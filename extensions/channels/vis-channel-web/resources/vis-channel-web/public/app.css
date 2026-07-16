@@ -278,7 +278,13 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
    burst of rg/patch cards stays scannable on a phone — labels + bodies too. */
 @media(max-width:42rem){
   .block{font-size:.68rem}
-  .block-result-summary{font-size:.66rem}
+  /* op-cards stay ONE line on phones: a long file path ellipsizes from the
+     LEFT (direction:rtl keeps the filename/tail visible) instead of wrapping to
+     a second row that doubles every cat/patch/rg card's height. The full body
+     is still one tap away via the disclosure. */
+  summary.block-result-label{flex-wrap:nowrap}
+  div.block-result-label{display:flex;flex-wrap:nowrap;align-items:baseline;gap:.35rem;min-width:0}
+  .block-result-summary{font-size:.66rem;flex:1 1 auto;min-width:0;margin-left:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;direction:rtl;text-align:left}
   .block-code-label,.block-result-label,.block-thinking-label,.trace-meta{font-size:.62rem}
   .md pre code,.ir-pre{font-size:.68rem}
 }
@@ -302,7 +308,7 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 /* thinking keeps its first rows visible; only surplus folds behind +N more. */
-.block-thinking-card{display:flex;flex-direction:column;align-items:stretch;gap:.25rem;margin:.18rem 0;padding:.1rem 0 .1rem .8rem;border-left:2px solid var(--accent);color:var(--fg);text-align:left}
+.block-thinking-card{display:flex;flex-direction:column;align-items:stretch;gap:.25rem;margin:.18rem 0;padding:.1rem 0;color:var(--fg);text-align:left}
 .block-thinking-label{color:var(--dim);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-thinking{border-left:0;padding-left:0}
 /* Reasoning renders as real markdown (block <p> + <br> hard breaks), so

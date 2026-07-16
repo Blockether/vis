@@ -149,18 +149,21 @@
         ;; the ASCII backend maps the strings onto an integer axis and prints
         ;; every category name as an x tick label (proves the categorical path)
         (let [ascii (ev python-context
-                        (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                        (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
                              "plt.bar(['repo-a','repo-b','repo-c'],[1,2,3])\n"
-                             "plt.to_ascii(60,12)"))]
+                             "b=io.StringIO()\nplt.savefig(b, format='txt', width=60, height=12)\n"
+                             "b.getvalue()"))]
           (expect (str/includes? ascii "repo-a"))
           (expect (str/includes? ascii "repo-b"))
           (expect (str/includes? ascii "repo-c")))
         ;; barh with string categories renders through the same path
-        (expect (str/includes? (ev python-context
-                                   (str "import matplotlib.pyplot as plt\nplt.clf()\n"
-                                        "plt.barh(['alpha','beta','gamma'],[3,7,2])\n"
-                                        "plt.to_ascii(60,12)"))
-                               "alpha"))))
+        (expect (str/includes?
+                  (ev python-context
+                      (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                           "plt.barh(['alpha','beta','gamma'],[3,7,2])\n"
+                           "b=io.StringIO()\nplt.savefig(b, format='txt', width=60, height=12)\n"
+                           "b.getvalue()"))
+                  "alpha"))))
   (it
     "renders fill_between / step / axhline / axvline"
     (with-python-context
@@ -338,16 +341,19 @@
 
 (defdescribe
   matplotlib-ascii-test
-  (it "to_ascii returns a framed multi-line ASCII plot with title + legend"
+  (it "the ASCII savefig target returns a framed multi-line ASCII plot with title + legend"
       (with-python-context
         (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt, math\nplt.clf()\n"
-                                "xs=[i*0.3 for i in range(21)]\n"
-                                "plt.plot(xs,[math.sin(x) for x in xs],label='sin')\n"
-                                "plt.plot(xs,[math.cos(x) for x in xs],label='cos')\n"
-                                "plt.title('trig'); plt.legend()\n" "s=plt.to_ascii(50,14)\n"
-                                "isinstance(s,str) and 'trig' in s and 'sin' in s "
-                                "and 'cos' in s and s.count(chr(10))>=14"))))))
+                           (str
+                             "import matplotlib.pyplot as plt, math, io\nplt.clf()\n"
+                             "xs=[i*0.3 for i in range(21)]\n"
+                             "plt.plot(xs,[math.sin(x) for x in xs],label='sin')\n"
+                             "plt.plot(xs,[math.cos(x) for x in xs],label='cos')\n"
+                             "plt.title('trig'); plt.legend()\n"
+                             "b=io.StringIO()\nplt.savefig(b, format='txt', width=50, height=14)\n"
+                             "s=b.getvalue()\n"
+                             "isinstance(s,str) and 'trig' in s and 'sin' in s "
+                             "and 'cos' in s and s.count(chr(10))>=14"))))))
   (it "savefig(format='txt') writes an ASCII render (not a PNG) to a buffer"
       (with-python-context
         (expect (true? (ev python-context
@@ -387,35 +393,50 @@
           (expect (= "640x480" (nth lines 4)))
           (expect (.exists f))
           (expect (> (.length f) 100)))))
-  (it "to_ascii on an empty figure returns a string without error"
+  (it "ASCII savefig on an empty figure returns a string without error"
+      (with-python-context (expect (true? (ev python-context
+                                              (str
+                                                "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                                                "b=io.StringIO()\nplt.savefig(b, format='txt')\n"
+                                                "isinstance(b.getvalue(), str)"))))))
+  (it "ASCII savefig renders a bar chart into the braille canvas"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str
+                             "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                             "plt.bar([1,2,3,4],[3,7,2,5])\n"
+                             "b=io.StringIO()\nplt.savefig(b, format='txt', width=40, height=12)\n"
+                             "s=b.getvalue()\n"
+                             "isinstance(s,str) and any(0x2800<=ord(c)<=0x28ff for c in s)"))))))
+  (it "color=True resolves a per-element hex color list without raising (issue #32)"
       (with-python-context
         (expect
           (true?
             (ev python-context
-                "import matplotlib.pyplot as plt\nplt.clf()\nisinstance(plt.to_ascii(), str)")))))
-  (it "to_ascii renders a bar chart into the braille canvas"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
-                                "plt.bar([1,2,3,4],[3,7,2,5])\n"
-                                "s=plt.to_ascii(40,12)\n"
-                                "isinstance(s,str) and any(0x2800<=ord(c)<=0x28ff for c in s)"))))))
-  (it "to_ascii(color=True) resolves a per-element hex color list without raising (issue #32)"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
-                                "plt.bar([1,2,3],[1,4,9],color=['#4C9F70','#123456','#abcdef'])\n"
-                                "isinstance(plt.to_ascii(40,12,color=True), str)"))))
-        (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
-                                "plt.plot([1,2,3],[1,4,9],color='#4C9F70')\n"
-                                "plt.plot([1,2,3],[2,5,10],color='green')\n"
-                                "isinstance(plt.to_ascii(40,12,color=True), str)"))))))
-  (it "to_ascii(color=True) emits ANSI escapes; default stays plain"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
-                                "plt.plot([0,1,2,3],[0,1,4,9],label='q')\nplt.legend()\n"
-                                "c=plt.to_ascii(40,12,color=True)\np=plt.to_ascii(40,12)\n"
-                                "(chr(27) in c) and (chr(27) not in p) "
-                                "and '\u2502' in p and '\u2514' in p")))))))
+                (str
+                  "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                  "plt.bar([1,2,3],[1,4,9],color=['#4C9F70','#123456','#abcdef'])\n"
+                  "b=io.StringIO()\nplt.savefig(b, format='txt', width=40, height=12, color=True)\n"
+                  "isinstance(b.getvalue(), str)"))))
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                  "plt.plot([1,2,3],[1,4,9],color='#4C9F70')\n"
+                  "plt.plot([1,2,3],[2,5,10],color='green')\n"
+                  "b=io.StringIO()\nplt.savefig(b, format='txt', width=40, height=12, color=True)\n"
+                  "isinstance(b.getvalue(), str)"))))))
+  (it
+    "color=True emits ANSI escapes; default stays plain"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+              "plt.plot([0,1,2,3],[0,1,4,9],label='q')\nplt.legend()\n"
+              "bc=io.StringIO()\nplt.savefig(bc, format='txt', width=40, height=12, color=True)\nc=bc.getvalue()\n"
+              "bp=io.StringIO()\nplt.savefig(bp, format='txt', width=40, height=12)\np=bp.getvalue()\n"
+              "(chr(27) in c) and (chr(27) not in p) " "and '│' in p and '└' in p")))))))

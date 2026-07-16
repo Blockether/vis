@@ -1404,7 +1404,18 @@
 (defn- open-click-target!
   ([{:keys [kind url]}]
    (vis/worker-future "vis-tui-open-click-target"
-                      #(try (if (= :file kind) (opener/open-file-in-editor! url) (opener/open! url))
+                      #(try (case kind
+                              :file
+                              (opener/open-file-in-editor! url)
+
+                              ;; Inline transcript image: the PNG lives in the
+                              ;; system temp dir (outside the workspace), so the
+                              ;; cwd-confined `open!` would reject it — use the
+                              ;; local-file opener (OS previewer).
+                              :image
+                              (opener/open-local! url)
+
+                              (opener/open! url))
                             (catch Throwable _ nil))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
 (defn- screen-size

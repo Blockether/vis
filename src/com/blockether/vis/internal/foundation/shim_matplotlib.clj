@@ -1247,8 +1247,6 @@ def __vis_install_matplotlib__():
         # delegates to the module-level artist / renderer.
         def savefig(self, *a, **k):
             return savefig(*a, **k)
-        def to_ascii(self, *a, **k):
-            return to_ascii(*a, **k)
         def suptitle(self, s, **k):
             _state['title'] = str(s)
             return None
@@ -1544,10 +1542,6 @@ def __vis_install_matplotlib__():
                                   for rgb, l in labs))
         return '\\n'.join(out)
 
-    def to_ascii(width=74, height=22, color=False):
-        # Return the current figure as an ASCII-art string (no image, no file).
-        return _render_ascii(_spec(), width, height, color)
-
     def _spec():
         return {
             'width': _state['width'], 'height': _state['height'],
@@ -1567,7 +1561,10 @@ def __vis_install_matplotlib__():
         is_text = str(format).lower() in ('ascii', 'txt') or (
             isinstance(fname, str) and fname.lower().endswith(('.txt', '.asc')))
         if is_text:
-            txt = _render_ascii(_spec())
+            txt = _render_ascii(_spec(),
+                                int(kwargs.get('width', 74)),
+                                int(kwargs.get('height', 22)),
+                                bool(kwargs.get('color', False)))
             if hasattr(fname, 'write'):
                 fname.write(txt)
             else:
@@ -1668,7 +1665,7 @@ def __vis_install_matplotlib__():
                 xlim, ylim, xscale, yscale, semilogx, semilogy, loglog,
                 xticks, yticks, tight_layout, subplots_adjust,
                 boxplot, imshow, colorbar,
-                clf, cla, close, show, savefig, to_ascii,
+                clf, cla, close, show, savefig,
                 subplots, subplot, gca, gcf,
                 use, switch_backend, get_backend, rc, rcdefaults,
                 ion, ioff, isinteractive, draw, draw_if_interactive, pause,
@@ -1715,7 +1712,7 @@ del __vis_install_matplotlib__
   (vis/extension
     {:ext/name "foundation-shim-matplotlib"
      :ext/description
-     "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/barh/hist/fill_between/step/pie/boxplot/imshow/hlines/vlines/axhline/axvline + the OO Figure/Axes API with subplots, add_subplot, savefig, suptitle, tight_layout, set_size_inches, twinx; multi-pair plot with Line2D-like handles; axis('off'|[x0,x1,y0,y1]); log scales, markers, dashed styles, hex + named colors, viridis heatmaps, title/labels/grid/legend/text) with TWO renderers: a pure-JVM Java2D PNG backend and a pure-Python ASCII backend. plt.show() renders the figure to a PNG and paints it INLINE in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty), automatically falling back to an ASCII plot on text-only terminals; plt.to_ascii() always returns the ASCII plot as a string; savefig writes a PNG (or ASCII for a '*.txt'/'*.asc' target). No pip, no native wheel."
+     "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/barh/hist/fill_between/step/pie/boxplot/imshow/hlines/vlines/axhline/axvline + the OO Figure/Axes API with subplots, add_subplot, savefig, suptitle, tight_layout, set_size_inches, twinx; multi-pair plot with Line2D-like handles; axis('off'|[x0,x1,y0,y1]); log scales, markers, dashed styles, hex + named colors, viridis heatmaps, title/labels/grid/legend/text) with TWO renderers: a pure-JVM Java2D PNG backend and a pure-Python ASCII backend. plt.show() is the ONE display call: it renders the figure to a PNG and paints it INLINE in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty), automatically falling back to an ASCII plot on text-only terminals; savefig writes a PNG (or ASCII for a '*.txt'/'*.asc'/format='txt' target, honoring width/height/color kwargs). No pip, no native wheel."
      :ext/version "0.4.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -1724,7 +1721,7 @@ del __vis_install_matplotlib__
      :ext/sandbox-shims
      [{:shim/name "matplotlib"
        :shim/description
-       "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with Java2D PNG and ASCII renderers. plt.show() paints the real PNG INLINE on a graphics terminal (Kitty/iTerm2), falling back to ASCII on text-only terminals; plt.to_ascii() returns the ASCII plot; savefig writes PNG (or *.txt/*.asc ASCII). Not supported: animation, 3-D axes, full rcParams theming; only documented plot types render."
+       "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with Java2D PNG and ASCII renderers. plt.show() is the ONE display call — it paints the real PNG INLINE on a graphics terminal (Kitty/iTerm2) and automatically falls back to ASCII on text-only terminals; savefig writes PNG (or *.txt/*.asc/format='txt' ASCII, honoring width/height/color kwargs). Not supported: animation, 3-D axes, full rcParams theming; only documented plot types render."
        :shim/bindings mpl-bridge-bindings
        :shim/preamble matplotlib-shim-src}]}))
 

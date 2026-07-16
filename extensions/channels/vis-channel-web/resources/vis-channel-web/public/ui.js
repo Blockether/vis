@@ -1380,8 +1380,10 @@
       .then(function (more) { setTimeout(poll, more ? 0 : POLL_MS); });
   }
 
-  setTimeout(function () {
-    if (alive) { return; }     /* SSE delivered — stay on the stream */
+  /* Flip the page from the (buffered/wedged) SSE stream to /poll pulling.
+     Idempotent: once polling owns the page it stays for the page's lifetime. */
+  function fallbackToPolling(reason) {
+    if (polling) { return; }
     polling = true;
     /* close the buffered EventSource so a late edge flush can't
        double-apply frames the poller already pulled. htmx-sse only
@@ -1391,10 +1393,34 @@
       var d = app["htmx-internal-data"];
       if (d && d.sseEventSource) { d.sseEventSource.close(); }
     } catch (err) { console.warn("vis: could not close buffered EventSource:", err); }
-    console.warn("vis: SSE silent for " + WATCH_MS +
-      "ms — an edge proxy is buffering the stream; falling back to polling.");
+    console.warn("vis: " + reason + " — falling back to polling.");
     poll();
+  }
+
+  /* Connect check: the immediate ping + replay must land within WATCH_MS.
+     Silence here means an edge proxy buffered the body from byte zero. */
+  setTimeout(function () {
+    if (alive) { return; }     /* SSE delivered — stay on the stream */
+    fallbackToPolling("SSE silent for " + WATCH_MS +
+      "ms — an edge proxy is buffering the stream");
   }, WATCH_MS);
+
+  /* Continuous liveness — the stream can go dead AFTER a healthy start: an
+     edge proxy that only begins buffering mid-turn, or a half-open TCP that
+     never fires EventSource.onerror (so htmx-sse never reconnects and the
+     thread just freezes until a manual refresh — the "live isn't updating"
+     symptom). The server pings every ~15s (HEARTBEAT_MS) and every ping/frame
+     refreshes `alive`; if NOTHING lands for STALL_MS the stream is wedged, so
+     fall back to polling. Threshold is 2×heartbeat + margin to ride out a
+     single missed ping / GC pause; a hidden tab is skipped (throttled timers +
+     paused stream would false-trip) and re-checked once it's foregrounded. */
+  var STALL_MS = 35000;
+  setInterval(function () {
+    if (polling || !alive || document.hidden) { return; }
+    if (Date.now() - alive > STALL_MS) {
+      fallbackToPolling("SSE went silent for " + STALL_MS + "ms mid-stream");
+    }
+  }, 5000);
 
   /* ── Command palette (Ctrl/Cmd+P) ─────────────────────────────────────
      A searchable overlay over every web command — the SAME set the

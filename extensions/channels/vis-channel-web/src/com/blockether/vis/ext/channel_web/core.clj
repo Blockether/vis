@@ -2426,7 +2426,7 @@
                    (filter #(= "turn.started" (:type %)))
                    last
                    :seq
-                   #(dec (long %))))
+                   (#(dec (long %)))))
 
         from
         page-seq

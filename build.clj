@@ -347,14 +347,18 @@
     (if (and launcher (.isFile launcher)) (.getAbsolutePath launcher) exe)))
 
 ;; ── Distribution profiles ───────────────────────────────────────────────────
-;; Three shipped distributions, selected with `:profile` on `native` / `uber`:
-;;   :tui   — MINIMAL: the TUI channel only. Web + Telegram channels and voice
-;;            are dropped from the classpath (agent substrate, providers,
-;;            languages, persistence all stay — the binary is a full agent,
-;;            just single-channel and voiceless).
-;;   :cross — all channels (TUI + web + Telegram), NO voice.
-;;   :voice — all channels + voice ASR (DEFAULT for local builds; the model
-;;            still downloads on first use unless :with-assets embeds it).
+;; Profiles select what ships, via `:profile` on `native` / `uber`:
+;;   :tui       — MINIMAL: the TUI channel only. Web + Telegram channels and
+;;                voice are dropped (agent substrate, providers, languages,
+;;                persistence all stay — a full agent, single-channel/voiceless).
+;;   :cross     — all channels (TUI + web + Telegram), NO voice.
+;;   :voice     — all channels + voice ASR (DEFAULT for local builds; the model
+;;                still downloads on first use unless :with-assets embeds it).
+;; ── Shipped end-user distributions ──
+;;   :community — FULL agent: every extension incl. web `search` + voice ASR;
+;;                models download on first use (lean binary).
+;;   :corporate — AIR-GAPPED: `search` extension dropped entirely + the parakeet
+;;                ASR model ALWAYS embedded (no runtime HuggingFace/network fetch).
 ;; Dropping a dep here removes its whole subtree: vis-foundation-voice is the
 ;; ONLY way sherpa-onnx/onnxruntime JNI libs reach the classpath, so :tui and
 ;; :cross contain zero voice natives for ANY platform. Every channel
@@ -366,15 +370,44 @@
   {:tui #{'com.blockether/vis-foundation-voice 'com.blockether/vis-channel-web
           'com.blockether/vis-channel-telegram}
    :cross #{'com.blockether/vis-foundation-voice}
-   :voice #{}})
+   :voice #{}
+   ;; ── Shipped end-user distributions ──────────────────────────────────────
+   ;; :community — the FULL agent: every extension (all channels, voice ASR,
+   ;;   AND the web/network `search` extension). Park (parakeet) voice models
+   ;;   and any other on-demand assets download on FIRST USE, so the binary
+   ;;   stays lean. Same classpath as :voice; named for the distribution.
+   :community #{}
+   ;; :corporate — the AIR-GAPPED agent for locked-down networks. The `search`
+   ;;   extension is dropped ENTIRELY (its namespaces never reach the image, so
+   ;;   `search_web`/`search_code`/`search_papers` do not exist and nothing can
+   ;;   phone a search API). Corporates typically also forbid pulling models
+   ;;   from HuggingFace at runtime, so this profile ALWAYS embeds the parakeet
+   ;;   ASR model into the image (see `native` / `voice-profile?`) — the binary
+   ;;   is fully offline out of the box.
+   :corporate #{'com.blockether/vis-foundation-search}})
 
 (defn- resolve-profile
   [opts]
   (let [p (keyword (or (:profile opts) :voice))]
     (when-not (contains? profile->dropped-libs p)
-      (throw (ex-info (str "Unknown :profile " p " — use :tui, :cross or :voice")
-                      {:profile p :available (keys profile->dropped-libs)})))
+      (throw (ex-info
+               (str "Unknown :profile " p " — use :tui, :cross, :voice, :community or :corporate")
+               {:profile p :available (keys profile->dropped-libs)})))
     p))
+
+(defn- voice-profile?
+  "True when the voice extension SURVIVES this profile (its lib is not dropped),
+   so the sherpa-onnx/onnxruntime JNI libs — and, when embedding assets, the
+   parakeet ASR model — belong in the image."
+  [profile]
+  (not (contains? (profile->dropped-libs profile) 'com.blockether/vis-foundation-voice)))
+
+(defn- embed-assets?
+  "Whether to vendor the parakeet ASR model INTO the image. Explicit
+   `:with-assets true` requests it; the `:corporate` profile forces it (an
+   air-gapped binary must not fetch the model at runtime)."
+  [opts profile]
+  (boolean (or (:with-assets opts) (= :corporate profile))))
 
 (defn- dropped-lib-roots
   "The `:local/root` dirs of the deps a profile drops — used to keep their
@@ -908,7 +941,7 @@
         (native-platform-token)
 
         voice?
-        (= :voice profile)
+        (voice-profile? profile)
 
         [t-os t-arch]
         (truffle-platform-tokens)
@@ -1024,10 +1057,10 @@
         (b/create-basis {:project (root-deps-edn profile) :aliases [:native]})]
 
     (println "native-image (reusing target/native-classes)…")
-    (let [{:keys [exit]}
-          (b/process {:command-args
-                      (into [(native-image-command)]
-                            (native-image-args basis (boolean (:with-assets opts)) profile))})]
+    (let [{:keys [exit]} (b/process
+                           {:command-args
+                            (into [(native-image-command)]
+                                  (native-image-args basis (embed-assets? opts profile) profile))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))
@@ -1041,29 +1074,34 @@
    `bin/vis` then proxies to the native binary by default.
 
    Options:
-     :profile :tui      — MINIMAL distribution: TUI channel only (no web, no
-                          Telegram, no voice — zero voice JNI libs).
-     :profile :cross    — all channels, NO voice.
-     :profile :voice    — all channels + voice ASR (the default).
-     :with-assets true  — embed the ~465 MB voice ASR model for a fully-offline
-                          LOCAL binary (default: download on first use). Only valid
-                          with :profile :voice. NOT used for releases — the shipped
-                          native downloads the model on first use, like every other
-                          model, so the binary stays lean."
+     :profile :tui       — MINIMAL: TUI channel only (no web, Telegram, voice).
+     :profile :cross     — all channels, NO voice.
+     :profile :voice     — all channels + voice ASR (the default).
+     :profile :community — SHIPPED full distribution: every extension incl. web
+                           `search` + voice ASR; models download on first use.
+     :profile :corporate — SHIPPED air-gapped distribution: `search` extension
+                           dropped entirely + the parakeet ASR model ALWAYS
+                           embedded (fully offline, no HuggingFace/network fetch).
+     :with-assets true   — embed the ~465 MB voice ASR model for a fully-offline
+                           binary (default: download on first use). Requires a
+                           voice-capable profile; :corporate implies it."
   [opts]
-  (let [with-assets?
-        (boolean (:with-assets opts))
+  (let
+    [profile
+     (resolve-profile opts)
 
-        profile
-        (resolve-profile opts)
+     with-assets?
+     (embed-assets? opts profile)
 
-        _
-        (when (and with-assets? (not= :voice profile))
-          (throw (ex-info ":with-assets embeds the voice model — it requires :profile :voice"
-                          {:opts opts})))
+     _
+     (when (and with-assets? (not (voice-profile? profile)))
+       (throw
+         (ex-info
+           ":with-assets embeds the voice model — it requires a voice-capable profile (:voice, :community or :corporate)"
+           {:opts opts :profile profile})))
 
-        basis
-        (prepare-native-classes! profile)]
+     basis
+     (prepare-native-classes! profile)]
 
     (when with-assets? (vendor-voice-model! native-class-dir))
     ;; (1) JVM distribution — also the `vis --jvm` fallback. Portable uberjar.

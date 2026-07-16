@@ -1116,6 +1116,15 @@
            (p/fill-rect! g 0 margin-row cols 1))
          ;; Title bar (accent + flex hints) — the inline `@` file picker rides
          ;; the SAME overlay as slash commands, just relabelled.
+         ;; Clear the whole row to terminal-bg FIRST, exactly like the border
+         ;; and suggestion rows below: the accent stripe only spans the inner
+         ;; column range, so on a live-bubble tick the streaming assistant text
+         ;; repainted underneath would otherwise show through the title row's
+         ;; side gutters and churn every 80ms — the "palette flickers the bottom
+         ;; of the live scroll" bug.
+         (p/set-colors! g t/text-fg t/terminal-bg)
+         (p/fill-rect! g 0 title-row cols 1)
+         ;; the SAME overlay as slash commands, just relabelled.
          (if (:file/mention? (first suggestions))
            (draw-slash-title-bar! g title-row left inner-w file-title-label file-title-hints)
            (draw-slash-title-bar! g title-row left inner-w))
@@ -2021,6 +2030,15 @@
                   (when (and *image-placements* (= :image (:kind meta)))
                     (swap! *image-placements* conj
                       {:row (+ (long viewport-top) (long y)) :col x :img (:img meta)}))
+                  ;; Every painted image row (paint row + pads) is a click
+                  ;; target: clicking the picture opens the file in the OS
+                  ;; previewer (`:image` branch of `open-click-target!`).
+                  (when-let [img (and (contains? #{:image :image-pad} (:kind meta)) (:img meta))]
+                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y))
+                                            :col x
+                                            :width (long (max 1 (long (or (:cols img) 1))))}
+                                   :kind :image
+                                   :url (:path img)}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -3771,7 +3789,7 @@
 
         ;; A `vis-image` result must NEVER start life collapsed: the whole
         ;; point is to SEE the picture. Detect one in the body so the op-card
-        ;; defaults to expanded (and force the inner image disclosure open).
+        ;; defaults to expanded (the image box itself is always allocated).
         has-image?
         (boolean (some (fn [n]
                          (and (vector? n) (= :code (first n)) (= "vis-image" (:lang (second n)))))
@@ -3783,9 +3801,7 @@
           (tag-copy-block-body (vec (paste-aware-ir->entries
                                       ir
                                       (max 1 (- (long fill-w) (long tool-output-indent-cols)))
-                                      (assoc opts
-                                        :mode :channel
-                                        :image-default-expanded? true)))
+                                      (assoc opts :mode :channel)))
                                node-id
                                body-text))]
 
@@ -4279,8 +4295,7 @@
                                                        :session-id session-id
                                                        :session-turn-id session-turn-id
                                                        :detail-expansions detail-expansions
-                                                       :image-section :iteration
-                                                       :image-default-expanded? true}))
+                                                       :image-section :iteration}))
                                                result-node-id
                                                result-text))
 
@@ -5431,13 +5446,20 @@
   60)
 
 (defn- image-disclosure-entries
-  "Render one `vis-image` block as a collapsible disclosure: the
-   `[Image #N: ...]` token is the chevron summary row; expanding it reserves
-   `rows` blank body rows whose FIRST row carries `:kind :image` meta so the
-   screen loop can paint the actual picture (Kitty/iTerm2 graphics) over them
-   AFTER Lanterna's delta refresh. Terminals without inline-image support (or
-   an unreadable file) fall back to a single descriptive text row."
-  [node content-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
+  "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
+
+   The `[Image #N: ...]` token paints as a plain caption row; on a graphical
+   terminal the image's cell box (width × height) is reserved IMMEDIATELY
+   below it, so the virtual layout always accounts for the picture's true
+   size — no expand/collapse state, no height pop-in, no image painted at a
+   stale position. The FIRST reserved row carries `:kind :image` meta so the
+   screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the
+   box AFTER Lanterna's delta refresh; every reserved row (pads included)
+   carries the `:img` map so the paint loop registers a click region that
+   opens the file in the OS previewer. Terminals without inline-image
+   support (or an unreadable file) render the descriptive fallback plus the
+   fence's ASCII body instead — likewise always visible."
+  [node content-w {:keys [session-turn-id] :as opts}]
   (let [{:keys [summary path mime width height size-label ascii]}
         (image-block-parts node)
 
@@ -5452,58 +5474,46 @@
                          :kind :image
                          :details-path [id]})
 
-        expanded?
-        (detail-expanded? detail-expansions
-                          session-id
-                          node-id
-                          (:image-default-expanded? opts (timg/graphical-terminal?)))
-
         header
-        (detail-summary-entries {:marker md-summary-marker
-                                 :max-w content-w
-                                 :summary summary
-                                 :collapsed? (not expanded?)
-                                 :session-id session-id
-                                 :node-id node-id})
+        (vec (ir-tui/ir->entries [:ir {} [:p {} summary]] content-w {}))
 
         can-draw?
-        (and expanded? (timg/graphical-terminal?) width height)
+        (and (timg/graphical-terminal?) width height)
 
         body
-        (when expanded?
-          (if can-draw?
-            (let [box
-                  (timg/cell-size {:w width :h height}
-                                  (min (long image-max-cols) (max 1 (long content-w)))
-                                  40)
+        (if can-draw?
+          (let [box
+                (timg/cell-size {:w width :h height}
+                                (min (long image-max-cols) (max 1 (long content-w)))
+                                40)
 
-                  rows
-                  (max 1 (long (:rows box)))
+                rows
+                (max 1 (long (:rows box)))
 
-                  img
-                  {:path path :mime mime :cols (:cols box) :rows rows}]
+                img
+                {:path path :mime mime :cols (:cols box) :rows rows}]
 
-              ;; First reserved row carries the paint meta; the rest
-              ;; are blanks the graphics sequence spans over. Every
-              ;; row is tagged so `trim-user-prompt-margin-entries`
-              ;; doesn't mistake the reserved box for trailing margin
-              ;; and collapse the space the image needs.
-              (into [{:line "" :meta {:kind :image :img img :node-id (str node-id)}}]
-                    (repeat (dec rows) {:line "" :meta {:kind :image-pad}})))
-            ;; Fallback: describe the image so headless / unsupported
-            ;; terminals still see what was attached.
-            (let [dims
-                  (when (and width height) (str width "×" height))
+            ;; First reserved row carries the paint meta; the rest are
+            ;; blanks the graphics sequence spans over. Every row is
+            ;; tagged (and carries `:img`) so `trim-user-prompt-margin-entries`
+            ;; doesn't mistake the reserved box for trailing margin AND so
+            ;; each painted row registers its own click region.
+            (into [{:line "" :meta {:kind :image :img img :node-id (str node-id)}}]
+                  (repeat (dec rows) {:line "" :meta {:kind :image-pad :img img}})))
+          ;; Fallback: describe the image so headless / unsupported
+          ;; terminals still see what was attached (ASCII body included).
+          (let [dims
+                (when (and width height) (str width "×" height))
 
-                  desc
-                  (str (or (not-empty (last (str/split (str path) #"/"))) "image")
-                       (when dims (str "  " dims))
-                       (when size-label (str "  " size-label)))
+                desc
+                (str (or (not-empty (last (str/split (str path) #"/"))) "image")
+                     (when dims (str "  " dims))
+                     (when size-label (str "  " size-label)))
 
-                  ir
-                  (if ascii [:ir {} [:p {} desc] [:code {} ascii]] [:ir {} [:p {} desc]])]
+                ir
+                (if ascii [:ir {} [:p {} desc] [:code {} ascii]] [:ir {} [:p {} desc]])]
 
-              (tag-copy-block-body (vec (ir-tui/ir->entries ir content-w {})) node-id path))))]
+            (tag-copy-block-body (vec (ir-tui/ir->entries ir content-w {})) node-id path)))]
 
     (vec (concat header body))))
 

@@ -1,12 +1,17 @@
 name: Native Release
 
 # Companion to release.yml (which cuts the GitHub Release + Clojars deploy of the
-# libraries/extensions). On each `v*` tag this builds ONE native binary per OS —
-# the full agent, nothing dropped:
-#   vis-<os>  — every channel (TUI + web + Telegram) AND voice ASR
-# The ~465 MB Parakeet voice model is NOT embedded: it downloads on first use
-# (like every other model), so the shipped binary stays lean. Each binary carries
-# ONLY its own build host's native libs, never another platform's.
+# libraries/extensions). On each `v*` tag this builds TWO native distributions
+# per OS:
+#   vis-<os>-community  — the FULL agent: every channel (TUI + web + Telegram),
+#                         voice ASR, AND the web/network `search` extension. The
+#                         ~465 MB Parakeet voice model is NOT embedded — it
+#                         downloads on first use, so the binary stays lean.
+#   vis-<os>-corporate  — the AIR-GAPPED agent: the `search` extension is dropped
+#                         entirely and the Parakeet ASR model is EMBEDDED, so the
+#                         binary never fetches anything from HuggingFace/network.
+# Each binary carries ONLY its own build host's native libs, never another
+# platform's.
 #
 # The native binary is the ONLY distributed application artifact — there is no
 # JVM uberjar release asset. Libraries/extensions still publish to Clojars from
@@ -32,14 +37,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64, extra_args: '' }
+          - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '' }
+          - { os: ubuntu-latest, profile: corporate, bin: target/vis, asset: vis-linux-x64-corporate, extra_args: '' }
           # macos-15: FREE Apple-silicon runner (M1, 7 GB). The paid macos-15-xlarge
           # (14 GB) is blocked by the org spending limit, so free runners are the only
           # option. GraalPy forces -Xms14g, which on a 7 GB host swaps into a
           # DeadlockWatchdog kill — so VIS_NATIVE_EXTRA_ARGS overrides the heap
           # (-Xmx6g/-Xms1g), and the -Os + interpreter-only build (DefaultTruffleRuntime,
           # no Truffle JIT) keeps the analysis footprint low enough to fit via swap.
-          - { os: macos-15, bin: target/vis, asset: vis-macos-arm64, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
+          - { os: macos-15, profile: community, bin: target/vis, asset: vis-macos-arm64-community, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
+          - { os: macos-15, profile: corporate, bin: target/vis, asset: vis-macos-arm64-corporate, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
     steps:
       - uses: actions/checkout@v6
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
@@ -60,12 +67,13 @@ jobs:
             ~/.vis/build-cache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
-      # The full agent: all channels + voice ASR. The voice model is NOT embedded
-      # (no :with-assets) — it downloads on first use, so the binary stays lean.
+      # community: full agent, model downloads on first use (lean binary).
+      # corporate: `search` dropped + Parakeet model embedded by the profile
+      # itself (no :with-assets flag needed), so the binary is fully offline.
       - name: Build native image
         env:
           VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
-        run: clojure -T:build native :profile :voice
+        run: clojure -T:build native :profile :${{ matrix.profile }}
       - name: Stage asset
         shell: bash
         run: cp "${{ matrix.bin }}" "${{ matrix.asset }}"

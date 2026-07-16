@@ -285,6 +285,47 @@
          :target nil
          :error (str "Path escapes the working directory: " (pr-str s))}))))
 
+(defn open-local!
+  "Open the LOCAL file at `path` with the generic OS opener (Preview /
+   default viewer), WITHOUT the cwd confinement `open!` applies.
+
+   For targets vis itself produced — e.g. the inline-image temp PNGs
+   `plt.show()` writes under the system temp dir — never for arbitrary
+   model-provided links. Returns the same result-map shape as `open!`.
+   Never throws."
+  [path]
+  (let [f (File. (str path))]
+    (if (.isFile f)
+      (let [target (.getAbsolutePath f)]
+        (if-let [argv (open-command target)]
+          (let [err (spawn! argv)]
+            (cond
+              (nil? err) {:status :ok :command argv :scheme :file :target target :error nil}
+              (and (= "xdg-open" (first argv)) (instance? java.io.IOException err))
+              (if-let [argv* (spawn-first! (mapv #(conj (vec %) target) linux-fallbacks))]
+                {:status :ok :command argv* :scheme :file :target target :error nil}
+                {:status :spawn-failed
+                 :command argv
+                 :scheme :file
+                 :target target
+                 :error
+                 "No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed."})
+              :else {:status :spawn-failed
+                     :command argv
+                     :scheme :file
+                     :target target
+                     :error (.getMessage ^Throwable err)}))
+          {:status :no-opener
+           :command nil
+           :scheme :file
+           :target target
+           :error (str "No opener available for OS: " (System/getProperty "os.name"))}))
+      {:status :rejected-scheme
+       :command nil
+       :scheme nil
+       :target nil
+       :error (str "Not a local file: " (pr-str path))})))
+
 (defn open-file-in-editor!
   "Open local file target `s` in a GUI editor when possible, preserving
    `#Lline` anchors for editor CLIs. Falls back to `open!` for missing

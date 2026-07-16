@@ -2428,50 +2428,60 @@
 
         ;; Human-facing enrichment for the fold card: how much wire THIS fold
         ;; reclaims — in ~tokens (summed from `engine_iter_weights`) AND as a
-        ;; fraction of the model's per-call limit. Deliberately the fold's OWN
-        ;; contribution (a REDUCTION), never an absolute "how full am I" level:
-        ;; `last_request_tokens` grows with every new tool result, so a
-        ;; projected level would RISE across iterations even when the fold
-        ;; helped — a fold, one tool call, another fold and the number climbs
-        ;; (issue #27's scary regression: a moving-for-the-wrong-reason figure
-        ;; sitting beside `saved ~Nk` reads as the fold's result). A per-fold
-        ;; reduction can't mislead that way; the authoritative live fullness
-        ;; stays in `session["utilization"]["now"]`'s `context <U>%`. Best-effort
-        ;; — any hiccup degrades to no suffix rather than breaking the card.
+        ;; fraction of the model's per-call limit (`~P% of window`). That figure
+        ;; is deliberately the fold's OWN contribution (a REDUCTION), never a
+        ;; derived "how full am I" level: `last_request_tokens` grows with every
+        ;; new tool result, so a PROJECTED level would RISE across iterations
+        ;; even when the fold helped (issue #27's scary regression: a
+        ;; moving-for-the-wrong-reason figure beside `saved ~Nk` reads as the
+        ;; fold's result). Alongside it we ALSO surface the live window fullness
+        ;; as `context <U>%` — but taken straight from the provider's
+        ;; authoritative `saturation` (last-request / model-input-limit), the
+        ;; SAME number `session["utilization"]["now"]` shows and clearly a
+        ;; separate, absolute reading — so it can't be misread as the fold's own
+        ;; reduction. Best-effort — any hiccup degrades to no suffix rather than
+        ;; breaking the card.
         priced
         (fn [base]
-          (try (let [ctx
-                     (some-> ctx-atom
-                             deref)
+          (try
+            (let [ctx
+                  (some-> ctx-atom
+                          deref)
 
-                     universe
-                     (get ctx "engine_iter_universe")
+                  universe
+                  (get ctx "engine_iter_universe")
 
-                     weights
-                     (get ctx "engine_iter_weights")
+                  weights
+                  (get ctx "engine_iter_weights")
 
-                     util
-                     (get ctx "engine_utilization")
+                  util
+                  (get ctx "engine_utilization")
 
-                     scopes
-                     (into #{}
-                           (mapcat #(get % "scopes"))
-                           (ctx-engine/expand-through [base] (or universe [])))
+                  scopes
+                  (into #{}
+                        (mapcat #(get % "scopes"))
+                        (ctx-engine/expand-through [base] (or universe [])))
 
-                     toks
-                     (reduce + 0 (keep #(get weights %) scopes))
+                  toks
+                  (reduce + 0 (keep #(get weights %) scopes))
 
-                     lim
-                     (get util "model_input_limit")
+                  lim
+                  (get util "model_input_limit")
 
-                     pct
-                     (when (and (pos? (long toks)) lim (pos? (long lim)))
-                       (long (Math/round (/ (* 100.0 (double toks)) (double lim)))))]
+                  pct
+                  (when (and (pos? (long toks)) lim (pos? (long lim)))
+                    (long (Math/round (/ (* 100.0 (double toks)) (double lim)))))
 
-                 (when (pos? (long toks))
-                   (str " · saved ~" (fmt-tok toks)
-                        " tokens" (when pct (str " · ~" pct "% of window")))))
-               (catch Throwable _ "")))]
+                  sat
+                  (get util "saturation")]
+
+              (when (pos? (long toks))
+                (str " · saved ~"
+                     (fmt-tok toks)
+                     " tokens"
+                     (when pct (str " · ~" pct "% of window"))
+                     (when (and sat (pos? (long sat))) (str " · context " sat "%")))))
+            (catch Throwable _ "")))]
 
     {'session-fold
      (fn session-fold [scopes & [gist]]

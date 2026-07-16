@@ -568,18 +568,23 @@
   ;; NOT an absolute level: a projected level baselines on the growing
   ;; `last_request_tokens`, so it RISES across iterations even when the fold helped
   ;; (issue #27's scary regression). A per-fold reduction can never mislead that way.
+  ;; Alongside it the card ALSO surfaces the live window fullness as `context <U>%`,
+  ;; taken straight from the provider's authoritative `saturation` — a separate,
+  ;; absolute reading, omitted when no `saturation` is stamped.
   (it "an explicit scope card prices its ~tokens + the reduction as % of window"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window → big cat dump"
+        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% → big cat dump"
                    (sf ["t1/i1"] "big cat dump")))))
   (it "a `through` selector sums the weight of EVERY scope it resolves"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
-        (expect (= "folded through t1/i2 · saved ~15k tokens · ~16% of window → traced"
-                   (sf {"through" "t1/i2"} "traced")))))
+        (expect (=
+                  "folded through t1/i2 · saved ~15k tokens · ~16% of window · context 44% → traced"
+                  (sf {"through" "t1/i2"} "traced")))))
   (it "a gist-less fold still shows the tokens + reduction suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window" (sf ["t1/i1"])))))
+        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44%"
+                   (sf ["t1/i1"])))))
   (it "a scope with NO stamped weight reclaims nothing, so the card omits the suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; t2/i9 is not in the weights map (created this iteration, unsent) — a fold
@@ -609,7 +614,7 @@
             card2
             (sf ["t1/i2"] "second")]
 
-        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window → first" card1))
+        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% → first" card1))
         ;; second fold reclaims only its own 3.4k regardless of the 90k request
         (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of window → second" card2))))
   (it "the note ALSO lands in the persistent breadcrumb, not just the tool card"
@@ -634,7 +639,9 @@
             line
             (:content (irm (second (first out))))]
 
-        (expect (= "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · big cat dump" line))))
+        (expect
+          (= "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% · big cat dump"
+             line))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))
