@@ -2467,15 +2467,38 @@
                                    (min (long iw)
                                         (+ (long (get code-band-w lines-idx 0))
                                            (* 2 (long code-block-h-pad))))
-                                   iw)]
-                      (p/set-colors! g t/code-block-fg t/code-block-bg)
+                                   iw)
+                          ;; A diff fence tints each add/del row with a subtle
+                          ;; green/red BACKGROUND band (mirroring the web channel's
+                          ;; `df-add`/`df-del`), not just the ANSI foreground. The
+                          ;; kind rides in the line meta from `code-block->lines`;
+                          ;; hunk/meta/ctx rows keep the neutral code-block bg.
+                          dk (:diff-kind meta)
+                          cbg (case dk
+                                :add
+                                t/code-ok-bg
+
+                                :del
+                                t/code-err-bg
+
+                                t/code-block-bg)
+                          cfg (case dk
+                                :add
+                                t/code-success-fg
+
+                                :del
+                                t/code-error-fg
+
+                                t/code-block-fg)]
+
+                      (p/set-colors! g cfg cbg)
                       (p/fill-rect! g fbx y band-w 1)
                       (paint-ansi-line! g
                                         (+ (long x) (long code-block-h-pad))
                                         y
                                         (subs line 1)
-                                        t/code-block-fg
-                                        t/code-block-bg))
+                                        cfg
+                                        cbg))
                     ;; Bullet items: same inline-span treatment as plain text.
                     ;; `- **bold** thing` should bold the word.
                     (str/starts-with? line md-bullet-marker)

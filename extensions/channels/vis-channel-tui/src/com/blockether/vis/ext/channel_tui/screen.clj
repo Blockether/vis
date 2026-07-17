@@ -2342,6 +2342,20 @@
         (if (scroll/scrolled-up? (:scroll db))
           (.setCursorPosition screen nil)
           (.setCursorPosition screen (TerminalPosition. cx cy)))))
+    ;; Outer chat scrollbar FIRST, then the suggestion popup on top — the
+    ;; SAME order as the full-frame path (`draw-messages-area!` scrollbar →
+    ;; `draw-bottom-chrome!` suggestions). The popup sits just above the input
+    ;; box and its bottom rows overlap the scrollbar track; painting the
+    ;; scrollbar AFTER the popup let it re-draw over those rows every streaming
+    ;; tick, so the outer scroll thumb churned through the picker — the
+    ;; "flickering of the outer scroll" behind an open `@` file picker.
+    (render-scrollbar! g
+                       cols
+                       messages-top
+                       inner-h
+                       (- messages-bottom messages-top)
+                       (:total-h layout)
+                       (:eff-scroll layout))
     ;; Suggestion popup (slash commands / inline `@` file picker) is drawn
     ;; just above the input box, in rows the live-bubble repaint above
     ;; overdraws. Re-paint it here every tick so it stays on top instead of
@@ -2353,13 +2367,6 @@
       input-top
       cols
       slash-command-index)
-    (render-scrollbar! g
-                       cols
-                       messages-top
-                       inner-h
-                       (- messages-bottom messages-top)
-                       (:total-h layout)
-                       (:eff-scroll layout))
     ;; Search hit highlights: painted on the live path too so they survive
     ;; streaming ticks instead of only appearing on full frames.
     (paint-search-hits! screen layout text-top inner-h cols db)

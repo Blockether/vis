@@ -450,9 +450,16 @@
             :style #{:code}
             :node node}])
 
-        verbatim-line
+        diff-line
         (fn [line]
-          {:runs (if (= "" line) [] (runs-of line))})
+          ;; Tag each add/del row with its unified-diff kind so the painter can
+          ;; tint the row's BACKGROUND band green/red (mirroring the web channel's
+          ;; `df-add`/`df-del`). Hunk/meta/ctx rows keep the neutral code-block bg
+          ;; and rely on their ANSI foreground alone.
+          (let [kind (ir/diff-line-kind line)]
+            (cond-> {:runs (if (= "" line) [] (runs-of line))}
+              (#{:add :del} kind)
+              (assoc :meta {:diff-kind kind}))))
 
         wrap-line
         (fn [line]
@@ -489,7 +496,7 @@
                 ;; A diff fence stays verbatim: its `+`/`-`/hunk column
                 ;; alignment is a contract folding would break, and its rows
                 ;; are rarely wider than the bubble.
-                diff? (mapv verbatim-line (or hl-lines (str/split-lines content)))
+                diff? (mapv diff-line (or hl-lines (str/split-lines content)))
                 ;; Highlighted source (real grammar) ANSI-CHAR-FOLDS any
                 ;; over-wide row to the bubble width, re-opening the SGR
                 ;; active at each cut so token color survives the fold.

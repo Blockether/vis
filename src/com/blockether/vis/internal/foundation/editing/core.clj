@@ -97,9 +97,43 @@
 ;; be empty` bug (verified). A cold create + full scan of the whole repo is
 ;; ~11ms, so a FRESH instance per search is effectively free and always
 ;; current. Callers MUST close it (use `with-open`).
+
+(def ^:private fff-scan-max-concurrency
+  "Permit count for `fff-scan-semaphore`: the max number of FRESH fff index
+   scans (rg / find_files / occurrences — everything that goes through
+   `rg-fff-open`) allowed to run at once. A fresh scan spins fff's own worker
+   threads over the whole tree — cheap for a small repo (~11ms), but up to the
+   `rg-fff-scan-timeout-ms` (~30s) ceiling for a large one — so an UNBOUNDED
+   `gather(rg, rg, …)` of N searches could fan out into N simultaneous
+   full-tree scans, N CPU-heavy scan groups grinding at once (the orphan-CPU
+   shape). A small bound caps that blast radius while still overlapping enough
+   scans to keep `gather` worthwhile. Cheap reads (cat / outline) never spin an
+   index and are NEVER bounded — they don't pass through here."
+  4)
+
+(defonce ^:private ^java.util.concurrent.Semaphore fff-scan-semaphore
+  ;; FAIR (true) so a queued burst of scans drains in arrival order — no scan
+  ;; starves behind a steady stream of later arrivals.
+  (java.util.concurrent.Semaphore. fff-scan-max-concurrency true))
+
+(defn- with-fff-scan-permit*
+  "Run `thunk` holding ONE fff-scan permit: block (interruptibly) until a permit
+   is free, then ALWAYS release it — even when `thunk` throws, or the waiting
+   thread is interrupted (turn `cancel!` / eval timeout, which surfaces as an
+   `InterruptedException` from `.acquire` and propagates, releasing nothing it
+   never took). Guards ONLY the index BUILD (create + `wait-for-scan`);
+   searching an already-scanned index is cheap and needs no permit, so the
+   permit is dropped the moment the scan is ready — maximizing scan overlap."
+  [thunk]
+  (.acquire fff-scan-semaphore)
+  (try (thunk) (finally (.release fff-scan-semaphore))))
+
 (defn- rg-fff-open
   "Create a FRESH fff instance scoped to `root`, blocking until its initial
-   scan completes. The caller owns the instance and must close it."
+   scan completes. The caller owns the instance and must close it. The
+   CPU-heavy build (create + scan) runs under `with-fff-scan-permit*`, so no
+   more than `fff-scan-max-concurrency` fresh scans ever run at once — a
+   `gather(rg, …)` fan-out queues past the bound instead of stampeding."
   ^java.io.Closeable [^File root]
   (when-not (.isDirectory root)
     (throw (ex-info "rg fff index root must be a directory"
@@ -110,27 +144,30 @@
   (when (paths/pathological-index-root? root)
     (throw (ex-info "refusing to fff-index the home directory or a filesystem root"
                     {:type :ext.foundation.editing/pathological-root :path (.getPath root)})))
-  (let [k
-        (.getCanonicalPath root)
+  (with-fff-scan-permit*
+    (fn []
+      (let [k
+            (.getCanonicalPath root)
 
-        idx
-        (try (fff/create {:base-path k
-                          :watch? false
-                          :ai-mode? true
-                          :enable-content-indexing? true
-                          :enable-mmap-cache? false})
-             (catch Throwable t
-               (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
-                               {:type :ext.foundation.editing/fff-unavailable :path k}
-                               t))))]
+            idx
+            (try (fff/create {:base-path k
+                              :watch? false
+                              :ai-mode? true
+                              :enable-content-indexing? true
+                              :enable-mmap-cache? false})
+                 (catch Throwable t
+                   (throw (ex-info (str "rg requires fff for directory search, but fff failed for "
+                                        k)
+                                   {:type :ext.foundation.editing/fff-unavailable :path k}
+                                   t))))]
 
-    (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
-      (.close ^java.io.Closeable idx)
-      (throw (ex-info "rg fff scan did not complete in time"
-                      {:type :ext.foundation.editing/fff-scan-timeout
-                       :path k
-                       :timeout-ms rg-fff-scan-timeout-ms})))
-    idx))
+        (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
+          (.close ^java.io.Closeable idx)
+          (throw (ex-info "rg fff scan did not complete in time"
+                          {:type :ext.foundation.editing/fff-scan-timeout
+                           :path k
+                           :timeout-ms rg-fff-scan-timeout-ms})))
+        idx))))
 
 (defn- rg-needle-hostile-to-fff?
   "fff's candidate pre-filter (fuzzy path + content grep) honors a needle as a

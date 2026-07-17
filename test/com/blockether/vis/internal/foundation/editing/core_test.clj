@@ -17,6 +17,7 @@
             ;; tool calls below see the same op-tag registry as production.
             [com.blockether.vis.internal.foundation.core]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
+            [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -3531,3 +3532,128 @@
                     (fn []
                       ;; node_modules resurfaces — the default guard list is gone
                       (expect (has? (rg-files path) "secret_dep.txt"))))))))
+
+(defdescribe
+  fff-scan-concurrency-guard
+  "The bounded-concurrency permit around FRESH fff index scans (rg /
+   find_files / occurrences). Bounds the CPU-heavy scan fan-out without
+   serializing it, and never leaks a permit."
+  (let [guard
+        (private-fn "with-fff-scan-permit*")
+
+        semaphore
+        (private-fn "fff-scan-semaphore")
+
+        permits
+        (private-fn "fff-scan-max-concurrency")]
+
+    (describe
+      "with-fff-scan-permit*"
+      (it "caps concurrent scans at the permit count yet still overlaps them"
+          ;; N > permits threads all pile into the guard at once; each records
+          ;; the live in-flight count while inside. The peak must NEVER exceed
+          ;; the permit count (bounded), and must REACH it (real overlap — the
+          ;; guard isn't accidentally serializing everything down to 1).
+          (let [n
+                (+ permits 6)
+
+                in-flight
+                (atom 0)
+
+                peak
+                (atom 0)
+
+                start
+                (java.util.concurrent.CountDownLatch. 1)
+
+                done
+                (java.util.concurrent.CountDownLatch. n)
+
+                workers
+                (mapv (fn [_]
+                        (future (.await start)
+                                (guard (fn []
+                                         (let [live (swap! in-flight inc)]
+                                           (swap! peak max live)
+                                           (Thread/sleep 60)
+                                           (swap! in-flight dec)
+                                           (.countDown done))))))
+                      (range n))]
+
+            (.countDown start)
+            (let [finished? (.await done 15 java.util.concurrent.TimeUnit/SECONDS)]
+              (run! deref workers)
+              (expect finished?)
+              ;; bounded above by the permit count
+              (expect (<= @peak permits))
+              ;; and reaches the cap — overlap is preserved, not serialized
+              (expect (= permits @peak))
+              ;; every permit handed back — nothing leaked
+              (expect (= permits (.availablePermits semaphore))))))
+      (it "releases the permit even when the thunk throws"
+          (let [before (.availablePermits semaphore)]
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(guard (fn []
+                                       (throw (ex-info "boom" {}))))))
+            (expect (= before (.availablePermits semaphore))))))
+    (describe
+      "rg-fff-open wiring"
+      (it "holds exactly one scan permit while fff builds its index, then releases it"
+          ;; Prove the heavy op is actually GUARDED without a real fff scan:
+          ;; stub create + wait-for-scan, capture the live permit count at the
+          ;; moment the index build runs. One permit must be held during the
+          ;; build, and all permits must be back afterward.
+          (let [seen-during-build
+                (atom nil)
+
+                fake-idx
+                (reify
+                  java.io.Closeable
+                    (close [_] nil))
+
+                rg-fff-open
+                (private-fn "rg-fff-open")]
+
+            (with-redefs [fff/create
+                          (fn [_opts]
+                            (reset! seen-during-build (.availablePermits semaphore))
+                            fake-idx)
+
+                          fff/wait-for-scan
+                          (fn [_idx _timeout]
+                            true)]
+
+              (rg-fff-open (java.io.File. ".")))
+            ;; one permit taken while the (stubbed) scan ran
+            (expect (= (dec permits) @seen-during-build))
+            ;; released once the build returned
+            (expect (= permits (.availablePermits semaphore)))))
+      (it "releases the permit when fff's scan times out"
+          ;; wait-for-scan false → rg-fff-open closes the idx and throws; the
+          ;; permit must still come back (finally), or a timeout would slowly
+          ;; drain the pool to deadlock.
+          (let [before
+                (.availablePermits semaphore)
+
+                closed?
+                (atom false)
+
+                fake-idx
+                (reify
+                  java.io.Closeable
+                    (close [_] (reset! closed? true)))
+
+                rg-fff-open
+                (private-fn "rg-fff-open")]
+
+            (with-redefs [fff/create
+                          (fn [_opts]
+                            fake-idx)
+
+                          fff/wait-for-scan
+                          (fn [_idx _timeout]
+                            false)]
+
+              (expect (throws? clojure.lang.ExceptionInfo #(rg-fff-open (java.io.File. ".")))))
+            (expect @closed?)
+            (expect (= before (.availablePermits semaphore))))))))
