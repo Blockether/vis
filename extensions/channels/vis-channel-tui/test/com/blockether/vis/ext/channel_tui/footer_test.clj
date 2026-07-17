@@ -28,25 +28,25 @@
   (let [n (int c)]
     (or (<= 0x2061 n 0x206F) (<= 0xE000 n 0xE0FF) (p/inline-sentinel? (str c)))))
 
-(defdescribe ir->footer-text-test
-             ;; Footer hook IR was routed
-             ;; through `lines->sentinel-strings`, which prepends
-             ;; `MARKER_ANSWER_TXT` (\u206E). `draw-spans!` then wrote that
-             ;; marker into a real terminal cell, showing as a leading blank
-             ;; before "zai-coding/glm-5.1" in the second footer row.
-             (let [ast->footer-text @#'footer/ast->footer-text]
-               (it "strips block markers so plain-text IR yields plain text"
-                   (expect (= "zai-coding/glm-5.1"
-                              (ast->footer-text [:ast {} [:p {} [:span {} "zai-coding/glm-5.1"]]]))))
-               (it "never returns a leading sentinel character"
-                   (let [s (ast->footer-text [:ast {} [:p {} [:span {} "openai/gpt-5"]]])]
-                     (expect (pos? (count s)))
-                     (expect (not (sentinel-char? (.charAt ^String s 0))))))
-               (it "strips inline style sentinels too (footer uses :bold? on seg, not IR)"
-                   (let [s (ast->footer-text [:ast {}
-                                             [:p {} [:strong {} "bold"] [:span {} "plain"]]])]
-                     (expect (= "boldplain" s))
-                     (expect (every? #(not (sentinel-char? %)) s))))))
+(defdescribe
+  ir->footer-text-test
+  ;; Footer hook IR was routed
+  ;; through `lines->sentinel-strings`, which prepends
+  ;; `MARKER_ANSWER_TXT` (\u206E). `draw-spans!` then wrote that
+  ;; marker into a real terminal cell, showing as a leading blank
+  ;; before "zai-coding/glm-5.1" in the second footer row.
+  (let [ast->footer-text @#'footer/ast->footer-text]
+    (it "strips block markers so plain-text IR yields plain text"
+        (expect (= "zai-coding/glm-5.1"
+                   (ast->footer-text [:ast {} [:p {} [:span {} "zai-coding/glm-5.1"]]]))))
+    (it "never returns a leading sentinel character"
+        (let [s (ast->footer-text [:ast {} [:p {} [:span {} "openai/gpt-5"]]])]
+          (expect (pos? (count s)))
+          (expect (not (sentinel-char? (.charAt ^String s 0))))))
+    (it "strips inline style sentinels too (footer uses :bold? on seg, not IR)"
+        (let [s (ast->footer-text [:ast {} [:p {} [:strong {} "bold"] [:span {} "plain"]]])]
+          (expect (= "boldplain" s))
+          (expect (every? #(not (sentinel-char? %)) s))))))
 
 (defdescribe
   echo-area-test
@@ -171,6 +171,41 @@
             (expect (str/includes? text " AM"))
             (expect (str/includes? text " PM"))
             (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
+  (it
+    "keeps a visible Codex 5h window even when the provider omits its data"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
+
+          now-ms
+          1000000000000
+
+          ;; Codex omitted the 5h window: a placeholder row with no usage
+          ;; signal (no :remaining / :resets-at-ms). It must still render
+          ;; beside the data-bearing 7d row, not be filtered away.
+          report
+          {:dynamic {:limits [{:id :codex-5h
+                               :label "Codex 5h quota (%)"
+                               :precision :unknown
+                               :window {:kind :rolling :unit :hour :size 5}}
+                              {:id :codex-7d
+                               :label "Codex 7d quota (%)"
+                               :remaining 81.0
+                               :limit 100.0
+                               :window {:resets-at-ms (+ now-ms
+                                                         (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+
+      (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                    {:name "gpt-5.5" :provider :openai-codex})}
+        (fn []
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :openai-codex
+                                                                    :report report}}
+                                                 now-ms)
+                          (filter #(= :left (:region %)))
+                          first
+                          :text)]
+            (expect (re-find #"Codex 5h / 7d 81%" text)))))))
   (it
     "shares the Claude provider label across 5h and 7d windows"
     (let [build-limits-segments

@@ -76,6 +76,21 @@
           (str/replace #"(?i)\s+quota\s*\(%\)" "")
           (str/replace #"(?i)\s+quota$" "")))))
 
+(def account-plan-window-ids
+  "Known account-level rolling plan windows (Codex / Z.ai 5h + 7d). These are
+   surfaced as a PAIR: when a provider omits data for one window, its companion
+   row carries no usage signal but must STILL render so both windows stay
+   visible (the whole point of the provider keeping a placeholder row)."
+  #{:codex-5h :codex-7d :zai-coding-plan-5h :zai-coding-plan-7d})
+
+(defn account-plan-window-row?
+  "True when the row is one of the known account plan windows (Codex / Z.ai
+   5h + 7d), REGARDLESS of whether it currently carries usage signal. `:id` is
+   coerced via `->kw` so a report that crossed the gateway wire (string ids)
+   matches the same as an in-process one (keyword ids)."
+  [row]
+  (contains? account-plan-window-ids (->kw (:id row))))
+
 (defn percentage-limit-row?
   "True when the row is best displayed as a percent-remaining (the
    provider reports a 0-100 percentage rather than raw token counts).
@@ -92,7 +107,7 @@
         (->kw kind)]
 
     (and (number? remaining)
-         (or (contains? #{:codex-5h :codex-7d :zai-coding-plan-5h :zai-coding-plan-7d} id)
+         (or (contains? account-plan-window-ids id)
              (and (= :rate kind) (number? limit) (== 100.0 (double limit)))))))
 
 (defn format-limit-usage
@@ -169,7 +184,8 @@
          (get-in limits [:dynamic :limits])
 
          pick
-         (or (seq (filter generic-limit-has-signal? rows)) (seq rows))
+         (or (seq (filter #(or (generic-limit-has-signal? %) (account-plan-window-row? %)) rows))
+             (seq rows))
 
          lines
          (->> pick

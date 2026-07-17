@@ -43,6 +43,19 @@
                  (expect (not (lfmt/percentage-limit-row?
                                 {:id :other :kind :rate :limit 500 :remaining 30})))))
 
+(defdescribe account-plan-window-row?-test
+             (it "true for known Codex / Z.ai plan windows regardless of signal"
+                 ;; No :remaining here: the whole point is a placeholder window
+                 ;; (provider omitted data) still counts as a plan window.
+                 (expect (lfmt/account-plan-window-row? {:id :codex-5h :precision :unknown}))
+                 (expect (lfmt/account-plan-window-row? {:id :codex-7d}))
+                 (expect (lfmt/account-plan-window-row? {:id :zai-coding-plan-5h})))
+             (it "matches string ids that crossed the gateway wire"
+                 (expect (lfmt/account-plan-window-row? {:id "codex-5h"})))
+             (it "false for unrelated rows"
+                 (expect (not (lfmt/account-plan-window-row? {:id :premium_interactions})))
+                 (expect (not (lfmt/account-plan-window-row? {:id :rpm})))))
+
 (defdescribe
   format-limit-usage-test
   (it "renders percentage-style rows as `N% left`"
@@ -100,6 +113,19 @@
             (lfmt/dynamic-summary limits)]
 
         (expect (some? out))))
+  (it "keeps a no-signal account plan window so a companion pair stays visible"
+      ;; A provider that omits one window ships a placeholder row with no usage
+      ;; signal (Codex 5h here); it must still render beside its data-bearing
+      ;; companion instead of collapsing to a lone `7d`.
+      (let [limits
+            {:dynamic {:limits [{:id :codex-5h :precision :unknown}
+                                {:id :codex-7d :remaining 81 :limit 100.0}]}}
+
+            out
+            (lfmt/dynamic-summary limits)]
+
+        (expect (str/includes? out "Codex 5h"))
+        (expect (str/includes? out "Codex 7d"))))
   (it "is nil when `[:dynamic :limits]` is empty"
       (expect (nil? (lfmt/dynamic-summary {:dynamic {:limits []}})))
       (expect (nil? (lfmt/dynamic-summary {})))))

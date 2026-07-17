@@ -450,7 +450,10 @@
         (get-in report [:dynamic :limits])
 
         rows
-        (->> (or (seq (filter lfmt/generic-limit-has-signal? raw-rows)) raw-rows)
+        (->> (or (seq (filter #(or (lfmt/generic-limit-has-signal? %)
+                                   (lfmt/account-plan-window-row? %))
+                              raw-rows))
+                 raw-rows)
              (sort-by generic-limit-sort-key))]
 
     (if (seq rows) (format-generic-limit-rows now-ms rows) (limits-status-text db provider))))
@@ -783,8 +786,10 @@
   "Convert one extension seg-map into the internal segment shape.
    Returns nil for invalid / out-of-row entries."
   [seg ^long row]
-  (when
-    (and (map? seg) (= row (long (or (:row seg) 0))) (vector? (:ast seg)) (= :ast (first (:ast seg))))
+  (when (and (map? seg)
+             (= row (long (or (:row seg) 0)))
+             (vector? (:ast seg))
+             (= :ast (first (:ast seg))))
     (let [raw
           (ast->footer-text (:ast seg))
 
