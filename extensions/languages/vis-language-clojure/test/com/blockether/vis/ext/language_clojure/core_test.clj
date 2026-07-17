@@ -239,6 +239,35 @@
              (finally (cleanup dir))))))
 
 (defdescribe
+  blank-code-default-does-not-shadow-path-test
+  (it
+    "a blank `code` default (models emit EVERY key) still lints the given path/paths, not an empty snippet"
+    (let [dir (tmp-dir)]
+      (try (let [sub (io/file dir "sub")]
+             (.mkdirs sub)
+             ;; unused binding x -> a clj-kondo warning
+             (spit (io/file sub "probe.clj") "(ns sub.probe)\n(defn foo [] (let [x 1] 42))\n")
+             ;; the model shape: {"code" ""} alongside a real {"path"} (and empty {"paths"})
+             (let [r (core/clj-lint-fn {:workspace/root (str dir)}
+                                       {"code" "" "path" "sub/probe.clj" "paths" []})
+                   findings (get-in r [:result "findings"])]
+
+               (expect (:success? r))
+               ;; the file was actually linted, NOT skipped as a blank snippet
+               (expect (= ["sub/probe.clj"] (get-in r [:result "targets"])))
+               (expect (= 1 (count findings)))
+               (expect (= "unused binding x" (get (first findings) "message"))))
+             ;; format sees the same shape: a blank `code` must format the FILE, not ""
+             (spit (io/file sub "fmt.clj") "(defn f [x]\n(* x 2))\n")
+             (let [r (core/clj-format-fn {:workspace/root (str dir)}
+                                         {"code" "" "path" "sub/fmt.clj" "paths" []})]
+               (expect (:success? r))
+               (expect (= "sub/fmt.clj" (get-in r [:result "path"])))
+               (expect (true? (get-in r [:result "changed"])))
+               (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file sub "fmt.clj"))))))
+           (finally (cleanup dir))))))
+
+(defdescribe
   recursive-format-test
   (it "formats a DIRECTORY in {\"paths\"} RECURSIVELY, skipping non-Clojure files"
       (let [dir (tmp-dir)]
