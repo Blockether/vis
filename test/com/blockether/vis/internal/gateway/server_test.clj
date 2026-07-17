@@ -147,9 +147,9 @@
                         (let [resp
                               ((rv 'startables-handler) {:path-params {:sid (str (random-uuid))}})
 
-                              ;; the client applies kebab-keys to restore the engine's hyphen shape
+                              ;; the wire IS the canonical shape: snake_case STRING keys
                               startables
-                              (mapv wire/kebab-keys (:startables (wire/parse-json (:body resp))))
+                              (get (wire/parse-json (:body resp)) "startables")
 
                               nrepl
                               (first startables)
@@ -159,18 +159,18 @@
 
                           (is (= 200 (:status resp)))
                           ;; nREPL: dir + options proposed from env, hyphenated key survives the wire
-                          (is (= "nrepl" (:kind nrepl)))
-                          (is (true? (:dir? nrepl)))
-                          (is (true? (:options? nrepl)))
-                          (is (= "aliases" (:options-label nrepl)))
-                          (is (= [":dev" ":test"] (:options nrepl)))
+                          (is (= "nrepl" (get nrepl "kind")))
+                          (is (true? (get nrepl "is_dir")))
+                          (is (true? (get nrepl "is_options")))
+                          (is (= "aliases" (get nrepl "options_label")))
+                          (is (= [":dev" ":test"] (get nrepl "options")))
                           ;; MCP: declared fields ride across, no options
-                          (is (= "mcp-stdio" (:kind mcp)))
-                          (is (nil? (:options? mcp)))
-                          (is (= 2 (count (:fields mcp))))
+                          (is (= "mcp-stdio" (get mcp "kind")))
+                          (is (nil? (get mcp "is_options")))
+                          (is (= 2 (count (get mcp "fields"))))
                           ;; the non-serializable fns never cross the wire
-                          (is (not (contains? nrepl :start-fn)))
-                          (is (not (contains? nrepl :options-fn))))))))
+                          (is (not (contains? nrepl "start_fn")))
+                          (is (not (contains? nrepl "options_fn"))))))))
 
 (deftest resource-start-handler-runs-start-fn-daemon-side
   (testing "POST start resolves the startable and runs its :start-fn in the daemon"
@@ -208,19 +208,19 @@
       (testing "options-based start threads the chosen dir + selected values (async)"
         (let [resp (call {:kind "nrepl" :dir "/tmp/x" :selected [":dev" ":test"]})]
           (is (= 200 (:status resp)))
-          (is (= "starting" (:result (wire/parse-json (:body resp)))))
+          (is (= "starting" (get (wire/parse-json (:body resp)) "result")))
           (is (wait-until #(= [:nrepl "/tmp/x" [":dev" ":test"]] (first @started))))))
-      (testing "fields-based start passes the keyword-keyed field map through (async)"
+      (testing "fields-based start passes the STRING-keyed field map through (async)"
         (let [resp (call {:kind "mcp-stdio" :selected {:cmd "npx server" :cwd "/tmp"}})]
           (is (= 200 (:status resp)))
-          (is (wait-until #(= [:mcp {:cmd "npx server" :cwd "/tmp"}] (second @started))))))
+          (is (wait-until #(= [:mcp {"cmd" "npx server" "cwd" "/tmp"}] (second @started))))))
       (testing "unknown kind → 404" (is (= 404 (:status (call {:kind "nope"})))))
       (testing "missing kind → 400" (is (= 400 (:status (call {})))))
       (testing
         "a throwing :start-fn never crashes the handler — 'starting', failure swallowed off-thread"
         (let [resp (call {:kind "boom"})]
           (is (= 200 (:status resp)))
-          (is (= "starting" (:result (wire/parse-json (:body resp))))))))))
+          (is (= "starting" (get (wire/parse-json (:body resp)) "result"))))))))
 
 (deftest wrap-auth-accepts-gateway-secret-header
   (testing "a token-gated gateway authenticates the internal client's X-Vis-Gateway-Secret"
@@ -285,7 +285,7 @@
           (let [parse (rv 'parse-multi-sids)]
             ;; sids are parsed to java.util.UUID — the registry's key type
             ;; (path-sid parity). A string key registered a ghost registry
-            ;; entry: deaf idle tabs + boot auto-resume never firing on open.
+            ;; entry: idle tabs would miss live queue and turn events.
             (is (= [[sid-a 10] [sid-b 0]]
                    (parse {:query-params {"sids" (str a ":10, " b " , zzz:3")}})))
             (is (nil? (parse {:query-params {}})))
@@ -429,7 +429,7 @@
               (is (= 200 (:status logs)))
               (is (= [[:stop nrepl-rid] [:restart nrepl-rid] [:logs nrepl-rid]] @seen)))
             (testing "logs handler surfaces the captured lines"
-              (is (= ["line-1"] (:lines (wire/parse-json (:body logs))))))))))))
+              (is (= ["line-1"] (get (wire/parse-json (:body logs)) "lines"))))))))))
 
 (deftest resource-handlers-404-on-unknown-session
   (testing "a non-uuid sid is rejected before any resources call — 404, resources ns untouched"

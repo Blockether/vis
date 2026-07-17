@@ -28,7 +28,7 @@
                               (label-fn {:position 0
                                          :code (str "(def x 1)\n"
                                                     "(set-session-title! \"Mixed\")\n"
-                                                    "(done [:ir [:p \"Done\"]])")
+                                                    "(done [:ast [:p \"Done\"]])")
                                          :render-segments [{:kind :code :source "(def x 1)"}
                                                            {:kind :title :value "Mixed"}
                                                            {:kind :answer-ref}]}))))))
@@ -515,12 +515,12 @@
 
                     vis/gateway-create-session!
                     (fn [_]
-                      {:id "c1"})
+                      {"id" "c1"})
 
                     vis/gateway-submit-turn-sync!
                     (fn [id opts]
                       (deliver seen-send [id (:request opts) opts])
-                      {:answer {:answer "spoken ok"}})
+                      {"content" [{"id" "b1" "type" "prose" "markdown" "spoken ok"}]})
 
                     tg/send-chat-action!
                     (fn [_token _chat-id _action])

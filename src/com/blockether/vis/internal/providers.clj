@@ -434,7 +434,7 @@
 (defn status-md
   "The provider status + limits report as MARKDOWN — one rich canonical
    form every channel renders natively: the web through its markdown
-   pipeline, the TUI through `markdown->ir` + the IR walker. The same
+   pipeline and the TUI through its transient Markdown layout walker. The same
    facts as [[status-text]], structured instead of flat."
   ([provider] (status-md provider (provider-status provider) (provider-limits-safe provider)))
   ([provider status limits]

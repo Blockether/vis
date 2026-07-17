@@ -34,16 +34,16 @@
              ;; `MARKER_ANSWER_TXT` (\u206E). `draw-spans!` then wrote that
              ;; marker into a real terminal cell, showing as a leading blank
              ;; before "zai-coding/glm-5.1" in the second footer row.
-             (let [ir->footer-text @#'footer/ir->footer-text]
+             (let [ast->footer-text @#'footer/ast->footer-text]
                (it "strips block markers so plain-text IR yields plain text"
                    (expect (= "zai-coding/glm-5.1"
-                              (ir->footer-text [:ir {} [:p {} [:span {} "zai-coding/glm-5.1"]]]))))
+                              (ast->footer-text [:ast {} [:p {} [:span {} "zai-coding/glm-5.1"]]]))))
                (it "never returns a leading sentinel character"
-                   (let [s (ir->footer-text [:ir {} [:p {} [:span {} "openai/gpt-5"]]])]
+                   (let [s (ast->footer-text [:ast {} [:p {} [:span {} "openai/gpt-5"]]])]
                      (expect (pos? (count s)))
                      (expect (not (sentinel-char? (.charAt ^String s 0))))))
                (it "strips inline style sentinels too (footer uses :bold? on seg, not IR)"
-                   (let [s (ir->footer-text [:ir {}
+                   (let [s (ast->footer-text [:ast {}
                                              [:p {} [:strong {} "bold"] [:span {} "plain"]]])]
                      (expect (= "boldplain" s))
                      (expect (every? #(not (sentinel-char? %)) s))))))
@@ -300,16 +300,16 @@
             (let [db {:messages []
                       :settings {}
                       :workspace/root "/tmp/vis"
-                      :workspace {:root "/tmp/vis"
-                                  :git {:workspace? true
-                                        :repo "vis"
-                                        :branch "main"
-                                        :modified 2
-                                        :created 3
-                                        :deleted 1
-                                        :upstream? true
-                                        :ahead 4
-                                        :behind 0}}}]
+                      :workspace {"root" "/tmp/vis"
+                                  "git" {"is_workspace" true
+                                         "repo" "vis"
+                                         "branch" "main"
+                                         "modified" 2
+                                         "created" 3
+                                         "deleted" 1
+                                         "is_upstream" true
+                                         "ahead" 4
+                                         "behind" 0}}}]
               (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) (C-x g) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
@@ -325,15 +325,15 @@
           (fn []
             (let [db {:messages []
                       :settings {}
-                      :workspace {:git {:workspace? true
-                                        :repo "spel"
-                                        :branch "main"
-                                        :modified 0
-                                        :created 0
-                                        :deleted 0
-                                        :upstream? true
-                                        :ahead 0
-                                        :behind 0}}}]
+                      :workspace {"git" {"is_workspace" true
+                                         "repo" "spel"
+                                         "branch" "main"
+                                         "modified" 0
+                                         "created" 0
+                                         "deleted" 0
+                                         "is_upstream" true
+                                         "ahead" 0
+                                         "behind" 0}}}]
               (expect (= [" git ~/spel (main) (C-x g) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
@@ -347,7 +347,7 @@
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
             (let [spans (->> (build-segments
-                               {:messages [] :settings {} :workspace {:git {:workspace? false}}}
+                               {:messages [] :settings {} :workspace {"git" {"is_workspace" false}}}
                                0)
                              (filter #(= :right (:region %)))
                              (remove fixture-seg?))]
@@ -363,16 +363,16 @@
               (= [" git ~/vis (main) (C-x g) "]
                  (->> (build-segments {:messages []
                                        :settings {}
-                                       :workspace {:root "/tmp/vis"
-                                                   :git {:workspace? true
-                                                         :repo "vis"
-                                                         :branch "main"
-                                                         :modified 0
-                                                         :created 0
-                                                         :deleted 0
-                                                         :upstream? true
-                                                         :ahead 0
-                                                         :behind 0}}}
+                                       :workspace {"root" "/tmp/vis"
+                                                   "git" {"is_workspace" true
+                                                          "repo" "vis"
+                                                          "branch" "main"
+                                                          "modified" 0
+                                                          "created" 0
+                                                          "deleted" 0
+                                                          "is_upstream" true
+                                                          "ahead" 0
+                                                          "behind" 0}}}
                                       0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -386,16 +386,16 @@
               (= [" git ~/vis (main ∅) (C-x g) "]
                  (->> (build-segments {:messages []
                                        :settings {}
-                                       :workspace {:root "/tmp/vis"
-                                                   :git {:workspace? true
-                                                         :repo "vis"
-                                                         :branch "main"
-                                                         :modified 0
-                                                         :created 0
-                                                         :deleted 0
-                                                         :upstream? false
-                                                         :ahead 0
-                                                         :behind 0}}}
+                                       :workspace {"root" "/tmp/vis"
+                                                   "git" {"is_workspace" true
+                                                          "repo" "vis"
+                                                          "branch" "main"
+                                                          "modified" 0
+                                                          "created" 0
+                                                          "deleted" 0
+                                                          "is_upstream" false
+                                                          "ahead" 0
+                                                          "behind" 0}}}
                                       0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -412,8 +412,8 @@
             ;; Right region: bare in→out token counts and the running session
             ;; price (`~$` = approximate — rounded display, not billed-to-cent).
             (expect (= ["100→20" "~$0.0042"]
-                       (->> (build-limits-segments {:messages [{:tokens {:input 100 :output 20}
-                                                                :cost {:total-cost 0.0042}}]
+                       (->> (build-limits-segments {:messages [{:tokens {"input" 100 "output" 20}
+                                                                :cost {"total_cost" 0.0042}}]
                                                     :settings {}}
                                                    0)
                             (filter #(= :right (:region %)))

@@ -56,10 +56,13 @@
                          :duration-ms 12
                          :llm-provider :blockether
                          :llm-model "gpt-4o"
-                         :tokens {:input 100 :output 20 :reasoning 0 :cached 30}
+                         :tokens {"input" 100 "output" 20 "reasoning" 0 "cached" 30}
                          :cache-created-tokens 700
                          :cost-usd 0.0042})
-    (vis/db-update-session-turn! s q1 {:status :done :answer-markdown "42"})
+    (vis/db-update-session-turn! s
+                                 q1
+                                 {:status :done
+                                  :content [{"id" "b1" "type" "prose" "markdown" "42"}]})
     ;; Turn 2: failure iteration. No vars, no answer.
     (let [q2 (vis/db-store-session-turn!
                s
@@ -75,7 +78,7 @@
                            :duration-ms 1
                            :llm-provider :blockether
                            :llm-model "gpt-4o"
-                           :tokens {:input 80 :output 10 :reasoning 0 :cached 20}
+                           :tokens {"input" 80 "output" 10 "reasoning" 0 "cached" 20}
                            :cache-created-tokens 300
                            :cost-usd 0.0021})
       (vis/db-update-session-turn! s q2 {:status :error}))
@@ -194,7 +197,7 @@
                ;; Cross-turn `(def ...)` survival was retired; per-form payload
                ;; lives on the iteration's :blocks vec instead. The final
                ;; answer surfaces on the turn.
-               (expect (= "42" (:answer turn))))
+               (expect (= "42" (get-in turn [:content 0 "markdown"]))))
              (finally (vis/db-dispose-connection! s)))))
   (it "surfaces :returned-empty-code? as a typed boolean"
       (let [s (vis/db-create-connection! :memory)]
@@ -207,7 +210,7 @@
                                           :code ""
                                           :llm-returned-empty-code? true
                                           :duration-ms 1
-                                          :tokens {:input 10 :output 0}
+                                          :tokens {"input" 10 "output" 0}
                                           :cost-usd 0.0001})
                    _ (vis/db-update-session-turn! s q {:status :done})
                    iter (-> (transcript/transcript s cid)
@@ -222,38 +225,44 @@
   (it
     "normalizes dialog, code blocks, and tool-call envelopes into transcript-level timelines"
     (let [s (vis/db-create-connection! :memory)]
-      (try (let [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
-                 turn (vis/db-store-session-turn!
-                        s
-                        {:parent-session-id cid :user-request "run a tool" :status :running})
-                 code "(v/tool \"echo hi\")"
-                 value (tool-result "echo hi")]
+      (try
+        (let [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
+              turn (vis/db-store-session-turn!
+                     s
+                     {:parent-session-id cid :user-request "run a tool" :status :running})
+              code "(v/tool \"echo hi\")"
+              value (tool-result "echo hi")]
 
-             ;; Cross-turn def survival is gone; the iteration row carries
-             ;; the per-form envelope directly. tool-call detection now
-             ;; flows through the block's :result, not a separate :vars
-             ;; sidecar.
-             (h/store-iteration!
-               s
-               {:session-turn-id turn :code code :result value :answer "done" :duration-ms 10})
-             (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-             (let [data (transcript/transcript s cid)
-                   call (first (:calls data))
-                   code-row (first (filter #(= :code (:kind %)) (:timeline data)))
-                   tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
+          ;; Cross-turn def survival is gone; the iteration row carries
+          ;; the per-form envelope directly. tool-call detection now
+          ;; flows through the block's :result, not a separate :vars
+          ;; sidecar.
+          (h/store-iteration!
+            s
+            {:session-turn-id turn :code code :result value :answer "done" :duration-ms 10})
+          (vis/db-update-session-turn! s
+                                       turn
+                                       {:status :done
+                                        :content [{"id" "b1" "type" "prose" "markdown" "done"}]})
+          (let [data (transcript/transcript s cid)
+                call (first (:calls data))
+                code-row (first (filter #(= :code (:kind %)) (:timeline data)))
+                tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
 
-               (expect (= [{:role :user :turn-id turn :content "run a tool"}
-                           {:role :assistant :turn-id turn :content "done"}]
-                          (:dialog data)))
-               (expect (= 1 (count (:calls data))))
-               (expect (= :v/tool (:op call)))
-               (expect (= code (:code call)))
-               (expect (= "echo hi" (:command call)))
-               (expect (= 0 (get-in call [:result-summary :exit])))
-               (expect (= "t1/i1/f1" (:ref code-row)))
-               (expect (= (:parent-ref call) (:ref code-row)))
-               (expect (= call tool-row))))
-           (finally (vis/db-dispose-connection! s))))))
+            (expect (= [{:role :user :turn-id turn :content "run a tool"}
+                        {:role :assistant
+                         :turn-id turn
+                         :content [{"id" "b1" "type" "prose" "markdown" "done"}]}]
+                       (:dialog data)))
+            (expect (= 1 (count (:calls data))))
+            (expect (= :v/tool (:op call)))
+            (expect (= code (:code call)))
+            (expect (= "echo hi" (:command call)))
+            (expect (= 0 (get-in call [:result-summary :exit])))
+            (expect (= "t1/i1/f1" (:ref code-row)))
+            (expect (= (:parent-ref call) (:ref code-row)))
+            (expect (= call tool-row))))
+        (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Markdown renderer - spot-check a few literals the CLI relies on.
@@ -336,7 +345,10 @@
                 {:scope "t1/i1/f2" :tag :mutation :src "(set-session-title! \"Mixed\")" :result :ok}
                 {:scope "t1/i1/f3" :tag :observation :src "(read-file \"a\")" :result {:path "a"}}]
                :answer "Done"}))
-          (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
+          (vis/db-update-session-turn! s
+                                       qid
+                                       {:status :done
+                                        :content [{"id" "b1" "type" "prose" "markdown" "Done"}]})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "(def x 1)"))
             (expect (str/includes? out "set-session-title!"))

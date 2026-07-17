@@ -46,11 +46,10 @@
       ;; The DB persists one ordered :forms vector — restore re-derives order from
       ;; it (map-indexed), never from a stored position field.
       (let [it
-            {:id "t1"
-             :code ""
-             :produced-answer? false
-             :forms [{:src "(f0)" :result "r0"} {:src "(f1-silent)" :result "r1" :vis/silent true}
-                     {:src "(f2)" :result "r2"}]}
+            {"id" "t1"
+             "code" ""
+             "forms" [{"src" "(f0)" "result" "r0"} {"src" "(f1-silent)" "result" "r1" "silent" true}
+                      {"src" "(f2)" "result" "r2"}]}
 
             restored
             (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it)]
@@ -76,11 +75,11 @@
               (codes (first (get-timeline)))
 
               it
-              {:id "t1"
-               :code ""
-               :produced-answer? false
-               :forms [{:src "(f0)" :result "r0"} {:src "(f1-silent)" :result "r1" :vis/silent true}
-                       {:src "(f2)" :result "r2"}]}
+              {"id" "t1"
+               "code" ""
+               "forms" [{"src" "(f0)" "result" "r0"}
+                        {"src" "(f1-silent)" "result" "r1" "silent" true}
+                        {"src" "(f2)" "result" "r2"}]}
 
               restored
               (codes (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it))]

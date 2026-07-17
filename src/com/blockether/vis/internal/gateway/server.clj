@@ -226,10 +226,10 @@
               write!
               (fn [event]
                 (locking out
-                  (when (> (long (:seq event)) (long @last-seq))
+                  (when (> (long (get event "seq")) (long @last-seq))
                     (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
                     (.flush out)
-                    (reset! last-seq (long (:seq event))))))]
+                    (reset! last-seq (long (get event "seq"))))))]
 
           (swap! server-state (fn [st]
                                 (-> st
@@ -289,10 +289,9 @@
 
    Each sid is parsed to a `java.util.UUID` — the SAME key type `path-sid`
    hands every other route — because the gateway registry is UUID-keyed. A
-   string sid here registered the SSE sink under a GHOST string entry: idle
-   tabs never received queue/turn events, and the lazy daemon-boot
-   auto-resume (`subscribe!` -> `maybe-resume-pending!`) never fired on tab
-   open — only on the next submit, whose handler parses the sid properly.
+   string sid here registered the SSE sink under a GHOST string entry, so idle
+   tabs never received queue or turn events until their next submit parsed the
+   sid correctly.
 
    When the request carries a `Last-Event-ID` header AND resolves to exactly
    ONE sid, that header overrides the sole sid's cursor. This lets a NATIVE
@@ -351,12 +350,12 @@
 
               write!
               (fn [event]
-                (let [esid (str (:session_id event))]
+                (let [esid (str (get event "session_id"))]
                   (locking out
-                    (when (> (long (:seq event)) (long (get @last-seqs esid Long/MIN_VALUE)))
+                    (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
                       (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
                       (.flush out)
-                      (swap! last-seqs assoc esid (long (:seq event)))))))]
+                      (swap! last-seqs assoc esid (long (get event "seq")))))))]
 
           (swap! server-state (fn [st]
                                 (-> st
@@ -469,7 +468,7 @@
 
 (defn- client-register-handler
   [request]
-  (let [{:keys [pid kind]}
+  (let [{:strs [pid kind]}
         (body-json request)
 
         client-id
@@ -596,18 +595,22 @@
                                   grouped)})))
 
 (defn- set-setting-handler
-  "POST /v1/settings {id, action} — flip (`toggle`, the default) or
-   `cycle` one registered toggle; answers with the refreshed row. JSON
-   body or query params both work."
+  "POST /v1/settings {id, action} — flip (`toggle`, the default), `cycle`,
+   or set an exact enum choice (`value` action with `{value}`) on one
+   registered toggle; answers with the refreshed row. JSON body or query
+   params both work."
   [request]
   (let [body
         (try (body-json request) (catch Throwable _ nil))
 
         id-str
-        (or (:id body) (get-in request [:query-params "id"]))
+        (or (get body "id") (get-in request [:query-params "id"]))
 
         action
-        (str (or (:action body) (get-in request [:query-params "action"]) "toggle"))
+        (str (or (get body "action") (get-in request [:query-params "action"]) "toggle"))
+
+        raw-value
+        (or (get body "value") (get-in request [:query-params "value"]))
 
         [ns* n]
         (when id-str (str/split (str id-str) #"/" 2))
@@ -620,20 +623,33 @@
 
     (cond (nil? id) (error-response 400 :bad-setting-id "settings id must be <ns>/<name>")
           (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
-          :else (do (if (= action "cycle")
-                      (toggles/cycle-value! id)
-                      (toggles/set-enabled! id (not (toggles/enabled? id))))
+          :else (do (cond (= action "value")
+                          ;; Set an EXACT choice. The wire carries an enum choice as its
+                          ;; string name (e.g. "balanced"); map it back to the registered
+                          ;; choice (keyword or string) before `set-value!` validates it.
+                          (let [choices
+                                (toggles/choices-of id)
+
+                                chosen
+                                (if (seq choices)
+                                  (some #(when (= (name %) (str raw-value)) %) choices)
+                                  raw-value)]
+
+                            (when (some? chosen) (toggles/set-value! id chosen)))
+                          (= action "cycle") (toggles/cycle-value! id)
+                          :else (toggles/set-enabled! id (not (toggles/enabled? id))))
                     (json-response (toggle-json (toggles/toggle-spec id)))))))
 
 (defn- create-session-handler
   [request]
   (let [body (body-json request)]
     (json-response 201
-                   (state/create-session! {:channel (:channel body)
-                                           :title (:title body)
-                                           :external-id (:external_id body)
-                                           :workspace-id (:workspace_id body)
-                                           :prewarm? (:prewarm body)}))))
+                   (state/create-session! {:channel (some-> (get body "channel")
+                                                            keyword)
+                                           :title (get body "title")
+                                           :external-id (get body "external_id")
+                                           :workspace-id (get body "workspace_id")
+                                           :prewarm? (get body "prewarm")}))))
 
 (defn- list-sessions-handler [_] (json-response {:sessions (state/list-sessions)}))
 
@@ -655,15 +671,15 @@
         (body-json request)]
 
     (cond (not sid) (session-404 (get-in request [:path-params :sid]))
-          (contains? body :project_id) (if-let [soul (state/assign-project! sid
-                                                                            (some-> (:project_id
-                                                                                      body)
-                                                                                    parse-uuid))]
-                                         (json-response soul)
-                                         (session-404 (get-in request [:path-params :sid])))
-          (str/blank? (str (:title body)))
+          (contains? body "project_id") (if-let [soul (state/assign-project!
+                                                        sid
+                                                        (some-> (get body "project_id")
+                                                                parse-uuid))]
+                                          (json-response soul)
+                                          (session-404 (get-in request [:path-params :sid])))
+          (str/blank? (str (get body "title")))
           (error-response 400 :invalid-request "title must be a non-blank string")
-          :else (if-let [soul (state/set-title! sid (:title body))]
+          :else (if-let [soul (state/set-title! sid (get body "title"))]
                   (json-response soul)
                   (session-404 (get-in request [:path-params :sid]))))))
 
@@ -695,34 +711,27 @@
   (error-response 404 :project-not-found "unknown project" :project_id (str pid-str)))
 
 (defn- list-projects-handler
-  "GET /v1/projects[?channel=tui|all&owner=…&archived=true] — projects for one
-   owner/channel view, each with a live session_count."
+  "GET /v1/projects[?owner=…&archived=true] — the owner's projects (projects
+   are CROSS-CHANNEL), each with a live session_count."
   [request]
-  (let [channel
-        (or (not-empty (get-in request [:query-params "channel"])) "all")
-
-        owner
+  (let [owner
         (not-empty (get-in request [:query-params "owner"]))
 
         archived?
         (= "true" (get-in request [:query-params "archived"]))]
 
-    (json-response {:projects (state/list-projects (cond-> {:channel channel
-                                                            :include-archived? archived?}
+    (json-response {:projects (state/list-projects (cond-> {:include-archived? archived?}
                                                      owner
                                                      (assoc :owner-id owner)))})))
 
 (defn- create-project-handler
-  "POST /v1/projects {name, channel?, color?, owner_id?, root?} — create a project."
+  "POST /v1/projects {name, color?, owner_id?, root?} — create a (cross-channel) project."
   [request]
-  (let [{:keys [name channel color owner_id root]} (body-json request)]
+  (let [{:strs [name color owner_id root]} (body-json request)]
     (if (str/blank? (str name))
       (error-response 400 :invalid-request "name must be a non-blank string")
       (json-response 201
                      (state/create-project! (cond-> {:name name}
-                                              channel
-                                              (assoc :channel channel)
-
                                               color
                                               (assoc :color color)
 
@@ -737,7 +746,7 @@
    bound to a canonical workspace root. A project IS a TUI tab set; this is the
    launch-dir -> project resolution. Idempotent (safe under concurrent TUIs)."
   [request]
-  (let [{:keys [root name owner_id]} (body-json request)]
+  (let [{:strs [root name owner_id]} (body-json request)]
     (if (str/blank? (str root))
       (error-response 400 :invalid-request "root must be a non-blank string")
       (json-response
@@ -765,17 +774,17 @@
 
         opts
         (cond-> {}
-          (contains? body :name)
-          (assoc :name (:name body))
+          (contains? body "name")
+          (assoc :name (get body "name"))
 
-          (contains? body :color)
-          (assoc :color (:color body))
+          (contains? body "color")
+          (assoc :color (get body "color"))
 
-          (contains? body :position)
-          (assoc :position (:position body))
+          (contains? body "position")
+          (assoc :position (get body "position"))
 
-          (contains? body :archived)
-          (assoc :archived? (boolean (:archived body))))]
+          (contains? body "archived")
+          (assoc :archived? (boolean (get body "archived"))))]
 
     (cond (not pid) (project-404 pid-str)
           (and (contains? opts :name) (str/blank? (str (:name opts))))
@@ -803,7 +812,7 @@
         (path-pid request)
 
         order
-        (->> (:order (body-json request))
+        (->> (get (body-json request) "order")
              (keep #(some-> %
                             str
                             parse-uuid))
@@ -827,15 +836,15 @@
     (if (nil? sid)
       (session-404 (get-in request [:path-params :sid]))
       (let [result (state/submit-turn! sid
-                                       {:request (:request body)
-                                        :idempotency-key (:idempotency_key body)
-                                        :model (:model body)
-                                        :reasoning-default (some-> (:reasoning_default body)
+                                       {:request (get body "request")
+                                        :idempotency-key (get body "idempotency_key")
+                                        :model (get body "model")
+                                        :reasoning-default (some-> (get body "reasoning_default")
                                                                    keyword)
-                                        :extra-body (:extra_body body)
-                                        :turn-features (:turn_features body)
-                                        :workspace (:workspace body)
-                                        :attachments (:attachments body)})]
+                                        :extra-body (get body "extra_body")
+                                        :turn-features (get body "turn_features")
+                                        :workspace (get body "workspace")
+                                        :attachments (get body "attachments")})]
         (cond (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
               (error-response 409
@@ -875,7 +884,7 @@
 
         result
         (if sid
-          (state/update-queued-turn! sid tid (:request (body-json request)))
+          (state/update-queued-turn! sid tid (get (body-json request) "request"))
           {:error :turn-not-found})]
 
     (cond (:turn result) (json-response (:turn result))
@@ -1045,7 +1054,7 @@
    sends the plain choices it collected. Mirrors the web's in-process start."
   [request]
   (if-let [sid (path-sid request)]
-    (let [{:keys [kind dir selected]} (body-json request)
+    (let [{:strs [kind dir selected]} (body-json request)
           kw (some-> kind
                      not-empty
                      keyword)
@@ -1130,7 +1139,7 @@
 (defn- set-session-model-handler
   [request]
   (if-let [sid (path-sid request)]
-    (let [{:keys [provider model]} (body-json request)]
+    (let [{:strs [provider model]} (body-json request)]
       (state/set-session-model! sid provider model)
       (json-response {:model (state/session-model sid)}))
     (session-404 (get-in request [:path-params :sid]))))
@@ -1144,21 +1153,21 @@
 (defn- add-filesystem-root-handler
   [request]
   (if-let [sid (path-sid request)]
-    (let [{:keys [path]} (body-json request)]
+    (let [{:strs [path]} (body-json request)]
       (json-response {:workspace (state/add-filesystem-root! sid path)}))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- remove-filesystem-root-handler
   [request]
   (if-let [sid (path-sid request)]
-    (let [path (or (:path (body-json request)) (get-in request [:query-params "path"]))]
+    (let [path (or (get (body-json request) "path") (get-in request [:query-params "path"]))]
       (json-response {:workspace (state/remove-filesystem-root! sid path)}))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- change-root-handler
   [request]
   (if-let [sid (path-sid request)]
-    (let [{:keys [path]} (body-json request)]
+    (let [{:strs [path]} (body-json request)]
       (json-response {:workspace (state/change-root! sid path)}))
     (session-404 (get-in request [:path-params :sid]))))
 
@@ -1723,19 +1732,14 @@
          _
          (state/warm-db!)
 
-         ;; Self-heal turns left :running by a PREVIOUS process (a daemon
-         ;; restart / crash mid-turn). The stale :running flags are cleared
-         ;; (otherwise the web renders a permanent Stop button + thinking dots
-         ;; for a turn that is no longer executing). Because streaming lives in
-         ;; the dead engine (not the DB) an interrupted turn is re-run from its
-         ;; persisted request, but LAZILY: `resume-orphaned-turns!` only STAGES
-         ;; each orphan here and the actual re-submit fires when a client next
-         ;; attaches to that session, so boot never stampedes the provider with
-         ;; one concurrent LLM turn per live session. Bounded + gated inside.
+         ;; A dead process can leave durable turn rows marked :running. Clear
+         ;; those stale flags to :interrupted, but NEVER reconstruct or resubmit
+         ;; their requests: queued work is intentionally process-memory only.
          _
-         (try (state/resume-orphaned-turns!)
+         (try (state/reconcile-orphaned-turns!)
               (catch Throwable t
-                (tel/log! :warn ["gateway: orphan-running-turn resume failed" (ex-message t)])))
+                (tel/log! :warn
+                          ["gateway: orphan-running-turn reconciliation failed" (ex-message t)])))
 
          ;; Hydrate persisted toggles + install the config.edn save
          ;; listener so web/gateway-driven flips survive restarts.

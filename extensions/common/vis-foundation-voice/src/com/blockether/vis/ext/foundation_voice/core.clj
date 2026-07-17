@@ -257,7 +257,7 @@
 (defn- answer->speech-text
   [text]
   (let [ir-answer?
-        (and (vector? text) (= :ir (first text)))
+        (and (vector? text) (= :ast (first text)))
 
         md
         (cond (nil? text) nil
@@ -275,7 +275,7 @@
         ir
         (cond ir-answer? (vis/->ast text)
               (str/blank? (str md)) nil
-              :else (vis/markdown->ir md))]
+              :else (vis/markdown->ast md))]
 
     (letfn
       [(children->text
@@ -571,7 +571,7 @@
 
 (defn speak-answer-async!
   "Synthesize and play `answer` after the caller has persisted the text answer.
-   `answer` may be a plain string or canonical `[:ir & nodes]`; the
+   `answer` may be a plain string or canonical `[:ast & nodes]`; the
    downstream `synthesize-file!` projects to plain text on its own."
   [answer]
   (when-not (or (nil? answer) (and (string? answer) (str/blank? answer)))

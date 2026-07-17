@@ -6,7 +6,7 @@
             [com.blockether.vis.ext.channel-tui.highlight :as highlight]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -4576,7 +4576,7 @@
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id
   [session]
-  (let [id (str (:id session))]
+  (let [id (str (get session "id"))]
     (subs id 0 (min 8 (count id)))))
 (def ^:private untitled-session-title "Untitled session")
 (defn- untitled-session-title?
@@ -4584,18 +4584,18 @@
   (or (str/blank? (str title))
       (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))
 (defn- empty-untitled-session?
-  [{:keys [title turn-count]}]
-  (and (not (pos? (long (or turn-count 0)))) (untitled-session-title? title)))
+  [s]
+  (and (not (pos? (long (or (get s "turn_count") 0)))) (untitled-session-title? (get s "title"))))
 (defn- session-title
   [session]
   (let [title
-        (:title session)
+        (get session "title")
 
         base-title
         (if (untitled-session-title? title) untitled-session-title (str title))
 
         fork-count
-        (long (or (:fork-count session) 0))]
+        (long (or (get session "fork_count") 0))]
 
     (cond-> base-title
       (pos? fork-count)
@@ -4698,10 +4698,24 @@
 (defn session-dialog-label
   "Format one fixed-width session table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
-  [{:keys [id turn-count modified-at created-at] :as session} active-id body-w]
-  (let [active? (= (str id)
-                   (some-> active-id
-                           str))]
+  [session active-id body-w]
+  (let [id
+        (get session "id")
+
+        turn-count
+        (get session "turn_count")
+
+        modified-at
+        (get session "modified_at")
+
+        created-at
+        (get session "created_at")
+
+        active?
+        (= (str id)
+           (some-> active-id
+                   str))]
+
     (session-table-row-label [(if active? "●" "") (short-session-id session) (session-title session)
                               (str (long (or turn-count 0))) (format-session-day created-at)
                               (format-session-time created-at) (format-session-day modified-at)
@@ -4709,8 +4723,9 @@
                              body-w)))
 (defn session-dialog-header [body-w] (session-table-row-label session-table-headers body-w))
 (defn- session-dialog-sort-key
-  [{:keys [modified-at created-at]}]
-  [(- (long (or (date->millis modified-at) 0))) (- (long (or (date->millis created-at) 0)))])
+  [session]
+  [(- (long (or (date->millis (get session "modified_at")) 0)))
+   (- (long (or (date->millis (get session "created_at")) 0)))])
 (defn session-dialog-items
   "Build table rows for existing sessions only. New/fork stay dialog
    options via the N/F shortcuts and command palette; they are not fake table
@@ -4719,7 +4734,7 @@
   ([sessions active-id body-w]
    (mapv (fn [session]
            {:action :switch
-            :id (str (:id session)) ; downstream (switch-session!) accepts full UUID strings
+            :id (str (get session "id")) ; downstream (switch-session!) accepts full UUID strings
             :label (session-dialog-label session active-id body-w)})
          (sort-by session-dialog-sort-key sessions))))
 (defn- draw-session-row!
@@ -4915,7 +4930,7 @@
    from the switch-to-other rows; its status shows `● focused`."
   [active-session-id session]
   (let [id
-        (:id session)
+        (get session "id")
 
         active?
         (= (str id)
@@ -4932,13 +4947,13 @@
      :draft (or (not-empty (:draft-label session)) "—")
      ;; The persistent Project wins as the cluster/label; sessions with no
      ;; project fall back to their project dir (the pre-project behaviour).
-     :group (not-empty (:project_name session))
+     :group (not-empty (get session "project_name"))
      ;; Manual order within the project (movable tabs); nil for projectless.
-     :position (:project_position session)
-     :dir (or (not-empty (:project_name session)) (not-empty (:work-dir session)) "—")
-     :status (if active? "● focused" (str (long (or (:turn-count session) 0)) " turns"))
-     :created (navigator-stamp (:created-at session))
-     :modified (navigator-stamp (:modified-at session))
+     :position (get session "project_position")
+     :dir (or (not-empty (get session "project_name")) (not-empty (:work-dir session)) "—")
+     :status (if active? "● focused" (str (long (or (get session "turn_count") 0)) " turns"))
+     :created (navigator-stamp (get session "created_at"))
+     :modified (navigator-stamp (get session "modified_at"))
      :target {:action :switch :id id}}))
 (defn- group-rows-by-dir
   "Regroup navigator rows so sessions of the SAME project (`:dir`) sit
@@ -4975,7 +4990,7 @@
 
         focused?
         (fn [s]
-          (= (str (:id s)) focused-id))
+          (= (str (get s "id")) focused-id))
 
         rows
         (->> sessions
@@ -5146,10 +5161,10 @@
             (when manager? @ws-info)
 
             base
-            (:root ws)
+            (get ws "root")
 
             extras
-            (:filesystem-roots ws)
+            (get ws "filesystem_roots")
 
             dir-canon-str
             (norm (.getPath dir))
@@ -5158,7 +5173,7 @@
             (norm base)
 
             extra-set
-            (set (keep #(norm (:trunk %)) extras))
+            (set (keep #(norm (get % "trunk")) extras))
 
             path-within?
             (fn [root p]
@@ -5370,7 +5385,7 @@
                                    (vis/gateway-remove-filesystem-root! sid (.getPath target-dir))
                                    (vis/gateway-add-filesystem-root! sid (.getPath target-dir)))]
                              (reset! ws-info updated)
-                             (reset! wid (:id updated)))
+                             (reset! wid (get updated "id")))
                            (reset! notice [dir-canon-str :ok
                                            (str (if target-already? "Removed " "Added ")
                                                 target-name)])
@@ -5389,7 +5404,7 @@
                       target-base? (reset! notice [dir-canon-str :ok "Already the session's root"])
                       :else (try (let [new-ws (vis/gateway-change-root! sid (.getPath target-dir))]
                                    (reset! ws-info new-ws)
-                                   (reset! wid (:id new-ws))
+                                   (reset! wid (get new-ws "id"))
                                    ;; The footer reads the gateway `:git` fact (kept
                                    ;; fresh by the workspace-refresh poller), so no
                                    ;; client-side git walk is needed on the root switch.
@@ -6165,9 +6180,9 @@
     (+ (long x) (p/display-width text))))
 (defn markdown-viewer-dialog!
   "Scrollable read-only MARKDOWN viewer: `md` is lifted to canonical IR
-   (`vis/markdown->ir`) and painted styled — headings, bold, code
+   (`vis/markdown->ast`) and painted with styled headings, bold, and code
    accents, tables — through the SAME IR walker the chat uses
-   (`render-ir/ir->lines`). The rich twin of `text-viewer-dialog!`.
+   (`layout/ast->lines`). The rich twin of `text-viewer-dialog!`.
    Returns nil on Esc. Supports keyboard scrolling."
   [^TerminalScreen screen title md]
   (let [scroll
@@ -6175,8 +6190,8 @@
 
         ir
         (try
-          (vis/markdown->ir (str md))
-          (catch Throwable t (tel/log! :warn ["dialogs: markdown->ir failed" (ex-message t)]) nil))]
+          (vis/markdown->ast (str md))
+          (catch Throwable t (tel/log! :warn ["dialogs: markdown->ast failed" (ex-message t)]) nil))]
 
     (if (nil? ir)
       (text-viewer-dialog! screen title (str md))
@@ -6210,9 +6225,9 @@
               (max 1 (- (long inner-w) 3))
 
               lines
-              (try (ir-tui/ir->lines ir text-w)
+              (try (layout/ast->lines ir text-w)
                    (catch Throwable t
-                     (tel/log! :warn ["dialogs: ir->lines failed" (ex-message t)])
+                     (tel/log! :warn ["dialogs: ast->lines failed" (ex-message t)])
                      []))
 
               total

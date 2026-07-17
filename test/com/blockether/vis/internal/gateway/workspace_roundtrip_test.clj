@@ -1,20 +1,14 @@
 (ns com.blockether.vis.internal.gateway.workspace-roundtrip-test
   "END-TO-END guard for the filesystem-root add the TUI picker / web footer show.
 
-   The bug: you add a directory, the daemon persists it and says \"Added…\", but
-   the header's `FILESYSTEM (n)` list never grew. Root cause was the wire seam —
-   `wire/->wire` munges kebab map keys `-`->`_` on the way out while `parse-json`
-   keywordizes VERBATIM, so `:filesystem-roots` came back `:filesystem_roots` and
-   every kebab reader (`(:filesystem-roots ws)`, `(:trunk e)`, `(:root ws)`) saw
-   nil. `client/decode-workspace` re-hydrates the kebab shape at the ONE client
-   boundary every channel goes through.
-
-   This exercises the REAL chain a C-a keystroke drives — `workspace/add-filesystem-root!`
+   The gateway serves the workspace in THE canonical string-keyed wire shape
+   (`wire/canonical`) on BOTH transports, and `client/decode-workspace` passes
+   it through VERBATIM — one representation, no re-hydration. This exercises
+   the REAL chain a C-a keystroke drives — `workspace/add-filesystem-root!`
    (server DB) → the `state/session-workspace-info` map shape → `wire/json-str`
    (server encoder) → `wire/parse-json` (client decoder) → the REAL, private
-   `client/decode-workspace` — and asserts the added root arrives in the kebab
-   shape the picker reads. A raw hop (no decode) is asserted to LOSE it, so the
-   guard fails loudly if the decode is ever dropped."
+   `client/decode-workspace` — and asserts the added root arrives in the
+   canonical snake_case STRING-key shape every channel reads."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -61,7 +55,7 @@
 (defdescribe
   filesystem-add-survives-the-wire-test
   (it
-    "an added root reaches the picker's kebab shape through server-encode → client-decode"
+    "an added root reaches every channel in the canonical string-keyed shape"
     (with-store
       (fn [store]
         (let [base
@@ -94,16 +88,18 @@
                     raw
                     (wire/parse-json (wire/json-str info))]
 
-                ;; The picker reads these kebab keys off `@ws-info`:
-                (expect (= [(ws/normalize-root extra)] (mapv :trunk (:filesystem-roots decoded))))
-                (expect (= 1 (count (:filesystem-roots decoded))))
-                (expect (= base (:root decoded)))
-                (expect (= base (:repo-root decoded)))
-                ;; `:backend` rides the wire as a stringified keyword VALUE; the
-                ;; decoder re-coerces it back to a keyword (never a bare string).
-                (expect (keyword? (:backend (first (:filesystem-roots decoded)))))
-                ;; And the raw hop (the bug) demonstrably loses the kebab keys —
-                ;; if someone drops the decode, this guard fails.
-                (expect (nil? (:filesystem-roots raw)))
-                (expect (some? (:filesystem_roots raw)))))
+                ;; The decode is a VERBATIM passthrough — one canonical shape.
+                (expect (= raw decoded))
+                ;; Channels read these snake_case STRING keys off `@ws-info`:
+                (expect (= [(ws/normalize-root extra)]
+                           (mapv #(get % "trunk") (get decoded "filesystem_roots"))))
+                (expect (= 1 (count (get decoded "filesystem_roots"))))
+                (expect (= base (get decoded "root")))
+                (expect (= base (get decoded "repo_root")))
+                ;; Keyword VALUES ride the wire as strings — never keywords.
+                (expect (string? (get (first (get decoded "filesystem_roots")) "backend")))
+                ;; The `?` boolean rides as `is_draft` — no kebab / `?` key survives.
+                (expect (contains? decoded "is_draft"))
+                (expect (nil? (get decoded "draft?")))
+                (expect (nil? (:filesystem-roots decoded)))))
             (finally (delete-tree! base) (delete-tree! extra))))))))

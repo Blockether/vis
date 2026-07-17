@@ -839,15 +839,9 @@
   (let [line (or line "")]
     (not-any? #(str/starts-with? line %) transcript-copy-skip-markers)))
 (defn- projected-content-lines
-  "Lines for clipboard / selection layout. Bubble messages always
-   carry `:ir` (canonical answer-IR); we derive the markdown string
-   on demand if the walker hasn't projected the bubble yet."
+  "Lines for clipboard / selection layout from the message text projection."
   [message content-w]
-  (or (:prewrapped-lines message)
-      (let [text (or (:text message)
-                     (some-> (:ir message)
-                             (vis/render :markdown)))]
-        (render/wrap-text (or text "") content-w))))
+  (or (:prewrapped-lines message) (render/wrap-text (or (:text message) "") content-w)))
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
 
@@ -1084,17 +1078,14 @@
                 :session-turn-id (or (:turn-id message) (:session-turn-id message) (:id message))
                 :detail-expansions (assoc (or detail-expansions {})
                                      :vis.channel-tui/expand-all-details? true)}]
-      (:text (render/format-answer-with-thinking-data (:ir message)
+      (:text (render/format-answer-with-thinking-data (:text message)
                                                       (:traces message)
                                                       bubble-w
                                                       settings
                                                       (:confidence message)
                                                       (= :cancelled (:status message))
                                                       opts)))
-    (or (:text message)
-        (some-> (:ir message)
-                (vis/render :markdown))
-        "")))
+    (or (:text message) "")))
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.
 
@@ -1130,14 +1121,8 @@
         (for [{:keys [idx top height projected]}
               (:visible layout)
 
-              :let [;; Use the PROJECTED message, not the raw one from
-                    ;; `messages`. For the live streaming bubble the raw
-                    ;; message has `:ir` = pending placeholder ("Sending
-                    ;; request to provider...") while `projected` has
-                    ;; `:text` set by virtual/layout's loading branch
-                    ;; with the actual streamed content. Falling back to
-                    ;; the raw message would render the placeholder IR
-                    ;; on copy, which is the bug fixed here.
+              :let [;; Use the projected message for live text, but prefer the raw
+                    ;; persisted message when expanding trace details.
                     raw-message
                     (nth messages idx nil)
 
@@ -1154,7 +1139,7 @@
                     ;; region exists.
                     has-copyable-content?
                     (boolean (or (:traces message)
-                                 (some? (:ir message))
+                                 (seq (:content message))
                                  (not (str/blank? (:text message)))))
 
                     text
@@ -3064,7 +3049,7 @@
                   (let [sid (get-in @state/app-db [:session :id])
                         ws (try (when sid
                                   (when-let [ws (vis/gateway-session-workspace sid)]
-                                    (when (:root ws) ws)))
+                                    (when (get ws "root") ws)))
                                 (catch Throwable t
                                   (tel/log! {:level :warn
                                              :id ::workspace-refresh-failed
@@ -3082,7 +3067,7 @@
                         ;; then show different counts). Re-dispatch on any sid OR
                         ;; git change so the footer always tracks the active tab.
                         next-key (if ws
-                                   (let [k [sid (:git ws)]]
+                                   (let [k [sid (get ws "git")]]
                                      (when (not= k last-key) (state/dispatch [:set-workspace ws]))
                                      k)
                                    last-key)]
@@ -3106,13 +3091,13 @@
         line
         (fn [c]
           (let [id-str
-                (str (:id c))
+                (str (get c "id"))
 
                 id8
                 (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
 
                 title
-                (let [t (:title c)]
+                (let [t (get c "title")]
                   (when-not (str/blank? t) t))]
 
             (str "  " id8 "  " (or title "(untitled)"))))]
@@ -3269,34 +3254,44 @@
 (defn- latest-turn-created-at
   [turns]
   (->> turns
-       (keep :created-at)
+       (keep #(get % "created_at"))
        (sort-by #(or (date->millis %) 0))
        last))
 (defn- session-summary
   [session]
   (let [turns
-        (try (vec (vis/gateway-list-turns (:id session))) (catch Throwable _ []))
+        (try (vec (vis/gateway-list-turns (get session "id"))) (catch Throwable _ []))
 
         modified-at
-        (or (latest-turn-created-at turns) (:created-at session))]
+        (or (latest-turn-created-at turns) (get session "created_at"))]
 
     (assoc session
-      :turn-count (count turns)
-      :modified-at modified-at)))
+      "turn_count" (count turns)
+      "modified_at" modified-at)))
 (defn- empty-untitled-session?
-  [{:keys [title turn-count]}]
-  (and (not (pos? (long (or turn-count 0))))
-       (or (str/blank? (str title))
-           (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title)))))))
+  [s]
+  (let [title (get s "title")]
+    (and (not (pos? (long (or (get s "turn_count") 0))))
+         (or (str/blank? (str title))
+             (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))))
 (defn- session-sort-key
   "Default session picker ordering.
 
    Prefer sessions with real turns, then newest latest-turn/modified time,
    then higher turn count. This keeps the latest active session first while
    still pushing empty/new shells behind sessions with history."
-  [{:keys [turn-count modified-at created-at]}]
-  [(if (pos? (long (or turn-count 0))) 1 0)
-   (or (date->millis modified-at) (date->millis created-at) 0) (long (or turn-count 0))])
+  [s]
+  (let [turn-count
+        (get s "turn_count")
+
+        modified-at
+        (get s "modified_at")
+
+        created-at
+        (get s "created_at")]
+
+    [(if (pos? (long (or turn-count 0))) 1 0)
+     (or (date->millis modified-at) (date->millis created-at) 0) (long (or turn-count 0))]))
 (defn- latest-modified-first
   [sessions]
   (sort-by session-sort-key
@@ -3313,7 +3308,7 @@
 (defn- session-db-title
   [session-id]
   (when-let [session (try (vis/gateway-soul session-id) (catch Throwable _ nil))]
-    (let [title (:title session)]
+    (let [title (get session "title")]
       (when-not (str/blank? (str title)) (str title)))))
 (defn- session-workspace
   "The rift draft pinned to `session-id` — a workspace record whose
@@ -3348,14 +3343,14 @@
    trunk."
   [s]
   (let [ws
-        (session-workspace (:id s))
+        (session-workspace (get s "id"))
 
         draft?
-        (some? (:fork-ms ws))]
+        (some? (get ws "fork_ms"))]
 
     (assoc s
-      :draft-label (when draft? (or (not-empty (:label ws)) "draft"))
-      :work-dir (short-dir (or (:repo-root ws) (:root ws))))))
+      :draft-label (when draft? (or (not-empty (get ws "label")) "draft"))
+      :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
 
 (def ^:private project-session-probe-cap
   "How many newest sessions the no-sidecar startup fallback probes for a
@@ -3385,7 +3380,7 @@
                             (session-workspace id)
 
                             root
-                            (or (:repo-root ws) (:root ws))]
+                            (or (get ws "repo_root") (get ws "root"))]
 
                         (when (and root (= place (canonical root))) id))))))
        (catch Throwable _ nil)))
@@ -3441,9 +3436,9 @@
   [pid]
   (when pid
     (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ nil))
-         (filter #(= (str pid) (str (:project_id %))))
-         (sort-by #(or (:project_position %) Long/MAX_VALUE))
-         (mapv #(str (:id %))))))
+         (filter #(= (str pid) (str (get % "project_id"))))
+         (sort-by #(or (get % "project_position") Long/MAX_VALUE))
+         (mapv #(str (get % "id"))))))
 
 (defn- persist-tabs-once!
   "One synchronous persist pass: reconcile the current open-tab set with the
@@ -3461,8 +3456,8 @@
         ;; One scan of every session -> its CURRENT project id (nil = loose).
         (let [proj-of (into {}
                             (map (fn [s]
-                                   [(str (:id s))
-                                    (some-> (:project_id s)
+                                   [(str (get s "id"))
+                                    (some-> (get s "project_id")
                                             str)]))
                             (try (vis/gateway-list-sessions :all) (catch Throwable _ nil)))
               pid-str (str pid)]
@@ -4209,16 +4204,17 @@
                      ;; make a new one, or remove it from its project.
                      (= :project (:action choice))
                      (when-let [target-id (:id choice)]
-                       (let [projects (try (vis/gateway-list-projects {:channel :tui})
-                                           (catch Throwable _ nil))
-                             items (vec (concat
-                                          (mapv (fn [pr]
-                                                  {:id (:id pr)
-                                                   :label
-                                                   (str (:name pr) "  (" (:session_count pr) ")")})
-                                                projects)
-                                          [{:id ::new-project :label "＋ New project…"}
-                                           {:id ::remove-project :label "✗ Remove from project"}]))
+                       (let [projects (try (vis/gateway-list-projects) (catch Throwable _ nil))
+                             items (vec (concat (mapv (fn [pr]
+                                                        {:id (get pr "id")
+                                                         :label (str (get pr "name")
+                                                                     "  ("
+                                                                     (get pr "session_count")
+                                                                     ")")})
+                                                      projects)
+                                                [{:id ::new-project :label "＋ New project…"}
+                                                 {:id ::remove-project
+                                                  :label "✗ Remove from project"}]))
                              pick (with-dialog-lock #(dlg/searchable-select!
                                                        screen
                                                        "Move session to project…"
@@ -4233,9 +4229,9 @@
                                                                          "New project"
                                                                          "Project name"))]
                                              (when-not (str/blank? (str nm))
-                                               (:id (try (vis/gateway-create-project!
-                                                           {:name nm :channel "tui"})
-                                                         (catch Throwable _ nil)))))
+                                               (get (try (vis/gateway-create-project! {:name nm})
+                                                         (catch Throwable _ nil))
+                                                    "id")))
                                            (= ::remove-project (:id pick)) nil
                                            :else (:id pick))]
                              (when (or (= ::remove-project (:id pick)) pid)
@@ -4252,13 +4248,15 @@
                      (= :reorder (:action choice))
                      (when-let [target-id (:id choice)]
                        (let [summaries (tui-session-summaries)
-                             target (some #(when (= (str (:id %)) (str target-id)) %) summaries)
-                             pid (:project_id target)
+                             target (some #(when (= (str (get % "id")) (str target-id)) %)
+                                          summaries)
+                             pid (get target "project_id")
                              ordered (when pid
                                        (->> summaries
-                                            (filter #(= (str (:project_id %)) (str pid)))
-                                            (sort-by #(or (:project_position %) Long/MAX_VALUE))
-                                            (mapv #(str (:id %)))))
+                                            (filter #(= (str (get % "project_id")) (str pid)))
+                                            (sort-by #(or (get % "project_position")
+                                                          Long/MAX_VALUE))
+                                            (mapv #(str (get % "id")))))
                              idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
                              swap-with (when (and idx (>= (long idx) 0))
                                          (case (:dir choice)
@@ -4452,8 +4450,7 @@
                  switch-project!
                  (fn switch-project! []
                    (when-not (:dialog-open? @state/app-db)
-                     (let [projects (try (vis/gateway-list-projects {:channel :tui})
-                                         (catch Throwable _ []))
+                     (let [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
                            cur (str @active-project-id*)
                            items (mapv (fn [p]
                                          (let [current? (= cur (str (:id p)))

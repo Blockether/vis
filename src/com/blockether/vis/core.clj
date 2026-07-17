@@ -240,6 +240,7 @@
              [registered-startable-resources extension/registered-startable-resources]
              [slash-by-path slash/slash-by-path]
              [slash-children slash/slash-children]
+             [slash-palette slash/slash-palette]
              [slash-parse slash/parse]
              [slash-dispatch slash/dispatch])
 
@@ -311,19 +312,10 @@
 ;;
 ;; Single host-runtime helper for projecting a persisted session
 ;; (every turn: user prompt + final answer + optional metadata) into a
-;; Markdown string. Lives in the runtime so EVERY channel - TUI,
-;; Telegram, CLI agent, third-party plug-ins - can ship a `Copy as
-;; Markdown` / `Export session` affordance without re-implementing
-;; the projection. Lives in `internal.render` alongside the IR pipeline.
+;; Markdown parsing/rendering helpers. Parsed Markdown trees are renderer-local;
+;; canonical answers are string-keyed content blocks.
 ;; =============================================================================
 (import-vars [session->markdown ir/session->markdown])
-
-;; =============================================================================
-;; Answer IR rendering — pure-Clojure walker for the 21-tag Hiccup-EDN IR.
-;; Channels register their preferred renderer via
-;; `:channel/messages-renderer-fn` and call it through `tg/send-message!`
-;; or the TUI screen-emit boundary. See `docs/specs/01-streaming-and-markdown.md`.
-;; =============================================================================
 (import-vars [render ir/render] [->ast ir/->ast])
 ;; Canonical per-form DISPLAY contract — channels project the whole form-display
 ;; field set through ONE list (see internal/form.clj): `->display` outbound,
@@ -341,14 +333,14 @@
 ;; cover every role here (guard tests lock it), so the two maps can't drift.
 (import-vars [tool-color-roles form/tool-color-roles])
 
-(import-vars [markdown->ir ir/markdown->ir])
+(import-vars [markdown->ast ir/markdown->ast])
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS
 ;; class, so a diff fence colours identically in both from ONE source.
 (import-vars [diff-line-kind ir/diff-line-kind])
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
 ;; thinking card) MUST render traces through these so they stay identical.
 (import-vars [normalize-reasoning ir/normalize-reasoning]
-             [reasoning->ir ir/reasoning->ir]
+             [reasoning->ast ir/reasoning->ast]
              [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
              [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
 ;; ruff-beautify model Python before display (gateway code blocks). Cached +
@@ -357,23 +349,22 @@
 ;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
 (import-vars [wire-json-str wire/json-str] [wire-json-pretty wire/json-str-pretty])
+;; Canonical gateway values use snake_case STRING keys at every depth.
+(import-vars [wire-canonical wire/canonical])
+;; ONE key policy: keyword/symbol key -> canonical snake_case STRING
+;; (namespace dropped, `foo?` -> `is_foo`) — the exact spelling `->wire`
+;; emits, for readers that project canonical maps back by engine keyword.
+(import-vars [wire-key wire/wire-key])
 
-;; THE inbound normalization every channel applies to a gateway event BEFORE it
-;; reads any field. The wire munges keyword map keys `-`->`_` on the way out
-;; (`wire/->wire`) and `parse-json` keywordizes VERBATIM, so a foreign event
-;; arriving over the cross-process bus has snake_case keys (`:prose-final` ->
-;; `:prose_final`, `:tool-color-role` -> `:tool_color_role`) while a same-process
-;; event keeps kebab. Reading a kebab key off a snake event yields nil — the class
-;; of bug behind vanishing prose/badges. `event<-wire` restores the kebab shape
-;; recursively (structural inverse of the munge, keys only), so EVERY channel — TUI
-;; client, web, mobile — reads the ONE canonical key set regardless of origin.
-(defn event<-wire [event] (wire/kebab-keys event))
+;; The gateway serves ONE canonical wire shape on BOTH transports
+;; (snake_case STRING keys, `wire/canonical`), so there is NO inbound
+;; re-normalization step anymore: channels read `(get event "field")`
+;; directly, same-process or remote.
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
 ;; result the way the MODEL reads it (rg gutter, shell model-render, Python
 ;; printer) instead of pr-str'd Clojure.
 (import-vars [render-form-value ctx-renderer/render-form-value]
-             [answer->ir ir/answer->ir]
              [search-text ir/search-text]
              [extract-code ir/extract-code]
              [extract-text ir/extract-text]

@@ -219,7 +219,7 @@
 
                        sessions
                        (mapv (fn [idx]
-                               {:id idx :title (str "Session " idx) :turn-count idx})
+                               {"id" idx "title" (str "Session " idx) "turn_count" idx})
                              (range 20))]
 
                    (try (dotimes [_ 5]
@@ -317,16 +317,16 @@
 (defdescribe session-dialog-table-model-test
              (it "session rows sort by modified-at desc and split date/time columns"
                  (let [items
-                       (dlg/session-dialog-items [{:id "old"
-                                                   :title "Old"
-                                                   :turn-count 1
-                                                   :created-at #inst "2024-01-01T09:30:00.000Z"
-                                                   :modified-at #inst "2024-01-01T10:45:00.000Z"}
-                                                  {:id "new"
-                                                   :title "New"
-                                                   :turn-count 2
-                                                   :created-at #inst "2024-01-02T08:15:00.000Z"
-                                                   :modified-at #inst "2024-01-02T11:05:00.000Z"}]
+                       (dlg/session-dialog-items [{"id" "old"
+                                                   "title" "Old"
+                                                   "turn_count" 1
+                                                   "created_at" #inst "2024-01-01T09:30:00.000Z"
+                                                   "modified_at" #inst "2024-01-01T10:45:00.000Z"}
+                                                  {"id" "new"
+                                                   "title" "New"
+                                                   "turn_count" 2
+                                                   "created_at" #inst "2024-01-02T08:15:00.000Z"
+                                                   "modified_at" #inst "2024-01-02T11:05:00.000Z"}]
                                                  "new"
                                                  96)
 
@@ -361,9 +361,9 @@
 ;; to the top, marked "● focused".
 (defdescribe
   navigator-row-model-test
-  (let [sessions [{:id "empty" :title nil :turn-count 0 :created-at 0 :modified-at 7200000}
-                  {:id "s1" :title nil :turn-count 2 :created-at 0 :modified-at 3600000}
-                  {:id "s2" :title "Second" :turn-count 5 :created-at 0 :modified-at 0}]]
+  (let [sessions [{"id" "empty" "title" nil "turn_count" 0 "created_at" 0 "modified_at" 7200000}
+                  {"id" "s1" "title" nil "turn_count" 2 "created_at" 0 "modified_at" 3600000}
+                  {"id" "s2" "title" "Second" "turn_count" 5 "created_at" 0 "modified_at" 0}]]
     (it "one unified row per session, no :kind / :switch-workspace"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})]
@@ -827,17 +827,17 @@
           (dlg/session-dialog-header body-w)
 
           rows
-          (session-items [{:id "123e4567-e89b-12d3-a456-426614174000"
-                           :title (str "Title " (apply str (repeat 80 "汉")))
-                           :turn-count 2
-                           :fork-count 3
-                           :modified-at #inst "2024-01-03T04:05:00.000-00:00"
-                           :created-at #inst "2024-01-01T01:02:00.000-00:00"}
-                          {:id "abcdef00-e89b-12d3-a456-426614174000"
-                           :title ""
-                           :turn-count 0
-                           :modified-at nil
-                           :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
+          (session-items [{"id" "123e4567-e89b-12d3-a456-426614174000"
+                           "title" (str "Title " (apply str (repeat 80 "汉")))
+                           "turn_count" 2
+                           "fork_count" 3
+                           "modified_at" #inst "2024-01-03T04:05:00.000-00:00"
+                           "created_at" #inst "2024-01-01T01:02:00.000-00:00"}
+                          {"id" "abcdef00-e89b-12d3-a456-426614174000"
+                           "title" ""
+                           "turn_count" 0
+                           "modified_at" nil
+                           "created_at" #inst "2024-01-02T01:02:00.000-00:00"}]
                          "123e4567-e89b-12d3-a456-426614174000"
                          body-w)
 
@@ -848,12 +848,12 @@
           (:label (nth rows 1))
 
           fork-label
-          (dlg/session-dialog-label {:id "fedcba00-e89b-12d3-a456-426614174000"
-                                     :title "Forkable"
-                                     :turn-count 4
-                                     :fork-count 3
-                                     :modified-at #inst "2024-01-04T04:05:00.000-00:00"
-                                     :created-at #inst "2024-01-01T01:02:00.000-00:00"}
+          (dlg/session-dialog-label {"id" "fedcba00-e89b-12d3-a456-426614174000"
+                                     "title" "Forkable"
+                                     "turn_count" 4
+                                     "fork_count" 3
+                                     "modified_at" #inst "2024-01-04T04:05:00.000-00:00"
+                                     "created_at" #inst "2024-01-01T01:02:00.000-00:00"}
                                     nil
                                     body-w)]
 
@@ -927,14 +927,29 @@
           (var-get #'dlg/navigator-all-rows)
 
           sessions
-          [{:id "s1" :title "A1" :turn-count 1 :created-at 0 :modified-at 4000 :work-dir "~/proj-a"}
-           {:id "s2" :title "B1" :turn-count 1 :created-at 0 :modified-at 3000 :work-dir "~/proj-b"}
-           {:id "s3" :title "A2" :turn-count 1 :created-at 0 :modified-at 2000 :work-dir "~/proj-a"}
-           {:id "s4"
-            :title "B2"
-            :turn-count 1
-            :created-at 0
-            :modified-at 1000
+          [{"id" "s1"
+            "title" "A1"
+            "turn_count" 1
+            "created_at" 0
+            "modified_at" 4000
+            :work-dir "~/proj-a"}
+           {"id" "s2"
+            "title" "B1"
+            "turn_count" 1
+            "created_at" 0
+            "modified_at" 3000
+            :work-dir "~/proj-b"}
+           {"id" "s3"
+            "title" "A2"
+            "turn_count" 1
+            "created_at" 0
+            "modified_at" 2000
+            :work-dir "~/proj-a"}
+           {"id" "s4"
+            "title" "B2"
+            "turn_count" 1
+            "created_at" 0
+            "modified_at" 1000
             :work-dir "~/proj-b"}]
 
           rows
@@ -948,9 +963,9 @@
             (var-get #'dlg/navigator-all-rows)
 
             sessions
-            [{:id "s1" :title "A" :turn-count 1 :created-at 0 :modified-at 3000}
-             {:id "s2" :title "B" :turn-count 1 :created-at 0 :modified-at 2000}
-             {:id "s3" :title "C" :turn-count 1 :created-at 0 :modified-at 1000}]
+            [{"id" "s1" "title" "A" "turn_count" 1 "created_at" 0 "modified_at" 3000}
+             {"id" "s2" "title" "B" "turn_count" 1 "created_at" 0 "modified_at" 2000}
+             {"id" "s3" "title" "C" "turn_count" 1 "created_at" 0 "modified_at" 1000}]
 
             rows
             (all-rows {:active-session-id "s1" :sessions sessions})]

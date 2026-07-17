@@ -266,12 +266,11 @@
    appear without delay. Virtual layout then projects and paints only visible
    bubbles."
   80)
-(def ^:private pending-assistant-ir
-  "Canonical IR placeholder shown in the assistant bubble while the
-   request is in flight. Construction sites also stamp `:pending?
-   true` on the message map; the predicate below relies on that flag
-   exclusively — we never compare on rendered text content."
-  [:ir {} [:p {} [:span {} "Sending request to provider..."]]])
+(def ^:private pending-assistant-content
+  [{"id" "pending"
+    "type" "notice"
+    "code" "turn_pending"
+    "message" "Sending request to provider..."}])
 (defn- pending-assistant-message? [m] (and (= :assistant (:role m)) (true? (:pending? m))))
 (defn- replace-pending-assistant
   "Replace the pending assistant slot for a completed turn. Prefer the
@@ -1402,14 +1401,14 @@
               ;; cwd (the ENGINE's own repo) for a frame — the visible "flicker". Keep the
               ;; last-known-good workspace when the incoming one carries no root.
               (fn [db [_ ws workspace-id]]
-                (if-not (:root ws)
+                (if-not (get ws "root")
                   db
                   (update-tab db
                               workspace-id
                               (fn [d]
                                 (assoc d
                                   :workspace ws
-                                  :workspace/root (:root ws)))))))
+                                  :workspace/root (get ws "root")))))))
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
    :gateway-turn-id])
@@ -2516,7 +2515,7 @@
                                            :client-turn-id client-turn-id))
                                  (update :messages
                                          conj
-                                         (assoc (chat/assistant-message pending-assistant-ir)
+                                         (assoc (chat/assistant-message pending-assistant-content)
                                            :pending? true
                                            :client-turn-id client-turn-id))
                                  (update :input-history
@@ -2729,77 +2728,78 @@
                    :fx (mapv (fn [tid]
                                [:gateway-delete-queued sid tid])
                              tids)})))
-(reg-event-fx
-  :drain-pending
-  ;; Pop one queued submission for `workspace-id`. When it carries a
-  ;; gateway turn id the gateway already (auto-)started it, so ATTACH and
-  ;; render its result instead of submitting again. Without a gateway id
-  ;; (submit failed) fall back to a fresh local `:send-message`.
-  (fn [db [_ workspace-id]]
-    (let [workspace-id
-          (or workspace-id (current-tab-id db))
+(reg-event-fx :drain-pending
+              ;; Pop one queued submission for `workspace-id`. When it carries a
+              ;; gateway turn id the gateway already (auto-)started it, so ATTACH and
+              ;; render its result instead of submitting again. Without a gateway id
+              ;; (submit failed) fall back to a fresh local `:send-message`.
+              (fn [db [_ workspace-id]]
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
 
-          source-db
-          (db-for-tab db workspace-id)
+                      source-db
+                      (db-for-tab db workspace-id)
 
-          q
-          (vec (or (:pending-sends source-db) []))
+                      q
+                      (vec (or (:pending-sends source-db) []))
 
-          head
-          (first q)]
+                      head
+                      (first q)]
 
-      (cond (or (nil? head)
-                ;; A turn is ALREADY streaming into this tab (e.g. the
-                ;; persistent event listener attached a sibling-started turn
-                ;; first): draining now would double-attach the same turn.
-                ;; The queue pops again on the NEXT terminal.
-                (:loading? source-db))
-            {:db db}
-            (:turn-id head)
-            (let [token
-                  (vis/cancellation-token)
+                  (cond (or (nil? head)
+                            ;; A turn is ALREADY streaming into this tab (e.g. the
+                            ;; persistent event listener attached a sibling-started turn
+                            ;; first): draining now would double-attach the same turn.
+                            ;; The queue pops again on the NEXT terminal.
+                            (:loading? source-db))
+                        {:db db}
+                        (:turn-id head)
+                        (let [token
+                              (vis/cancellation-token)
 
-                  client-turn-id
-                  (str (java.util.UUID/randomUUID))
+                              client-turn-id
+                              (str (java.util.UUID/randomUUID))
 
-                  preview-text
-                  (or (:preview-text head) (:text head))
+                              preview-text
+                              (or (:preview-text head) (:text head))
 
-                  session
-                  (:session source-db)]
+                              session
+                              (:session source-db)]
 
-              {:db (update-tab db
-                               workspace-id
-                               (fn [w]
-                                 (-> w
-                                     (assoc :pending-sends (vec (rest q)))
-                                     (update :messages
-                                             conj
-                                             (assoc (chat/user-message preview-text)
-                                               :client-turn-id client-turn-id))
-                                     (update :messages
-                                             conj
-                                             (assoc (chat/assistant-message pending-assistant-ir)
-                                               :pending? true
-                                               :client-turn-id client-turn-id))
-                                     (assoc :scroll scroll/follow
-                                            :loading? true
-                                            :cancel-token token
-                                            :gateway-turn-id (:turn-id head)
-                                            :cancelling? false
-                                            :progress {:iterations []}
-                                            :turn-start-ms (System/currentTimeMillis)
-                                            :input-history-index nil
-                                            :input-history-draft nil))))
-               :fx [[:session-attach workspace-id session (:turn-id head) token client-turn-id]]})
-            :else {:db (update-tab db
-                                   workspace-id
-                                   (fn [w]
-                                     (assoc w
-                                       :pending-sends (vec (rest q))
-                                       :pastes (or (:pastes head) {})
-                                       :paste-counter (or (:paste-counter head) 0))))
-                   :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
+                          {:db (update-tab db
+                                           workspace-id
+                                           (fn [w]
+                                             (-> w
+                                                 (assoc :pending-sends (vec (rest q)))
+                                                 (update :messages
+                                                         conj
+                                                         (assoc (chat/user-message preview-text)
+                                                           :client-turn-id client-turn-id))
+                                                 (update :messages
+                                                         conj
+                                                         (assoc (chat/assistant-message
+                                                                  pending-assistant-content)
+                                                           :pending? true
+                                                           :client-turn-id client-turn-id))
+                                                 (assoc :scroll scroll/follow
+                                                        :loading? true
+                                                        :cancel-token token
+                                                        :gateway-turn-id (:turn-id head)
+                                                        :cancelling? false
+                                                        :progress {:iterations []}
+                                                        :turn-start-ms (System/currentTimeMillis)
+                                                        :input-history-index nil
+                                                        :input-history-draft nil))))
+                           :fx [[:session-attach workspace-id session (:turn-id head) token
+                                 client-turn-id]]})
+                        :else {:db (update-tab db
+                                               workspace-id
+                                               (fn [w]
+                                                 (assoc w
+                                                   :pending-sends (vec (rest q))
+                                                   :pastes (or (:pastes head) {})
+                                                   :paste-counter (or (:paste-counter head) 0))))
+                               :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
 (reg-event-fx
   :attach-running-turn
   ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
@@ -2898,7 +2898,7 @@
                          (assoc (chat/user-message request-text) :client-turn-id client-turn-id))
                  (update :messages
                          conj
-                         (assoc (chat/assistant-message pending-assistant-ir)
+                         (assoc (chat/assistant-message pending-assistant-content)
                            :pending? true
                            :client-turn-id client-turn-id))
                  ;; The turn we are ATTACHING as running must not
@@ -3205,24 +3205,18 @@
                         wall-ms
                         (when start (- (System/currentTimeMillis) (long start)))
 
-                        ;; `answer` arrives as canonical IR from `chat/turn!`
-                        ;; (loop result coerced + lifted there). NULL/missing
-                        ;; collapses to empty IR; we never feed strings to the
-                        ;; render chokepoint.
-                        answer-ir
-                        (or answer chat/empty-ir)
+                        content
+                        (vec (or answer []))
 
                         response
                         (->
-                          (chat/assistant-message answer-ir)
+                          (chat/assistant-message content)
                           (cond->
                             session-turn-id
                             (assoc :session-turn-id session-turn-id)
 
                             (seq trace)
-                            (assoc :traces
-                              trace :ir
-                              answer-ir)
+                            (assoc :traces trace)
 
                             (or duration-ms wall-ms)
                             (assoc :duration-ms (or duration-ms wall-ms))
@@ -3448,23 +3442,37 @@
                                           :workspace workspace
                                           :display-text display-text})]
 
-                  (if (:error result)
-                    (dispatch [:message-received workspace-id
-                               ;; A failed provider turn carries the SAME structured
-                               ;; provider-error IR (`:vis/provider-error` marker)
-                               ;; the Web card paints. `chat/attach!`/`turn!` fold
-                               ;; that IR onto `:answer` (dissoc'ing `:answer-ir`),
-                               ;; so `error-answer-ir` reads it back and renders the
-                               ;; styled card instead of flattening `:error`.
-                               (chat/error-answer-ir result) {:client-turn-id client-turn-id}])
-                    (do (dispatch [:message-received workspace-id (:answer result)
-                                   (assoc (select-keys result
-                                                       [:model :provider :llm-selected :llm-actual
-                                                        :llm-fallback? :llm-routing-trace
-                                                        :iteration-count :duration-ms :tokens :cost
-                                                        :confidence :session-turn-id :status
-                                                        :utilization :slash])
-                                     :client-turn-id client-turn-id)])
+                  (if (get result "error")
+                    (dispatch [:message-received workspace-id (chat/error-content result)
+                               {:client-turn-id client-turn-id}])
+                    (do (dispatch
+                          [:message-received workspace-id (get result "content")
+                           ;; Field-by-field pick from the canonical string-keyed
+                           ;; gateway result into the TUI's internal message map —
+                           ;; never a blanket re-keying of wire data.
+                           {:model (get result "model")
+                            :provider (get result "provider")
+                            :llm-selected (get result "llm_selected")
+                            :llm-actual (get result "llm_actual")
+                            :llm-fallback? (get result "is_llm_fallback")
+                            :llm-routing-trace (get result "llm_routing_trace")
+                            :iteration-count (get result "iteration_count")
+                            :duration-ms (get result "duration_ms")
+                            :tokens (get result "tokens")
+                            :cost (get result "cost")
+                            :confidence (get result "confidence")
+                            :session-turn-id (get result "session_turn_id")
+                            :status (case (get result "status")
+                                      "needs_input"
+                                      :needs-input
+
+                                      "cancelled"
+                                      :cancelled
+
+                                      nil)
+                            :utilization (get result "utilization")
+                            :slash (get result "slash")
+                            :client-turn-id client-turn-id}])
                         ;; A turn may have switched the session's workspace
                         ;; (`/draft new | apply | abandon`, `/root <path>`).
                         ;; Re-sync so header/footer reflect it. The gateway ws
@@ -3484,7 +3492,7 @@
                                (dispatch [:set-ctx-panel sid {}]))
                              (catch Throwable _ nil))
                         (when (:voice-response? turn-features)
-                          (speak-answer-async! (:answer result))))))
+                          (speak-answer-async! (chat/content->markdown (get result "content")))))))
                 (catch Throwable t
                   ;; channels.cancellation/cancellation? folds in
                   ;; InterruptedException, CancellationException, and
@@ -3492,13 +3500,18 @@
                   ;; channel-shaped logic in one place. The bubble
                   ;; renderer dims the result based on `:status
                   ;; :cancelled`, so we attach it explicitly here.
-                  (if (vis/cancellation? t)
-                    (dispatch [:message-received workspace-id
-                               [:ir {} [:p {} [:span {} "Cancelled by user."]]]
-                               {:status :cancelled :client-turn-id client-turn-id}])
-                    (dispatch [:message-received workspace-id
-                               (vis/markdown->ir (vis/format-error (or (ex-message t) (str t))))
-                               {:client-turn-id client-turn-id}]))))))]
+                  (let [message (if (vis/cancellation? t)
+                                  "Cancelled by user."
+                                  (vis/format-error (or (ex-message t) (str t))))
+                        block {"id" (str (java.util.UUID/randomUUID))
+                               "type" (if (vis/cancellation? t) "notice" "error")
+                               "code" (if (vis/cancellation? t) "turn_cancelled" "turn_failed")
+                               "message" message}]
+
+                    (dispatch [:message-received workspace-id [block]
+                               (cond-> {:client-turn-id client-turn-id}
+                                 (vis/cancellation? t)
+                                 (assoc :status :cancelled))]))))))]
       (vis/cancellation-set-future! token fut))))
 (reg-fx
   :session-attach
@@ -3542,23 +3555,35 @@
                                        (track-chunk chunk))))
                       result (chat/attach! session tid {:on-chunk on-chunk})]
 
-                  (if (:error result)
-                    (dispatch [:message-received workspace-id
-                               ;; A failed provider turn carries the SAME structured
-                               ;; provider-error IR (`:vis/provider-error` marker)
-                               ;; the Web card paints. `chat/attach!`/`turn!` fold
-                               ;; that IR onto `:answer` (dissoc'ing `:answer-ir`),
-                               ;; so `error-answer-ir` reads it back and renders the
-                               ;; styled card instead of flattening `:error`.
-                               (chat/error-answer-ir result) {:client-turn-id client-turn-id}])
-                    (do (dispatch [:message-received workspace-id (:answer result)
-                                   (assoc (select-keys result
-                                                       [:model :provider :llm-selected :llm-actual
-                                                        :llm-fallback? :llm-routing-trace
-                                                        :iteration-count :duration-ms :tokens :cost
-                                                        :confidence :session-turn-id :status
-                                                        :utilization :slash])
-                                     :client-turn-id client-turn-id)])
+                  (if (get result "error")
+                    (dispatch [:message-received workspace-id (chat/error-content result)
+                               {:client-turn-id client-turn-id}])
+                    (do (dispatch
+                          [:message-received workspace-id (get result "content")
+                           ;; Same field-by-field pick as :session-turn (above).
+                           {:model (get result "model")
+                            :provider (get result "provider")
+                            :llm-selected (get result "llm_selected")
+                            :llm-actual (get result "llm_actual")
+                            :llm-fallback? (get result "is_llm_fallback")
+                            :llm-routing-trace (get result "llm_routing_trace")
+                            :iteration-count (get result "iteration_count")
+                            :duration-ms (get result "duration_ms")
+                            :tokens (get result "tokens")
+                            :cost (get result "cost")
+                            :confidence (get result "confidence")
+                            :session-turn-id (get result "session_turn_id")
+                            :status (case (get result "status")
+                                      "needs_input"
+                                      :needs-input
+
+                                      "cancelled"
+                                      :cancelled
+
+                                      nil)
+                            :utilization (get result "utilization")
+                            :slash (get result "slash")
+                            :client-turn-id client-turn-id}])
                         (try (let [sid (some-> session
                                                :id)
                                    ws (when sid (vis/gateway-session-workspace sid))]
@@ -3569,13 +3594,18 @@
                                (dispatch [:set-ctx-panel sid {}]))
                              (catch Throwable _ nil)))))
                 (catch Throwable t
-                  (if (vis/cancellation? t)
-                    (dispatch [:message-received workspace-id
-                               [:ir {} [:p {} [:span {} "Cancelled by user."]]]
-                               {:status :cancelled :client-turn-id client-turn-id}])
-                    (dispatch [:message-received workspace-id
-                               (vis/markdown->ir (vis/format-error (or (ex-message t) (str t))))
-                               {:client-turn-id client-turn-id}]))))))]
+                  (let [message (if (vis/cancellation? t)
+                                  "Cancelled by user."
+                                  (vis/format-error (or (ex-message t) (str t))))
+                        block {"id" (str (java.util.UUID/randomUUID))
+                               "type" (if (vis/cancellation? t) "notice" "error")
+                               "code" (if (vis/cancellation? t) "turn_cancelled" "turn_failed")
+                               "message" message}]
+
+                    (dispatch [:message-received workspace-id [block]
+                               (cond-> {:client-turn-id client-turn-id}
+                                 (vis/cancellation? t)
+                                 (assoc :status :cancelled))]))))))]
       (vis/cancellation-set-future! token fut))))
 (reg-fx :gateway-enqueue
         ;; Register a busy-time submission as a REAL gateway queued turn (server-side
@@ -3597,7 +3627,7 @@
 
                                                        (seq workspace)
                                                        (assoc :workspace workspace)))
-                       tid (get-in res [:turn :turn_id])]
+                       tid (get-in res [:turn "turn_id"])]
 
                    (when tid (dispatch [:set-queued-turn-id workspace-id client-id tid]))))
                (catch Throwable t

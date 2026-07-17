@@ -33,10 +33,12 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.doctor :as doctor]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.loop :as lp]
@@ -80,18 +82,20 @@
             "unknown")
 
         data
-        (try (json/write-json-str (cond-> {}
-                                    (:msg_ signal)
-                                    (assoc :msg (force (:msg_ signal)))
+        ;; Persisted payload boundary: the log table's `data` column is JSON —
+        ;; encode via the canonical wire (snake_case STRING keys, `foo?` -> is_foo).
+        (try (wire/json-str (cond-> {}
+                              (:msg_ signal)
+                              (assoc :msg (force (:msg_ signal)))
 
-                                    (:data signal)
-                                    (assoc :data (:data signal))
+                              (:data signal)
+                              (assoc :data (:data signal))
 
-                                    (:ns signal)
-                                    (assoc :ns (str (:ns signal)))
+                              (:ns signal)
+                              (assoc :ns (str (:ns signal)))
 
-                                    (:error signal)
-                                    (assoc :error (str (:error signal)))))
+                              (:error signal)
+                              (assoc :error (str (:error signal)))))
              (catch Throwable _ nil))]
 
     (cond-> {:level level :event event :data data}
@@ -564,7 +568,7 @@
    - :iteration-count - Number of iterations executed
    - :duration-ms  - Total wall-clock time
    - :tokens       - {:input N :output N :reasoning N :cached N :total N}
-   - :cost         - {:input-cost N :output-cost N :total-cost N :model str}
+   - :cost         - {\"input_cost\" N \"output_cost\" N \"total_cost\" N \"model\" str}
    - :trace        - Full iteration trace
    - :confidence   - :high/:medium/:low (when present)
    - :status - Only on failure (`:error` or `:cancelled`).
@@ -665,7 +669,7 @@
                                        {:db (or db :memory) :channel :cli})]
         (try (let [result (lp/turn! env messages q-opts)]
                (cond-> {:session-id nil
-                        :answer (:answer result)
+                        :content (content/answer-content (:answer result))
                         :iteration-count (:iteration-count result)
                         :duration-ms (:duration-ms result)
                         :tokens (:tokens result)
@@ -727,21 +731,28 @@
         (try (let [result (gateway-state/submit-turn-sync!
                             session-id
                             {:request prompt-s :messages messages :engine-opts q-opts})]
+               ;; The gateway result is canonical string-keyed; pick the
+               ;; fields into the CLI envelope explicitly.
                (cond-> {:session-id session-id
-                        :answer (or (:answer-ir result) (:answer result))
-                        :iteration-count (:iteration-count result)
-                        :duration-ms (:duration-ms result)
-                        :tokens (:tokens result)
-                        :cost (:cost result)
-                        :trace (:trace result)}
-                 (:status result)
-                 (assoc :status (:status result))
+                        :content (vec (or (get result "content") []))
+                        :iteration-count (get result "iteration_count")
+                        :duration-ms (get result "duration_ms")
+                        :tokens (get result "tokens")
+                        :cost (get result "cost")
+                        :trace (get result "trace")}
+                 (get result "status")
+                 (assoc :status
+                   (case (get result "status")
+                     "needs_input"
+                     :needs-input
 
-                 (:confidence result)
-                 (assoc :confidence (:confidence result))
+                     (keyword (get result "status"))))
 
-                 (:eval result)
-                 (assoc :eval (:eval result))))
+                 (get result "confidence")
+                 (assoc :confidence (get result "confidence"))
+
+                 (get result "eval")
+                 (assoc :eval (get result "eval"))))
              (catch Exception e (run-error-result session-id e)))))))
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
@@ -1542,7 +1553,7 @@
   (stdout! "  --json            Print result as a single JSON envelope.")
   (stdout! "  --edn             Print result as EDN.")
   (stdout! "  --code            Print only [:code] block contents from the")
-  (stdout! "                    answer IR. Concatenated in source order;")
+  (stdout! "                    parsed Markdown. Concatenated in source order;")
   (stdout! "                    no fences, no language tags. Pipes cleanly")
   (stdout! "                    into editors / interpreters. Errors when")
   (stdout! "                    the answer contains no [:code] blocks.")
@@ -1674,21 +1685,10 @@
            (finally (doseq [[id v] previous]
                       (toggles/set-value! id v)))))))
 
-(defn- answer->ir-safe
-  "Coerce a turn's `:answer` into a render-ready IR/AST. The canonical path is
-   `render/answer->ir` ({:answer md} / needs-input); but a turn can also surface a
-   force-finalized answer, an already-built `[:ir …]` error-fallback AST, or a
-   bare string. Those are non-canonical, so answer->ir would throw and crash the
-   CLI render. Try the canonical lift; on any other shape, coerce instead of
-   dying — a bare string becomes `{:answer string}`, an existing AST vector is
-   used as-is, anything else is stringified."
-  [answer]
-  (try (render/answer->ir answer)
-       (catch Exception _
-         (cond (nil? answer) [:ir {}]
-               (string? answer) (render/answer->ir {:answer answer})
-               (vector? answer) answer
-               :else (render/answer->ir {:answer (pr-str answer)})))))
+(defn- result-content
+  "Return one CLI result's canonical typed content blocks."
+  [result]
+  (vec (or (:content result) [])))
 
 (defn- cli-result-exit-code
   [result]
@@ -1750,44 +1750,42 @@
                                              #(run! agent-def prompt run-opts))
           exit-code (cli-result-exit-code result)
           trace-result (select-keys result
-                                    [:session-id :answer :trace :iteration-count :duration-ms
+                                    [:session-id :content :trace :iteration-count :duration-ms
                                      :tokens :cost :confidence :status :error :type :eval])]
 
-      (cond
-        full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
-        full-trace-edn-stream? (print-full-trace-edn-frame! :result trace-result)
-        full-trace-stream?
-        (do (tel/log! {:level :info :id ::cli-trace :data trace-result} "CLI trace result")
-            (stdout! (str "\n"
-                          (trace-dim "└────────────────────────────────────────────────────────")))
-            (stdout! (str "\n"
-                          (trace-title "◆" "final result")
-                          (pretty-block "summary" (trace-final-summary-prose result))))
-            (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
-            (stdout! (render/render (answer->ir-safe (:answer result))
-                                    (if (trace-terminal?) :markdown :plain)))
-            (when (:error result)
-              (when-let [ex (:exception result)]
-                (stdout! "\nStack trace:")
-                (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))))
-        json? (stdout! (result->json result))
-        edn? (stdout! (result->edn result))
-        code?
-        (let [blocks (render/extract-code (answer->ir-safe (:answer result)))]
-          (cond
+      (cond full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
+            full-trace-edn-stream? (print-full-trace-edn-frame! :result trace-result)
+            full-trace-stream?
+            (do (tel/log! {:level :info :id ::cli-trace :data trace-result} "CLI trace result")
+                (stdout! (str "\n"
+                              (trace-dim
+                                "└────────────────────────────────────────────────────────")))
+                (stdout! (str "\n"
+                              (trace-title "◆" "final result")
+                              (pretty-block "summary" (trace-final-summary-prose result))))
+                (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
+                (stdout! (content/text-projection (result-content result)))
+                (when (:error result)
+                  (when-let [ex (:exception result)]
+                    (stdout! "\nStack trace:")
+                    (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))))
+            json? (stdout! (result->json result))
+            edn? (stdout! (result->edn result))
+            code?
+            (let [blocks (->> (result-content result)
+                              (keep #(when (= "code" (get % "type")) (get % "text")))
+                              vec)]
+              (cond (:error result) (stdout! (error/format-error (:error result)))
+                    (empty? blocks)
+                    (do (stdout!
+                          "Error: --code expects at least one code content block; got prose only.")
+                        (shutdown-agents)
+                        (System/exit 1))
+                    :else (stdout! (str/join "\n\n" blocks))))
             (:error result) (stdout! (error/format-error (:error result)))
-            (empty? blocks)
-            (do
-              (stdout!
-                "Error: --code expects answer to contain at least one [:code] block; got prose only. Run without --code for rendered output.")
-              (shutdown-agents)
-              (System/exit 1))
-            :else (stdout! (str/join "\n\n" blocks))))
-        (:error result) (stdout! (error/format-error (:error result)))
-        :else (do (stdout! (render/render (answer->ir-safe (:answer result))
-                                          (if effective-raw? :plain :markdown)))
-                  (when (and (:duration-ms result) (not effective-raw?))
-                    (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
+            :else (do (stdout! (content/text-projection (result-content result)))
+                      (when (and (:duration-ms result) (not effective-raw?))
+                        (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents)
       (when (pos? (long exit-code)) (System/exit exit-code)))))
 
@@ -3402,9 +3400,9 @@
 
 (defn- log-file-path
   []
-  (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis/logs"))]
-    (when-not (.exists log-dir) (.mkdirs log-dir))
-    (str log-dir "/vis.log")))
+  (let [vis-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
+    (when-not (.exists vis-dir) (.mkdirs vis-dir))
+    (str vis-dir "/vis.log")))
 
 (defn- configure-logging!
   "Route Telemere signals: file handler always on, persistence-backed

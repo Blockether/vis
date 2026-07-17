@@ -122,26 +122,25 @@
 
    The arrow reads 'prompt produced completion'. Cached is cached
    input tokens, parenthesized because provider APIs report cache
-   hits inside prompt usage. `:cached` is the provider field;
-   `:cached-input` / `:input-cached` are accepted aliases so usage
-   maps can name the direction explicitly.
+   hits inside prompt usage. Reads the canonical string-keyed usage
+   map (`\"input\"` / `\"output\"` / `\"cached\"` / `\"cache_created\"`).
 
    Cache visibility: the `(cached N)` segment renders only when N is
    positive. Zero / missing cache info stays hidden so meta lines do
    not show noisy `(cached 0)` decorations.
 
    Returns nil when no known field carries a number."
-  [{:keys [input output] :as tokens}]
+  [{:strs [input output] :as tokens}]
   (letfn [(first-number [ks]
             (some (fn [k]
                     (let [v (get tokens k)]
                       (when (number? v) v)))
                   ks))]
     (let [cached-input
-          (or (first-number [:cached-input :input-cached :cached]) 0)
+          (or (first-number ["cached"]) 0)
 
           cache-created
-          (or (first-number [:cache-created :cache-created-input :cache-creation :cache-write]) 0)
+          (or (first-number ["cache_created"]) 0)
 
           in-n
           (when (number? input) input)
@@ -166,7 +165,7 @@
 (defn format-cost
   "Render a dollar cost as '~$0.006954' (six decimal places, US
    locale). Returns nil when `cost` is nil, zero, negative, or
-   non-numeric. Accepts either the bare number or a `:total-cost`
+   non-numeric. Accepts either the bare number or a `\"total_cost\"`
    map. Detailed cost maps render the total first and the breakdown
    parenthesized, in order: in, cached, write, out — e.g.
    '~$0.006954 (in ~$0.001200, cached ~$0.000400, out ~$0.005354)'.
@@ -185,22 +184,22 @@
             (when-let [v (positive-cost-number k)]
               (str label " " (format-cost-number v))))]
     (let [n (cond (number? cost) cost
-                  (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
+                  (and (map? cost) (number? (get cost "total_cost"))) (get cost "total_cost")
                   :else nil)]
       (when (and n (pos? (double n)))
         (if (map? cost)
           (let [details (cond-> []
-                          (positive-cost-number :input-uncached-cost)
-                          (conj (detail "in" :input-uncached-cost))
+                          (positive-cost-number "input_uncached_cost")
+                          (conj (detail "in" "input_uncached_cost"))
 
-                          (positive-cost-number :input-cached-cost)
-                          (conj (detail "cached" :input-cached-cost))
+                          (positive-cost-number "input_cached_cost")
+                          (conj (detail "cached" "input_cached_cost"))
 
-                          (positive-cost-number :input-cache-write-cost)
-                          (conj (detail "write" :input-cache-write-cost))
+                          (positive-cost-number "input_cache_write_cost")
+                          (conj (detail "write" "input_cache_write_cost"))
 
-                          (positive-cost-number :output-cost)
-                          (conj (detail "out" :output-cost)))
+                          (positive-cost-number "output_cost")
+                          (conj (detail "out" "output_cost")))
                 total (format-cost-number n)]
 
             (if (> (count details) 1) (str total " (" (str/join ", " details) ")") total))
@@ -246,19 +245,19 @@
    `blockether/glm-5.1`. Falls back to bare `model` when only the
    model is known (older persisted rows, mid-flight chunks). The
    iteration runtime stores both fields on `:cost`
-   (`(:cost result) => {:total-cost N :provider :openai :model
+   (`(:cost result) => {\"total_cost\" N \"provider\" \"openai\" \"model\"
    \"gpt-4o\"}`); channels sometimes lift `:model` / `:provider` to
    top-level on the result map. Returns nil when no model is known."
   [result]
   (let [model
         (display-model-name (or (when-let [m (:model result)]
                                   (when (string? m) m))
-                                (when-let [m (:model (:cost result))]
+                                (when-let [m (get (:cost result) "model")]
                                   (when (string? m) m))))
 
         provider
         (or (normalize-provider (:provider result))
-            (normalize-provider (:provider (:cost result))))]
+            (normalize-provider (get (:cost result) "provider")))]
 
     (when model (if provider (str provider "/" model) model))))
 
@@ -330,13 +329,13 @@
                       (when (number? v) v)))
                   ks))]
     (let [in
-          (num [:input])
+          (num ["input"])
 
           out
-          (num [:output])
+          (num ["output"])
 
           cached
-          (num [:cached-input :input-cached :cached])]
+          (num ["cached"])]
 
       (when (or (and in (pos? (long in))) (and out (pos? (long out))))
         (str (humanize-count (or in 0))
@@ -350,7 +349,7 @@
    Extra decimals for sub-cent turns so they don't round down to \"$0\"."
   [cost]
   (let [n (cond (number? cost) cost
-                (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
+                (and (map? cost) (number? (get cost "total_cost"))) (get cost "total_cost")
                 :else nil)]
     (when (and n (pos? (double n)))
       (str "~$"

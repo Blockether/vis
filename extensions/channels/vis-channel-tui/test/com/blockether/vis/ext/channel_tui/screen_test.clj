@@ -474,27 +474,28 @@
 
 (defdescribe
   session-switcher-data-test
-  (it
-    "uses latest turn creation time as modification time and sorts newest first"
-    (with-redefs [vis/gateway-list-turns (fn [session-id]
-                                           (case session-id
-                                             "old"
-                                             [{:created-at #inst "2024-01-04T00:00:00.000-00:00"}]
+  (it "uses latest turn creation time as modification time and sorts newest first"
+      (with-redefs [vis/gateway-list-turns
+                    (fn [session-id]
+                      (case session-id
+                        "old"
+                        [{"created_at" #inst "2024-01-04T00:00:00.000-00:00"}]
 
-                                             "new"
-                                             [{:created-at #inst "2024-01-02T00:00:00.000-00:00"}
-                                              {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
+                        "new"
+                        [{"created_at" #inst "2024-01-02T00:00:00.000-00:00"}
+                         {"created_at" #inst "2024-01-08T00:00:00.000-00:00"}]
 
-                                             []))]
-      (let [old-summary (session-summary {:id "old"
-                                          :created-at #inst "2024-01-01T00:00:00.000-00:00"})
-            new-summary (session-summary {:id "new"
-                                          :created-at #inst "2024-01-03T00:00:00.000-00:00"})]
+                        []))]
+        (let [old-summary (session-summary {"id" "old"
+                                            "created_at" #inst "2024-01-01T00:00:00.000-00:00"})
+              new-summary (session-summary {"id" "new"
+                                            "created_at" #inst "2024-01-03T00:00:00.000-00:00"})]
 
-        (expect (= 1 (:turn-count old-summary)))
-        (expect (= 2 (:turn-count new-summary)))
-        (expect (= #inst "2024-01-08T00:00:00.000-00:00" (:modified-at new-summary)))
-        (expect (= ["new" "old"] (mapv :id (latest-modified-first [old-summary new-summary]))))))))
+          (expect (= 1 (get old-summary "turn_count")))
+          (expect (= 2 (get new-summary "turn_count")))
+          (expect (= #inst "2024-01-08T00:00:00.000-00:00" (get new-summary "modified_at")))
+          (expect (= ["new" "old"]
+                     (mapv #(get % "id") (latest-modified-first [old-summary new-summary]))))))))
 
 (defdescribe submit-input-test
              (it "dispatches send before reset so paste placeholders can expand"
@@ -549,32 +550,32 @@
                    20))))
   (it "sorts sessions by real turns, latest modified time, then turn count by default"
       (let [old-with-turns
-            {:id :old
-             :turn-count 1
-             :modified-at #inst "2024-01-02T00:00:00.000-00:00"
-             :created-at #inst "2024-01-01T00:00:00.000-00:00"}
+            {"id" :old
+             "turn_count" 1
+             "modified_at" #inst "2024-01-02T00:00:00.000-00:00"
+             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
 
             latest-empty
-            {:id :empty
-             :turn-count 0
-             :modified-at #inst "2024-01-10T00:00:00.000-00:00"
-             :created-at #inst "2024-01-10T00:00:00.000-00:00"}
+            {"id" :empty
+             "turn_count" 0
+             "modified_at" #inst "2024-01-10T00:00:00.000-00:00"
+             "created_at" #inst "2024-01-10T00:00:00.000-00:00"}
 
             latest-with-turns
-            {:id :latest
-             :turn-count 2
-             :modified-at #inst "2024-01-03T00:00:00.000-00:00"
-             :created-at #inst "2024-01-01T00:00:00.000-00:00"}
+            {"id" :latest
+             "turn_count" 2
+             "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
+             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
 
             same-latest-more-turns
-            {:id :more-turns
-             :turn-count 5
-             :modified-at #inst "2024-01-03T00:00:00.000-00:00"
-             :created-at #inst "2024-01-01T00:00:00.000-00:00"}]
+            {"id" :more-turns
+             "turn_count" 5
+             "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
+             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}]
 
         (expect (= [1 1704240000000 2] (session-sort-key latest-with-turns)))
         (expect (= [:more-turns :latest :old :empty]
-                   (mapv :id
+                   (mapv #(get % "id")
                          (latest-modified-first [old-with-turns latest-empty latest-with-turns
                                                  same-latest-more-turns]))))))
   (it

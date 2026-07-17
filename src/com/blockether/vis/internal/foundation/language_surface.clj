@@ -473,7 +473,7 @@
         ok
         (and (not error)
              (cond (number? fail) (zero? (long fail))
-                   (contains? r "pass?") (boolean (get r "pass?")) ; CLI fallback: exit-code verdict
+                   (contains? r "is_pass") (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
                    :else (boolean (get r "pass"))))
 
         parts

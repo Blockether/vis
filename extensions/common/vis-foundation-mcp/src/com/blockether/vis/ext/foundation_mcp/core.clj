@@ -99,7 +99,7 @@
     server))
 
 (defn- add-stdio-server!
-  [{:keys [name command args cwd env]}]
+  [{:strs [name command args cwd env]}]
   (let [cmd (some-> command
                     str
                     str/trim
@@ -118,7 +118,7 @@
                               (assoc :env (parse-env env))))))
 
 (defn- add-http-server!
-  [{:keys [name url authorization token]}]
+  [{:strs [name url authorization token]}]
   (let [u
         (some-> url
                 str

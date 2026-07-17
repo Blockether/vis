@@ -62,11 +62,11 @@
    canonical wire hop (`wire/canonical` at the gateway transcript facade):
    keyword identity values arrive as strings, so the spec-strict
    `extension/tool-result?` can no longer match — recognize the envelope
-   STRUCTURALLY instead, by the `:success?` flag plus the `:symbol`/`:metadata`
+   STRUCTURALLY instead, by the `is_success` flag plus the `:symbol`/`:metadata`
    identity `envelope-of` always stamps. Also true for a raw in-process
    envelope, which carries the same keys."
   [x]
-  (and (map? x) (contains? x :success?) (or (contains? x :symbol) (contains? x :metadata))))
+  (and (map? x) (contains? x "is_success") (or (contains? x "symbol") (contains? x "metadata"))))
 
 (defn- form-result-kind
   "Mirror of `progress/form-result-kind` for restored sessions: a
@@ -97,17 +97,27 @@
    same shape the live path produces, just sourced from persistance."
   [{:keys [result channel]}]
   (cond (restored-tool-envelope? result)
-        (let [metadata (:metadata result)]
-          (merge (select-keys result [:symbol :tag])
-                 (select-keys metadata
-                              [:spec :paths :hit_count :truncated_by :command :cwd :target])))
-        (seq channel) (let [first-ok (or (first (filter :success? channel)) (first channel))]
+        (let [metadata (get result "metadata")]
+          (merge (into {}
+                       (keep (fn [[k wk]]
+                               (when-some [v (get result wk)]
+                                 [k v])))
+                       [[:symbol "symbol"] [:tag "tag"]])
+                 (into {}
+                       (keep (fn [[k wk]]
+                               (when-some [v (get metadata wk)]
+                                 [k v])))
+                       [[:spec "spec"] [:paths "paths"] [:hit_count "hit_count"]
+                        [:truncated_by "truncated_by"] [:command "command"] [:cwd "cwd"]
+                        [:target "target"]])))
+        (seq channel) (let [first-ok (or (first (filter #(get % "is_success") channel))
+                                         (first channel))]
                         (cond-> {}
-                          (:symbol first-ok)
-                          (assoc :op (:symbol first-ok))
+                          (get first-ok "symbol")
+                          (assoc :op (get first-ok "symbol"))
 
-                          (:tag first-ok)
-                          (assoc :tag (:tag first-ok))))))
+                          (get first-ok "tag")
+                          (assoc :tag (get first-ok "tag"))))))
 
 (defn- block->form-record
   "Materialize one DB-iteration block into a `:forms` entry. The shape
@@ -123,9 +133,9 @@
    the derived `:duration-ms`/`:channel`, the computed op projections
    (`:result-kind`/`:result-detail`), and the restore-only status flags."
   [block]
-  (merge (vis/form<-wire block)
+  (merge (vis/form->display block)
          {:started-at-ms nil
-          :duration-ms (or (:duration-ms block) (:duration_ms block) 0)
+          :duration-ms (or (:duration-ms block) 0)
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
           ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
           :channel (vec (:channel block))
@@ -164,10 +174,10 @@
   ;; progress tracker; restored bubbles must do the same to render
   ;; identically.
   (let [iter-code
-        (or (:code it) "")
+        (or (get it "code") "")
 
         envelopes
-        (vec (or (:forms it) []))
+        (vec (or (get it "forms") []))
 
         ;; Sentinel block when the iteration ran no forms (eval timeout,
         ;; pre-eval rejection, etc.). Keep the iteration visible with
@@ -175,22 +185,22 @@
         ;; nothing on restore.
         fallback-blocks
         [(cond-> {:position 0 :code iter-code}
-           (some? (:render_segments it))
-           (assoc :render-segments (:render_segments it))
+           (some? (get it "render_segments"))
+           (assoc :render-segments (get it "render_segments"))
 
-           (some? (:duration_ms it))
-           (assoc :duration-ms (:duration_ms it))
+           (some? (get it "duration_ms"))
+           (assoc :duration-ms (get it "duration_ms"))
 
-           (some? (:result it))
-           (assoc :result (:result it))
+           (some? (get it "result"))
+           (assoc :result (get it "result"))
 
-           (some? (:error it))
-           (assoc :error (:error it)))]
+           (some? (get it "error"))
+           (assoc :error (get it "error")))]
 
         envelope->block
         (fn [idx env]
           (let [src
-                (or (:src env) (:source env) (:code env) "")
+                (or (get env "src") (get env "source") (get env "code") "")
 
                 segments
                 (vis/parse-block-display src)]
@@ -209,25 +219,25 @@
                             :code src
                             ;; `:scope` ("tN/iM/fK") preserves the per-form
                             ;; provenance string the engine stamped at write time.
-                            :scope (:scope env)
-                            :tag (:tag env)})
-              (contains? env :result)
-              (assoc :result (:result env))
+                            :scope (get env "scope")
+                            :tag (get env "tag")})
+              (contains? env "result")
+              (assoc :result (get env "result"))
 
-              (contains? env :error)
-              (assoc :error (:error env))
+              (contains? env "error")
+              (assoc :error (get env "error"))
 
               (seq segments)
               (assoc :render-segments segments)
 
-              (some? (:duration_ms env))
-              (assoc :duration-ms (:duration_ms env)))))
+              (some? (get env "duration_ms"))
+              (assoc :duration-ms (get env "duration_ms")))))
 
         all-blocks
         (if (seq envelopes) (vec (map-indexed envelope->block envelopes)) fallback-blocks)
 
         answer-here?
-        (and produced-answer? (= (:id it) last-iteration-id) (seq all-blocks))
+        (and produced-answer? (= (get it "id") last-iteration-id) (seq all-blocks))
 
         preflight-source?
         (fn [b]
@@ -245,7 +255,7 @@
         answer-idx
         (when answer-here?
           (let [idx
-                (or (:answer_position it) (dec (count all-blocks)))
+                (or (get it "answer_position") (dec (count all-blocks)))
 
                 block
                 (when (and (integer? idx) (not (neg? (long idx))) (< (long idx) (count all-blocks)))
@@ -273,7 +283,7 @@
         ;; non-answer form remains visible after `(done ...)` elision so
         ;; restored green footers still match live bubbles.
         duration-fallback-idxs
-        (when (some? (:duration_ms it))
+        (when (some? (get it "duration_ms"))
           (into []
                 (keep-indexed (fn [idx b]
                                 (let [src (some-> (:code b)
@@ -287,7 +297,7 @@
 
         visible
         (if (= 1 (count duration-fallback-idxs))
-          (update visible (first duration-fallback-idxs) assoc :duration-ms (:duration_ms it))
+          (update visible (first duration-fallback-idxs) assoc :duration-ms (get it "duration_ms"))
           visible)
 
         ;; One restored block PER persisted form envelope - parity with the
@@ -304,121 +314,70 @@
         forms
         (mapv block->form-record visible)]
 
-    (iteration/canonicalize {:position (when-let [p (:position it)]
+    (iteration/canonicalize {:position (when-let [p (get it "position")]
                                          (dec (long p)))
-                             :thinking (visible-thinking (:thinking it))
-                             :provider-fallbacks (:llm_routing_trace it)
+                             :thinking (visible-thinking (get it "thinking"))
+                             :provider-fallbacks (get it "llm_routing_trace")
                              :forms forms})))
 
 (defn user-message
-  "Create a structured user message with timestamp.
-   The user types raw markdown into the input box; we lift it to
-   canonical IR via `vis/markdown->ir` immediately so the bubble layer
-   (and every downstream consumer) sees the same shape it sees for
-   assistant answers.
-
-   Unlike model answers, user input is line-oriented: every literal
-   newline the user typed or pasted is intent (code, line-numbered
-   dumps, stack traces). We lift with `{:soft-break :hard}` so bare
-   newlines become `[:br]` and the bubble preserves the exact line
-   structure instead of collapsing pasted lines into one wrapped wall
-   of text (CommonMark prose soft-break semantics).
-
-   The message carries ONLY `:ir` — every consumer that needs a
-   string projection computes it on demand (and caches the result
-   client-side, e.g. via `virtual.clj` projection) instead of us
-   eagerly rendering at construction."
+  "Create a canonical user message."
   ([text] (user-message text (java.util.Date.)))
   ([text timestamp]
-   {:role :user
-    :ir (vis/markdown->ir text {:soft-break :hard})
-    ;; Keep the raw text so resume paths (input-history arrow cycling in
-    ;; state/:init-session, search, etc.) can recover the exact string
-    ;; the user typed without re-rendering IR back to markdown.
-    :text (or text "")
-    :timestamp timestamp}))
+   (let [markdown (or text "")]
+     {:role :user
+      :content [{"id" (str (java.util.UUID/randomUUID)) "type" "prose" "markdown" markdown}]
+      :text markdown
+      :timestamp timestamp})))
 
-(def empty-ir
-  "Canonical empty IR — used as the placeholder when an answer slot is
-   absent (e.g. resumed turns whose answer column is NULL because the
-   turn never finished). Never feed `nil` or `\"\"` to the TUI render
-   chokepoints; lift to `empty-ir` instead."
-  [:ir {}])
-(defn error-answer-ir
-  "Renderable answer-IR for a FAILED turn result. `turn!`/`attach!` fold the
-   engine's provider-error IR (`:vis/provider-error` marker) onto `:answer`
-   and dissoc `:answer-ir`, so a failed turn's styled card lives on `:answer` —
-   NOT `:answer-ir` (that key is gone by the time a channel reads the result).
-   Returns that IR when it carries real content; otherwise flattens the
-   `:error` string through `format-error` so a bare/generic failure still shows
-   a readable bubble instead of a blank one."
+(defn error-content
+  "Canonical blocks for a failed gateway result."
   [result]
-  (let [ir (or (:answer-ir result) (:answer result))]
-    (if (and (vector? ir) (= :ir (first ir)) (seq (nnext ir)))
-      ir
-      (vis/markdown->ir (vis/format-error (:error result))))))
+  (let [blocks (vec (or (get result "content") []))]
+    (if (seq blocks)
+      blocks
+      [{"id" (str (java.util.UUID/randomUUID))
+        "type" "error"
+        "code" "turn_failed"
+        "message" (vis/format-error (get result "error"))
+        "retryable" false}])))
+
+(defn content->markdown
+  "Disposable Markdown projection of canonical content blocks."
+  [blocks]
+  (->> blocks
+       (keep (fn [block]
+               (case (get block "type")
+                 "prose"
+                 (get block "markdown")
+
+                 "code"
+                 (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
+
+                 "reasoning"
+                 (get block "text")
+
+                 ("error" "notice")
+                 (get block "message")
+
+                 "tool"
+                 (some-> (get block "output")
+                         str)
+
+                 nil)))
+       (str/join "\n\n")))
 
 (defn render-answer
-  "Render canonical answer-IR (`[:ir & nodes]`) to the markdown string
-   the TUI bubble renderer expects.
-
-   STRICT input contract: IR only. `nil` is accepted as a convenience
-   for unfilled answer slots and renders as the empty string. Strings,
-   Hiccup vectors, EDN values, etc. are programmer bugs — the IR
-   boundary lives upstream (loop emits IR, persistence stores Nippy IR,
-   resumed turns thaw to IR). Anything else throws with the offending
-   type so the bug surfaces at the wrong call site, not silently in the
-   bubble.
-
-   Dispatches via the TUI channel's `:channel/messages-renderer-fn`
-   (`core/render-for-tui`) when registered; otherwise falls back to
-   `vis/render :markdown` directly so unit tests that load this ns in
-   isolation still work. Both paths share the same strict IR contract."
-  [ir]
-  (cond
-    (nil? ir) ""
-    (not (and (vector? ir) (= :ir (first ir))))
-    (throw
-      (ex-info
-        "chat/render-answer requires canonical [:ir ...] input; build IR upstream, do not pass raw text"
-        {:got-type (some-> ir
-                           class
-                           .getName)
-         :got-preview (let [s (pr-str ir)]
-                        (subs s 0 (min 200 (count s))))}))
-    :else (let [renderer (some-> (vis/channel-by-id :tui)
-                                 :channel/messages-renderer-fn)]
-            (if renderer (renderer ir) (vis/render ir :markdown)))))
+  "Project canonical content blocks to Markdown for clipboard/export callers."
+  [blocks]
+  (content->markdown blocks))
 
 (defn assistant-message
-  "Create a structured assistant (vis) message with timestamp.
-
-   Accepts either:
-     - a Markdown source string  -> the canonical input on the Markdown
-       answer pipeline; IR is derived via `vis/markdown->ir`
-     - a canonical `[:ir & nodes]` vector -> IR is used as-is; raw
-       Markdown is reconstructed via `vis/render ir :markdown` so the
-       message still carries a `:text` field
-     - nil -> empty placeholder for unfilled answer slots
-
-   The message carries both:
-     :text  raw Markdown source (used by copy/export, FTS, plain views)
-     :ir    derived IR (used by the bubble layout walker)"
-  ([source] (assistant-message source (java.util.Date.)))
-  ([source timestamp]
-   (cond (nil? source) {:role :assistant :text "" :ir empty-ir :timestamp timestamp}
-         (string? source) {:role :assistant
-                           :text source
-                           :ir (if (str/blank? source) empty-ir (vis/markdown->ir source))
-                           :timestamp timestamp}
-         (and (vector? source) (= :ir (first source)))
-         {:role :assistant :text (vis/render source :markdown) :ir source :timestamp timestamp}
-         :else (throw
-                 (ex-info
-                   "chat/assistant-message requires Markdown string or canonical [:ir ...] input"
-                   {:got-type (some-> source
-                                      class
-                                      .getName)})))))
+  "Create a canonical assistant message from typed content blocks."
+  ([blocks] (assistant-message blocks (java.util.Date.)))
+  ([blocks timestamp]
+   (let [blocks (vec (or blocks []))]
+     {:role :assistant :content blocks :text (content->markdown blocks) :timestamp timestamp})))
 
 (defn- rebuild-history
   "Reconstruct message history from DB for a session.
@@ -431,13 +390,13 @@
                      ;; and streams it live (see resume-session / :attach-running-turn),
                      ;; so rebuilding its half-written `:running` row here would double
                      ;; the bubble (once frozen from the DB, once live).
-                     (remove #(contains? #{:running "running"} (:status %))))]
+                     (remove #(= "running" (str (get % "status")))))]
       (into
         []
         (mapcat
           (fn [q]
-            (let [user-message (assoc (user-message (or (:user_request q) "")
-                                                    (or (some-> (:created_at q)
+            (let [user-message (assoc (user-message (or (get q "user_request") "")
+                                                    (or (some-> (get q "created_at")
                                                                 long
                                                                 ((fn [^long ms]
                                                                    (java.util.Date. ms))))
@@ -448,55 +407,50 @@
                                  ;; toggle every paste in the session. Stamp the gateway turn id (same one the
                                  ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
                                  ;; like the live send path scopes them by :client-turn-id.
-                                 :session-turn-id (:id q))
+                                 :session-turn-id (get q "id"))
                   ;; `:prior-outcome :cancelled` is how the
                   ;; persistance layer marks an aborted turn (the
                   ;; sweep + cancel paths both write that value).
-                  cancelled? (= "cancelled" (str (:prior_outcome q)))
-                  ;; Persistence stores the raw Markdown source
-                  ;; the model wrote in `(done {:answer ...})`.
-                  ;; Channels derive IR via `vis/markdown->ir` at
-                  ;; render time; keep the source so copy/export
-                  ;; round-trip byte-for-byte. Cancelled turns can
-                  ;; persist with no answer when the user aborts
-                  ;; before the first iteration; show an explicit
-                  ;; status line instead of a blank gray Vis bubble.
-                  answer-md (let [stored (or (:answer_markdown q) "")]
-                              (if (and cancelled? (str/blank? stored)) "Cancelled by user." stored))
-                  answer-ir (if (str/blank? answer-md) empty-ir (vis/markdown->ir answer-md))
-                  model (:model q)
-                  ;; Phase B: canonical token shape mapped to the per-bubble
-                  ;; render contract. `:input` is TOTAL, `:input-regular` /
-                  ;; `:cached` (cache-read) / `:cache-created` (cache-write)
-                  ;; are subsets. Render layer formats whichever it needs;
-                  ;; absent keys stay absent.
+                  cancelled? (= "cancelled" (str (get q "prior_outcome")))
+                  ;; Persisted history carries the same canonical content blocks as live turns.
+                  content-blocks (let [stored (vec (or (get q "content") []))]
+                                   (if (and cancelled? (empty? stored))
+                                     [{"id" (str (get q "id") ":cancelled")
+                                       "type" "notice"
+                                       "code" "turn_cancelled"
+                                       "message" "Cancelled by user."}]
+                                     stored))
+                  model (get q "model")
+                  ;; Canonical string-keyed token shape, passed through to the
+                  ;; per-bubble render contract. "input" is TOTAL; the detail
+                  ;; keys are subsets. Absent keys stay absent.
                   tokens (cond-> {}
-                           (:input_tokens q)
-                           (assoc :input (:input_tokens q))
+                           (get q "input_tokens")
+                           (assoc "input" (get q "input_tokens"))
 
-                           (:input_regular_tokens q)
-                           (assoc :input-regular (:input_regular_tokens q))
+                           (get q "input_regular_tokens")
+                           (assoc "input_regular" (get q "input_regular_tokens"))
 
-                           (:input_cache_read_tokens q)
-                           (assoc :cached (:input_cache_read_tokens q))
+                           (get q "input_cache_read_tokens")
+                           (assoc "cached" (get q "input_cache_read_tokens"))
 
-                           (:input_cache_write_tokens q)
-                           (assoc :cache-created (:input_cache_write_tokens q))
+                           (get q "input_cache_write_tokens")
+                           (assoc "cache_created" (get q "input_cache_write_tokens"))
 
-                           (:output_tokens q)
-                           (assoc :output (:output_tokens q))
+                           (get q "output_tokens")
+                           (assoc "output" (get q "output_tokens"))
 
-                           (:output_reasoning_tokens q)
-                           (assoc :reasoning (:output_reasoning_tokens q)))
-                  iteration-count (:iteration_count q)
-                  duration-ms (:duration_ms q)
-                  cost (when-let [total-cost (or (:total_cost q) (:cost q))]
-                         (cond-> {:total-cost total-cost}
-                           (:provider q)
-                           (assoc :provider (:provider q))
+                           (get q "output_reasoning_tokens")
+                           (assoc "reasoning" (get q "output_reasoning_tokens")))
+                  iteration-count (get q "iteration_count")
+                  duration-ms (get q "duration_ms")
+                  cost (when-let [total-cost (or (get q "total_cost") (get q "cost"))]
+                         (cond-> {"total_cost" total-cost}
+                           (get q "provider")
+                           (assoc "provider" (get q "provider"))
 
-                           (:model q)
-                           (assoc :model (:model q))))
+                           (get q "model")
+                           (assoc "model" (get q "model"))))
                   ;; Rebuild trace from gateway transcript iterations + blocks.
                   ;; The answer-bearing form (last expression of
                   ;; the answer iteration, per rule b') is
@@ -505,26 +459,22 @@
                   ;; same way live ones do - just the answer
                   ;; text below the iteration trace, never the
                   ;; `(done "...")` call as code above it.
-                  turn-iterations (vec (:iterations q))
+                  turn-iterations (vec (get q "iterations"))
                   last-it (last turn-iterations)
-                  last-iteration-id (:id last-it)
+                  last-iteration-id (get last-it "id")
                   llm-routing (cond-> {}
-                                (:llm_selected last-it)
-                                (assoc :selected (:llm_selected last-it))
+                                (get last-it "llm_selected")
+                                (assoc :selected (get last-it "llm_selected"))
 
-                                (:llm_actual last-it)
-                                (assoc :actual (:llm_actual last-it))
+                                (get last-it "llm_actual")
+                                (assoc :actual (get last-it "llm_actual"))
 
-                                (contains? last-it :llm_fallback?)
-                                (assoc :fallback? (:llm_fallback? last-it))
+                                (contains? last-it "is_llm_fallback")
+                                (assoc :fallback? (get last-it "is_llm_fallback"))
 
-                                (seq (:llm_routing_trace last-it))
-                                (assoc :trace (:llm_routing_trace last-it)))
-                  ;; A non-blank Markdown source signals a real
-                  ;; final answer; empty / nil-only turns keep
-                  ;; their assistant message but elide the
-                  ;; answer-bearing form differently.
-                  produced-answer? (not (str/blank? answer-md))
+                                (seq (get last-it "llm_routing_trace"))
+                                (assoc :trace (get last-it "llm_routing_trace")))
+                  produced-answer? (seq content-blocks)
                   ;; A slash turn persists ONE synthetic iteration whose
                   ;; envelope is tagged `:user-slash`. Live slash turns
                   ;; stream no iterations, so they render as a bare answer
@@ -532,8 +482,8 @@
                   ;; trace made resumed sessions look different from live.
                   ;; Suppress it so resume matches live: just the answer.
                   slash-turn? (some (fn [it]
-                                      (some #(#{"user-slash" "user-shell"} (str (:tag %)))
-                                            (:forms it)))
+                                      (some #(#{"user-slash" "user-shell"} (str (get % "tag")))
+                                            (get it "forms")))
                                     turn-iterations)
                   trace (if slash-turn?
                           []
@@ -542,20 +492,18 @@
                                               {:produced-answer? produced-answer?
                                                :last-iteration-id last-iteration-id}))
                                 turn-iterations))
-                  assistant-message (cond-> (assistant-message answer-ir
-                                                               (or (some-> (:created_at q)
+                  assistant-message (cond-> (assistant-message content-blocks
+                                                               (or (some-> (get q "created_at")
                                                                            long
                                                                            ((fn [^long ms]
                                                                               (java.util.Date.
                                                                                 ms))))
                                                                    (java.util.Date.)))
                                       true
-                                      (assoc :session-turn-id (:id q))
+                                      (assoc :session-turn-id (get q "id"))
 
                                       (seq trace)
-                                      (assoc :traces
-                                        trace :ir
-                                        answer-ir)
+                                      (assoc :traces trace)
 
                                       model
                                       (assoc :model model)
@@ -613,13 +561,11 @@
   2)
 
 (defn- event-get
+  "Read field `k` off a canonical string-keyed wire map — ONE deterministic
+   lookup: the exact spelling `vis/wire-key` emits (snake_case, `foo?` ->
+   `is_foo`), the same policy the wire encoder owns."
   [m k]
-  (or (get m k)
-      (get m (keyword (str/replace (name k) "-" "_")))
-      (get m (keyword (str/replace (name k) "_" "-")))
-      (get m (name k))
-      (get m (str/replace (name k) "-" "_"))
-      (get m (str/replace (name k) "_" "-"))))
+  (get m (vis/wire-key k)))
 
 (defn- gateway-event->chunk
   "Project canonical gateway wire events back into the progress chunk shape the
@@ -662,17 +608,19 @@
         (event-get event :text)]
 
     (case type
-      ;; Live model-text deltas, coalesced to sentence granularity by the gateway.
-      ;; `reasoning.delta` paints the THINKING trace; `content.delta` paints PROSE
-      ;; (`:prose-final`) or streaming provider content — DISTINCT blocks. The
-      ;; complete, persisted text still lands on iteration.completed.
-      "reasoning.delta"
-      {:phase :reasoning :iteration iteration :thinking text}
+      ;; Canonical typed-block delta projected into the TUI's transient progress shape.
+      "content.block.delta"
+      (cond (= "text" (event-get event :field))
+            {:phase :reasoning :iteration iteration :thinking text}
+            (str/includes? (str block-id) ":assistant-prose:")
+            {:phase :assistant-prose :iteration iteration :text text}
+            :else {:phase :content :iteration iteration :content text})
 
-      "content.delta"
-      (if (event-get event :prose-final)
-        {:phase :assistant-prose :iteration iteration :text text}
-        {:phase :content :iteration iteration :content text})
+      "content.block.started"
+      nil
+
+      "content.block.completed"
+      nil
 
       "block.started"
       (merge {:phase :form-start :iteration iteration :position block-id :code code}
@@ -828,21 +776,21 @@
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root prewarm?]}]
-  (let [{:keys [id]} (vis/gateway-create-session! (cond-> {:channel :tui}
-                                                    workspace-id
-                                                    (assoc :workspace-id workspace-id)
+  (let [resp (vis/gateway-create-session! (cond-> {:channel :tui}
+                                            workspace-id
+                                            (assoc :workspace-id workspace-id)
 
-                                                    root
-                                                    (assoc :root root)
+                                            root
+                                            (assoc :root root)
 
-                                                    ;; Warm-pool builds are UNCLAIMED: they must
-                                                    ;; not surface in the cross-channel session
-                                                    ;; list until a tab actually uses one (the
-                                                    ;; first turn claims the soul). Real new-tab
-                                                    ;; builds (pool miss) omit this and are claimed.
-                                                    prewarm?
-                                                    (assoc :prewarm true)))]
-    {:id (java.util.UUID/fromString id) :history []}))
+                                            ;; Warm-pool builds are UNCLAIMED: they must
+                                            ;; not surface in the cross-channel session
+                                            ;; list until a tab actually uses one (the
+                                            ;; first turn claims the soul). Real new-tab
+                                            ;; builds (pool miss) omit this and are claimed.
+                                            prewarm?
+                                            (assoc :prewarm true)))]
+    {:id (java.util.UUID/fromString (get resp "id")) :history []}))
 
 (defn- pop-prewarmed!
   "Atomically take one warm session from the pool (FIFO), or nil when empty."
@@ -978,9 +926,9 @@
                     str/trim)]
     (when (seq cid)
       (or (when-let [session (vis/gateway-soul cid)]
-            (java.util.UUID/fromString (:id session)))
+            (java.util.UUID/fromString (get session "id")))
           (let [matches (->> (vis/gateway-list-sessions :all)
-                             (map :id)
+                             (map #(get % "id"))
                              (filter #(str/starts-with? (str %) cid))
                              vec)]
             (when (= 1 (count matches)) (java.util.UUID/fromString (first matches))))))))
@@ -1002,104 +950,87 @@
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
     (when-let [soul (vis/gateway-soul resolved-id)]
-      (let [tid (:current_turn_id soul)
+      (let [tid (get soul "current_turn_id")
             turns (try (vis/gateway-list-turns resolved-id) (catch Throwable _ nil))
             running-turn (when tid
                            (some (fn [t]
-                                   (when (and (= "running" (str (:status t)))
-                                              (= (str tid) (str (:turn_id t))))
+                                   (when (and (= "running" (str (get t "status")))
+                                              (= (str tid) (str (get t "turn_id"))))
                                      t))
                                  turns))
-            queued-turns
-            (->> turns
-                 (filter (fn [t]
-                           (= "queued" (str (:status t)))))
-                 (sort-by (fn [t]
-                            (or (:queued_at t) 0)))
-                 (mapv (fn [t]
-                         {:turn-id (:turn_id t) :text (:request t) :queued-at-ms (:queued_at t)})))]
+            queued-turns (->> turns
+                              (filter (fn [t]
+                                        (= "queued" (str (get t "status")))))
+                              (sort-by (fn [t]
+                                         (or (get t "queued_at") 0)))
+                              (mapv (fn [t]
+                                      {:turn-id (get t "turn_id")
+                                       :text (get t "request")
+                                       :queued-at-ms (get t "queued_at")})))]
 
-        (cond-> {:id resolved-id :history (rebuild-history resolved-id) :status (:status soul)}
+        (cond-> {:id resolved-id :history (rebuild-history resolved-id) :status (get soul "status")}
           tid
           (assoc :current-turn-id tid)
 
-          (some? (:request running-turn))
-          (assoc :running-request (:request running-turn))
+          (some? (get running-turn "request"))
+          (assoc :running-request (get running-turn "request"))
 
-          (nat-int? (:started_at running-turn))
-          (assoc :running-started-at (:started_at running-turn))
+          (nat-int? (get running-turn "started_at"))
+          (assoc :running-started-at (get running-turn "started_at"))
 
           (seq queued-turns)
           (assoc :queued-turns queued-turns))))))
 
 (defn turn!
-  "Submit a user request through the canonical in-process gateway. Blocking.
-  Returns `{:answer [:ir ...]}` or `{:error str}`."
+  "Submit a user request through the canonical in-process gateway. Blocking."
   ([session text] (turn! session text {}))
   ([{:keys [id]} text
     {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace]}]
-   (try (let [result
-              (vis/gateway-submit-turn-sync!
-                id
-                (cond-> {:request text
-                         :on-event (fn [event]
-                                     (when-let [chunk (gateway-event->chunk event)]
-                                       (when on-chunk (on-chunk chunk))))}
-                  cancel-token
-                  (assoc :cancel-token cancel-token)
+   (try (vis/gateway-submit-turn-sync! id
+                                       (cond-> {:request text
+                                                :on-event (fn [event]
+                                                            (when-let [chunk (gateway-event->chunk
+                                                                               event)]
+                                                              (when on-chunk (on-chunk chunk))))}
+                                         cancel-token
+                                         (assoc :cancel-token cancel-token)
 
-                  reasoning-default
-                  (assoc :reasoning-default reasoning-default)
+                                         reasoning-default
+                                         (assoc :reasoning-default reasoning-default)
 
-                  extra-body
-                  (assoc :extra-body extra-body)
+                                         extra-body
+                                         (assoc :extra-body extra-body)
 
-                  turn-features
-                  (assoc :turn-features turn-features)
+                                         turn-features
+                                         (assoc :turn-features turn-features)
 
-                  (seq workspace)
-                  (assoc :workspace workspace)))
-
-              answer-ir
-              (or (:answer-ir result)
-                  (some-> (:answer result)
-                          vis/markdown->ir)
-                  empty-ir)]
-
-          (cond-> (assoc result :answer answer-ir)
-            (:answer-ir result)
-            (dissoc :answer-ir)))
+                                         (seq workspace)
+                                         (assoc :workspace workspace)))
         (catch Exception e
           (if (vis/cancellation? e)
-            {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]] :status :cancelled}
-            {:error (or (ex-message e) (str e))})))))
+            {"content" [{"id" (str (java.util.UUID/randomUUID))
+                         "type" "notice"
+                         "code" "turn_cancelled"
+                         "message" "Cancelled by user."}]
+             "status" "cancelled"}
+            {"error" (or (ex-message e) (str e))})))))
 (defn attach!
-  "Attach to a gateway turn `tid` already queued/running for `session`, blocking
-   until it completes. Same result shape as `turn!` — drives TUI rendering for a
-   busy-time submission the gateway queued (see gateway/state `attach-turn-sync!`)."
+  "Attach to an already submitted gateway turn and return canonical content."
   ([session tid] (attach! session tid {}))
   ([{:keys [id]} tid {:keys [on-chunk]}]
-   (try (let [result
-              (vis/gateway-attach-turn-sync! id
-                                             tid
-                                             {:on-event (fn [event]
-                                                          (when-let [chunk (gateway-event->chunk
-                                                                             event)]
-                                                            (when on-chunk (on-chunk chunk))))})
-
-              answer-ir
-              (or (:answer-ir result)
-                  (some-> (:answer result)
-                          vis/markdown->ir)
-                  empty-ir)]
-
-          (cond-> (assoc result :answer answer-ir)
-            (:answer-ir result)
-            (dissoc :answer-ir)))
+   (try (vis/gateway-attach-turn-sync! id
+                                       tid
+                                       {:on-event (fn [event]
+                                                    (when-let [chunk (gateway-event->chunk event)]
+                                                      (when on-chunk (on-chunk chunk))))})
         (catch Exception e
           (if (vis/cancellation? e)
-            {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]] :status :cancelled}
-            {:error (or (ex-message e) (str e))})))))
+            {"content" [{"id" (str (java.util.UUID/randomUUID))
+                         "type" "notice"
+                         "code" "turn_cancelled"
+                         "message" "Cancelled by user."}]
+             "status" "cancelled"}
+            {"error" (or (ex-message e) (str e))})))))
 
 (defn dispose!
   "Release the TUI's env handle. Session data stays in

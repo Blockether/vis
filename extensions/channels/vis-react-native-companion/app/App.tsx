@@ -36,6 +36,10 @@ import {
   SessionSoul,
   SuggestRow,
   TurnAttachment,
+  ManagedResource,
+  SettingsGroup,
+  ToggleRow,
+  WorkspaceInfo,
   VisGatewayClient,
   gatewayErrorMessage,
   isGatewayConnectionMessage,
@@ -147,11 +151,32 @@ const imageAtts = (turn: GatewayTurn): TurnAttachment[] =>
       (a.kind === "image" || (a.media_type ?? "").startsWith("image/")),
   );
 
+const contentText = (turn: GatewayTurn): string =>
+  (turn.content ?? [])
+    .map((block) => {
+      switch (block.type) {
+        case "prose":
+          return block.markdown ?? "";
+        case "code":
+          return `\`\`\`${block.language ?? ""}\n${block.text ?? ""}\n\`\`\``;
+        case "reasoning":
+          return block.text ?? "";
+        case "error":
+        case "notice":
+          return block.message ?? "";
+        default:
+          return "";
+      }
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
 const messageText = (turn: GatewayTurn): Message[] => {
   const id = turn.id ?? turn.turn_id ?? Math.random().toString(36);
   const user = turn.request?.trim();
   const atts = imageAtts(turn);
-  const answer = (turn.answer_md ?? turn.answer)?.trim();
+  const answer = contentText(turn);
   const live = !answer && turnLive(turn);
   /* Terminal turn that never produced an answer (failed / interrupted / error):
      show its status quietly instead of dots-forever or a silent hole. */
@@ -318,6 +343,15 @@ function Root() {
   const [showSettings, setShowSettings] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [showModel, setShowModel] = useState(false);
+  const [showEffort, setShowEffort] = useState(false);
+  const [showFs, setShowFs] = useState(false);
+  const [showRes, setShowRes] = useState(false);
+  const [effortRow, setEffortRow] = useState<ToggleRow | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [rootDraft, setRootDraft] = useState("");
+  const [busyFs, setBusyFs] = useState(false);
+  const [resources, setResources] = useState<ManagedResource[]>([]);
+  const [busyRes, setBusyRes] = useState(false);
   const [sessions, setSessions] = useState<SessionSoul[]>([]);
   const [projects, setProjects] = useState<GatewayProject[]>([]);
   const [activeSession, setActiveSession] = useState<SessionSoul | null>(null);
@@ -395,8 +429,7 @@ function Root() {
   );
 
   /* Overlay the running turn's LIVE tool-call cards plus complete prose/thinking
-     snapshots from iteration.completed. Model text is never token-streamed; once
-     the turn settles, the poll's answer_md takes over. */
+     snapshots. Once settled, the poll's canonical content array takes over. */
   const runningId = runningTurn?.id ?? runningTurn?.turn_id;
   const liveTurn = runningId ? live[runningId] : undefined;
   const messages = useMemo(() => {
@@ -406,9 +439,8 @@ function Root() {
       if (runningId && liveTurn && m.id === `${runningId}-vis`) {
         return {
           ...m,
-          /* Running turn: its ordered thinking / prose / op-card blocks pin
-             live; each iteration ADDS to them (nothing is overwritten). The
-             poll's answer_md takes over once the turn settles. */
+          /* Running turn: ordered thinking / prose / op-card blocks pin live;
+             settled canonical content replaces this overlay. */
           blocks: liveTurn.blocks,
           thinking: liveTurn.thinking.trim() || undefined,
           pending: m.pending && !liveTurn.blocks.length,
@@ -1053,6 +1085,138 @@ function Root() {
     !sending &&
     (input.trim().length > 0 || pendingAtts.length > 0);
 
+  /* ── reasoning effort — the global :vis/reasoning-level toggle, the SAME lever
+     the web footer slider and the TUI Ctrl+R drive (per-install, shared across
+     channels). Loaded on connect so the footer chip shows the live level; a pick
+     POSTs /v1/settings {action:"value"}. ── */
+  const effortLevel =
+    typeof effortRow?.value === "string" ? effortRow.value : null;
+  const effortChoices =
+    effortRow?.choices && effortRow.choices.length > 0
+      ? effortRow.choices
+      : ["quick", "balanced", "deep"];
+
+  const refreshEffort = useCallback(async () => {
+    try {
+      const groups: SettingsGroup[] = await client.settingsGroups("all");
+      const row = groups
+        .flatMap((g) => g.toggles)
+        .find((t) => t.id.endsWith("/reasoning-level"));
+      if (row) setEffortRow(row);
+    } catch {
+      /* keep the last-known level; the chip stays usable */
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (connected) void refreshEffort();
+  }, [connected, refreshEffort]);
+
+  const pickEffort = useCallback(
+    async (level: string) => {
+      if (!effortRow) return;
+      try {
+        setEffortRow(await client.settingsMutate(effortRow.id, "value", level));
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [client, effortRow, fail],
+  );
+
+  /* ── filesystem roots — the session's extra allowed directories, the SAME state
+     (and add/remove mutations) the web footer picker + TUI use. `trunk` is the
+     directory path. ── */
+  const roots = workspace?.filesystem_roots ?? [];
+
+  const openFsDialog = useCallback(async () => {
+    setShowFs(true);
+    setRootDraft("");
+    if (!activeSession) return;
+    setBusyFs(true);
+    try {
+      setWorkspace(await client.sessionWorkspace(activeSession.id));
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusyFs(false);
+    }
+  }, [activeSession, client, fail]);
+
+  const addRoot = useCallback(async () => {
+    if (!activeSession || !rootDraft.trim()) return;
+    setBusyFs(true);
+    try {
+      setWorkspace(await client.addRoot(activeSession.id, rootDraft.trim()));
+      setRootDraft("");
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusyFs(false);
+    }
+  }, [activeSession, client, fail, rootDraft]);
+
+  const removeRoot = useCallback(
+    async (path: string) => {
+      if (!activeSession || !path) return;
+      setBusyFs(true);
+      try {
+        setWorkspace(await client.removeRoot(activeSession.id, path));
+      } catch (err) {
+        fail(err);
+      } finally {
+        setBusyFs(false);
+      }
+    },
+    [activeSession, client, fail],
+  );
+
+  /* ── managed resources / backgrounds — shell_bg children + REPLs the agent
+     spawned this session; stop/restart go through the gateway's single
+     session-scoped path. ── */
+  const refreshResources = useCallback(async () => {
+    if (!activeSession) return;
+    setBusyRes(true);
+    try {
+      setResources(await client.listResources(activeSession.id));
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusyRes(false);
+    }
+  }, [activeSession, client, fail]);
+
+  const openResDialog = useCallback(() => {
+    setShowRes(true);
+    void refreshResources();
+  }, [refreshResources]);
+
+  const stopResource = useCallback(
+    async (rid: string) => {
+      if (!activeSession) return;
+      try {
+        await client.stopResource(activeSession.id, rid);
+        await refreshResources();
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [activeSession, client, fail, refreshResources],
+  );
+
+  const restartResource = useCallback(
+    async (rid: string) => {
+      if (!activeSession) return;
+      try {
+        await client.restartResource(activeSession.id, rid);
+        await refreshResources();
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [activeSession, client, fail, refreshResources],
+  );
+
   return (
     <View style={styles.safe}>
       <SafeAreaView style={styles.flex} edges={["top", "bottom"]}>
@@ -1291,6 +1455,37 @@ function Root() {
                 {modelLabel(model)}
               </Text>
             </Pressable>
+            {connected ? (
+              <>
+                <Pressable
+                  onPress={() => {
+                    setShowEffort(true);
+                    void refreshEffort();
+                  }}
+                  style={styles.footChip}
+                  hitSlop={6}
+                >
+                  <Feather name="sliders" size={10} color={c.dim} />
+                  <Text numberOfLines={1} style={styles.footChipText}>
+                    {effortLevel ?? "effort"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void openFsDialog()}
+                  style={styles.footChip}
+                  hitSlop={6}
+                >
+                  <Feather name="folder" size={10} color={c.dim} />
+                </Pressable>
+                <Pressable
+                  onPress={openResDialog}
+                  style={styles.footChip}
+                  hitSlop={6}
+                >
+                  <Feather name="box" size={10} color={c.dim} />
+                </Pressable>
+              </>
+            ) : null}
             {ctxPct(ctxUtil) != null ? (
               <Text style={styles.ctxChip}>{`ctx ${ctxPct(ctxUtil)}%`}</Text>
             ) : null}
@@ -1458,6 +1653,153 @@ function Root() {
           tone="amber"
           disabled={!renameDraft.trim()}
           onPress={() => void applyRename()}
+        />
+      </DialogModal>
+
+      {/* ── reasoning effort ───────────────────────────── */}
+      <DialogModal
+        visible={showEffort}
+        title="Reasoning effort"
+        onClose={() => setShowEffort(false)}
+      >
+        <Text style={styles.activeModel}>
+          How hard reasoning-capable models think before answering. Applies to
+          the next turn and is shared across every channel.
+        </Text>
+        <View style={styles.modelChips}>
+          {effortChoices.map((lvl) => {
+            const on = effortLevel === lvl;
+            return (
+              <Pressable
+                key={lvl}
+                onPress={() => void pickEffort(lvl)}
+                style={[styles.modelChip, on && styles.modelChipOn]}
+              >
+                {on ? <Feather name="check" size={11} color="#FFFFFF" /> : null}
+                <Text
+                  style={[styles.modelChipText, on && styles.modelChipTextOn]}
+                >
+                  {lvl}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </DialogModal>
+
+      {/* ── filesystem access ──────────────────────────── */}
+      <DialogModal
+        visible={showFs}
+        title="Filesystem access"
+        onClose={() => setShowFs(false)}
+      >
+        <Text style={styles.activeModel}>
+          Directories this session may read and write, beyond its root.
+        </Text>
+        {workspace?.root ? (
+          <View style={styles.fsRow}>
+            <Feather name="home" size={12} color={c.dim} />
+            <Text numberOfLines={1} style={styles.fsPath}>
+              {workspace.root}
+            </Text>
+            <Text style={styles.fsTag}>root</Text>
+          </View>
+        ) : null}
+        {roots.length === 0 ? (
+          <Text style={styles.emptyBody}>No extra directories yet.</Text>
+        ) : (
+          roots.map((r) => {
+            const path = r.trunk ?? r.clone ?? "";
+            return (
+              <View key={path} style={styles.fsRow}>
+                <Feather name="folder" size={12} color={c.dim} />
+                <Text numberOfLines={1} style={styles.fsPath}>
+                  {path}
+                </Text>
+                <Pressable
+                  onPress={() => void removeRoot(path)}
+                  hitSlop={8}
+                  disabled={busyFs}
+                >
+                  <Feather name="x" size={14} color={c.dim} />
+                </Pressable>
+              </View>
+            );
+          })
+        )}
+        <TextInput
+          value={rootDraft}
+          onChangeText={setRootDraft}
+          autoCorrect={false}
+          autoCapitalize="none"
+          placeholder="/absolute/path/to/allow"
+          placeholderTextColor={c.tsep}
+          style={styles.field}
+          onSubmitEditing={() => void addRoot()}
+        />
+        <ActionBtn
+          label={busyFs ? "Working\u2026" : "Allow directory"}
+          tone="amber"
+          disabled={busyFs || !rootDraft.trim()}
+          onPress={() => void addRoot()}
+        />
+      </DialogModal>
+
+      {/* ── backgrounds / managed resources ───────────── */}
+      <DialogModal
+        visible={showRes}
+        title="Backgrounds"
+        onClose={() => setShowRes(false)}
+      >
+        <Text style={styles.activeModel}>
+          Live background processes the agent started this session — shell jobs
+          and managed REPLs.
+        </Text>
+        {resources.length === 0 ? (
+          <Text style={styles.emptyBody}>
+            {busyRes ? "Loading\u2026" : "No background processes running."}
+          </Text>
+        ) : (
+          resources.map((r) => (
+            <View key={r.id} style={styles.resRow}>
+              <View style={styles.resMain}>
+                <Text numberOfLines={1} style={styles.resName}>
+                  {r.label ?? r.id}
+                </Text>
+                <Text numberOfLines={1} style={styles.resMeta}>
+                  {[r.kind, r.status, r.detail]
+                    .filter(Boolean)
+                    .join(" \u00b7 ")}
+                </Text>
+              </View>
+              <View style={styles.resBtns}>
+                {r.can_restart ? (
+                  <Pressable
+                    onPress={() => void restartResource(r.id)}
+                    hitSlop={8}
+                    style={styles.resBtn}
+                  >
+                    <Feather name="rotate-ccw" size={14} color={c.dim} />
+                  </Pressable>
+                ) : null}
+                {r.can_stop ? (
+                  <Pressable
+                    onPress={() => void stopResource(r.id)}
+                    hitSlop={8}
+                    style={styles.resBtn}
+                  >
+                    <Feather name="square" size={13} color={c.err} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ))
+        )}
+        <ActionBtn
+          label={busyRes ? "Refreshing\u2026" : "Refresh"}
+          tone="ghost"
+          disabled={busyRes}
+          onPress={() => void refreshResources()}
         />
       </DialogModal>
 
@@ -1636,7 +1978,7 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 4,
   },
@@ -1654,7 +1996,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    maxWidth: 230,
+    maxWidth: 140,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: c.lineSoft,
     borderRadius: 11,
@@ -1722,5 +2064,51 @@ const styles = StyleSheet.create({
   modelChipOn: { backgroundColor: c.accent, borderColor: c.accent },
   modelChipText: { fontFamily: mono, fontSize: 12, color: c.ink },
   modelChipTextOn: { color: "#FFFFFF", fontWeight: "700" },
+  footChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: c.lineSoft,
+    borderRadius: 4,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  footChipText: { fontFamily: mono, fontSize: 10, color: c.dim, maxWidth: 66 },
+  fsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 7,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.lineSoft,
+  },
+  fsPath: { flex: 1, fontFamily: mono, fontSize: 11, color: c.ink },
+  fsTag: {
+    fontFamily: mono,
+    fontSize: 9,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    color: c.dim,
+  },
+  resRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.lineSoft,
+  },
+  resMain: { flex: 1, gap: 2 },
+  resName: { fontFamily: mono, fontSize: 12, color: c.ink },
+  resMeta: { fontFamily: mono, fontSize: 10, color: c.dim },
+  resBtns: { flexDirection: "row", alignItems: "center", gap: 10 },
+  resBtn: {
+    width: 30,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   errorText: { color: c.ink, fontSize: 13, lineHeight: 18 },
 });

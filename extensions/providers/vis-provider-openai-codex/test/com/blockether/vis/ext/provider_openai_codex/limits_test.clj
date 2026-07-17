@@ -63,6 +63,17 @@
                      0)]
         (expect (= 75.0 (get-in report [:limits 0 :remaining])))
         (expect (= 50.0 (get-in report [:limits 1 :remaining])))))
+  (it "keeps a visible 5h row when OpenAI temporarily omits it"
+      (let [report (codex/usage->dynamic-limits {:rate_limit {:primary_window {:used_percent 19
+                                                                               :limit_window_seconds
+                                                                               (* 7 24 60 60)}}}
+                                                {:id "gpt-5.3-codex"}
+                                                0)]
+        (expect (= [:codex-5h :codex-7d] (mapv :id (:limits report))))
+        (expect (= :unknown (get-in report [:limits 0 :precision])))
+        (expect (= "OpenAI Codex did not report this quota window."
+                   (get-in report [:limits 0 :note])))
+        (expect (= 81.0 (get-in report [:limits 1 :remaining])))))
   (it "reports a note when no matching bucket exists"
       (let [report (codex/usage->dynamic-limits {} {:id "gpt-5.3-codex-spark"} 0)]
         (expect (= [] (:limits report)))

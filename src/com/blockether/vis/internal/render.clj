@@ -1,52 +1,13 @@
 (ns com.blockether.vis.internal.render
-  "Vis answer IR — Hiccup-EDN, MDAST-equivalent, with strict canonical
-   form post-`->ast`.
+  "Transient Markdown parsing and renderer projections.
 
-   Public surface:
-     (->ast input)                 ; soft-normalize any input → [:ir & blocks]
-     (render input flavor opts)    ; one of :html :markdown :plain
-     (extract-code ast)            ; for vis --code
-     (extract-text ast)            ; for voice TTS
-     (session->markdown db session-ref opts?)
+   Canonical answers are role-labelled, string-keyed content blocks from
+   `com.blockether.vis.internal.content`. Parsed Markdown trees are created only
+   inside renderers and are never transported or persisted.
 
-   Tags:
-     ROOT             :ir
-     BLOCKS    (11)   :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li
-                      :quote :table :tr :th :td
-     INLINES   (11)   :span{:preserve-ws? :nowrap?} :br
-                      :strong :em :c :a{:href}
-                      :img{:src :alt} :kbd :mark :sup :sub
-
-   Disclosure/collapsible answer blocks are intentionally unsupported:
-   no `:details`, no `:summary`, no HTML `<details>/<summary>` in answer IR.
-
-   ─── Canonical form (invariant after `->ast`) ───────────────────────────────
-
-   1. Every vector node has its attrs map at index 1 ({} when absent).
-   2. `:ir` children are exclusively block nodes.
-   3. Text lives ONLY in:
-        - `:span` body (single string, no '\\n').
-        - raw bodies of `:code`, `:c`, `:kbd` (single string, ws preserved).
-      Anywhere else, vector children only — no bare strings in the tree.
-   4. Hard line breaks are explicit `[:br {}]` nodes.
-   5. Soft breaks (any '\\n' inside a non-preserve-ws string) are collapsed
-      to a single space during canonicalization. This is the structural fix
-      for LLM output that emits cosmetic mid-paragraph indentation
-      (e.g. `\" \\n   continuation\"`).
-   6. `:li` children are either all blocks OR a single `:p` wrapping the
-      inline run.
-   7. `:ul`/`:ol` children are exclusively `:li`.
-   8. `:table` children are `:tr`; `:tr` children are `:th`/`:td`;
-      `:th`/`:td` children are inline.
-
-   ─── Coercion rules at the boundary ─────────────────────────────────────────
-
-   `->ast` is total and pure. Accepted inputs:
-     [:ir ...]                    — re-canonicalized (idempotent)
-     [:tag ...] (Hiccup, non-:ir) — wrapped in [:ir <node>]
-     \"text\"                       — wrapped in [:ir [:p [:span text]]]
-     sequential / vector of mixed — element-by-element coercion
-     anything else                — surfaced as [:code {:lang \"edn\"} pr-str]"
+   `markdown->ast` parses prose for renderer-local layout. `render`,
+   `extract-code`, `extract-text`, and `session->markdown` are disposable
+   projections; none of their intermediate trees are canonical message data."
   (:require [clojure.string :as str]
             [clojure+.walk :as cwalk]
             [com.blockether.ruff :as ruff]
@@ -172,13 +133,13 @@
            false))))
 
 (defn canonical?
-  "Cheap structural check: `x` is already a canonical `[:ir & blocks]`
+  "Cheap structural check: `x` is already a canonical `[:ast & blocks]`
    AST. When true, `(->ast x)` is the identity (returns the same
    object), so downstream caches keyed on `System/identityHashCode`
    hit cleanly across repeated render passes."
   [x]
   (and (vector? x)
-       (= :ir (first x))
+       (= :ast (first x))
        (>= (count x) 2)
        (map? (nth x 1))
        (every? block-canonical? (drop 2 x))))
@@ -476,8 +437,9 @@
       ;; should not happen — caller dispatches by block?/inline?
       (into [tag attrs] (canon-block-children children)))))
 
+
 (defn ->ast
-  "Soft-normalize any answer-input value into canonical [:ir & blocks].
+  "Soft-normalize any answer-input value into canonical [:ast & blocks].
    Pure, total, idempotent.
 
    Identity-preserving: when the input already satisfies the canonical
@@ -489,7 +451,7 @@
 
    Before canonicalization, Hiccup child positions are walked with
    `clojure+.walk` semantics and non-vector sequential values (notably
-   lazy seqs from `(map ...)` inside answer IR) are safely realized to
+   lazy seqs from `(map ...)` inside renderer input) are safely realized to
    at most 100 items, then replaced with an explicit `… many more`
    marker when truncated. This avoids persisting Java LazySeq identity
    strings and avoids hanging on infinite seqs.
@@ -540,8 +502,8 @@
         (let [v (sanitize v)]
           (if (canonical? v)
             v
-            (let [raw-children (cond (and (vector? v) (= :ir (first v))) (let [v (ensure-attrs v)]
-                                                                           (drop 2 v))
+            (let [raw-children (cond (and (vector? v) (= :ast (first v))) (let [v (ensure-attrs v)]
+                                                                            (drop 2 v))
                                      (string? v) [v]
                                      (and (vector? v) (keyword? (first v))) [v]
                                      (sequential? v) (seq v)
@@ -553,12 +515,12 @@
                                         :else [:code {:lang "edn"} (pr-str x)]))
                                 raw-children)]
 
-              (into [:ir {}] (canon-blocks-strict (filter some? coerced))))))))))
+              (into [:ast {}] (canon-blocks-strict (filter some? coerced))))))))))
 
-(defn ir? "True when x is a canonical [:ir ...] AST." [x] (and (vector? x) (= :ir (first x))))
+(defn ast? "True when x is a canonical [:ast ...] AST." [x] (and (vector? x) (= :ast (first x))))
 
 ;; =============================================================================
-;; markdown->ir — commonmark-java markdown parser → canonical IR
+;; markdown->ast — commonmark-java parser → transient renderer tree
 ;; =============================================================================
 ;;
 ;; Used at the boundaries that DON'T have IR upstream:
@@ -596,7 +558,7 @@
    and thinking. User-typed / pasted input is line-oriented (an input
    box, not a prose document): a literal newline is intent, so we lift
    it to `[:br]` to preserve the pasted shape (code, line-numbered
-   dumps, tables). Bound to `:hard` via `(markdown->ir text {:soft-break
+   dumps, tables). Bound to `:hard` via `(markdown->ast text {:soft-break
    :hard})`. Default `:space` keeps every existing caller unchanged."
   :space)
 
@@ -710,7 +672,7 @@
         (instance? ThematicBreak n) [[:hr {}]]
         (instance? TableBlock n) [(cm->table n)]
         (instance? HtmlBlock n)
-        ;; Raw HTML is not answer IR structure. Keep non-comment HTML visible
+        ;; Raw HTML is not renderer structure. Keep non-comment HTML visible
         ;; as text; notably, <details>/<summary> does not become a collapsible
         ;; widget. HTML comments (`<!-- -->`) are invisible authoring/control
         ;; markers, so they should not paint in the bubble.
@@ -762,8 +724,8 @@
           (and (pos? (count s)) (= \- (.charAt s 0))) :del
           :else :ctx)))
 
-(defn markdown->ir
-  "Parse a Markdown string into canonical answer-IR.
+(defn markdown->ast
+  "Parse a Markdown string into canonical transient Markdown tree.
    Idempotent: when the input is already canonical IR, returns it
    unchanged (`identical?` preserved — cache-friendly).
 
@@ -773,8 +735,8 @@
      - thinking text from the model
      - user-typed messages from the TUI input box
 
-   Returns canonical `[:ir & blocks]` directly (no further `->ast`
-   round-trip needed). Empty / nil input yields `[:ir {}]`.
+   Returns canonical `[:ast & blocks]` directly (no further `->ast`
+   round-trip needed). Empty / nil input yields `[:ast {}]`.
 
    Implementation: commonmark-java parser + GFM tables / strikethrough
    extensions, then a faithful Node→IR walker. Soft line breaks collapse
@@ -784,17 +746,17 @@
    lifts every bare newline to `[:br]` instead of a space — used for
    line-oriented user/pasted input so the rendered bubble keeps the
    exact line structure the user typed. Default keeps prose semantics."
-  ([text] (markdown->ir text nil))
+  ([text] (markdown->ast text nil))
   ([text {:keys [soft-break]}]
    (cond (canonical? text) text ; identity-preserving fast path
-         (or (nil? text) (= "" text)) [:ir {}]
+         (or (nil? text) (= "" text)) [:ast {}]
          (string? text) (binding [*soft-break* (or soft-break *soft-break*)]
                           (let [prepared
                                 (if (= :hard *soft-break*) text (ensure-table-blank-lines text))
                                 doc (.parse md-parser ^String prepared)
                                 blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
 
-                            (->ast (into [:ir {}] blocks))))
+                            (->ast (into [:ast {}] blocks))))
          :else
          ;; non-string, non-canonical — best-effort coerce via ->ast
          (->ast text))))
@@ -833,8 +795,8 @@
       (str/replace #"([.!?\u2026][\"')\]]?)\r?\n(?=\S)" "$1\n\n")
       str/trim))
 
-(defn reasoning->ir
-  "Reasoning / thinking text -> canonical answer-IR. The SINGLE shared entry
+(defn reasoning->ast
+  "Reasoning / thinking text -> canonical transient Markdown tree. The SINGLE shared entry
    point for rendering a model's thinking trace (TUI thinking bubble AND the web
    thinking card), so both channels paint the SAME structure. Reasoning is
    line-oriented (a trace, not flowing prose): normalize via `normalize-reasoning`
@@ -843,7 +805,7 @@
    (the TUI `**heading** body` bug); with it the heading keeps its own line,
    matching the web ticker's `marked({:breaks true})`."
   [text]
-  (markdown->ir (normalize-reasoning text) {:soft-break :hard}))
+  (markdown->ast (normalize-reasoning text) {:soft-break :hard}))
 
 ;; =============================================================================
 ;; Walker helpers (canonical inputs)
@@ -994,7 +956,7 @@
               (node-children node)]
 
           (case tag
-            :ir
+            :ast
             (render-html-children children opts)
 
             :p
@@ -1201,7 +1163,7 @@
               (node-children node)]
 
           (case tag
-            :ir
+            :ast
             (render-md-children children opts)
 
             :p
@@ -1370,7 +1332,7 @@
               (node-children node)]
 
           (case tag
-            :ir
+            :ast
             (render-plain-children children opts)
 
             :p
@@ -1458,29 +1420,11 @@
 ;; Public render entry
 ;; =============================================================================
 
-(defn answer->ir
-  "Lift a final-answer value into canonical IR.
-
-   The Markdown-answer pipeline produces exactly two final-answer shapes:
-     - `{:answer markdown}`                                  - plain-prose answer
-     - `{:vis/answer-mode :needs-input :answer/text string}` - needs-input gate
-
-   Returns canonical `[:ir & blocks]`. nil yields `[:ir {}]`.
-   Anything outside the two canonical shapes is an upstream bug."
-  [answer]
-  (cond (nil? answer) [:ir {}]
-        (and (map? answer) (string? (:answer answer))) (markdown->ir (:answer answer))
-        (and (map? answer) (string? (:answer/text answer))) (markdown->ir (:answer/text answer))
-        :else (throw (ex-info "answer->ir requires {:answer markdown} or a needs-input map"
-                              {:type :vis/invalid-answer
-                               :got-type (some-> answer
-                                                 class
-                                                 .getName)}))))
 
 (defn render
   "Render any answer input into a flavor.
 
-   Input:  string | Hiccup vector | [:ir ...] AST | sequential of mixed
+   Input:  string | Hiccup vector | [:ast ...] AST | sequential of mixed
    Flavor: :html | :markdown | :plain
    Opts:   {:context    #{:answer :thinking :status :error}
             :max-length int  - hard cap; truncate at paragraph boundary}"
@@ -1546,15 +1490,15 @@
    IR-side rendering: all prose/list/quote/table text collapses to spaces;
    `:code`/`:c` bodies are included verbatim (often the highest-signal text
    for search).
-   Strings are lifted via `markdown->ir` so search hits the same shape
+   Strings are parsed via `markdown->ast` so search sees the rendered shape
    regardless of upstream contract.
 
-   Idempotent on canonical input via the `markdown->ir` shortcut."
+   Idempotent on parsed input via the `markdown->ast` shortcut."
   ^String [v]
   (when (some? v)
-    (let [ir
+    (let [ast
           (cond (canonical? v) v
-                (string? v) (markdown->ir v)
+                (string? v) (markdown->ast v)
                 :else (->ast v))
 
           out
@@ -1567,7 +1511,7 @@
                       (= :img (first n)) nil
                       :else (doseq [c (drop 2 n)]
                               (walk c))))]
-        (walk ir))
+        (walk ast))
       ;; collapse any whitespace runs introduced by joining spans /
       ;; block boundaries; FT search wants stable, single-spaced text.
       (-> (str/join " " @out)
@@ -1626,7 +1570,7 @@
           :markdown
           md
 
-          (render (markdown->ir md) (:flavor opts)))]
+          (render (markdown->ast md) (:flavor opts)))]
 
     (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
 

@@ -6,17 +6,6 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe
-  answer->ir-safe-test
-  "The --raw/CLI render must NEVER die on an unexpected answer shape (a
-   force-finalized answer, a provider-error `[:ir …]` fallback, a bare string).
-   `answer->ir-safe` coerces any shape into something `render/render` accepts."
-  (let [safe (deref #'main/answer->ir-safe)]
-    (it "renders every answer shape without throwing"
-        (doseq [[a expected] [[{:answer "hi"} "hi"] [nil ""] ["bare string" "bare string"]
-                              [[:ir {} [:p {} "x"]] "x"] [{:weird 1} "{:weird 1}"]
-                              [{:vis/answer-mode :needs-input :answer/text "q"} "q"]]]
-          (expect (= expected (render/render (safe a) :plain)))))))
 
 (defdescribe
   root-help-test

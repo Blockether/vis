@@ -10,8 +10,10 @@
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-engine :as ctx-engine]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
@@ -553,37 +555,22 @@
   (and (map? v) (string? (:answer v))))
 
 (defn answer-markdown
-  "Extract the raw Markdown source from a final-answer value.
-
-   Canonical shapes:
-   - `{:answer string}`           -> the string (the plain prose answer)
-   - `{:vis/answer-mode :needs-input :answer/text string}` -> `:answer/text`
-   - `[:ir {…} …]` canonical IR AST -> rendered to flat Markdown. loop.clj
-     hands back an IR AST (NOT a Markdown map) for the provider-error /
-     fatal-iteration fallbacks. The LIVE wire carries it as `:answer_ir`,
-     but `session_turn_state.answer_markdown` is the only persisted answer
-     channel — so without rendering it here a failed turn persisted a NULL
-     answer and reopened as a bare \"(error)\" with the real message lost.
-
-   Returns nil for anything else."
+  "Disposable text projection of a final answer. Canonical typed content remains
+   structured; this projection exists only for legacy text-only model context and
+   will not be transported as a second answer shape."
   [answer]
   (let [v (:result answer answer)]
     (cond (needs-input-answer? v) (:answer/text v)
           (markdown-answer? v) (:answer v)
-          (and (vector? v) (= :ir (first v))) (some-> (render/render v :markdown)
-                                                      str/trim
-                                                      not-empty)
+          (and (vector? v) (every? content/block-valid? v))
+          (not-empty (str/trim (content/text-projection v)))
           :else nil)))
 
 (defn- turn-error-data
-  "Structured provider-error map carried on a fallback error-answer IR
-   (`:vis/provider-error-data` on the IR root), for the first-class
-   `session_turn_state.error` column. nil for a normal answer — an error is not
-   an answer, so a successful turn stores no error."
+  "First canonical error block from a final answer, or nil."
   [answer]
   (let [v (:result answer answer)]
-    (when (and (vector? v) (= :ir (first v)) (map? (second v)))
-      (:vis/provider-error-data (second v)))))
+    (when (vector? v) (some #(when (= "error" (get % "type")) %) v))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
@@ -1996,17 +1983,12 @@
 
 (defn- ask-result->api-usage
   [{:keys [tokens]}]
-  (let [reasoning (token-number tokens [:reasoning])]
-    (cond-> {:prompt_tokens (long (or (token-number tokens [:input]) 0))
-             :completion_tokens (long (or (token-number tokens [:output]) 0))
-             :prompt_tokens_details
-             {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached])
-                                       0))
-              :cache_creation_tokens (long (or (token-number tokens
-                                                             [:cache-created :cache-created-input
-                                                              :cache-creation :cache-write
-                                                              :cache_creation])
-                                               0))}}
+  (let [reasoning (token-number tokens ["reasoning"])]
+    (cond-> {:prompt_tokens (long (or (token-number tokens ["input"]) 0))
+             :completion_tokens (long (or (token-number tokens ["output"]) 0))
+             :prompt_tokens_details {:cached_tokens (long (or (token-number tokens ["cached"]) 0))
+                                     :cache_creation_tokens
+                                     (long (or (token-number tokens ["cache_created"]) 0))}}
       (some? reasoning)
       (assoc :completion_tokens_details {:reasoning_tokens (long reasoning)}))))
 
@@ -4337,7 +4319,7 @@
         ;; veto is an extension `:turn.answer/validate` hook via
         ;; `final-answer-gate-error`.
         ;;
-        ;; `value` is already canonical `[:ir & nodes]` (or a needs-input map):
+        ;; `value` is already canonical `[:ast & nodes]` (or a needs-input map):
         ;; the engine boundary ran `render/->ast`. Persist the IR as-is; channels
         ;; render at their boundary via `:channel/messages-renderer-fn`.
         ;; `resolved-model` is a MAP `{:name :provider :reasoning?}` — surface
@@ -5266,17 +5248,17 @@
 
 (do (defn- status->id [status] (when status (keyword "rlm.status" (name status))))
     (def ^:private cost-map-keys
-      [:input-cost :input-uncached-cost :input-cached-cost :input-cache-write-cost :cache-read-cost
-       :cache-write-cost :output-cost :total-cost])
+      ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost"
+       "cache_read_cost" "cache_write_cost" "output_cost" "total_cost"])
     (defn- estimate-token-cost
       "Estimate cost from provider usage while preserving cached/non-cached input split."
       ([model input-tokens output-tokens] (estimate-token-cost model input-tokens output-tokens {}))
       ([model input-tokens output-tokens opts]
-       (try (svar-router/estimate-cost model
-                                       input-tokens
-                                       output-tokens
-                                       svar-router/MODEL_PRICING
-                                       (or opts {}))
+       (try (wire/canonical (svar-router/estimate-cost model
+                                                       input-tokens
+                                                       output-tokens
+                                                       svar-router/MODEL_PRICING
+                                                       (or opts {})))
             (catch Throwable _ nil))))
     (defn- merge-cost-maps
       [acc extra-cost]
@@ -5614,9 +5596,9 @@
                                                                     0))
 
                                                           ;; svar's `estimate-cost` returns a MAP
-                                                          ;; `{:input-cost :output-cost :total-cost
-                                                          ;; :model :pricing}`, NOT a bare number.
-                                                          ;; Pull `:total-cost` out; nil pricing
+                                                          ;; keyed map; `wire/canonical` re-keys it to
+                                                          ;; canonical snake strings at this boundary.
+                                                          ;; Pull `"total_cost"` out; nil pricing
                                                           ;; (e.g. unknown model) leaves the
                                                           ;; column NULL on disk, which the read
                                                           ;; side defaults to 0.0.
@@ -5638,19 +5620,19 @@
 
                                                           total
                                                           (when (map? cost-map)
-                                                            (:total-cost cost-map))]
+                                                            (get cost-map "total_cost"))]
 
                                                       (when (map? cost-map)
                                                         (swap! accrued-cost-atom #(merge-cost-maps
                                                                                     (or % {})
                                                                                     cost-map)))
-                                                      {:tokens (cond-> {:input in
-                                                                        :output out
-                                                                        :cached cach
-                                                                        :cache-created
+                                                      {:tokens (cond-> {"input" in
+                                                                        "output" out
+                                                                        "cached" cach
+                                                                        "cache_created"
                                                                         cache-created}
                                                                  (some? reas)
-                                                                 (assoc :reasoning (long reas)))
+                                                                 (assoc "reasoning" (long reas)))
                                                        :cost-usd (when (number? total)
                                                                    (double total))}))))
 
@@ -5677,13 +5659,13 @@
                                          {:cached-tokens cached-tokens
                                           :cache-creation-tokens cache-creation-tokens}))]
 
-            {:tokens (cond-> {:input input-tokens
-                              :output output-tokens
-                              :cached cached-tokens
-                              :cache-created cache-creation-tokens
-                              :total total-tokens}
+            {:tokens (cond-> {"input" input-tokens
+                              "output" output-tokens
+                              "cached" cached-tokens
+                              "cache_created" cache-creation-tokens
+                              "total" total-tokens}
                        reasoning-reported?
-                       (assoc :reasoning reasoning-tokens))
+                       (assoc "reasoning" reasoning-tokens))
              :cost cost}))
 
         ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
@@ -5705,7 +5687,7 @@
 
         iteration-cache-created-tokens
         (fn [token-cost]
-          (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
+          (let [cache-created (long (or (get-in token-cost [:tokens "cache_created"]) 0))]
             (when (pos? cache-created) cache-created)))]
 
     ;; -----------------------------------------------------------------
@@ -6300,14 +6282,12 @@
                         (let
                           [trace' (conj trace trace-entry)
                            fallback
-                           (or
-                             (some-> (:error trace-entry)
-                                     perr/provider-error-ir)
-                             (render/->ast
-                               [:ir {} [:h {:level 2} [:span {} "Provider unavailable"]]
-                                [:p {}
-                                 [:span {}
-                                  "The model provider failed before Vis received a usable response."]]]))
+                           (or (some-> (:error trace-entry)
+                                       perr/provider-error-content)
+                               [(content/error
+                                  "provider_unavailable"
+                                  "The model provider failed before Vis received a usable response."
+                                  true)])
                            result (merge {:answer fallback
                                           :status :error
                                           :status-id (status->id :error)
@@ -6755,50 +6735,33 @@
       (:workspace-atom env)
       (assoc :workspace-atom (:workspace-atom env)))))
 
-(defn- slash-body->ir
-  "Coerce a slash `:slash/body` value to canonical IR.
-   - nil          -> nil (no body)
-   - IR vector    -> normalized through render/->ast (identity-fast-path)
-   - Hiccup vec   -> rebuilt as IR via render/->ast
-   - String       -> parsed as Markdown via render/markdown->ir
-   - anything else -> rendered as the printable form (defensive)"
+(defn- slash-body->markdown
+  "Project a slash body to Markdown without constructing renderer IR."
   [body]
   (cond (nil? body) nil
-        (render/ir? body) (render/->ast body)
-        (and (vector? body) (keyword? (first body))) (render/->ast body)
-        (string? body) (render/markdown->ir body)
-        :else (render/markdown->ir (pr-str body))))
+        (string? body) body
+        (and (vector? body) (every? content/block-valid? body)) (content/text-projection body)
+        :else (pr-str body)))
 
-(defn- ir->markdown
-  "Render IR back to a flat Markdown string for the persisted
-   `answer_markdown` column. nil round-trips as nil."
-  [ir]
-  (when ir (render/render ir :markdown)))
 
 (defn- slash-result->answer-markdown
-  "Build the persisted `answer_markdown` for a slash turn from the
-   dispatch envelope. The body in `:slash/result` is IR-or-string;
-   we coerce to IR, render to Markdown, and prefix the title.
-   Channels display the IR directly; persistence stays plain Markdown
-   for transcript export / re-render."
+  "Build the prose Markdown carried by a slash result's canonical prose block."
   [{:keys [result error reason]}]
   (cond result (let [title
                      (or (:slash/title result) "Slash handled")
 
-                     ir
-                     (slash-body->ir (:slash/body result))
-
                      body
-                     (some-> ir
-                             ir->markdown
+                     (some-> (:slash/body result)
+                             slash-body->markdown
                              str/trim
                              not-empty)]
 
                  (cond-> (str "**" title "**")
                    body
                    (str "\n\n" body)))
-        error (str "**Slash error** (" (name (or reason :error)) ")\n\n" error)
-        :else "_slash handled_"))
+        error (str "**Slash failed**\n\n" error)
+        reason (str "**Slash unavailable**\n\n" reason)
+        :else "**Slash handled**"))
 
 (defn- slash-result->wire
   "STRINGS-ONLY view of a slash result for the form envelope `:result`. That
@@ -6898,7 +6861,7 @@
                {:level :warn :id ::slash-iter-persist-failed :data {:error (ex-message t)}})))
       (persistance/db-update-session-turn! db-info
                                            turn-id
-                                           {:answer-markdown answer-md
+                                           {:content [(content/prose answer-md)]
                                             :iteration-count 1
                                             :duration-ms 0
                                             :status :success
@@ -6993,14 +6956,7 @@
         _
         (persistance/db-update-session-turn! (:db-info env)
                                              session-turn-id
-                                             {;; The persisted answer is the raw Markdown source the
-                                              ;; model replied with (its plain prose answer). Channels
-                                              ;; parse the Markdown into IR at render time via
-                                              ;; `render/markdown->ir`; the database stays human-
-                                              ;; readable and round-trips byte-for-byte through copy /
-                                              ;; export / transcript.
-                                              :answer-markdown (when-let [a (:answer result)]
-                                                                 (answer-markdown a))
+                                             {:content (content/answer-content (:answer result))
                                               :iteration-count (:iteration-count result)
                                               :duration-ms (:duration-ms result)
                                               :status (or (:status result) :success)
@@ -7221,7 +7177,7 @@
            (tel/log! {:level :warn :id ::bang-iter-persist-failed :data {:error (ex-message t)}})))
     (persistance/db-update-session-turn! db-info
                                          turn-id
-                                         {:answer-markdown answer-md
+                                         {:content [(content/prose answer-md)]
                                           :iteration-count 1
                                           :duration-ms (- t1 t0)
                                           :status :success
@@ -7652,8 +7608,8 @@
                                        (merge-with +
                                                    acc
                                                    (select-keys extra-tokens
-                                                                [:input :output :reasoning :cached
-                                                                 :total])))))
+                                                                ["input" "output" "reasoning"
+                                                                 "cached" "total"])))))
           (when extra-cost
             (swap! total-cost-atom (fn [acc]
                                      (merge-cost-maps acc extra-cost)))))]
@@ -7685,11 +7641,12 @@
 
         cost-with-model
         (cond-> @total-cost-atom
-          (and root-model (not (:model @total-cost-atom)))
-          (assoc :model (str root-model))
+          (and root-model (not (get @total-cost-atom "model")))
+          (assoc "model" (str root-model))
 
-          (and root-provider (not (:provider @total-cost-atom)))
-          (assoc :provider root-provider))]
+          (and root-provider (not (get @total-cost-atom "provider")))
+          (assoc "provider"
+            (if (keyword? root-provider) (name root-provider) (str root-provider))))]
 
     (if status
       ;; failure path - surface the fallback answer (built by the loop for
@@ -7702,7 +7659,8 @@
           (let [fallback-answer (:result answer answer)]
             (try (persistance/db-update-session-turn! db-info
                                                       session-turn-id
-                                                      {:answer fallback-answer
+                                                      {:content (content/answer-content
+                                                                  fallback-answer)
                                                        ;; First-class structured error for a failed turn.
                                                        :error (turn-error-data fallback-answer)
                                                        :iteration-count iteration-count
@@ -7732,10 +7690,10 @@
                       0
                       {:duration-ms duration-ms
                        :iteration-count iteration-count
-                       :cost (str (:total-cost cost-with-model))})
+                       :cost (str (get cost-with-model "total_cost"))})
           (try (persistance/db-update-session-turn! db-info
                                                     session-turn-id
-                                                    {:answer answer
+                                                    {:content (content/answer-content answer)
                                                      :iteration-count iteration-count
                                                      :duration-ms duration-ms
                                                      :status :success
@@ -7796,8 +7754,8 @@
                        ...]}
      - :iteration-count - Number of iterations used.
      - :duration-ms - Turn duration in milliseconds.
-     - :tokens - Token usage map {:input N :output N :total N}.
-     - :cost - Cost map {:input-cost N :output-cost N :total-cost N}.
+     - :tokens - Token usage map {\"input\" N \"output\" N \"total\" N} (canonical string keys).
+     - :cost - Cost map {\"input_cost\" N \"output_cost\" N \"total_cost\" N} (canonical string keys).
      - :confidence - Confidence level (:high/:medium/:low) from final iteration.
       - :reasoning - String summary of how the answer was derived (from LLM's FINAL call).
       - :status - Only present on failure (`:error` or `:cancelled`)."
@@ -9369,8 +9327,8 @@
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
 (defn projects
-  "List projects. `opts`: :owner-id (default \"local\"), :channel
-   (keyword | :all/nil), :include-archived?. Each carries a live :session-count."
+  "List projects (cross-channel). `opts`: :owner-id (default \"local\"),
+   :include-archived?. Each carries a live :session-count."
   ([] (projects {}))
   ([opts] (persistance/db-list-projects (db-info) opts)))
 
@@ -9504,13 +9462,14 @@
    (let [orphans (try (persistance/db-list-session-turns-by-status db :running)
                       (catch Exception _ []))]
      (doseq [{:keys [id iteration-count duration-ms]} orphans]
-       (try (persistance/db-update-session-turn! db
-                                                 id
-                                                 {:answer ORPHAN_INTERRUPTED_ANSWER
-                                                  :iteration-count (or iteration-count 0)
-                                                  :duration-ms (or duration-ms 0)
-                                                  :status :interrupted
-                                                  :prior-outcome :cancelled})
+       (try (persistance/db-update-session-turn!
+              db
+              id
+              {:content [(content/error "turn_interrupted" ORPHAN_INTERRUPTED_ANSWER true)]
+               :iteration-count (or iteration-count 0)
+               :duration-ms (or duration-ms 0)
+               :status :interrupted
+               :prior-outcome :cancelled})
             (catch Exception _ nil)))
      (count orphans))))
 

@@ -24,31 +24,35 @@
 (def tui-usage "vis channels tui [--session-id ID | --resume | --continue]")
 
 (defn render-for-tui
-  "TUI's :channel/messages-renderer-fn.
+  "Project canonical typed content blocks to Markdown for the TUI."
+  ([blocks] (render-for-tui blocks nil))
+  ([blocks _opts]
+   (when-not (vector? blocks)
+     (throw (ex-info "render-for-tui requires canonical content blocks"
+                     {:got-type (some-> blocks
+                                        class
+                                        .getName)})))
+   (->> blocks
+        (keep (fn [block]
+                (case (get block "type")
+                  "prose"
+                  (get block "markdown")
 
-   STRICT input contract: canonical answer-IR (`[:ir & nodes]` as
-   produced by `vis.internal.render/->ast`). Anything else is a
-   programmer bug at the call site — we throw with the actual type so
-   the offender shows up in stderr immediately. The IR boundary is
-   upstream (loop / persistence / chat helpers); this renderer never
-   soft-coerces strings, Hiccup, EDN, or anything else.
+                  "code"
+                  (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
 
-   Returns plain markdown text the TUI transcript layouter consumes.
-   A follow-up commit replaces the markdown round-trip with the
-   styled-line walker (`channel-tui.render-ir/ir->lines`) without
-   changing this function's contract."
-  ([ir] (render-for-tui ir nil))
-  ([ir opts]
-   (when-not (and (vector? ir) (= :ir (first ir)))
-     (throw
-       (ex-info
-         "render-for-tui requires canonical [:ir ...] input; build IR upstream, do not pass raw text or Hiccup here"
-         {:got-type (some-> ir
-                            class
-                            .getName)
-          :got-preview (let [s (pr-str ir)]
-                         (subs s 0 (min 200 (count s))))})))
-   (vis/render ir :markdown opts)))
+                  "reasoning"
+                  (get block "text")
+
+                  ("error" "notice")
+                  (get block "message")
+
+                  "tool"
+                  (some-> (get block "output")
+                          str)
+
+                  nil)))
+        (str/join "\n\n"))))
 
 (defn- parse-session-id-flag
   "Walk `args` and return the value of the first `--session-id` flag, or
@@ -75,9 +79,9 @@
                     str/trim)]
     (when (seq cid)
       (or (when-let [session (try (vis/gateway-soul cid) (catch Throwable _ nil))]
-            (:id session))
+            (get session "id"))
           (let [matches (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ []))
-                             (map :id)
+                             (map #(get % "id"))
                              (filter #(str/starts-with? (str %) cid))
                              vec)]
             (when (= 1 (count matches)) (str (first matches))))))))
@@ -92,13 +96,13 @@
         line
         (fn [c]
           (let [id-str
-                (str (:id c))
+                (str (get c "id"))
 
                 id8
                 (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
 
                 title
-                (let [t (:title c)]
+                (let [t (get c "title")]
                   (when-not (str/blank? t) t))]
 
             (str "  " id8 "  " (or title "(untitled)"))))]

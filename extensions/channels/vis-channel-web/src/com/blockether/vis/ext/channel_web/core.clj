@@ -220,7 +220,7 @@
 
 ;; Mutually recursive with `ir->hiccup` (defined below): code-children->hiccup
 ;; recurses into IR children, and ir->hiccup calls back here for code nodes.
-(declare ir->hiccup)
+(declare ast->hiccup)
 
 (defn- code-children->hiccup
   [children]
@@ -228,7 +228,7 @@
            (string? (first children))
            (re-find ansi-sgr-pattern (first children)))
     (ansi->hiccup (first children))
-    (keep ir->hiccup children)))
+    (keep ast->hiccup children)))
 
 (def ^:private diff-kind->class
   "Shared `vis/diff-line-kind` → the web's `df-*` CSS class. The TUI maps the SAME
@@ -255,44 +255,44 @@
 (def ^:private ir-tag->html
   "IR tags with a direct HTML counterpart. Anything else renders as a
    div carrying `ir-<tag>` so unknown/new IR never breaks the page."
-  {:ir :div
-   :p :p
-   :span :span
-   :strong :strong
-   :b :strong
-   :em :em
-   :i :em
-   :h1 :h1
-   :h2 :h2
-   :h3 :h3
-   :h4 :h4
-   :h5 :h5
-   :h6 :h6
-   :ul :ul
-   :ol :ol
-   :li :li
-   :blockquote :blockquote
-   :hr :hr
-   :br :br
-   :table :table
-   :thead :thead
-   :tbody :tbody
-   :tr :tr
-   :td :td
-   :th :th
-   :del :del
-   :s :del
-   :a :a})
+  {"ir" :div
+   "p" :p
+   "span" :span
+   "strong" :strong
+   "b" :strong
+   "em" :em
+   "i" :em
+   "h1" :h1
+   "h2" :h2
+   "h3" :h3
+   "h4" :h4
+   "h5" :h5
+   "h6" :h6
+   "ul" :ul
+   "ol" :ol
+   "li" :li
+   "blockquote" :blockquote
+   "hr" :hr
+   "br" :br
+   "table" :table
+   "thead" :thead
+   "tbody" :tbody
+   "tr" :tr
+   "td" :td
+   "th" :th
+   "del" :del
+   "s" :del
+   "a" :a})
 
-(defn ir->hiccup
-  "Walk a canonical IR node (`[:tag {attrs}? & children]`, strings,
+(defn ast->hiccup
+  "Walk a canonical wire IR node (`[\"tag\" {attrs}? & children]`, strings,
    seqs) into hiccup. Total: unknown tags degrade to classed divs,
    non-IR leaves degrade to strings. Never throws on model output."
   [node]
   (cond (string? node) node
         (nil? node) nil
         (number? node) (str node)
-        (seq? node) (keep ir->hiccup node)
+        (seq? node) (keep ast->hiccup node)
         (vector? node) (let [[tag second-el & rest-els]
                              node
 
@@ -306,17 +306,17 @@
                              (if attrs? rest-els (cons second-el rest-els))]
 
                          (cond
-                           ;; The ENGINE vocabulary (markdown->ir): headings are
+                           ;; The renderer-local Markdown AST vocabulary: headings are
                            ;; `[:h {:level N} …]`, inline code is `[:c …]`, and `[:code
                            ;; {:lang …} "…"]` is the fenced BLOCK.
-                           (= tag :h) (into [(keyword (str "h"
-                                                           (-> (or (:level attrs) 2)
-                                                               long
-                                                               (max 1)
-                                                               (min 6))))]
-                                            (keep ir->hiccup children))
-                           (= tag :c) [:code (keep ir->hiccup children)]
-                           (or (= tag :code) (= tag :pre) (= tag :code-block))
+                           (= tag "h") (into [(keyword (str "h"
+                                                            (-> (or (get attrs "level") 2)
+                                                                long
+                                                                (max 1)
+                                                                (min 6))))]
+                                             (keep ast->hiccup children))
+                           (= tag "c") [:code (keep ast->hiccup children)]
+                           (or (= tag "code") (= tag "pre") (= tag "code-block"))
                            ;; `language-*` is the Prism convention (marked emits it too),
                            ;; so server-rendered and client-rendered fences highlight alike.
                            ;; `.ir-pre` is LOAD-BEARING: it carries overflow-x:auto — without
@@ -325,30 +325,30 @@
                            ;; A `diff` fence (patch / write evidence) is colored server-side per
                            ;; line via `diff->hiccup` so adds/dels read without a Prism diff plugin.
                            (if (= "diff"
-                                  (some-> (:lang attrs)
-                                          name
+                                  (some-> (get attrs "lang")
+                                          str
                                           str/lower-case))
                              [:pre.ir-pre.ir-diff [:code (diff->hiccup children)]]
                              [:pre.ir-pre
-                              [:code {:class (str "language-" (name (or (:lang attrs) "txt")))}
+                              [:code {:class (str "language-" (or (get attrs "lang") "txt"))}
                                (code-children->hiccup children)]])
-                           (= tag :a) (into [:a {:href (str (:href attrs)) :rel "noreferrer"}]
-                                            (keep ir->hiccup children))
+                           (= tag "a") (into [:a {:href (str (get attrs "href")) :rel "noreferrer"}]
+                                             (keep ast->hiccup children))
                            :else (if-let [html-tag (ir-tag->html tag)]
-                                   (into [html-tag] (keep ir->hiccup children))
-                                   (into [:div {:class (str "ir-" (name tag))}]
-                                         (keep ir->hiccup children)))))
+                                   (into [html-tag] (keep ast->hiccup children))
+                                   (into [:div {:class (str "ir-" (str tag))}]
+                                         (keep ast->hiccup children)))))
         :else (str node)))
 
 (defn- md->hiccup
   [markdown]
   (when-not (str/blank? (str markdown))
-    (try (ir->hiccup (vis/markdown->ir (str markdown)))
+    (try (ast->hiccup (vis/wire-canonical (vis/markdown->ast (str markdown))))
          (catch Throwable _ [:pre.ir-pre (str markdown)]))))
 
 (defn- inline-md->hiccup
   "Render a SHORT one-line markdown string (a tool-result SUMMARY) as INLINE
-   hiccup. `markdown->ir` wraps even a one-liner in a block `[:p …]`; a <p> in
+   hiccup. `markdown->ast` wraps even a one-liner in a block `[:p …]`; a <p> in
    the badge row would break its flex baseline and force a line break, so we lift
    the paragraph's INLINE children out. The upshot: a summary's inline markdown
    (`code`, *em*, **strong**) renders instead of leaking literal backticks /
@@ -356,17 +356,17 @@
   [s]
   (when-not (str/blank? (str s))
     (try (let [ir
-               (vis/markdown->ir (str s))
+               (vis/wire-canonical (vis/markdown->ast (str s)))
 
                blocks
                (drop 2 ir)
 
                inline
-               (if (and (= 1 (count blocks)) (vector? (first blocks)) (= :p (ffirst blocks)))
+               (if (and (= 1 (count blocks)) (vector? (first blocks)) (= "p" (ffirst blocks)))
                  (drop 2 (first blocks))
                  blocks)]
 
-           (keep ir->hiccup inline))
+           (keep ast->hiccup inline))
          (catch Throwable _ [(str s)]))))
 
 (def ^:private mpl-image-dir
@@ -451,14 +451,14 @@
 
 (defn- attachment->figure
   "One persisted iteration attachment riding the CANONICAL turn-trace wire
-   (`{:kind :media_type :filename :size :base64}`, gateway-hydrated from the
+   (`{\"kind\" \"media_type\" \"filename\" \"size\" \"base64\"}`, gateway-hydrated from the
    attachment store) → hiccup, INLINED from the DB bytes (base64 data-URI).
    Image kinds paint as a `<figure><img>`; any other kind degrades to a
    labelled download link so a non-image artifact (csv/json/…) still surfaces.
    This is the restart-durable twin of the live `vis-image` fence: the temp
    PNG is gone after a restart, the persisted bytes are not — so history
    re-renders from the wire, never the disk temp."
-  [{:keys [kind media_type filename size base64]}]
+  [{:strs [kind media_type filename size base64]}]
   (when (not-empty (str base64))
     (let [mt
           (or (not-empty (str media_type)) "application/octet-stream")
@@ -587,11 +587,9 @@
          (into [:body] body)]))))
 
 ;; =============================================================================
-;; Defensive readers (context snapshot values may carry string OR kw
-;; keys - the GraalPy boundary keeps snake_case strings verbatim)
-;; =============================================================================
-
-(defn- pick [m k] (when (map? m) (or (get m k) (get m (name k)) (get m (keyword (name k))))))
+;; Canonical wire readers — the gateway serves ONE string-keyed snake_case
+;; shape on BOTH transports (`wire/canonical`), so every read below is a
+;; plain `(get m "field")` — no tolerant fallbacks, no key normalization.
 
 (defn- status-chip
   [status]
@@ -601,11 +599,12 @@
   "Children of the header `.bar-title` - re-rendered over SSE at turn
    boundaries so the status chip and the host-generated title stay live."
   [soul]
-  (list
-    [:span.bar-name
-     {:role "button" :tabindex "0" :data-rename (or (:title soul) "") :title "Rename this session"}
-     (or (:title soul) "Untitled")]
-    (status-chip (:status soul))))
+  (list [:span.bar-name
+         {:role "button"
+          :tabindex "0"
+          :data-rename (or (get soul "title") "")
+          :title "Rename this session"} (or (get soul "title") "Untitled")]
+        (status-chip (get soul "status"))))
 
 (defn- routing-footer
   "Provider/model this session routes through, shown as a compact chip in the
@@ -624,13 +623,13 @@
                   :else nil))
 
           routing
-          (try (pick (vis/gateway-context-snapshot sid) :session/routing) (catch Throwable _ nil))
+          (try (get (vis/gateway-context-snapshot sid) "session_routing") (catch Throwable _ nil))
 
           actual-provider
-          (->name (or (pick routing :provider) (pick routing :current-provider)))
+          (->name (or (get routing "provider") (get routing "current_provider")))
 
           actual-model
-          (->name (or (pick routing :model) (pick routing :current-model)))
+          (->name (or (get routing "model") (get routing "current_model")))
 
           pref
           (try (vis/gateway-session-model sid) (catch Throwable _ nil))
@@ -730,7 +729,7 @@
            {:title "Reasoning effort — slide quick → balanced → deep"
             :aria-label "Reasoning effort"
             :data-level (name level)} (icon "activity")
-           [:span.foot-effort-label "effort: " [:strong.foot-effort-value (name level)]]
+           [:span.foot-effort-label [:strong.foot-effort-value (name level)]]
            [:input.foot-effort-slide
             {:type "range"
              :min 0
@@ -759,123 +758,6 @@
       (str "~" (subs path (count home)))
       path)))
 
-(defn- filesystem-section
-  "`Filesystem` - the session's filesystem permissions: the ROOT vis works
-   in (changeable via the picker's \"Make this the session's root\" or
-   `/root <path>`) plus any additional granted directories. The manage
-   button opens the filesystem picker (`/fs-picker`); each extra root
-   carries a remove control (`/fs-remove`). Backed by
-   `vis/gateway-session-workspace`'s `:filesystem-roots`."
-  ([sid] (filesystem-section sid nil))
-  ([sid notice]
-   (when sid
-     (let [wi
-           (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
-
-           base
-           (:root wi)
-
-           roots
-           (:filesystem-roots wi)
-
-           total
-           (+ (if base 1 0) (count roots))]
-
-       [:section.rail-section.filesystem-roots {:id "fs-roots"}
-        [:div.rail-head-row
-         [:h3 (str "Filesystem Permissions" (when (pos? total) (str " · " total)))]
-         [:button.ctx-action
-          {:type "button"
-           :hx-get (str "/ui/session/" sid "/fs-picker")
-           :hx-target "#modal"
-           :hx-swap "innerHTML"
-           :aria-label "Manage this session's filesystem permissions"} (icon "plus")
-          [:span "Manage"]]] (when (seq notice) [:p.fs-roots-notice (icon "check") [:span notice]])
-        [:ul.fs-roots
-         ;; The session's ROOT is always the first filesystem root: vis
-         ;; reads/edits there by default and the shell/search work there.
-         ;; It is changeable (picker "Make this the session's root", or
-         ;; /root <path>) but never removable — a session always has a root;
-         ;; added roots below are removable grants.
-         (when base
-           [:li.fs-root.fs-root-base [:span.ctx-mono.fs-root-path (abbrev-home base)]
-            [:span.fs-root-tag "root"]])
-         (for [{:keys [trunk clone fork-ms]} roots]
-           [:li.fs-root [:span.ctx-mono.fs-root-path (abbrev-home trunk)]
-            (when (and fork-ms (not= clone trunk)) [:span.fs-root-iso "draft"])
-            [:button.fs-root-remove
-             {:type "button"
-              :hx-post (str "/ui/session/" sid "/fs-remove")
-              :hx-vals (json-text {:path (str trunk)})
-              :hx-swap "none"
-              :aria-label (str "Remove " trunk)} (icon "x")]])]]))))
-
-(defn- resource-status-class
-  "Maps a managed-resource status to the `.res-dot` color class — the SAME ●
-   language as the TUI F4 dialog: ok = live/healthy (green), bad = errored
-   (red), off = otherwise (dim)."
-  [status]
-  (case (some-> status
-                name
-                keyword)
-    (:up :running :ok :active :ready :live :started)
-    "is-ok"
-
-    (:error :failed :dead :crashed)
-    "is-bad"
-
-    "is-off"))
-
-(defn- resources-section
-  "Managed resources in the right rail — each row now carries the SAME vocabulary
-   as the TUI F4 dialog and the web modal: a status-keyed dot, the kind as a TYPE
-   badge, the readable label, and a `:port · status` meta line. `Manage` opens the
-   canonical modal (the web twin of the TUI F4 dialog)."
-  [sid]
-  (when sid
-    (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
-      [:section.rail-section
-       [:div.rail-head-row [:h3 (str "Backgrounds" (when (seq rs) (str " · " (count rs))))]
-        [:button.ctx-action
-         {:type "button"
-          :hx-get (str "/ui/session/" sid "/resources")
-          :hx-target "#modal"
-          :hx-swap "innerHTML"
-          :aria-label "Manage this session's backgrounds"} (icon "layers") [:span "Manage"]]]
-       (if (seq rs)
-         [:ul.ctx-resources
-          (for [r rs]
-            (let [kind (some-> (or (pick r :kind) (pick r :type))
-                               name)
-                  meta (str/join "  ·  "
-                                 (remove nil?
-                                   [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))]
-                                      (str ":" p))
-                                    (when-let [s (pick r :status)]
-                                      (name s))]))]
-
-              [:li.ctx-resource
-               [:span {:class (str "res-dot " (resource-status-class (pick r :status)))}]
-               [:span.ctx-res-body
-                [:span.ctx-res-title (when kind [:span.ctx-res-type kind])
-                 [:span.ctx-res-name (str (or (pick r :label) (pick r :id) "resource"))]]
-                (when (seq meta) [:span.ctx-res-meta meta])]]))]
-         [:p.empty "no backgrounds running"])])))
-
-(defn- context-rail
-  "Right rail for session-scoped gateway capabilities. This is where web exposes
-   the same canonical controls the TUI surfaces in its footer/dialogs: routing,
-   filesystem roots (`/fs`), and managed resources."
-  [sid _snapshot]
-  [:aside.rail
-   [:div.rail-head [:h2 "Context"]
-    [:button.rail-close.bar-toggle
-     {:type "button" :data-close-drawer "1" :aria-label "Close context"} (icon "x")]]
-   [:div.context-body
-    ;; Routing (provider/model) moved to the bottom dock under the composer
-    ;; (`routing-footer`) — it belongs next to the input, like the TUI footer.
-    [:div#fs-roots-wrap (filesystem-section sid)] (resources-section sid)]])
-
 ;; =============================================================================
 
 (defn- bubble-foot
@@ -885,13 +767,13 @@
    status badge; only a failure states itself, in red."
   [turn]
   (let [meta-line
-        (try (vis/meta-summary-line {:tokens (pick turn :tokens)
-                                     :cost (pick turn :cost)
-                                     :duration-ms (pick turn :duration_ms)})
+        (try (vis/meta-summary-line {:tokens (get turn "tokens")
+                                     :cost (get turn "cost")
+                                     :duration-ms (get turn "duration_ms")})
              (catch Throwable _ nil))
 
         status
-        (str (pick turn :status))
+        (str (get turn "status"))
 
         cancelled?
         (= "cancelled" status)
@@ -906,7 +788,7 @@
        ;; a partial answer shows in the bubble body; the stop note replaces it
        ;; when blank, so only badge "stopped" here when there IS a partial answer
        ;; (otherwise the bubble already says "Stopped - you cancelled this turn").
-       (when (and cancelled? (seq (str (pick turn :answer_md)))) [:span.foot-stopped "stopped"])
+       (when (and cancelled? (seq (get turn "content"))) [:span.foot-stopped "stopped"])
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
 (defn- role-time
@@ -933,9 +815,8 @@
   row id as `:engine_turn_id`; prefer it so a refreshed/reconnected web page can
   drop replayed answer/trace fragments instead of showing the same turn twice."
   [prefix turn]
-  (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
-                     (not-empty (str (pick turn :turn_id)))
-                     (:turn_id turn))]
+  (when-let [tid (or (not-empty (str (get turn "engine_turn_id")))
+                     (not-empty (str (get turn "turn_id"))))]
     (str prefix ":" tid)))
 
 (defn- attachment-media
@@ -947,15 +828,15 @@
    text-only."
   [atts]
   (when-let [imgs (seq (filter (fn [a]
-                                 (and (:base64 a)
-                                      (str/starts-with? (str (or (:media-type a) "image/"))
+                                 (and (get a "base64")
+                                      (str/starts-with? (str (or (get a "media_type") "image/"))
                                                         "image/")))
                                atts))]
     [:div.bubble-media
      (for [a imgs]
-       (let [src (str "data:" (or (:media-type a) "image/png") ";base64," (:base64 a))]
+       (let [src (str "data:" (or (get a "media_type") "image/png") ";base64," (get a "base64"))]
          [:a.bubble-img {:href src :target "_blank" :rel "noopener"}
-          [:img {:src src :alt (str (or (:filename a) "image")) :loading "lazy"}]]))]))
+          [:img {:src src :alt (str (or (get a "filename") "image")) :loading "lazy"}]]))]))
 
 (defn- user-bubble
   "TUI anatomy: 'You' role label in slate (:user-role-fg). The raw text
@@ -976,9 +857,9 @@
    `gateway-transcript` hydrate it from the DB). Reading it here keeps the web
    bubble on the SAME gateway-sourced payload every other channel consumes,
    instead of reaching around the gateway into persistence. Returns
-   `[{:media-type :base64 :filename …}]` or nil."
+   `[{\"media_type\" \"base64\" \"filename\" …}]` or nil."
   [turn]
-  (seq (pick turn :attachments)))
+  (seq (get turn "attachments")))
 
 (defn- strip-label
   "Drop a leading `WHAT HAPPENED: ` / `NEXT STEP: ` prefix — the card supplies its
@@ -993,76 +874,95 @@
    (title / explanation / next-step / facts / raw body) — a distinct, scannable
    surface instead of undifferentiated prose. Kind drives the accent color via a
    `pe-<kind>` class (see app.css)."
-  [{:keys [title kind explanation next-step status provider-id request-id attempts body]}]
+  [{:strs [title kind explanation next_step status provider_id request_id attempts body]}]
   (let [facts (cond-> []
                 status
                 (conj ["HTTP" (str status)])
 
-                provider-id
-                (conj ["Provider" (str provider-id)])
+                provider_id
+                (conj ["Provider" (str provider_id)])
 
-                request-id
-                (conj ["Request id" (str request-id)]))]
-    [:div.provider-error-card {:class (str "pe-" (name (or kind :generic)))}
+                request_id
+                (conj ["Request id" (str request_id)]))]
+    [:div.provider-error-card {:class (str "pe-" (or kind "generic"))}
      [:div.pe-head [:span.pe-icon "⚠"] [:span.pe-title (str (or title "Provider unavailable"))]]
      (when explanation [:p.pe-what (strip-label explanation)])
-     (when next-step [:p.pe-next [:span.pe-next-label "Next step"] (strip-label next-step)])
+     (when next_step [:p.pe-next [:span.pe-next-label "Next step"] (strip-label next_step)])
      ;; Per-provider breakdown — WHY each provider bowed out.
      (when (seq attempts)
        [:ul.pe-attempts
-        (for [{:keys [provider model status reason]} attempts]
+        (for [{:strs [provider model status reason]} attempts]
           [:li {:key (str provider "/" model)}
            [:span.pe-prov
             (str provider
                  (when-let [m (vis/display-model-name (some-> model
                                                               str))]
                    (str "/" m)))] (when status [:span.pe-status (str status)])
-           (when reason [:span.pe-reason (name reason)])])])
+           (when reason [:span.pe-reason (str reason)])])])
      (when (seq facts)
        [:ul.pe-facts
         (for [[k v] facts]
           [:li {:key k} [:span.pe-k (str k)] [:span.pe-v (str v)]])])
      (when body [:details.pe-body [:summary "Provider response"] [:pre (str body)]])]))
 
-(defn- vis-bubble
-  "TUI anatomy: 'Vis' role label in green (:ai-role-fg), canonical meta
-   footer. Server renders the IR walk as the instant fallback; the raw
-   markdown rides in data-md and ui.js re-renders it through `marked`."
-  [turn]
-  (let [ir
-        (pick turn :answer_ir)
+(defn- content-block->hiccup
+  "Render one canonical string-keyed content block."
+  [block]
+  (case (get block "type")
+    "prose"
+    (let [md (get block "markdown" "")]
+      [:div.prose.md {:data-md md} (md->hiccup md)])
 
-        status
-        (str (pick turn :status))
+    "code"
+    [:pre
+     [:code
+      {:class (some-> (get block "language")
+                      (str "language-"))} (get block "text" "")]]
+
+    "error"
+    (provider-error-card {"title" (get block "code")
+                          "explanation" (get block "message")
+                          "status" (get block "status")
+                          "provider_id" (get block "provider")
+                          "request_id" (get block "request_id")
+                          "attempts" (get block "attempts")
+                          "body" (get block "body")})
+
+    "notice"
+    [:div.prose.md [:p (get block "message" "")]]
+
+    "tool"
+    [:details [:summary (str (get block "tool") " · " (get block "status"))]
+     [:pre (str (or (get block "output") (get block "error") ""))]]
+
+    "attachment"
+    [:a {:href (str "/v1/attachments/" (get block "attachment_id"))}
+     (get block "name" "attachment")]
+
+    "reasoning"
+    (when (= "visible" (get block "visibility"))
+      [:details [:summary "Reasoning"] [:pre (get block "text" "")]])
+
+    [:div.prose.md [:p (str "Unsupported content block: " (get block "type"))]]))
+
+(defn- vis-bubble
+  "Render the assistant's canonical ordered content blocks."
+  [turn]
+  (let [status
+        (str (get turn "status"))
 
         cancelled?
         (= "cancelled" status)
 
-        answer
-        (pick turn :answer_md)
-
-        ;; A cancelled turn's `:error` is the internal CancellationException —
-        ;; never the body. Show the partial answer if one exists, else a clean
-        ;; stop note. (Same path for live `turn.*` events and DB refresh, so
-        ;; the two can't drift.)
-        md
-        (or answer (when-not cancelled? (pick turn :error)) "")]
+        blocks
+        (vec (or (get turn "content") []))]
 
     [:div.bubble.b-vis (live-key-attr (turn-live-key "vis" turn))
-     [:div.role.role-vis "Vis" (role-time (pick turn :started_at))]
-     (cond
-       ;; A provider failure carries the canonical marker + structured data on the
-       ;; IR root — paint the styled CARD, not undifferentiated prose.
-       (and (vector? ir) (= :ir (first ir)) (get-in ir [1 :vis/provider-error]))
-       (provider-error-card (get-in ir [1 :vis/provider-error-data]))
-       (and (vector? ir) (= :ir (first ir)))
-       ;; The engine handed back a canonical IR AST (fatal fallback), not markdown
-       ;; — walk it directly. md->hiccup on the stringified vector dumped the raw
-       ;; `[:ir …]` into the bubble.
-       [:div.prose.md (ir->hiccup ir)]
-       (and cancelled? (str/blank? (str answer))) [:p.bubble-stopped
-                                                   "Stopped — you cancelled this turn."]
-       :else [:div.prose.md {:data-md (str md)} (md->hiccup md)]) (bubble-foot turn)]))
+     [:div.role.role-vis "Vis" (role-time (or (get turn "created_at") (get turn "started_at")))]
+     (if (and cancelled? (empty? blocks))
+       [:p.bubble-stopped "Stopped — you cancelled this turn."]
+       (for [block blocks]
+         ^{:key (get block "id")} (content-block->hiccup block))) (bubble-foot turn)]))
 
 ;; ── Trace blocks — the TUI transcript's code/result/error cells ──
 ;; Shown INLINE in the thread (no Work fold, nothing hidden): the live
@@ -1241,21 +1141,21 @@
   (if-not (map? error)
     (str error)
     (let [msg
-          (or (not-empty (str (:message error)))
-              (not-empty (some-> (:type error)
+          (or (not-empty (str (get error "message")))
+              (not-empty (some-> (get error "type")
                                  str))
               ;; No message/type: surface the data (minus bulky trace/raw)
               ;; instead of a blank "error" — a dropped :message must NOT hide
               ;; the real failure behind a content-free word.
-              (when-let [d (not-empty (dissoc (:data error) :trace :raw-data))]
+              (when-let [d (not-empty (dissoc (get error "data") "trace" "raw_data"))]
                 (str "error: " (pr-str d)))
               "error (the engine produced no message — please report)")
 
           hint
-          (:hint error)
+          (get error "hint")
 
-          {:keys [line column]}
-          (:data error)]
+          {:strs [line column]}
+          (get error "data")]
 
       (cond-> msg
         (and line column)
@@ -1269,7 +1169,7 @@
    user STOPS a turn — not a real failure, so it shouldn't render as a red
    error with a raw `java.util.concurrent.CancellationException`."
   [error]
-  (let [s (str (if (map? error) (or (:message error) (:type error)) error))]
+  (let [s (str (if (map? error) (or (get error "message") (get error "type")) error))]
     (boolean (re-find #"(?i)cancellation|cancelled|canceled|interrupt" s))))
 
 (defn- block-error
@@ -1289,9 +1189,9 @@
    — one source of truth, so live and settled never diverge. Otherwise the
    plain lean error row."
   [event live-key]
-  (if-let [ped (:provider-error-data event)]
+  (if-let [ped (get event "provider_error_data")]
     [:div.pe-live (live-key-attr live-key) (provider-error-card ped)]
-    (block-error (:error event) live-key)))
+    (block-error (get event "error") live-key)))
 
 (defn- think-md->hiccup
   "Reasoning is line-oriented (a thinking trace, not flowing prose): lift each
@@ -1302,7 +1202,7 @@
   point the TUI thinking bubble uses."
   [markdown]
   (when-not (str/blank? (str markdown))
-    (try (ir->hiccup (vis/reasoning->ir (str markdown)))
+    (try (ast->hiccup (vis/reasoning->ast (str markdown)))
          (catch Throwable _ (md->hiccup markdown)))))
 
 (defn- block-thinking
@@ -1364,7 +1264,7 @@
    it is useful in logs/DB for forensics, but showing it as a red user-facing
    error makes a normal transcript look broken."
   [error]
-  (let [msg (str (if (map? error) (or (:message error) (:type error)) error))]
+  (let [msg (str (if (map? error) (or (get error "message") (get error "type")) error))]
     (= "empty iteration" (str/trim (str/lower-case msg)))))
 
 (defn- engine-empty-iteration-form?
@@ -1383,8 +1283,8 @@
    or a non-answer result. Direct answer / engine-bookkeeping-only iterations
    have none, so their trace body should not render a blank/error artifact."
   [it]
-  (or (not (str/blank? (str (:thinking it))))
-      (some? (:error it))
+  (or (not (str/blank? (str (get it "thinking"))))
+      (some? (get it "error"))
       (boolean (some (fn [form]
                        (when-not (engine-empty-iteration-form? form)
                          (or (and (:src form)
@@ -1392,7 +1292,7 @@
                                   (not (engine-chrome-form? form)))
                              (not (str/blank? (str (:stdout form))))
                              (some? (:error form)))))
-                     (:forms it)))))
+                     (get it "forms")))))
 
 (defn- trace-visible-iterations [iters] (filterv iter-has-trace? iters))
 
@@ -1405,14 +1305,15 @@
    (`:src`/`:stdout`/`:result`/`:error`) and the `:success?` flag layered
    verbatim — the web twin of the TUI's restored-envelope projection."
   [env]
-  (cond-> (merge
-            (vis/form<-wire env)
-            {:src (or (:src env) (:code env)) :stdout (:stdout env) :success? (nil? (:error env))})
-    (contains? env :result)
-    (assoc :result (:result env))
+  (cond-> (merge (vis/form<-wire env)
+                 {:src (or (get env "src") (get env "code"))
+                  :stdout (get env "stdout")
+                  :success? (nil? (get env "error"))})
+    (contains? env "result")
+    (assoc :result (get env "result"))
 
-    (contains? env :error)
-    (assoc :error (:error env))))
+    (contains? env "error")
+    (assoc :error (get env "error"))))
 
 (defn- trace-body
   "The code/results/tools body of one finished turn's trace, read from the
@@ -1430,9 +1331,9 @@
    an image still paints after a restart that wiped the temp dir."
   [turn]
   (try
-    (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
-                       (not-empty (str (pick turn :turn_id))))]
-      (let [iters (vis/gateway-turn-trace (pick turn :session_id) tid)
+    (when-let [tid (or (not-empty (str (get turn "engine_turn_id")))
+                       (not-empty (str (get turn "turn_id"))))]
+      (let [iters (vis/gateway-turn-trace (get turn "session_id") tid)
             visible-iters (trace-visible-iterations (vec iters))]
 
         (cond (empty? iters) nil
@@ -1441,8 +1342,8 @@
               :else
               [:div.trace-body
                (for [it visible-iters]
-                 (list (block-thinking (:thinking it))
-                       (when (:error it) (block-error (:error it)))
+                 (list (block-thinking (get it "thinking"))
+                       (when (get it "error") (block-error (get it "error")))
                        ;; The model's markdown prose returned ALONGSIDE its tool call —
                        ;; its commentary, rendered as MARKDOWN ABOVE the code+result
                        ;; ("here's what I did"), distinct from the dim thinking trace.
@@ -1462,7 +1363,7 @@
                                                             (comp (remove
                                                                     engine-empty-iteration-form?)
                                                                   (map wire-env->form))
-                                                            (or (:forms it) [])))]
+                                                            (or (get it "forms") [])))]
                          (list (when-let [src (:src form)]
                                  (when-not (or (str/blank? (str src))
                                                (engine-chrome-form? form)
@@ -1472,7 +1373,7 @@
                                (when (:error form) (block-error (:error form)))))
                        ;; Produced artifacts (figures/files) restored from the gateway-
                        ;; hydrated bytes — durable across a restart, unlike the temp fence.
-                       (keep attachment->figure (:attachments it))))])))
+                       (keep attachment->figure (get it "attachments"))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy
@@ -1492,11 +1393,11 @@
   ;; `not-empty` guards the Clojure footgun where an EMPTY-string
   ;; engine_turn_id (truthy!) would win over the real turn_id and build a
   ;; broken `/turn//trace` URL.
-  (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
-                     (not-empty (str (pick turn :turn_id))))]
-    (let [sid (pick turn :session_id)
-          status (str (pick turn :status))
-          raw (pick turn :iteration_count)
+  (when-let [tid (or (not-empty (str (get turn "engine_turn_id")))
+                     (not-empty (str (get turn "turn_id"))))]
+    (let [sid (get turn "session_id")
+          status (str (get turn "status"))
+          raw (get turn "iteration_count")
           visible-count (try (when-let [iters (vis/gateway-turn-trace sid tid)]
                                (count (trace-visible-iterations (vec iters))))
                              (catch Throwable _ nil))
@@ -1525,37 +1426,36 @@
             [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
            [:div.trace-body [:div.block-loading "loading…"]]])))))
 
+(defn- settled-vis-bubble
+  "A finished Vis bubble with the durable trace INSIDE it. The live shell is
+   replaced by this exact shape at turn end, and restored history uses it too,
+   so streamed work neither floats outside Vis nor disappears after refresh."
+  [turn]
+  (let [[tag attrs role & answer] (vis-bubble turn)]
+    (into [tag attrs role (or (trace-body turn) (trace-lazy turn))] answer)))
+
 (defn- turn-block
-  "One restored turn. `live-replay?` true means the turn is RUNNING and
-   the SSE stream will replay its WHOLE trace from the event ring -
-   render only the user bubble (no DB trace, no static dots bubble:
-   the bottom #thinking ticker owns the typing indicator, so '...' never
-   sits stale above the streaming content)."
+  "One restored turn. A running turn's Vis shell is rendered in `#live` from
+   its replayed frames; a finished turn keeps its full work trace in the Vis
+   bubble, followed by the final answer."
   ([turn] (turn-block turn false))
   ([turn live-replay?]
    (let [status
-         (pick turn :status)
+         (get turn "status")
 
          running?
-         (= "running" status)]
+         (= "streaming" status)]
 
      (list
        [:div.tsep]
-       (user-bubble (pick turn :request)
-                    (pick turn :started_at)
+       (user-bubble (get turn "request")
+                    (get turn "started_at")
                     (turn-live-key "user" turn)
                     (turn-attachments turn))
-       (when-not (and running? live-replay?) (trace-lazy turn))
        (cond
-         (or (pick turn :answer_md) (pick turn :error)) (vis-bubble turn)
-         ;; running: the answer streams into #live and the bottom ticker
-         ;; shows the dots - nothing static to pin here.
+         (or (seq (get turn "content")) (get turn "error")) (settled-vis-bubble turn)
+         (and running? live-replay?) nil
          running? nil
-         ;; Errored turn that left NO answer (a hard provider/infrastructure
-         ;; failure — e.g. "selector manager closed", a 400, a stream drop —
-         ;; that the engine couldn't turn into a fallback answer). The raw
-         ;; message isn't persisted, so say what happened plainly instead of
-         ;; a cryptic "(error)".
          (= "error" status)
          [:div.bubble.b-vis [:div.role.role-vis "Vis"]
           [:p.bubble-stopped
@@ -1572,17 +1472,53 @@
 ;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
 
+(defn- footer-context-button
+  "Compact footer entry opening a session-scoped modal — the small-icon
+   replacement for the removed right context rail. `n`, when positive, rides
+   as a count badge beside the icon."
+  [{:keys [icon-name label href n]}]
+  [:button.foot-chip
+   {:type "button"
+    :hx-get href
+    :hx-target "#modal"
+    :hx-swap "innerHTML"
+    :aria-label label
+    :title label} (icon icon-name) (when (and n (pos? (long n))) [:span.foot-chip-n n])])
+
 (defn- footer-content
   [sid]
-  ;; Bottom dock under the composer: the session's provider/model chip
-  ;; (`routing-footer`) + the reasoning-effort chip (`reasoning-footer`),
-  ;; followed by any extension footer contributions. Both mirror the TUI
-  ;; footer (model + reasoning: deep) and re-render on every `footer` SSE frame.
-  (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer) (catch Throwable _ []))]
+  ;; Bottom dock under the composer — ONE compact line: the session's
+  ;; provider/model chip (`routing-footer`) + reasoning-effort chip
+  ;; (`reasoning-footer`) + small icon buttons for the session's filesystem
+  ;; permissions and backgrounds (folded in from the old right context rail),
+  ;; then any extension footer contributions. Re-renders on every `footer` SSE
+  ;; frame and on the fs/bg OOB swaps.
+  (let [contribs
+        (try (vis/channel-contributions-for :web :web.slot/footer) (catch Throwable _ []))
+
+        wi
+        (when sid (try (vis/gateway-session-workspace sid) (catch Throwable _ nil)))
+
+        fs-n
+        (when wi (+ (if (get wi "root") 1 0) (count (get wi "filesystem_roots"))))
+
+        res
+        (when sid (try (vis/list-resources sid) (catch Throwable _ [])))]
+
     [:footer.foot (routing-footer sid) (reasoning-footer sid)
+     (when sid
+       (footer-context-button {:icon-name "folder"
+                               :label "Filesystem permissions"
+                               :href (str "/ui/session/" sid "/fs-picker")
+                               :n fs-n}))
+     (when sid
+       (footer-context-button {:icon-name "layers"
+                               :label "Backgrounds"
+                               :href (str "/ui/session/" sid "/resources")
+                               :n (count res)}))
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
-         [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
+         [:span.foot-item {:data-contrib (str id)} (ast->hiccup ir)]))]))
 
 (defn- user-bubble-html
   ([text] (user-bubble-html text nil nil))
@@ -1601,7 +1537,7 @@
 (defn- running-turn-id
   "The turn_id (string) of `sid`'s currently-running turn, or nil."
   [sid]
-  (some #(when (= "running" (pick % :status)) (str (pick % :turn_id)))
+  (some #(when (= "streaming" (get % "status")) (str (get % "turn_id")))
         (when sid (vis/gateway-list-turns sid))))
 
 (defn- stop-button
@@ -1633,7 +1569,7 @@
 (defn- queued-turns
   [sid]
   (->> (vis/gateway-list-turns sid)
-       (filter #(= "queued" (pick % :status)))
+       (filter #(= "queued" (get % "status")))
        vec))
 
 (defn- queued-content
@@ -1641,7 +1577,7 @@
   (let [items (seq (queued-turns sid))] ; oldest-first (item #1 fires next, at top) — matches the TUI queue order
     (when items
       [:div.queued-panel [:div.queued-title "Queued"]
-       (for [{:keys [turn_id request]} items]
+       (for [{:strs [turn_id request]} items]
          [:form.queued-item {:data-turn-id (str turn_id)}
           [:textarea.queued-edit
            {:name "request"
@@ -1691,7 +1627,7 @@
 (defn- activity-label
   "Human ticker label for a coarse `activity` event (provider wait, response
    parse, nested shell/tool call)."
-  [{:keys [activity cmd op]}]
+  [{:strs [activity cmd op]}]
   (let [what (activity-one-line (or cmd op "") 80)]
     (case (str activity)
       "provider-call"
@@ -1718,6 +1654,21 @@
   [event]
   (list [:div.dots [:span] [:span] [:span]] [:div.thinking-activity (activity-label event)]))
 
+(defn- live-vis-shell
+  "The single live Vis bubble. Trace frames append inside `.live-vis-trace`;
+   cumulative answer deltas replace `.live-vis-answer`. At the terminal event
+   the whole shell is replaced by `settled-vis-bubble`."
+  ([turn] (live-vis-shell turn nil nil))
+  ([turn trace-html answer-html]
+   [:div.bubble.b-vis
+    (merge {:sse-swap "vis-final" :hx-swap "outerHTML"}
+           (live-key-attr (turn-live-key "stream" turn)))
+    [:div.role.role-vis "Vis" (role-time (get turn "started_at"))]
+    [:div.live-vis-trace {:sse-swap "trace-message" :hx-swap "beforeend"}
+     (when (seq (str trace-html)) (h/raw trace-html))]
+    [:div.live-vis-answer {:sse-swap "content" :hx-swap "beforeend"}
+     (when (seq (str answer-html)) (h/raw answer-html))]]))
+
 (defn- event->frames
   "One gateway event -> seq of `{:event name :html fragment}` for the
    htmx SSE extension (`sse-swap=\"<name>\"`)."
@@ -1727,35 +1678,42 @@
   ;; the cross-process bus with snake_case keys) and a same-process event (kebab)
   ;; read IDENTICALLY below — no branch re-derives key-spelling tolerance, one
   ;; contract, the SAME keys the TUI client normalizes to.
-  (let [{:keys [type] :as event} (vis/event<-wire raw-event)]
+  (let [event
+        raw-event
+
+        type
+        (get event "type")]
+
     (case type
-      ;; EVERYTHING flows into the thread (`message` -> #live, in arrival
-      ;; order): user bubble (form response), trace blocks, answer.
-      ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
+      ;; A turn gets ONE Vis shell. Every trace/result stays inside it.
       "turn.started"
-      (cond-> [{:event "thinking" :html (html (list [:div.dots [:span] [:span] [:span]]))}
+      (cond-> [{:event "message" :html (html (live-vis-shell event))}
+               {:event "thinking" :html (html (list [:div.dots [:span] [:span] [:span]]))}
                {:event "turnctl" :html (html (stop-button sid))}
                {:event "queued" :html (html (queued-content sid))}]
-        (:queued? event)
+        (get event "is_queued")
         (into [{:event "message"
-                :html (user-bubble-html (:request event) (turn-live-key "user" event))}])
+                :html (user-bubble-html (get event "request") (turn-live-key "user" event))}])
 
-        ;; status flips to running -> header chip + sidebar dot light up
         true
         (into (chrome-frames sid)))
 
-      "reasoning.delta"
-      (when-let [thought (block-thinking (:text event))]
-        [{:event "thinking" :html (html thought)}])
-
-      ;; Live prose, coalesced to sentence granularity by the gateway. Only the
-      ;; `:prose-final` frames paint a prose block — DISTINCT from the #thinking
-      ;; trace above; streaming provider `:content` (no prose-final) is skipped.
-      "content.delta"
-      (when (:prose-final event)
-        (when-let [prose (block-prose (:text event)
-                                      (turn-live-key (str "prose:" (:iteration event)) event))]
-          [{:event "message" :html (html prose)}]))
+      ;; Typed-block streaming delta — INCREMENTAL text (`stream-delta`) appended
+      ;; per block_id. `field "text"` is reasoning: repaint the transient
+      ;; #thinking ticker with the moving tail. `field "markdown"` is provider
+      ;; content / end-of-iteration prose: append the raw fragment into
+      ;; `.live-vis-answer` (`hx-swap "beforeend"`), so the BROWSER accumulates
+      ;; the stream — no server-side per-connection state, and the SAME ordered
+      ;; deltas replay identically over SSE, poll, and reconnect. The complete
+      ;; reasoning + prose pin at `iteration.completed`; the fully rendered
+      ;; answer lands at `turn.completed` (settled bubble).
+      "content.block.delta"
+      (let [delta (str (get event "text"))]
+        (if (= "text" (get event "field"))
+          (when-let [thought (block-thinking delta)]
+            [{:event "thinking" :html (html thought)}])
+          (when-not (str/blank? delta)
+            [{:event "content" :html (str/replace (html-text-escape delta) "\n" "<br>")}])))
 
       ;; Coarse live-progress: a provider wait, response parse, or a nested
       ;; shell/tool call. Repaint the transient #thinking ticker with a labeled
@@ -1775,7 +1733,7 @@
       ;; `:silent` is the engine's display contract: a structurally code-free
       ;; block, or one whose result is a vis_answer (done) / vis_silent (title)
       ;; sentinel, is pure chrome — no code, no result row.
-      (when-not (:silent event)
+      (when-not (get event "silent")
         (let [;; Project the event through the SAME `vis/form<-wire` contract the
               ;; DB-restored trace uses (`wire-env->form`): a MIRRORED event
               ;; arriving over the cross-process bus has its kebab keys munged to
@@ -1783,44 +1741,56 @@
               ;; → `:tool_color_role`), so reading them raw yielded nil and the
               ;; op-card badge/label silently vanished live. `<-wire` is tolerant of
               ;; BOTH spellings, so local and mirrored events paint identically.
-              form (wire-env->form event)
-              code (:code event)
-              ;; Code row rides HERE (not block.started) so chrome never flashes.
-              code-frame (when-not (or (str/blank? (str code)) (vis/hide-tool-code? form))
-                           {:event "message" :html (html (block-code code))})
-              ;; Human display surface: the block RETURN value as a native tool's
-              ;; colored op-card (badge + summary + collapsible body as ONE card),
-              ;; painted from the wire-normalized `form` above.
-              result-frame (when-let [out (block-result (:result event) form)]
-                             {:event "message" :html (html out)})
-              error-frame (when (:error event)
-                            {:event "message"
-                             :html (html (live-error-frame event
-                                                           (turn-live-key (str "error:"
-                                                                               (:iteration event))
-                                                                          event)))})]
+              form
+              (wire-env->form event)
+
+              code
+              (get event "code")
+
+              ;; Work frames stay under the live Vis role.
+              code-frame
+              (when-not (or (str/blank? (str code)) (vis/hide-tool-code? form))
+                {:event "trace-message" :html (html (block-code code))})
+
+              result-frame
+              (when-let [out (block-result (get event "result") form)]
+                {:event "trace-message" :html (html out)})
+
+              error-frame
+              (when (get event "error")
+                {:event "trace-message"
+                 :html (html (live-error-frame event
+                                               (turn-live-key (str "error:" (get event "iteration"))
+                                                              event)))})]
 
           (into [] (keep identity [code-frame result-frame error-frame]))))
 
       "iteration.error"
-      [{:event "message"
+      [{:event "trace-message"
         :html (html (live-error-frame event
-                                      (turn-live-key (str "error:" (:iteration event)) event)))}]
+                                      (turn-live-key (str "error:" (get event "iteration"))
+                                                     event)))}]
 
       "iteration.completed"
-      (let [thought (block-thinking (:thinking event)
-                                    (turn-live-key (str "thinking:" (:iteration event)) event))
-            prose (block-prose (:assistant-prose event)
-                               (turn-live-key (str "prose:" (:iteration event)) event))]
+      (let [thought
+            (block-thinking (get event "thinking")
+                            (turn-live-key (str "thinking:" (get event "iteration")) event))
 
-        ;; Complete reasoning + complete prose pin into the thread HERE. No
-        ;; token/partial model text is streamed by current gateway builds.
+            prose
+            (block-prose (get event "assistant_prose")
+                         (turn-live-key (str "prose:" (get event "iteration")) event))]
+
+        ;; Complete reasoning + prose pin permanently inside this Vis shell.
         (cond-> []
           thought
-          (conj {:event "message" :html (html thought)})
+          (conj {:event "trace-message" :html (html thought)})
 
+          ;; Pinning the prose into the durable trace makes the transient
+          ;; `.live-vis-answer` streaming PREVIEW (the same text, streamed by
+          ;; `content.delta`) redundant — clear it so the answer never shows
+          ;; twice while the shell awaits its terminal `vis-final` collapse.
           prose
-          (conj {:event "message" :html (html prose)})
+          (conj {:event "trace-message" :html (html prose)} {:event "content" :html ""})
 
           ;; the ticker RESETS to dots (not empty) - the turn is still running,
           ;; so the bottom indicator must survive the iteration boundary; only
@@ -1831,24 +1801,12 @@
           (conj {:event "thinking" :html (html [:div.dots [:span] [:span] [:span]])})))
 
       ("turn.completed" "turn.failed")
-      (let [trace (trace-lazy event)]
-        (cond-> [{:event "thinking" :html ""} {:event "turnctl" :html ""}]
-          ;; A turn completed through SSE/polling never gets re-rendered as a
-          ;; restored `turn-block`, so its lazy "N iterations" disclosure must
-          ;; be pinned live too. Otherwise the row appears only after a full
-          ;; browser refresh.
-          trace
-          (conj {:event "message" :html (html trace)})
-
-          true
-          (into [{:event "message" :html (vis-message-html event)}
-                 {:event "queued" :html (html (queued-content sid))}
-                 {:event "footer" :html (html (footer-content sid))}])
-
-          ;; the chip leaves `running` and the title may have just been
-          ;; generated - re-render header + session drawer
-          true
-          (into (chrome-frames sid))))
+      (into [{:event "thinking" :html ""} {:event "turnctl" :html ""}
+             ;; Replace the live shell atomically with persisted work + answer.
+             {:event "vis-final" :html (html (settled-vis-bubble event))}
+             {:event "queued" :html (html (queued-content sid))}
+             {:event "footer" :html (html (footer-content sid))}]
+            (chrome-frames sid))
 
       ("turn.queued" "turn.queued.updated" "turn.queued.deleted")
       [{:event "queued" :html (html (queued-content sid))}]
@@ -1874,7 +1832,7 @@
    stream — which now starts at the SAME cursor — will deliver next."
   [sid from to]
   (->> (vis/gateway-events-since sid from)
-       (take-while #(<= (long (:seq %)) (long to)))
+       (take-while #(<= (long (get % "seq")) (long to)))
        (mapcat #(event->frames sid %))))
 
 (defn- query-long
@@ -1951,9 +1909,9 @@
             (vec (event->frames sid event))]
 
         (cond (empty? event-frames)
-              (recur (next events) (long (:seq event)) 0 0 budget frames partials)
+              (recur (next events) (long (get event "seq")) 0 0 budget frames partials)
               (>= frame-i (count event-frames))
-              (recur (next events) (long (:seq event)) 0 0 budget frames partials)
+              (recur (next events) (long (get event "seq")) 0 0 budget frames partials)
               :else (let [{frame-event :event :keys [html] :as frame}
                           (nth event-frames frame-i)
 
@@ -2035,72 +1993,72 @@
        :headers {"Content-Type" "text/event-stream"
                  "Cache-Control" "no-cache, no-transform"
                  "X-Accel-Buffering" "no"}
-       :body
-       (reify
-         ring-protocols/StreamableResponseBody
-           (write-body-to-stream [_ _ output-stream]
-             (let [^OutputStream out
-                   output-stream
+       :body (reify
+               ring-protocols/StreamableResponseBody
+                 (write-body-to-stream [_ _ output-stream]
+                   (let [^OutputStream out
+                         output-stream
 
-                   sub-id
-                   (str (java.util.UUID/randomUUID))
+                         sub-id
+                         (str (java.util.UUID/randomUUID))
 
-                   ;; Tracks the last ticker write so a `reasoning.delta`
-                   ;; token-burst coalesces to one write per window.
-                   last-thinking
-                   (volatile! 0)
+                         ;; Tracks the last ticker write so a `reasoning.delta`
+                         ;; token-burst coalesces to one write per window.
+                         last-thinking
+                         (volatile! 0)
 
-                   sink
-                   (fn [event]
-                     (locking out
-                       (let [now (System/currentTimeMillis)]
-                         ;; Drop intermediate reasoning ticks that land inside
-                         ;; the coalesce window: they only re-render the
-                         ;; transient #thinking ticker, so skipping a few costs
-                         ;; nothing but spares the tunnel a write+flush each.
-                         (when-not (and (= "reasoning.delta" (:type event))
-                                        (< (- now (long @last-thinking)) THINKING_COALESCE_MS))
-                           (when (= "reasoning.delta" (:type event)) (vreset! last-thinking now))
-                           (doseq [frame (event->frames sid event)]
-                             ;; stamp the gateway seq so the client can
-                             ;; rewind a reconnect to it (pings carry none —
-                             ;; an id-less frame leaves lastEventId alone)
-                             (write-frame! out (assoc frame :id (:seq event))))
-                           (.flush out)))))]
+                         sink
+                         (fn [event]
+                           (locking out
+                             (let [now (System/currentTimeMillis)]
+                               ;; Drop intermediate reasoning ticks that land inside
+                               ;; the coalesce window: they only re-render the
+                               ;; transient #thinking ticker, so skipping a few costs
+                               ;; nothing but spares the tunnel a write+flush each.
+                               (when-not (and (= "text" (get event "field"))
+                                              (< (- now (long @last-thinking))
+                                                 THINKING_COALESCE_MS))
+                                 (when (= "text" (get event "field")) (vreset! last-thinking now))
+                                 (doseq [frame (event->frames sid event)]
+                                   ;; stamp the gateway seq so the client can
+                                   ;; rewind a reconnect to it (pings carry none —
+                                   ;; an id-less frame leaves lastEventId alone)
+                                   (write-frame! out (assoc frame :id (get event "seq"))))
+                                 (.flush out)))))]
 
-               (try (locking out
-                      ;; 8KB SSE comment pad (clients ignore comments): proxy
-                      ;; edges (Cloudflare tunnel) buffer a streaming body until
-                      ;; a byte threshold — without the pad the first real frames
-                      ;; sit in the edge buffer and live streaming looks dead.
-                      ;; ONLY for proxied requests; a direct localhost client
-                      ;; needs no pad and shouldn't pay the bytes.
-                      (when proxied?
-                        (.write out
-                                (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                           StandardCharsets/UTF_8))
-                        (.flush out))
-                      ;; Immediate NAMED ping (not a comment): the page's
-                      ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
-                      ;; stream proves itself within a second; silence means an
-                      ;; edge proxy is buffering the body and ui.js falls back
-                      ;; to polling /ui/session/:sid/poll.
-                      (write-frame! out {:event "ping" :html ""})
-                      (.flush out)
-                      (doseq [event (vis/gateway-subscribe! sid
-                                                            sub-id
-                                                            sink
-                                                            (or from
-                                                                (vis/gateway-current-seq sid)))]
-                        (sink event)))
-                    (loop []
+                     (try (locking out
+                            ;; 8KB SSE comment pad (clients ignore comments): proxy
+                            ;; edges (Cloudflare tunnel) buffer a streaming body until
+                            ;; a byte threshold — without the pad the first real frames
+                            ;; sit in the edge buffer and live streaming looks dead.
+                            ;; ONLY for proxied requests; a direct localhost client
+                            ;; needs no pad and shouldn't pay the bytes.
+                            (when proxied?
+                              (.write out
+                                      (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                                 StandardCharsets/UTF_8))
+                              (.flush out))
+                            ;; Immediate NAMED ping (not a comment): the page's
+                            ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
+                            ;; stream proves itself within a second; silence means an
+                            ;; edge proxy is buffering the body and ui.js falls back
+                            ;; to polling /ui/session/:sid/poll.
+                            (write-frame! out {:event "ping" :html ""})
+                            (.flush out)
+                            (doseq [event (vis/gateway-subscribe!
+                                            sid
+                                            sub-id
+                                            sink
+                                            (or from (vis/gateway-current-seq sid)))]
+                              (sink event)))
+                          (loop []
 
-                      (Thread/sleep (long HEARTBEAT_MS))
-                      (locking out (write-frame! out {:event "ping" :html ""}) (.flush out))
-                      (recur))
-                    (catch Throwable _ nil)
-                    (finally (vis/gateway-unsubscribe! sid sub-id)
-                             (try (.close out) (catch Throwable _ nil)))))))})))
+                            (Thread/sleep (long HEARTBEAT_MS))
+                            (locking out (write-frame! out {:event "ping" :html ""}) (.flush out))
+                            (recur))
+                          (catch Throwable _ nil)
+                          (finally (vis/gateway-unsubscribe! sid sub-id)
+                                   (try (.close out) (catch Throwable _ nil)))))))})))
 
 (defn- poll-handler
   "GET /ui/session/:sid/poll?from=N — the SSE stream's PULL twin for
@@ -2221,7 +2179,7 @@
 (defn- project-accent
   "CSS color for a project: its explicit `:color` (hex) when set, else a hashed
    vivid hue. Fed to markup as the `--proj` custom property the CSS tints from."
-  [{:keys [id color]}]
+  [{:strs [id color]}]
   (if (not-empty color) color (str "hsl(" (project-hue id) " 62% 58%)")))
 
 (defn- session-row-li
@@ -2232,7 +2190,7 @@
    move this PROJECT SESSION within its project (persisted via the gateway
    reorder endpoint) — the web twin of dragging a TUI tab."
   ([session active-sid] (session-row-li session active-sid nil))
-  ([{:keys [id title status]} active-sid reorder]
+  ([{:strs [id title status]} active-sid reorder]
    [:li.side-item
     ;; bulk-delete checkbox - hidden until the aside carries .select-mode;
     ;; checked rows ride hx-include to the confirm modal
@@ -2289,10 +2247,10 @@
         (vis/gateway-list-sessions)
 
         projects
-        (try (vis/gateway-list-projects {:channel :web}) (catch Throwable _ nil))
+        (try (vis/gateway-list-projects) (catch Throwable _ nil))
 
         by-project
-        (group-by #(some-> (:project_id %)
+        (group-by #(some-> (get % "project_id")
                            str)
                   sessions)
 
@@ -2300,7 +2258,7 @@
         (get by-project nil)
 
         ordered
-        (sort-by (juxt :position :name) projects)]
+        (sort-by (juxt #(get % "position") #(get % "name")) projects)]
 
     (list [:div.side-head
            [:form.newchat {:method "post" :action "/ui/sessions"}
@@ -2321,28 +2279,30 @@
                  ordered
 
                  :let [members
-                       (vec (sort-by (juxt :project_position :name) (get by-project (str (:id p)))))
+                       (vec (sort-by (juxt #(get % "project_position") #(get % "name"))
+                                     (get by-project (str (get p "id")))))
 
                        last-idx
                        (dec (count members))]]
 
              [:section.side-project {:style (str "--proj:" (project-accent p))}
               [:div.side-project-head [:span.side-project-dot]
-               [:span.side-project-name (or (not-empty (:name p)) "Project")]
+               [:span.side-project-name (or (not-empty (get p "name")) "Project")]
                [:span.side-project-count (count members)]
                [:button.side-project-edit
                 {:type "button"
                  :aria-label "Manage project"
-                 :hx-get (str "/ui/project/" (:id p))
+                 :hx-get (str "/ui/project/" (get p "id"))
                  :hx-target "#modal"
                  :hx-swap "innerHTML"} (icon "edit")]]
               (if (seq members)
                 [:ul.side-list
                  (map-indexed (fn [i s]
-                                (session-row-li
-                                  s
-                                  active-sid
-                                  {:pid (:id p) :first? (zero? (long i)) :last? (= i last-idx)}))
+                                (session-row-li s
+                                                active-sid
+                                                {:pid (get p "id")
+                                                 :first? (zero? (long i))
+                                                 :last? (= i last-idx)}))
                               members)]
                 [:p.side-project-empty "empty — move a session here"])])
            (when (and (seq ordered) (seq no-project)) [:div.side-project-label "No project"])
@@ -2393,7 +2353,7 @@
         (vec (vis/gateway-list-turns sid))
 
         turns
-        (remove #(= "queued" (pick % :status)) all-turns)
+        (remove #(= "queued" (get % "status")) all-turns)
 
         window
         (vec (take-last INITIAL_TURN_WINDOW turns))
@@ -2403,14 +2363,14 @@
 
         oldest-tid
         (some-> (first window)
-                (pick :turn_id)
+                (get "turn_id")
                 str)
 
-        snapshot
-        (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
+        running-turn
+        (some #(when (= "streaming" (get % "status")) %) all-turns)
 
         running?
-        (boolean (some #(= "running" (pick % :status)) all-turns))
+        (boolean running-turn)
 
         ;; The SSE/poll cursor pins at PAGE RENDER (not at connect) so nothing falls
         ;; into the render->connect gap. The stream ALWAYS starts at `page-seq` (the
@@ -2420,31 +2380,37 @@
         page-seq
         (vis/gateway-current-seq sid)
 
-        run-seq
-        (when running?
-          (some->> (try (vis/gateway-events-since sid 0) (catch Throwable _ nil))
-                   (filter #(= "turn.started" (:type %)))
-                   last
-                   :seq
-                   (#(dec (long %)))))
+        event-start-seq
+        (get running-turn "event_start_seq")
 
         from
         page-seq
 
         live-replay?
-        (some? run-seq)
+        (some? event-start-seq)
 
         ;; Server-rendered current trace of the in-flight turn (events AFTER its
         ;; turn.started, up to the pinned cursor) — the SAME frames the stream
         ;; produces, painted now instead of replayed.
         live-frames
-        (when run-seq (inflight-live-frames sid (inc (long run-seq)) page-seq))
+        (when event-start-seq (inflight-live-frames sid event-start-seq page-seq))
+
+        live-trace-html
+        (apply str (map :html (filter #(= "trace-message" (:event %)) live-frames)))
+
+        live-answer-html
+        ;; Replay the beforeend/clear stream server-side so a refresh / session
+        ;; switch paints the CURRENT answer: each `content` frame APPENDS its
+        ;; fragment; an empty one (the iteration boundary clear) resets it.
+        (reduce (fn [acc {:keys [event html]}]
+                  (cond (not= "content" event) acc
+                        (str/blank? (str html)) ""
+                        :else (str acc html)))
+                ""
+                live-frames)
 
         live-html
-        (apply str
-          (->> live-frames
-               (filter #(= "message" (:event %)))
-               (map :html)))
+        (when running-turn (html (live-vis-shell running-turn live-trace-html live-answer-html)))
 
         live-think
         (->> live-frames
@@ -2453,7 +2419,7 @@
              :html)]
 
     (page
-      (or (:title soul) "session")
+      (or (get soul "title") "session")
       [:div.app
        {:hx-ext "sse"
         :sse-connect (str "/ui/session/" sid "/stream?from=" from)
@@ -2467,9 +2433,7 @@
         [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
          (icon "sidebar")]
         [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"} (bar-title-content soul)]
-        [:span.session-id (subs (str sid) 0 8)]
-        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
-         (icon "layers")]] [:div#modal]
+        [:span.session-id (subs (str sid) 0 8)]] [:div#modal]
        ;; mobile-drawer backdrop: dim + tap-to-close when the sidebar/rail is open
        [:div.scrim {:aria-hidden "true"}]
        [:div.layout (sessions-sidebar sid)
@@ -2543,8 +2507,7 @@
               :aria-label "Dictate"
               :data-voice-url (str "/v1/sessions/" sid "/voice")} (icon "mic")]
             [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]]
-         [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"} (footer-content sid)]]
-        (context-rail sid snapshot)]])))
+         [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"} (footer-content sid)]]]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -2561,7 +2524,7 @@
 
 (defn- epoch-of
   [soul]
-  (let [v (or (:last_active_at soul) (:created_at soul))]
+  (let [v (or (get soul "last_active_at") (get soul "created_at"))]
     (cond (number? v) (long v)
           (instance? java.util.Date v) (.getTime ^java.util.Date v)
           :else 0)))
@@ -2576,8 +2539,8 @@
 
         target
         (if (seq sessions)
-          (:id (apply max-key epoch-of sessions))
-          (:id (vis/gateway-create-session! {})))]
+          (get (apply max-key epoch-of sessions) "id")
+          (get (vis/gateway-create-session! {}) "id"))]
 
     (merge {:status 303 :headers {"Location" (str "/ui/session/" target)} :body ""} extra)))
 
@@ -2625,8 +2588,8 @@
         (let [t (str (get-in request [:form-params "title"]))]
           (when-not (str/blank? t) t))
 
-        {:keys [id]}
-        (vis/gateway-create-session! {:title title})]
+        id
+        (get (vis/gateway-create-session! {:title title}) "id")]
 
     {:status 303 :headers {"Location" (str "/ui/session/" id)} :body ""}))
 
@@ -2729,11 +2692,8 @@
       [:div.bubble.b-vis [:div.role.role-vis "Vis"]
        (if-let [error (:error result)]
          [:p.empty.slash-error (str error)]
-         ;; `result` is the slash-dispatch ENVELOPE; the run-fn's card lives at
-         ;; `:result` as a `:slash/{title,body}` map (NOT IR — feeding it raw to
-         ;; ir->hiccup dumped the EDN literal). Render the title as a heading and
-         ;; coerce the body (IR / hiccup / markdown string / nil) the way the
-         ;; persisted answer_markdown does.
+         ;; The slash-dispatch envelope carries its title/body under `:result`.
+         ;; Project canonical content directly; no duplicate persisted shape.
          (let [r (:result result)
                title (some-> (:slash/title r)
                              str
@@ -2742,7 +2702,7 @@
                body (:slash/body r)
                body* (cond (nil? body) nil
                            (string? body) (md->hiccup body)
-                           (vector? body) (ir->hiccup body)
+                           (vector? body) (ast->hiccup body)
                            :else (md->hiccup (pr-str body)))]
 
            [:div.prose.md
@@ -2829,8 +2789,8 @@
                     parse-uuid)]
     (when sid
       (doseq [t (->> (vis/gateway-list-turns sid)
-                     (filter #(= "queued" (pick % :status))))]
-        (vis/gateway-delete-queued-turn! sid (:turn_id t))))
+                     (filter #(= "queued" (get % "status"))))]
+        (vis/gateway-delete-queued-turn! sid (get t "turn_id"))))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (html (queued-content sid)) "")}))
@@ -2897,8 +2857,8 @@
                           str/trim
                           not-empty)
 
-                  {:keys [id]}
-                  (vis/gateway-create-session! {})]
+                  id
+                  (get (vis/gateway-create-session! {}) "id")]
 
               ;; `/new-session <text>` (TUI parity): the trailing text is the new
               ;; session's FIRST MESSAGE — submit it as a turn so the session opens
@@ -2962,82 +2922,41 @@
                     (if (:handled? result)
                       (slash-bubble result)
                       (slash-bubble {:error (str "unknown command: " text)})))})
-      :else (let [atts
-                  (composer-attachments (get-in request [:multipart-params "attachment"]))
+      :else
+      (let [atts
+            (composer-attachments (get-in request [:multipart-params "attachment"]))
 
-                  result
-                  (when sid
-                    (vis/gateway-submit-turn! sid
-                                              (cond-> {:request text}
-                                                (seq atts)
-                                                (assoc :attachments atts))))]
+            result
+            (when sid
+              (vis/gateway-submit-turn! sid
+                                        (cond-> {:request text}
+                                          (seq atts)
+                                          (assoc :attachments atts))))]
 
-              {:status 200
-               :headers {"Content-Type" "text/html; charset=utf-8"}
-               :body (let [turn (:turn result)]
-                       (cond (and turn (= "queued" (:status turn))) (oob-queued sid)
-                             turn (user-bubble-html text (turn-live-key "user" turn) atts)
-                             :else (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                                          [:p.empty
-                                           (str "rejected: "
-                                                (or (:message result) "invalid request"))]])))}))))
-
-(defn- slash-available-in-web?
-  "True when a slash spec is safe to expose / dispatch in the web channel.
-   `registered-slashes` is env-less and includes Telegram-only specs (`/help`,
-   `/clear`, `/model`, …) whose `:slash/availability-fn` returns false for
-   `:web` — those dispatch to \"not available in this context\", so they must
-   be filtered out of the composer menu. Mirrors the TUI's
-   `slash-available-in-tui?`, for `:web`."
-  [spec]
-  (and (not (:slash/hidden? spec))
-       (if-let [available? (:slash/availability-fn spec)]
-         (try (boolean (available? {:channel/id :web})) (catch Throwable _ false))
-         true)))
+        {:status 200
+         :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body
+         (let [turn (:turn result)]
+           (cond (and turn (= "queued" (get turn "status"))) (oob-queued sid)
+                 turn (user-bubble-html text (turn-live-key "user" turn) (vis/wire-canonical atts))
+                 :else (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                              [:p.empty
+                               (str "rejected: " (or (:message result) "invalid request"))]])))}))))
 
 (defn- slash-list-handler
-  "GET /ui/slash — the slash specs the web channel actually supports, for the
-   composer's `/` autocomplete. Applies `:web` availability (drops Telegram-only
-   commands) and surfaces LEAF commands (`/draft new`, `/fs list`) rather than
-   group roots — the same shape the TUI palette shows — plus the web-native
-   `/new-session`."
+  "GET /ui/slash — the typed-`/` palette for the composer's `/` autocomplete
+   and the Cmd+P command menu. Just the canonical `vis/slash-palette` for the
+   `:web` channel (registered leaf slashes + prompt-template skills / file
+   prompts, TUI-parity) with the web-native channel slashes prepended — those
+   (`/new-session`, `/fork-session`, `/switch-session`, `/providers`,
+   `/settings`) are handled in `submit-turn-handler`, not engine slashes."
   [_request]
-  (let [avail
-        (filter slash-available-in-web? (vis/registered-slashes))
-
-        parent-paths
-        (into #{}
-              (keep #(let [p
-                           (vec (:slash/parent %))]
-
-                       (when (seq p) p))
-                    avail))
-
-        leaf?
-        (fn [s]
-          (not (contains? parent-paths (conj (vec (:slash/parent s)) (:slash/name s)))))
-
-        path-name
-        (fn [s]
-          (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)]))))
-
-        specs
-        (->> avail
-             (filter leaf?)
-             (map (fn [s]
-                    {:name (path-name s) :doc (str (:slash/doc s))})))
-
-        ;; Web-native channel slashes (handled in submit-turn-handler), not
-        ;; engine slashes — surface them first for discoverability (TUI palette
-        ;; parity: new/fork/switch session + settings/providers panels).
-        specs
-        (concat [{:name "/new-session" :doc "Start a new session"}
-                 {:name "/fork-session" :doc "Fork the current session"}
-                 {:name "/switch-session" :doc "Switch to another session"}
-                 {:name "/providers" :doc "Configure providers & model"}
-                 {:name "/settings" :doc "Open settings"}]
-                specs)]
-
+  (let [specs (vis/slash-palette :web
+                                 [{:name "/new-session" :doc "Start a new session"}
+                                  {:name "/fork-session" :doc "Fork the current session"}
+                                  {:name "/switch-session" :doc "Switch to another session"}
+                                  {:name "/providers" :doc "Configure providers & model"}
+                                  {:name "/settings" :doc "Open settings"}])]
     {:status 200
      :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
@@ -3109,7 +3028,7 @@
                 parse-uuid)
 
         title
-        (some #(when (= (str (:id %)) (str sid)) (:title %)) (vis/gateway-list-sessions))]
+        (some #(when (= (str (get % "id")) (str sid)) (get % "title")) (vis/gateway-list-sessions))]
 
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -3213,7 +3132,7 @@
                       (let [sessions (vis/gateway-list-sessions)]
                         (if (seq sessions)
                           [:ul.modal-sessions
-                           (for [{:keys [id title status]} sessions]
+                           (for [{:strs [id title status]} sessions]
                              [:li
                               [:a.modal-session-row {:href (str "/ui/session/" id)}
                                [:span (or (not-empty title) "Untitled")]
@@ -3233,11 +3152,13 @@
         (->> (vis/gateway-list-sessions)
              (filter (fn [s]
                        (or (str/blank? q)
-                           (str/includes? (str/lower-case (str (or (:title s) "untitled"))) q))))
+                           (str/includes? (str/lower-case (str (or (get s "title") "untitled")))
+                                          q))))
              (map (fn [s]
-                    {:name (or (not-empty (:title s)) "Untitled")
-                     :doc (str (when (= "running" (:status s)) "● ") (subs (str (:id s)) 0 8))
-                     :nav (str "/ui/session/" (:id s))})))]
+                    {:name (or (not-empty (get s "title")) "Untitled")
+                     :doc (str (when (= "running" (get s "status")) "● ")
+                               (subs (str (get s "id")) 0 8))
+                     :nav (str "/ui/session/" (get s "id"))})))]
 
     {:status 200
      :headers {"Content-Type" "application/json; charset=utf-8"}
@@ -3262,10 +3183,10 @@
           parse-uuid))
 
 (defn- web-projects
-  "Web-channel projects, newest gateway view. Never throws — an unreachable
+  "All projects (cross-channel), newest gateway view. Never throws — an unreachable
    daemon yields nil (the drawer then shows only projectless sessions)."
   []
-  (try (vis/gateway-list-projects {:channel :web}) (catch Throwable _ nil)))
+  (try (vis/gateway-list-projects) (catch Throwable _ nil)))
 
 (defn- new-project-modal-handler
   "GET /ui/projects/new — name a new project."
@@ -3282,11 +3203,11 @@
        [:button.btn-primary {:type "submit"} "Create project"]]])})
 
 (defn- create-project-handler
-  "POST /ui/projects {name} — create a web project, then refresh the drawer."
+  "POST /ui/projects {name} — create a cross-channel project, then refresh the drawer."
   [request]
   (let [name (str/trim (str (get-in request [:form-params "name"])))]
     (when-not (str/blank? name)
-      (try (vis/gateway-create-project! {:name name :channel "web"}) (catch Throwable _ nil)))
+      (try (vis/gateway-create-project! {:name name}) (catch Throwable _ nil)))
     (hx-refresh)))
 
 (defn- manage-project-handler
@@ -3296,7 +3217,7 @@
         (path-project-id request)
 
         p
-        (some #(when (= (str (:id %)) (str pid)) %) (web-projects))]
+        (some #(when (= (str (get % "id")) (str pid)) %) (web-projects))]
 
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -3308,7 +3229,7 @@
                 :name "name"
                 :autocomplete "off"
                 :autofocus true
-                :value (or (:name p) "")
+                :value (or (get p "name") "")
                 :placeholder "Project name"}]
               [:div.proj-actions
                [:button.btn-danger
@@ -3347,10 +3268,11 @@
                 parse-uuid)
 
         cur
-        (some #(when (= (str (:id %)) (str sid)) (:project_id %)) (vis/gateway-list-sessions))
+        (some #(when (= (str (get % "id")) (str sid)) (get % "project_id"))
+              (vis/gateway-list-sessions))
 
         projects
-        (sort-by (juxt :position :name) (web-projects))]
+        (sort-by (juxt #(get % "position") #(get % "name")) (web-projects))]
 
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -3369,8 +3291,8 @@
                  :hx-swap "none"}
                 [:option {:value "" :selected (str/blank? (str cur))} "— No project —"]
                 (for [p projects]
-                  [:option {:value (str (:id p)) :selected (= (str (:id p)) (str cur))}
-                   (or (not-empty (:name p)) "Project")])]]
+                  [:option {:value (str (get p "id")) :selected (= (str (get p "id")) (str cur))}
+                   (or (not-empty (get p "name")) "Project")])]]
               [:button.proj-pick-row.proj-pick-new
                {:type "button" :hx-get "/ui/projects/new" :hx-target "#modal" :hx-swap "innerHTML"}
                (icon "folder-plus") [:span "New project…"]]])}))
@@ -3404,14 +3326,14 @@
         (vis/gateway-list-sessions)
 
         pid
-        (some #(when (= (str (:id %)) (str sid)) (:project_id %)) sessions)
+        (some #(when (= (str (get % "id")) (str sid)) (get % "project_id")) sessions)
 
         ordered
         (when pid
           (->> sessions
-               (filter #(= (str (:project_id %)) (str pid)))
-               (sort-by (juxt :project_position :name))
-               (mapv #(str (:id %)))))
+               (filter #(= (str (get % "project_id")) (str pid)))
+               (sort-by (juxt #(get % "project_position") #(get % "name")))
+               (mapv #(str (get % "id")))))
 
         idx
         (when ordered (.indexOf ^java.util.List ordered (str sid)))
@@ -3640,9 +3562,9 @@
        (if (seq rs)
          [:ul.modal-resources
           (for [r rs]
-            (let [rid (str (or (pick r :id) (pick r :name)))
-                  kind (some-> (or (pick r :kind) (pick r :type))
-                               name)]
+            (let [rid (str (or (get r "id") (get r "name")))
+                  kind (some-> (or (get r "kind") (get r "type"))
+                               str)]
 
               [:li.modal-res-row [:span.res-dot]
                [:span.modal-res-name
@@ -3652,19 +3574,19 @@
                  ;; lead with the kind as a prominent TYPE badge so the row
                  ;; reads "what it is" at a glance, then the readable name.
                  (when kind [:span.modal-res-type kind])
-                 [:span.modal-res-title-text (str (or (pick r :label) (pick r :id) "resource"))]]
+                 [:span.modal-res-title-text (str (or (get r "label") (get r "id") "resource"))]]
                 [:span.modal-res-meta
                  (str/join "  ·  "
                            (remove nil?
-                             [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))]
+                             [(when-let [p (or (get-in r ["detail" "port"]) (get r "port"))]
                                 (str ":" p))
-                              (when-let [s (pick r :status)]
-                                (name s))]))]]
+                              (when-let [s (get r "status")]
+                                (str s))]))]]
                ;; rid rides in the BODY (hx-vals), not the path — resource ids
                ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
                ;; can't carry.
                [:span.modal-res-actions
-                (when (pick r :can_logs)
+                (when (get r "can_logs")
                   [:button.btn-sm
                    {:type "button"
                     :hx-post (str "/ui/session/" sid "/resources/logs")
@@ -3711,7 +3633,7 @@
    resource id."
   [sid rid]
   (let [label (some-> (try (vis/get-resource sid rid) (catch Throwable _ nil))
-                      (pick :label))]
+                      (get "label"))]
     (modal-shell (str "Logs — " (or label rid))
                  {:class "modal-wide"}
                  [:div.modal-res-actions {:style "margin-bottom:8px"}
@@ -3853,7 +3775,7 @@
         (into {}
               (keep (fn [{fname :name}]
                       (let [k
-                            (keyword fname)
+                            (name fname)
 
                             v
                             (str/trim (str (get-in request
@@ -4641,7 +4563,7 @@
               (let [deadline (+ (System/currentTimeMillis) 3000)]
                 (loop []
 
-                  (or (trace-body {:session_id sid :turn_id tid})
+                  (or (trace-body {"session_id" sid "turn_id" tid})
                       (when (< (System/currentTimeMillis) deadline) (Thread/sleep 100) (recur)))))
               ;; Empty/failed read (e.g. starved by a concurrent live-stream
               ;; write). Keep the lazy trigger so re-opening retries instead
@@ -4672,7 +4594,7 @@
             idx
             (or (some (fn [[i t]]
                         (when (= before
-                                 (some-> (pick t :turn_id)
+                                 (some-> (get t "turn_id")
                                          str))
                           i))
                       (map-indexed vector turns-all))
@@ -4689,7 +4611,7 @@
 
             new-oldest
             (some-> (first batch)
-                    (pick :turn_id)
+                    (get "turn_id")
                     str)]
 
         (html-ok (html (list (when more? (older-sentinel sid new-oldest))
@@ -5145,9 +5067,9 @@
    since a standalone file can't fetch them."
   [turn]
   (list [:div.tsep]
-        (user-bubble (pick turn :request) (pick turn :started_at) nil)
+        (user-bubble (get turn "request") (get turn "started_at") nil)
         (trace-body turn)
-        (when (or (pick turn :answer_md) (pick turn :error)) (vis-bubble turn))))
+        (when (or (seq (get turn "content")) (get turn "error")) (vis-bubble turn))))
 
 (defn export-session-html
   "Standalone, self-contained HTML export of `sid` — the SAME chat view the web
@@ -5165,11 +5087,11 @@
     (if-not (or data soul)
       (str "Session not found: " sid "\n")
       (let [turns
-            (remove #(= "queued" (pick % :status))
+            (remove #(= "queued" (get % "status"))
               (vec (try (vis/gateway-list-turns sid) (catch Throwable _ []))))
 
             title
-            (or (:title soul) (get-in data [:session :title]) "vis session")
+            (or (get soul "title") (get-in data [:session :title]) "vis session")
 
             css
             (str (or @app-css "") "\n" (current-web-css-root) "\n" export-css)
@@ -5285,13 +5207,13 @@
                   (#(try (str (vis/workspace-normalize-root %)) (catch Throwable _ %)))))
 
         base
-        (norm (:root wi))
+        (norm (get wi "root"))
 
         extras
-        (:filesystem-roots wi)
+        (get wi "filesystem_roots")
 
         extra
-        (set (keep #(norm (:trunk %)) extras))
+        (set (keep #(norm (get % "trunk")) extras))
 
         path-within?
         (fn [root p]
@@ -5337,7 +5259,7 @@
        (when base
          [:li.dir-root [:span.dir-root-mark (icon "check")]
           [:span.ctx-mono.fs-root-path (abbrev-home base)] [:span.fs-root-tag "workspace"]])
-       (for [{:keys [trunk]} extras]
+       (for [{:strs [trunk]} extras]
          [:li.dir-root [:span.dir-root-mark (icon "check")]
           [:span.ctx-mono.fs-root-path (abbrev-home trunk)] [:span.fs-root-tag "added"]
           [:button.dir-root-remove
@@ -5505,14 +5427,10 @@
           {:status 200
            :headers {"Content-Type" "text/html; charset=utf-8"}
            :body (str (html (dir-browser sid path :notice "Added this folder to the session"))
-                      (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
-                             (filesystem-section sid)])
                       (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}
           {:status 200
            :headers {"Content-Type" "text/html; charset=utf-8"}
            :body (str (oob-modal "")
-                      (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
-                             (filesystem-section sid "Added filesystem root")])
                       (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
                              (footer-content sid)]))}))
       (catch Throwable e
@@ -5546,18 +5464,15 @@
     (when (and (seq path) wid) (vis/gateway-remove-filesystem-root! sid path))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body
-     (if frag
-       ;; Removed from INSIDE the picker: re-render the browser at the
-       ;; folder being viewed, plus OOB-refresh the rail + footer.
-       (str
-         (html
-           (dir-browser sid (fs-picker-base sid at) :notice "Removed this folder from the session"))
-         (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"} (filesystem-section sid)])
-         (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))
-       (str (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
-                   (filesystem-section sid "Removed filesystem root")])
-            (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)])))}))
+     :body (if frag
+             ;; Removed from INSIDE the picker: re-render the browser at the
+             ;; folder being viewed, plus OOB-refresh the rail + footer.
+             (str (html (dir-browser sid
+                                     (fs-picker-base sid at)
+                                     :notice
+                                     "Removed this folder from the session"))
+                  (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))
+             (str (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)])))}))
 
 (defn- fs-root-handler
   "POST /ui/session/:sid/fs-root {path} - change THIS session's PRIMARY
@@ -5585,8 +5500,6 @@
          {:status 200
           :headers {"Content-Type" "text/html; charset=utf-8"}
           :body (str (html (dir-browser sid path :notice "This folder is now the session's root"))
-                     (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
-                            (filesystem-section sid "Root changed")])
                      (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}
          (catch Throwable e
            {:status 200
@@ -5869,10 +5782,22 @@
         tailscale?
         (boolean (some #{"--tailscale"} args))
 
-        {:keys [host port secret]}
-        (vis/gateway-ensure-serving! "/ui")
+        flag-val
+        (fn [flag]
+          (second (drop-while #(not= flag %) args)))
 
-        {:keys [require_token]}
+        req-port
+        (some-> (flag-val "--port")
+                not-empty
+                parse-long)
+
+        req-host
+        (not-empty (flag-val "--host"))
+
+        {:keys [host port secret]}
+        (vis/gateway-ensure-serving! "/ui" {:host req-host :port req-port})
+
+        {:strs [require_token]}
         (vis/gateway-daemon-status)]
 
     (println (str "vis web companion: http://" host ":" port "/ui"))

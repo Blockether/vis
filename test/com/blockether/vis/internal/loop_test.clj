@@ -1215,7 +1215,8 @@
                              :completion_tokens 69
                              :prompt_tokens_details {:cached_tokens 0 :cache_creation_tokens 8777}}
                             (ask-result->api-usage
-                              {:tokens {:input 112 :output 69 :cached 0 :cache-created 8777}})))))
+                              {:tokens
+                               {"input" 112 "output" 69 "cached" 0 "cache_created" 8777}})))))
 
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
@@ -1456,7 +1457,7 @@
                                  1
                                  [{:id 0
                                    :code "cat(\"deps.edn\")"
-                                   :channel [{:success? true :tag :observation :result [:ir {}]}]
+                                   :channel [{:success? true :tag :observation :result [:ast {}]}]
                                    :error nil}]
                                  {:answer "done"}
                                  nil))))

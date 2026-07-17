@@ -854,11 +854,23 @@
 (defn- wget
   "Read `k` from a map tolerating BOTH key shapes the workspace record travels
    in: the in-process kebab keys (`:repo-root`) and the canonical snake wire
-   keys (`:repo_root`) the detached TUI receives from the gateway."
+   keys (`repo_root`, boolean `foo?` -> `is_foo`) the detached TUI receives
+   from the gateway."
   [m k]
   (when m
     (let [v (clojure.core/get m k)]
-      (if (some? v) v (clojure.core/get m (keyword (str/replace (name k) "-" "_")))))))
+      (if (some? v)
+        v
+        (let [n (name k)
+              n (if (str/ends-with? n "?")
+                  (let [base (subs n 0 (dec (count n)))]
+                    (if (str/starts-with? base "is-") base (str "is-" base)))
+                  n)
+              sk (str/replace n "-" "_")]
+
+          (if-some [v' (clojure.core/get m (keyword sk))]
+            v'
+            (clojure.core/get m sk)))))))
 
 (defn- root-label
   "Human label for a repo entry: the basename of its REAL (trunk) directory."

@@ -187,6 +187,18 @@
 
     (* (long (or size 1)) (long seconds))))
 
+(defn- missing-window-row
+  [{:keys [id label unit size]}]
+  {:id id
+   :label label
+   :scope :account
+   :kind :rate
+   :precision :unknown
+   :source :provider-api
+   :unlimited? false
+   :window {:kind :rolling :unit unit :size size}
+   :note "OpenAI Codex did not report this quota window."})
+
 (defn usage->dynamic-limits
   "Convert ChatGPT/Codex `/wham/usage` JSON into Vis dynamic limit rows.
 
@@ -203,10 +215,14 @@
 
          rows
          (if bucket
-           (->> fallback-window-specs
-                (keep #(window-row now-ms % bucket))
-                (sort-by window-sort-seconds)
-                vec)
+           (let [actual-rows (keep #(window-row now-ms % bucket) fallback-window-specs)
+                 present-ids (set (map :id actual-rows))]
+             (->> fallback-window-specs
+                  (remove #(contains? present-ids (:id %)))
+                  (map missing-window-row)
+                  (concat actual-rows)
+                  (sort-by window-sort-seconds)
+                  vec))
            [])
 
          limited?

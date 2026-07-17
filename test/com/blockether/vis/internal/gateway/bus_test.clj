@@ -70,7 +70,8 @@
                                      [(turn-started prod live-pid "sid-live" "T-live")
                                       (delta prod live-pid "T-live")])
                              (bus/hydrate! "sid-live")
-                             (expect (= ["turn.started" "content.delta"] (mapv :type @capture)))))))
+                             (expect (= ["turn.started" "content.delta"]
+                                        (mapv #(get % "type") @capture)))))))
   (it "REAPS an orphan (dead producer) with a synthetic terminal, never resurrects it"
       (with-temp-journal (fn [capture write!]
                            (let [prod (str (java.util.UUID/randomUUID))]
@@ -82,9 +83,9 @@
                                ;; the ONLY thing delivered is a terminal for the orphaned turn —
                                ;; the live turn.started/deltas are NOT replayed
                                (expect (= 1 (count @capture)))
-                               (expect (= "turn.failed" (:type ev)))
-                               (expect (= "interrupted" (:status ev)))
-                               (expect (= "T-orphan" (:turn_id ev))))))))
+                               (expect (= "turn.failed" (get ev "type")))
+                               (expect (= "interrupted" (get ev "status")))
+                               (expect (= "T-orphan" (get ev "turn_id"))))))))
   (it "is idempotent: a second hydrate of a reaped journal delivers nothing"
       (with-temp-journal (fn [capture write!]
                            (let [prod (str (java.util.UUID/randomUUID))]

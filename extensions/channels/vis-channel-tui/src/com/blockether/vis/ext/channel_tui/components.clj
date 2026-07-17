@@ -18,7 +18,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]
@@ -1113,10 +1113,13 @@
                                 bold?]))
                            segs)))))))
 (defn- md-wrapped-rows
-  "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Runs of\n   blank inter-block lines collapse to a single separator; `-`/`1.` list items\n   keep a `• ` marker. Only lines the wrapper broke on overflow (those\n   the IR walker tags `:wrap?`) are full-justified to `w` via\n   `justify-segs`; paragraph/block-terminal lines stay ragged-right so\n   short tails aren't stretched edge-to-edge."
+  "Wrap Markdown `text` to `w` `columns` through the renderer-local Markdown
+  layout walker. Styled runs become `[text color bold?]` `segments`; the first
+  row receives `head`, continuation rows receive `indent`, and only
+  overflow-wrapped rows are justified."
   [head indent text w base-color base-bold?]
   (let [ir
-        (vis/markdown->ir (str text))
+        (vis/markdown->ast (str text))
 
         blank-line?
         (fn [{:keys [runs]}]
@@ -1125,7 +1128,7 @@
                   runs))
 
         lines
-        (->> (ir-tui/ir->lines ir (long w))
+        (->> (layout/ast->lines ir (long w))
              ;; Collapse runs of blank inter-block lines to a single
              ;; separator (and trim leading/trailing) so multi-paragraph /
              ;; bulleted task bodies keep their block breaks instead of

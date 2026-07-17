@@ -51,8 +51,8 @@
    ratchet."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
-            [com.blockether.vis.internal.render :as ir])
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
+            [com.blockether.vis.internal.render :as ast])
   (:import [java.util LinkedHashMap]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -344,13 +344,8 @@
          trace
          (:traces message)
 
-         ;; Pre-projection rough text estimate: extract plain text from
-         ;; `:ir` so the height heuristic doesn't depend on `:text`
-         ;; (which is only set by the walker AFTER projection).
          text
-         (or (:text message)
-             (some-> (:ir message)
-                     ir/extract-text))]
+         (:text message)]
 
      (cond
        (= role :user)
@@ -373,13 +368,13 @@
 
              ;; Collapsed-default caps: preview rows + the `+N more` row.
              peek
-             (long ir/reasoning-preview-line-limit)
+             (long ast/reasoning-preview-line-limit)
 
              ;; A collapse only fires when it hides ≥ reasoning-collapse-min-hidden
              ;; rows; below that the section renders in full. Cap at the
              ;; largest height a collapsed-or-inline section can paint.
              cap
-             (+ peek (long ir/reasoning-collapse-min-hidden))
+             (+ peek (long ast/reasoning-collapse-min-hidden))
 
              section-rows
              (fn ^long [s]
@@ -650,7 +645,7 @@
    it lazily per-bubble. Hits the same caches `apply-settings` did.
 
    `:tail-lines` opt (when present, positive long) routes the IR
-   walker through `ir-tui/ir->lines-tail` so only the LAST tail-lines
+   walker through `layout/ast->lines-tail` so only the LAST tail-lines
    styled lines are produced - O(visible-tail) instead of O(body).
    Used by `layout` for the auto-scrolled tail-pinned bubble where
    the user only sees the bottom of the message. See A3 in
@@ -667,35 +662,24 @@
              (not show-timestamps?)
              (dissoc :timestamp)))
 
-         ;; Mid-window walker fast path: when caller specifies a
-         ;; window into the bubble (only the bottom assistant
-         ;; message during genuine mid-scroll), bypass the cached
-         ;; format-answer pipeline and call ir->lines-window
-         ;; directly. The window output is set as :prewrapped-lines
-         ;; with `:lines-window {:start :total-h}` so the painter
-         ;; can translate logical bubble rows to lines-vec indices.
+         ;; Mid-window fast path parses the message's Markdown projection only
+         ;; for the visible window; no renderer tree is stored on the message.
          windowed?
          (and window-start
               window-num
-              ;; Trace assistants are not plain answer IR: their
-              ;; visible body is synthesized from reasoning + tool
-              ;; iterations + final answer. Windowing only `:ir`
-              ;; skips the trace and can yield an empty mid-scroll
-              ;; viewport. Keep traces on the full projection path.
               (not (:traces message))
               (#{:assistant :user} (:role message))
-              (vector? (:ir message))
-              (= :ir (first (:ir message))))]
+              (not (str/blank? (:text message))))]
 
      (cond windowed?
-           (let [ir
-                 (:ir message)
+           (let [ast
+                 (ast/markdown->ast (:text message))
 
                  content-w
                  (max 10 (- bubble-w 4))
 
                  window-lines
-                 (ir-tui/ir->lines-window ir content-w (long window-start) (long window-num))
+                 (layout/ast->lines-window ast content-w (long window-start) (long window-num))
 
                  ;; Render through the entries adapter for parity with
                  ;; the non-windowed path: produce sentinel-prefixed
@@ -703,7 +687,7 @@
                  ;; format-answer-markdown-data's cache because window
                  ;; opts shift each frame; not worth keying.
                  entry-strs
-                 (ir-tui/lines->sentinel-strings window-lines {:mode :answer})
+                 (layout/lines->sentinel-strings window-lines {:mode :answer})
 
                  ;; The painter consumes `:prewrapped-lines` as a vec of
                  ;; sentinel-strings (one per content row) for the
@@ -728,7 +712,7 @@
                  strip-ts))
            (and (= :assistant (:role message)) (:traces message))
            (let [{:keys [text lines line-meta]} (render/format-answer-with-thinking-data
-                                                  (:ir message)
+                                                  (:text message)
                                                   (:traces message)
                                                   bubble-w
                                                   settings
@@ -744,17 +728,12 @@
                         :prewrapped-lines lines
                         :line-meta line-meta)
                  strip-ts))
-           ;; Both assistant- and user-messages now carry canonical IR on
-           ;; `:ir` (chat/assistant-message + chat/user-message lift
-           ;; via vis/markdown->ir at construction). The walker is the single
-           ;; bubble layout engine; the rendered markdown string stays in
-           ;; `:text` for clipboard/copy.
            (#{:assistant :user} (:role message))
-           (let [ir
-                 (:ir message)
+           (let [ast
+                 (ast/markdown->ast (or (:text message) ""))
 
                  {:keys [text lines line-meta]}
-                 (render/format-answer-markdown-data ir
+                 (render/format-answer-markdown-data ast
                                                      bubble-w
                                                      (cond-> {:session-id session-id
                                                               :session-turn-id (turn-identity

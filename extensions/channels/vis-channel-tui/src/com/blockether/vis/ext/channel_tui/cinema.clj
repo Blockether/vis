@@ -92,16 +92,16 @@
   (or (requiring-resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)
       (throw (ex-info "cinema: chat/rebuild-history did not resolve" {}))))
 
-(defn- markdown->ir-fn
+(defn- markdown->ast-fn
   []
-  (or (requiring-resolve 'com.blockether.vis.core/markdown->ir)
-      (throw (ex-info "cinema: core/markdown->ir did not resolve" {}))))
+  (or (requiring-resolve 'com.blockether.vis.core/markdown->ast)
+      (throw (ex-info "cinema: core/markdown->ast did not resolve" {}))))
 
-(defn- empty-ir-fn
+(defn- empty-ast-fn
   []
   (or (some-> (requiring-resolve 'com.blockether.vis.ext.channel-tui.chat/empty-ir)
               deref)
-      [:ir]))
+      [:ast]))
 
 (defn- gateway-soul-fn [] (requiring-resolve 'com.blockether.vis.core/gateway-soul))
 
@@ -168,10 +168,10 @@
         (render-frame-fn)
 
         md->ir
-        (markdown->ir-fn)
+        (markdown->ast-fn)
 
         empty-ir
-        (empty-ir-fn)
+        (empty-ast-fn)
 
         vt
         (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))

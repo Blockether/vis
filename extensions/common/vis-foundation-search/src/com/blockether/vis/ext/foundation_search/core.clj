@@ -24,7 +24,7 @@
       :error        {:message … …}}    ;; only on failure
 
    `:excerpt` is Markdown; the channel renderer parses it through
-   `vis/markdown->ir` so the TUI / Telegram / web channels render
+   `vis/markdown->ast` so TUI / Telegram / web renderers can present
    commonmark blocks (headings, lists, code fences) instead of dumping
    the raw blob. Errors are still surfaced inline as a single citation
    with `:error true` AND on the envelope's `:error` slot so failures

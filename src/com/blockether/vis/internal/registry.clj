@@ -111,7 +111,7 @@
 (s/def :channel/main-fn ifn?)
 
 ;; Optional. (fn [input opts] -> renderer-output) called by the channel's
-;; emit chokepoint to convert the answer-IR into the channel-flavored
+;; emit chokepoint to convert the canonical content blocks into the channel-flavored
 ;; output. Telegram registers an :html walker; TUI
 ;; registers a :markdown walker. Output type is channel-defined.
 (s/def :channel/messages-renderer-fn ifn?)

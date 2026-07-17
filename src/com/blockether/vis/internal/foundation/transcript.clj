@@ -37,7 +37,7 @@
       :turns
        [{:id :user-request :status :prior-outcome :provider :model
          :iteration-count :failure-count
-         :tokens :cost-usd :answer
+         :tokens :cost-usd :content
          :iterations
           [{:id :position :status :duration-ms
             :provider :model :thinking :error
@@ -54,7 +54,8 @@
    fields are bounded so reports stay safe to open."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis])
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.content :as content])
   (:import [java.util Locale]
            [java.time ZoneId]
            [java.time.format DateTimeFormatter]
@@ -170,15 +171,14 @@
              :failure-count (reduce + 0 (map :failure-count iters))
              :iterations iters
              :tokens (:tokens totals)
-             :cost-usd (:cost-usd totals)}
+             :cost-usd (:cost-usd totals)
+             :content (vec (or (:content turn) []))}
       provider
       (assoc :provider provider)
 
       model
-      (assoc :model model)
+      (assoc :model model))))
 
-      (:answer-markdown turn)
-      (assoc :answer (:answer-markdown turn)))))
 
 (defn- session-totals
   "Sum tokens + cost + iteration counts across every turn."
@@ -410,8 +410,8 @@
   [turns]
   (vec (mapcat (fn [turn]
                  (cond-> [{:role :user :turn-id (:id turn) :content (:user-request turn)}]
-                   (:answer turn)
-                   (conj {:role :assistant :turn-id (:id turn) :content (:answer turn)})))
+                   (seq (:content turn))
+                   (conj {:role :assistant :turn-id (:id turn) :content (:content turn)})))
                turns)))
 
 (defn- code-event
@@ -813,16 +813,14 @@
                                     blocks))))))
 
 (defn- render-final-answer
-  "Final answer text the turn settled on, persisted in the
-   `session_turn_state.answer_markdown` TEXT column. The model wrote
-   raw Markdown via `done(...)`; the transcript echoes the
-   source verbatim. nil/blank -> nothing emitted."
-  [answer]
-  (when (not (str/blank? (str answer))) (str "\n#### Final answer\n\n" answer "\n")))
+  "Render canonical content blocks as a disposable Markdown projection."
+  [blocks]
+  (let [answer (content/text-projection blocks)]
+    (when-not (str/blank? answer) (str "\n#### Final answer\n\n" answer "\n"))))
 
 (defn- render-turn-block
   [{:keys [position user-request status prior-outcome provider model iteration-count failure-count
-           iterations tokens cost-usd answer]}]
+           iterations tokens cost-usd content]}]
   ;; Render `position` (int), never `:id` (uuid). UUID stays in
   ;; introspection responses for programmatic callers,
   ;; never in user/LLM-facing surfaces.
@@ -857,7 +855,7 @@
        (format-cost-usd cost-usd)
        "\n"
        (apply str (map render-iteration-section iterations))
-       (render-final-answer answer)
+       (render-final-answer content)
        "\n"))
 
 (defn- render-summary-md
@@ -882,18 +880,19 @@
 
 (defn- render-dialog-message
   [{:keys [role content]}]
-  (str "### "
-       (case role
-         :user
-         "User"
+  (let [body (if (vector? content) (content/text-projection content) (str content))]
+    (str "### "
+         (case role
+           :user
+           "User"
 
-         :assistant
-         "Assistant"
+           :assistant
+           "Assistant"
 
-         (name role))
-       "\n\n"
-       (render-fenced "markdown" content)
-       "\n"))
+           (name role))
+         "\n\n"
+         (render-fenced "markdown" body)
+         "\n")))
 
 (defn- render-dialog-md
   [{:keys [session dialog]}]

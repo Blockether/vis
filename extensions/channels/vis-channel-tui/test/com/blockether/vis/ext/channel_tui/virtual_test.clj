@@ -16,7 +16,6 @@
       forward extent, even when estimates differ from real heights."
   (:require [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
-            [com.blockether.vis.internal.render :as ir]
             [lazytest.core :refer [defdescribe describe expect it]]
             [clojure.string :as str]))
 
@@ -26,15 +25,18 @@
 
 ;; ─── Fixtures ───────────────────────────────────────────────────────────────
 
-(defn- markdown->ir [s] (ir/markdown->ir (or s "")))
+(defn- prose-content [text] [{"id" (str "block-" text) "type" "prose" "markdown" text}])
 
 (defn- user-msg
   [text]
-  {:role :user :text text :ir (markdown->ir text) :timestamp #inst "2026-04-30T00:00:00"})
+  {:role :user :content (prose-content text) :text text :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- plain-assistant-msg
   [text]
-  {:role :assistant :text text :ir (markdown->ir text) :timestamp #inst "2026-04-30T00:00:00"})
+  {:role :assistant
+   :content (prose-content text)
+   :text text
+   :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- trace-assistant-msg
   "Build a minimal assistant message with a `:traces` of `n-iters`
@@ -61,7 +63,7 @@
         (vec (repeat n-iters {:thinking "thinking line" :forms forms}))]
 
     {:role :assistant
-     :ir (markdown->ir answer)
+     :content (prose-content answer)
      :text answer
      :traces trace
      :iteration-count n-iters
@@ -162,7 +164,7 @@
                                                chunk))})))]
 
     {:role :assistant
-     :ir (markdown->ir "done")
+     :content (prose-content "done")
      :text "done"
      :traces trace
      :iteration-count (count trace)
@@ -526,91 +528,91 @@
 
 (defdescribe
   pre-warm-test
-  (describe "pre-warm! warms the LRU off the render thread"
-            (it "returns nil for empty messages, no thread spawned"
-                (expect (nil? (virtual/pre-warm! [] bubble-w settings))))
-            (it "returns a daemon thread for non-empty messages"
-                (let [t (virtual/pre-warm! [(plain-assistant-msg "hi")] bubble-w settings)]
-                  (expect (some? t))
-                  (expect (.isDaemon ^Thread t))
-                  (virtual/stop-pre-warm! t)))
-            (it "pre-warm-recent! warms only the requested tail-count"
-                (virtual/invalidate-heights!)
-                (render/invalidate-cache!)
-                (let [msgs
-                      [(plain-assistant-msg "m0") (plain-assistant-msg "m1")
-                       (plain-assistant-msg "m2") (plain-assistant-msg "m3")
-                       (plain-assistant-msg "m4")]
+  (describe
+    "pre-warm! warms the LRU off the render thread"
+    (it "returns nil for empty messages, no thread spawned"
+        (expect (nil? (virtual/pre-warm! [] bubble-w settings))))
+    (it "returns a daemon thread for non-empty messages"
+        (let [t (virtual/pre-warm! [(plain-assistant-msg "hi")] bubble-w settings)]
+          (expect (some? t))
+          (expect (.isDaemon ^Thread t))
+          (virtual/stop-pre-warm! t)))
+    (it "pre-warm-recent! warms only the requested tail-count"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [msgs
+              [(plain-assistant-msg "m0") (plain-assistant-msg "m1") (plain-assistant-msg "m2")
+               (plain-assistant-msg "m3") (plain-assistant-msg "m4")]
 
-                      warmed
-                      (virtual/pre-warm-recent! msgs bubble-w settings {:count 2 :budget-ms 1000})]
+              warmed
+              (virtual/pre-warm-recent! msgs bubble-w settings {:count 2 :budget-ms 1000})]
 
-                  (expect (= 2 warmed))
-                  (expect (= 2 (virtual/height-cache-size)))))
-            (it "pre-warm-recent! respects wall-clock budget"
-                (virtual/invalidate-heights!)
-                (render/invalidate-cache!)
-                (let [msgs
-                      [(trace-assistant-msg 5 4 "a") (trace-assistant-msg 5 4 "b")
-                       (trace-assistant-msg 5 4 "c")]
+          (expect (= 2 warmed))
+          (expect (= 2 (virtual/height-cache-size)))))
+    (it "pre-warm-recent! respects wall-clock budget"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [msgs
+              [(trace-assistant-msg 5 4 "a") (trace-assistant-msg 5 4 "b")
+               (trace-assistant-msg 5 4 "c")]
 
-                      warmed
-                      (virtual/pre-warm-recent! msgs bubble-w settings {:count 3 :budget-ms 0})]
+              warmed
+              (virtual/pre-warm-recent! msgs bubble-w settings {:count 3 :budget-ms 0})]
 
-                  (expect (= 0 warmed))
-                  (expect (= 0 (virtual/height-cache-size)))))
-            (it "warms the cache so a subsequent layout call is cheap"
-                ;; The whole point: after pre-warm finishes, calling
-                ;; format-answer-with-thinking on the warmed assistants must
-                ;; hit the cache (sub-microsecond), NOT recompute. Verified by
-                ;; counting calls into the uncached `format-answer-with-thinking*`
-                ;; surface.
-                (render/invalidate-cache!)
-                (let [msgs
-                      [(trace-assistant-msg 3 2 "answer") (trace-assistant-msg 2 1 "another")]
+          (expect (= 0 warmed))
+          (expect (= 0 (virtual/height-cache-size)))))
+    (it "warms the cache so a subsequent layout call is cheap"
+        ;; The whole point: after pre-warm finishes, calling
+        ;; format-answer-with-thinking on the warmed assistants must
+        ;; hit the cache (sub-microsecond), NOT recompute. Verified by
+        ;; counting calls into the uncached `format-answer-with-thinking*`
+        ;; surface.
+        (render/invalidate-cache!)
+        (let [msgs
+              [(trace-assistant-msg 3 2 "answer") (trace-assistant-msg 2 1 "another")]
 
-                      t
-                      (virtual/pre-warm! msgs bubble-w settings)]
+              t
+              (virtual/pre-warm! msgs bubble-w settings)]
 
-                  (.join ^Thread t 5000)
-                  ;; Now both bubbles' fawt entries should be cached.
-                  (let [calls
-                        (atom 0)
+          (.join ^Thread t 5000)
+          ;; Now both bubbles' fawt entries should be cached.
+          (let [calls
+                (atom 0)
 
-                        real
-                        @#'render/format-answer-with-thinking*]
+                real
+                @#'render/format-answer-with-thinking*]
 
-                    (with-redefs [render/format-answer-with-thinking* (fn [& args]
-                                                                        (swap! calls inc)
-                                                                        (apply real args))]
-                      (doseq [m msgs]
-                        (render/format-answer-with-thinking (:ir m) (:traces m) bubble-w settings))
-                      ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
-                      ;; calls expected.
-                      (expect (zero? @calls))))))
-            (it "fires :on-warm at least once when warming completes"
-                ;; The render-version bump hook: callers wire :on-warm to
-                ;; settle total-h via a re-layout. Must fire at least once
-                ;; (the final settle) even for a sub-batch session.
-                (virtual/invalidate-heights!)
-                (render/invalidate-cache!)
-                (let [hits
-                      (atom 0)
+            (with-redefs [render/format-answer-with-thinking* (fn [& args]
+                                                                (swap! calls inc)
+                                                                (apply real args))]
+              (doseq [m msgs]
+                (render/format-answer-with-thinking (:text m) (:traces m) bubble-w settings))
+              ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
+              ;; calls expected.
+              (expect (zero? @calls))))))
+    (it "fires :on-warm at least once when warming completes"
+        ;; The render-version bump hook: callers wire :on-warm to
+        ;; settle total-h via a re-layout. Must fire at least once
+        ;; (the final settle) even for a sub-batch session.
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [hits
+              (atom 0)
 
-                      t
-                      (virtual/pre-warm! [(plain-assistant-msg "a") (plain-assistant-msg "b")]
-                                         bubble-w
-                                         settings
-                                         {:on-warm (fn []
-                                                     (swap! hits inc))})]
+              t
+              (virtual/pre-warm! [(plain-assistant-msg "a") (plain-assistant-msg "b")]
+                                 bubble-w
+                                 settings
+                                 {:on-warm (fn []
+                                             (swap! hits inc))})]
 
-                  (.join ^Thread t 5000)
-                  (expect (pos? @hits))))
-            (it "stop-pre-warm! is safe on nil and on already-finished threads"
-                (expect (nil? (virtual/stop-pre-warm! nil)))
-                (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]
-                  (.join ^Thread t 5000)
-                  (expect (nil? (virtual/stop-pre-warm! t)))))))
+          (.join ^Thread t 5000)
+          (expect (pos? @hits))))
+    (it "stop-pre-warm! is safe on nil and on already-finished threads"
+        (expect (nil? (virtual/stop-pre-warm! nil)))
+        (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]
+          (.join ^Thread t 5000)
+          (expect (nil? (virtual/stop-pre-warm! t)))))))
 
 (defdescribe
   overshoot-invariant-test
@@ -869,7 +871,7 @@
                                    :prewrapped-lines))))
           (expect (= total (:total-h mid)))
           (expect (= total (:total-h mid-again)))))
-    (it "mid-scroll trace assistants render the trace instead of an empty answer-IR window"
+    (it "mid-scroll trace assistants render the trace instead of an empty Markdown window"
         (virtual/invalidate-heights!)
         (render/invalidate-cache!)
         (let [msgs
@@ -1019,14 +1021,19 @@
              :session-turn-id (str "t" i)
              :client-turn-id (str "c" i)
              :traces [{:error err}]
-             :ir [:ir {} [:p {} ""]]})
+             :content []
+             :text ""})
 
           cancel
           {:role :assistant
            :session-turn-id "tc"
            :client-turn-id "cc"
            :status :cancelled
-           :ir [:ir {} [:p {} "Cancelled by user."]]}
+           :content [{"id" "cancelled"
+                      "type" "notice"
+                      "code" "turn_cancelled"
+                      "message" "Cancelled by user."}]
+           :text "Cancelled by user."}
 
           msgs
           (-> (mapv mk (range 9))

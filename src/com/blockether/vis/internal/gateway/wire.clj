@@ -5,27 +5,33 @@
    keys become snake_case strings (namespace dropped), keyword VALUES keep
    their full `ns/name` (a badge role like `:tool-color/search` must survive
    the hop — dropping the namespace made the remote TUI see `:search` while
-   the in-process web saw the full keyword), non-JSON leaves fall back to
-   `str`. The walker makes ZERO semantic decisions - no flattening, no
-   rendering. Canonical IR vectors pass through structurally
-   (`[:ir {...} ...]` -> `[\"ir\", {...}, ...]`), which is exactly the
-   ALWAYS-IR contract: the client walks IR; the gateway never renders.
+   the hop), non-JSON leaves fall back to `str`. The walker makes zero semantic
+   or rendering decisions. Canonical message content is already a string-keyed
+   vector of typed block maps before it reaches this boundary.
 
    `canonical` is the SAME shape on the Clojure side: by definition what
-   `parse-json` ∘ `json-str` yields — serve it from a facade and in-process
-   readers see exactly what a remote client sees."
+   `parse-json` ∘ `json-str` yields — snake_case STRING keys — serve it from
+   a facade and in-process readers see exactly what a remote client sees."
   (:require [charred.api :as json]
             [clojure.string :as str]))
 
-(defn- wire-key
-  "Keyword/symbol map key -> snake_case string. String keys (fact keys,
-   scope strings, file paths) pass VERBATIM - rewriting them could
-   corrupt user data that legitimately contains hyphens."
+(defn wire-key
+  "Keyword/symbol map key -> snake_case string. A boolean-style `foo?` key
+   becomes `is_foo` (already-`is-` prefixed keys just drop the `?`). String
+   keys (fact keys, scope strings, file paths) pass VERBATIM - rewriting
+   them could corrupt user data that legitimately contains hyphens."
   [k]
   (if (or (keyword? k) (symbol? k))
-    (-> k
-        name
-        (str/replace "-" "_"))
+    (let [n
+          (name k)
+
+          n
+          (if (str/ends-with? n "?")
+            (let [base (subs n 0 (dec (count n)))]
+              (if (str/starts-with? base "is-") base (str "is-" base)))
+            n)]
+
+      (str/replace n "-" "_"))
     k))
 
 (defn ->wire
@@ -48,24 +54,14 @@
         :else (str x)))
 
 (defn canonical
-  "THE canonical gateway value shape — BY CONSTRUCTION identical to what a
-   remote client holds after `parse-json` ∘ `json-str`: snake_case KEYWORD
-   map keys (namespaces dropped), keyword/symbol values stringified, dates
-   as epoch millis. Serve `(canonical x)` from a facade and the HTTP hop
-   becomes an IDENTITY — in-process and remote consumers read the SAME
-   shape, so a channel written against one transport can never break on
-   the other. Invariant (guarded by the wire round-trip test):
-   `(canonical x)` == `(parse-json (json-str x))` for every engine value."
+  "THE canonical gateway value shape — snake_case STRING map keys, exactly
+   what a remote client holds after `parse-json` ∘ `json-str`. In-process and
+   remote consumers therefore read the same role-labelled messages and typed
+   content blocks.
+
+   Invariant: `(canonical x)` equals `(parse-json (json-str x))`."
   [x]
-  (let [keywordize (fn keywordize [v]
-                     (cond (map? v) (persistent! (reduce-kv
-                                                   (fn [m k v']
-                                                     (assoc! m (keyword k) (keywordize v')))
-                                                   (transient {})
-                                                   v))
-                           (coll? v) (mapv keywordize v)
-                           :else v))]
-    (keywordize (->wire x))))
+  (->wire x))
 
 (defn json-str
   "Encode any engine value as a JSON string via [[->wire]]."
@@ -80,39 +76,11 @@
   (json/write-json-str (->wire x) :indent-str "  "))
 
 (defn parse-json
-  "Parse a JSON request body into keyword-keyed Clojure data. Returns
-   nil on blank or malformed input (callers map that to 400)."
+  "Parse a JSON string into the canonical wire shape: snake_case STRING map
+   keys, identical to [[canonical]]. Returns nil on blank or malformed input
+   (callers map that to 400)."
   [^String s]
-  (when-not (str/blank? s) (try (json/read-json s :key-fn keyword) (catch Throwable _ nil))))
-
-(defn- unwire-key
-  "Inverse of [[wire-key]] for ONE map key: a snake_case keyword (what
-   `parse-json` yields for a JSON object key) -> the engine's kebab keyword.
-   Preserves any namespace; non-keyword keys pass through."
-  [k]
-  (if (keyword? k) (keyword (namespace k) (str/replace (name k) "_" "-")) k))
-
-(defn kebab-keys
-  "Recursively rewrite every MAP KEY snake_case -> kebab-case — the structural
-   INVERSE of the `-`->`_` munge [[wire-key]]/[[->wire]] apply on the way out.
-   Values pass through UNTOUCHED (paths, labels, ids never mutate).
-
-   Deliberately OPT-IN, applied only at a TYPED boundary whose keys are known to
-   be engine keywords (e.g. the gateway workspace record) — NOT folded into
-   [[parse-json]]: once JSON has flattened every key to a string the encoder's
-   keyword-vs-string distinction is gone, so a legit STRING key that genuinely
-   carries an underscore (a fact key, a scope like `turn_5`, a file path) is
-   indistinguishable from a munged keyword and a blanket rewrite would corrupt it.
-   Where the payload has no such string keys, this restores the engine's kebab
-   shape LOSSLESSLY and — unlike a hand-maintained rename map — can never silently
-   miss a newly-added key. Idempotent on already-kebab input."
-  [x]
-  (cond (map? x) (persistent! (reduce-kv (fn [m k v]
-                                           (assoc! m (unwire-key k) (kebab-keys v)))
-                                         (transient {})
-                                         x))
-        (coll? x) (mapv kebab-keys x)
-        :else x))
+  (when-not (str/blank? s) (try (json/read-json s) (catch Throwable _ nil))))
 
 
 (defn bounded-pr
@@ -143,7 +111,16 @@
   #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"})
 
 (defn sse-frame
-  "Render one event map as an SSE frame. The event's `:seq` doubles as
-   the SSE `id:` so `Last-Event-ID` reconnects resume losslessly."
-  ^String [{:keys [seq type] :as event}]
-  (str "id: " seq "\n" "event: " type "\n" "data: " (json-str event) "\n\n"))
+  "Render one canonical (string-keyed) event map as an SSE frame. The event's
+   `\"seq\"` doubles as the SSE `id:` so `Last-Event-ID` reconnects resume
+   losslessly."
+  ^String [event]
+  (str "id: "
+       (get event "seq")
+       "\n"
+       "event: "
+       (get event "type")
+       "\n"
+       "data: "
+       (json-str event)
+       "\n\n"))

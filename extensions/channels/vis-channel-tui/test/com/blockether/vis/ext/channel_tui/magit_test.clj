@@ -623,7 +623,7 @@
                  (expect (= "C-x g" (keymap/label-for :open-magit))))
              (it "the footer git segment is a clickable :footer-git button"
                  (let [spans (#'footer/git-footer-spans
-                              {:workspace? true :repo "vis" :branch "main"})]
+                              {"is_workspace" true "repo" "vis" "branch" "main"})]
                    (expect (= :footer-git (:kind (first spans))))
                    (expect (str/includes? (:text (first spans)) "vis"))
                    ;; the C-x g chord rides on the chip (discoverability gripe)
@@ -633,13 +633,13 @@
                    (expect (= :git (:tint (first spans))))))
              (it "the DRAFT footer segment is clickable too"
                  (let [spans (#'footer/git-footer-spans
-                              {:workspace? true :draft? true :draft-root "/tmp/draft"})]
+                              {"is_workspace" true "is_draft" true "draft_root" "/tmp/draft"})]
                    (expect (= :footer-git (:kind (first spans))))
                    (expect (str/includes? (:text (first spans)) "C-x g"))
                    ;; a draft chip is tinted amber (isolated-tree warning colour)
                    (expect (= :draft (:tint (first spans))))))
              (it "outside a workspace the dead 'No git' label stays a plain span"
-                 (let [spans (#'footer/git-footer-spans {:workspace? false})]
+                 (let [spans (#'footer/git-footer-spans {"is_workspace" false})]
                    (expect (nil? (:kind (first spans)))))))
 
 ;;; ── async network verbs (push/pull/fetch never freeze the modal) ─────────────

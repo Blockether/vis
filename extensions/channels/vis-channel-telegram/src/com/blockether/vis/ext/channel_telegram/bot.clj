@@ -42,49 +42,48 @@
 (def ^:private telegram-restart-cmd-env "VIS_TELEGRAM_RESTART_CMD")
 (def ^:private telegram-allowed-chat-ids-env "TELEGRAM_ALLOWED_CHAT_IDS")
 
-;; ─── renderer chokepoint ────────────────────────────────────────────────
-;;
-;; Single point where answer-IR becomes
-;; Telegram-HTML. Registered on the channel as
-;; `:channel/messages-renderer-fn`. Bot calls it before every
-;; `tg/send-message!` so the API helper receives ready-to-ship HTML.
+;; ─── canonical content renderer ─────────────────────────────────────────
+
+(defn- prose-blocks
+  [markdown]
+  [{"id" (str (java.util.UUID/randomUUID)) "type" "prose" "markdown" (or markdown "")}])
+
+(defn- content-blocks->markdown
+  [blocks]
+  (->> blocks
+       (keep (fn [block]
+               (case (get block "type")
+                 "prose"
+                 (get block "markdown")
+
+                 "code"
+                 (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
+
+                 ("error" "notice")
+                 (get block "message")
+
+                 nil)))
+       (str/join "\n\n")))
 
 (defn render-for-telegram
-  "Render canonical answer-IR (`[:ir & nodes]`) to Telegram-flavored
-   HTML.
-
-   STRICT input contract: IR only, mirroring
-   `channel-tui.core/render-for-tui`. `nil` is accepted as the empty
-   placeholder. Strings, Hiccup vectors, EDN, etc. are programmer
-   bugs and throw — lift to IR upstream via `vis/markdown->ir`.
-
-   `opts` forwarded to the IR walker."
-  ([ir] (render-for-telegram ir nil))
-  ([ir opts]
-   (cond
-     (nil? ir) ""
-     (not (and (vector? ir) (= :ir (first ir))))
-     (throw
-       (ex-info
-         "render-for-telegram requires canonical [:ir ...] input; build IR upstream, do not pass raw text or Hiccup"
-         {:got-type (some-> ir
-                            class
-                            .getName)
-          :got-preview (let [s (pr-str ir)]
-                         (subs s 0 (min 200 (count s))))}))
-     :else (-> (vis/render ir :html opts)
-               ;; Belt-and-suspenders: the block walkers fix the structural
-               ;; spacing, but collapse any residual run of 3+ newlines to a
-               ;; single blank line and trim the edges so stacked blocks read
-               ;; cleanly and the footer attaches without a gap.
-               (str/replace #"\n{3,}" "\n\n")
-               str/trim))))
+  "Render canonical typed content blocks to Telegram-safe HTML."
+  ([blocks] (render-for-telegram blocks nil))
+  ([blocks opts]
+   (when-not (vector? blocks)
+     (throw (ex-info "render-for-telegram requires canonical content blocks"
+                     {:got-type (some-> blocks
+                                        class
+                                        .getName)})))
+   (let [markdown (content-blocks->markdown blocks)]
+     (if (str/blank? markdown)
+       ""
+       (-> (vis/render (vis/markdown->ast markdown) :html opts)
+           (str/replace #"\n{3,}" "\n\n")
+           str/trim)))))
 
 (defn- send!
-  [token chat-id ir & [opts]]
-  ;; STRICT IR rendering chokepoint. String callers must wrap via
-  ;; `vis/markdown->ir` before invoking; passing a raw string here throws.
-  (tg/send-message! token chat-id (render-for-telegram ir) opts))
+  [token chat-id blocks & [opts]]
+  (tg/send-message! token chat-id (render-for-telegram blocks) opts))
 
 (defn- send-plain!
   [token chat-id text & [opts]]
@@ -851,7 +850,17 @@
   ;; and shipped with parse_mode=HTML, so use <i>…</i> tags (Markdown `_…_`
   ;; renders as literal underscores in HTML mode) and escape the dynamic line so
   ;; stray &/</> never break parsing.
-  (let [line (vis/format-meta-line result)]
+  ;; The gateway result is canonical string-keyed; the shared formatter's
+  ;; contract is the TUI-message field map, so pick the fields explicitly.
+  (let [line (vis/format-meta-line {:model (get result "model")
+                                    :provider (get result "provider")
+                                    :tokens (get result "tokens")
+                                    :cost (get result "cost")
+                                    :duration-ms (get result "duration_ms")
+                                    :llm-selected (get result "llm_selected")
+                                    :llm-actual (get result "llm_actual")
+                                    :llm-fallback? (get result "is_llm_fallback")
+                                    :llm-routing-trace (get result "llm_routing_trace")})]
     (when (seq line) (str "\n\n<i>🤖 " (esc-html line) "</i>"))))
 
 (defn- normalize-choice
@@ -1193,7 +1202,7 @@
 
 (defn- command-model
   []
-  (vis/markdown->ir
+  (prose-blocks
     (str "Current model: " (current-model-label) "\n\nUse /models to list and choose.")))
 
 (defn- command-models
@@ -1211,7 +1220,7 @@
       ;; The inline keyboard already lists every model (with ✅ on the
       ;; active one), so the text body is just a header — enumerating the
       ;; models in text too is redundant noise on Telegram.
-      {:message (vis/markdown->ir
+      {:message (prose-blocks
                   (if (seq entries)
                     (str "Models — current: "
                          (or (some-> active
@@ -1220,13 +1229,13 @@
                          "\nTap a button to switch, or send /models 2 or /models provider/model.")
                     "No models configured"))
        :reply-markup (when (seq entries) (model-inline-keyboard entries active))}
-      {:message (vis/markdown->ir (:message (select-model! arg)))})))
+      {:message (prose-blocks (:message (select-model! arg)))})))
 
 (defn- model-label [] (current-model-label))
 
 (defn- command-help
   []
-  (vis/markdown->ir
+  (prose-blocks
     (str "Vis Telegram commands:\n"
          "/help - show this help\n"
          "/status - show session, model, reasoning, verbosity\n"
@@ -1255,52 +1264,52 @@
 (defn- gateway-session-for-telegram-chat!
   [chat-id]
   (let [external-id (normalize-chat-id chat-id)]
-    (or (some #(when (= external-id (:external_id %)) %) (vis/gateway-list-sessions :telegram))
+    (or (some #(when (= external-id (get % "external_id")) %) (vis/gateway-list-sessions :telegram))
         (vis/gateway-create-session! {:channel :telegram :external-id external-id}))))
 
 (defn- command-status
   [chat-id]
-  (let [{:keys [id title]}
+  (let [{:strs [id title]}
         (gateway-session-for-telegram-chat! chat-id)
 
         settings
         (chat-settings chat-id)]
 
-    (vis/markdown->ir (str "Session: "
-                           (subs (str id) 0 (min 8 (count (str id))))
-                           (when-not (str/blank? title) (str " - " title))
-                           "\nModel: "
-                           (model-label)
-                           "\nReasoning: "
-                           (name (:reasoning-level settings))
-                           (when (codex-model-active?)
-                             (str "\nCodex verbosity: " (name (:openai-codex-verbosity settings))))
-                           "\nVoice mode: " (name (:voice-mode settings))
-                           "\nIn flight: " (if (in-flight-token chat-id) "yes" "no")))))
+    (prose-blocks (str "Session: "
+                       (subs (str id) 0 (min 8 (count (str id))))
+                       (when-not (str/blank? title) (str " - " title))
+                       "\nModel: "
+                       (model-label)
+                       "\nReasoning: "
+                       (name (:reasoning-level settings))
+                       (when (codex-model-active?)
+                         (str "\nCodex verbosity: " (name (:openai-codex-verbosity settings))))
+                       "\nVoice mode: " (name (:voice-mode settings))
+                       "\nIn flight: " (if (in-flight-token chat-id) "yes" "no")))))
 
 (defn- command-reasoning
   [chat-id arg]
-  (vis/markdown->ir (if (str/blank? (or arg ""))
-                      (str "Reasoning: "
-                           (name (:reasoning-level (chat-settings chat-id)))
-                           "\nUse /reasoning quick, /reasoning balanced, or /reasoning deep.")
-                      (let [level (normalize-reasoning-level arg)]
-                        (if-not (= (keyword (str/lower-case (str/trim arg))) level)
-                          (str "Unknown reasoning level: " arg "\nUse quick, balanced, or deep.")
-                          (do (set-chat-setting! chat-id :reasoning-level level)
-                              (str "Reasoning: " (name level))))))))
+  (prose-blocks (if (str/blank? (or arg ""))
+                  (str "Reasoning: "
+                       (name (:reasoning-level (chat-settings chat-id)))
+                       "\nUse /reasoning quick, /reasoning balanced, or /reasoning deep.")
+                  (let [level (normalize-reasoning-level arg)]
+                    (if-not (= (keyword (str/lower-case (str/trim arg))) level)
+                      (str "Unknown reasoning level: " arg "\nUse quick, balanced, or deep.")
+                      (do (set-chat-setting! chat-id :reasoning-level level)
+                          (str "Reasoning: " (name level))))))))
 
 (defn- command-verbosity
   [chat-id arg]
-  (vis/markdown->ir (if (str/blank? (or arg ""))
-                      (str "Codex verbosity: "
-                           (name (:openai-codex-verbosity (chat-settings chat-id)))
-                           "\nUse /verbosity low, /verbosity medium, or /verbosity high.")
-                      (let [verbosity (normalize-codex-verbosity arg)]
-                        (if-not (= (keyword (str/lower-case (str/trim arg))) verbosity)
-                          (str "Unknown verbosity: " arg "\nUse low, medium, or high.")
-                          (do (set-chat-setting! chat-id :openai-codex-verbosity verbosity)
-                              (str "Codex verbosity: " (name verbosity))))))))
+  (prose-blocks (if (str/blank? (or arg ""))
+                  (str "Codex verbosity: "
+                       (name (:openai-codex-verbosity (chat-settings chat-id)))
+                       "\nUse /verbosity low, /verbosity medium, or /verbosity high.")
+                  (let [verbosity (normalize-codex-verbosity arg)]
+                    (if-not (= (keyword (str/lower-case (str/trim arg))) verbosity)
+                      (str "Unknown verbosity: " arg "\nUse low, medium, or high.")
+                      (do (set-chat-setting! chat-id :openai-codex-verbosity verbosity)
+                          (str "Codex verbosity: " (name verbosity))))))))
 
 (defn- voice-mode-available?
   [mode]
@@ -1349,7 +1358,7 @@
 (defn- command-voice
   [chat-id arg]
   (if-not (voice-extension?)
-    {:message (vis/markdown->ir
+    {:message (prose-blocks
                 "Voice is not loaded. Install/load vis-foundation-voice, then restart Telegram.")}
     (if (str/blank? (or arg ""))
       (let [active
@@ -1358,15 +1367,15 @@
             modes
             (available-voice-modes)]
 
-        {:message (vis/markdown->ir
-                    (str "Voice modes\nCurrent: " (name active)
-                         "\n\n" (str/join "\n" (voice-mode-lines active modes))
-                         "\n\ninput = voice messages transcribe to text answers."
-                         "\noutput = text prompts receive audio answers."
-                         "\nduplex = voice in, audio out."
-                         "\n\nTap a button, or send /voice duplex."
-                         "\nAvailable: input=" (if (voice-input-extension?) "yes" "missing")
-                         ", output=" (if (voice-output-extension?) "yes" "missing")))
+        {:message (prose-blocks (str "Voice modes\nCurrent: " (name active)
+                                     "\n\n" (str/join "\n" (voice-mode-lines active modes))
+                                     "\n\ninput = voice messages transcribe to text answers."
+                                     "\noutput = text prompts receive audio answers."
+                                     "\nduplex = voice in, audio out."
+                                     "\n\nTap a button, or send /voice duplex."
+                                     "\nAvailable: input="
+                                     (if (voice-input-extension?) "yes" "missing")
+                                     ", output=" (if (voice-output-extension?) "yes" "missing")))
          :reply-markup (voice-inline-keyboard active modes)})
       (let [raw
             (keyword (str/lower-case (str/trim arg)))
@@ -1374,25 +1383,25 @@
             mode
             (normalize-voice-mode raw)]
 
-        {:message (vis/markdown->ir
+        {:message (prose-blocks
                     (if (and (not= raw mode) (not (contains? #{:on :voice :audio} raw)))
                       (str "Unknown voice mode: " arg "\nUse off, input, output, duplex, or on.")
                       (set-voice-mode! chat-id mode)))}))))
 
 (defn- command-cancel
   [chat-id]
-  (vis/markdown->ir (if-let [token (in-flight-token chat-id)]
-                      (do (vis/cancel! token) "Cancelling current request...")
-                      "No request is currently running.")))
+  (prose-blocks (if-let [token (in-flight-token chat-id)]
+                  (do (vis/cancel! token) "Cancelling current request...")
+                  "No request is currently running.")))
 
 (defn- command-restart
   []
   (schedule-self-restart!)
-  (vis/markdown->ir "Restarting Telegram bot in a fresh Java process..."))
+  (prose-blocks "Restarting Telegram bot in a fresh Java process..."))
 
 (defn- command-export
   [chat-id]
-  (let [{:keys [id]}
+  (let [{:strs [id]}
         (gateway-session-for-telegram-chat! chat-id)
 
         db
@@ -1426,16 +1435,16 @@
                                          "Styled HTML transcript (vis-light)")
                       (finally (.delete tmp))))))
            (catch Throwable t (tel/log! {:level :warn :id ::export-html-failed :error (str t)}))))
-    (vis/markdown->ir (if (seq markdown) markdown "No persisted turns to export yet."))))
+    (prose-blocks (if (seq markdown) markdown "No persisted turns to export yet."))))
 
 (defn- command-clear
   [chat-id]
   ;; Tear down the chat's gateway session tree (turns + soul + workspace
   ;; links) and immediately recreate a fresh empty Telegram gateway session.
-  (let [{:keys [id]} (gateway-session-for-telegram-chat! chat-id)]
+  (let [{:strs [id]} (gateway-session-for-telegram-chat! chat-id)]
     (vis/gateway-close-session! id)
     (vis/gateway-create-session! {:channel :telegram :external-id (normalize-chat-id chat-id)})
-    (vis/markdown->ir "🧹 Session cleared - starting a fresh conversation.")))
+    (prose-blocks "🧹 Session cleared - starting a fresh conversation.")))
 
 ;; ----------------------------------------------------------------------------
 ;; Slash dispatch
@@ -1486,7 +1495,7 @@
           (try (vis/db-info) (catch Throwable _ nil))
 
           session-id
-          (try (:id (gateway-session-for-telegram-chat! chat-id)) (catch Throwable _ nil))
+          (try (get (gateway-session-for-telegram-chat! chat-id) "id") (catch Throwable _ nil))
 
           ctx
           (cond-> {:channel/id :telegram :telegram/chat-id chat-id :command/raw text}
@@ -1502,9 +1511,9 @@
       (cond (not (:handled? result)) false
             (:error result) (do (send! token
                                        chat-id
-                                       (vis/markdown->ir (str "**Slash error** ("
-                                                              (name (or (:reason result) :error))
-                                                              ")\n\n" (:error result))))
+                                       (prose-blocks (str "**Slash error** ("
+                                                          (name (or (:reason result) :error))
+                                                          ")\n\n" (:error result))))
                                 true)
             :else (let [r
                         (:result result)
@@ -1514,12 +1523,12 @@
 
                         ;; Cross-channel slash run-fns (e.g. /dir) may return a raw
                         ;; string body; render-for-telegram only accepts canonical
-                        ;; [:ir ...]. Coerce strings to IR so non-Telegram-native
+                        ;; [:ast ...]. Coerce strings to IR so non-Telegram-native
                         ;; slashes render here instead of throwing.
                         body
-                        (cond (string? raw-body) (vis/markdown->ir raw-body)
+                        (cond (string? raw-body) (prose-blocks raw-body)
                               (some? raw-body) raw-body
-                              :else (vis/markdown->ir (or (:slash/title r) "Slash handled")))
+                              :else (prose-blocks (or (:slash/title r) "Slash handled")))
 
                         reply-markup
                         (get-in r [:slash/data :reply-markup])]
@@ -1547,10 +1556,10 @@
 ;; line, with the mechanics tucked into a native expandable blockquote.
 
 (defn- provider-error-data
-  "Structured provider-error info the engine stashes on the answer IR
+  "Structured provider-error information carried by a canonical error block,
    attrs, or nil when the answer is not a provider error."
   [answer]
-  (when (and (vector? answer) (= :ir (first answer)) (map? (second answer)))
+  (when (and (vector? answer) (= :ast (first answer)) (map? (second answer)))
     (get (second answer) :vis/provider-error-data)))
 
 (defn- provider-id-str
@@ -1626,32 +1635,35 @@
                 (conj block)))))
 
 (defn- answer-text
-  "Render the turn's answer to a Telegram-HTML string. The model usually
-   writes Markdown via `(done {:answer ...})` (a `{:answer string}` map), but
-   the engine can hand back canonical IR DIRECTLY — e.g. a
-   `#:vis{:provider-error true}` block when a provider call fails (401, etc.).
-   Render IR as-is (otherwise it falls through to a blank string and the user
-   sees only the footer); lift a markdown string to IR first."
+  "Render canonical content blocks to Telegram-safe HTML."
   [result]
-  (let [answer (:answer result)]
-    (cond
-      ;; Provider errors render compact + chat-native (expandable details),
-      ;; not as the TUI-shaped wall of JSON/HTTP the shared IR carries.
-      (provider-error-data answer) (provider-error-html (provider-error-data answer))
-      (and (vector? answer) (= :ir (first answer))) (render-for-telegram answer)
-      :else (let [md (answer->markdown-string answer)]
-              (if (str/blank? md) "" (render-for-telegram (vis/markdown->ir md)))))))
+  (let [blocks
+        (get result "content")
+
+        error-block
+        (some #(when (= "error" (get % "type")) %) blocks)
+
+        md
+        (content-blocks->markdown blocks)]
+
+    (cond error-block (provider-error-html {"title" (get error-block "code")
+                                            "explanation" (get error-block "message")
+                                            "status" (get error-block "status")
+                                            "provider_id" (get error-block "provider")
+                                            "request_id" (get error-block "request_id")
+                                            "attempts" (get error-block "attempts")
+                                            "body" (get error-block "body")})
+          (str/blank? md) ""
+          :else (render-for-telegram blocks))))
 
 (defn- answer-voice-text
-  "Plain-text projection of the answer for voice TTS. Strips structure
-   so the synth doesn't read code blocks / tables aloud verbatim.
-   Falls back to a generic line when the answer carries no prose."
+  "Plain-text projection of canonical content for voice TTS."
   [result]
   (let [md
-        (answer->markdown-string (:answer result))
+        (content-blocks->markdown (get result "content"))
 
         spoken
-        (when-not (str/blank? md) (vis/extract-text (vis/markdown->ir md)))]
+        (when-not (str/blank? md) md)]
 
     (if (str/blank? spoken)
       "The assistant returned a structured answer (code or data). See the chat for details."
@@ -1760,7 +1772,7 @@
                  ;; Pre-first-paint failure path — keep the legacy
                  ;; typing indicator so the chat doesn't look frozen.
                  (tg/send-chat-action! token chat-id "typing"))
-               (let [{:keys [id]}
+               (let [{:strs [id]}
                      (gateway-session-for-telegram-chat! chat-id)
 
                      result*
@@ -1772,9 +1784,7 @@
                                                                (select-keys opts [:hooks]))))
 
                      result
-                     (cond-> result*
-                       (:answer-ir result*)
-                       (assoc :answer (:answer-ir result*)))]
+                     result*]
 
                  (if voice-response?
                    (do
@@ -1784,7 +1794,7 @@
                      (let [voice-text (answer-voice-text result)]
                        (when (and (voice-config-flag :telegram-send-transcript? true)
                                   (not (str/blank? (str transcript))))
-                         (send! token chat-id (vis/markdown->ir (transcript-message transcript))))
+                         (send! token chat-id (prose-blocks (transcript-message transcript))))
                        (tg/send-chat-action! token chat-id "record_voice")
                        (send-answer-audio! token chat-id voice-text)
                        (when (voice-config-flag :telegram-send-answer-text? true)
@@ -1800,7 +1810,7 @@
                        ;; bubble was posted first — so drop it and send
                        ;; transcript + answer fresh, in order.
                        (do (drop-live-bubble! token chat-id)
-                           (send! token chat-id (vis/markdown->ir (transcript-message transcript)))
+                           (send! token chat-id (prose-blocks (transcript-message transcript)))
                            (tg/send-message! token chat-id answer-html))
                        (when-not (replace-bubble-with-answer! token chat-id answer-html)
                          (tg/send-message! token chat-id answer-html))))))
@@ -1818,8 +1828,7 @@
                                   :msg (str "error handling msg from " sender " in chat " chat-id)})
                        (try (send! token
                                    chat-id
-                                   (vis/markdown->ir (vis/format-error (vis/db-error->user-message
-                                                                         e))))
+                                   (prose-blocks (vis/format-error (vis/db-error->user-message e))))
                             (catch Exception _ nil)))))
                (finally (clear-in-flight! chat-id turn-token))))]
 
@@ -1840,9 +1849,8 @@
                               :msg (str "voice ASR failed for chat " chat-id)})
                    (try (send! token
                                chat-id
-                               (vis/markdown->ir (vis/format-error (str
-                                                                     "Voice transcription failed: "
-                                                                     (or (ex-message e) e)))))
+                               (prose-blocks (vis/format-error (str "Voice transcription failed: "
+                                                                    (or (ex-message e) e)))))
                         (catch Exception _ nil))))))
   true)
 
@@ -1860,39 +1868,39 @@
             :chat
             :id)]
 
-    (cond
-      (and chat-id (not (chat-approved? chat-id)))
-      (do (tg/answer-callback-query! token callback-id "Chat is not approved")
-          (send! token chat-id (vis/markdown->ir (unauthorized-message chat-id)))
-          true)
-      (and callback-id chat-id (string? data) (str/starts-with? data "model:"))
-      (let [idx-str
-            (subs data (count "model:"))
+    (cond (and chat-id (not (chat-approved? chat-id)))
+          (do (tg/answer-callback-query! token callback-id "Chat is not approved")
+              (send! token chat-id (prose-blocks (unauthorized-message chat-id)))
+              true)
+          (and callback-id chat-id (string? data) (str/starts-with? data "model:"))
+          (let [idx-str
+                (subs data (count "model:"))
 
-            result
-            (when (re-matches #"\d+" idx-str) (select-model! (str (inc (Long/parseLong idx-str)))))]
+                result
+                (when (re-matches #"\d+" idx-str)
+                  (select-model! (str (inc (Long/parseLong idx-str)))))]
 
-        (tg/answer-callback-query! token callback-id (:message result))
-        (send! token chat-id (vis/markdown->ir (or (:message result) "Model selection failed.")))
-        true)
-      (and callback-id chat-id (string? data) (str/starts-with? data "voice:"))
-      (let [raw
-            (keyword (str/lower-case (subs data (count "voice:"))))
+            (tg/answer-callback-query! token callback-id (:message result))
+            (send! token chat-id (prose-blocks (or (:message result) "Model selection failed.")))
+            true)
+          (and callback-id chat-id (string? data) (str/starts-with? data "voice:"))
+          (let [raw
+                (keyword (str/lower-case (subs data (count "voice:"))))
 
-            message
-            (if (some #{raw} voice-mode-order)
-              (set-voice-mode! chat-id raw)
-              "Voice selection failed.")]
+                message
+                (if (some #{raw} voice-mode-order)
+                  (set-voice-mode! chat-id raw)
+                  "Voice selection failed.")]
 
-        (tg/answer-callback-query! token callback-id message)
-        true)
-      (and callback-id chat-id (string? data) (str/starts-with? data "cancel:"))
-      (let [in-flight (in-flight-token chat-id)]
-        (if in-flight
-          (do (tg/answer-callback-query! token callback-id "Cancelling…")
-              (try (vis/cancel! in-flight) (catch Exception _ nil)))
-          (tg/answer-callback-query! token callback-id "Already cancelled."))
-        true))))
+            (tg/answer-callback-query! token callback-id message)
+            true)
+          (and callback-id chat-id (string? data) (str/starts-with? data "cancel:"))
+          (let [in-flight (in-flight-token chat-id)]
+            (if in-flight
+              (do (tg/answer-callback-query! token callback-id "Cancelling…")
+                  (try (vis/cancel! in-flight) (catch Exception _ nil)))
+              (tg/answer-callback-query! token callback-id "Already cancelled."))
+            true))))
 
 (defn- handle-update!
   [token update]
@@ -1907,7 +1915,7 @@
 
           (cond (nil? chat-id) nil
                 (not (chat-approved? chat-id))
-                (do (send! token chat-id (vis/markdown->ir (unauthorized-message chat-id))) true)
+                (do (send! token chat-id (prose-blocks (unauthorized-message chat-id))) true)
                 text (do (when-not (handle-slash! token chat-id text)
                            (handle-user-text! token chat-id text sender))
                          true)

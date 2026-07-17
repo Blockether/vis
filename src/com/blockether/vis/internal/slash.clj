@@ -42,6 +42,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -67,6 +68,76 @@
    `active-slashes env` so per-session activation-fn rules still hold."
   []
   (vec (mapcat :ext/slash-commands (extension/registered-extensions))))
+
+(defn- spec-visible-for-channel?
+  "True when slash `spec` is safe to surface in `channel`'s slash UX — not
+   hidden, and its `:slash/availability-fn` (if any) admits the channel.
+   `registered-slashes` is env-less and carries specs from every channel
+   (e.g. Telegram-only `/help`, `/model`), so each channel filters here
+   before it renders suggestions."
+  [channel spec]
+  (and (not (:slash/hidden? spec))
+       (if-let [available? (:slash/availability-fn spec)]
+         (try (boolean (available? {:channel/id channel})) (catch Throwable _ false))
+         true)))
+
+(defn slash-palette
+  "THE canonical typed-`/` palette for a channel — the single source every
+   channel's `/` autocomplete / command menu consumes, so skills and file
+   prompts appear uniformly instead of each channel re-deriving the set.
+   Returns `[{:name \"/path\" :doc str} …]`:
+
+     • LEAF registered slashes available in `channel` — group roots dropped
+       (a spec whose path is some other visible spec's `:slash/parent`) and
+       hidden / channel-unavailable specs filtered out — then
+     • prompt-template entries: `.vis/prompts/*.md` file prompts and harness
+       `/skill:<name>` commands, minus any name a registered slash already
+       claimed (registered slashes always win).
+
+   `extra` are CHANNEL-NATIVE entries (`{:name :doc}`) the channel handles
+   itself (e.g. the web's `/new-session`); they PREPEND and win name
+   collisions against templates."
+  ([channel] (slash-palette channel nil))
+  ([channel extra]
+   (let [avail
+         (filter #(spec-visible-for-channel? channel %) (registered-slashes))
+
+         parent-paths
+         (into #{}
+               (keep #(let [p
+                            (vec (:slash/parent %))]
+
+                        (when (seq p) p)))
+               avail)
+
+         leaf?
+         (fn [s]
+           (not (contains? parent-paths (conj (vec (:slash/parent s)) (:slash/name s)))))
+
+         path-name
+         (fn [s]
+           (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)]))))
+
+         registered
+         (->> avail
+              (filter leaf?)
+              (map (fn [s]
+                     {:name (path-name s) :doc (str (:slash/doc s))})))
+
+         specs
+         (concat (vec extra) registered)
+
+         taken
+         (into #{} (map :name) specs)
+
+         templates
+         (try (->> (prompt-templates/templates)
+                   (keep (fn [{:keys [name description]}]
+                           (let [nm (str "/" name)]
+                             (when-not (contains? taken nm) {:name nm :doc (str description)})))))
+              (catch Throwable _ nil))]
+
+     (vec (concat specs templates)))))
 
 (defn- index-by-path
   "Build `{path-vec [slash-spec ...]}` from a vec of slash specs.

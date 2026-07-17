@@ -330,7 +330,6 @@
       });
     }
     wireToggle("#toggle-left", "hide-left", "open-left", "vis.hideLeft");
-    wireToggle("#toggle-right", "hide-right", "open-right", "vis.hideRight");
     /* explicit closers: the context drawer's X (it covers the scrim full-width),
        and the sidebar's Settings/Providers buttons (close the drawer so the modal
        — which opens into #modal — shows over the chat, not behind the sidebar) */
@@ -341,7 +340,7 @@
     document.addEventListener("click", function (e) {
       if (!app) { return; }
       if (!app.classList.contains("open-left") && !app.classList.contains("open-right")) { return; }
-      if (e.target.closest(".sidebar, .rail, #toggle-left, #toggle-right")) { return; }
+      if (e.target.closest(".sidebar, #toggle-left")) { return; }
       closeDrawers();
     });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closeDrawers(); } });
@@ -406,7 +405,13 @@
     }
     function showSuggest(list, kind) {
       if (!suggest) { return; }
-      items = list.slice(0, 8); mode = kind; active = items.length ? 0 : -1;
+      /* Render the whole list — the popup itself is the height cap + scroller
+         (.suggest: max-height:min(50vh,22rem) + overflow-y:auto + overscroll-contain),
+         so however many slashes/skills/@files there are, they SCROLL INSIDE the
+         popup. No arbitrary row cap: an exact count under the cap fits, a long
+         list overflows and scrolls (which also keeps the touch-drag captured by
+         the popup instead of chaining to the thread — the mobile scroll bug). */
+      items = list.slice(); mode = kind; active = items.length ? 0 : -1;
       if (!items.length) { hideSuggest(); return; }
       suggest.innerHTML = "";
       items.forEach(function (it, i) {
@@ -1323,6 +1328,10 @@
     nodes.forEach(function (el) {
       var mode = (el.getAttribute("hx-swap") || "innerHTML").trim();
       if (mode === "none") { return; }
+      /* an empty frame is an explicit CLEAR (iteration boundary wipes the
+         streamed answer preview) — reset innerHTML even for a beforeend
+         target, which insertAdjacentHTML("") would otherwise no-op. */
+      if (f.html === "") { el.innerHTML = ""; return; }
       if (mode === "beforeend") {
         if (hasExistingLiveKey(f.html)) { return; }
         el.insertAdjacentHTML("beforeend", f.html);

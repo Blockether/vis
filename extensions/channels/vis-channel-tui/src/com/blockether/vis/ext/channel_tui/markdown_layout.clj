@@ -1,5 +1,5 @@
-(ns com.blockether.vis.ext.channel-tui.render-ir
-  "TUI walker over canonical answer-IR (`com.blockether.vis.internal.render/->ast`).
+(ns com.blockether.vis.ext.channel-tui.markdown-layout
+  "TUI layout walker over a transient parsed Markdown tree (`com.blockether.vis.internal.render/->ast`).
 
    Pure data: IR -> vector of lines. Each line is a vector of styled
    runs. The screen layer turns runs into ANSI / Lanterna cells.
@@ -26,8 +26,8 @@
       :node   any?}           ; opaque node identity for click/select
 
    Public API:
-     (ir->lines ir width)             ; total walker
-     (ir->lines ir width opts)
+     (ast->lines ir width)             ; total walker
+     (ast->lines ir width opts)
    Opts:
      :heading-prefix? bool   ; render '#'-style markers (default false; bold suffices)
      :code-fence?     bool   ; render ``` lines around code blocks (default false)
@@ -324,7 +324,7 @@
 
    When `(:max-lines opts)` is set, the reduce short-circuits as soon
    as the accumulator reaches `1.5 * limit` lines. The post-walk
-   pipeline in `ir->lines` may collapse blank-runs and only ever
+   pipeline in `ast->lines` may collapse blank-runs and only ever
    shrinks the result, so walking N*1.5 lines and post-truncating to
    N produces the same final output as walking the entire body. The
    slack covers worst-case blank-collapse.
@@ -902,7 +902,7 @@
       ;;   :outer-margin   bubble-bg spacer above/below the chip
       ;;   :code           inside padding above/below content (code bg)
       ;; The outer-margin leader/trailer matches what every other block
-      ;; emits, so the dedup pass in `ir->lines` collapses adjacent
+      ;; emits, so the dedup pass in `ast->lines` collapses adjacent
       ;; outer-margin blanks regardless of which sibling block produced
       ;; them. The inner :code padding is deliberately preserved.
       (vec (concat [(assoc (empty-line) :block-tag :outer-margin)]
@@ -935,10 +935,10 @@
 ;; Public API
 ;; =============================================================================
 
-(defn ir->lines
+(defn ast->lines
   "Walk canonical IR (or any input that `ir/->ast` accepts) at a given
    terminal `width` and return a vector of styled lines."
-  ([input width] (ir->lines input width nil))
+  ([input width] (ast->lines input width nil))
   ([input width opts]
    (let [ast
          (ir/->ast input)
@@ -946,7 +946,7 @@
          body
          (drop 2 ast)
 
-         ; canonical: [:ir {} & blocks]
+         ; canonical: [:ast {} & blocks]
          lines
          (blocks->lines body width (or opts {}))
 
@@ -1020,10 +1020,10 @@
        (vec (take n lines))
        lines))))
 
-(defn- ir-text-chars
+(defn- ast-text-chars
   "Sum of all text-content character counts in an IR node tree. Cheap
    recursive walk - just counts string leaves. Used by
-   `ir->lines-tail` as a per-block height estimator.
+   `ast->lines-tail` as a per-block height estimator.
 
    Uses `.length` on Strings (direct char-array length, no Counted
    dispatch) and `.count` on the IPersistentVector node so neither
@@ -1042,17 +1042,17 @@
                                 acc
                                 (long 0)]
 
-                           (if (>= i n) acc (recur (inc i) (+ acc (ir-text-chars (.nth v i)))))))
+                           (if (>= i n) acc (recur (inc i) (+ acc (ast-text-chars (.nth v i)))))))
         :else 0))
 
-(defn ir->lines-tail
+(defn ast->lines-tail
   "Render only the last `tail-n` styled lines of the IR.
 
    Walks the top-level blocks BACKWARD, accumulating a cheap
    per-block line estimate (text-chars / content-width), until
    accumulated estimate ≥ `tail-n * 2` (slack covers blank-collapse
    + per-block trailing blanks). Then renders ONLY those tail blocks
-   via the normal `ir->lines` and `(take-last tail-n)`.
+   via the normal `ast->lines` and `(take-last tail-n)`.
 
    Per-frame cost = O(visible-tail), independent of total body
    length. The semantically-correct path for an auto-scrolled
@@ -1061,7 +1061,7 @@
 
    `tail-n` must be positive. If the body has fewer total estimated
    lines than the budget, this falls back to a full walk."
-  ([input width tail-n] (ir->lines-tail input width tail-n nil))
+  ([input width tail-n] (ast->lines-tail input width tail-n nil))
   ([input width tail-n opts]
    (let [tail-n
          (long tail-n)
@@ -1096,7 +1096,7 @@
 
                              est
                              (max 1
-                                  (long (Math/ceil (/ (double (max 1 (ir-text-chars b)))
+                                  (long (Math/ceil (/ (double (max 1 (ast-text-chars b)))
                                                       (double content-w)))))]
 
                          (recur (dec i) (+ accum est)))))
@@ -1105,20 +1105,20 @@
          (subvec blocks picked-from)
 
          synth-ir
-         (into [:ir {}] tail-blocks)
+         (into [:ast {}] tail-blocks)
 
          tail-lines
-         (ir->lines synth-ir width opts)]
+         (ast->lines synth-ir width opts)]
 
      (if (<= (count tail-lines) tail-n) tail-lines (vec (take-last tail-n tail-lines))))))
 
-(defn ir->lines-window
+(defn ast->lines-window
   "Render only rows `[start, start+num)` of the IR.
 
    Internally walks blocks forward with `:max-lines (start + num +
    slack)` so the walker short-circuits via the A1 `blocks->lines`
    path - work is O(start + num), not O(body). Output is
-   bit-identical to `(subvec (ir->lines ir w opts) start (+ start
+   bit-identical to `(subvec (ast->lines ir w opts) start (+ start
    num))` when both are in range; result is clamped if the body has
    fewer lines.
 
@@ -1131,7 +1131,7 @@
        this fn does not do.
 
    `num` must be positive. `start` must be non-negative."
-  ([input width start num] (ir->lines-window input width start num nil))
+  ([input width start num] (ast->lines-window input width start num nil))
   ([input width start num opts]
    (let [start
          (max 0 (long start))
@@ -1146,7 +1146,7 @@
          (long (+ start (* 3 num)))
 
          lines
-         (ir->lines input width (assoc (or opts {}) :max-lines cap))
+         (ast->lines input width (assoc (or opts {}) :max-lines cap))
 
          have
          (count lines)]
@@ -1371,15 +1371,15 @@
              (str (block-marker-for ms block-tag block-level) (line-body-sentinels block-tag runs)))
            lines))))
 
-(defn ir->sentinel-strings
+(defn ast->sentinel-strings
   "One-shot helper: canonical IR → vector of sentinel-prefixed strings
-   ready for the existing bubble painter. Composes `ir->lines` with
+   ready for the existing bubble painter. Composes `ast->lines` with
    the sentinel adapter. `:mode` (`:answer`, `:thinking`, or `:channel`)
    selects the marker set."
-  ([ir width] (ir->sentinel-strings ir width nil))
-  ([ir width opts] (lines->sentinel-strings (ir->lines ir width opts) opts)))
+  ([ir width] (ast->sentinel-strings ir width nil))
+  ([ir width opts] (lines->sentinel-strings (ast->lines ir width opts) opts)))
 
-(defn ir->inline-sentinel-string
+(defn ast->inline-sentinel-string
   "Flatten a canonical IR into a single sentinel-wrapped inline string
    suitable for chrome-row labels. NO block markers — just inline
    sentinels (`INLINE_BOLD_ON/OFF`, `INLINE_CODE_ON/OFF`, etc.) wrapping
@@ -1389,7 +1389,7 @@
   ^String [ir]
   (let [;; pass huge width so walker never wraps; we want one flat run
         lines
-        (ir->lines ir Integer/MAX_VALUE)
+        (ast->lines ir Integer/MAX_VALUE)
 
         ;; concat all runs across all lines, joining lines with single space
         line-strs
@@ -1399,7 +1399,7 @@
 
     (str/replace (str/join " " (remove str/blank? line-strs)) #"\s+" " ")))
 
-(defn ir->entries
+(defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
    Returns a vector of `{:line :meta}` maps where `:line` is the
    sentinel-prefixed string the bubble painter consumes, and `:meta`
@@ -1416,13 +1416,13 @@
    bubble rendering path that used to parse the rendered markdown
    back into entries should call this directly on the canonical IR
    — no markdown round-trip."
-  ([ir width] (ir->entries ir width nil))
+  ([ir width] (ast->entries ir width nil))
   ([ir width opts]
    (let [tail-n
          (:tail-lines opts)
 
          lines
-         (if tail-n (ir->lines-tail ir width (long tail-n) opts) (ir->lines ir width opts))
+         (if tail-n (ast->lines-tail ir width (long tail-n) opts) (ast->lines ir width opts))
 
          ms
          (marker-set-for (:mode opts))]

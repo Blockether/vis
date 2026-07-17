@@ -46,7 +46,7 @@
 (def db-path (str config-dir "/vis.mdb"))
 (def default-db-spec {:backend :sqlite :path db-path})
 
-(def ^:private ^String log-path (str config-dir "/logs/vis.log"))
+(def ^:private ^String log-path (str config-dir "/vis.log"))
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 

@@ -244,9 +244,8 @@
   ([source-root store-root]
    (mapv (fn [backend]
            (let [availability
-                 (try ((:workspace.backend/available-fn backend
-                                                        {:source-root (file-path source-root)
-                                                         :store-root (file-path store-root)}))
+                 (try ((:workspace.backend/available-fn backend)
+                        {:source-root (file-path source-root) :store-root (file-path store-root)})
                       (catch Throwable t
                         {:available? false
                          :reason :availability-check-failed
@@ -344,10 +343,9 @@
                        :required (set required)
                        :source-root (file-path source-root)
                        :capability-matrix (capability-matrix source-root store-root)})))
-    (let [root ((:workspace.backend/fork-fn backend
-                                            {:source-root (file-path source-root)
-                                             :store-root (file-path store-root)
-                                             :name name}))]
+    (let [root
+          ((:workspace.backend/fork-fn backend)
+            {:source-root (file-path source-root) :store-root (file-path store-root) :name name})]
       {:root (file-path root) :backend (:workspace.backend/id backend)})))
 
 (defn- discard-root!
@@ -883,12 +881,19 @@
 
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this. A FRESH
-        ;; LINEAGE (this draft, or any ancestor the clone descends from)
-        ;; instead anchors at 0 — the lineage never saw trunk's files, so
-        ;; everything that ever appears in the clone is an agent edit and no
-        ;; trunk file can predate the baseline into a spurious deletion.
+        ;; LINEAGE instead anchors at 0 — the lineage never saw trunk's files,
+        ;; so everything that ever appears in the clone is an agent edit and
+        ;; no trunk file can predate the baseline into a spurious deletion.
+        ;; Zero-heredity applies only to a real non-trunk parent (its clone
+        ;; lacks trunk's files); a nil `from` / trunk parent forks the REAL
+        ;; tree and must get a real timestamp or deletions can never land.
+        inherited-fresh?
+        (boolean (and from
+                      (not= (:root from) (:repo-root from))
+                      (zero? (long (or (apply-fork-ms-of from) 0)))))
+
         fork-ms
-        (if (or fresh? (zero? (long (or (apply-fork-ms-of from) 0)))) 0 (System/currentTimeMillis))
+        (if (or fresh? inherited-fresh?) 0 (System/currentTimeMillis))
 
         ws
         (p/db-workspace-insert! db-info

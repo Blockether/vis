@@ -39,7 +39,8 @@
     "extensions/common/vis-foundation-search/test" "extensions/common/vis-foundation-voice/test"
     "extensions/common/vis-foundation-mcp/test" "extensions/languages/vis-language-clojure/test"
     "extensions/languages/vis-language-python/test"
-    "extensions/languages/vis-language-typescript-bun/test"]
+    "extensions/languages/vis-language-typescript-bun/test"
+    "extensions/workspaces/vis-workspace-rift/test"]
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow" "-Djava.awt.headless=true"
               "-Dapple.awt.UIElement=true" "-Dvis.drafts.dir=target/vis-drafts-test"]

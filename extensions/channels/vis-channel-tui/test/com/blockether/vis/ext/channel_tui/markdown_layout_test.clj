@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.channel-tui.render-ir-test
+(ns com.blockether.vis.ext.channel-tui.markdown-layout-test
   "Tests for the canonical-IR → styled-line walker.
 
    Two layers of coverage:
@@ -14,7 +14,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; ---------------------------------------------------------------------------
@@ -48,10 +48,10 @@
 
 (defdescribe paragraph-test
              (it "paragraph emits one line for short content"
-                 (let [lines (ir-tui/ir->lines [:ir [:p "hello world"]] 80)]
+                 (let [lines (layout/ast->lines [:ast [:p "hello world"]] 80)]
                    (expect (= ["hello world"] (texts lines)))))
              (it "paragraph wraps at width on word boundary"
-                 (let [lines (ir-tui/ir->lines [:ir [:p "lorem ipsum dolor sit amet"]] 12)]
+                 (let [lines (layout/ast->lines [:ast [:p "lorem ipsum dolor sit amet"]] 12)]
                    (expect (every? (fn [t]
                                      (<= (count t) 12))
                                    (texts lines))
@@ -59,11 +59,11 @@
                    (expect (= "lorem ipsum dolor sit amet"
                               (str/replace (str/join " " (texts lines)) #"\s+" " ")))))
              (it "inline code keeps :code style on the word"
-                 (let [lines (ir-tui/ir->lines [:ir [:p "use " [:c "send!"] " here"]] 80)]
+                 (let [lines (layout/ast->lines [:ast [:p "use " [:c "send!"] " here"]] 80)]
                    (expect (= ["use send! here"] (texts lines)))
                    (expect (styled? lines :code))))
              (it "strong + em propagate style flags"
-                 (let [lines (ir-tui/ir->lines [:ir [:p [:strong "bold"] " and " [:em "ital"]]] 80)]
+                 (let [lines (layout/ast->lines [:ast [:p [:strong "bold"] " and " [:em "ital"]]] 80)]
                    (expect (styled? lines :bold))
                    (expect (styled? lines :italic)))))
 
@@ -74,7 +74,7 @@
 (defdescribe list-test
              (it "ul renders '- ' marker per item"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:ul [:li "a"] [:li "b"]]] 80)
+                       (layout/ast->lines [:ast [:ul [:li "a"] [:li "b"]]] 80)
 
                        ts
                        (texts lines)]
@@ -83,7 +83,7 @@
                    (expect (some #(= "- b" %) ts))))
              (it "ol numbers items starting at 1"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:ol [:li "x"] [:li "y"]]] 80)
+                       (layout/ast->lines [:ast [:ol [:li "x"] [:li "y"]]] 80)
 
                        ts
                        (texts lines)]
@@ -92,7 +92,7 @@
                    (expect (some #(= "2. y" %) ts))))
              (it "ul renders GFM task-list markers as checklist glyphs"
                  (let [lines
-                       (ir-tui/ir->lines [:ir
+                       (layout/ast->lines [:ast
                                           [:ul [:li "[x] Completed item"] [:li "[ ] Pending item"]
                                            [:li "[X] Also completed"]]]
                                          80)
@@ -103,7 +103,7 @@
                    (expect (= ["☑️  Completed item" "⬜ Pending item" "☑️  Also completed"] ts))))
              (it "task-list continuations indent by display width, not char count"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:ul [:li "[ ] Pending item wraps here"]]] 14)
+                       (layout/ast->lines [:ast [:ul [:li "[ ] Pending item wraps here"]]] 14)
 
                        ts
                        (texts lines)]
@@ -112,7 +112,7 @@
                    (expect (every? #(<= (p/display-width %) 14) ts))))
              (it "does not crash when a list item starts with a non-text inline node"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:ul [:li [:br] "after break"]]] 80)
+                       (layout/ast->lines [:ast [:ul [:li [:br] "after break"]]] 80)
 
                        ts
                        (texts lines)]
@@ -121,7 +121,7 @@
              (it "wrapped li uses hanging indent equal to marker width (NOT 3 spaces)"
                  ;; This is the regression target: pre-IR code produced "   foo" continuation.
                  (let [lines
-                       (ir-tui/ir->lines [:ir
+                       (layout/ast->lines [:ast
                                           [:ul
                                            [:li "short " [:c "code-token"] " then a long tail "
                                             "that will force wrapping at the chosen width"]]]
@@ -149,7 +149,7 @@
                        "(let [x 1]\n  (println x))"
 
                        lines
-                       (ir-tui/ir->lines [:ir [:code {:lang "clj"} src]] 40)
+                       (layout/ast->lines [:ast [:code {:lang "clj"} src]] 40)
 
                        ts
                        (mapv #(str/replace (or % "") #"\u001b\[[0-9;]*m" "") (texts lines))]
@@ -166,7 +166,7 @@
 (defdescribe table-test
              (it "renders IR tables as boxed rows with semantic table tags"
                  (let [lines
-                       (ir-tui/ir->lines [:ir
+                       (layout/ast->lines [:ast
                                           [:table [:tr [:th "Name"] [:th "Count"]]
                                            [:tr [:td "apples"] [:td "12"]]]]
                                          80)
@@ -185,8 +185,8 @@
                    (expect (= "└────────┴───────┘" (nth ts 4)))))
              (it "emits table head/separator/body markers for the painter"
                  (let [out
-                       (ir-tui/ir->sentinel-strings
-                         [:ir [:table [:tr [:th "A"] [:th "B"]] [:tr [:td "1"] [:td "2"]]]]
+                       (layout/ast->sentinel-strings
+                         [:ast [:table [:tr [:th "A"] [:th "B"]] [:tr [:td "1"] [:td "2"]]]]
                          80)
 
                        ms
@@ -197,7 +197,7 @@
                               ms))))
              (it "uses thinking table markers in thinking mode"
                  (let [out
-                       (ir-tui/ir->sentinel-strings [:ir [:table [:tr [:th "A"]] [:tr [:td "1"]]]]
+                       (layout/ast->sentinel-strings [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]]
                                                     80
                                                     {:mode :thinking})
 
@@ -216,7 +216,7 @@
                "fit on one physical terminal row and must wrap inside its cell")
 
           lines
-          (ir-tui/ir->lines [:ir
+          (layout/ast->lines [:ast
                              [:table [:tr [:th "Option"] [:th "Description"]]
                               [:tr [:td "alpha"] [:td long-desc]] [:tr [:td "beta"] [:td "short"]]]]
                             40)
@@ -249,7 +249,7 @@
       (expect (every? #(and (str/starts-with? % "│") (str/ends-with? % "│")) (texts row-lines)))))
   (it "continuation rows keep sibling short cells blank-padded"
       (let [lines
-            (ir-tui/ir->lines [:ir
+            (layout/ast->lines [:ast
                                [:table [:tr [:th "K"] [:th "V"]]
                                 [:tr [:td "k1"]
                                  [:td "a long value that needs several rows to fit"]]]]
@@ -264,7 +264,7 @@
         (expect (every? #(not (str/includes? % "k1")) (rest row-ts)))))
   (it "header cells wrap too, tagged :table-head on every physical row"
       (let [lines
-            (ir-tui/ir->lines [:ir
+            (layout/ast->lines [:ast
                                [:table
                                 [:tr [:th "A"] [:th "an extremely verbose header label that wraps"]]
                                 [:tr [:td "1"] [:td "x"]]]]
@@ -279,7 +279,7 @@
       ;; regression: col-prefix-end returns 0 fitting chars for an
       ;; emoji in a width-1 column — the wrap loop must still advance.
       (let [lines
-            (ir-tui/ir->lines [:ir
+            (layout/ast->lines [:ast
                                [:table [:tr [:th "😀😀"] [:th "b"]]
                                 [:tr [:td "😀 zażółć gęślą jaźń"] [:td "y"]]]]
                               8)
@@ -301,7 +301,7 @@
   ;; runs from the repo root or from this extension's own directory. The old
   ;; repo-root-relative `io/file` path only resolved from the repo root and
   ;; silently returned nil (unreachable fixture) when run from the extension.
-  (when-let [r (io/resource "resources/fixtures/bdc79ae9_answer_ir.edn")]
+  (when-let [r (io/resource "resources/fixtures/bdc79ae9_markdown_ast.edn")]
     (edn/read-string (slurp r))))
 
 (defdescribe
@@ -309,14 +309,14 @@
   (it "fixture is reachable" (expect (some? (fixture-ir))))
   (it "no line begins with the 3-space hanging-indent pattern that broke the TUI"
       (when-let [raw (fixture-ir)]
-        (let [lines (ir-tui/ir->lines raw 100)
+        (let [lines (layout/ast->lines raw 100)
               ts (texts lines)
               offenders (filter #(re-matches #"^   \S.*" %) ts)]
 
           (expect (empty? offenders) (str "first 3 offenders: " (vec (take 3 offenders)))))))
   (it "every line fits within the requested width"
       (when-let [raw (fixture-ir)]
-        (let [lines (ir-tui/ir->lines raw 100)
+        (let [lines (layout/ast->lines raw 100)
               ts (texts lines)
               over (filter #(> (count %) 100) ts)]
 
@@ -325,7 +325,7 @@
       ;; Source had: \"`z/locators` — główny koń roboczy. Z `:source-contains` i `:symbol` \\n   znajduje nodes wiarygodnie. ...\"
       ;; After ->ast + walker, the sentence flows in one wrap chunk.
       (when-let [raw (fixture-ir)]
-        (let [lines (ir-tui/ir->lines raw 100)
+        (let [lines (layout/ast->lines raw 100)
               ts (texts lines)
               joined (str/join " " ts)]
 
@@ -340,11 +340,11 @@
 
 (defdescribe block-tag-test
              (it ":p block stamps :block-tag :p on every produced line"
-                 (let [lines (ir-tui/ir->lines [:ir [:p "hello"]] 80)]
+                 (let [lines (layout/ast->lines [:ast [:p "hello"]] 80)]
                    (expect (every? #(= :p (:block-tag %)) lines))))
              (it ":h block stamps :block-tag :h with :block-level"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:h {:level 2} "Title"]] 80)
+                       (layout/ast->lines [:ast [:h {:level 2} "Title"]] 80)
 
                        [first-line]
                        lines]
@@ -353,7 +353,7 @@
                    (expect (= 2 (:block-level first-line)))))
              (it ":code block has neutral outside margins and code-bg inside padding"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:code "a\n\nb"]] 80)
+                       (layout/ast->lines [:ast [:code "a\n\nb"]] 80)
 
                        code-lines
                        (filter #(= :code (:block-tag %)) lines)
@@ -381,7 +381,7 @@
                    (expect (= ["" "" "a" "" "b" "" ""] ts))))
              (it "adjacent :code blocks keep one neutral margin between padded chips"
                  (let [lines
-                       (ir-tui/ir->lines [:ir [:code "a"] [:code "b"]] 80)
+                       (layout/ast->lines [:ast [:code "a"] [:code "b"]] 80)
 
                        tags
                        (mapv :block-tag lines)
@@ -396,13 +396,13 @@
                               tags))
                    (expect (= ["" "" "a" "" "" "" "b" "" ""] ts))))
              (it ":ul list stamps :block-tag :ul on marker + continuation lines"
-                 (let [lines (ir-tui/ir->lines [:ir [:ul [:li "x"] [:li "y"]]] 80)]
+                 (let [lines (layout/ast->lines [:ast [:ul [:li "x"] [:li "y"]]] 80)]
                    (expect (every? #(= :ul (:block-tag %)) lines)))))
 
 (defdescribe sentinel-adapter-test
              (it "emits H1/H2/H3 markers for headings, picking by :level"
                  (let [out
-                       (ir-tui/ir->sentinel-strings [:ir [:h {:level 1} "A"] [:h {:level 2} "B"]
+                       (layout/ast->sentinel-strings [:ast [:h {:level 1} "A"] [:h {:level 2} "B"]
                                                      [:h {:level 3} "C"]]
                                                     80)
 
@@ -413,17 +413,17 @@
                    (expect (some #(= p/MARKER_MD_H2 %) ms))
                    (expect (some #(= p/MARKER_MD_H3 %) ms))))
              (it "emits MARKER_MD_BULLET for ul / ol items"
-                 (let [out (ir-tui/ir->sentinel-strings [:ir [:ul [:li "x"]]] 80)]
+                 (let [out (layout/ast->sentinel-strings [:ast [:ul [:li "x"]]] 80)]
                    (expect (some #(= p/MARKER_MD_BULLET (subs % 0 1)) out))))
              (it "emits MARKER_MD_CODE for fenced code"
-                 (let [out (ir-tui/ir->sentinel-strings [:ir [:code {:lang "clj"} "(+ 1 1)"]] 80)]
+                 (let [out (layout/ast->sentinel-strings [:ast [:code {:lang "clj"} "(+ 1 1)"]] 80)]
                    (expect (some #(= p/MARKER_MD_CODE (subs % 0 1)) out))))
              (it "emits MARKER_ANSWER_TXT for plain paragraphs"
-                 (let [out (ir-tui/ir->sentinel-strings [:ir [:p "hello world"]] 80)]
+                 (let [out (layout/ast->sentinel-strings [:ast [:p "hello world"]] 80)]
                    (expect (some #(= p/MARKER_ANSWER_TXT (subs % 0 1)) out))))
              (it "wraps :strong runs in INLINE_BOLD_ON/OFF sentinel pair"
                  (let [out
-                       (ir-tui/ir->sentinel-strings [:ir [:p "hi " [:strong "bold"] " rest"]] 80)
+                       (layout/ast->sentinel-strings [:ast [:p "hi " [:strong "bold"] " rest"]] 80)
 
                        body
                        (str/join "" (bodies out))]
@@ -431,21 +431,21 @@
                    (expect (str/includes? body (str p/INLINE_BOLD_ON "bold" p/INLINE_BOLD_OFF)))))
              (it "wraps :c (inline code) in INLINE_CODE_ON/OFF sentinel pair"
                  (let [out
-                       (ir-tui/ir->sentinel-strings [:ir [:p "use " [:c "send!"] " here"]] 80)
+                       (layout/ast->sentinel-strings [:ast [:p "use " [:c "send!"] " here"]] 80)
 
                        body
                        (str/join "" (bodies out))]
 
                    (expect (str/includes? body (str p/INLINE_CODE_ON "send!" p/INLINE_CODE_OFF)))))
              (it "sentinel adapter is a string-only contract (every entry begins with a marker)"
-                 (let [out (ir-tui/ir->sentinel-strings [:ir [:h {:level 1} "T"] [:p "x"]
+                 (let [out (layout/ast->sentinel-strings [:ast [:h {:level 1} "T"] [:p "x"]
                                                          [:ul [:li "y"]] [:code "z"]]
                                                         80)]
                    (expect (every? string? out))
                    (expect (every? #(>= (count %) 1) out))))
              (it "bdc79ae9 fixture round-trips through the sentinel adapter without throwing"
                  (when-let [raw (fixture-ir)]
-                   (let [out (ir-tui/ir->sentinel-strings raw 100)]
+                   (let [out (layout/ast->sentinel-strings raw 100)]
                      (expect (vector? out))
                      (expect (every? string? out))
                      ;; the bug-paragraph still flows on one wrap chunk
@@ -458,8 +458,8 @@
 (defdescribe retired-disclosure-tags-test
              (it ":details/:summary input is flattened without toggle metadata"
                  (let [entries
-                       (ir-tui/ir->entries
-                         [:ir [:p "intro"] [:details {:open? true} [:summary "toggle"] [:p "body"]]]
+                       (layout/ast->entries
+                         [:ast [:p "intro"] [:details {:open? true} [:summary "toggle"] [:p "body"]]]
                          80)
 
                        body
@@ -477,5 +477,5 @@
                  ;; hand-rolled divergent wrapper is the regression this pins against.
                  (doseq [[s w] [["a quick brown fox jumps over it" 7] ["zażółć gęślą jaźń ✅ done" 6]
                                 ["one-unbreakable-supertoken" 5] ["" 5] [nil 4] ["🎉🎉" 1]]]
-                   (expect (= (p/word-wrap (str s) (max 1 (long w))) (#'ir-tui/wrap-cell-cols s w))
+                   (expect (= (p/word-wrap (str s) (max 1 (long w))) (#'layout/wrap-cell-cols s w))
                            (str "diverged from p/word-wrap for " (pr-str [s w]))))))

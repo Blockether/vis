@@ -1,35 +1,17 @@
 -- =============================================================================
--- V1__schema.sql — vis unified SQLite baseline schema.
---
--- A single consolidated migration equivalent to the old incremental chain
--- V1..V10 applied end to end: every ALTER / rename / table-rebuild is folded
--- inline into clean CREATE statements (no historical data transforms — a
--- fresh DB has no rows to migrate). Drop this in as the ONLY file under
--- migration/ for a fresh install, and reset the Flyway baseline so existing
--- ~/.vis/vis.mdb databases keep their incremental chain.
---
--- Folded from:
---   V1  base schema
---   V2  session_iteration_attachment      (superseded by V4)
---   V3  session_turn_attachment rebuild    (superseded by V4)
---   V4  unify attachments -> session_attachment
---   V5  session_soul.claimed_at
---   V6  owner + session_group(+membership) — group renamed to project in V7
---   V7  session_group -> project; soul.group_id -> project_id; project_position
---   V8  session_turn_queue
---   V9  project.workspace_root (project == tab set, bound to a dir)
---   V10 project_position hard-unique invariant
---
--- Table order respects FK dependencies where it can; SQLite resolves the two
--- genuinely circular refs (session_soul.parent_state_id <-> session_state) at
--- row time, not DDL time, so a forward reference is fine.
+-- V1__schema.sql — THE single unified vis SQLite schema (snake_string epoch).
+-- One consolidated baseline: clean CREATEs only, no historical ALTER chain.
+-- All persisted payloads are canonical snake_case STRING-keyed JSON/Nippy;
+-- pre-epoch (keyword-era) databases are not migrated — start a fresh DB.
+-- SQLite resolves the circular session_soul <-> session_state refs at row
+-- time, so the forward reference is fine.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
 
 -- =============================================================================
 -- owner — ownership tag (the "who" axis). Single-user seam: one `local` row.
--- (V6)
+--
 -- =============================================================================
 CREATE TABLE owner (
   id           TEXT PRIMARY KEY NOT NULL,
@@ -42,20 +24,18 @@ CREATE TABLE owner (
 INSERT INTO owner (id, name, created_at) VALUES ('local', 'local', 0);
 
 -- =============================================================================
--- project — the cross-channel "what belongs together" axis (V6 session_group,
--- renamed in V7). A project OWNS its member sessions (the TUI calls them TABS),
--- ordered by session_soul.project_position. `workspace_root` binds a project to
--- a directory so "workspace = project = tab set" (V9).
+-- project — the CROSS-CHANNEL "what belongs together" axis. A project OWNS its
+-- member sessions (the TUI calls them TABS), ordered by
+-- session_soul.project_position. `workspace_root` binds a project to a
+-- directory so "workspace = project = tab set". No channel column: every
+-- channel sees the same projects.
 -- =============================================================================
 CREATE TABLE project (
   id             TEXT PRIMARY KEY NOT NULL,
   owner_id       TEXT NOT NULL REFERENCES owner(id),
-  -- NULL = a cross-channel project (shows in EVERY channel's db-list-projects
-  -- view); non-NULL scopes it to one channel ('tui'/'telegram'/…).
-  channel        TEXT,
   name           TEXT NOT NULL CHECK (trim(name) <> ''),
   color          TEXT,                        -- optional TUI/web accent
-  position       INTEGER NOT NULL DEFAULT 0,  -- manual ordering within a channel
+  position       INTEGER NOT NULL DEFAULT 0,  -- manual ordering
   created_at     INTEGER NOT NULL,
   archived_at    INTEGER,                     -- soft-hide without deleting
 
@@ -69,8 +49,8 @@ CREATE TABLE project (
   workspace_root TEXT CHECK (workspace_root IS NULL OR trim(workspace_root) <> '')
 );
 
-CREATE INDEX idx_project_owner_channel
-  ON project(owner_id, channel, position, created_at);
+CREATE INDEX idx_project_owner
+  ON project(owner_id, position, created_at);
 
 -- One project per (owner, workspace_root): partial-unique makes get-or-create
 -- race-safe (a losing concurrent insert fails and the caller re-reads).
@@ -79,8 +59,7 @@ CREATE UNIQUE INDEX idx_project_owner_workspace_root
   WHERE workspace_root IS NOT NULL;
 
 -- =============================================================================
--- session_soul — pure identity. (V1 + claimed_at V5 + owner_id/project_id V6/V7
--- + project_position V7)
+-- session_soul — pure identity.
 -- =============================================================================
 CREATE TABLE session_soul (
   id           TEXT PRIMARY KEY NOT NULL,
@@ -100,21 +79,21 @@ CREATE TABLE session_soul (
   llm_pref_model    TEXT,
   created_at        INTEGER NOT NULL,
 
-  -- Adoption stamp (V5). NULL = unclaimed warm-pool scaffolding (hidden from
+  -- Adoption stamp. NULL = unclaimed warm-pool scaffolding (hidden from
   -- db-list-sessions); non-NULL = a real conversation (user-created or received
   -- its first turn). Direct resume by id stays unfiltered.
   claimed_at        INTEGER,
 
-  -- Ownership tag (V6).
+  -- Ownership tag.
   owner_id          TEXT REFERENCES owner(id),
 
-  -- Exclusive project membership pointer (V6 group_id -> V7 project_id). A soul
+  -- Exclusive project membership pointer. A soul
   -- is in 0..1 projects; deleting the project SCATTERS members back to loose
   -- (SET NULL), never cascade-deletes conversations.
   project_id        TEXT REFERENCES project(id) ON DELETE SET NULL,
 
   -- Manual order of this soul within its project (the movable TAB order, V7).
-  -- Held gap-free & unique per project by idx_project_position (V10).
+  -- Held gap-free & unique per project by idx_project_position.
   project_position  INTEGER NOT NULL DEFAULT 0
 );
 
@@ -128,19 +107,19 @@ CREATE UNIQUE INDEX idx_session_soul_channel_external
   ON session_soul(channel, external_id)
   WHERE external_id IS NOT NULL;
 
--- Claimed-only listing hot path (V5).
+-- Claimed-only listing hot path.
 CREATE INDEX idx_session_soul_claimed
   ON session_soul(channel, claimed_at, created_at DESC)
   WHERE claimed_at IS NOT NULL;
 
 CREATE INDEX idx_session_soul_owner ON session_soul(owner_id);
 
--- Members of a project in tab order (V7).
+-- Members of a project in tab order.
 CREATE INDEX idx_session_soul_project ON session_soul(project_id, project_position)
   WHERE project_id IS NOT NULL;
 
 -- One slot per (project, position), forever — position integrity is structural,
--- not application convention (V10). The reorder fn parks members in negative
+-- not application convention. The reorder fn parks members in negative
 -- temp slots first so a row-by-row renumber never transiently collides.
 CREATE UNIQUE INDEX idx_project_position
   ON session_soul(project_id, project_position)
@@ -148,7 +127,7 @@ CREATE UNIQUE INDEX idx_project_position
 
 -- =============================================================================
 -- workspace — a rift copy-on-write clone of cwd (a "draft"). One row = one
--- draft clone on disk = one session-binding (1:1). (V1)
+-- draft clone on disk = one session-binding (1:1).
 -- =============================================================================
 CREATE TABLE workspace (
   id                   TEXT PRIMARY KEY NOT NULL,
@@ -190,7 +169,7 @@ CREATE INDEX idx_workspace_parent
   ON workspace(parent_workspace_id);
 
 -- =============================================================================
--- repo_focus — per-repo last-active workspace pointer. (V1)
+-- repo_focus — per-repo last-active workspace pointer.
 -- =============================================================================
 CREATE TABLE repo_focus (
   repo_id        TEXT PRIMARY KEY NOT NULL,
@@ -200,7 +179,7 @@ CREATE TABLE repo_focus (
 );
 
 -- =============================================================================
--- session_state — forkable mutable snapshot. Pinned 1:1 to a workspace. (V1)
+-- session_state — forkable mutable snapshot. Pinned 1:1 to a workspace.
 -- =============================================================================
 CREATE TABLE session_state (
   id                    TEXT PRIMARY KEY NOT NULL,
@@ -231,7 +210,7 @@ CREATE INDEX idx_session_state_parent
   ON session_state(parent_state_id);
 
 -- =============================================================================
--- session_turn_soul — immutable identity of a user request, branch-local. (V1)
+-- session_turn_soul — immutable identity of a user request, branch-local.
 -- =============================================================================
 CREATE TABLE session_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
@@ -279,7 +258,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- session_turn_state — one run of session_turn_soul. Retry = new version. (V1)
+-- session_turn_state — one run of session_turn_soul. Retry = new version.
 -- =============================================================================
 CREATE TABLE session_turn_state (
   id                           TEXT PRIMARY KEY NOT NULL,
@@ -303,7 +282,7 @@ CREATE TABLE session_turn_state (
   output_tokens                INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
   output_reasoning_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (output_reasoning_tokens >= 0),
   total_cost_usd               REAL NOT NULL DEFAULT 0 CHECK (total_cost_usd >= 0),
-  answer_markdown              TEXT,        -- raw Markdown of the model's plain-prose answer; NULL while running
+  content_json                 TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(content_json)),
   -- Per-turn final outcome, derived at turn end.
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
@@ -329,7 +308,7 @@ CREATE INDEX idx_session_turn_state_forked_from
   ON session_turn_state(forked_from_session_turn_state_id);
 
 -- =============================================================================
--- session_turn_iteration — one LLM round-trip within a session_turn_state. (V1)
+-- session_turn_iteration — one LLM round-trip within a session_turn_state.
 -- =============================================================================
 CREATE TABLE session_turn_iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
@@ -344,8 +323,8 @@ CREATE TABLE session_turn_iteration (
   llm_selected_model              TEXT,
   llm_actual_provider             TEXT,
   llm_actual_model                TEXT,
-  llm_fallback                    INTEGER NOT NULL DEFAULT 0
-                                  CHECK (llm_fallback IN (0, 1)),
+  is_llm_fallback                    INTEGER NOT NULL DEFAULT 0
+                                  CHECK (is_llm_fallback IN (0, 1)),
 
   llm_full_duration_ms            INTEGER CHECK (
                                     llm_full_duration_ms IS NULL OR llm_full_duration_ms >= 0
@@ -353,8 +332,8 @@ CREATE TABLE session_turn_iteration (
   llm_thinking                    TEXT,
   -- Model markdown PROSE returned ALONGSIDE a tool call. NULL = no prose.
   llm_assistant_prose             TEXT,
-  llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
-                                  CHECK (llm_returned_empty_code IN (0, 1)),
+  is_llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
+                                  CHECK (is_llm_returned_empty_code IN (0, 1)),
 
   -- svar canonical assistant message (JSON) — preserved-thinking replay survives
   -- a restart.
@@ -442,7 +421,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- llm_routing_event — per-iteration provider/model routing trace. (V1)
+-- llm_routing_event — per-iteration provider/model routing trace.
 -- =============================================================================
 CREATE TABLE llm_routing_event (
   id                             TEXT PRIMARY KEY NOT NULL,
@@ -473,7 +452,7 @@ CREATE INDEX idx_llm_routing_event_iteration_position
   ON llm_routing_event(session_turn_iteration_id, position);
 
 -- =============================================================================
--- extension_aggregate — extension-owned durable sidecar state. (V1)
+-- extension_aggregate — extension-owned durable sidecar state.
 -- =============================================================================
 CREATE TABLE extension_aggregate (
   id                          TEXT PRIMARY KEY NOT NULL,
@@ -578,7 +557,7 @@ CREATE INDEX idx_extension_aggregate_index_path
   WHERE index_data IS NOT NULL;
 
 -- =============================================================================
--- log — structured logs. (V1)
+-- log — structured logs.
 -- =============================================================================
 CREATE TABLE log (
   id                     TEXT PRIMARY KEY NOT NULL,
@@ -631,8 +610,7 @@ CREATE INDEX idx_log_iteration
   WHERE session_turn_iteration_id IS NOT NULL;
 
 -- =============================================================================
--- session_attachment — unified attachment table (V4; supersedes V1/V2/V3
--- session_turn_attachment + session_iteration_attachment).
+-- session_attachment — unified attachment table.
 --
 -- Every row carries session_turn_soul_id (ALWAYS set: the turn it belongs to).
 -- A row with session_turn_iteration_id set is a TOOL artifact (OUTBOUND); NULL
@@ -682,20 +660,3 @@ CREATE INDEX idx_attachment_soul
 -- Per-iteration roll-up (tool artifacts), ordered by (call, position).
 CREATE INDEX idx_attachment_iteration
   ON session_attachment(session_turn_iteration_id, tool_call_id, position);
-
--- =============================================================================
--- session_turn_queue — durable per-session TURN QUEUE (V8). A queued turn is
--- pure gateway scheduling intent (not yet a session_turn_state); rows are
--- short-lived and drop when drained/cancelled/soul-deleted.
--- =============================================================================
-CREATE TABLE session_turn_queue (
-  id               TEXT PRIMARY KEY NOT NULL,   -- gateway registry turn id (tid)
-  session_soul_id  TEXT NOT NULL,
-  request          TEXT NOT NULL,
-  position         INTEGER NOT NULL,            -- FIFO order within the session
-  queued_at        INTEGER NOT NULL,
-  FOREIGN KEY (session_soul_id) REFERENCES session_soul(id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_session_turn_queue_session
-  ON session_turn_queue(session_soul_id, position, queued_at);

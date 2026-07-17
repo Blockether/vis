@@ -639,7 +639,7 @@
   ;; row before text. If a code-bearing trace already ended with a
   ;; neutral iteration pad, reuse that row as the outside margin.
   (let [ans
-        [:ir {} [:p {} "hello"]]
+        "hello"
 
         settings
         {:show-thinking true :show-iterations true}
@@ -855,8 +855,7 @@
                                                {:now-ms 1000 :turn-start-ms 0}))
 
           cancel
-          (:lines (render/format-answer-with-thinking-data [:ir {}
-                                                            [:p {} [:span {} "Cancelled by user."]]]
+          (:lines (render/format-answer-with-thinking-data "Cancelled by user."
                                                            [iter]
                                                            80
                                                            settings
@@ -1596,7 +1595,7 @@
         (expect (contains? (:sgr stamp) com.googlecode.lanterna.SGR/ITALIC))))))
 
 (defdescribe answer-text-inline-sentinel-paint-test
-             ;; Final-answer IR uses MARKER_ANSWER_TXT for normal paragraphs.
+             ;; Final-answer prose uses MARKER_ANSWER_TXT for normal paragraphs.
              ;; Inline code inside that IR arrives at the bubble painter as
              ;; INLINE_CODE_ON/OFF sentinels. The answer-text branch must consume
              ;; them just like headings/bullets/quotes; otherwise the user sees
@@ -1831,7 +1830,7 @@
           (fn [exp]
             (render/invalidate-cache!)
             (render/format-answer-with-thinking-data
-              [:ir {} [:p {} [:span {} "done"]]]
+              "done"
               [{:thinking thinking}]
               96
               {:show-thinking true :show-iterations true}
@@ -1939,7 +1938,7 @@
             (fn [exp]
               (render/invalidate-cache!)
               (render/format-answer-with-thinking-data
-                [:ir {} [:p {} [:span {} "done"]]]
+                "done"
                 trace
                 120
                 {:show-iterations true :show-thinking true}
@@ -2075,7 +2074,7 @@
 (defdescribe retired-answer-disclosure-test
              (it "ignores :details/:summary as structure and emits no summary lane"
                  (let [answer
-                       [:ir {}
+                       [:ast {}
                         [:details {:open? false} [:summary {} [:span {} "Plan"]]
                          [:p {} [:span {} "alpha"]] [:p {} [:span {} "beta"]]]]
 
@@ -2100,47 +2099,46 @@
 
 (defdescribe
   provider-error-answer-test
-  (it "renders only the IR provider-error block, not duplicate trace error rows"
-      (render/invalidate-cache!)
-      (let [answer
-            [:ir {:vis/provider-error true} [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
-             [:p {} [:span {} "Provider call failed before the model could run."]]
-             [:p {} [:span {} "WHAT HAPPENED: invalid thinking signature"]]]
+  (it
+    "renders only the canonical provider-error Markdown, not duplicate trace rows"
+    (render/invalidate-cache!)
+    (let
+      [answer
+       "## 🚨 PROVIDER_ERROR\n\nProvider call failed before the model could run.\n\nWHAT HAPPENED: invalid thinking signature"
 
-            trace
-            [{:error {:message "Exceptional status code: 400"
-                      :data
-                      {:status 400
-                       :body
-                       "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}}}]
+       trace
+       [{:error {:message "Exceptional status code: 400"
+                 :data {:status 400
+                        :body
+                        "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}}}]
 
-            payload
-            (render/format-answer-with-thinking-data answer
-                                                     trace
-                                                     96
-                                                     {:show-iterations true}
-                                                     nil
-                                                     false
-                                                     {})
+       payload
+       (render/format-answer-with-thinking-data answer
+                                                trace
+                                                96
+                                                {:show-iterations true}
+                                                nil
+                                                false
+                                                {})
 
-            text
-            (:text payload)]
+       text
+       (:text payload)]
 
-        (expect (= 1 (count (re-seq #"PROVIDER_ERROR" text))))
-        (expect (not (str/includes? text "provider response:")))
-        (expect (str/includes? text "WHAT HAPPENED: invalid thinking signature")))))
+      (expect (= 1 (count (re-seq #"PROVIDER_ERROR" text))))
+      (expect (not (str/includes? text "provider response:")))
+      (expect (str/includes? text "WHAT HAPPENED: invalid thinking signature")))))
 
 (defdescribe answer-separator-test
              (it "does not draw a bottom border between reasoning and final answer"
                  (render/invalidate-cache!)
-                 (let [payload (render/format-answer-with-thinking-data
-                                 [:ir {} [:p {} [:span {} "done"]]]
-                                 [{:thinking "reasoning"}]
-                                 80
-                                 {:show-thinking true :show-iterations true}
-                                 nil
-                                 false
-                                 {})]
+                 (let [payload (render/format-answer-with-thinking-data "done"
+                                                                        [{:thinking "reasoning"}]
+                                                                        80
+                                                                        {:show-thinking true
+                                                                         :show-iterations true}
+                                                                        nil
+                                                                        false
+                                                                        {})]
                    (expect (not (str/includes? (:text payload) p/MARKER_ANSWER_SEP)))
                    (expect (not-any? #(str/starts-with? % p/MARKER_ANSWER_SEP) (:lines payload))))))
 
@@ -2201,7 +2199,7 @@
                                       {:role :assistant
                                        :text "hello"
                                        :message-meta-mode :full
-                                       :tokens {:input 100 :output 20 :cached 70}}
+                                       :tokens {"input" 100 "output" 20 "cached" 70}}
                                       4 2
                                       60 {:viewport-h 40})]
 
@@ -2228,7 +2226,7 @@
                                       {:role :assistant
                                        :text "hello"
                                        :message-meta-mode :full
-                                       :tokens {:input 100 :output 20 :cached 0}}
+                                       :tokens {"input" 100 "output" 20 "cached" 0}}
                                       4 2
                                       60 {:viewport-h 40})]
 
@@ -2257,7 +2255,7 @@
                                     {:role :assistant
                                      :text "hello"
                                      :message-meta-mode :full
-                                     :tokens {:input 100 :output 20}}
+                                     :tokens {"input" 100 "output" 20}}
                                     4 2
                                     60 {:viewport-h 40})
 
@@ -2378,7 +2376,7 @@
           ;; lines directly so the assertion exercises the painter, not
           ;; the retired in-painter markdown lift.
           rendered
-          (render/format-answer-markdown-data (vis/markdown->ir "**SIEMA**\n\n> quoted text")
+          (render/format-answer-markdown-data (vis/markdown->ast "**SIEMA**\n\n> quoted text")
                                               50
                                               nil)
 
@@ -2438,7 +2436,7 @@
             (setCharacter [_ _ _] this))
 
           rendered
-          (render/format-answer-markdown-data (vis/markdown->ir "hello") 50 nil)
+          (render/format-answer-markdown-data (vis/markdown->ast "hello") 50 nil)
 
           left
           2
@@ -2503,7 +2501,7 @@
             (setCharacter [_ _ _] this))
 
           rendered
-          (render/format-answer-markdown-data (vis/markdown->ir "```clojure\n(+ 1 2)\n```") 50 nil)
+          (render/format-answer-markdown-data (vis/markdown->ast "```clojure\n(+ 1 2)\n```") 50 nil)
 
           left
           2
@@ -2949,7 +2947,20 @@
                      (expect (some #{{:type :x :message "m"}} out))))
                (it "different String errors produce different fingerprints"
                    (expect (not= (fp {:error "a"}) (fp {:error "b"}))))
-               (it "nil :error is fine" (expect (vector? (fp {:error nil}))))))
+               (it "nil :error is fine" (expect (vector? (fp {:error nil}))))
+               ;; Regression: `:assistant-prose` (and pre-forms `:content-stream`)
+               ;; are read by `format-iteration-entry-entries` but were absent from
+               ;; the fingerprint. The loop emits prose WHILE `:forms` is still empty,
+               ;; so an unchanged fingerprint let the live cache serve the stale,
+               ;; prose-less render — the commentary block vanished from the terminal.
+               (it "assistant-prose busts the fingerprint while forms are empty"
+                   (let [base {:thinking "planning" :forms []}]
+                     (expect (not= (fp base) (fp (assoc base :assistant-prose "doing X"))))
+                     (expect (not= (fp (assoc base :assistant-prose "a"))
+                                   (fp (assoc base :assistant-prose "b"))))))
+               (it "content-stream busts the fingerprint while forms are empty"
+                   (let [base {:thinking "planning" :forms []}]
+                     (expect (not= (fp base) (fp (assoc base :content-stream "live text"))))))))
 
 (defdescribe
   message-detail-expansions-key-test
@@ -3038,8 +3049,8 @@
   ;; `input/collapse-paste-placeholders` emits) renders as a collapsible
   ;; disclosure: the token is the chevron summary row, the payload the body
   ;; shown only when expanded.
-  (let [ir
-        [:ir {} [:p {} [:span {} "look at this"]]
+  (let [ast
+        [:ast {} [:p {} [:span {} "look at this"]]
          [:code {:lang "vis-paste"} "[Pasted #1: 3 lines, 11B]\nAAA\nBBB\nCCC\n"]]
 
         sid
@@ -3057,17 +3068,17 @@
          {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
 
     (it "collapsed by default: summary chevron shows, payload hidden"
-        (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {})))]
+        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
           (expect (str/includes? txt "▸ [Pasted #1: 3 lines, 11B]"))
           (expect (not (str/includes? txt "AAA")))))
     (it "expanded: chevron flips and the verbatim payload appears"
-        (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {[sid node-id] true})))]
+        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {[sid node-id] true})))]
           (expect (str/includes? txt "▾ [Pasted #1: 3 lines, 11B]"))
           (expect (str/includes? txt "AAA"))
           (expect (str/includes? txt "CCC"))))
     (it "the summary row carries toggle-details click meta scoped to this node"
         (let [{:keys [lines line-meta]}
-              (render/format-answer-markdown-data ir 76 (opts {}))
+              (render/format-answer-markdown-data ast 76 (opts {}))
 
               idx
               (first (keep-indexed (fn [i l]
@@ -3088,8 +3099,8 @@
   ;; layout (or a text fallback shows on image-incapable terminals) — no
   ;; expansion state, so the transcript height never jumps and the picture is
   ;; never painted at a stale position.
-  (let [ir
-        [:ir {}
+  (let [ast
+        [:ast {}
          [:code {:lang "vis-image"}
           "[Image #1: shot.png 1200×800, 245KB]\n/tmp/shot.png\nimage/png\n1200x800\n245KB\n"]]
 
@@ -3105,7 +3116,7 @@
 
     (it "graphical terminal: paint-meta row + reserved box are allocated by default"
         (with-redefs [timg/images-protocol (constantly :kitty)]
-          (let [{:keys [line-meta]} (render/format-answer-markdown-data ir 76 (opts {}))
+          (let [{:keys [line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
                 img-rows (filter #(= :image (:kind %)) line-meta)
                 pad-rows (filter #(= :image-pad (:kind %)) line-meta)
                 img (:img (first img-rows))]
@@ -3119,7 +3130,7 @@
             (expect (every? #(= "/tmp/shot.png" (:path (:img %))) pad-rows)))))
     (it "plain terminal: caption + text fallback always visible, no chevron"
         (with-redefs [timg/images-protocol (constantly nil)]
-          (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {})))]
+          (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
             (expect (str/includes? txt "[Image #1: shot.png 1200×800, 245KB]"))
             (expect (not (str/includes? txt "▸ [Image #1")))
             (expect (str/includes? txt "shot.png"))

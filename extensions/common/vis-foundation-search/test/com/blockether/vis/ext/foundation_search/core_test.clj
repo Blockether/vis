@@ -297,7 +297,7 @@ const total = add(1, 2);")
   "Flatten an excerpt's parsed IR to its block tags + the text under each
    :code / :h node, for structural assertions."
   [excerpt]
-  (let [ir (vis/markdown->ir excerpt)]
+  (let [ir (vis/markdown->ast excerpt)]
     {:code (->> (tree-seq vector? seq ir)
                 (filter #(and (vector? %) (= :code (first %))))
                 (map (fn [c]

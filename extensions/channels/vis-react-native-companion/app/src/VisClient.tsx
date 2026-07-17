@@ -48,12 +48,22 @@ export type TurnAttachment = {
 };
 export type TurnTokens = { input?: number; output?: number };
 
+export type ContentBlock = {
+  id: string;
+  type: "prose" | "code" | "tool" | "reasoning" | "error" | "attachment" | "notice" | string;
+  markdown?: string;
+  text?: string;
+  message?: string;
+  language?: string;
+  [key: string]: unknown;
+};
+
 export type GatewayTurn = {
   id?: string;
   turn_id?: string;
   request?: string;
-  answer?: string;
-  answer_md?: string;
+  role?: string;
+  content: ContentBlock[];
   status?: string;
   started_at?: number;
   completed_at?: number;
@@ -114,9 +124,8 @@ export type GatewayEvent = {
   /* iteration.completed — complete model text, never partial prose/thinking */
   assistant_prose?: string;
   thinking?: string;
-  /* turn.completed / turn.failed */
+  /* terminal events carry no duplicate answer; poll/turn state owns content */
   status?: string;
-  answer_md?: string;
   /* context.updated — the session-view utilization the model reads (ctx fullness) */
   utilization?: CtxUtilization;
 };
@@ -213,6 +222,22 @@ export type WorkspaceInfo = {
   label?: string;
   fork_ms?: number;
   filesystem_roots?: FilesystemRoot[];
+};
+
+/* GET /v1/sessions/:sid/resources `resources` — the session's live vis-managed
+   backgrounds (shell_bg children, managed REPLs). DATA is string-keyed and
+   OPEN-ENDED; only the stable fields the mobile Resources sheet renders are
+   typed. `can_stop`/`can_restart` gate the lifecycle buttons. */
+export type ManagedResource = {
+  id: string;
+  kind?: string;
+  label?: string;
+  status?: string;
+  detail?: string;
+  pid?: number;
+  can_stop?: boolean;
+  can_restart?: boolean;
+  [k: string]: unknown;
 };
 
 /* GET /v1/providers/:id/limits `report` — normalized RPM/TPM quota envelope
@@ -501,10 +526,8 @@ export class VisGatewayClient {
   }
 
   /* The canonical settled trace of ONE turn: its iteration rows (each with the
-     tool-call forms that ran). Rehydrates tool cards into scrollback AFTER a
-     turn settles — the /turns list carries no trace, so without this the live
-     cards vanish once the poll's answer_md takes over. A pre-trace gateway 404s;
-     callers treat that as "no cards". */
+     tool-call forms that ran). Rehydrates tool cards into scrollback after a
+     turn settles; settled prose remains in the turn's canonical content array. */
   async turnTrace(
     sessionId: string,
     turnId: string,
@@ -604,11 +627,12 @@ export class VisGatewayClient {
   /* Flip a boolean / cycle an enum; resolves to the refreshed row. */
   async settingsMutate(
     id: string,
-    action: "toggle" | "cycle",
+    action: "toggle" | "cycle" | "value",
+    value?: string,
   ): Promise<ToggleRow> {
     return this.request<ToggleRow>("/v1/settings", {
       method: "POST",
-      body: JSON.stringify({ id, action }),
+      body: JSON.stringify({ id, action, value }),
     });
   }
 
@@ -776,5 +800,34 @@ export class VisGatewayClient {
       `/v1/providers/${encodeURIComponent(providerId)}/limits`,
     );
     return body.report ?? {};
+  }
+
+  /* ── managed resources / backgrounds (GET /v1/sessions/:sid/resources) — the
+     same live registry the web footer + agent `resource_stop` act on, scoped to
+     the session so no client can touch another's. ── */
+
+  async listResources(sessionId: string): Promise<ManagedResource[]> {
+    const body = await this.request<{ resources?: ManagedResource[] }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/resources`,
+    );
+    return body.resources ?? [];
+  }
+
+  async stopResource(sessionId: string, rid: string): Promise<void> {
+    await this.request(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/resources/stop?rid=${encodeURIComponent(
+        rid,
+      )}`,
+      { method: "POST" },
+    );
+  }
+
+  async restartResource(sessionId: string, rid: string): Promise<void> {
+    await this.request(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/resources/restart?rid=${encodeURIComponent(
+        rid,
+      )}`,
+      { method: "POST" },
+    );
   }
 }

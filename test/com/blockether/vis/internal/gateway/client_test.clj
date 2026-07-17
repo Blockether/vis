@@ -34,17 +34,17 @@
                      (fn [_ method path]
                        (is (= "GET" method))
                        (is (= @request path))
-                       {:report {:provider_id "openai-codex"
-                                 :status "ok"
-                                 :dynamic {:limits [{:id "codex-5h"
-                                                     :scope "account"
-                                                     :kind "percentage"
-                                                     :precision "percent"
-                                                     :source "live"
-                                                     :window {:kind "rolling"
-                                                              :unit "hour"
-                                                              :size 5
-                                                              :resets_at_ms 1234}}]}}})}
+                       {"report" {"provider_id" "openai-codex"
+                                  "status" "ok"
+                                  "dynamic" {"limits" [{"id" "codex-5h"
+                                                        "scope" "account"
+                                                        "kind" "percentage"
+                                                        "precision" "percent"
+                                                        "source" "live"
+                                                        "window" {"kind" "rolling"
+                                                                  "unit" "hour"
+                                                                  "size" 5
+                                                                  "resets_at_ms" 1234}}]}}})}
       (fn []
         (let [report (client/provider-limits :openai-codex)]
           (is (= "/v1/providers/openai-codex/limits" @request))
@@ -70,7 +70,7 @@
         awaits
         (atom 0)]
 
-    (with-redefs-fn {(rv 'ensure-gateway!) (fn []
+    (with-redefs-fn {(rv 'ensure-gateway!) (fn [& _]
                                              fake-entry)
                      (rv 'probe-route) (fn [_ _]
                                          (let [[p] @probe-seq]
@@ -112,7 +112,7 @@
     "a real 404 on an IDLE daemon (no other clients, no running turn) respawns:
             stop → await-down → re-ensure → re-probe :served"
     (let [{:keys [entry stops awaits ex]} (run-serving! {:probes [:absent :served]
-                                                         :status {:clients 1 :running_turns 0}})]
+                                                         :status {"clients" 1 "running_turns" 0}})]
       (is (nil? ex))
       (is (= fake-entry entry))
       (is (= 1 stops) "the idle stale daemon is stopped exactly once")
@@ -121,7 +121,7 @@
 (deftest busy-daemon-is-not-force-killed
   (testing "a real 404 on a daemon OTHER clients depend on is refused, not nuked"
     (let [{:keys [ex stops awaits]} (run-serving! {:probes [:absent]
-                                                   :status {:clients 2 :running_turns 0}})]
+                                                   :status {"clients" 2 "running_turns" 0}})]
       (is (= :gateway/route-missing-busy (:type ex)))
       (is (= 2 (:clients ex)))
       (is (zero? stops) "a shared daemon is never stopped")
@@ -130,7 +130,7 @@
 (deftest running-turn-blocks-restart
   (testing "a real 404 while a turn is running is refused — a restart would abort it"
     (let [{:keys [ex stops]} (run-serving! {:probes [:absent]
-                                            :status {:clients 1 :running_turns 1}})]
+                                            :status {"clients" 1 "running_turns" 1}})]
       (is (= :gateway/route-missing-busy (:type ex)))
       (is (= 1 (:running-turns ex)))
       (is (zero? stops) "an in-flight turn is never force-aborted by the heal"))))
@@ -138,7 +138,7 @@
 (deftest respawn-that-still-404s-throws-route-missing
   (testing "if the fresh daemon STILL lacks the route, surface a clear error"
     (let [{:keys [ex stops]} (run-serving! {:probes [:absent :absent]
-                                            :status {:clients 1 :running_turns 0}})]
+                                            :status {"clients" 1 "running_turns" 0}})]
       (is (= :gateway/route-missing (:type ex)))
       (is (= 1 stops)))))
 
@@ -159,44 +159,54 @@
 
 (deftest sse-event-action-test
   (testing "own turn terminal returns the event"
-    (is (= [:terminal {:type "turn.completed" :turn_id "t1"}]
-           (client/sse-event-action {:type "turn.completed" :turn_id "t1"} "t1"))))
+    (is (= [:terminal {"type" "turn.completed" "turn_id" "t1"}]
+           (client/sse-event-action {"type" "turn.completed" "turn_id" "t1"} "t1"))))
   (testing "own turn progress forwards"
-    (is (= :forward (first (client/sse-event-action {:type "block.output" :turn_id "t1"} "t1")))))
+    (is (= :forward (first (client/sse-event-action {"type" "block.output" "turn_id" "t1"} "t1")))))
   (testing "own queued record deleted synthesizes a cancelled terminal (no hang)"
-    (let [[action event'] (client/sse-event-action {:type "turn.queued.deleted" :turn_id "t1"}
+    (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
                                                    "t1")]
       (is (= :terminal action))
-      (is (= "cancelled" (:status event')))
-      (is (= "turn.completed" (:type event')))))
+      (is (= "cancelled" (get event' "status")))
+      (is (= "turn.completed" (get event' "type")))))
   (testing "a SIBLING turn's queue lifecycle events forward (cross-TUI queue mirror)"
     (doseq [type ["turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"]]
-      (is (= :forward (first (client/sse-event-action {:type type :turn_id "OTHER"} "t1"))) type)))
+      (is (= :forward (first (client/sse-event-action {"type" type "turn_id" "OTHER"} "t1")))
+          type)))
   (testing "a sibling turn's non-queue events are dropped"
-    (is (= :skip (first (client/sse-event-action {:type "block.output" :turn_id "OTHER"} "t1"))))
+    (is (= :skip (first (client/sse-event-action {"type" "block.output" "turn_id" "OTHER"} "t1"))))
     (is (= :skip
-           (first (client/sse-event-action {:type "turn.completed" :turn_id "OTHER"} "t1"))))))
+           (first (client/sse-event-action {"type" "turn.completed" "turn_id" "OTHER"} "t1"))))))
 
-(deftest terminal-event->result-unwires-nested-maps
+(deftest terminal-event->result-keeps-canonical-nested-maps
   (testing
-    "the wire munges :total-cost -> :total_cost; the client must restore
-           the KEBAB shape so meta-cost / the footer's session-cost-keys read it"
+    "the blocking result IS the canonical snake_case string-keyed wire event
+           (plus derived fills) — tokens/cost/utilization are never re-keyed"
     (let [t->r
           (rv 'terminal-event->result)
 
-          ;; What `parse-json` yields after the SSE hop: nested map keys snake_cased.
+          ;; What `parse-json` yields after the SSE hop: snake_case STRING keys.
           event
-          {:type "turn.completed"
-           :turn_id "t1"
-           :cost {:total_cost 0.0123 :model "m" :provider "p"}
-           :tokens {:input 10 :cached_input 4 :output 2}}
+          {"type" "turn.completed"
+           "turn_id" "t1"
+           "session_id" "s1"
+           "cost" {"total_cost" 0.0123 "model" "m" "provider" "p"}
+           "tokens" {"input" 10 "cached" 4 "output" 2}
+           "utilization" {"saturation" 42 "headroom_tokens" 1000}}
 
           result
-          (t->r event "t1")]
+          (with-redefs [client/get-turn (fn [_ _]
+                                          {"content" [{"id" "b1" "type" "prose" "markdown" "done"}]
+                                           "iteration_count" 1})]
+            (t->r event "t1"))]
 
-      (is (= 0.0123 (get-in result [:cost :total-cost])) "cost total is kebab again")
-      (is (= "m" (get-in result [:cost :model])))
-      (is (= 4 (get-in result [:tokens :cached-input])) "token slots kebab too"))))
+      (is (= 0.0123 (get-in result ["cost" "total_cost"])) "cost stays canonical")
+      (is (= "m" (get-in result ["cost" "model"])))
+      (is (= 4 (get-in result ["tokens" "cached"])) "token slots stay canonical")
+      (is (= 42 (get-in result ["utilization" "saturation"])) "utilization stays canonical")
+      (is (= "t1" (get result "session_turn_id")))
+      (is (= "done" (get-in result ["content" 0 "markdown"])))
+      (is (not-any? keyword? (keys result)) "no keyword keys survive in the blocking result"))))
 
 (deftest read-events-until!-surfaces-disconnect
   (testing
@@ -414,7 +424,8 @@
     (with-redefs-fn {(rv 'send-json!) (fn [method path body]
                                         (is (= "PATCH" method))
                                         (is (= "/v1/sessions/sid-w/model" path))
-                                        {:model body})}
+                                        {"model" {"provider" (:provider body)
+                                                  "model" (:model body)}})}
       (fn []
         (reset! @cache {})
         (is (= {:provider "zai" :model "glm"} (client/set-session-model! "sid-w" "zai" "glm")))

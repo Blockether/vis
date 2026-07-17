@@ -82,7 +82,7 @@
                              (when (= "save" method) nil)
                              (when (= "generate" method) :audio))]
 
-               (let [result (voice/synthesize-file! [:ir {} [:p {} "hello"]] {:out-file out})]
+               (let [result (voice/synthesize-file! [:ast {} [:p {} "hello"]] {:out-file out})]
                  (expect (str/includes? @spoken "hello"))
                  (expect (= (str (.getAbsoluteFile out)) (:out-file result)))))
              (finally (.delete out)))))

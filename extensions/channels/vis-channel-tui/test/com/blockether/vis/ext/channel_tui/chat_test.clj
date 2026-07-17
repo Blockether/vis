@@ -43,7 +43,9 @@
                     (fn [_db _cid]
                       [{:id :turn-1
                         :user-request "siema"
-                        :answer-markdown "Siema! 👋 What can I do for you?"}])
+                        :content [{"id" "b1"
+                                   "type" "prose"
+                                   "markdown" "Siema! 👋 What can I do for you?"}]}])
 
                     vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
@@ -55,20 +57,15 @@
               assistant
               (second history)
 
-              ;; Pre-projection bubble carries `:ir` only — `:text` is
-              ;; computed lazily by the walker (`virtual.clj` projection)
-              ;; or by clipboard via `vis/render :markdown`. The test
-              ;; renders explicitly to assert the IR round-trip.
-              ir
-              (:ir assistant)
+              blocks
+              (:content assistant)
 
               text
-              (vis/render ir :markdown)]
+              (:text assistant)]
 
-          (expect (vector? ir))
-          (expect (= :ir (first ir)))
+          (expect (= "prose" (get-in blocks [0 "type"])))
           (expect (str/includes? text "Siema!")))))
-  (it "rebuild-history derives IR from the raw Markdown answer source"
+  (it "rebuild-history preserves canonical content blocks"
       (with-redefs [vis/db-info
                     (fn []
                       :db)
@@ -78,9 +75,12 @@
 
                     vis/db-list-session-turns
                     (fn [_db _cid]
-                      [{:id :turn-legacy
+                      [{:id :turn-cancelled
                         :user-request "siema"
-                        :answer-markdown "Cancelled by user."}])
+                        :content [{"id" "b1"
+                                   "type" "notice"
+                                   "code" "turn_cancelled"
+                                   "message" "Cancelled by user."}]}])
 
                     vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
@@ -92,12 +92,12 @@
               assistant
               (second history)
 
-              ir
-              (:ir assistant)]
+              blocks
+              (:content assistant)]
 
           (expect (= 2 (count history)))
-          (expect (= :ir (first ir)))
-          (expect (str/includes? (vis/render ir :markdown) "Cancelled by user")))))
+          (expect (= "notice" (get-in blocks [0 "type"])))
+          (expect (str/includes? (:text assistant) "Cancelled by user")))))
   (it "rebuild-history shows cancelled status text when persisted answer is blank"
       (with-redefs [vis/db-info
                     (fn []
@@ -111,7 +111,7 @@
                       [{:id :turn-cancelled
                         :user-request "no live"
                         :prior-outcome :cancelled
-                        :answer-markdown ""}])
+                        :content []}])
 
                     vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
@@ -123,11 +123,12 @@
               assistant
               (second history)
 
-              ir
-              (:ir assistant)]
+              blocks
+              (:content assistant)]
 
           (expect (= :cancelled (:status assistant)))
-          (expect (str/includes? (vis/render ir :markdown) "Cancelled by user")))))
+          (expect (= "notice" (get-in blocks [0 "type"])))
+          (expect (str/includes? (:text assistant) "Cancelled by user")))))
   (it
     "rebuild-history marks persisted silent engine calls for the TUI visibility toggle"
     ;; Python engine: an engine-only form (set_session_title) is silent UI chrome,
@@ -211,7 +212,7 @@
                       [{:id :iter-1
                         :code (str "(def x 1)\n"
                                    "(set-session-title! \"Mixed\")\n"
-                                   "(done [:ir [:p \"Done\"]])")
+                                   "(done [:ast [:p \"Done\"]])")
                         :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
                                 {:scope "t1/i1/f2"
                                  :tag :host
@@ -219,7 +220,7 @@
                                  :result "vis_silent"}
                                 {:scope "t1/i1/f3"
                                  :tag :host
-                                 :src "(done [:ir [:p \"Done\"]])"
+                                 :src "(done [:ast [:p \"Done\"]])"
                                  :result "vis_answer"}]}])]
 
         (let [history
@@ -342,14 +343,10 @@
           ;; iteration's canonical status + error
           (expect (= :error (:status trace)))
           (expect (some? (:error trace))))))
-  (it "render-answer throws on raw-string input (strict IR contract)"
-      (expect (try ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer))
-                     "raw markdown string")
-                   false
-                   (catch clojure.lang.ExceptionInfo _ true))))
-  (it "render-answer accepts nil as the empty placeholder"
-      (expect (= ""
-                 ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer)) nil))))
+  (it "render-answer projects canonical blocks"
+      (expect (= "raw **markdown**"
+                 ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer))
+                   [{"id" "b1" "type" "prose" "markdown" "raw **markdown**"}]))))
   (it "rebuilds tool-result details from canonical op envelope keys"
       ;; Generic envelope shaped like a tool result with command/target
       ;; metadata. Asserts chat layer extracts the canonical keys regardless
@@ -397,78 +394,83 @@
                   first)]
 
           (expect (= :tool (:result-kind form)))
-          (expect (= {:symbol "cat" :tag "observation" :target {:path "x.txt"}}
+          (expect (= {:symbol "cat" :tag "observation" :target {"path" "x.txt"}}
                      (:result-detail form)))))))
 
-(defdescribe turn-options-test
-             ;; `turn!` blocks on `vis/gateway-submit-turn-sync!` (the canonical sync
-             ;; facade) and derives answer IR from its result, passing through caller
-             ;; options. We mock that one seam.
-             (it "submits through the gateway sync facade, derives answer IR, passes options"
-                 (let [seen (atom nil)]
-                   (with-redefs [vis/gateway-submit-turn-sync! (fn [sid opts]
-                                                                 (reset! seen [sid opts])
-                                                                 {:answer "ok" :iteration-count 1})]
-                     (let [result (chat/turn! {:id "c1"}
-                                              "hello"
-                                              {:reasoning-default :deep
-                                               :extra-body {:text {:verbosity "high"}}})]
-                       (expect (vector? (:answer result)))
-                       (expect (= :ir (first (:answer result))))
-                       (expect (str/includes? (vis/render (:answer result) :markdown) "ok"))
-                       (expect (= 1 (:iteration-count result)))
-                       (expect (= "c1" (first @seen)))
-                       (expect (= "hello" (:request (second @seen))))
-                       (expect (= :deep (:reasoning-default (second @seen))))
-                       (expect (= {:text {:verbosity "high"}} (:extra-body (second @seen))))))))
-             (it "returns canonical IR when cancellation is raised as an exception"
-                 (with-redefs [vis/gateway-submit-turn-sync!
-                               (fn [& _]
-                                 (throw (InterruptedException. "cancel")))
-
-                               vis/cancellation?
-                               (fn [_]
-                                 true)]
-
-                   (let [result (chat/turn! {:id "c1"} "hello")]
-                     (expect (= :cancelled (:status result)))
-                     (expect (= :ir (first (:answer result)))))))
-             (it "coerces gateway cancellation text into canonical IR"
-                 (with-redefs [vis/gateway-submit-turn-sync! (fn [& _]
-                                                               {:answer "Cancelled by user."
-                                                                :status :cancelled})]
-                   (let [result (chat/turn! {:id "c1"} "hello")]
-                     (expect (= :cancelled (:status result)))
-                     (expect (= :ir (first (:answer result))))
-                     (expect (str/includes? (vis/render (:answer result) :markdown)
-                                            "Cancelled by user"))))))
-
 (defdescribe
-  gateway-event-chunk-test
-  ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
-  ;; (the canonical web `block-code` contract), so the projection just carries
-  ;; `:code` straight through — no `:render-segments` reconstruction.
-  (let [g->c @#'chat/gateway-event->chunk]
-    (it "block.started carries the raw code straight through"
-        (let [chunk
-              (g->c
-                {:type "block.started" :iteration 1 :block_id 0 :code "git_status()\nprint(42)"})]
-          (expect (= :form-start (:phase chunk)))
-          (expect (= "git_status()\nprint(42)" (:code chunk)))))
-    (it "block.output carries the raw code + stdout straight through"
-        (let [chunk
-              (g->c
-                {:type "block.output" :iteration 1 :block_id 0 :code "git_status()" :stdout "ok"})]
-          (expect (= :form-result (:phase chunk)))
-          (expect (= "git_status()" (:code chunk)))
-          (expect (= "ok" (:stdout chunk)))))
-    (it "reasoning.delta projects onto :thinking (the tracker's chunk contract)"
-        ;; progress.clj `:reasoning` reads `(:thinking chunk)` — a `:text`-keyed
-        ;; projection made live thinking invisible until iteration.completed.
-        (let [chunk (g->c {:type "reasoning.delta" :iteration 2 :text "pondering"})]
-          (expect (= :reasoning (:phase chunk)))
-          (expect (= 2 (:iteration chunk)))
-          (expect (= "pondering" (:thinking chunk)))))))
+  turn-options-test
+  (it "submits through the gateway sync facade without changing content shape"
+      (let [seen (atom nil)]
+        (with-redefs [vis/gateway-submit-turn-sync! (fn [sid opts]
+                                                      (reset! seen [sid opts])
+                                                      {"content"
+                                                       [{"id" "b1" "type" "prose" "markdown" "ok"}]
+                                                       "iteration_count" 1})]
+          (let [result (chat/turn! {:id "c1"}
+                                   "hello"
+                                   {:reasoning-default :deep
+                                    :extra-body {:text {:verbosity "high"}}})]
+            (expect (= "prose" (get-in result ["content" 0 "type"])))
+            (expect (= "ok" (get-in result ["content" 0 "markdown"])))
+            (expect (= 1 (get result "iteration_count")))
+            (expect (= "c1" (first @seen)))
+            (expect (= "hello" (:request (second @seen))))
+            (expect (= :deep (:reasoning-default (second @seen))))
+            (expect (= {:text {:verbosity "high"}} (:extra-body (second @seen))))))))
+  (it "returns canonical notice content when cancellation is raised"
+      (with-redefs [vis/gateway-submit-turn-sync!
+                    (fn [& _]
+                      (throw (InterruptedException. "cancel")))
+
+                    vis/cancellation?
+                    (fn [_]
+                      true)]
+
+        (let [result (chat/turn! {:id "c1"} "hello")]
+          (expect (= "cancelled" (get result "status")))
+          (expect (= "notice" (get-in result ["content" 0 "type"]))))))
+  (it "preserves gateway cancellation content"
+      (with-redefs [vis/gateway-submit-turn-sync! (fn [& _]
+                                                    {"content" [{"id" "b1"
+                                                                 "type" "notice"
+                                                                 "code" "turn_cancelled"
+                                                                 "message" "Cancelled by user."}]
+                                                     "status" "cancelled"})]
+        (let [result (chat/turn! {:id "c1"} "hello")]
+          (expect (= "cancelled" (get result "status")))
+          (expect (= "notice" (get-in result ["content" 0 "type"])))
+          (expect (str/includes? (get-in result ["content" 0 "message"]) "Cancelled by user"))))))
+
+(defdescribe gateway-event-chunk-test
+             ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
+             ;; (the canonical web `block-code` contract), so the projection just carries
+             ;; `:code` straight through — no `:render-segments` reconstruction.
+             (let [g->c @#'chat/gateway-event->chunk]
+               (it "block.started carries the raw code straight through"
+                   (let [chunk (g->c {"type" "block.started"
+                                      "iteration" 1
+                                      "block_id" 0
+                                      "code" "git_status()\nprint(42)"})]
+                     (expect (= :form-start (:phase chunk)))
+                     (expect (= "git_status()\nprint(42)" (:code chunk)))))
+               (it "block.output carries the raw code + stdout straight through"
+                   (let [chunk (g->c {"type" "block.output"
+                                      "iteration" 1
+                                      "block_id" 0
+                                      "code" "git_status()"
+                                      "stdout" "ok"})]
+                     (expect (= :form-result (:phase chunk)))
+                     (expect (= "git_status()" (:code chunk)))
+                     (expect (= "ok" (:stdout chunk)))))
+               (it "typed reasoning block delta projects onto :thinking"
+                   (let [chunk (g->c {"type" "content.block.delta"
+                                      "iteration" 2
+                                      "block_id" "t1:reasoning:2"
+                                      "field" "text"
+                                      "text" "pondering"})]
+                     (expect (= :reasoning (:phase chunk)))
+                     (expect (= 2 (:iteration chunk)))
+                     (expect (= "pondering" (:thinking chunk)))))))
 
 (defdescribe
   activity-event-chunk-test
@@ -478,14 +480,14 @@
   (let [g->c @#'chat/gateway-event->chunk]
     (it "a nested tool activity projects to :tool-start naming the op"
         (expect (= {:phase :tool-start :iteration 2 :tool-event {:op "shell_run"}}
-                   (g->c {:type "activity" :activity "tool" :op "shell_run" :iteration 2}))))
+                   (g->c {"type" "activity" "activity" "tool" "op" "shell_run" "iteration" 2}))))
     (it "a shell-run activity projects to :shell-run with its command"
-        (expect (= {:phase :shell-run :iteration 1 :cmd "./verify.sh"}
-                   (g->c
-                     {:type "activity" :activity "shell-run" :cmd "./verify.sh" :iteration 1}))))
+        (expect
+          (= {:phase :shell-run :iteration 1 :cmd "./verify.sh"}
+             (g->c {"type" "activity" "activity" "shell-run" "cmd" "./verify.sh" "iteration" 1}))))
     (it "a provider-call activity projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
-                   (g->c {:type "activity" :activity "provider-call" :iteration 1}))))))
+                   (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))))
 
 (defdescribe
   restore-block-record-test
@@ -549,32 +551,20 @@
 
 ;; Regression: a FAILED provider turn's styled card must survive the
 ;; `turn!`/`attach!` fold. Those fold the engine's provider-error IR onto
-;; `:answer` and dissoc `:answer-ir`, so the live TUI bubble (state.clj) reads
-;; it back via `chat/error-answer-ir` — NOT `:answer-ir` (gone) which used to
+;; canonical error blocks are preserved end-to-end.
 ;; flatten `:error` into plain text on a fresh conversation.
-(defdescribe error-answer-ir-test
-             (it "reads the folded provider-error IR off :answer, not the flattened :error"
-                 (let [card
-                       [:ir {:vis/provider-error true}
-                        [:h {:level 2} [:span {} "Provider unavailable"]] [:p {} [:span {} "boom"]]]
-
-                       ;; shape produced by attach!/turn! fold: IR on :answer, :answer-ir gone
-                       folded
-                       {:error "ERROR: Provider unavailable ..." :answer card}
-
-                       out
-                       (chat/error-answer-ir folded)]
-
-                   (expect (= card out))
-                   (expect (true? (:vis/provider-error (second out))))))
-             (it "still legacy-reads :answer-ir when present (belt-and-suspenders)"
-                 (let [card [:ir {:vis/provider-error true} [:p {} [:span {} "x"]]]]
-                   (expect (= card (chat/error-answer-ir {:error "e" :answer-ir card})))))
-             (it "falls back to a format-error bubble when no IR content survived"
-                 (let [out (chat/error-answer-ir {:error "boom" :answer chat/empty-ir})]
-                   (expect (vector? out))
-                   (expect (= :ir (first out)))
-                   (expect (seq (nnext out))))))
+(defdescribe error-content-test
+             (it "preserves canonical provider error blocks"
+                 (let [blocks [{"id" "e1"
+                                "type" "error"
+                                "code" "provider_unavailable"
+                                "message" "Provider unavailable"
+                                "retryable" true}]]
+                   (expect (= blocks (chat/error-content {"content" blocks "error" "boom"})))))
+             (it "creates a canonical error block when content is absent"
+                 (let [out (chat/error-content {"error" "boom"})]
+                   (expect (= "error" (get-in out [0 "type"])))
+                   (expect (str/includes? (get-in out [0 "message"]) "boom")))))
 
 (defdescribe
   queue-sync-event-chunk-test
@@ -583,19 +573,20 @@
   (let [g->c @#'chat/gateway-event->chunk]
     (it "turn.queued projects to :add with the prompt text"
         (expect (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi"}
-                   (g->c {:type "turn.queued" :turn_id "q1" :request "hi"}))))
+                   (g->c {"type" "turn.queued" "turn_id" "q1" "request" "hi"}))))
     (it "turn.queued.updated projects to :update"
         (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
-                   (g->c {:type "turn.queued.updated" :turn_id "q1" :request "hi2"}))))
+                   (g->c {"type" "turn.queued.updated" "turn_id" "q1" "request" "hi2"}))))
     (it "turn.queued.deleted projects to :delete"
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
-                   (g->c {:type "turn.queued.deleted" :turn_id "q1"}))))
+                   (g->c {"type" "turn.queued.deleted" "turn_id" "q1"}))))
     (it "turn.queued.drained (gateway auto-start) projects to :delete"
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
-                   (g->c {:type "turn.queued.drained" :turn_id "q1"}))))
+                   (g->c {"type" "turn.queued.drained" "turn_id" "q1"}))))
     (it "turn.started projects to :turn-start with the canonical run-start clock"
         (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234}
-                   (g->c {:type "turn.started" :turn_id "t1" :request "hi" :started_at 1234}))))))
+                   (g->c
+                     {"type" "turn.started" "turn_id" "t1" "request" "hi" "started_at" 1234}))))))
 (defdescribe
   title-sync-event-chunk-test
   ;; `session.title_updated` (auto-title or rename — possibly produced in a
@@ -606,7 +597,8 @@
   (let [g->c @#'chat/gateway-event->chunk]
     (it "projects the titled session's id and the new title"
         (expect (= {:phase :title-sync :session-id "aaa" :title "Tab Sync Fix"}
-                   (g->c {:type "session.title_updated" :session_id "aaa" :title "Tab Sync Fix"}))))
+                   (g->c
+                     {"type" "session.title_updated" "session_id" "aaa" "title" "Tab Sync Fix"}))))
     (it "reads string-keyed wire events too (SSE JSON)"
         (expect (= {:phase :title-sync :session-id "bbb" :title "T"}
                    (g->c {"type" "session.title_updated" "session_id" "bbb" "title" "T"}))))
@@ -615,6 +607,6 @@
         ;; registered session with the titled session's id in the payload —
         ;; the chunk must carry THAT id, not the subscribed session's.
         (expect (= "other-session"
-                   (:session-id (g->c {:type "session.title_updated"
-                                       :session_id "other-session"
-                                       :title "X"})))))))
+                   (:session-id (g->c {"type" "session.title_updated"
+                                       "session_id" "other-session"
+                                       "title" "X"})))))))

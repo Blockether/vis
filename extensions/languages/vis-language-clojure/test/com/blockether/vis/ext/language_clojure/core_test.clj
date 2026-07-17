@@ -445,7 +445,7 @@
                                         #'test-runner/run-via-cli
                                         (fn [_root norm]
                                           (reset! called true)
-                                          {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
+                                          {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                          #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
 
                    (expect @called)
@@ -463,7 +463,7 @@
                                         #'test-runner/run-via-cli
                                         (fn [_root norm]
                                           (reset! called true)
-                                          {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
+                                          {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                          #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
 
                    (expect @called)
@@ -511,7 +511,7 @@
                                                                         nil)
                                   #'test-runner/run-via-cli
                                   (fn [_root norm]
-                                    {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
+                                    {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                    #(test-runner/clj-test-fn {:workspace/root (.getAbsolutePath root)}
                                              {"paths" ["services/svc/test"]}))
                  ;; the nREPL is autostarted at services/svc, where deps.edn lives

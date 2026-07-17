@@ -1123,7 +1123,6 @@
   [row]
   {:id (->uuid (:id row))
    :owner-id (:owner_id row)
-   :channel (->kw-back (:channel row))
    :name (:name row)
    :color (:color row)
    :position (:position row)
@@ -1133,8 +1132,7 @@
    :session-count (or (:session_count row) 0)})
 
 (def ^:private project-select-cols
-  [:p.id :p.owner_id :p.channel :p.name :p.color :p.position :p.workspace_root :p.created_at
-   :p.archived_at
+  [:p.id :p.owner_id :p.name :p.color :p.position :p.workspace_root :p.created_at :p.archived_at
    [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.project_id :p.id]}
     :session_count]])
 
@@ -1150,31 +1148,18 @@
 
 (defn db-list-projects
   "List `project`s for `owner-id` (default \"local\"), each with a live
-   `:session-count`, ordered by (position, created_at).
-
-   `channel` scopes the view: a channel keyword returns that channel's projects
-   PLUS cross-channel (NULL-channel) projects; `:all`/nil returns every project.
+   `:session-count`, ordered by (position, created_at). Projects are
+   CROSS-CHANNEL by construction — every channel sees the same set.
    Archived projects are hidden unless `:include-archived?` is truthy."
-  [db-info {:keys [owner-id channel include-archived?]}]
+  [db-info {:keys [owner-id include-archived?]}]
   (when (ds db-info)
-    (let [owner
-          (or owner-id "local")
-
-          ch
-          (some-> channel
-                  ->kw)
-
-          all?
-          (or (nil? ch) (= "all" ch))]
-
+    (let [owner (or owner-id "local")]
       (mapv row->project
             (query! db-info
                     {:select project-select-cols
                      :from [[:project :p]]
                      :where (into [:and [:= :p.owner_id owner]]
-                                  (concat (when-not all?
-                                            [[:or [:= :p.channel ch] [:= :p.channel nil]]])
-                                          (when-not include-archived? [[:= :p.archived_at nil]])))
+                                  (when-not include-archived? [[:= :p.archived_at nil]]))
                      :order-by [[:p.position :asc] [:p.created_at :asc]]})))))
 
 (defn db-get-project-by-root
@@ -1192,11 +1177,10 @@
             row->project)))
 
 (defn db-create-project!
-  "Create a `project`. `:name` is required (non-blank). `:channel` nil => a
-   cross-channel project. `:owner-id` defaults to \"local\". `:position`, when
-   omitted, appends after the owner's current projects. Returns the created
-   project (canonical shape)."
-  [db-info {:keys [name channel color owner-id position workspace-root]}]
+  "Create a `project` (always cross-channel). `:name` is required (non-blank).
+   `:owner-id` defaults to \"local\". `:position`, when omitted, appends after
+   the owner's current projects. Returns the created project (canonical shape)."
+  [db-info {:keys [name color owner-id position workspace-root]}]
   (when (str/blank? (str name))
     (throw (ex-info "db-create-project! requires a non-blank :name"
                     {:type :persistance/invalid-project-name})))
@@ -1207,8 +1191,6 @@
                          (let [pid (new-uuid)
                                now (now-ms)
                                owner (or owner-id "local")
-                               ch (some-> channel
-                                          ->kw)
                                pos (or position
                                        (inc (long (or (:maxpos (query-one!
                                                                  tx-info
@@ -1225,9 +1207,6 @@
                                                         :name (str name)
                                                         :position pos
                                                         :created_at now}
-                                                 ch
-                                                 (assoc :channel ch)
-
                                                  color
                                                  (assoc :color color)
 
@@ -2019,7 +1998,7 @@
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
   [db-info session-turn-id
-   {:keys [answer-markdown iteration-count duration-ms status tokens cost prior-outcome ctx error]}]
+   {:keys [content iteration-count duration-ms status tokens cost prior-outcome ctx error]}]
   (when (and (ds db-info) session-turn-id)
     (sqlite-write-tx!
       db-info
@@ -2044,26 +2023,26 @@
                              ;; invariant when the upstream map omits it
                              ;; (older accumulators don't track it explicitly):
                              ;;   regular = input - cache-write - cache-read
-                             :input_tokens (long (or (:input tokens) 0))
+                             :input_tokens (long (or (get tokens "input") 0))
                              :input_regular_tokens
-                             (long (or (:input-regular tokens)
+                             (long (or (get tokens "input_regular")
                                        (max 0
-                                            (- (long (or (:input tokens) 0))
-                                               (long (or (:cache-created tokens) 0))
-                                               (long (or (:cached tokens) 0))))))
-                             :input_cache_write_tokens (long (or (:cache-created tokens) 0))
-                             :input_cache_read_tokens (long (or (:cached tokens) 0))
-                             :output_tokens (long (or (:output tokens) 0))
-                             :output_reasoning_tokens (long (or (:reasoning tokens) 0))
-                             :total_cost_usd (double (or (:total-cost cost) 0.0))}
-                      (:model cost)
-                      (assoc :llm_root_model (str (:model cost)))
+                                            (- (long (or (get tokens "input") 0))
+                                               (long (or (get tokens "cache_created") 0))
+                                               (long (or (get tokens "cached") 0))))))
+                             :input_cache_write_tokens (long (or (get tokens "cache_created") 0))
+                             :input_cache_read_tokens (long (or (get tokens "cached") 0))
+                             :output_tokens (long (or (get tokens "output") 0))
+                             :output_reasoning_tokens (long (or (get tokens "reasoning") 0))
+                             :total_cost_usd (double (or (get cost "total_cost") 0.0))}
+                      (get cost "model")
+                      (assoc :llm_root_model (str (get cost "model")))
 
-                      (:provider cost)
-                      (assoc :llm_root_provider (name (->kw (:provider cost))))
+                      (get cost "provider")
+                      (assoc :llm_root_provider (name (->kw (get cost "provider"))))
 
-                      (some? answer-markdown)
-                      (assoc :answer_markdown answer-markdown)
+                      (some? content)
+                      (assoc :content_json (json/write-json-str content))
 
                       prior-outcome
                       (assoc :prior_outcome (name prior-outcome))
@@ -2155,7 +2134,7 @@
       (assoc :llm_actual_model (:model actual))
 
       (contains? routing :fallback?)
-      (assoc :llm_fallback (if (:fallback? routing) 1 0)))))
+      (assoc :is_llm_fallback (if (:fallback? routing) 1 0)))))
 
 (defn- routing-event-row
   [iteration-id-s now position event]
@@ -2330,9 +2309,12 @@
                                       :llm_thinking (str/trim (or thinking ""))
                                       :llm_assistant_prose (str/trim (or assistant-prose ""))
                                       :llm_full_duration_ms (long (or llm-full-duration-ms 0))
-                                      :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
+                                      :is_llm_returned_empty_code (if llm-returned-empty-code? 1 0)
+                                      ;; Persisted in the canonical wire shape (snake_case
+                                      ;; STRING keys) — svar's kebab keywords never reach the DB.
                                       :llm_assistant_message (when (some? llm-assistant-message)
-                                                               (->json llm-assistant-message))
+                                                               (->json (vis/wire-canonical
+                                                                         llm-assistant-message)))
                                       :created_at now
                                       :finished_at now}
                                      iteration-cols)
@@ -2344,8 +2326,8 @@
                         ;; Phase B canonical columns. :input is TOTAL,
                         ;; details (regular / cache-write / cache-read)
                         ;; are subsets obeying the canonical invariant.
-                        (some? (:input tokens))
-                        (assoc :input_tokens (long (:input tokens)))
+                        (some? (get tokens "input"))
+                        (assoc :input_tokens (long (get tokens "input")))
 
                         ;; :input-regular derived from invariant when absent
                         ;; on per-iter rows. The invariant is enforced at the
@@ -2353,23 +2335,23 @@
                         ;; compute even when the accumulator did not surface it.
                         true
                         (assoc :input_regular_tokens
-                          (long (or (:input-regular tokens)
+                          (long (or (get tokens "input_regular")
                                     (max 0
-                                         (- (long (or (:input tokens) 0))
+                                         (- (long (or (get tokens "input") 0))
                                             (long (or cache-created-tokens 0))
-                                            (long (or (:cached tokens) 0)))))))
+                                            (long (or (get tokens "cached") 0)))))))
 
                         (some? cache-created-tokens)
                         (assoc :input_cache_write_tokens (long cache-created-tokens))
 
-                        (some? (:cached tokens))
-                        (assoc :input_cache_read_tokens (long (:cached tokens)))
+                        (some? (get tokens "cached"))
+                        (assoc :input_cache_read_tokens (long (get tokens "cached")))
 
-                        (some? (:output tokens))
-                        (assoc :output_tokens (long (:output tokens)))
+                        (some? (get tokens "output"))
+                        (assoc :output_tokens (long (get tokens "output")))
 
-                        (some? (:reasoning tokens))
-                        (assoc :output_reasoning_tokens (long (:reasoning tokens)))
+                        (some? (get tokens "reasoning"))
+                        (assoc :output_reasoning_tokens (long (get tokens "reasoning")))
 
                         (some? cost-usd)
                         (assoc :cost_usd (double cost-usd))
@@ -2416,8 +2398,8 @@
     ;; turn label or read the session-level title via `:title`
     ;; on the session map.
     ;; (intentionally no `(:title row)` branch)
-    (:answer_markdown row)
-    (assoc :answer-markdown (:answer_markdown row))
+    (:content_json row)
+    (assoc :content (json/read-json (:content_json row)))
 
     ;; First-class structured terminal error (nippy BLOB) for a failed turn —
     ;; channels render the error CARD from this instead of re-deriving it.
@@ -2437,7 +2419,7 @@
   ;; no `title` column. Display layers fall back to `:user_request`
   ;; or the session-level title.
   {:select [:qs.id :qs.session_state_id :qs.position :qs.user_request
-            [:qs.created_at :soul_created_at] [:qs.id :soul_id] :qst.status :qst.answer_markdown
+            [:qs.created_at :soul_created_at] [:qs.id :soul_id] :qst.status :qst.content_json
             :qst.iteration_count :qst.duration_ms
             ;; Phase B canonical columns on session_turn_state.
             :qst.input_tokens :qst.input_regular_tokens :qst.input_cache_write_tokens
@@ -2459,84 +2441,6 @@
                   (session-turn-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
 
-(defn db-list-orphaned-running-turns
-  "Every `:running` turn joined to its OWNING session soul id, for daemon-boot
-   auto-resume. Each row is `{:session-id <uuid> :turn-id <uuid> :user-request s}`
-   — `:session-id` is the conversation id `submit-turn!`/`by-id` key on, so the
-   daemon can re-run the turn from its persisted request without a separate
-   state->session lookup. `[]` when none / no datasource."
-  [db-info]
-  (if (ds db-info)
-    (mapv (fn [r]
-            {:session-id (->uuid (:session_soul_id r))
-             :turn-id (->uuid (:soul_id r))
-             :user-request (:user_request r)})
-          (query! db-info
-                  {:select [[:qs.id :soul_id] :qs.user_request :ss.session_soul_id]
-                   :from [[:session_turn_soul :qs]]
-                   :join [[:session_state :ss] [:= :ss.id :qs.session_state_id]
-                          [:session_turn_state :qst] [:= :qst.session_turn_soul_id :qs.id]]
-                   :where [:and [:= :qst.status (normalize-status :running)]
-                           [:= :qst.version
-                            {:select [[[:max :version]]]
-                             :from [[:session_turn_state :qst2]]
-                             :where [:= :qst2.session_turn_soul_id :qs.id]}]]}))
-    []))
-
-(defn db-enqueue-turn!
-  "Persist ONE queued turn (gateway scheduling intent) so a daemon restart can
-   re-run it. `opts` = `{:id <gateway-tid> :session-soul-id :request :position
-   :queued-at}`. Idempotent on `:id` - a re-enqueue REPLACEs the row. Returns
-   `:id`, or nil with no datasource / missing keys."
-  [db-info {:keys [id session-soul-id request position queued-at]}]
-  (when (and (ds db-info) id session-soul-id)
-    (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (execute! tx-info
-                                  {:delete-from :session_turn_queue :where [:= :id (str id)]})
-                        (execute! tx-info
-                                  {:insert-into :session_turn_queue
-                                   :values [{:id (str id)
-                                             :session_soul_id (->ref session-soul-id)
-                                             :request (or request "")
-                                             :position (long (or position (now-ms)))
-                                             :queued_at (long (or queued-at (now-ms)))}]})
-                        id))))
-
-(defn db-update-queued-turn!
-  "Replace the prompt text of a persisted queued turn (in-place edit). No-op when
-   the row is gone (already drained / cancelled). Returns `id`."
-  [db-info id request]
-  (when (and (ds db-info) id)
-    (execute!
-      db-info
-      {:update :session_turn_queue :set {:request (or request "")} :where [:= :id (str id)]})
-    id))
-
-(defn db-dequeue-turn!
-  "Delete a persisted queued turn by its gateway id (drained / cancelled)."
-  [db-info id]
-  (when (and (ds db-info) id)
-    (execute! db-info {:delete-from :session_turn_queue :where [:= :id (str id)]})
-    id))
-
-(defn db-list-queued-turns
-  "Every persisted queued turn joined to its owning session soul id, FIFO-ordered
-   (per session by `position`, then `queued_at`). Each row is
-   `{:session-id <uuid> :turn-id <tid-string> :request s :position n}` - the shape
-   daemon-boot auto-resume stages. `[]` when none / no datasource."
-  [db-info]
-  (if (ds db-info)
-    (mapv (fn [r]
-            {:session-id (->uuid (:session_soul_id r))
-             :turn-id (:id r)
-             :request (:request r)
-             :position (:position r)})
-          (query! db-info
-                  {:select [:id :session_soul_id :request :position :queued_at]
-                   :from :session_turn_queue
-                   :order-by [[:session_soul_id :asc] [:position :asc] [:queued_at :asc]]}))
-    []))
 
 (defn- attach-prior-outcome
   [row->turn-map]
@@ -2613,8 +2517,8 @@
       (seq actual)
       (assoc :actual actual)
 
-      (some? (:llm_fallback row))
-      (assoc :fallback? (= 1 (long (:llm_fallback row))))
+      (some? (:is_llm_fallback row))
+      (assoc :fallback? (= 1 (long (:is_llm_fallback row))))
 
       (seq trace)
       (assoc :trace trace))))
@@ -2740,16 +2644,16 @@
       (some? (:llm_actual_model row))
       (assoc :llm-actual-model (:llm_actual_model row))
 
-      (some? (:llm_fallback row))
-      (assoc :llm-fallback? (= 1 (long (:llm_fallback row))))
+      (some? (:is_llm_fallback row))
+      (assoc :llm-fallback? (= 1 (long (:is_llm_fallback row))))
 
       ;; Canonical assistant message svar emitted on this iteration; rehydrated
       ;; on resume so preserved-thinking replay survives a vis restart.
       (some? (:llm_assistant_message row))
       (assoc :llm-assistant-message (<-json-lazy (:llm_assistant_message row)))
 
-      (some? (:llm_returned_empty_code row))
-      (assoc :returned-empty-code? (= 1 (long (:llm_returned_empty_code row))))
+      (some? (:is_llm_returned_empty_code row))
+      (assoc :returned-empty-code? (= 1 (long (:is_llm_returned_empty_code row))))
 
       ;; Token / cost columns - ALWAYS present on the read side, with
       ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
@@ -2834,10 +2738,7 @@
 ;; -----------------------------------------------------------------------------
 
 (defn db-turn-history
-  "Per-turn history rows for a session. `:answer-markdown` is the raw
-   Markdown source the model wrote in `(done {:answer ...})` (or nil).
-   Channels derive IR via `vis/markdown->ir` at render time; persistence
-   stays flavor-free."
+  "Per-turn history rows with canonical typed `:content`."
   [db-info session-id]
   (let [turns (db-list-session-turns db-info session-id)]
     (mapv (fn [idx turn]
@@ -2850,8 +2751,8 @@
                        :user-request (:user-request turn)
                        :status (:status turn)
                        :iteration-count iteration-count}
-                (:answer-markdown turn)
-                (assoc :answer-markdown (:answer-markdown turn)))))
+                (seq (:content turn))
+                (assoc :content (:content turn)))))
           (range)
           turns)))
 

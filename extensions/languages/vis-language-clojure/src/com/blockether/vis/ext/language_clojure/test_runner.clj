@@ -534,45 +534,65 @@
                     port
                     " is not ready to run tests (status "
                     (name (or (:status probe) :unknown))
-                    ") — the server is down or unresponsive. Restart it and retry.")}
+                    ") — the server is down or unresponsive.")
+       "repl_unusable" true}
       (let [ns-files (test-files-for root ns-strs)
             code (build-eval-code ns-strs sel ns-files)
-            ns-disp (str/join " " ns-strs)
-            r
-            ;; The run is parked outside the native tool wall, so THIS timeout is
-            ;; the real budget — a slow / wedged nREPL surfaces as a real timeout
-            ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
-            (nrepl-client/eval!
-              {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
-            parsed (try (let [x (edn/read-string (get r "value"))]
-                          (if (string? x) (edn/read-string x) x))
-                        (catch Throwable _ nil))]
+            ns-disp (str/join " " ns-strs)]
 
-        (cond
-          ;; nREPL never returned a result within the budget (eval! reports it and
-          ;; evicts the connection). Surface a CLEAR timeout instead of the opaque
-          ;; "could not parse test result" a nil value would otherwise produce.
-          (get r "timed_out")
-          {"mode" "repl"
-           "ns" ns-disp
-           "port" port
-           "timed_out" true
-           "error" (str "test run timed out after " default-test-timeout-ms
-                        "ms — the nREPL never returned. The eval is likely wedged "
-                        "(infinite loop, blocked I/O, or a deadlock in the code under "
-                        "test); the connection was evicted so a retry reconnects fresh."
-                        (when (seq (str (get r "err"))) (str " nREPL err: " (get r "err"))))}
-          (map? parsed) (-> parsed
-                            (compose-repl-output)
-                            (assoc "mode" "repl"
-                                   "ns" ns-disp
-                                   "port" port))
-          :else {"mode" "repl"
-                 "ns" ns-disp
-                 "port" port
-                 "error" (str "could not parse test result"
-                              (when (seq (str (get r "err"))) (str " - nREPL err " (get r "err"))))
-                 "raw_value" (get r "value")})))))
+        (try (let [r
+                   ;; The run is parked outside the native tool wall, so THIS timeout is
+                   ;; the real budget — a slow / wedged nREPL surfaces as a real timeout
+                   ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
+                   (nrepl-client/eval!
+                     {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
+                   parsed (try (let [x (edn/read-string (get r "value"))]
+                                 (if (string? x) (edn/read-string x) x))
+                               (catch Throwable _ nil))]
+
+               (cond
+                 ;; nREPL never returned a result within the budget (eval! reports it and
+                 ;; evicts the connection). Surface a CLEAR timeout instead of the opaque
+                 ;; "could not parse test result" a nil value would otherwise produce.
+                 (get r "timed_out")
+                 {"mode" "repl"
+                  "ns" ns-disp
+                  "port" port
+                  "timed_out" true
+                  "error" (str "test run timed out after " default-test-timeout-ms
+                               "ms — the nREPL never returned. The eval is likely wedged "
+                               "(infinite loop, blocked I/O, or a deadlock in the code under "
+                               "test); the connection was evicted so a retry reconnects fresh."
+                               (when (seq (str (get r "err"))) (str " nREPL err: " (get r "err"))))
+                  "repl_wedged" true}
+                 (map? parsed) (-> parsed
+                                   (compose-repl-output)
+                                   (assoc "mode" "repl"
+                                          "ns" ns-disp
+                                          "port" port))
+                 :else {"mode" "repl"
+                        "ns" ns-disp
+                        "port" port
+                        "error" (str "could not parse test result"
+                                     (when (seq (str (get r "err")))
+                                       (str " - nREPL err " (get r "err"))))
+                        "raw_value" (get r "value")}))
+             ;; The probe passed but the server vanished before/while the eval ran
+             ;; (a crash, an idle-reap, or a manual kill in the TOCTOU window between
+             ;; probe and eval). Surface it as DATA — the same actionable "restart and
+             ;; retry" the down-probe branch returns — instead of letting the raw
+             ;; connect exception escape as a hard tool error and eat the turn.
+             (catch clojure.lang.ExceptionInfo e
+               (if (#{:clj/nrepl-connect-failed :clj/nrepl-io} (:type (ex-data e)))
+                 {"mode" "repl"
+                  "ns" ns-disp
+                  "port" port
+                  "error" (str "nREPL at localhost:" port
+                               " went down mid-run (" (.getMessage e)
+                               ") — the server is no longer reachable. Restart it "
+                               "(repl_start \"clojure\") and retry.")
+                  "repl_unusable" true}
+                 (throw e))))))))
 
 (defn- cli-tail
   "Last 40 lines of a CLI test run's combined out+err, ANSI-stripped so the
@@ -671,15 +691,14 @@
                           second)
             tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
 
-        ;; "pass?" (exit-code verdict) is a DISTINCT key from the repl path's
-        ;; "pass" (a count) — render-test-result reads both; keep the "?" so they
-        ;; never collide.
+        ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
+        ;; "pass" (a count) — render-test-result reads both.
         {"mode" "cli"
          "ns" ns-str
          "tool" (name tool)
          "command" (str/join " " cmd)
          "exit" (:exit res)
-         "pass?" (zero? (long (or (:exit res) -1)))
+         "is_pass" (zero? (long (or (:exit res) -1)))
          ;; Surface just the RESULT — the tally is all the caller needs. The
          ;; runner mechanics (which build tool, live nREPL vs CLI, selector
          ;; pass-through) are internal plumbing, not something to narrate.
@@ -690,6 +709,58 @@
        "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in "
                     root
                     " to run tests via CLI")})))
+
+(defn- restart-repl-async!
+  "Best-effort background kill+relaunch of `session-id`'s managed nREPL for `dir`
+   on a daemon thread, so the NEXT eval/test hits a fresh server. Returns at once —
+   the relaunch (deps resolve + JVM boot, up to ~2 min) never blocks the caller."
+  [session-id dir]
+  (when (and session-id dir)
+    (doto (Thread. ^Runnable
+                   (fn []
+                     (try (repl-manager/stop! session-id dir)
+                          (repl-manager/start! session-id dir nil)
+                          (catch Throwable _ nil))))
+      (.setDaemon true)
+      (.setName "vis-clj-repl-recover")
+      (.start)))
+  nil)
+
+(defn- recover-if-unusable
+  "Auto-recovery seam for run_tests. When run-via-repl reports the nREPL was UNUSABLE
+   for this run — down / gone mid-run (\"repl_unusable\") or wedged past the timeout
+   (\"repl_wedged\") — don't just hand back a 'restart and retry' error and burn the
+   turn. Kill and relaunch the nREPL in the BACKGROUND, and for an unusable (not
+   merely wedged) server ALSO run the suite via the build-tool CLI so the caller still
+   gets REAL results THIS turn. A wedged eval is left CLI-less: its hang is likely the
+   code under test, which a CLI run would only re-hang on. The recovery is announced
+   on :note so the outcome is self-explaining."
+  [session-id root norm result]
+  (cond (get result "repl_unusable")
+        (do (restart-repl-async! session-id root)
+            (let [cli
+                  (run-via-cli root norm)
+
+                  why
+                  (get result "error")
+
+                  note
+                  (str "nREPL was unusable"
+                       (when why (str " (" why ")"))
+                       " — ran the suite via CLI and restarted the nREPL in the background.")]
+
+              (-> cli
+                  (assoc "recovered" true)
+                  (update "note"
+                          (fn [n]
+                            (if (seq (str n)) (str note " " n) note))))))
+        (get result "repl_wedged") (do (restart-repl-async! session-id root)
+                                       (update result
+                                               "error"
+                                               (fn [e]
+                                                 (str e
+                                                      " Restarting the nREPL in the background."))))
+        :else result))
 
 (defn- has-build-file?
   "True when `dir` holds a Clojure build manifest (deps.edn / project.clj / bb.edn)."
@@ -840,6 +911,9 @@
                            (assoc "log_tail" (get repl "log_tail")))
              ;; Defensive last resort (nil / unexpected shape): the CLI suite.
              :else (run-via-cli eff-root norm))
+
+           result
+           (recover-if-unusable (:session-id env) eff-root norm result)
 
            result'
            (if (and (get result "error")

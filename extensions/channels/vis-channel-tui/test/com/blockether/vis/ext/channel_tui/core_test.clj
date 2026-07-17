@@ -57,7 +57,7 @@
                     vis/gateway-soul
                     (fn [id]
                       (swap! soul-calls conj id)
-                      {:id id :channel "tui"})
+                      {"id" id "channel" "tui"})
 
                     vis/gateway-list-sessions
                     (fn [_]

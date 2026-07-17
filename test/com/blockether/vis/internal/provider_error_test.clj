@@ -1,9 +1,7 @@
 (ns com.blockether.vis.internal.provider-error-test
-  "Provider-error presentation — the per-provider failure breakdown svar attaches
-   to an `all-providers-exhausted` error, surfaced as a scannable summary + IR."
+  "Provider-error presentation and canonical typed error content."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.provider-error :as perr]
-            [com.blockether.vis.internal.render :as render]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private exhausted-err
@@ -37,17 +35,17 @@
         (expect (nil? (perr/provider-error-attempts-summary bare)))))
   (it "title for exhausted is the specific headline"
       (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err))))
-  (it "the IR embeds each provider's failure line + carries attempts on the data"
-      (let [ir
-            (perr/provider-error-ir exhausted-err)
+  (it "emits one structured provider error block"
+      (let [blocks
+            (perr/provider-error-content exhausted-err)
 
-            text
-            (render/extract-text ir)]
+            block
+            (first blocks)]
 
-        (expect (str/includes? text "Providers tried"))
-        (expect (str/includes? text "anthropic/claude-opus-4: 429 rate-limit"))
-        (expect (str/includes? text "openai/gpt-5: 401 auth"))
-        (expect (= 2 (count (:attempts (get-in ir [1 :vis/provider-error-data])))))))
+        (expect (= 1 (count blocks)))
+        (expect (= "error" (get block "type")))
+        (expect (= 2 (count (get block "attempts"))))
+        (expect (str/includes? (get block "message") "All providers unavailable"))))
   (it "the bare `All providers exhausted` wrapper is NOT repeated as a fact row"
       ;; title + attempts already carry it — no redundant `Wrapper: …` line
       (expect (not-any? #(= "Wrapper" (first %)) (perr/provider-error-facts exhausted-err)))))

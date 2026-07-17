@@ -127,5 +127,6 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 - **[Configuration](configuration.md)**: providers and models, system-prompt overrides, router tuning, the database.
 - **[Python extensions](python-extensions.md)**: drop a `.py` file into `.vis/extensions/` — project-local tools, prompts, slash commands and guards, no rebuild, `/reload`able. Vis can write these for itself mid-session.
 - **[Clojure extensions](extending.md)**: the full-surface path — new tools, channels, providers, slash commands and doc pages, compiled into the binary.
+- **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.
 
 Vis can also answer these questions itself: ask a running `vis` how to configure or extend it and it reads these same pages through its `vis_docs` tool.

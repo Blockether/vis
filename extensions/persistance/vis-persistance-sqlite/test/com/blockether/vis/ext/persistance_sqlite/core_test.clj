@@ -466,33 +466,6 @@
       (expect (not (str/includes? migration-checksum-mismatch-user-message
                                   "remove ~/.vis/vis.mdb")))))
 
-(defdescribe
-  migration-repair-self-heal-test
-  (it "a drifted migration checksum self-heals via Flyway repair, PRESERVING rows (never nukes)"
-      (let [dir
-            (str (fs/path (fs/create-temp-dir {:prefix "vis-repair-"}) "store"))
-
-            s1
-            (vis/db-create-connection! dir)]
-
-        (try
-          ;; A NON-Flyway probe row: repair touches only flyway_schema_history, so
-          ;; this survives a repair — but a nuke (dir delete) would take it with it.
-          (jdbc/execute! (:datasource s1) ["CREATE TABLE repair_probe (id INTEGER)"])
-          (jdbc/execute! (:datasource s1) ["INSERT INTO repair_probe (id) VALUES (42)"])
-          ;; Corrupt the recorded checksum of the applied migration → the next open
-          ;; hits Flyway's validation mismatch, the exact wedge we self-heal.
-          (jdbc/execute!
-            (:datasource s1)
-            ["UPDATE flyway_schema_history SET checksum = -999 WHERE version IS NOT NULL"])
-          (vis/db-dispose-connection! s1)
-          ;; Reopen: migrate! must REPAIR (realign checksum) + re-run cleanly — not
-          ;; throw, not delete. The probe row proves nothing was nuked.
-          (let [s2 (vis/db-create-connection! dir)]
-            (try (expect (some? (:datasource s2)))
-                 (expect (= 1 (raw-count s2 :repair_probe)))
-                 (finally (vis/db-dispose-connection! s2))))
-          (finally (fs/delete-tree (fs/parent (fs/path dir))))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
@@ -1210,8 +1183,8 @@
                                      qid
                                      {:status :success
                                       :answer "42"
-                                      :tokens {:input 100 :output 50}
-                                      :cost {:total-cost 0.005 :model "gpt-4o"}})
+                                      :tokens {"input" 100 "output" 50}
+                                      :cost {"total_cost" 0.005 "model" "gpt-4o"}})
         (let [q (first (vis/db-list-session-turns s cid))]
           (expect (= :done (:status q)))
           (expect (= "gpt-4o" (:model q))))))
@@ -1353,7 +1326,7 @@
                                        :position 4
                                        :status "done"
                                        :code ""
-                                       :llm_returned_empty_code 1
+                                       :is_llm_returned_empty_code 1
                                        :created_at 1}]})
                  nil
                  (catch Exception e e))]
@@ -1531,7 +1504,7 @@
                            ;; — inconsistent on purpose: persistance derives
                            ;; `:input-regular = max(0, input - write - read)` so
                            ;; this assertion locks the invariant.
-                           :tokens {:input 1200 :output 150 :reasoning 80 :cached 600}
+                           :tokens {"input" 1200 "output" 150 "reasoning" 80 "cached" 600}
                            :cache-created-tokens 7000
                            :cost-usd 0.0123})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
@@ -1607,7 +1580,8 @@
       (expect (= 2 (raw-count s :llm_routing_event)))
       (let [raw-row
             (first (raw-query s
-                              {:select [:llm_selected_provider :llm_actual_provider :llm_fallback]
+                              {:select [:llm_selected_provider :llm_actual_provider
+                                        :is_llm_fallback]
                                :from :session_turn_iteration
                                :where [:= :id (str iid)]}))
 
@@ -1616,7 +1590,7 @@
 
         (expect (= "p1" (:llm_selected_provider raw-row)))
         (expect (= "p2" (:llm_actual_provider raw-row)))
-        (expect (= 1 (:llm_fallback raw-row)))
+        (expect (= 1 (:is_llm_fallback raw-row)))
         (expect (= [:llm.routing/provider-retry :llm.routing/provider-fallback]
                    (mapv :event/type (:llm-routing-trace iter))))
         (expect (= true (:llm-fallback? iter)))
@@ -1666,12 +1640,12 @@
         ;; negative value gets a SQLite constraint exception (wrapped
         ;; through next.jdbc). lazytest has no `thrown?` macro; use a
         ;; plain try/catch and assert the throw landed.
-        (let [thrown? (try
-                        (h/store-iteration!
-                          s
-                          {:session-turn-id qid :code "x" :result 1 :tokens {:input -5 :output 10}})
-                        false
-                        (catch Throwable _ true))]
+        (let [thrown?
+              (try (h/store-iteration!
+                     s
+                     {:session-turn-id qid :code "x" :result 1 :tokens {"input" -5 "output" 10}})
+                   false
+                   (catch Throwable _ true))]
           (expect (true? thrown?))))))
 
 ;; =============================================================================
@@ -2053,12 +2027,12 @@
 (defdescribe
   sqlite-project-test
   (it
-    "creates channel-scoped projects, assigns sessions, and scatters on delete"
+    "creates cross-channel projects, assigns sessions, and scatters on delete"
     (let [s
           (h/store)
 
           p-tui
-          (persistance/db-create-project! s {:name "vis-core" :channel :tui :color "#4f8"})
+          (persistance/db-create-project! s {:name "vis-core" :color "#4f8"})
 
           p-x
           (persistance/db-create-project! s {:name "side-proj"})
@@ -2069,9 +2043,6 @@
           (expect (= "vis-core" (:name p-tui)))
 
           _
-          (expect (= :tui (:channel p-tui)))
-
-          _
           (expect (= "local" (:owner-id p-tui)))
 
           _
@@ -2080,15 +2051,10 @@
           _
           (expect (= 1 (:position p-x)))
 
-          ;; :tui view = tui-scoped project PLUS the cross-channel one
+          ;; EVERY channel sees the same cross-channel set
           _
           (expect (= #{"vis-core" "side-proj"}
-                     (set (map :name (persistance/db-list-projects s {:channel :tui})))))
-
-          ;; :web view = only the cross-channel project (tui-scoped hidden)
-          _
-          (expect (= #{"side-proj"}
-                     (set (map :name (persistance/db-list-projects s {:channel :web})))))
+                     (set (map :name (persistance/db-list-projects s {})))))
 
           ;; assign a session; membership + live count reflect it
           sid
@@ -2153,7 +2119,7 @@
           (h/store)
 
           p
-          (persistance/db-create-project! s {:name "movable" :channel :tui})
+          (persistance/db-create-project! s {:name "movable"})
 
           a
           (h/store-session! s {:channel :tui :title "A"})
@@ -2221,7 +2187,7 @@
             (h/store)
 
             p
-            (persistance/db-create-project! s {:name "idem" :channel :tui})
+            (persistance/db-create-project! s {:name "idem"})
 
             a
             (h/store-session! s {:channel :tui :title "A"})
@@ -2249,7 +2215,7 @@
             (h/store)
 
             p
-            (persistance/db-create-project! s {:name "clear" :channel :tui})
+            (persistance/db-create-project! s {:name "clear"})
 
             a
             (h/store-session! s {:channel :tui :title "A"})
@@ -2277,7 +2243,7 @@
             (h/store)
 
             p
-            (persistance/db-create-project! s {:name "rev" :channel :tui})
+            (persistance/db-create-project! s {:name "rev"})
 
             a
             (h/store-session! s {:channel :tui :title "A"})
@@ -2314,7 +2280,7 @@
           (h/store)
 
           p
-          (persistance/db-create-project! s {:name "partial" :channel :tui})
+          (persistance/db-create-project! s {:name "partial"})
 
           a
           (h/store-session! s {:channel :tui :title "A"})

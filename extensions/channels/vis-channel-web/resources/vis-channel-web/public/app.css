@@ -73,7 +73,7 @@ display:flex;flex-direction:column;overscroll-behavior:contain;overflow-anchor:n
 display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
 .jump-bottom{position:absolute;right:min(max(1.2rem,calc((100% - 56rem)/2)),calc(100% - 3.6rem));bottom:calc(100% + .5rem);z-index:20;
 box-sizing:border-box;
-display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--line2);border-radius:var(--r-pill);
+display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--line2);border-radius:var(--r-2xs);
 background:var(--bg);color:var(--secondary);box-shadow:var(--shadow);
 font:inherit;padding:0;cursor:pointer;transition:transform .12s,border-color .12s,box-shadow .12s,color .12s}
 .jump-bottom:hover{transform:translateY(-1px);border-color:var(--primary);color:var(--warning);box-shadow:0 4px 14px rgba(20,20,20,.12)}
@@ -130,20 +130,20 @@ font-size:.66rem;line-height:1.35;color:var(--dim);font-family:var(--mono)}
 .provider-error-card .pe-title{font-size:.92rem;letter-spacing:.01em}
 .provider-error-card .pe-what{margin:0;color:var(--dim)}
 .provider-error-card .pe-next{margin:0;color:var(--fg);display:flex;flex-wrap:wrap;gap:.4rem;align-items:baseline}
-.provider-error-card .pe-next-label{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--err);border:1px solid color-mix(in srgb,var(--err) 40%,var(--line));border-radius:4px;padding:.02rem .32rem}
+.provider-error-card .pe-next-label{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--err);border:1px solid color-mix(in srgb,var(--err) 40%,var(--line));border-radius:var(--r-xs);padding:.02rem .32rem}
 .provider-error-card .pe-attempts{list-style:none;margin:.1rem 0 0;padding:0;display:grid;gap:.2rem;font-size:.74rem}
 .provider-error-card .pe-attempts li{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem}
 .provider-error-card .pe-attempts .pe-prov{font-family:monospace;color:var(--fg);font-weight:600}
 .provider-error-card .pe-attempts .pe-status{font-family:monospace;color:var(--err);font-weight:700}
 .provider-error-card.pe-rate-limit .pe-attempts .pe-status,.provider-error-card.pe-auth .pe-attempts .pe-status{color:var(--secondary)}
-.provider-error-card .pe-attempts .pe-reason{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:.01rem .3rem}
+.provider-error-card .pe-attempts .pe-reason{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border:1px solid var(--line);border-radius:var(--r-xs);padding:.01rem .3rem}
 .provider-error-card .pe-facts{list-style:none;margin:.1rem 0 0;padding:0;display:flex;flex-wrap:wrap;gap:.25rem .8rem;font-size:.72rem;color:var(--dim)}
 .provider-error-card .pe-facts li{display:flex;gap:.3rem}
 .provider-error-card .pe-facts .pe-k{color:color-mix(in srgb,var(--dim) 65%,var(--fg));font-weight:700}
 .provider-error-card .pe-facts .pe-v{font-family:monospace}
 .provider-error-card .pe-body{margin-top:.15rem}
 .provider-error-card .pe-body summary{cursor:pointer;font-size:.72rem;color:var(--dim)}
-.provider-error-card .pe-body pre{margin:.3rem 0 0;padding:.5rem;background:var(--code-bg);border-radius:4px;overflow:auto;font-size:.72rem}
+.provider-error-card .pe-body pre{margin:.3rem 0 0;padding:.5rem;background:var(--code-bg);border-radius:var(--r-xs);overflow:auto;font-size:.72rem}
 .provider-error-card.pe-rate-limit,.provider-error-card.pe-auth{border-left-color:var(--secondary)}
 .provider-error-card.pe-rate-limit .pe-head,.provider-error-card.pe-auth .pe-head{color:var(--secondary)}
 .provider-error-card.pe-rate-limit .pe-next-label,.provider-error-card.pe-auth .pe-next-label{color:var(--secondary);border-color:color-mix(in srgb,var(--secondary) 40%,var(--line))}
@@ -394,13 +394,13 @@ padding:.6rem .8rem;overflow-x:auto;font-size:.76rem;margin:.4rem 0;line-height:
 /* reverse-video SGR (\u001b[7m) — the shared rg renderer wraps matched search
    needles in it so the term reads as a hit in BOTH channels (the TUI maps the
    same code to a fg). A real mark-style background, not a syntax color. */
-.rg-hit{background:color-mix(in srgb,var(--primary) 24%,transparent);color:var(--fg);border-radius:2px;padding:0 .12em;font-weight:600;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.rg-hit{background:color-mix(in srgb,var(--primary) 24%,transparent);color:var(--fg);border-radius:var(--r-xs);padding:0 .12em;font-weight:600;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ir-code{background:var(--code-bg);border-radius:var(--r-xs);padding:.06rem .32rem;font-size:.86em;color:var(--secondary)}
 /* suggestions popup (slash + @files) */
 .suggest{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
 width:min(54rem,92%);margin-bottom:.4rem;background:var(--bg);
 border:1px solid var(--line2);border-radius:var(--r-lg);box-shadow:var(--shadow);
-overflow-x:hidden;overflow-y:auto;max-height:min(50vh,22rem);-webkit-overflow-scrolling:touch;overscroll-behavior:contain;z-index:20}
+overflow-x:hidden;overflow-y:auto;max-height:min(50vh,22rem);-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;z-index:20}
 .suggest-row{display:flex;gap:.8rem;align-items:baseline;padding:.45rem .9rem;
 cursor:pointer;font-size:.85rem}
 .suggest-row.active,.suggest-row:hover{background:var(--hover)}
@@ -421,7 +421,7 @@ white-space:nowrap;letter-spacing:-.01em}
 .suggest-file[data-status="conflict"] .suggest-name{color:var(--err)}
 .slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
-.dock{position:relative;padding:.4rem 1.2rem 1.4rem;background:linear-gradient(to top,var(--bg) 65%,transparent);overflow-anchor:none;contain:layout}
+.dock{position:relative;padding:.35rem 1.2rem .8rem;background:linear-gradient(to top,var(--bg) 65%,transparent);overflow-anchor:none;contain:layout}
 .composer{max-width:56rem;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-lg);
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
@@ -440,7 +440,7 @@ display:block;font:inherit;font-size:.9rem;line-height:20px;height:34px;max-heig
 min-height:34px;box-sizing:border-box;overflow-y:auto;color:var(--fg)}
 .composer textarea::placeholder{color:var(--dim)}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
-.send{flex:none;width:34px;height:34px;border-radius:var(--r-circle);border:0;cursor:pointer;
+.send{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);border:0;cursor:pointer;
 background:var(--primary);color:var(--primary-fg);font-size:1.05rem;font-weight:700;
 display:flex;align-items:center;justify-content:center;transition:filter .15s}
 .send:hover{filter:brightness(1.07)}
@@ -448,7 +448,7 @@ display:flex;align-items:center;justify-content:center;transition:filter .15s}
 .turnctl{max-width:56rem;margin:0 auto .4rem;display:flex;justify-content:center}
 .turnctl:empty{display:none;margin:0}
 .stop-turn{display:inline-flex;align-items:center;gap:.4rem;padding:.3rem .85rem;
-border-radius:var(--r-pill);border:1px solid var(--line2);background:var(--bg);color:var(--fg);
+border-radius:var(--r-sm);border:1px solid var(--line2);background:var(--bg);color:var(--fg);
 cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition:border-color .12s,background .12s,color .12s}
 .stop-turn:hover{border-color:var(--err);background:var(--err);color:#fff}
 .stop-turn .icon{width:14px;height:14px}
@@ -461,7 +461,7 @@ cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition
 color:var(--fg);font:inherit;font-size:.84rem;line-height:1.35;padding:.5rem .62rem;resize:vertical;box-shadow:inset 0 1px 2px rgba(20,20,20,.03)}
 .queued-edit:focus{outline:0;border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 22%,transparent)}
 .queued-actions{display:flex;align-items:center;gap:.28rem;flex:none}
-.queued-del{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--line2);border-radius:var(--r-pill);background:var(--bg);color:var(--dim);padding:0;cursor:pointer;transition:border-color .12s,background .12s,color .12s,transform .12s}
+.queued-del{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--line2);border-radius:var(--r-2xs);background:var(--bg);color:var(--dim);padding:0;cursor:pointer;transition:border-color .12s,background .12s,color .12s,transform .12s}
 .queued-del .icon{width:14px;height:14px;stroke-width:2.4}
 
 .queued-del:hover{border-color:var(--err);color:var(--err);background:color-mix(in srgb,var(--err) 10%,var(--bg));transform:translateY(-1px)}
@@ -642,7 +642,7 @@ font-size:.78rem;line-height:1.4;color:var(--warning)}
 text-transform:uppercase;color:var(--dim)}
 /* "Home" quick-jump — leave the project to add a root anywhere */
 .dir-jump{display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .55rem;
-border-radius:var(--r-pill);border:1px solid var(--line2);background:var(--bg);
+border-radius:var(--r-sm);border:1px solid var(--line2);background:var(--bg);
 color:var(--fg);font-size:.74rem;font-weight:600;cursor:pointer;
 transition:background .1s,border-color .1s}
 .dir-jump:hover{background:var(--hover);border-color:var(--accent)}
@@ -679,7 +679,7 @@ border:1px dashed var(--line2);border-radius:var(--r-md);margin:0}
 .dir-root-mark{flex:none;display:inline-flex;color:var(--secondary)}
 .dir-root-mark .icon{width:12px;height:12px}
 .dir-root-empty{list-style:none;font-size:.78rem;color:var(--dim);font-style:italic;padding:.1rem 0}
-.dir-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-circle);border:none;background:transparent;color:var(--dim);cursor:pointer}
+.dir-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-2xs);border:none;background:transparent;color:var(--dim);cursor:pointer}
 .dir-root-remove:hover{color:var(--err);background:var(--panel2)}
 .dir-root-remove .icon{width:13px;height:13px}
 /* membership mark on each subfolder row: filled = already a root, hollow = addable */
@@ -781,7 +781,7 @@ padding:.15rem .2rem;animation:rise .15s ease both}
 height:34px;color:var(--secondary);font-size:.85rem}
 .rec-time{flex:none;font-family:var(--mono);font-size:.8rem;color:var(--secondary);
 min-width:2.6rem;text-align:center}
-.rec-cancel,.rec-accept{flex:none;width:34px;height:34px;border-radius:var(--r-circle);
+.rec-cancel,.rec-accept{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);
 display:flex;align-items:center;justify-content:center;font-size:.95rem;
 font-weight:700;transition:filter .15s,background .15s}
 .rec-cancel{background:var(--panel2);color:var(--err)}
@@ -794,13 +794,13 @@ height:34px;padding:0 .4rem}
 .wave span{width:3px;min-height:4px;height:4px;border-radius:var(--r-2xs);
 background:linear-gradient(180deg,var(--primary),var(--accent));
 transition:height .09s ease;box-shadow:0 0 6px color-mix(in srgb,var(--primary) 35%,transparent)}
-.mic{flex:none;width:34px;height:34px;border-radius:var(--r-circle);display:flex;align-items:center;
+.mic{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);display:flex;align-items:center;
 justify-content:center;color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,var(--bg));transition:color .15s,background .15s}
 .mic:hover{background:color-mix(in srgb,var(--accent) 26%,var(--bg));color:var(--accent)}
 .mic.recording{background:var(--err);color:var(--bg);animation:pulse 1.2s infinite}
 .mic.mic-error{color:var(--err)}
 .mic.model-loading{color:var(--secondary);cursor:progress;animation:pulse 1.5s infinite}
-.attach{flex:none;width:34px;height:34px;border-radius:var(--r-circle);display:flex;align-items:center;
+.attach{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);display:flex;align-items:center;
 justify-content:center;color:var(--secondary);background:color-mix(in srgb,var(--secondary) 15%,var(--bg));cursor:pointer;transition:color .15s,background .15s}
 .attach:hover{background:color-mix(in srgb,var(--secondary) 26%,var(--bg));color:var(--secondary)}
 .attach-input{display:none}
@@ -817,7 +817,7 @@ justify-content:center;color:var(--secondary);background:color-mix(in srgb,var(-
 .attach-meta{min-width:0;display:flex;flex-direction:column;line-height:1.15}
 .attach-name{font-size:.76rem;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .attach-size{font-size:.68rem;color:var(--dim)}
-.attach-remove{flex:none;width:20px;height:20px;border:0;border-radius:var(--r-circle);background:transparent;color:var(--dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
+.attach-remove{flex:none;width:20px;height:20px;border:0;border-radius:var(--r-2xs);background:transparent;color:var(--dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
 .attach-remove:hover{background:var(--bg);color:var(--err)}
 .attach-remove .icon{width:13px;height:13px}
 /* inline image attachments shown INSIDE a user bubble (persist across refresh) */
@@ -903,7 +903,7 @@ padding:.22rem .52rem;line-height:1.2;cursor:pointer;white-space:nowrap;transiti
 /* the workspace (base) root: gold "workspace" tag, no remove control */
 .fs-root-tag{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,var(--bg));border-radius:var(--r-xs);padding:0 .3rem}
 .fs-root-base .fs-root-path{font-weight:600}
-.fs-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-circle);border:none;background:transparent;color:var(--dim);cursor:pointer}
+.fs-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-2xs);border:none;background:transparent;color:var(--dim);cursor:pointer}
 .fs-root-remove:hover{color:var(--err);background:var(--panel2)}
 .fs-root-remove .icon{width:13px;height:13px}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
@@ -1030,7 +1030,7 @@ background:var(--bg);color:var(--fg);font:inherit;text-transform:none;letter-spa
 transition:border-color .12s,box-shadow .12s}
 .modal-res-field input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 30%,transparent)}
 .modal-res-go{flex:none;justify-self:end;align-self:start;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;
-border-radius:var(--r-circle);border:0;cursor:pointer;
+border-radius:var(--r-2xs);border:0;cursor:pointer;
 background:var(--primary);color:var(--primary-fg);
 box-shadow:0 1px 2px rgba(20,20,20,.08);transition:filter .12s,box-shadow .12s,transform .06s}
 .modal-res-go .icon{width:14px;height:14px;stroke-width:2.4}
@@ -1167,19 +1167,29 @@ color:var(--dim);margin:.5rem 0 .3rem}
    take no space unless an extension actually contributes footer content. */
 #footwrap{min-height:0;display:flex;align-items:flex-end;justify-content:center}
 #footwrap > .foot{width:100%}
-.foot{display:flex;align-items:center;justify-content:center;gap:.8rem;flex-wrap:wrap;
-row-gap:.25rem;padding:.25rem 1.2rem .55rem;font-size:.72rem;color:var(--dim)}
+.foot{display:flex;align-items:center;justify-content:center;gap:.4rem;flex-wrap:wrap;
+row-gap:.2rem;padding:.05rem 1rem .25rem;font-size:.72rem;color:var(--dim)}
 .foot:empty{display:none}
 .foot-item{display:flex;align-items:center;gap:.35rem;font-family:var(--mono);
 animation:foot-in .2s ease both}
 @keyframes foot-in{from{opacity:0}to{opacity:1}}
 .foot-item .icon{width:12px;height:12px}
 
+/* Compact footer icon buttons for filesystem permissions + backgrounds
+   (the small-icon replacement for the removed right context rail). */
+.foot-chip{display:inline-flex;align-items:center;gap:.25rem;font-family:var(--mono);
+font-size:.7rem;font-weight:600;color:var(--dim);background:transparent;
+border:1px solid var(--line2);border-radius:var(--r-pill);padding:.08rem .45rem;cursor:pointer;
+animation:foot-in .2s ease both}
+.foot-chip:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
+.foot-chip .icon{width:13px;height:13px;min-width:13px;min-height:13px;stroke-width:2}
+.foot-chip-n{font-variant-numeric:tabular-nums;font-weight:700;color:var(--fg)}
+
 /* Session provider/model chip in the bottom dock (moved here from the context
    rail). A quiet pill that opens the per-session model picker on click. */
 .foot-routing{display:inline-flex;align-items:center;gap:.35rem;font-family:var(--mono);
-font-size:.72rem;font-weight:600;color:var(--dim);background:transparent;
-border:1px solid var(--line2);border-radius:var(--r-pill);padding:.12rem .6rem;cursor:pointer;
+font-size:.7rem;font-weight:600;color:var(--dim);background:transparent;
+border:1px solid var(--line2);border-radius:var(--r-pill);padding:.08rem .5rem;cursor:pointer;
 animation:foot-in .2s ease both}
 .foot-routing:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
 .foot-routing .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
@@ -1189,8 +1199,8 @@ animation:foot-in .2s ease both}
    zai-thinking, or :reasoning-effort? false); the backend gates it the same way
    in loop.clj, so the chip never offers a lever the model would ignore. */
 .foot-effort{display:inline-flex;align-items:center;gap:.35rem;font-family:var(--mono);
-font-size:.72rem;font-weight:600;color:var(--dim);background:transparent;
-border:1px solid var(--line2);border-radius:var(--r-pill);padding:.12rem .6rem;cursor:pointer;
+font-size:.7rem;font-weight:600;color:var(--dim);background:transparent;
+border:1px solid var(--line2);border-radius:var(--r-pill);padding:.08rem .5rem;cursor:pointer;
 animation:foot-in .2s ease both}
 .foot-effort:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
 .foot-effort .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
@@ -1200,7 +1210,7 @@ animation:foot-in .2s ease both}
 .foot-effort-value{display:inline-block;min-width:8ch;text-transform:lowercase}
 /* Reasoning-effort slider: quick / balanced / deep as a compact 3-stop range.
    Replaces the old modal picker — dragging it POSTs /reasoning. */
-.foot-effort-slide{-webkit-appearance:none;appearance:none;width:88px;height:6px;margin:0;padding:0;
+.foot-effort-slide{-webkit-appearance:none;appearance:none;width:62px;height:6px;margin:0;padding:0;
 border:0;border-radius:var(--r-pill);background:var(--line2);cursor:pointer;flex:none;touch-action:pan-x}
 .foot-effort:hover .foot-effort-slide{background:color-mix(in srgb,var(--accent) 45%,var(--line2))}
 .foot-effort-slide::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;
@@ -1312,7 +1322,7 @@ border-bottom:1px solid var(--panel2)}
 .status-md h3{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;
 color:var(--dim);margin:.9rem 0 .4rem}
 .status-md blockquote{border-left:3px solid var(--err);color:var(--err);
-padding:.2rem .8rem;margin:.5rem 0;background:color-mix(in srgb,var(--err) 8%,var(--bg));border-radius:0 8px 8px 0}
+padding:.2rem .8rem;margin:.5rem 0;background:color-mix(in srgb,var(--err) 8%,var(--bg));border-radius:0}
 /* prism — vis-light token theme (vendored highlighter, no external theme) */
 .token.comment,.token.prolog,.token.doctype,.token.cdata{color:var(--dim);font-style:italic}
 .token.punctuation{color:var(--dim)}
@@ -1413,7 +1423,7 @@ border-radius:var(--r-lg);box-shadow:var(--shadow-lg);overflow:hidden}
 .cmd-palette-input{border:0;border-bottom:1px solid var(--line);background:var(--bg);
 color:var(--fg);font:inherit;font-size:.95rem;padding:.85rem 1rem;outline:0}
 .cmd-palette-input::placeholder{color:var(--dim)}
-.cmd-palette-list{list-style:none;margin:0;padding:.3rem;overflow-y:auto}
+.cmd-palette-list{list-style:none;margin:0;padding:.3rem;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
 .cmd-palette-row{display:flex;align-items:baseline;gap:.6rem;padding:.5rem .7rem;
 border-radius:var(--r-sm);cursor:pointer}
 .cmd-palette-row.is-active{background:color-mix(in srgb,var(--primary) 18%,var(--bg))}

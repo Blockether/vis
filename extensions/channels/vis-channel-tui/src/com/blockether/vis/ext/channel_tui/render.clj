@@ -3,7 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.highlight :as hl]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
@@ -3124,7 +3124,8 @@
    so completed iterations hit the cache forever even when the parent
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
-  [{:keys [thinking forms recaps provider-fallbacks error repeat-count]}]
+  [{:keys [thinking assistant-prose content-stream forms recaps provider-fallbacks error
+           repeat-count]}]
   [(text-fingerprint thinking) (mapv form-fingerprint forms) recaps provider-fallbacks
    ;; `:error` is USUALLY a map, but some paths (e.g. CONSULT failures) carry a
    ;; plain String. `select-keys` only works on associatives and throws on a
@@ -3133,7 +3134,13 @@
    ;; fingerprint (as their string) so cache invalidation still tracks them.
    (cond (map? error) (select-keys error [:type :message])
          (some? error) (str error)
-         :else nil) repeat-count])
+         :else nil) repeat-count
+   ;; `:assistant-prose` and (pre-forms) `:content-stream` are BOTH read by
+   ;; `format-iteration-entry-entries`, so they MUST invalidate the live cache.
+   ;; The loop emits `:assistant-prose` while `:forms` is still empty, so without
+   ;; it here the fingerprint is unchanged and the cache returns the stale,
+   ;; prose-less render — the commentary block silently vanished.
+   (text-fingerprint assistant-prose) (text-fingerprint content-stream)])
 (defn- short-id-fragment
   ^String [id]
   (let [s (str (or id ""))]
@@ -3411,7 +3418,7 @@
         ;; sentinel-wrapped runs the painter understands; legacy
         ;; `markdown->inline` regex parser is gone.
         wrapped
-        (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir visible))
+        (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast visible))
                    (max 1 (long max-w)))
 
         meta
@@ -3646,7 +3653,7 @@
         (mapv :meta entries)]
 
     {:lines lines :line-meta line-meta :text (str/join "\n" (map strip-paint-markers-line lines))}))
-(declare paste-aware-ir->entries)
+(declare paste-aware-ast->entries)
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
 ;; `markdown->inline` is forward-declared once at the top of the
@@ -3783,9 +3790,9 @@
               :line (str result-marker
                          (if (str/blank? stripped) stripped (str tool-output-indent stripped))))))
 
-        ir
+        ast
         (some-> body-text
-                vis/markdown->ir)
+                vis/markdown->ast)
 
         ;; A `vis-image` result must NEVER start life collapsed: the whole
         ;; point is to SEE the picture. Detect one in the body so the op-card
@@ -3793,13 +3800,13 @@
         has-image?
         (boolean (some (fn [n]
                          (and (vector? n) (= :code (first n)) (= "vis-image" (:lang (second n)))))
-                       (some-> ir
+                       (some-> ast
                                (nthrest 2))))
 
         entries
-        (when ir
-          (tag-copy-block-body (vec (paste-aware-ir->entries
-                                      ir
+        (when ast
+          (tag-copy-block-body (vec (paste-aware-ast->entries
+                                      ast
                                       (max 1 (- (long fill-w) (long tool-output-indent-cols)))
                                       (assoc opts :mode :channel)))
                                node-id
@@ -3841,7 +3848,7 @@
             headline
             (mapv (fn [line]
                     {:line (str result-marker " " line) :meta meta})
-                  (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
+                  (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast head-line))
                              (max 1 (- (long fill-w) 1))))
 
             ;; A card can carry a body yet have NO node-id (nothing to fold it
@@ -3954,15 +3961,15 @@
                             ;; uses, so a bold heading keeps its own line
                             ;; instead of collapsing onto its body. Then walk
                             ;; in `:thinking` mode (iter-header-bg / italic).
-                            (let [ir (vis/reasoning->ir thinking-text)]
-                              (or (seq (ir-tui/ir->entries ir
-                                                           fill-w
-                                                           {:mode :thinking
-                                                            :session-id session-id
-                                                            :session-turn-id session-turn-id
-                                                            :detail-expansions detail-expansions
-                                                            :iteration-number iteration-number
-                                                            :section :thinking}))
+                            (let [ast (vis/reasoning->ast thinking-text)]
+                              (or (seq (layout/ast->entries ast
+                                                            fill-w
+                                                            {:mode :thinking
+                                                             :session-id session-id
+                                                             :session-turn-id session-turn-id
+                                                             :detail-expansions detail-expansions
+                                                             :iteration-number iteration-number
+                                                             :section :thinking}))
                                   (mapv #(line-entry (str thinking-marker %))
                                         (wrap-text thinking-text fill-w)))))))
                       texts)]
@@ -4033,9 +4040,9 @@
                   provider-rows
                   (when provider-error?
                     (let [;; Bold the leading `WHAT HAPPENED:` / `NEXT STEP:` LABEL so the
-                          ;; live trace reads like the styled answer IR (bold label, plain
+                          ;; live trace reads like styled Markdown (bold label, plain
                           ;; body). The label/body split uses the SHARED `split-error-label`
-                          ;; (same helper the answer IR uses) so the convention never
+                          ;; (same helper the final-answer renderer uses) so the convention never
                           ;; diverges between surfaces. Sentinels go on the FIRST wrapped
                           ;; row only — the label is short and never wraps. `paint-ansi-line!`
                           ;; (used by the err-result band) translates these to SGR/BOLD.
@@ -4288,8 +4295,8 @@
                   (or result-text head-summary)
                   (let [entries
                         (when result-text
-                          (tag-copy-block-body (vec (paste-aware-ir->entries
-                                                      (vis/markdown->ir result-text)
+                          (tag-copy-block-body (vec (paste-aware-ast->entries
+                                                      (vis/markdown->ast result-text)
                                                       fill-w
                                                       {:mode :channel
                                                        :session-id session-id
@@ -4543,7 +4550,7 @@
           ;; the thinking band above / the green code band below. The
           ;; coalesce pass upstream collapses any doubled blank to one.
           (-> [(line-entry "")]
-              (into (ir-tui/ir->entries (vis/markdown->ir p) fill-w {:mode :channel}))
+              (into (layout/ast->entries (vis/markdown->ast p) fill-w {:mode :channel}))
               (conj (line-entry ""))))
 
         ;; Block count headers (`1 observation · 2 mutations`) and their
@@ -5124,28 +5131,21 @@
    (:text (progress->lines-data progress bubble-w settings extra))))
 ;;; ── Markdown table parsing ───────────────────────────────────────────────
 ;; **prefix:** value
-(defn- assert-canonical-ir!
-  "STRICT: bubble layout takes canonical answer-IR (`[:ir & nodes]`)
-   or nil only. Strings/Hiccup/EDN are programmer bugs at this layer
-   — the IR boundary is upstream."
-  [ir]
-  (when-not (or (nil? ir) (and (vector? ir) (= :ir (first ir))))
-    (throw (ex-info "format-answer-with-thinking-data: answer must be canonical [:ir ...] (or nil)"
-                    {:got-type (some-> ir
+(defn- assert-markdown!
+  [markdown]
+  (when-not (or (nil? markdown) (string? markdown))
+    (throw (ex-info "format-answer-with-thinking-data: answer must be Markdown text"
+                    {:got-type (some-> markdown
                                        class
-                                       .getName)
-                     :got-preview (let [s (pr-str ir)]
-                                    (subs s 0 (min 200 (count s))))}))))
-(defn- ir-non-empty? [ir] (and (vector? ir) (= :ir (first ir)) (> (count ir) 2)))
-(defn- provider-error-answer?
-  [ir]
-  (boolean (and (vector? ir) (= :ir (first ir)) (true? (get-in ir [1 :vis/provider-error])))))
-(defn format-answer-with-thinking-data*
-  "Uncached implementation. Returns `{:text :lines :line-meta}` so the
-   bubble painter can keep clickable summary-row metadata aligned with
-   the already-wrapped lines.
+                                       .getName)}))))
 
-   STRICT: `answer` is canonical answer-IR (`[:ir & nodes]`) or nil."
+(defn- markdown-non-empty? [markdown] (and (string? markdown) (not (str/blank? markdown))))
+
+(defn- ast-non-empty? [ast] (and (vector? ast) (= :ast (first ast)) (seq (nnext ast))))
+(defn format-answer-with-thinking-data*
+  "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
+   bubble painter can keep clickable summary-row metadata aligned with the
+   already-wrapped lines."
   [answer trace bubble-w settings _confidence cancelled? opts]
   (let [content-w
         (max 10 (- (long bubble-w) 4))
@@ -5158,10 +5158,10 @@
           {:line line :meta nil})
 
         _
-        (assert-canonical-ir! answer)
+        (assert-markdown! answer)
 
         suppress-trace?
-        (provider-error-answer? answer)
+        (and (string? answer) (str/includes? answer "PROVIDER_ERROR"))
 
         trace-entries
         (trace-render-entries {:iterations trace
@@ -5172,23 +5172,21 @@
                                :detail-expansions (:detail-expansions opts)
                                :suppress-trace? suppress-trace?})
 
-        ;; IR walker emits painter-ready entries directly. No
-        ;; markdown round-trip, no `markdown->entries` rebuild.
         ans-entries
-        (if (ir-non-empty? answer)
-          (vec (ir-tui/ir->entries answer
-                                   (max 1 (- (long fill-w) 2))
-                                   {:session-id (:session-id opts)
-                                    :session-turn-id (:session-turn-id opts)
-                                    :detail-expansions (:detail-expansions opts)
-                                    :section :answer}))
+        (if (markdown-non-empty? answer)
+          (vec (layout/ast->entries (vis/markdown->ast answer)
+                                    (max 1 (- (long fill-w) 2))
+                                    {:session-id (:session-id opts)
+                                     :session-turn-id (:session-turn-id opts)
+                                     :detail-expansions (:detail-expansions opts)
+                                     :section :answer}))
           [])
 
         ans-pad
         (line-entry (str answer-pad-marker ""))
 
         cancel-text
-        (if (ir-non-empty? answer) (str/trim (vis/extract-text answer)) "Cancelled by user.")
+        (if (markdown-non-empty? answer) (str/trim answer) "Cancelled by user.")
 
         ;; Wrap each cancel body line in INLINE_ITALIC sentinels so the
         ;; painter applies italic on top of the `cancelled-fg` color.
@@ -5255,7 +5253,7 @@
         ;; lists / bold intact) — the cancel-block flattens it via
         ;; `extract-text` + italic, which is what made real answers read as
         ;; "italics shit" instead of markdown. Bubble-level dim still applies.
-        (if (and cancelled? (not (ir-non-empty? answer))) cancel-block answer-block)
+        (if (and cancelled? (not (markdown-non-empty? answer))) cancel-block answer-block)
 
         entries
         (if has-trace? (vec (concat trace-entries trailer)) (vec trailer))
@@ -5434,7 +5432,7 @@
         body
         (when expanded?
           (tag-copy-block-body
-            (vec (ir-tui/ir->entries [:ir {} [:code {:wrap? true} payload]] content-w opts))
+            (vec (layout/ast->entries [:ast {} [:code {:wrap? true} payload]] content-w opts))
             node-id
             payload))]
 
@@ -5479,7 +5477,7 @@
                          :details-path [id]})
 
         header
-        (vec (ir-tui/ir->entries [:ir {} [:p {} summary]] content-w {}))
+        (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))
 
         can-draw?
         (and (timg/graphical-terminal?) width height)
@@ -5518,21 +5516,21 @@
                      (when dims (str "  " dims))
                      (when size-label (str "  " size-label)))
 
-                ir
-                (if ascii [:ir {} [:p {} desc] [:code {} ascii]] [:ir {} [:p {} desc]])]
+                ast
+                (if ascii [:ast {} [:p {} desc] [:code {} ascii]] [:ast {} [:p {} desc]])]
 
-            (tag-copy-block-body (vec (ir-tui/ir->entries ir content-w {})) node-id path)))]
+            (tag-copy-block-body (vec (layout/ast->entries ast content-w {})) node-id path)))]
 
     (vec (concat header body))))
 
-(defn- paste-aware-ir->entries
-  "`ir-tui/ir->entries`, but each top-level `vis-paste` code block becomes
+(defn- paste-aware-ast->entries
+  "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
    a collapsible paste disclosure instead of an inline code chip. Falls
    back to the plain walker (zero overhead) when the IR carries no paste."
   [answer content-w opts]
   (let [blocks (vec (drop 2 answer))]
     (if (not-any? disclosure-code-block? blocks)
-      (vec (ir-tui/ir->entries answer content-w opts))
+      (vec (layout/ast->entries answer content-w opts))
       (->> (partition-by disclosure-code-block? blocks)
            (mapcat (fn [run]
                      (if (disclosure-code-block? (first run))
@@ -5541,17 +5539,21 @@
                                    (image-disclosure-entries node content-w opts)
                                    (paste-disclosure-entries node content-w opts)))
                                run)
-                       (ir-tui/ir->entries (into [:ir {}] run) content-w opts))))
+                       (layout/ast->entries (into [:ast {}] run) content-w opts))))
            vec))))
 
 (defn format-answer-markdown-data*
   [answer bubble-w opts]
-  (assert-canonical-ir! answer)
+  (when-not (or (nil? answer) (vector? answer))
+    (throw (ex-info "format-answer-markdown-data requires a parsed Markdown tree"
+                    {:got-type (some-> answer
+                                       class
+                                       .getName)})))
   (let [content-w
         (max 10 (- (long bubble-w) 4))
 
         raw-entries
-        (if (ir-non-empty? answer) (paste-aware-ir->entries answer content-w opts) [])
+        (if (ast-non-empty? answer) (paste-aware-ast->entries answer content-w opts) [])
 
         ;; Assistant answers keep a blank margin row so the first line of
         ;; answer content is never flush against the top of the bubble or the

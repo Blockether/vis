@@ -108,7 +108,7 @@
 (defonce ^:private writer (atom nil))
 
 (defn- write-event!
-  "Write one already-shaped event to the shared journal. Never throws."
+  "Write one already-shaped (canonical string-keyed) event to the shared\n   journal. Never throws."
   [sid event {:keys [store? truncate?]}]
   (try (ensure-dir!)
        (let [f
@@ -116,9 +116,9 @@
 
              line
              (str (wire/json-str (assoc event
-                                   :_producer producer-id
-                                   :_pid producer-pid
-                                   :_store (boolean store?)))
+                                   "_producer" producer-id
+                                   "_pid" producer-pid
+                                   "_store" (boolean store?)))
                   "\n")]
 
          (locking f
@@ -268,14 +268,15 @@
   [sid ^String line]
   ;; Skip our OWN lines with a cheap substring test BEFORE parsing — the
   ;; streaming producer tails its own journal, so this avoids parse-then-discard
-  ;; on nearly every line it just wrote. The `:_producer` equality below stays as
+  ;; streaming producer tails its own journal, so this avoids parse-then-discard
+  ;; on nearly every line it just wrote. The `"_producer"` equality below stays as
   ;; a correctness backstop for the (foreign) lines that do get parsed.
   (when-not (.contains line self-marker)
     (when-let [event (wire/parse-json line)]
-      (when-not (= (:_producer event) producer-id)
+      (when-not (= (get event "_producer") producer-id)
         (when-let [f @deliver-fn]
-          (let [store? (boolean (:_store event))
-                clean (dissoc event :_producer :_pid :_store)]
+          (let [store? (boolean (get event "_store"))
+                clean (dissoc event "_producer" "_pid" "_store")]
 
             (try (f sid store? clean)
                  (catch Throwable t
@@ -332,7 +333,7 @@
               (when (>= last-nl 0) (swap! offsets assoc sid (+ off (inc last-nl))) true))))))))
 
 (defn journal-high-water-seq
-  "Highest `:seq` persisted in `sid`'s journal file, or 0 when there is none.
+  "Highest `\"seq\"` persisted in `sid`'s journal file, or 0 when there is none.
 
    A daemon restart resets its in-memory `:seq` counter to 0, but a client
    (TUI) keeps its replay cursor as a monotonic MAX across reconnects — so
@@ -348,7 +349,7 @@
         (->> (str/split-lines (slurp f))
              (remove str/blank?)
              (keep wire/parse-json)
-             (map #(long (or (:seq %) 0)))
+             (map #(long (or (get % "seq") 0)))
              (reduce max 0))
         0))
     (catch Throwable t (tel/log! :debug ["gateway-bus: high-water read failed" (ex-message t)]) 0)))
@@ -364,7 +365,7 @@
    terminal event yet): a finished turn is already covered by the durable DB +
    normal history, and re-streaming it would double-render a completed answer.
 
-   A non-terminal journal has TWO causes, told apart by `:_pid` liveness: the
+   A non-terminal journal has TWO causes, told apart by `\"_pid\"` liveness: the
    producer is still alive (a real in-flight sibling turn — mirror it) OR the
    producer PROCESS is gone (a daemon crash/restart mid-turn). An orphaned turn
    will never emit a terminal, so resurrecting it pins this process's
@@ -383,31 +384,31 @@
               events (->> (str/split-lines (slurp f))
                           (remove str/blank?)
                           (keep wire/parse-json))
-              foreign (remove #(= (:_producer %) producer-id) events)
+              foreign (remove #(= (get % "_producer") producer-id) events)
               ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
               ;; THIS process) means the turn is done — don't re-stream it.
-              terminal? (some #(contains? #{"turn.completed" "turn.failed"} (:type %)) events)]
+              terminal? (some #(contains? #{"turn.completed" "turn.failed"} (get % "type")) events)]
 
           (when (and (seq foreign) (not terminal?))
             ;; claim everything up to EOF so poll-once! won't re-deliver it
             (swap! offsets assoc (str sid) len)
-            (let [started (some #(when (= "turn.started" (:type %)) %) foreign)]
-              (if (producer-alive? (:_pid (or started (last foreign))))
+            (let [started (some #(when (= "turn.started" (get % "type")) %) foreign)]
+              (if (producer-alive? (get (or started (last foreign)) "_pid"))
                 ;; Live sibling: mirror its in-flight turn into the registry.
                 (when-let [f' @deliver-fn]
                   (doseq [ev foreign]
-                    (try (f' sid (boolean (:_store ev)) (dissoc ev :_producer :_pid :_store))
-                         (catch Throwable t
-                           (tel/log! :debug
-                                     ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
+                    (try
+                      (f' sid (boolean (get ev "_store")) (dissoc ev "_producer" "_pid" "_store"))
+                      (catch Throwable t
+                        (tel/log! :debug ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
                 ;; Orphan: producer process is gone. Reap it terminally.
-                (when-let [tid (:turn_id started)]
-                  (let [term {:schema 1
-                              :type "turn.failed"
-                              :session_id (str sid)
-                              :turn_id tid
-                              :status "interrupted"
-                              :error "gateway producer exited before the turn finished"}]
+                (when-let [tid (get started "turn_id")]
+                  (let [term {"schema" 1
+                              "type" "turn.failed"
+                              "session_id" (str sid)
+                              "turn_id" tid
+                              "status" "interrupted"
+                              "error" "gateway producer exited before the turn finished"}]
                     ;; Durable + cross-process: appended (no truncate), so any
                     ;; process hydrating later sees `terminal?` and skips.
                     (publish! sid term {:store? true})

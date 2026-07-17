@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -22,10 +23,12 @@
   (it "streams reasoning deltas with normalized thinking over the gateway"
       (let [[type store? payload] (#'state/chunk->event
                                    {:phase :reasoning
-                                    :thinking " first  \n\n\t\nsecond\r\n\r\nthird  "})]
-        (expect (= "reasoning.delta" type))
-        ;; transient live frame — the canonical text persists on iteration.completed
-        (expect (not store?))
+                                    :iteration 1
+                                    :thinking " first  \n\n\t\nsecond\r\n\r\nthird  "
+                                    :stream-block-id "t1:reasoning:1"
+                                    :stream-delta "first\nsecond\nthird"})]
+        (expect (= "content.block.delta" type))
+        (expect store?)
         (expect (= "first\nsecond\nthird" (:text payload)))))
   (it "normalizes iteration-boundary thinking for pinned session history"
       (let [[type store? payload]
@@ -46,9 +49,9 @@
         (expect (= "alpha\n beta"
                    (-> (state/transcript :session-1)
                        first
-                       :iterations
+                       (get "iterations")
                        first
-                       :thinking))))))
+                       (get "thinking")))))))
 
 (defdescribe
   form-result-error-wire-test
@@ -109,12 +112,18 @@
              {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
         (expect (= 3 (:iteration payload)))))
-  (it "reasoning.delta streams live on the wire (transient, iteration-tagged)"
+  (it "reasoning streams as a replayable typed block delta"
       (let [[type store? payload] (#'state/chunk->event
-                                   {:phase :reasoning :iteration 2 :thinking "hmm"})]
-        (expect (= "reasoning.delta" type))
-        (expect (not store?))
+                                   {:phase :reasoning
+                                    :iteration 2
+                                    :thinking "hmm"
+                                    :stream-block-id "t1:reasoning:2"
+                                    :stream-delta "hmm"})]
+        (expect (= "content.block.delta" type))
+        (expect store?)
         (expect (= 2 (:iteration payload)))
+        (expect (= "t1:reasoning:2" (:block_id payload)))
+        (expect (= "text" (:field payload)))
         (expect (= "hmm" (:text payload)))))
   (it "iteration-final carries :iteration and complete assistant prose on the wire"
       (let [[type _ payload] (#'state/chunk->event
@@ -202,39 +211,27 @@
 
             ;; the titled session keeps its own stored event
             (expect (= 1 (count a-events)))
-            (expect (= "session.title_updated" (:type (first a-events))))
+            (expect (= "session.title_updated" (get (first a-events) "type")))
             ;; the sibling (poll-only) session ALSO has it stored → /poll sees it
             (expect (= 1 (count b-events)))
-            (expect (= "session.title_updated" (:type (first b-events))))
+            (expect (= "session.title_updated" (get (first b-events) "type")))
             ;; foreign copy carries the TITLED session's id, not b's
-            (expect (= (str a) (:session_id (first b-events)))))
+            (expect (= (str a) (get (first b-events) "session_id"))))
           (finally (reset! registry saved))))))
 
-(defdescribe
-  provider-error-ir-answer-wire-test
-  "An engine IR-AST answer (the provider-error / fatal-iteration fallback)
-   must flatten to PLAIN TEXT for :answer_md — never a pr-str'd `[:ir …]`
-   vector dumped into the chat bubble. The rich AST rides :answer_ir for
-   the IR walker."
-  (let [ir-answer
-        [:ir {:vis/provider-error true} [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
-         [:p {} [:strong {} [:span {} "Provider call failed before the model could run."]]]
-         [:p {}
-          [:strong {}
-           [:span {} "WHAT HAPPENED: provider rejected the request before the model ran."]]]]]
-    (it "recognises an IR-AST answer vs markdown / maps"
-        (expect (#'state/ir-ast-answer? ir-answer))
-        (expect (not (#'state/ir-ast-answer? "## hello")))
-        (expect (not (#'state/ir-ast-answer? {:answer "hi"}))))
-    (it "answer-md flattens the AST to plain text, never a pr-str'd vector"
-        (let [md (#'state/answer-md ir-answer)]
-          (expect (string? md))
-          (expect (not (str/starts-with? md "[:ir")))
-          (expect (not (str/includes? md ":vis/provider-error")))
-          (expect (str/includes? md "PROVIDER_ERROR"))
-          (expect (str/includes? md "Provider call failed before the model could run."))))
-    (it "leaves a plain markdown answer untouched"
-        (expect (= "## hello" (#'state/answer-md "## hello"))))))
+(defdescribe canonical-answer-content-test
+             (it "normalizes Markdown to one prose block"
+                 (let [blocks (#'state/answer-content {:answer "## hello"})]
+                   (expect (= 1 (count blocks)))
+                   (expect (= "prose" (get-in blocks [0 "type"])))
+                   (expect (= "## hello" (get-in blocks [0 "markdown"])))))
+             (it "passes typed error content without creating a second answer shape"
+                 (let [blocks [{"id" "e1"
+                                "type" "error"
+                                "code" "provider_unavailable"
+                                "message" "Provider failed"
+                                "retryable" true}]]
+                   (expect (= blocks (#'state/answer-content blocks))))))
 
 (defdescribe
   list-turns-dedup-test
@@ -266,20 +263,40 @@
                                                       :session_id (str sid)
                                                       :status "completed"
                                                       :request "hello"
-                                                      :answer_md "hi"
+                                                      :content
+                                                      [{"id" "b1" "type" "prose" "markdown" "hi"}]
                                                       :started_at 1000}}}})
-           (with-redefs [persistance/db-list-session-turns (fn [_ _]
-                                                             [{:id engine-id
-                                                               :status :success
-                                                               :user-request "hello"
-                                                               :answer-markdown "hi"
-                                                               :iteration-count 2
-                                                               :created-at (java.util.Date.
-                                                                             1010)}])]
+           (with-redefs [persistance/db-list-session-turns
+                         (fn [_ _]
+                           [{:id engine-id
+                             :status :success
+                             :user-request "hello"
+                             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                             :iteration-count 2
+                             :input-tokens 1200
+                             :input-regular-tokens 500
+                             :input-cache-write-tokens 100
+                             :input-cache-read-tokens 600
+                             :output-tokens 150
+                             :output-reasoning-tokens 80
+                             :total-cost 0.0123
+                             :provider :openai
+                             :model "gpt-4o"
+                             :created-at (java.util.Date. 1010)}])]
              (let [turns (state/list-turns sid)]
                (expect (= 1 (count turns)))
-               (expect (= (str engine-id) (:turn_id (first turns))))
-               (expect (= 2 (:iteration_count (first turns))))))
+               (let [turn (first turns)]
+                 (expect (= (str engine-id) (get turn "turn_id")))
+                 (expect (= 2 (get turn "iteration_count")))
+                 (expect (= {"input" 1200
+                             "input_regular" 500
+                             "cache_created" 100
+                             "cached" 600
+                             "output" 150
+                             "reasoning" 80}
+                            (get turn "tokens")))
+                 (expect (= {"total_cost" 0.0123 "provider" "openai" "model" "gpt-4o"}
+                            (get turn "cost"))))))
            (finally (reset! registry saved)))))
   (it
     "prefers the persisted row over a matching completed live row with no engine id"
@@ -307,21 +324,22 @@
                                                       :session_id (str sid)
                                                       :status "completed"
                                                       :request "hello"
-                                                      :answer_md "hi"
+                                                      :content
+                                                      [{"id" "b1" "type" "prose" "markdown" "hi"}]
                                                       :started_at started}}}})
-           (with-redefs [persistance/db-list-session-turns (fn [_ s]
-                                                             (expect (= sid s))
-                                                             [{:id engine-id
-                                                               :status :success
-                                                               :user-request "hello"
-                                                               :answer-markdown "hi"
-                                                               :iteration-count 2
-                                                               :created-at (java.util.Date.
-                                                                             (+ started 10))}])]
+           (with-redefs [persistance/db-list-session-turns
+                         (fn [_ s]
+                           (expect (= sid s))
+                           [{:id engine-id
+                             :status :success
+                             :user-request "hello"
+                             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                             :iteration-count 2
+                             :created-at (java.util.Date. (+ started 10))}])]
              (let [turns (state/list-turns sid)]
                (expect (= 1 (count turns)))
-               (expect (= (str engine-id) (:turn_id (first turns))))
-               (expect (= 2 (:iteration_count (first turns))))))
+               (expect (= (str engine-id) (get (first turns) "turn_id")))
+               (expect (= 2 (get (first turns) "iteration_count")))))
            (finally (reset! registry saved))))))
 
 (defdescribe
@@ -336,41 +354,38 @@
                     {:role "assistant" :content "old answer"} {:role :user :content "queued new"}]
                    (#'state/replace-last-user-message-content messages "queued new"))))))
 
-(defdescribe persisted-duplicate-of-live-test
-             ;; A FAILED/cancelled turn's error text lands ONLY on the durable row
-             ;; (`answer-markdown`); the transient live row's `answer_md` is blank, so
-             ;; a strict answer-equality check never matched an error turn and BOTH
-             ;; rows rendered — the same "Could not reach provider" twice. Request +
-             ;; terminal-status + created-after-start still identifies the one turn.
-             (let [dup?
-                   #'state/persisted-duplicate-of-live?
+(defdescribe
+  persisted-duplicate-of-live-test
+  ;; Terminal identity is request + status + timestamps; content blocks belong
+  ;; to the durable row and are not duplicated onto terminal events.
+  (let [dup?
+        #'state/persisted-duplicate-of-live?
 
-                   at
-                   (fn [ms]
-                     (java.util.Date. (long ms)))]
+        at
+        (fn [ms]
+          (java.util.Date. (long ms)))]
 
-               (it "dedups an error turn whose live row has no answer to compare"
-                   (expect (dup? {:engine_turn_id nil
-                                  :status "error"
-                                  :request "add zprint"
-                                  :answer_md ""
-                                  :started_at 1000}
-                                 {:id "soul-1"
-                                  :user-request "add zprint"
-                                  :answer-markdown "## Could not reach provider"
-                                  :created-at (at 2000)})))
-               (it "does NOT over-dedup two distinct completed answers with the same request"
-                   (expect (not (dup? {:engine_turn_id nil
-                                       :status "completed"
-                                       :request "hi"
-                                       :answer_md "answer A"
-                                       :started_at 1000}
-                                      {:id "soul-2"
-                                       :user-request "hi"
-                                       :answer-markdown "answer B"
-                                       :created-at (at 2000)}))))
-               (it "still matches on the engine-turn-id primary key"
-                   (expect (dup? {:engine_turn_id "eng-9" :status "completed"} {:id "eng-9"})))))
+    (it "dedups an error turn whose live row has no answer to compare"
+        (expect
+          (dup?
+            {:engine_turn_id nil :status "error" :request "add zprint" :content [] :started_at 1000}
+            {:id "soul-1"
+             :user-request "add zprint"
+             :content
+             [{"id" "e1" "type" "error" "code" "failed" "message" "Could not reach provider"}]
+             :created-at (at 2000)})))
+    (it "does NOT over-dedup two distinct completed answers with the same request"
+        (expect (not (dup? {:engine_turn_id nil
+                            :status "completed"
+                            :request "hi"
+                            :content [{"id" "a" "type" "prose" "markdown" "answer A"}]
+                            :started_at 1000}
+                           {:id "soul-2"
+                            :user-request "hi"
+                            :content [{"id" "b" "type" "prose" "markdown" "answer B"}]
+                            :created-at (at 2000)}))))
+    (it "still matches on the engine-turn-id primary key"
+        (expect (dup? {:engine_turn_id "eng-9" :status "completed"} {:id "eng-9"})))))
 
 (defdescribe
   mirror-turn-row-test
@@ -391,72 +406,60 @@
              (#'state/ingest-mirrored-event!
               sid
               false
-              {:type "turn.started" :turn_id "T1" :request "hello world" :started_at 777})
+              {"type" "turn.started" "turn_id" "T1" "request" "hello world" "started_at" 777})
              (let [started (get @reg sid)]
                (expect (= "T1" (:current-turn started)))
                (expect (= ["T1"] (:turn-order started)))
                (expect (= "running" (get-in started [:turns "T1" :status])))
                (expect (= "hello world" (get-in started [:turns "T1" :request])))
+               ;; The turn row owns its replay boundary. Channels must not scan
+               ;; the event ring to rediscover the matching turn.started event.
+               (expect (= 1 (get-in started [:turns "T1" :event_start_seq])))
+               (expect (= 1 (get (state/get-turn sid "T1") "event_start_seq")))
                ;; the mirror adopts the PRODUCER's canonical run-start clock —
                ;; stamping mirror-local time desynced elapsed across processes
                (expect (= 777 (get-in started [:turns "T1" :started_at]))))
              (#'state/ingest-mirrored-event!
               sid
               false
-              {:type "turn.completed"
-               :turn_id "T1"
-               :status "completed"
-               :answer_md "the answer"
-               :engine_turn_id "E1"})
+              {"type" "turn.completed" "turn_id" "T1" "status" "completed" "engine_turn_id" "E1"})
              (let [done (get @reg sid)]
                (expect (nil? (:current-turn done)))
                (expect (= "completed" (get-in done [:turns "T1" :status])))
-               (expect (= "E1" (get-in done [:turns "T1" :engine_turn_id])))
-               (expect (= "the answer" (get-in done [:turns "T1" :answer_md]))))
+               (expect (= "E1" (get-in done [:turns "T1" :engine_turn_id]))))
              (finally (swap! reg dissoc sid))))
     (it "ignores mirrored events for a session this process never touched"
         (expect (nil? (#'state/ingest-mirrored-event!
                        "never-touched-sid"
                        false
-                       {:type "turn.started" :turn_id "X" :request "hi"})))
+                       {"type" "turn.started" "turn_id" "X" "request" "hi"})))
         (expect (not (contains? @reg "never-touched-sid"))))))
 
-(defdescribe
-  queue-drain-mirror-event-test
-  ;; Cross-channel queue sync: when the gateway auto-drains the queue head it
-  ;; must emit `turn.queued.drained` BEFORE the turn starts, so every mirror
-  ;; (TUI :sync-queued-turn) drops the entry and a replayed log nets to zero.
-  (it "drain-next-queued! emits turn.queued.drained for the promoted head"
-      (let [sid
-            (str "drain-test-" (java.util.UUID/randomUUID))
-
-            registry
-            @#'state/registry
-
-            launched
-            (atom nil)]
-
-        (try (swap! registry assoc
-               sid
-               {:next-seq 0
-                :turns
-                {"q1"
-                 {:turn_id "q1" :session_id sid :status "queued" :request "hello" :queued_at 1}}
-                :turn-order ["q1"]})
-             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
-                                                            (reset! launched (vec (take 2 args))))}
-               #(#'state/drain-next-queued! sid))
-             (expect (= [sid "q1"] @launched))
-             (expect (= "running" (:status (state/get-turn sid "q1"))))
-             (let [events
-                   (state/events-since sid 0)
-
-                   drained
-                   (filterv #(= "turn.queued.drained" (:type %)) events)]
-
-               (expect (= 1 (count drained)))
-               (expect (= "q1" (:turn_id (first drained)))))
-             (finally (swap! registry dissoc sid))))))
+(defdescribe queue-drain-mirror-event-test
+  (it "broadcasts queue drain live without adding it to replay persistence"
+      (let [sid (str "drain-test-" (java.util.UUID/randomUUID))
+            registry @#'state/registry
+            launched (atom nil)
+            seen (atom [])]
+        (try
+          (swap! registry assoc
+                 sid
+                 {:next-seq 0
+                  :subscribers {"test" #(swap! seen conj %)}
+                  :turns {"q1" {:turn_id "q1"
+                                :session_id sid
+                                :status "queued"
+                                :request "hello"
+                                :queued_at 1}}
+                  :turn-order ["q1"]})
+          (with-redefs-fn {#'state/launch-turn-worker!
+                           (fn [& args] (reset! launched (vec (take 2 args))))}
+            #(#'state/drain-next-queued! sid))
+          (expect (= [sid "q1"] @launched))
+          (expect (= "streaming" (get (state/get-turn sid "q1") "status")))
+          (expect (= ["turn.queued.drained"] (mapv #(get % "type") @seen)))
+          (expect (empty? (state/events-since sid 0)))
+          (finally (swap! registry dissoc sid))))))
 
 (defdescribe
   drain-idle-test
@@ -483,7 +486,7 @@
                                                             (reset! launched (vec (take 2 args))))}
                #(state/drain-idle! sid))
              (expect (= [sid "q1"] @launched))
-             (expect (= "running" (:status (state/get-turn sid "q1"))))
+             (expect (= "streaming" (get (state/get-turn sid "q1") "status")))
              (finally (swap! registry dissoc sid)))))
   (it "drain-idle! is a no-op while a turn is already running"
       (let [sid
@@ -511,7 +514,7 @@
                #(reset! result (state/drain-idle! sid)))
              (expect (nil? @result))
              (expect (nil? @launched))
-             (expect (= "queued" (:status (state/get-turn sid "q1"))))
+             (expect (= "queued" (get (state/get-turn sid "q1") "status")))
              (finally (swap! registry dissoc sid))))))
 
 (defdescribe
@@ -554,6 +557,15 @@
                                    1050))))
     (it "tool phases always pass"
         (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}} {:phase :form-result} 1050))))))
+
+(defdescribe volatile-queue-reconciliation-test
+             (it "marks orphaned running turns interrupted without reconstructing messages"
+                 (let [sweeps (atom 0)]
+                   (with-redefs [lp/db-sweep-orphaned-running-turns! (fn []
+                                                                       (swap! sweeps inc)
+                                                                       :swept)]
+                     (expect (= :swept (state/reconcile-orphaned-turns!)))
+                     (expect (= 1 @sweeps))))))
 
 (defdescribe
   turn-stall-watchdog-test

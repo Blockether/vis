@@ -2,13 +2,13 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
   tui-code-block-test
   (it "keeps code text visible in markdown formatting"
-      (let [out (render/format-answer-markdown [:ir {} [:code {:lang "clojure"} "(+ 1 2)"]] 80)]
+      (let [out (render/format-answer-markdown [:ast {} [:code {:lang "clojure"} "(+ 1 2)"]] 80)]
         (expect (string? out))
         (expect (re-find #"\(\+ 1 2\)" out)))))
 
@@ -18,7 +18,7 @@
 ;; edge when the code block carries `:wrap?`. A colorized (real-grammar)
 ;; fence now folds SGR-aware too, so a wide highlighted line stops overflowing.
 
-(def ^:private code-block->lines @#'ir/code-block->lines)
+(def ^:private code-block->lines @#'layout/code-block->lines)
 
 (defn- content-rows
   "Visible (non-pad) rows from `code-block->lines`, as concatenated text."

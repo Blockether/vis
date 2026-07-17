@@ -82,48 +82,18 @@
                               (boolean (some #(str/ends-with? fname %) suffixes)))))
               res))))))
 
-(defn- checksum-mismatch-error?
-  "True when a Flyway failure in the cause chain is a migration-checksum /
-   validation mismatch — i.e. an already-applied migration (e.g. V1) was edited
-   in place, so its recorded checksum no longer matches the source."
-  [^Throwable e]
-  (boolean (some (fn [^Throwable t]
-                   (let [^String m (or (.getMessage t) "")]
-                     (or (.contains m "checksum mismatch") (.contains m "failed validation"))))
-                 (take-while some?
-                             (iterate (fn [^Throwable t]
-                                        (.getCause t))
-                                      e)))))
 
 (defn migrate!
-  "Apply every Flyway migration found at the given classpath
-   `locations` to `ds`. Accepts a single string or a coll of strings.
-   Returns `ds`."
+  "Install the single canonical V1 schema. Existing databases whose applied V1
+   checksum differs are rejected: this flag-day schema has no compatibility or
+   repair path."
   [^DataSource ds locations]
-  (let [locs
-        (cond (string? locations) [locations]
-              (sequential? locations) (vec locations)
-              :else (throw (ex-info "locations must be a string or coll of strings"
-                                    {:type :persistance/invalid-migration-locations
-                                     :got (type locations)})))
-
-        rp
-        (index-resource-provider locs)
-
-        ;; DEV ESCAPE HATCH: when an already-applied migration (e.g. V1) is
-        ;; edited in place, Flyway's on-migrate validation throws a checksum
-        ;; mismatch and every DB open fails - which wedges the TUI render loop.
-        ;; Set VIS_DB_ALLOW_SCHEMA_DRIFT=1 to tolerate the drift (skip validation
-        ;; + ignore mismatch states) so you can keep working WITHOUT nuking
-        ;; ~/.vis/vis.mdb. NOTE: an edited-in-place migration is NOT re-applied -
-        ;; only NEW V*__ files run. Leave this OFF in prod (the guard exists to
-        ;; catch real schema drift).
-        allow-drift?
-        (contains? #{"1" "true" "yes"}
-                   (some-> (System/getenv "VIS_DB_ALLOW_SCHEMA_DRIFT")
-                           str/trim
-                           str/lower-case))
-
+  (let [locs (cond (string? locations) [locations]
+                   (sequential? locations) (vec locations)
+                   :else (throw (ex-info "locations must be a string or coll of strings"
+                                         {:type :persistance/invalid-migration-locations
+                                          :got (type locations)})))
+        rp (index-resource-provider locs)
         ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
         (cond-> (-> (org.flywaydb.core.Flyway/configure)
                     (.dataSource ds)
@@ -131,30 +101,6 @@
                     (.baselineOnMigrate true)
                     (.baselineVersion "0")
                     (.mixed true))
-          allow-drift?
-          (-> (.validateOnMigrate false)
-              (.ignoreMigrationPatterns ^"[Ljava.lang.String;" (into-array String ["*:*"])))
-
-          ;; native image: serve migrations explicitly (dir listing unavailable)
-          rp
-          (.resourceProvider rp))
-
-        ^org.flywaydb.core.Flyway flyway
-        (.load cfg)]
-
-    (try (.migrate flyway)
-         (catch Throwable e
-           ;; NON-DESTRUCTIVE self-heal. An in-place edit of an already-applied
-           ;; migration (e.g. a V1 comment/format tweak) drifts its recorded
-           ;; checksum and wedges every DB open. `repair` realigns the
-           ;; checksums/descriptions in `flyway_schema_history` to the current
-           ;; source — it touches ONLY that metadata table, never a data row — then
-           ;; we re-run migrate. All persisted history is preserved (no nuke).
-           ;; A genuine STRUCTURAL edit still needs a NEW V* file; repair only
-           ;; realigns checksum drift, so if migrate still fails after repair the
-           ;; real error surfaces. Skipped under allow-drift? (validation already
-           ;; off, so a mismatch never throws here).
-           (if (and (not allow-drift?) (checksum-mismatch-error? e))
-             (do (.repair flyway) (.migrate flyway))
-             (throw e))))
+          rp (.resourceProvider rp))]
+    (.migrate (.load cfg))
     ds))

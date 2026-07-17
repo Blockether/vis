@@ -257,7 +257,7 @@
                             :active-tab-id :main
                             :tab-locals {}
                             :render-version 0})
-      (state/dispatch [:set-workspace {:id "ws-1" :root "/tmp/new"}])
+      (state/dispatch [:set-workspace {"id" "ws-1" "root" "/tmp/new"}])
       (expect (= "/tmp/new" (:workspace/root @state/app-db)))
       (expect (= "/tmp/new" (get-in @state/app-db [:tab-locals :main :workspace/root]))))
   (it "caps workspaces at eight total entries"
@@ -728,7 +728,7 @@
                   :scroll {:mode :follow :pos 80}}
               {db' :db} (message-received-fn db
                                              [:message-received :main
-                                              [:ir {} [:p {} [:span {} "a big table"]]]
+                                              [:ast {} [:p {} [:span {} "a big table"]]]
                                               {:client-turn-id pending-id}])]
 
           (expect (= scroll/follow (:scroll db')))))
@@ -1483,7 +1483,7 @@
           (atom [])
 
           trace
-          [{:provider-id :p1 :model "m1" :status 429 :reason :transient-error}]]
+          [{"provider_id" "p1" "model" "m1" "status" 429 "reason" "transient_error"}]]
 
       (with-redefs [vis/worker-future
                     (fn [_label thunk]
@@ -1499,13 +1499,13 @@
 
                     chat/turn!
                     (fn [_session _text _opts]
-                      {:answer [:ir {} [:p {} [:span {} "ok"]]]
-                       :model "m2"
-                       :provider :p2
-                       :llm-selected {:provider :p1 :model "m1"}
-                       :llm-actual {:provider :p2 :model "m2"}
-                       :llm-fallback? true
-                       :llm-routing-trace trace})]
+                      {"content" [{"id" "b1" "type" "prose" "markdown" "ok"}]
+                       "model" "m2"
+                       "provider" "p2"
+                       "llm_selected" {"provider" "p1" "model" "m1"}
+                       "llm_actual" {"provider" "p2" "model" "m2"}
+                       "is_llm_fallback" true
+                       "llm_routing_trace" trace})]
 
         (session-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
         ;; The turn also dispatches workspace re-sync + live F2 ctx-panel
@@ -1518,9 +1518,9 @@
           (expect (= :message-received event-id))
           (expect (= :main workspace-id))
           (expect (= "m2" (:model metadata)))
-          (expect (= :p2 (:provider metadata)))
-          (expect (= {:provider :p1 :model "m1"} (:llm-selected metadata)))
-          (expect (= {:provider :p2 :model "m2"} (:llm-actual metadata)))
+          (expect (= "p2" (:provider metadata)))
+          (expect (= {"provider" "p1" "model" "m1"} (:llm-selected metadata)))
+          (expect (= {"provider" "p2" "model" "m2"} (:llm-actual metadata)))
           (expect (true? (:llm-fallback? metadata)))
           (expect (= trace (:llm-routing-trace metadata)))))))
   (it
@@ -1572,7 +1572,7 @@
               reset-db (reset-input-fn sent-db [:reset-input])
               restored-db (:db (message-received-fn
                                  reset-db
-                                 [:message-received [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                                 [:message-received [:ast {} [:p {} [:span {} "Cancelled by user."]]]
                                   {:status :cancelled}]))]
 
           (expect (= initial-messages (:messages restored-db)))
@@ -1670,7 +1670,7 @@
 
             {:keys [db fx]}
             (message-received-fn db
-                                 [:message-received :main [:ir {} [:p {} [:span {} "ok"]]]
+                                 [:message-received :main [:ast {} [:p {} [:span {} "ok"]]]
                                   {:client-turn-id pending-id}])]
 
         (expect (= [[:dispatch [:drain-pending :main]]] fx))
@@ -1788,7 +1788,7 @@
             {:keys [db fx]}
             (message-received-fn db
                                  [:message-received :main
-                                  [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                                  [:ast {} [:p {} [:span {} "Cancelled by user."]]]
                                   {:status :cancelled :client-turn-id pending-id}])]
 
         (expect (= [[:dispatch [:restore-pending-to-input :main]]] fx))
@@ -2050,7 +2050,7 @@
                                        :turn-start-ms 0
                                        :scroll scroll/follow
                                        :render-version 0})
-                 (state/dispatch [:message-received (vis/markdown->ir "Could not reach provider")
+                 (state/dispatch [:message-received (vis/markdown->ast "Could not reach provider")
                                   {:status :error :client-turn-id "t1"}])
                  (let [db @state/app-db]
                    (expect (false? (:loading? db)))

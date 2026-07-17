@@ -40,7 +40,7 @@
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt])
   (:import [java.time Instant ZoneId]
@@ -66,8 +66,11 @@
 (defn- git-change-bits
   "Per-kind changed-file counts `~modified +created -deleted` (only nonzero
    segments shown), or nil when the working tree is clean."
-  [{:keys [modified created deleted]}]
-  (let [m
+  [status]
+  (let [{:strs [modified created deleted]}
+        status
+
+        m
         (long (or modified 0))
 
         c
@@ -91,12 +94,12 @@
 (defn- git-status-bits
   "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
    style: changed-file counts then `⇡ahead ⇣behind`; a branch with NO
-   upstream configured (`:upstream?` explicitly false) shows `∅` — no
+   upstream configured (`is_upstream` explicitly false) shows `∅` — no
    remote to compare against, so ahead/behind are meaningless. `∅` (not a
    warning glyph: nothing is wrong) is a bare NARROW char, safe for the
    lanterna cell grid (VS-16 emoji are wide and desync the paint). Clean
    *and* synced yields nil so the branch name stands alone — no glyph."
-  [{:keys [ahead behind upstream?] :as status}]
+  [{:strs [ahead behind is_upstream] :as status}]
   (let [ahead
         (long (or ahead 0))
 
@@ -122,14 +125,14 @@
           (seq sync)
           (conj (str/join " " sync))
 
-          (false? upstream?)
+          (false? is_upstream)
           (conj "∅"))]
 
     (when (seq parts) (str/join " " parts))))
 (defn- git-repo-label
   "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
    the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)`."
-  [{:keys [repo branch] :as status}]
+  [{:strs [repo branch] :as status}]
   (str "~/"
        (or repo "?")
        " ("
@@ -145,7 +148,7 @@
       (str "~" (subs path (count home)))
       (str path))))
 (defn- git-footer-spans
-  [{:keys [workspace? draft? draft-root] :as status}]
+  [{:strs [is_workspace is_draft draft_root] :as status}]
   ;; The chord rides ON the chip (like the `resources N (C-x s)` /
   ;; `filesystem N (C-x d)` buttons) so C-x g is discoverable right where the
   ;; git button lives, not only in the help overlay.
@@ -155,19 +158,19 @@
       ;; detached HEAD, no-upstream) are noise — show the draft's location
       ;; (so the user knows WHERE the isolated tree lives) and how many
       ;; files differ, all in one chunk.
-      draft? [{:text (str " DRAFT "
-                          (if draft-root (abbreviate-home draft-root) "draft")
-                          (when-let [bits (git-change-bits status)]
-                            (str " (" bits ")"))
-                          (when chord (str " (" chord ")"))
-                          " ")
-               :fg t/footer-warning-fg
-               :bold? true
-               :region :right
-               :priority 2
-               :tint :draft
-               :kind :footer-git}]
-      workspace?
+      is_draft [{:text (str " DRAFT "
+                            (if draft_root (abbreviate-home draft_root) "draft")
+                            (when-let [bits (git-change-bits status)]
+                              (str " (" bits ")"))
+                            (when chord (str " (" chord ")"))
+                            " ")
+                 :fg t/footer-warning-fg
+                 :bold? true
+                 :region :right
+                 :priority 2
+                 :tint :draft
+                 :kind :footer-git}]
+      is_workspace
       [{:text (str " " git-label " " (git-repo-label status) (when chord (str " (" chord ")")) " ")
         :fg t/footer-fg-strong
         :bold? true
@@ -181,8 +184,8 @@
               :region :right
               :priority 2}])))
 (def ^:private session-cost-keys
-  [:input-cost :input-uncached-cost :input-cached-cost :input-cache-write-cost :cache-read-cost
-   :cache-write-cost :output-cost :total-cost])
+  ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
+   "cache_write_cost" "output_cost" "total_cost"])
 (defn- add-cost-slot
   [acc cost k]
   (let [v (get cost k)]
@@ -190,7 +193,7 @@
 (defn- add-message-cost
   [acc {:keys [cost]}]
   (cond (map? cost) (reduce #(add-cost-slot %1 cost %2) acc session-cost-keys)
-        (number? cost) (update acc :total-cost (fnil + 0.0) (double cost))
+        (number? cost) (update acc "total_cost" (fnil + 0.0) (double cost))
         :else acc))
 (defn- session-cost
   "Cumulative session cost across assistant turns. Preserves detailed
@@ -214,17 +217,16 @@
   [acc {:keys [tokens]}]
   (if (map? tokens)
     (-> acc
-        (add-token-slot tokens :input [:input])
-        (add-token-slot tokens :output [:output])
-        (add-token-slot tokens :cached-input [:cached-input :input-cached :cached]))
+        (add-token-slot tokens "input" ["input"])
+        (add-token-slot tokens "output" ["output"])
+        (add-token-slot tokens "cached" ["cached"]))
     acc))
 (defn- session-tokens
-  "Cumulative session token usage across assistant turns. Returns nil
-   when no message carried usage. The legacy `:cached` field is cached
-   input."
+  "Cumulative session token usage across assistant turns (canonical
+   string-keyed map). Returns nil when no message carried usage."
   [messages]
   (let [totals (reduce add-message-tokens {} messages)]
-    (when (seq totals) (merge {:input 0 :output 0 :cached-input 0} totals))))
+    (when (seq totals) (merge {"input" 0 "output" 0 "cached" 0} totals))))
 (defonce ^:private usage-cache (atom {:messages nil :tokens nil :cost nil}))
 (defn- session-usage
   "Cumulative session `{:tokens :cost}`, MEMOIZED by the messages vector's
@@ -476,7 +478,7 @@
         entry
         (or (some #(when (= (:id %) active-id) %) tabs) (first tabs))]
 
-    (or (:workspace/root entry) (:root (:workspace entry)))))
+    (or (:workspace/root entry) (get (:workspace entry) "root"))))
 
 (defn- build-segments
   "Vector of `{:text :fg :bold? :region :priority}`.
@@ -518,10 +520,10 @@
         (:workspace db)
 
         ws-root
-        (or (:workspace/root db) (:root ws) (active-tab-workspace-root db))
+        (or (:workspace/root db) (get ws "root") (active-tab-workspace-root db))
 
         in-draft?
-        (some? (:fork-ms ws))
+        (some? (get ws "fork_ms"))
 
         ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
         ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
@@ -531,13 +533,13 @@
         ;; (`start-workspace-refresh-thread!`), so the count tracks reality without
         ;; the render thread ever shelling out to git.
         git-status
-        (:git ws)
+        (get ws "git")
 
         git-spans
         (git-footer-spans (cond-> git-status
                             in-draft?
-                            (assoc :draft?
-                              true :draft-root
+                            (assoc "is_draft"
+                              true "draft_root"
                               (str ws-root))))
 
         ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
@@ -553,7 +555,7 @@
         ;; affordance is discoverable here, not buried; /fs and /root manage it
         ;; (the web twin is the clickable footer dirs button).
         dir-count
-        (inc (count (try (lp/workspace-filesystem-roots ws) (catch Throwable _ nil))))]
+        (inc (count (get ws "filesystem_roots")))]
 
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -714,7 +716,7 @@
 ;;            -> seg-map | [seg-map seg-map ...] | nil)}]}
 ;;
 ;; Each seg-map:
-;;   {:ir         [:ir {?:fg-role} & blocks]    ;; required
+;;   {:ast         [:ast {?:fg-role} & blocks]    ;; required
 ;;    :region     :left|:center|:right          ;; default :left
 ;;    :priority   N                             ;; default 3
 ;;    :row        0|1                           ;; default 0
@@ -750,7 +752,7 @@
     t/footer-fg-strong
 
     t/footer-fg))
-(defn- ir->footer-text
+(defn- ast->footer-text
   "Walk IR to a single PLAIN-text string for the footer packer.
 
    Footer rows are painted by `draw-spans!` via `p/put-str!`, which
@@ -769,7 +771,7 @@
    multi-block IR still fits one footer row."
   ^String [ir]
   (let [lines
-        (ir-tui/ir->lines ir 1024)
+        (layout/ast->lines ir 1024)
 
         line-strs
         (mapv (fn [{:keys [runs]}]
@@ -782,9 +784,9 @@
    Returns nil for invalid / out-of-row entries."
   [seg ^long row]
   (when
-    (and (map? seg) (= row (long (or (:row seg) 0))) (vector? (:ir seg)) (= :ir (first (:ir seg))))
+    (and (map? seg) (= row (long (or (:row seg) 0))) (vector? (:ast seg)) (= :ast (first (:ast seg))))
     (let [raw
-          (ir->footer-text (:ir seg))
+          (ast->footer-text (:ast seg))
 
           ;; Chip kinds render through `components/button!`, whose cap wants the
           ;; label PRE-padded ` like this ` (the resources / dirs chips do the

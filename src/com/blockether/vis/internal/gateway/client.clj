@@ -8,7 +8,6 @@
    in ONE process."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
-            [clojure.walk :as walk]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.wire :as wire])
@@ -96,7 +95,7 @@
      (when (>= status 400)
        (throw (if (= status 401)
                 (ex-info (str "could not authenticate to the gateway (HTTP 401: "
-                              (or (:message parsed) "unauthorized")
+                              (or (get parsed "message") "unauthorized")
                               "). It is bound to a "
                               "non-loopback host, so a bearer token is required and this "
                               "client did not present a valid one. Run the TUI on the SAME "
@@ -105,7 +104,7 @@
                          (assoc parsed
                            :http-status status
                            :vis/user-error true))
-                (ex-info (or (:message parsed) (str "gateway HTTP " status))
+                (ex-info (or (get parsed "message") (str "gateway HTTP " status))
                          (assoc parsed :http-status status)))))
      parsed)))
 
@@ -124,7 +123,9 @@
              body
              (parse-json-body (:body response))]
 
-         (and (= 200 (:status response)) (= "ok" (:status body)) (true? (:secret_match body))))
+         (and (= 200 (:status response))
+              (= "ok" (get body "status"))
+              (true? (get body "secret_match"))))
        (catch Throwable _ false)))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
@@ -206,43 +207,49 @@
    detached gateway if needed. `:memory` is a programmer error for this client;
    headless one-shots stay in-process and should not call here.
 
+   Optional `:port`/`:host` overrides the bind used WHEN THIS CALL SPAWNS a fresh
+   daemon (e.g. `vis channels web --port`); a fresh daemon already registered for
+   the DB is a singleton and is attached to as-is, so the override is moot there.
+
    Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
    runs at most once per `entry-probe-ttl-ms`. Within that window a cached entry
    whose pid is still alive is trusted directly, so the TUI's chatty poll loop
    stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
    every gateway call."
-  []
-  (let [db (db-target)]
-    (when (discovery/memory-db? db)
-      (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-    (let [cached @cached-entry
-          now (System/nanoTime)
-          fresh-until (long @entry-fresh-until-ns)
-          fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
-                   true
-                   ;; Window elapsed (or no cached entry): pay for the real
-                   ;; HTTP probe once, then re-open the debounce window.
-                   (when (discovery/registry-fresh? cached probe-entry?)
-                     (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
-                     true))]
+  ([] (ensure-gateway! nil))
+  ([{:keys [port host]}]
+   (let [db (db-target)]
+     (when (discovery/memory-db? db)
+       (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
+     (let [cached @cached-entry
+           now (System/nanoTime)
+           fresh-until (long @entry-fresh-until-ns)
+           fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+                    true
+                    ;; Window elapsed (or no cached entry): pay for the real
+                    ;; HTTP probe once, then re-open the debounce window.
+                    (when (discovery/registry-fresh? cached probe-entry?)
+                      (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+                      true))]
 
-      (if fresh?
-        cached
-        ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
-        ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
-        ;; it self-registers, so give it a much longer runway.
-        (let [{:keys [entry] :as result} (discovery/discover-or-start!
-                                           {:db db :port DEFAULT_PORT :host DEFAULT_HOST}
-                                           :probe probe-entry?
-                                           :on-event (progress-reporter)
-                                           :timeout-ms (if (discovery/native-image?) 15000 60000))]
-          (if entry
-            (do (reset! cached-entry entry)
-                (reset! entry-fresh-until-ns (+ (System/nanoTime)
-                                                (* (long entry-probe-ttl-ms) 1000000)))
-                entry)
-            (throw (ex-info "gateway daemon did not become ready"
-                            (assoc result :type :gateway/start-timeout)))))))))
+       (if fresh?
+         cached
+         ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
+         ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
+         ;; it self-registers, so give it a much longer runway.
+         (let [{:keys [entry] :as result}
+               (discovery/discover-or-start!
+                 {:db db :port (or port DEFAULT_PORT) :host (or host DEFAULT_HOST)}
+                 :probe probe-entry?
+                 :on-event (progress-reporter)
+                 :timeout-ms (if (discovery/native-image?) 15000 60000))]
+           (if entry
+             (do (reset! cached-entry entry)
+                 (reset! entry-fresh-until-ns (+ (System/nanoTime)
+                                                 (* (long entry-probe-ttl-ms) 1000000)))
+                 entry)
+             (throw (ex-info "gateway daemon did not become ready"
+                             (assoc result :type :gateway/start-timeout))))))))))
 
 (defn- release-client!
   []
@@ -283,21 +290,21 @@
        (catch clojure.lang.ExceptionInfo e
          (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
-(defn list-sessions ([] (:sessions (send-json! "GET" "/v1/sessions"))) ([_channel] (list-sessions)))
+(defn list-sessions
+  ([] (get (send-json! "GET" "/v1/sessions") "sessions"))
+  ([_channel] (list-sessions)))
 
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
 (defn list-projects
-  "GET /v1/projects. `opts`: :channel (keyword/string, :all ⇒ every project),
-   :owner (string), :archived? (bool). Returns the :projects vector."
+  "GET /v1/projects — projects are CROSS-CHANNEL. `opts`: :owner (string),
+   :archived? (bool). Returns the :projects vector."
   ([] (list-projects nil))
-  ([{:keys [channel owner archived?]}]
+  ([{:keys [owner archived?]}]
    (let [qs
-         (->> [(when (and channel (not= :all channel) (not= "all" channel))
-                 (str "channel=" (enc (name channel)))) (when owner (str "owner=" (enc owner)))
-               (when archived? "archived=true")]
+         (->> [(when owner (str "owner=" (enc owner))) (when archived? "archived=true")]
               (remove nil?)
               (str/join "&"))
 
@@ -306,7 +313,7 @@
            (seq qs)
            (str "?" qs))]
 
-     (:projects (send-json! "GET" path)))))
+     (get (send-json! "GET" path) "projects"))))
 
 (defn create-project! [opts] (send-json! "POST" "/v1/projects" opts))
 
@@ -377,19 +384,31 @@
        (catch clojure.lang.ExceptionInfo e
          (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
-(defn list-turns [sid] (:turns (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns"))))
+(defn list-turns [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns")) "turns"))
 
-(defn transcript [sid] (:turns (send-json! "GET" (str "/v1/sessions/" (enc sid) "/transcript"))))
+(defn transcript
+  [sid]
+  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/transcript")) "turns"))
 
 (defn turn-trace
   "Canonical wire iterations of ONE persisted turn (nil when the id is
    unknown to the daemon)."
   [sid tid]
-  (:iterations (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/trace"))))
+  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/trace"))
+       "iterations"))
 
 (defn context-snapshot [sid] (send-json! "GET" (str "/v1/sessions/" (enc sid) "/context")))
 
-(defn session-model [sid] (:model (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model"))))
+(defn- pref<-wire
+  "Project the wire model pref `{\"provider\" \"model\"}` into the engine-shaped
+   `{:provider :model}` map every channel's model UI consumes — the ONE exit
+   where this wire value becomes engine data."
+  [m]
+  (when m {:provider (get m "provider") :model (get m "model")}))
+
+(defn session-model
+  [sid]
+  (pref<-wire (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model")) "model")))
 
 (defonce ^:private session-model-cache (atom {}))
 (defonce ^:private session-model-refreshing (atom #{}))
@@ -441,8 +460,7 @@
   "Vector of the session's live resource DATA maps from the daemon's registry
    (string-keyed, same shape `resources/list-resources` returns in-process)."
   [sid]
-  (mapv walk/stringify-keys
-        (:resources (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources")))))
+  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources")) "resources")))
 
 (defonce ^:private resources-cache (atom {}))
 (defonce ^:private resources-refreshing (atom #{}))
@@ -496,19 +514,16 @@
 (defn resource-logs
   "Captured output lines for a background via its daemon-side logs-fn, or nil."
   [sid rid]
-  (:lines (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/logs?rid=" (enc rid)))))
+  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/logs?rid=" (enc rid))) "lines"))
 
 (defn list-startables
   "Declarative startables the session can offer, each with the options the daemon
-   PROPOSED from its own env (kebab-keyed descriptors — the wire snake_cases
-   hyphenated keys on the way out, so we restore them via `kebab-keys` and the
-   TUI sees the SAME `:options-label`/`:dir?`/`:fields` shape the in-process web
-   modal does). Drives a remote 'add
+   PROPOSED from its own env — canonical string-keyed wire descriptors, the SAME
+   shape the in-process web modal reads. Drives a remote 'add
    background' flow: the client renders the dialogs from this, then posts the
    chosen one to `start-resource!`."
   [sid]
-  (mapv wire/kebab-keys
-        (:startables (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/startables")))))
+  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/startables")) "startables"))
 
 (defn start-resource!
   "Start the declared startable in the DAEMON (arg map {:kind :dir :selected}), so
@@ -545,37 +560,24 @@
    straight through into the `session-model-cached` snapshot so the footer
    chip flips on the very next frame instead of waiting out the cache TTL."
   [sid provider model]
-  (let [pref (:model (send-json! "PATCH"
-                                 (str "/v1/sessions/" (enc sid) "/model")
-                                 {:provider provider :model model}))]
+  (let [pref (pref<-wire (get (send-json! "PATCH"
+                                          (str "/v1/sessions/" (enc sid) "/model")
+                                          {:provider provider :model model})
+                              "model"))]
     (swap! session-model-cache assoc (str sid) {:at (System/currentTimeMillis) :val pref})
     pref))
 
 (defn- decode-workspace
-  "Re-hydrate a gateway workspace response into the engine's HYPHENATED
-   workspace-record shape the channels read (`:repo-root`, `:fork-ms`,
-   `:filesystem-roots` with `:trunk`/`:clone`/`:fork-ms`/`:backend`).
-
-   The wire munges keyword keys `-`->`_` on the way out (`wire/->wire`) while
-   `parse-json` keywordizes VERBATIM, so every hyphenated key comes back snake
-   (`:filesystem-roots` -> `:filesystem_roots`) and a channel reading the kebab
-   key sees nil — the TUI picker/footer never showed the added root. Invert the
-   munge GENERICALLY with `wire/kebab-keys` (recursively, ALL keys) so a
-   newly-added hyphenated workspace key can never silently reintroduce this bug,
-   then keyword-coerce the `:backend` VALUE (a keyword the wire stringified).
-   nil-safe; idempotent on already-kebab in-process input."
+  "The gateway serves the workspace in THE canonical string-keyed wire shape
+   (`wire/canonical`) on BOTH transports, so the remote client passes it through
+   VERBATIM — one representation, no re-hydration."
   [w]
-  (when w
-    (let [w (wire/kebab-keys w)]
-      (cond-> w
-        (contains? w :filesystem-roots)
-        (update :filesystem-roots
-                (fn [rs]
-                  (when (seq rs) (mapv #(cond-> % (:backend %) (update :backend keyword)) rs))))))))
+  w)
 
 (defn session-workspace-info
   [sid]
-  (decode-workspace (:workspace (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace")))))
+  (decode-workspace (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace"))
+                         "workspace")))
 
 (defn add-filesystem-root!
   "Add `path` as an extra filesystem root for `sid` IN THE DAEMON, returning the
@@ -583,30 +585,30 @@
    new root is what every channel reads back (fixing the local-only mutation that
    never reached the running session)."
   [sid path]
-  (decode-workspace (:workspace (send-json! "POST"
-                                            (str "/v1/sessions/" (enc sid) "/workspace/roots")
-                                            {:path path}))))
+  (decode-workspace
+    (get (send-json! "POST" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})
+         "workspace")))
 
 (defn remove-filesystem-root!
   "Remove `path` from `sid`'s extra filesystem roots IN THE DAEMON, returning the
    refreshed `session-workspace-info`."
   [sid path]
-  (decode-workspace (:workspace (send-json! "DELETE"
-                                            (str "/v1/sessions/" (enc sid) "/workspace/roots")
-                                            {:path path}))))
+  (decode-workspace
+    (get (send-json! "DELETE" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})
+         "workspace")))
 
 (defn change-root!
   "Repoint `sid`'s PRIMARY filesystem root to `path` IN THE DAEMON, returning the
    refreshed `session-workspace-info` (whose `:id` is the newly pinned workspace)."
   [sid path]
-  (decode-workspace (:workspace (send-json! "PATCH"
-                                            (str "/v1/sessions/" (enc sid) "/workspace/root")
-                                            {:path path}))))
+  (decode-workspace
+    (get (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/workspace/root") {:path path})
+         "workspace")))
 
 (defn submit-turn!
   [sid opts]
   (let [res (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns") opts)]
-    (if (:turn_id res) {:turn res} res)))
+    (if (get res "turn_id") {:turn res} res)))
 
 (defn update-queued-turn!
   [sid tid request]
@@ -723,41 +725,46 @@
    construction, carries the route. This is what lets `vis channels web`
    self-heal instead of parking on a `/ui` that 404s.
 
+   Optional `opts` (`{:port :host}`) overrides the bind used when THIS call has
+   to spawn a fresh daemon (the `vis channels web --port/--host` flags); it is
+   moot when a fresh daemon is already registered for the DB.
+
    The respawn is NON-DESTRUCTIVE. A blind POST /v1/admin/stop is refcount-blind:
    it would abort every in-flight turn and kill every session's background
    resources. So we force-restart the stale daemon ONLY when it is idle — no OTHER
    clients and no running turn. Otherwise we leave it untouched and surface a clear
    error. A transport blip on the probe (not a real 404) never triggers a restart.
    Returns the entry."
-  [path]
-  (let [entry (ensure-gateway!)]
-    (case (probe-route entry path)
-      ;; Mounted — or a transient transport blip we must not misread as \"missing\".
-      (:served :unreachable)
-      entry
+  ([path] (ensure-gateway-serving! path nil))
+  ([path opts]
+   (let [entry (ensure-gateway! opts)]
+     (case (probe-route entry path)
+       ;; Mounted — or a transient transport blip we must not misread as "missing".
+       (:served :unreachable)
+       entry
 
-      :absent
-      (let [st (status)
-            clients (long (or (:clients st) 0))
-            running (long (or (:running_turns st) 0))]
+       :absent
+       (let [st (status)
+             clients (long (or (get st "clients") 0))
+             running (long (or (get st "running_turns") 0))]
 
-        (when (or (> clients 1) (pos? running))
-          (throw (ex-info (str "gateway daemon does not serve " path
-                               " but is in use (" clients
-                               " client(s), " running
-                               " running turn(s)); refusing" " to force-restart a shared daemon")
-                          {:type :gateway/route-missing-busy
-                           :path path
-                           :clients clients
-                           :running-turns running})))
-        (stop-daemon!)
-        (await-daemon-down! (db-target) (:host entry) (:port entry))
-        (let [entry (ensure-gateway!)]
-          (when-not (= :served (probe-route entry path))
-            (throw (ex-info
-                     (str "gateway daemon is not serving " path " even after a fresh restart")
-                     {:type :gateway/route-missing :path path})))
-          entry)))))
+         (when (or (> clients 1) (pos? running))
+           (throw (ex-info (str "gateway daemon does not serve " path
+                                " but is in use (" clients
+                                " client(s), " running
+                                " running turn(s)); refusing" " to force-restart a shared daemon")
+                           {:type :gateway/route-missing-busy
+                            :path path
+                            :clients clients
+                            :running-turns running})))
+         (stop-daemon!)
+         (await-daemon-down! (db-target) (:host entry) (:port entry))
+         (let [entry (ensure-gateway! opts)]
+           (when-not (= :served (probe-route entry path))
+             (throw (ex-info
+                      (str "gateway daemon is not serving " path " even after a fresh restart")
+                      {:type :gateway/route-missing :path path})))
+           entry))))))
 
 (defn provider-status
   [provider-id]
@@ -768,62 +775,57 @@
         (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (:status (send-json-with-entry! entry "GET" path))))
+    (get (send-json-with-entry! entry "GET" path) "status")))
 
 (defn- wire-enum [x] (if (string? x) (keyword x) x))
-
-(defn- wire-get
-  [m kebab-key snake-key]
-  (if (contains? m kebab-key) (get m kebab-key) (get m snake-key)))
 
 (defn- provider-limit-window<-wire
   [window]
   (when (map? window)
-    (cond-> {:kind (wire-enum (wire-get window :kind :kind))}
-      (some? (wire-get window :unit :unit))
-      (assoc :unit (wire-enum (wire-get window :unit :unit)))
+    (cond-> {:kind (wire-enum (get window "kind"))}
+      (some? (get window "unit"))
+      (assoc :unit (wire-enum (get window "unit")))
 
-      (some? (wire-get window :size :size))
-      (assoc :size (wire-get window :size :size))
+      (some? (get window "size"))
+      (assoc :size (get window "size"))
 
-      (some? (wire-get window :resets-at-ms :resets_at_ms))
-      (assoc :resets-at-ms (wire-get window :resets-at-ms :resets_at_ms)))))
+      (some? (get window "resets_at_ms"))
+      (assoc :resets-at-ms (get window "resets_at_ms")))))
 
 (defn- provider-limit-row<-wire
   [row]
   (when (map? row)
-    (cond-> {:id (wire-enum (wire-get row :id :id))
-             :label (wire-get row :label :label)
-             :scope (wire-enum (wire-get row :scope :scope))
-             :kind (wire-enum (wire-get row :kind :kind))
-             :precision (wire-enum (wire-get row :precision :precision))
-             :source (wire-enum (wire-get row :source :source))
-             :unlimited? (wire-get row :unlimited? :unlimited?)}
-      (some? (wire-get row :subject :subject))
-      (assoc :subject (wire-get row :subject :subject))
+    (cond-> {:id (wire-enum (get row "id"))
+             :label (get row "label")
+             :scope (wire-enum (get row "scope"))
+             :kind (wire-enum (get row "kind"))
+             :precision (wire-enum (get row "precision"))
+             :source (wire-enum (get row "source"))
+             :unlimited? (get row "is_unlimited")}
+      (some? (get row "subject"))
+      (assoc :subject (get row "subject"))
 
-      (some? (wire-get row :window :window))
-      (assoc :window (provider-limit-window<-wire (wire-get row :window :window)))
+      (some? (get row "window"))
+      (assoc :window (provider-limit-window<-wire (get row "window")))
 
-      (some? (wire-get row :used :used))
-      (assoc :used (wire-get row :used :used))
+      (some? (get row "used"))
+      (assoc :used (get row "used"))
 
-      (some? (wire-get row :limit :limit))
-      (assoc :limit (wire-get row :limit :limit))
+      (some? (get row "limit"))
+      (assoc :limit (get row "limit"))
 
-      (some? (wire-get row :remaining :remaining))
-      (assoc :remaining (wire-get row :remaining :remaining))
+      (some? (get row "remaining"))
+      (assoc :remaining (get row "remaining"))
 
-      (some? (wire-get row :note :note))
-      (assoc :note (wire-get row :note :note)))))
+      (some? (get row "note"))
+      (assoc :note (get row "note")))))
 
 (defn- provider-limit-error<-wire
   [error]
   (when (map? error)
-    (cond-> {:type (wire-enum (wire-get error :type :type))
-             :message (wire-get error :message :message)}
-      (some? (wire-get error :data :data))
-      (assoc :data (wire-get error :data :data)))))
+    (cond-> {:type (wire-enum (get error "type")) :message (get error "message")}
+      (some? (get error "data"))
+      (assoc :data (get error "data")))))
 
 (defn- provider-limits<-wire
   "Restore the gateway provider-limits report to the engine/TUI shape using the
@@ -833,29 +835,29 @@
   [report]
   (when (map? report)
     (let [static
-          (or (wire-get report :static :static) {})
+          (or (get report "static") {})
 
           dynamic
-          (or (wire-get report :dynamic :dynamic) {})
+          (or (get report "dynamic") {})
 
           limits
-          (wire-get dynamic :limits :limits)
+          (get dynamic "limits")
 
           error
-          (wire-get report :error :error)]
+          (get report "error")]
 
-      (cond-> {:provider-id (wire-enum (wire-get report :provider-id :provider_id))
-               :status (wire-enum (wire-get report :status :status))
-               :fetched-at-ms (wire-get report :fetched-at-ms :fetched_at_ms)
+      (cond-> {:provider-id (wire-enum (get report "provider_id"))
+               :status (wire-enum (get report "status"))
+               :fetched-at-ms (get report "fetched_at_ms")
                :static (cond-> {}
-                         (some? (wire-get static :rpm :rpm))
-                         (assoc :rpm (wire-get static :rpm :rpm))
+                         (some? (get static "rpm"))
+                         (assoc :rpm (get static "rpm"))
 
-                         (some? (wire-get static :tpm :tpm))
-                         (assoc :tpm (wire-get static :tpm :tpm)))
+                         (some? (get static "tpm"))
+                         (assoc :tpm (get static "tpm")))
                :dynamic (cond-> {:limits (mapv provider-limit-row<-wire (or limits []))}
-                          (some? (wire-get dynamic :note :note))
-                          (assoc :note (wire-get dynamic :note :note)))}
+                          (some? (get dynamic "note"))
+                          (assoc :note (get dynamic "note")))}
         (some? error)
         (assoc :error (provider-limit-error<-wire error))))))
 
@@ -868,87 +870,56 @@
         (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (provider-limits<-wire (:report (send-json-with-entry! entry "GET" path)))))
+    (provider-limits<-wire (get (send-json-with-entry! entry "GET" path) "report"))))
 
-(defn current-seq [sid] (:seq (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq"))))
+(defn current-seq [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq")) "seq"))
 
 (defn events-since
   [sid cursor]
-  (:events (send-json! "GET"
-                       (str "/v1/sessions/" (enc sid)
-                            "/events-since?cursor=" (long (or cursor 0))))))
-
-(defn- ir-from-wire
-  "Undo gateway.wire's keyword->string JSON coercion for canonical IR vectors."
-  [x]
-  (cond (vector? x) (mapv (fn [i v]
-                            (if (and (zero? (long i)) (string? v)) (keyword v) (ir-from-wire v)))
-                          (range)
-                          x)
-        (map? x) (into {}
-                       (map (fn [[k v]]
-                              [(if (string? k) (keyword (str/replace k "_" "-")) k)
-                               (ir-from-wire v)]))
-                       x)
-        (sequential? x) (mapv ir-from-wire x)
-        :else x))
+  (get (send-json! "GET"
+                   (str "/v1/sessions/" (enc sid) "/events-since?cursor=" (long (or cursor 0))))
+       "events"))
 
 (defn- terminal-event->result
+  "Resolve a terminal event to the canonical settled content. The event has no
+   duplicate answer body; fetch the turn message that owns the content array."
   [event fallback-turn-id]
   (let [failed?
-        (or (= "turn.failed" (:type event)) (= "failed" (:status event)))
+        (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
 
         cancelled?
-        (= "cancelled" (:status event))
+        (= "cancelled" (get event "status"))
 
         needs-input?
-        (or (true? (:needs_input event)) (= "suspended" (:status event)))
+        (= "suspended" (get event "status"))
 
-        answer
-        (or (:answer event) (:answer_md event))]
+        turn-id
+        (or (get event "turn_id") fallback-turn-id)
 
-    (cond-> {:answer answer
-             :answer-ir (some-> (:answer_ir event)
-                                ir-from-wire)
-             :iteration-count (or (:iteration_count event) 1)
-             :duration-ms (:duration_ms event)
-             :session-turn-id (or (:engine_turn_id event) fallback-turn-id)
-             :utilization (:utilization event)}
-      (:model event)
-      (assoc :model (:model event))
+        message
+        (get-turn (get event "session_id") turn-id)
 
-      (:provider event)
-      (assoc :provider (:provider event))
+        blocks
+        (or (get message "content") [])]
 
-      (:llm_selected event)
-      (assoc :llm-selected (:llm_selected event))
-
-      (:llm_actual event)
-      (assoc :llm-actual (:llm_actual event))
-
-      (some? (:llm_fallback event))
-      (assoc :llm-fallback? (:llm_fallback event))
-
-      (seq (:llm_routing_trace event))
-      (assoc :llm-routing-trace (:llm_routing_trace event))
-
-      (:tokens event)
-      (assoc :tokens (wire/kebab-keys (:tokens event)))
-
-      (:cost event)
-      (assoc :cost (wire/kebab-keys (:cost event)))
-
-      (:confidence event)
-      (assoc :confidence (:confidence event))
-
+    (cond-> (-> (select-keys event
+                             ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
+                              "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
+                              "utilization"])
+                (assoc "content" blocks
+                       "iteration_count" (or (get message "iteration_count") 1)
+                       "session_turn_id" (or (get message "engine_turn_id") turn-id)))
       needs-input?
-      (assoc :status :needs-input)
+      (assoc "status" "needs_input")
 
       cancelled?
-      (assoc :status :cancelled)
+      (assoc "status" "cancelled")
 
       failed?
-      (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
+      (assoc "error"
+        (or (some #(when (= "error" (get % "type")) (get % "message")) blocks)
+            (get event "error")
+            "turn failed")))))
 
 (defn- sse-response!
   "Open the gateway SSE stream for `sid` resuming at `cursor`. Returns the
@@ -1042,7 +1013,7 @@
 
                          (if-not event
                            (recur [])
-                           (do (when-let [s (:seq event)]
+                           (do (when-let [s (get event "seq")]
                                  (swap! cursor* max (long s)))
                                (or (handle event) (recur [])))))
                        (if (str/starts-with? line "data: ")
@@ -1205,11 +1176,11 @@
                                event (when (seq data) (wire/parse-json data))]
 
                            (when event
-                             (let [esid (str (:session_id event))
+                             (let [esid (str (get event "session_id"))
                                    {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
 
                                (when (seq sinks)
-                                 (when-let [s (:seq event)]
+                                 (when-let [s (get event "seq")]
                                    (swap! cursor-atom max (long s)))
                                  (doseq [[_ sink] sinks]
                                    (try (sink event) (catch Throwable _ nil))))))
@@ -1324,16 +1295,16 @@
    terminal is synthesized instead of blocking on a turn that never starts."
   [event wanted-turn-id]
   (let [type
-        (:type event)
+        (get event "type")
 
         own?
-        (= (str (:turn_id event)) (str wanted-turn-id))]
+        (= (str (get event "turn_id")) (str wanted-turn-id))]
 
     (cond (and own? (contains? #{"turn.completed" "turn.failed"} type)) [:terminal event]
           (and own? (= "turn.queued.deleted" type)) [:terminal
                                                      (assoc event
-                                                       :type "turn.completed"
-                                                       :status "cancelled")]
+                                                       "type" "turn.completed"
+                                                       "status" "cancelled")]
           own? [:forward event]
           (contains? wire/queue-mirror-event-types type) [:forward event]
           :else [:skip event])))
@@ -1399,10 +1370,10 @@
         (:turn submitted)
 
         turn-id
-        (:turn_id turn)]
+        (get turn "turn_id")]
 
-    (when-let [e (:error submitted)]
-      (throw (ex-info (or (:message submitted) (str e)) submitted)))
+    (when-let [e (or (:error submitted) (get submitted "error"))]
+      (throw (ex-info (or (:message submitted) (get submitted "message") (str e)) submitted)))
     (terminal-event->result (read-events-until! sid 0 turn-id on-event) turn-id)))
 
 (defn attach-turn-sync!

@@ -109,7 +109,7 @@
                   ;; segment renders one `:fg-role`, so the cycle hint shares the
                   ;; button's strong color. This is the DEFAULT, channel-level model
                   ;; decoration every provider reuses — no per-provider footer needed.
-                  :ir [:ir {}
+                  :ast [:ast {}
                        [:p {}
                         [:span {}
                          (str display
@@ -127,7 +127,7 @@
                   :kind :footer-model
                   :bold? true}]
           overload
-          (conj {:ir [:ir {}
+          (conj {:ast [:ast {}
                       [:p {}
                        [:span {}
                         (str "⚠ " (:overloaded-model overload)

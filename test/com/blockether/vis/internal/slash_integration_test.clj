@@ -117,8 +117,8 @@
              (it "IR :slash/body renders to Markdown for answer_markdown column"
                  (with-store
                    (fn [store]
-                     (let [ir
-                           [:ir {} [:p {} [:span {} "Hello "] [:strong {} "world"]]]
+                     (let [ast
+                           [:ast {} [:p {} [:span {} "Hello "] [:strong {} "world"]]]
 
                            env
                            (slash-env store
@@ -126,7 +126,7 @@
                                         :slash/run-fn (fn [_]
                                                         {:slash/status :ok
                                                          :slash/title "IR body"
-                                                         :slash/body ir})}])
+                                                         :slash/body ast})}])
 
                            result
                            (with-redefs [lp/iteration-loop (fn [& _]

@@ -19,34 +19,47 @@
    they are NOT in this set."
   (:require [clojure.string :as str]))
 
-(def display-keys
-  "Every field carried VERBATIM from the loop to a channel to render a form — the
-   complete passthrough set, NOT the handful the gateway computes/renames itself
-   (`:stdout`/`:error` are bounded, `:silent`/`:duration_ms` are derived; those
-   stay explicit gateway overrides). Add a new verbatim display field HERE and
-   `->display`/`<-wire` flow it across every boundary.
+(def ^:private display-fields
+  "Every field carried VERBATIM from the loop to a channel to render a form,
+   paired with its literal gateway wire key. This is the complete passthrough set,
+   NOT the handful the gateway computes/renames itself (`:stdout`/`:error` are
+   bounded, `:silent`/`:duration_ms` are derived; those stay explicit gateway
+   overrides). Add a new verbatim display field HERE; `->display`/`<-wire` then
+   flow it across every boundary without runtime key rewriting.
 
    Grouped: the source the model wrote, the result surfaces (raw + the
    pre-rendered op-card), the native-tool badge identity (label + colour), the
    per-form display projections, the tool-call linkage, and the repair/timeout
    flags channels surface."
   [;; source
-   :code :comment :scope :started-at-ms
+   [:code "code"]
+   [:comment "comment"]
+   [:scope "scope"]
+   [:started-at-ms "started_at_ms"]
    ;; result surfaces — the raw value, the pre-rendered op-card body, and the
-   ;; op-card HEADLINE (a tool-authored summary like "5 hits in 1 file", never a
-   ;; first-line slice of the body)
-   :result :result-render :result-summary
-   ;; MULTI-card: a python block that print()ed several tool results carries one
-   ;; CANONICAL MINI-FORM per result here (each shaped like a single form's display
-   ;; fields), so `result-cards`/`result-card` render each and `<-wire` round-trips
-   ;; them by recursing over this vector. nil/absent for a single-result form.
-   :cards
-   ;; native-tool op-card badge identity
-   :vis/tool-name :tool-color-role
+   ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
+   [:result "result"]
+   [:result-render "result_render"]
+   [:result-summary "result_summary"]
+   ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
+   [:cards "cards"]
+   ;; native-tool op-card badge identity; wire keys intentionally drop namespaces
+   [:vis/tool-name "tool_name"]
+   [:tool-color-role "tool_color_role"]
    ;; display projections
-   :render-segments :result-kind :result-detail :tag
+   [:render-segments "render_segments"]
+   [:result-kind "result_kind"]
+   [:result-detail "result_detail"]
+   [:tag "tag"]
    ;; tool-call linkage + status flags channels surface
-   :svar/tool-call-id :timeout? :repaired? :auto-repaired?])
+   [:svar/tool-call-id "tool_call_id"]
+   [:timeout? "is_timeout"]
+   [:repaired? "is_repaired"]
+   [:auto-repaired? "is_auto_repaired"]])
+
+(def display-keys
+  "The canonical engine keys projected by `->display` and recovered by `<-wire`."
+  (mapv first display-fields))
 
 (def ^:private label-overrides
   "Native-tool WIRE name → a nicer op-card LABEL. Most tools read fine uppercased
@@ -352,56 +365,21 @@
           {}
           display-keys))
 
-(defn- spellings
-  "Every keyword + string spelling of a base name, snake_case and kebab-case."
-  [base]
-  (let [snake
-        (str/replace base "-" "_")
 
-        kebab
-        (str/replace base "_" "-")]
-
-    [(keyword base) (keyword snake) (keyword kebab) base snake kebab]))
-
-(defn- wire-key-variants
-  "The on-the-wire spellings a display key may arrive as after serialization.
-   CRUCIAL for namespaced keys: `(name :vis/tool-name)` drops the namespace, so a
-   wire key like `\"vis/tool_name\"` would be missed — include the FULL `ns/name`
-   spelling alongside the bare name so the round-trip survives however the wire
-   encodes it."
-  [k]
-  (let [n
-        (name k)
-
-        ns
-        (namespace k)]
-
-    (distinct (concat [k] (when ns (spellings (str ns "/" n))) (spellings n)))))
-
-(defn- wire-get
-  "Read one display key off a wire event, tolerant of snake_case / namespaced /
-   string keys."
-  [event k]
-  (some #(let [v
-               (get event %)]
-
-           (when (some? v) v))
-        (wire-key-variants k)))
 
 (defn <-wire
   "Read the canonical display fields back off a gateway WIRE event into a form,
-   tolerant of snake_case keys and re-keywording the keyword-valued fields. The
-   single inbound projection the channels use — the mirror of `->display`."
+   using the literal wire spelling declared beside each engine key in
+   `display-fields`, and re-keywording keyword-valued fields. The single inbound
+   projection channels use — the mirror of `->display`."
   [event]
-  (reduce (fn [acc k]
-            (let [v (wire-get event k)]
+  (reduce (fn [acc [k wire-k]]
+            (let [v (get event wire-k)]
               (cond (nil? v) acc
                     (keyword-valued k) (assoc acc k (keyword v))
-                    ;; `:cards` is a vector of canonical MINI-FORMS — each crossed the
-                    ;; JSON wire with snake_case keys + a stringified `:tool-color-role`,
-                    ;; exactly what `<-wire` itself normalizes. Recurse so the nested
-                    ;; colour keyword survives the hop the same way the top-level one does.
+                    ;; `:cards` is a vector of canonical MINI-FORMS. Recurse so
+                    ;; each nested colour keyword survives the JSON hop too.
                     (= k :cards) (assoc acc k (mapv <-wire v))
                     :else (assoc acc k v))))
           {}
-          display-keys))
+          display-fields))

@@ -7,9 +7,9 @@
    the card / badge while persisted ones kept it. If a NEW key is added to
    `form/display-keys` but a boundary stops carrying it, `survives-the-gateway`
    fails — no more chasing it through tmux."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.form :as form]
+  (:require [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private chunk->event @#'gw/chunk->event)
@@ -50,25 +50,13 @@
     ;; everything else: a distinctive string
     (str "sentinel-" (namespace k) "-" (name k))))
 
-(defn- wire-key
-  [k]
-  (if (keyword? k)
-    (str/replace (str (when (namespace k) (str (namespace k) "/")) (name k)) "-" "_")
-    k))
-
 (defn- simulate-wire
-  "Mimic the JSON wire: keyword KEYS become snake_case strings and keyword VALUES
-   become plain strings (the exact lossiness `<-wire` must undo). Recurses into a
-   `:cards` vector so the NESTED per-card keys/colours get stringified too — the
-   round-trip then proves `<-wire` recovers them, not just the top-level fields."
+  "The REAL wire hop: `wire/canonical` is by construction what a client holds
+   after `parse-json` ∘ `json-str` — snake_case STRING keys, keyword values
+   stringified, namespaces dropped. Using the real codec keeps this guard
+   honest (a hand-rolled mimic drifted from the actual key munge)."
   [payload]
-  (into {}
-        (map (fn [[k v]]
-               [(wire-key k)
-                (cond (keyword? v) (subs (str v) 1)
-                      (and (vector? v) (every? map? v)) (mapv simulate-wire v)
-                      :else v)]))
-        payload))
+  (wire/canonical payload))
 
 (defdescribe
   form-gateway-roundtrip-test

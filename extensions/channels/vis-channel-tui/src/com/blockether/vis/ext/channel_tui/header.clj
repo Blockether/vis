@@ -28,7 +28,7 @@
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             ;; Channel-agnostic header policy (slot ratios, workspace
             ;; switcher padding/cap, glyphs, default labels). Lives in
@@ -47,9 +47,9 @@
 ;;    [{:id :my.extension/header-row
 ;;      :fn (fn [db cols] -> ir | nil)}]}
 ;;
-;; The fn returns CANONICAL IR (`[:ir {?:align ?:fg-role ...} &
+;; The fn returns CANONICAL IR (`[:ast {?:align ?:fg-role ...} &
 ;; blocks]`) — channel-agnostic data, NOT a paint thunk. The TUI
-;; walks the IR via `ir-tui/ir->lines` and paints the resulting
+;; walks the IR via `layout/ast->lines` and paints the resulting
 ;; styled lines into rows; other channels (Telegram, web) translate
 ;; the same IR to their own surface (markdown, HTML, etc.).
 ;;
@@ -150,12 +150,12 @@
   (let [disabled (get-in db [:settings :contributors-disabled])]
     (and (set? disabled) (contains? disabled contribution-id))))
 
-(defn- ir-root?
+(defn- ast-root?
   "Lightweight check: shape returned by contribution fn is canonical IR.
    Does NOT validate inner blocks; just confirms the envelope so
-   we know to walk it. Bad inner shape will be caught by ir-tui."
+   we know to walk it. Bad inner shape will be caught by layout."
   [x]
-  (and (vector? x) (= :ir (first x)) (>= (count x) 1)))
+  (and (vector? x) (= :ast (first x)) (>= (count x) 1)))
 
 (defn- fg-role->color
   "Map an extension-declared `:fg-role` keyword to a TUI theme color.
@@ -194,11 +194,11 @@
       ;; default = :center
       (long (max edge-pad (quot (- cols line-w) 2))))))
 
-(defn- ir->header-row-spec
+(defn- ast->header-row-spec
   "Convert canonical IR (returned by a header-row hook) into the
    internal row spec `{:height :draw!}` used by `draw-header!`.
 
-   - Walks the IR via `ir-tui/ir->lines` to get styled lines.
+   - Walks the IR via `layout/ast->lines` to get styled lines.
    - Reads optional `:align` and `:fg-role` from the IR root attrs.
    - Returns nil when the IR walks to zero lines.
 
@@ -220,16 +220,16 @@
         wrap-w
         (max 1 (- cols 2))
 
-        ;; ir-tui returns vec of `{:runs [{:text :style}...]}`. We
+        ;; layout returns vec of `{:runs [{:text :style}...]}`. We
         ;; convert to sentinel-prefixed plain strings via the
         ;; existing adapter so paint-styled-line! can render bold /
         ;; italic / code spans the same way every other styled line
         ;; in the TUI does.
         lines
-        (ir-tui/ir->lines ir wrap-w)
+        (layout/ast->lines ir wrap-w)
 
         line-strs
-        (when (seq lines) (ir-tui/lines->sentinel-strings lines))]
+        (when (seq lines) (layout/lines->sentinel-strings lines))]
 
     (when (seq line-strs)
       (let [fg (fg-role->color fg-role)]
@@ -275,7 +275,7 @@
                    (try (f db cols) (catch Throwable _ nil))
 
                    spec
-                   (when (ir-root? ir) (try (ir->header-row-spec ir cols) (catch Throwable _ nil)))]
+                   (when (ast-root? ir) (try (ast->header-row-spec ir cols) (catch Throwable _ nil)))]
              :when (and spec (pos? (long (or (:height spec) 0))))]
 
          {:id id :spec spec})))
