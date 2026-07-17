@@ -1632,6 +1632,23 @@
         (p/styled g [p/ITALIC] (p/put-str! g (right-align shown) (inc (long footer-row)) shown)))
       (p/clear-styles! g))))
 
+(defn- assistant-usage?
+  "True when a message carries REAL provider usage — positive input/output
+   tokens or a positive cost. A CANCELLED turn normally drops its meta footer
+   (a stray Esc that ran nothing reads as clutter under a \"Cancelled\"
+   placeholder), but an interrupt that already BURNED tokens/cost must still
+   show what it spent — so the footer is kept for cancelled turns that pass
+   this predicate."
+  [{:keys [tokens cost]}]
+  (letfn [(pos-num [m k]
+            (let [v (get m k)]
+              (and (number? v) (pos? (double v)))))]
+    (boolean (or (pos-num tokens "input")
+                 (pos-num tokens "output")
+                 (cond (number? cost) (pos? (double cost))
+                       (map? cost) (pos-num cost "total_cost")
+                       :else false)))))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1781,7 +1798,8 @@
         ;; `/voice`-style toggle ran no model and took no meaningful time,
         ;; so "<model> / <time>" under it is pure noise.
         meta-str
-        (when (and (not user?) (not cancelled?) (not slash?)) (vis/meta-summary-line message))
+        (when (and (not user?) (not slash?) (or (not cancelled?) (assistant-usage? message)))
+          (vis/meta-summary-line message))
 
         ;; Two-tier footer: the main line stays clean; the routing/fallback
         ;; story rides a faint, italic second row that only exists on a fallback.
@@ -2926,7 +2944,8 @@
         (= :cancelled status)
 
         meta-str
-        (when (and (not= role :user) (not cancelled?)) (vis/meta-summary-line message))
+        (when (and (not= role :user) (or (not cancelled?) (assistant-usage? message)))
+          (vis/meta-summary-line message))
 
         fallback-note
         (when (and meta-str (not= role :user) (not cancelled?)) (vis/meta-fallback-note message))
