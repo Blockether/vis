@@ -206,6 +206,9 @@
               terminal-error?
               (terminal-error-output? (.toString err-acc))
 
+              eval-error?
+              (contains? new-status "eval-error")
+
               values'
               (cond-> values
                 v
@@ -220,10 +223,12 @@
               rx''
               (or rx2 root-ex)]
 
-          (if (or done? terminal-error?)
-            ;; Drain no further. Once "done" arrived the eval is complete; for
-            ;; terminal errors nREPL may never send done, and waiting for it
-            ;; turns a useful syntax error into a timeout.
+          (if (or done? terminal-error? eval-error?)
+            ;; Drain no further. Once "done" arrived the eval is complete; and the
+            ;; moment nREPL reports an "eval-error" status (or prints a terminal
+            ;; error on *err* without ever sending done) the eval has finished —
+            ;; waiting on a straggling done just turns a real error into a
+            ;; full-budget timeout. There is nothing to wait for once it errored.
             {"timed_out" false
              "value" (peek values')
              "values" values'
@@ -405,6 +410,18 @@
                      (when (map? m) (not-empty m)))))))
          (catch Throwable _ nil))))
 
+(defn- interrupt!
+  "Best-effort `interrupt` op on `session` so a TIMED-OUT eval's server-side
+   thread is actually stopped rather than left running. An abandoned eval keeps
+   the Clojure compile/RT lock, so the NEXT eval (a fresh cloned session) blocks
+   on that lock and burns its whole budget too — the multi-minute cascade. With
+   no `:interrupt-id` nREPL interrupts the session's currently-running eval,
+   which is exactly the one we cloned this session for. Bounded and swallows
+   everything so it is safe from the timeout path / a `finally`."
+  [session]
+  (try (collect-op session "interrupt" (+ (System/currentTimeMillis) 1000))
+       (catch Throwable _ nil)))
+
 (defn- close-session!
   "Send a `close` op so the nREPL server reaps the cloned session's executor
    thread. Every `eval!`/`probe!` clones a fresh session; without an explicit
@@ -488,7 +505,9 @@
                ;; (background reader still parked, late messages pending). Evict it
                ;; so the NEXT eval reconnects fresh instead of inheriting the wedge
                ;; — the cascade that historically stalled run_tests past its budget.
-               (when (get res "timed_out") (evict! host port))
+               ;; and interrupt the abandoned server-side eval so it can't run on
+               ;; holding the compile/RT lock and wedge the NEXT eval for minutes.
+               (when (get res "timed_out") (interrupt! session) (evict! host port))
                res)
              (finally
                ;; Reap the cloned session's server-side thread — otherwise every

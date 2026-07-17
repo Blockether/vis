@@ -73,7 +73,15 @@
                      (let [r (nc/eval! {:port port :code "(defn broken []])" :timeout-ms 5000})]
                        (expect (false? (get r "timed_out")))
                        (expect (contains? (get r "status") "eval-error"))
-                       (expect (re-find #"Syntax error reading source" (get r "err"))))))))
+                       (expect (re-find #"Syntax error reading source" (get r "err")))))))
+             (it "returns a runtime eval error immediately, never waiting out a large budget"
+                 (with-server (fn [port]
+                                ;; A generous budget: a healthy REPL must still bail the instant nREPL
+                                ;; reports the "eval-error" status, not park until timeout-ms elapses.
+                                (let [r (nc/eval! {:port port :code "(/ 1 0)" :timeout-ms 120000})]
+                                  (expect (false? (get r "timed_out")))
+                                  (expect (contains? (get r "status") "eval-error"))
+                                  (expect (< (long (get r "ms")) 10000)))))))
 
 (defdescribe connect-failure-test
              (it "throws :clj/nrepl-connect-failed on an obviously-closed port"
