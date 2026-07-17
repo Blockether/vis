@@ -387,7 +387,17 @@
         (:lang attrs)
 
         content
-        (or src "")
+        ;; Expand hard TABs to spaces up front (per line, from col 0) so the
+        ;; width measure / fold below and the painter agree: `putString`
+        ;; expands tabs to 4-col stops at paint time while `fold-cols`
+        ;; counts each as one column, which overflowed tab-separated tool
+        ;; output (e.g. `gh issue list`) past the bubble's right edge.
+        (let [raw (or src "")]
+          (if (neg? (.indexOf ^String raw (int \tab)))
+            raw
+            (->> (str/split raw #"\n" -1)
+                 (map p/expand-tabs)
+                 (str/join "\n"))))
 
         budget
         (max 1 (long width))

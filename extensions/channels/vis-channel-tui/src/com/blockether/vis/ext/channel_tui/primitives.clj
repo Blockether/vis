@@ -415,6 +415,40 @@
   ^long [s]
   (if (nil? s) 0 (TerminalTextUtils/displayColumns (str s))))
 
+(def ^:const tab-width
+  "Columns the lanterna fork's `putString` advances a hard TAB to. The fork
+   expands tabs to FIXED tab stops at paint time; kept in sync here so tab
+   expansion done before layout matches what the painter would emit."
+  4)
+
+(defn expand-tabs
+  "Replace every hard TAB in `s` with spaces up to the next `tab-width` tab
+   stop, counted from the START of `s` (column 0).
+
+   WHY: the fork's `putString` expands tabs to fixed 4-column stops at PAINT
+   time, but the width measure / soft-wrap (`display-width` / `fold-cols`,
+   which sanitize a TAB to a single `/`) count each tab as ONE column. So
+   `\t`-bearing tool output (e.g. `gh issue list`, any tab-separated columns)
+   was folded as if tabs were 1 column wide, then OVERFLOWED the bubble's
+   right edge once paint re-expanded them. Expanding up front makes
+   measure == fold == paint and leaves `putString` no tabs to re-expand.
+
+   Column tracking is by char count (ASCII tool output); nil/empty → \"\"."
+  ^String [s]
+  (let [^String s (str (or s ""))]
+    (if (neg? (.indexOf s (int \tab)))
+      s
+      (let [sb (StringBuilder.)
+            n (.length s)]
+
+        (dotimes [i n]
+          (let [c (.charAt s i)]
+            (if (= c \tab)
+              (dotimes [_ (- (long tab-width) (rem (.length sb) (long tab-width)))]
+                (.append sb \space))
+              (.append sb c))))
+        (.toString sb)))))
+
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
    prefix of `s` whose `display-width` is <= `max-cols` AND that does NOT

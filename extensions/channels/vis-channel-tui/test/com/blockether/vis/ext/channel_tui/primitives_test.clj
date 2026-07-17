@@ -110,6 +110,26 @@
             (it "nil is zero" (expect (= 0 (p/display-width nil))))
             (it "empty is zero" (expect (= 0 (p/display-width ""))))))
 
+(defdescribe expand-tabs-test
+             (describe "expand-tabs replaces hard TABs with 4-col-stop spaces (matches paint)"
+                       ;; Regression: tab-separated tool output (e.g. `gh issue list`)
+                       ;; folded as if each TAB were 1 column, then overflowed the bubble's
+                       ;; right edge once `putString` re-expanded tabs to 4-col stops.
+                       (it "aligns to the next 4-column stop, mirroring putString"
+                           (expect (= "38  OPEN    XY" (p/expand-tabs "38\tOPEN\tXY"))))
+                       (it "a leading tab pads to column 4"
+                           (expect (= "    X" (p/expand-tabs "\tX"))))
+                       (it "a tab sitting exactly on a stop advances a full width"
+                           (expect (= "abcd    e" (p/expand-tabs "abcd\te"))))
+                       (it "leaves tab-free input untouched (fast path)"
+                           (let [s "no tabs here"]
+                             (expect (identical? s (p/expand-tabs s)))))
+                       (it "nil / empty become empty string"
+                           (expect (= "" (p/expand-tabs nil)))
+                           (expect (= "" (p/expand-tabs ""))))
+                       (it "the expanded string carries no tabs"
+                           (expect (not (str/includes? (p/expand-tabs "a\tb\tc\td") "\t"))))))
+
 (defdescribe put-str-sanitizer-test
              (it "strips inline style sentinels before raw Lanterna putString"
                  (let [captured
