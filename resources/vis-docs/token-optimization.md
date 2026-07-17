@@ -34,10 +34,10 @@ The agent writes code; intermediate results bind to vars in the sandbox. A 200 K
 A fold is **distillation, not deletion** — it drops steps off the **wire** only, never from the database, so it is always safe and always recoverable. Once a step's output has served its purpose, the agent replaces it with a one-line gist:
 
 ```
-session_fold(["t2/i4"], "http timeout lives at http.py:52")
+session_fold(["t2/i4"], "http timeout lives at src/vis/net/http.py:52")
 ```
 
-The whole step — the tool call **and** its output — collapses off the wire, so later requests stop paying for it. The gist is the fold's **rationale**: what the steps established and why the hunt is now safe to drop — the decision, the number, and the `file:line` **anchor** that makes the fact addressable later, so a reader scanning back sees *why* those steps went away. What it drops is the **noise**: search sweeps, raw dumps, dead ends, superseded reads.
+The whole step — the tool call **and** its output — collapses off the wire, so later requests stop paying for it. The gist is the fold's **rationale**: what the steps established and why the hunt is now safe to drop — the decision, the number, and the **anchor** as a FULL workspace-relative `path:line` (never a bare filename or lone `@anchor`) that makes the fact addressable later, so a reader scanning back sees *why* those steps went away. What it drops is the **noise**: search sweeps, raw dumps, dead ends, superseded reads.
 
 One fold can target several steps at once — a list, a whole turn (a bare `"tN"`), or a range: `{"through": "tN/iN"}` (up to a step), `{"since": "tN/iN"}` (from a step onward), or `{"from": …, "to": …}` (a window). A wider fold **supersedes** a finer one it already covers, so the ledger never accumulates overlapping breadcrumbs.
 

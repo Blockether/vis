@@ -29,7 +29,8 @@ manages that window and *when*.
 - **The compression is structural, done by the same agent.** Because the agent
   that did the work is the one that folds it, the summary is written with full
   understanding of what mattered and what didn't — "http timeout fixed @
-  http.clj:52", not a lossy mechanical digest of raw bytes. Same agent, same
+  src/vis/net/http.clj:52" (a full workspace-relative path, always clickable),
+  not a lossy mechanical digest of raw bytes. Same agent, same
   task, a fundamentally different *view* of what the context should contain.
 
 The payoff is cost. A long task might touch forty steps, but only a handful

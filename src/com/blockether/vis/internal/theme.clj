@@ -54,7 +54,7 @@
   {:dialog-width-ratio 0.90
    :dialog-min-width 88
    :dialog-max-width 140
-   :dialog-height-ratio 0.92
+   :dialog-height-ratio 0.95
    :dialog-min-height 30
    :dialog-max-height 80
    :dialog-chrome-w 4
