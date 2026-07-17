@@ -477,12 +477,20 @@
 
                         turns
                         (try (vis/db-list-session-turns (:db-info env) session-id)
-                             (catch Throwable _ []))]
+                             (catch Throwable _ []))
+
+                        modified-at
+                        (or (->> turns
+                                 (keep :created-at)
+                                 (sort-by #(if (inst? %) (inst-ms %) 0))
+                                 last)
+                            (:created-at session))]
 
                     (cond-> {:id session-id
                              :channel (:channel session)
                              :title (:title session)
                              :created-at (:created-at session)
+                             :modified-at modified-at
                              :turn-count (count turns)}
                       (:external-id session)
                       (assoc :external-id (:external-id session)))))
@@ -875,9 +883,10 @@ to a file to open in a browser. Most useful for OTHER sessions."
 (def
   ^{:doc
     "await sessions()  # index of EVERY past conversation, newest-first
-Returns [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\"} ...]. Pass a channel
-keyword to filter. Take an id from here into session_state(id) / session_report_md(id) to
-investigate that conversation."
+Returns [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\", \"modified_at\"} ...],
+newest-first; `modified_at` is the latest turn's timestamp (falls back to `created_at` for
+empty sessions). Pass a channel keyword to filter. Take an id from here into
+session_state(id) / session_report_md(id) to investigate that conversation."
     :arglists '([] [channel])}
   sessions
   foundation-sessions)
@@ -897,7 +906,7 @@ investigate that conversation."
   [session-state-symbol session-report-md-symbol session-report-html-symbol sessions-symbol])
 
 (def introspection-prompt
-  "Cross-conversation introspection: sessions() lists every past conversation (id, title, turn_count, created_at, newest-first) — pass a channel keyword to filter. Take an id from there into session_state(id) or session_report_md(id).
+  "Cross-conversation introspection: sessions() lists every past conversation (id, title, turn_count, created_at, modified_at, newest-first — modified_at is the latest turn's time) — pass a channel keyword to filter. Take an id from there into session_state(id) or session_report_md(id).
 
 session_state(id) returns ONE dict — pick the keys you need, the whole map stays bound: `session` (identity + per-turn rollup: user_request, outcome, iteration_count, status, cost), `current_turn` (the live/last turn), `failures` (classified provider/tool errors + raw_preview), `diagnosis` (what went wrong + suggested fix), `session_forks` / `turn_retries` (retry + fork lineage), and `transcript` — the FULL payload: `transcript[\"totals\"]` (turns/iterations/tokens/cost), `transcript[\"turns\"]` = [{id, user_request, status, provider, model, iteration_count, failure_count, tokens, cost_usd, answer, iterations:[{id, position, status, duration_ms, blocks:[code/result]}]}], plus `transcript[\"timeline\"]` / `transcript[\"dialog\"]` / `transcript[\"calls\"]` for flattened views. GATHER by iterating those in python_execution — e.g. pull every turn's `answer`, grep code blocks for a symbol, or diff token/cost across turns — never dump the whole dict; slice to what you asked.
 
