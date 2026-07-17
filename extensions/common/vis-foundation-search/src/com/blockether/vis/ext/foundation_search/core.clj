@@ -1283,36 +1283,6 @@
                           (search-papers (str (get input "query")) (dissoc input "query")))}))
 
 (def search-symbols [web-symbol code-symbol papers-symbol])
-
-(def search-env
-  [{:name "EXA_API_KEY"
-    :label "Exa API key"
-    :description "Optional Exa key for higher MCP limits. Also read as EXA_MCP_API_KEY."
-    :secret? true}
-   {:name "EXA_MCP_API_KEY"
-    :label "Exa MCP API key"
-    :description "Alias for EXA_API_KEY. Use one, not both."
-    :secret? true}
-   {:name "EXA_MCP_URL" :label "Exa MCP URL" :description "Override Exa MCP endpoint URL."}
-   {:name "EXA_MCP_TOOLS"
-    :label "Exa MCP tools"
-    :description "Comma-separated MCP tool allow-list."}
-   {:name "EXA_MCP_TIMEOUT_MS"
-    :label "Exa MCP timeout"
-    :description "HTTP timeout in milliseconds."}
-   {:name "EXA_MCP_PROTOCOL_VERSION"
-    :label "Exa MCP protocol version"
-    :description "MCP protocol version sent during initialize."}
-   {:name "EXA_MCP_MAX_BYTES"
-    :label "Exa max bytes"
-    :description "Client-side maximum response bytes before truncation."}
-   {:name "EXA_MCP_MAX_LINES"
-    :label "Exa max lines"
-    :description "Client-side maximum response lines before truncation."}
-   {:name "EXA_MCP_CONFIG"
-    :label "Exa MCP config file"
-    :description "Optional JSON config file path. Lower priority than explicit vars."}])
-
 ;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
 ;; above; register-extension! auto-populates the op registry.
 
@@ -1326,7 +1296,6 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols search-symbols}
-     :ext/kind "search"
-     :ext/env search-env}))
+     :ext/kind "search"}))
 
 (vis/register-extension! vis-extension)
