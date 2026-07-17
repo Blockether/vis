@@ -255,8 +255,8 @@
 ;; Iter-scope parsing + comparator
 ;; =============================================================================
 (defn compact-src
-  "One-line, length-capped form source — the auto-summary listing AND
-   the renderer's src line on pre-turn `<results>` pins share it."
+  "One-line, length-capped form source for the `you ran:` scope index
+   rendered in the cross-turn `<conversation-so-far>` resume block."
   [src]
   (let [s (-> (or src "")
               str
