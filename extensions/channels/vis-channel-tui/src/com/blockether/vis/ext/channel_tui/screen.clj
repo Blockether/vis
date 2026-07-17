@@ -3423,7 +3423,7 @@
 
             pid
             (try (some-> (vis/gateway-ensure-project-for-root! root nm)
-                         :id
+                         (get "id")
                          str)
                  (catch Throwable _ nil))]
 
@@ -4453,8 +4453,8 @@
                      (let [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
                            cur (str @active-project-id*)
                            items (mapv (fn [p]
-                                         (let [current? (= cur (str (:id p)))
-                                               session-count (:session_count p)
+                                         (let [current? (= cur (str (get p "id")))
+                                               session-count (get p "session_count")
                                                sessions-label (when session-count
                                                                 (str session-count
                                                                      " "
@@ -4462,8 +4462,8 @@
                                                                        "session"
                                                                        "sessions")))]
 
-                                           {:id (:id p)
-                                            :label (:name p)
+                                           {:id (get p "id")
+                                            :label (get p "name")
                                             :hint (str (when current? "current")
                                                        (when (and current? sessions-label) " · ")
                                                        sessions-label)}))
