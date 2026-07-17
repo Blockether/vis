@@ -5005,15 +5005,32 @@
 
 (def ^:private export-render-js
   "Static-export render, distilled from ui.js: render every `[data-md]` through
-   marked -> DOMPurify -> innerHTML, then Prism-highlight every `language-*`
-   block. No htmx/SSE — a standalone file has no server to talk to."
+   marked -> DOMPurify -> innerHTML, colorize `language-diff` fences into df-*
+   spans (the vendored Prism has NO diff grammar, so this is what paints the
+   green/red add/del backgrounds — same classifier as render.clj
+   `diff-line-kind`), then Prism-highlight every remaining `language-*` block.
+   No htmx/SSE — a standalone file has no server to talk to."
   (str
-    "(function(){function render(){" "if(typeof marked!=='undefined'){"
+    "(function(){"
+    "function diffLineClass(line){"
+    "if(line.indexOf('+++')===0||line.indexOf('---')===0){return 'df-meta';}"
+    "if(line.indexOf('@@')===0){return 'df-hunk';}"
+    "if(line.length&&line.charAt(0)==='+'){return 'df-add';}"
+    "if(line.length&&line.charAt(0)==='-'){return 'df-del';}" "return 'df-ctx';}"
+    "function colorizeDiff(el){"
+    "var pre=el.closest&&el.closest('pre');if(pre){pre.classList.add('ir-diff');}"
+    "var lines=el.textContent.split('\\n');var frag=document.createDocumentFragment();"
+    "lines.forEach(function(line){var span=document.createElement('span');"
+    "span.className=diffLineClass(line);span.textContent=line===''?' ':line;"
+    "frag.appendChild(span);});el.textContent='';el.appendChild(frag);}"
+    "function render(){" "if(typeof marked!=='undefined'){"
     "document.querySelectorAll('[data-md]:not([data-md-done])').forEach(function(el){"
     "try{var raw=el.getAttribute('data-md')||'';"
     "var out=marked.parse?marked.parse(raw):marked(raw);"
     "if(typeof DOMPurify!=='undefined')out=DOMPurify.sanitize(out);"
     "el.innerHTML=out;el.setAttribute('data-md-done','1');}catch(e){}});}"
+    "document.querySelectorAll('code.language-diff:not([data-hl-done])').forEach(function(el){"
+    "el.setAttribute('data-hl-done','1');try{colorizeDiff(el);}catch(e){}});"
     "if(typeof Prism!=='undefined'&&Prism.highlightElement){"
     "document.querySelectorAll('code[class*=\"language-\"]:not([data-hl-done])').forEach(function(el){"
     "try{Prism.highlightElement(el);el.setAttribute('data-hl-done','1');}catch(e){}});}}"
