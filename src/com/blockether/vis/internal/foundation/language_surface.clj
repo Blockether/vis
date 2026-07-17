@@ -392,8 +392,9 @@
   "lint_code → `` `path` — clean `` / `N targets — E errors, W warnings` headline
    (the LINT_CODE badge already names the tool, and the headline names the linted
    target(s) — the file/dir path(s) when given, else `snippet` for a stdin lint or
-   `N files` for a bare workspace lint); the findings (`file:row:col level message`)
-   in the body."
+   `N files` for a bare workspace lint); the findings GROUPED BY FILE — each linted
+   file path appears ONCE as a header with its findings (`  row:col level: message`)
+   indented beneath it, so a path is never repeated line after line — in the body."
   [r]
   (let [errors
         (long (or (get r "error") 0))
@@ -411,12 +412,15 @@
         (and (zero? errors) (zero? warnings) (zero? infos))
 
         lines
-        (for [f findings]
-          (str (get f "file")
-               ":" (get f "row")
-               ":" (get f "col")
-               " " (get f "level")
-               ": " (get f "message")))
+        (let [grouped (group-by #(get % "file") findings)]
+          (mapcat (fn [file]
+                    (cons file
+                          (for [f (get grouped file)]
+                            (str "  " (get f "row")
+                                 ":" (get f "col")
+                                 " " (get f "level")
+                                 ": " (get f "message")))))
+                  (distinct (map #(get % "file") findings))))
 
         targets
         (get r "targets")

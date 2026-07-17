@@ -368,4 +368,23 @@
                 [{"file" "src/foo.clj" "row" 3 "col" 5 "level" "error" "message" "boom"}]})]
           (expect (str/includes? summary "`src/foo.clj`"))
           (expect (str/includes? summary "1 error"))
-          (expect (str/includes? body "src/foo.clj:3:5 error: boom"))))))
+          (expect (str/includes? body "src/foo.clj"))
+          (expect (str/includes? body "  3:5 error: boom"))))
+    (it "findings across many files GROUP under one path header each, path never repeated"
+        (let [{:keys [body]}
+              (@render
+               {"error" 3
+                "warning" 0
+                "info" 0
+                "files" 2
+                "targets" ["src/a.clj" "src/b.clj"]
+                "findings"
+                [{"file" "src/a.clj" "row" 1 "col" 1 "level" "error" "message" "one"}
+                 {"file" "src/a.clj" "row" 9 "col" 2 "level" "error" "message" "two"}
+                 {"file" "src/b.clj" "row" 4 "col" 3 "level" "error" "message" "three"}]})]
+          ;; each path header appears EXACTLY once, findings indented beneath it
+          (expect (= 1 (count (re-seq #"(?m)^src/a\.clj$" body))))
+          (expect (= 1 (count (re-seq #"(?m)^src/b\.clj$" body))))
+          (expect (str/includes? body "  1:1 error: one"))
+          (expect (str/includes? body "  9:2 error: two"))
+          (expect (str/includes? body "  4:3 error: three"))))))
