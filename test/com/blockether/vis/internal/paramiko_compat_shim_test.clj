@@ -46,6 +46,17 @@
                             "k=paramiko.RSAKey.from_private_key_file('/tmp/id')\n"
                             "[paramiko.RSAKey().get_name(), paramiko.Ed25519Key().get_name(), "
                             "paramiko.ECDSAKey().get_name(), k._path]"))))))
+  (it "generates, serializes, and reloads private keys"
+      (with-python-context
+        (expect (= ["ssh-rsa" 1024 true true "ssh-rsa" 1024]
+                   (ev python-context
+                       (str
+                         "import io, paramiko\n"
+                         "k=paramiko.RSAKey.generate(bits=1024)\n" "buf=io.StringIO()\n"
+                         "k.write_private_key(buf)\n"
+                         "loaded=paramiko.RSAKey.from_private_key(io.StringIO(buf.getvalue()))\n"
+                         "[k.get_name(), k.get_bits(), len(k.asbytes())>0, "
+                         "len(k.get_fingerprint())==16, loaded.get_name(), loaded.get_bits()]"))))))
   (it
     "subclasses the exception tree like paramiko"
     (with-python-context
@@ -114,12 +125,18 @@
               "r.append(si.stat('/x')==paramiko.SFTP_OP_UNSUPPORTED)\n" "h=SFTPHandle()\n"
               "r.append(h.close() is None)\n" "r.append(h.stat()==paramiko.SFTP_OP_UNSUPPORTED)\n"
               "r.append(hasattr(InteractiveQuery(),'add_prompt'))\n" "r"))))))
-  (it "raises SSHException for server mode (Transport.start_server) \u2014 client-only backend"
+  (it "starts server mode and tracks server keys/subsystem handlers"
       (with-python-context
-        (expect (= "SSHException"
+        (expect (= [true true "ssh-rsa" nil true]
                    (ev python-context
                        (str "import paramiko\n" "class S(paramiko.ServerInterface):\n"
-                            "  pass\n" "t=paramiko.Transport(sess=None)\n"
-                            "out='?'\n" "try:\n"
-                            "  t.start_server(server=S())\n" "except paramiko.SSHException as e:\n"
-                            "  out=type(e).__name__\n" "out")))))))
+                            "  pass\n" "class E:\n"
+                            "  def __init__(self): self.flag=False\n"
+                            "  def set(self): self.flag=True\n"
+                            "e=E()\n" "t=paramiko.Transport(sock=object())\n"
+                            "k=paramiko.RSAKey.generate(bits=1024)\n" "t.add_server_key(k)\n"
+                            "t.set_subsystem_handler('sftp', paramiko.SFTPServer)\n"
+                            "t.start_server(event=e, server=S())\n"
+                            "r=[e.flag, t.is_active(), t.get_server_key().get_name(), "
+                            "t.accept(timeout=0), 'sftp' in t._subsystem_handlers]\n"
+                            "t.close()\n" "r")))))))

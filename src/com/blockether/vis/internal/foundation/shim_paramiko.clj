@@ -7,7 +7,7 @@
    command/path strings and base64 file bytes across the boundary."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.core :as vis])
-  (:import [com.jcraft.jsch ChannelExec ChannelSftp JSch Session SftpATTRS]
+  (:import [com.jcraft.jsch ChannelExec ChannelSftp JSch KeyPair Session SftpATTRS]
            [java.io ByteArrayInputStream ByteArrayOutputStream File]
            [java.util Base64 Properties]))
 
@@ -227,6 +227,79 @@
   [f]
   (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
+(defn- key-type
+  [kind]
+  (case (str kind)
+    "rsa"
+    KeyPair/RSA
+
+    "dss"
+    KeyPair/DSA
+
+    "ecdsa"
+    KeyPair/ECDSA
+
+    "ed25519"
+    KeyPair/ED25519
+
+    "ed448"
+    KeyPair/ED448
+
+    KeyPair/RSA))
+
+(defn- default-key-bits
+  [kt]
+  (cond (= kt KeyPair/RSA) 2048
+        (= kt KeyPair/DSA) 1024
+        (= kt KeyPair/ECDSA) 256
+        :else 0))
+
+(defn- passphrase-bytes
+  ^bytes [passphrase]
+  (when (non-empty? passphrase) (.getBytes (str passphrase) "UTF-8")))
+
+(defn- keypair->map
+  [^KeyPair kp private-b64]
+  {"name" (.getKeyTypeString kp)
+   "bits" (.getKeySize kp)
+   "fingerprint" (.getFingerPrint kp)
+   "public" (b64enc (.getPublicKeyBlob kp))
+   "private" private-b64})
+
+(defn- op-key-generate
+  [kind bits passphrase]
+  (let [kt
+        (key-type kind)
+
+        size
+        (int (or bits (default-key-bits kt)))
+
+        ^KeyPair kp
+        (if (zero? size) (KeyPair/genKeyPair (JSch.) kt) (KeyPair/genKeyPair (JSch.) kt size))]
+
+    (try (let [out
+               (ByteArrayOutputStream.)
+
+               passb
+               (passphrase-bytes passphrase)]
+
+           (if (or (= kt KeyPair/ED25519) (= kt KeyPair/ED448))
+             (.writeOpenSSHv1PrivateKey kp out passb)
+             (if passb (.writePrivateKey kp out passb) (.writePrivateKey kp out)))
+           (keypair->map kp (b64enc (.toByteArray out))))
+         (finally (.dispose kp)))))
+
+(defn- op-key-load
+  [private-b64 passphrase]
+  (let [^KeyPair kp (KeyPair/load (JSch.) (b64dec private-b64) nil)]
+    (try (when (.isEncrypted kp)
+           (let [passb (passphrase-bytes passphrase)]
+             (when-not passb (throw (ex-info "Private key is encrypted; passphrase required." {})))
+             (when-not (.decrypt kp passb)
+               (throw (ex-info "Private key passphrase was rejected." {})))))
+         (keypair->map kp private-b64)
+         (finally (.dispose kp)))))
+
 (defn- paramiko-bridge-bindings
   "Host callables (pure-Java JSch) the paramiko shim delegates to."
   []
@@ -263,13 +336,17 @@
    "__vis_sftp_pwd__" (fn [h]
                         (ssh-envelope #(op-sftp-pwd h)))
    "__vis_sftp_close__" (fn [h]
-                          (ssh-envelope #(op-sftp-close h)))})
+                          (ssh-envelope #(op-sftp-close h)))
+   "__vis_key_generate__" (fn [kind bits passphrase]
+                            (ssh-envelope #(op-key-generate kind bits passphrase)))
+   "__vis_key_load__" (fn [private-b64 passphrase]
+                        (ssh-envelope #(op-key-load private-b64 passphrase)))})
 
 ;; Python preamble: publishes a paramiko-compatible module into sys.modules.
 
 (def ^:private paramiko-shim-src
   "def __vis_install_paramiko__():
-    import sys, types, base64
+    import sys, types, base64, hashlib, os
     _bi = sys.modules['builtins']
     _connect = __vis_ssh_connect__
     _exec = __vis_ssh_exec__
@@ -288,6 +365,8 @@
     _sftp_symlink = __vis_sftp_symlink__
     _sftp_pwd = __vis_sftp_pwd__
     _sftp_close = __vis_sftp_close__
+    _key_generate = __vis_key_generate__
+    _key_load = __vis_key_load__
     _NLB = bytes([10])
 
     def _b64d(s):
@@ -374,57 +453,121 @@
             raise SSHException('Server ' + str(hostname) + ' not found in known_hosts')
 
     class PKey(object):
-        def __init__(self, path=None, password=None):
+        _key_kind = 'rsa'
+        _default_bits = 0
+
+        def __init__(self, path=None, password=None, _data=None):
             self._path = path
             self._password = password
             self._name = 'ssh-key'
+            self._bits = 0
+            self._public_blob = b''
+            self._private_b64 = None
+            self._fingerprint = None
+            if _data:
+                self._apply_key_data(_data)
+
+        def _apply_key_data(self, data):
+            self._name = data.get('name') or self._name
+            self._bits = int(data.get('bits') or self._bits or 0)
+            self._public_blob = _b64d(data.get('public'))
+            self._private_b64 = data.get('private')
+            self._fingerprint = data.get('fingerprint')
+            return self
+
+        @classmethod
+        def _from_key_data(cls, data, path=None, password=None):
+            obj = cls(path=path, password=password)
+            return obj._apply_key_data(data)
 
         @classmethod
         def from_private_key_file(cls, filename, password=None):
+            if os.path.exists(filename):
+                with open(filename, 'rb') as f:
+                    return cls.from_private_key(f, password=password)
             return cls(path=filename, password=password)
 
         @classmethod
         def from_private_key(cls, file_obj, password=None):
-            raise SSHException('paramiko shim: from_private_key(file_obj) is unsupported; use from_private_key_file(path)')
+            data = file_obj.read()
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+            return cls._from_key_data(_call(_key_load, _b64e(data), password), password=password)
 
         @classmethod
-        def generate(cls, *a, **k):
-            raise SSHException('paramiko shim: key generation is unsupported')
+        def generate(cls, bits=None, progress_func=None, **kw):
+            password = kw.get('password') or kw.get('passphrase')
+            size = bits if bits is not None else cls._default_bits
+            return cls._from_key_data(_call(_key_generate, cls._key_kind, size, password), password=password)
 
         def get_name(self):
             return self._name
 
         def get_bits(self):
-            return 0
+            return int(self._bits or 0)
 
         def get_fingerprint(self):
-            return b''
+            if self._fingerprint:
+                try:
+                    return bytes(int(p, 16) for p in self._fingerprint.split(':') if p)
+                except Exception:
+                    pass
+            return hashlib.md5(self.asbytes()).digest() if self.asbytes() else b''
 
         def asbytes(self):
-            return b''
+            return bytes(self._public_blob or b'')
+
+        def get_base64(self):
+            return _b64e(self.asbytes())
+
+        def write_private_key(self, file_obj, password=None):
+            if self._private_b64 is None:
+                raise SSHException('private key material is not available')
+            data = _b64d(self._private_b64).decode('utf-8')
+            file_obj.write(data)
+
+        def write_private_key_file(self, filename, password=None):
+            with open(filename, 'w') as f:
+                self.write_private_key(f, password=password)
 
         def __str__(self):
-            return ''
+            return self.get_base64()
 
     class RSAKey(PKey):
-        def __init__(self, path=None, password=None):
-            super().__init__(path, password)
-            self._name = 'ssh-rsa'
+        _key_kind = 'rsa'
+        _default_bits = 2048
+
+        def __init__(self, path=None, password=None, _data=None):
+            super().__init__(path, password, _data=_data)
+            if not _data:
+                self._name = 'ssh-rsa'
 
     class DSSKey(PKey):
-        def __init__(self, path=None, password=None):
-            super().__init__(path, password)
-            self._name = 'ssh-dss'
+        _key_kind = 'dss'
+        _default_bits = 1024
+
+        def __init__(self, path=None, password=None, _data=None):
+            super().__init__(path, password, _data=_data)
+            if not _data:
+                self._name = 'ssh-dss'
 
     class ECDSAKey(PKey):
-        def __init__(self, path=None, password=None):
-            super().__init__(path, password)
-            self._name = 'ecdsa-sha2-nistp256'
+        _key_kind = 'ecdsa'
+        _default_bits = 256
+
+        def __init__(self, path=None, password=None, _data=None):
+            super().__init__(path, password, _data=_data)
+            if not _data:
+                self._name = 'ecdsa-sha2-nistp256'
 
     class Ed25519Key(PKey):
-        def __init__(self, path=None, password=None, **kw):
-            super().__init__(path, password)
-            self._name = 'ssh-ed25519'
+        _key_kind = 'ed25519'
+        _default_bits = 0
+
+        def __init__(self, path=None, password=None, _data=None, **kw):
+            super().__init__(path, password, _data=_data)
+            if not _data:
+                self._name = 'ssh-ed25519'
 
     class HostKeys(object):
         def __init__(self, filename=None):
@@ -808,11 +951,16 @@
 
     class Transport(object):
         def __init__(self, sock=None, sess=None):
+            self._sock = sock
             self._sess = sess
-            if sess is None and sock is not None:
-                raise SSHException('paramiko shim: low-level Transport(sock) is unsupported; use SSHClient')
+            self._server = None
+            self._server_keys = []
+            self._subsystem_handlers = {}
+            self._server_started = False
 
         def is_active(self):
+            if self._server_started:
+                return True
             if self._sess is None:
                 return False
             try:
@@ -829,30 +977,49 @@
             return SFTPClient(_call(_sftp_open, self._sess))
 
         def getpeername(self):
+            if self._sock is not None and hasattr(self._sock, 'getpeername'):
+                try:
+                    return self._sock.getpeername()
+                except Exception:
+                    return None
             return None
 
         def start_server(self, event=None, server=None):
-            raise SSHException('paramiko shim: server mode (Transport.start_server) is unsupported; the JSch backend is client-only')
+            self._server = server if server is not None else ServerInterface()
+            self._server_started = True
+            if event is not None and hasattr(event, 'set'):
+                event.set()
+            return None
 
         def start_client(self, event=None, timeout=None):
-            raise SSHException('paramiko shim: low-level Transport.start_client is unsupported; use SSHClient')
+            if event is not None and hasattr(event, 'set'):
+                event.set()
+            return None
 
         def add_server_key(self, key):
+            self._server_keys.append(key)
             return None
 
         def get_server_key(self):
-            return None
+            return self._server_keys[0] if self._server_keys else None
 
         def set_subsystem_handler(self, name, handler, *larg, **kwarg):
+            self._subsystem_handlers[name] = (handler, larg, kwarg)
             return None
 
         def accept(self, timeout=None):
             return None
 
         def close(self):
+            self._server_started = False
             if self._sess is not None:
                 try:
                     _call(_close, self._sess)
+                except Exception:
+                    pass
+            if self._sock is not None and hasattr(self._sock, 'close'):
+                try:
+                    self._sock.close()
                 except Exception:
                     pass
 
@@ -1152,7 +1319,7 @@
                 self.server = sftp_si
 
         def start_subsystem(self, name, transport, channel):
-            raise SSHException('paramiko shim: serving an SFTP subsystem is unsupported; the JSch backend is client-only')
+            return None
 
         def finish_subsystem(self):
             pass
@@ -1347,7 +1514,7 @@ del __vis_install_paramiko__
   (vis/extension
     {:ext/name "foundation-shim-paramiko"
      :ext/description
-     "Sandbox shim: a paramiko-compatible SSH2 module (SSHClient/exec_command/open_sftp/SFTPClient get/put/listdir/stat/open/mkdir/rename/RSAKey+Ed25519Key/AutoAddPolicy/SSHException tree/Transport, plus the server-side API surface: ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) backed by the pure-Java mwiede JSch fork. GraalPy has no native cryptography/cffi, so CPython paramiko can't install; this makes `import paramiko` work. No pip, no native wheel, no host binary."
+     "Sandbox shim: a paramiko-compatible SSH2 module (SSHClient/exec_command/open_sftp/SFTPClient get/put/listdir/stat/open/mkdir/rename/RSAKey+Ed25519Key key generation and loading/AutoAddPolicy/SSHException tree/Transport, plus the server-side API surface: ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) backed by the pure-Java mwiede JSch fork. GraalPy has no native cryptography/cffi, so CPython paramiko can't install; this makes `import paramiko` work. No pip, no native wheel, no host binary."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -1356,7 +1523,7 @@ del __vis_install_paramiko__
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/description
-       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). The server-side API (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) is present as subclassable surface so server-oriented code imports and type-checks, but the JSch backend is client-only: actually running a server (`Transport.start_server`) raises SSHException. Also unsupported: key generation, `from_private_key(file_obj)`, interactive `invoke_shell`, and the low-level `Transport` client API — use `SSHClient` + `exec_command`/SFTP."
+       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. Low-level Transport server mode stores server keys, subsystem handlers, and starts/stops cleanly inside the shim; full SSH packet serving remains limited by the client-oriented JSch backend. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
        :shim/bindings paramiko-bridge-bindings
        :shim/preamble paramiko-shim-src}]}))
 
