@@ -661,12 +661,16 @@
          (when (map? arg) (get arg "paths"))
 
          path
-         (when-let [p (and (map? arg) (get arg "path"))]
+         (when-let [p (and (map? arg)
+                           (let [p (get arg "path")]
+                             (when-not (str/blank? (str p)) p)))]
            (let [f (io/file (str p))]
              (str (if (.isAbsolute f) f (io/file root (str p))))))
 
          has-code?
-         (and (map? arg) (contains? arg "code"))
+         ;; A blank `"code": ""` default must not shadow a real `path`/`paths`
+         ;; (otherwise we'd format an empty snippet instead of the file).
+         (and (map? arg) (not (str/blank? (str (get arg "code")))))
 
          default?
          (or (nil? arg) (and (map? arg) (not (seq paths)) (not path) (not has-code?)))
@@ -753,14 +757,20 @@
         (io/file (or (:workspace/root env) "."))
 
         path
-        (when (map? arg) (get arg "path"))
+        (when (map? arg)
+          (let [p (get arg "path")]
+            (when-not (str/blank? (str p)) p)))
 
         paths
         (when (map? arg) (get arg "paths"))
 
         code
-        (cond (string? arg) arg
-              (and (map? arg) (contains? arg "code")) (str (get arg "code"))
+        ;; Models routinely emit EVERY schema key with an empty default
+        ;; (`"code": ""` alongside a real `"path"`); a blank `code` must NOT
+        ;; shadow the path (that would lint an empty snippet and falsely
+        ;; report `snippet — clean` while the file goes unlinted).
+        (cond (string? arg) (when-not (str/blank? arg) arg)
+              (and (map? arg) (not (str/blank? (str (get arg "code"))))) (str (get arg "code"))
               :else nil)
 
         under
