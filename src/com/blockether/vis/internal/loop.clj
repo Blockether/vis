@@ -1693,7 +1693,8 @@
             include? (fn [turn]
                        (and (not= (str (:id turn)) (str current-turn-id))
                             (not= :running (:status turn))
-                            (or (seq (some-> (:answer-markdown turn)
+                            (or (seq (some-> (:content turn)
+                                             answer-markdown
                                              str
                                              str/trim))
                                 (contains? #{:interrupted :error} (:status turn)))))
@@ -1718,7 +1719,7 @@
                      ;; UNFINISHED work to continue, not as "you answered with
                      ;; a warning/error".
                      :answer (when-not (contains? #{:interrupted :error} (:status turn))
-                               (:answer-markdown turn))
+                               (answer-markdown (:content turn)))
                      :interrupted? (contains? #{:interrupted :error} (:status turn))
                      :results scopes}))
                 turns))))
@@ -1982,15 +1983,40 @@
         ks))
 
 (defn- ask-result->api-usage
-  [{:keys [tokens]}]
-  (let [reasoning (token-number tokens ["reasoning"])]
-    (cond-> {:prompt_tokens (long (or (token-number tokens ["input"]) 0))
-             :completion_tokens (long (or (token-number tokens ["output"]) 0))
-             :prompt_tokens_details {:cached_tokens (long (or (token-number tokens ["cached"]) 0))
-                                     :cache_creation_tokens
-                                     (long (or (token-number tokens ["cache_created"]) 0))}}
-      (some? reasoning)
-      (assoc :completion_tokens_details {:reasoning_tokens (long reasoning)}))))
+  "Return svar's canonical usage map, falling back to its flat public `:tokens`
+   projection for older/custom providers. svar 0.7 uses keyword token keys
+   (`:cache-created`, not the wire-only `\"cache_created\"`), so normalizing the
+   flat fallback here prevents a silent all-zero turn when `:api-usage` is
+   absent."
+  [{:keys [api-usage tokens]}]
+  (or api-usage
+      (when (map? tokens)
+        (let [input
+              (long (or (token-number tokens [:input "input"]) 0))
+
+              output
+              (long (or (token-number tokens [:output "output"]) 0))
+
+              cached
+              (long (or (token-number tokens [:cached "cached"]) 0))
+
+              cache-created
+              (long (or (token-number tokens [:cache-created :cache_created "cache_created"]) 0))
+
+              input-regular
+              (long (or (token-number tokens [:input-regular :input_regular "input_regular"])
+                        (max 0 (- input cached cache-created))))
+
+              reasoning
+              (token-number tokens [:reasoning "reasoning"])]
+
+          (cond-> {:input-tokens input
+                   :output-tokens output
+                   :input-tokens-details
+                   {:regular input-regular :cache-write cache-created :cache-read cached}
+                   :total-tokens (long (+ input output))}
+            (some? reasoning)
+            (assoc :output-tokens-details {:reasoning (long reasoning)}))))))
 
 (defn- reasoning-effort-configurable?
   "True when a model accepts a caller-selected reasoning effort.
@@ -3579,6 +3605,14 @@
                                    (do (.append sb e) (recur (+ i 2))))))
                     :else (do (.append sb c) (recur (inc i)))))))))))
 
+(defn- live-tool-code-markdown
+  "Append-only Markdown projection for cumulative native-tool code. While the
+   provider is still streaming, leave the fence open; append the closing fence
+   only on the terminal frame. Closing and reopening it on every cumulative
+   chunk moves the suffix and corrupts append-only gateway delta math."
+  [code done?]
+  (str "```python\n" code (when done? "\n```")))
+
 (defn- prose-beyond-code
   "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool
    call) is worth showing ONLY when it carries commentary BEYOND the code it's
@@ -3665,10 +3699,12 @@
           reasoning-len-volatile (volatile! 0)
           content-len-volatile (volatile! 0)
           tool-code-len-volatile (volatile! 0)
+          tool-code-volatile (volatile! nil)
           reset-stream-state! (fn []
                                 (vreset! reasoning-len-volatile 0)
                                 (vreset! content-len-volatile 0)
-                                (vreset! tool-code-len-volatile 0))
+                                (vreset! tool-code-len-volatile 0)
+                                (vreset! tool-code-volatile nil))
           streaming-fn
           (when on-chunk
             (fn [{:keys [reasoning content tool-input done?] :as chunk}]
@@ -3718,8 +3754,12 @@
                               ;; python code block) so the live bubble paints the
                               ;; code being written. Skipped once real text content
                               ;; (a plain-text answer reply) is present.
-                              (when (and (str/blank? (or content "")) (some? tool-input))
-                                (when-let [code (live-code-from-tool-input tool-input)]
+                              (when (and (str/blank? (or content ""))
+                                         (or (some? tool-input)
+                                             (and done? (some? @tool-code-volatile))))
+                                (when-let [code (or (some-> tool-input
+                                                            live-code-from-tool-input)
+                                                    @tool-code-volatile)]
                                   (when-not (str/blank? code)
                                     (let [prev-len (long @tool-code-len-volatile)
                                           cur-len (long (count code))
@@ -3728,9 +3768,10 @@
                                                       :else (subs code prev-len))]
 
                                       (vreset! tool-code-len-volatile cur-len)
+                                      (vreset! tool-code-volatile code)
                                       (on-chunk {:phase :content
                                                  :iteration iteration-position
-                                                 :content (str "```python\n" code "\n```")
+                                                 :content (live-tool-code-markdown code done?)
                                                  :delta delta
                                                  :done? (boolean done?)})))))))))
           copilot-initiator (copilot-initiator-for-iteration iteration)
@@ -5477,7 +5518,7 @@
                                            :previous-turn-context
                                            (previous-turn-context environment session-turn-id)})
 
-        ;; The cumulative `:input-tokens` field sums `prompt_tokens`
+        ;; The cumulative `:input-tokens` field sums canonical input tokens
         ;; from every iteration in this turn — useful for billing /
         ;; budget accounting but MUST NOT be passed to the
         ;; context-pressure hint, which compares against the model's
@@ -5486,10 +5527,10 @@
         ;; request stays small, producing fake context-pressure warnings.
         ;;
         ;; `:last-iter-input` carries the most recent SINGLE-CALL
-        ;; `prompt_tokens`, which is the right proxy for \"what the next
+        ;; request input tokens, which is the right proxy for \"what the next
         ;; request will look like\". Reasoning tokens from a preserved-
         ;; thinking-enabled provider already flow into the next iter's
-        ;; `prompt_tokens` server-side, so a single last-iter snapshot
+        ;; input-token count server-side, so a single last-iter snapshot
         ;; already captures that growth without us re-computing it.
         ;;
         ;; Iter 1 of a new user turn has no live provider usage yet. Keep
@@ -5525,26 +5566,20 @@
             (swap! usage-atom
               (fn [acc]
                 (let [iter-in
-                      (long (or (:prompt_tokens api-usage) 0))
+                      (long (or (:input-tokens api-usage) 0))
 
                       iter-reason
-                      (get-in api-usage [:completion_tokens_details :reasoning_tokens])]
+                      (get-in api-usage [:output-tokens-details :reasoning])]
 
                   (cond-> (-> acc
                               (update :input-tokens + iter-in)
-                              (update :output-tokens + (or (:completion_tokens api-usage) 0))
+                              (update :output-tokens + (or (:output-tokens api-usage) 0))
                               (update :cached-tokens
                                       +
-                                      (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
-                                          (get-in api-usage
-                                                  [:prompt_tokens_details :input_cached_tokens])
-                                          0))
+                                      (or (get-in api-usage [:input-tokens-details :cache-read]) 0))
                               (update :cache-creation-tokens
                                       +
-                                      (or (get-in api-usage
-                                                  [:prompt_tokens_details :cache_creation_tokens])
-                                          (get-in api-usage
-                                                  [:prompt_tokens_details :cache_write_tokens])
+                                      (or (get-in api-usage [:input-tokens-details :cache-write])
                                           0))
                               ;; Per-iter snapshots: overwrite, not accumulate.
                               (assoc :last-iter-input iter-in)
@@ -5565,34 +5600,26 @@
         iteration-token-cost
         (fn iteration-token-cost ([api-usage] (iteration-token-cost api-usage nil))
           ([api-usage actual-model] (when api-usage (let [in
-                                                          (long (or (:prompt_tokens api-usage) 0))
+                                                          (long (or (:input-tokens api-usage) 0))
 
                                                           out
-                                                          (long (or (:completion_tokens api-usage)
-                                                                    0))
+                                                          (long (or (:output-tokens api-usage) 0))
 
                                                           reas
                                                           (get-in api-usage
-                                                                  [:completion_tokens_details
-                                                                   :reasoning_tokens])
+                                                                  [:output-tokens-details
+                                                                   :reasoning])
 
                                                           cach
                                                           (long (or (get-in api-usage
-                                                                            [:prompt_tokens_details
-                                                                             :cached_tokens])
-                                                                    (get-in api-usage
-                                                                            [:prompt_tokens_details
-                                                                             :input_cached_tokens])
+                                                                            [:input-tokens-details
+                                                                             :cache-read])
                                                                     0))
 
                                                           cache-created
-                                                          (long (or (get-in
-                                                                      api-usage
-                                                                      [:prompt_tokens_details
-                                                                       :cache_creation_tokens])
-                                                                    (get-in api-usage
-                                                                            [:prompt_tokens_details
-                                                                             :cache_write_tokens])
+                                                          (long (or (get-in api-usage
+                                                                            [:input-tokens-details
+                                                                             :cache-write])
                                                                     0))
 
                                                           ;; svar's `estimate-cost` returns a MAP

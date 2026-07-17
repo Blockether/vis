@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop-test
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
@@ -491,12 +492,12 @@
                       :status :done
                       :position 1
                       :user-request "Read a"
-                      :answer-markdown "Read it"}
+                      :content [(content/prose "Read it")]}
                      {:id "t2"
                       :status :done
                       :position 2
                       :user-request "Read b"
-                      :answer-markdown "Read b too"}
+                      :content [(content/prose "Read b too")]}
                      {:id "t3" :status :running :user-request "yes"}])
 
                   persistance/db-list-session-turn-iterations
@@ -523,8 +524,11 @@
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
   (it "is deterministic — same DB ⇒ identical output (process-invariant)"
       (with-redefs [persistance/db-list-session-turns
-                    (constantly
-                      [{:id "t1" :status :done :position 1 :user-request "q" :answer-markdown "a"}])
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "q"
+                                  :content [(content/prose "a")]}])
 
                     persistance/db-list-session-turn-iterations
                     (constantly [{:status :done
@@ -542,8 +546,11 @@
     ;; dropped iteration collapses to ONE `dropped` audit line (keeping the why);
     ;; a folded iteration with multiple forms collapses to ONE gist line.
     (with-redefs [persistance/db-list-session-turns
-                  (constantly
-                    [{:id "t1" :status :done :position 1 :user-request "q" :answer-markdown "a"}])
+                  (constantly [{:id "t1"
+                                :status :done
+                                :position 1
+                                :user-request "q"
+                                :content [(content/prose "a")]}])
 
                   persistance/db-list-session-turn-iterations
                   (constantly [{:status :done
@@ -570,9 +577,15 @@
           (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2")))))))
   (it "returns nil when every prior turn is current/running/blank-answer"
       (with-redefs [persistance/db-list-session-turns
-                    (constantly
-                      [{:id "t1" :status :done :position 1 :user-request "old" :answer-markdown ""}
-                       {:id "t2" :status :running :user-request "now" :answer-markdown "partial"}])
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "old"
+                                  :content [(content/prose "")]}
+                                 {:id "t2"
+                                  :status :running
+                                  :user-request "now"
+                                  :content [(content/prose "partial")]}])
 
                     persistance/db-list-session-turn-iterations
                     (constantly [])]
@@ -585,7 +598,7 @@
                                   :status :error
                                   :position 1
                                   :user-request "fix web"
-                                  :answer-markdown "## 🚨 PROVIDER_ERROR"}
+                                  :content [(content/error "provider_error" "failed" true)]}
                                  {:id "t2" :status :running :user-request "continue"}])
 
                     persistance/db-list-session-turn-iterations
@@ -1209,14 +1222,26 @@
 ;; mode yields <=1 block, so multi-fence merge + fence-dropped diagnostics are
 ;; unreachable). See refactor "remove dead fenced-era code-block machinery".
 
-(defdescribe token-usage-normalization-test
-             (it "preserves Anthropic cache write tokens from svar token maps"
-                 (expect (= {:prompt_tokens 112
-                             :completion_tokens 69
-                             :prompt_tokens_details {:cached_tokens 0 :cache_creation_tokens 8777}}
-                            (ask-result->api-usage
-                              {:tokens
-                               {"input" 112 "output" 69 "cached" 0 "cache_created" 8777}})))))
+(defdescribe
+  token-usage-normalization-test
+  (let [canonical {:input-tokens 8889
+                   :output-tokens 69
+                   :input-tokens-details {:regular 112 :cache-write 8777 :cache-read 0}
+                   :total-tokens 8958}]
+    (it "uses svar's canonical api-usage without reshaping it"
+        (expect (= canonical (ask-result->api-usage {:api-usage canonical}))))
+    (it "normalizes current svar keyword token maps when canonical usage is absent"
+        (expect (= canonical
+                   (ask-result->api-usage
+                     {:tokens
+                      {:input 8889 :output 69 :cached 0 :cache-created 8777 :input-regular 112}}))))
+    (it "keeps the legacy string-key token fallback working"
+        (expect (= canonical
+                   (ask-result->api-usage {:tokens {"input" 8889
+                                                    "output" 69
+                                                    "cached" 0
+                                                    "cache_created" 8777
+                                                    "input_regular" 112}}))))))
 
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
@@ -2443,6 +2468,25 @@
                    (expect (= "aAb" (decode "{\"code\":\"a\\u0041b\"}"))))
                (it "keeps escaped quotes/backslashes inside the code intact"
                    (expect (= "print(\"x\\y\")" (decode "{\"code\":\"print(\\\"x\\\\y\\\")\"}"))))))
+
+(defdescribe live-tool-code-markdown-test
+             (it "keeps cumulative tool-code frames append-only until the terminal fence"
+                 (let [render
+                       @#'lp/live-tool-code-markdown
+
+                       first-frame
+                       (render "print" false)
+
+                       next-frame
+                       (render "print(1)" false)
+
+                       terminal-frame
+                       (render "print(1)" true)]
+
+                   (expect (= "```python\nprint" first-frame))
+                   (expect (str/starts-with? next-frame first-frame))
+                   (expect (str/starts-with? terminal-frame next-frame))
+                   (expect (str/ends-with? terminal-frame "\n```")))))
 
 (defdescribe
   strip-echo-diffs-test
