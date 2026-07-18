@@ -1592,6 +1592,13 @@
 
     nil))
 
+(defn- result-row-bg
+  "Result rows (collapsible headline + expanded body) all share the quiet
+   result band — no persistent summary tint on the collapsible label, it
+   reads cleaner flush on the band. Hover still wins for interactive rows."
+  [_meta hovered?]
+  (if hovered? t/link-chrome-hover-bg t/result-bg))
+
 ;; The assistant footer line + routing fallback note are the SHARED, humanized
 ;; turn-summary formatters in `internal.format` (`vis/meta-summary-line` +
 ;; `vis/meta-fallback-note`), so the CLI bracket, this TUI footer, and the
@@ -2285,32 +2292,32 @@
                         (p/put-str! g x y (subs line 1)))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                    ;; The RESULT zone gets its OWN background band (`result-bg` —
-                    ;; warmer than the cool code-bg / thinking gray) so a tool op-card
-                    ;; / eval output reads as a distinct zone, not blended with code.
-                    ;; A native-tool badge carries `:color-role` in its meta → paint
-                    ;; the text in the tool's color; plain result rows fall back to the
-                    ;; neutral result fg. Embedded ANSI (diff +/-) still translates.
-                    (let [res-fg (or (tool-color-role->fg (:color-role meta)) t/code-result-fg)]
-                      (p/set-colors! g res-fg t/result-bg)
+                    ;; Body rows stay on the quiet RESULT band; native-tool headlines
+                    ;; get the stronger summary tint so the operation and its inline
+                    ;; path chip remain immediately scannable.
+                    (let [abs-row (+ (long viewport-top) (long y))
+                          hovered? (and (= :toggle-details (:kind meta))
+                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                          row-bg (result-row-bg meta hovered?)
+                          res-fg (cond hovered? t/link-chrome-hover-fg
+                                       :else (or (tool-color-role->fg (:color-role meta))
+                                                 t/code-result-fg))]
+
+                      (p/set-colors! g res-fg row-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      ;; Inline-code chips in a result body (rg per-file path
-                      ;; headers, patch/move targets) paint on the distinct
-                      ;; `result-path` accent so filenames read as headers
-                      ;; instead of blending into the neutral result ink.
+                      ;; Inline code (paths, search needles, moved targets) gets its
+                      ;; own high-contrast chip instead of dissolving into the headline.
                       (paint-ansi-line! g
                                         x
                                         y
                                         (subs line 1)
                                         res-fg
-                                        t/result-bg
+                                        row-bg
                                         t/result-path-fg
                                         t/result-path-bg)
-                      (paint-turn-stamp! g x y (subs line 1) t/result-bg)
+                      (paint-turn-stamp! g x y (subs line 1) row-bg)
                       (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) (long y))
-                              click-width (long (or (:click-width meta) iw))]
-
+                        (let [click-width (long (or (:click-width meta) iw))]
                           (cr/register! {:bounds {:row abs-row :col x :width click-width}
                                          :kind :toggle-details
                                          :session-id (:session-id meta)

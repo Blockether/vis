@@ -352,8 +352,9 @@
      :code-ok-bg [223 240 224]
      :code-err-bg [250 226 226]
      :result-bg [242 235 223]
-     :result-path-bg [250 236 197]
-     :result-path-fg [140 92 0]
+     ;; Blue inline-code chips stay distinct from the amber summary headline.
+     :result-path-bg [219 234 254]
+     :result-path-fg [30 64 175]
      :code-block-fg [38 38 38]
      :code-success-fg [22 163 74]
      :code-error-fg [220 38 38]
@@ -437,8 +438,9 @@
      :code-ok-bg [20 50 35]
      :code-err-bg [69 26 34]
      :result-bg [22 24 32]
-     :result-path-bg [60 46 8]
-     :result-path-fg [255 210 120]
+     ;; Blue inline-code chips stay distinct from the amber summary headline.
+     :result-path-bg [37 51 84]
+     :result-path-fg [147 197 253]
      :code-block-fg [243 244 246]
      :code-success-fg [74 222 128]
      :code-error-fg [248 113 113]

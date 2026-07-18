@@ -110,6 +110,17 @@
    (`turn.queued` … `turn.queued.drained`)."
   #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"})
 
+(def turn-meta-keys
+  "Wire keys of a settled turn's META (usage/routing/timing) — the fields
+   `terminal-event->result` (both the in-process `gateway.state` impl and the
+   SSE `gateway.client` twin) resolves for the sync submit/attach result.
+   Terminal events are deliberately LEAN (`{:turn_id :status}`), so these are
+   read primarily from the registry's turn row (merged by `finish-turn!`),
+   with any event-carried value winning. ONE list so the two impls can't
+   drift."
+  ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback" "llm_routing_trace" "tokens"
+   "cost" "confidence" "eval" "duration_ms" "utilization"])
+
 (defn sse-frame
   "Render one canonical (string-keyed) event map as an SSE frame. The event's
    `\"seq\"` doubles as the SSE `id:` so `Last-Event-ID` reconnects resume

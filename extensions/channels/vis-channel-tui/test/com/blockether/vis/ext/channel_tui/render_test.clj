@@ -14,10 +14,19 @@
 (def ^:private bang-prefix @#'render/bang-prefix)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
+(def ^:private result-row-bg @#'render/result-row-bg)
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 (def ^:private coalesce-forms vis/coalesce-forms)
 (def ^:private format-iteration-entry-entries @#'render/format-iteration-entry-entries)
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
+
+(defdescribe result-summary-color-test
+             (it "keeps native-tool headlines flush on the quiet result band"
+                 (expect (= t/result-bg (result-row-bg {:kind :result-headline} false)))
+                 (expect (= t/result-bg (result-row-bg {:kind :toggle-details} false))))
+             (it "keeps body rows quiet and gives hover the strongest affordance"
+                 (expect (= t/result-bg (result-row-bg nil false)))
+                 (expect (= t/link-chrome-hover-bg (result-row-bg {:kind :toggle-details} true)))))
 
 (defn- native-form
   [tool summary render]

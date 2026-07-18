@@ -902,10 +902,11 @@
         blocks
         (or (get message "content") [])]
 
-    (cond-> (-> (select-keys event
-                             ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
-                              "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
-                              "utilization"])
+    ;; Terminal events are LEAN ({:turn_id :status}); the fetched turn row
+    ;; (`message`) owns the settled meta (tokens/cost/model/…) — mirror of
+    ;; the in-process gateway.state resolution, same shared key list.
+    (cond-> (-> (merge (select-keys message wire/turn-meta-keys)
+                       (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
                 (assoc "content" blocks
                        "iteration_count" (or (get message "iteration_count") 1)
                        "session_turn_id" (or (get message "engine_turn_id") turn-id)))

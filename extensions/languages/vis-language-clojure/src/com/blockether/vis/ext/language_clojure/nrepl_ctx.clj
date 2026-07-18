@@ -9,7 +9,9 @@
      {\"session_env\" {\"languages\" {\"clojure\"
         {\"nrepl\" {\"default\" <id|nil>
                   \"repls\"   [{\"id\" \"dir\" \"port\" \"aliases\" \"tool\"
-                              \"status\" \"managed\" [\"dialect\" \"versions\"]} ...]}}}}}
+                              \"status\" \"managed\" [\"dialect\" \"versions\"]
+                              ;; when the (+ 1 1) health check failed:
+                              [\"form\" \"hint\"]} ...]}}}}}
 
    OWNERSHIP: we surface ONLY the REPLs THIS session started + owns (from
    `repl-manager/session-repls`). There is no external-port discovery and no
@@ -33,6 +35,12 @@
 
 (def ^:private probe-timeout-ms 100)
 
+(def ^:private health-timeout-ms
+  "Budget for the per-turn `(+ 1 1)` eval health check (nrepl-client/health-check!).
+   Longer than the `describe` probe because it drives a real eval round-trip; a
+   healthy REPL answers in a few ms, a wedged one costs the full budget once."
+  2000)
+
 ;; Per-turn liveness cache. `{:key [turn sorted-ports] :statuses {port status-map}}`.
 ;; defonce so it survives `(require :reload)` during REPL-driven dev.
 (defonce ^:private liveness-cache (atom {:key nil :statuses {}}))
@@ -46,18 +54,38 @@
               :session/turn)
       0))
 
+(defn- probe-one
+  "Full per-turn liveness for ONE port: the cheap `describe` `probe!` (versions/
+   dialect + is it even up?) then, when up, a REAL `(+ 1 1)` eval `health-check!`
+   so a WEDGED eval executor is caught even though `describe` still answers. The
+   eval result WINS — when the health check is not `:up`, its `:status`/`:form`/
+   `:hint` override, so ctx shows `unresponsive` with the failing form + a clear
+   kill/restart hint."
+  [host port]
+  (let [p (nrepl-client/probe! {:host host :port port :timeout-ms probe-timeout-ms})]
+    (if (= :up (:status p))
+      (let [h (nrepl-client/health-check! {:host host :port port :timeout-ms health-timeout-ms})]
+        (if (= :up (:status h))
+          (assoc p :ms (:ms h))
+          (merge p (select-keys h [:status :form :hint :ms]))))
+      p)))
+
 (defn- probe-all
   "Probe every port in parallel, each under a hard deadline so one slow host can
-   never stall the render. Returns `{port {:status .. [:versions ..]}}`."
+   never stall the render. Each probe is `describe` + a `(+ 1 1)` eval health
+   check. Returns `{port {:status .. [:versions :dialect :form :hint :ms]}}`."
   [host ports]
-  (let [futs (mapv (fn [p]
-                     [p
-                      (future (nrepl-client/probe!
-                                {:host host :port p :timeout-ms probe-timeout-ms}))])
-                   ports)]
+  (let [budget
+        (+ (long probe-timeout-ms) (long health-timeout-ms) 200)
+
+        futs
+        (mapv (fn [p]
+                [p (future (probe-one host p))])
+              ports)]
+
     (into {}
           (map (fn [[p f]]
-                 [p (deref f (+ (long probe-timeout-ms) 50) {:status :down})]))
+                 [p (deref f budget {:status :down})]))
           futs)))
 
 (defn- liveness-for
@@ -148,7 +176,16 @@
                    (assoc "versions" (update-keys (:versions st) name))
 
                    (:dialect st)
-                   (assoc "dialect" (name (:dialect st))))))
+                   (assoc "dialect" (name (:dialect st)))
+
+                   ;; When the `(+ 1 1)` health check failed, carry the exact form
+                   ;; that was run + a plain-language kill/restart hint so the model
+                   ;; sees WHY a REPL is `unresponsive` and what to do about it.
+                   (:form st)
+                   (assoc "form" (:form st))
+
+                   (:hint st)
+                   (assoc "hint" (:hint st)))))
              repls)})
 
 (defn contribute

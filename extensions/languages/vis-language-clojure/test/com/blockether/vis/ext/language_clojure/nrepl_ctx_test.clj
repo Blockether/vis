@@ -41,7 +41,11 @@
 
                         nc/probe!
                         (fn [_]
-                          {:status :up :versions {:clojure "1.12.4"} :dialect :clj})]
+                          {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
+
+                        nc/health-check!
+                        (fn [_]
+                          {:status :up :ms 3})]
 
             (let [b
                   (nrepl-of (nx/contribute {:workspace/root "/proj"
@@ -62,6 +66,48 @@
               (expect (= "clj" (get p "dialect")))
               (expect (= ["dev" "test"] (get p "aliases")))
               (expect (= {"clojure" "1.12.4"} (get p "versions")))))))))
+
+(defdescribe
+  eval-health-block-test
+  (it
+    "marks a REPL whose (+ 1 1) eval wedges as `unresponsive` with the form + a kill/restart hint"
+    (reset-cache!)
+    (no-resource-mirror
+      (fn []
+        (with-redefs
+          [rm/session-repls
+           (fn [_]
+             [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj}])
+
+           ;; describe answers (server is UP) ...
+           nc/probe!
+           (fn [_]
+             {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
+
+           ;; ... but the real eval health check WEDGES
+           nc/health-check!
+           (fn [_]
+             {:status :unresponsive
+              :form "(+ 1 1)"
+              :ms 2000
+              :hint
+              "nREPL eval timed out after 2000ms on (+ 1 1) — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl_start) or reprobe."})]
+
+          (let [b
+                (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                          :session-id "s1"
+                                          :ctx-atom (atom {:session/turn 1})}))
+
+                p
+                (first (get b "repls"))]
+
+            ;; the eval health check WINS over describe: status flips to unresponsive
+            (expect (= "unresponsive" (get p "status")))
+            (expect (= "(+ 1 1)" (get p "form")))
+            (expect (re-find #"(?i)unresponsive" (get p "hint")))
+            (expect (re-find #"(?i)restart|reprobe" (get p "hint")))
+            ;; describe metadata still rides along
+            (expect (= "clj" (get p "dialect")))))))))
 
 (defdescribe
   resource-mirror-logs-test

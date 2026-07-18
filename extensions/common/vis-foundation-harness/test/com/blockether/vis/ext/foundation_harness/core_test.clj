@@ -17,7 +17,7 @@
       (let [r (skill-result {} "definitely-not-a-real-skill-zzz")]
         (expect (string? (get r "error")))
         (expect (vector? (get r "available")))))
-  (it "loads a skill body ONCE per session, then acks already-loaded (tracked on the ctx, no atom)"
+  (it "loads a skill body ONCE per session, then acks already-loaded on its string-keyed ctx"
       (with-redefs [d/skill-by-name
                     (fn [_]
                       {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
@@ -27,9 +27,21 @@
               r2 (skill-result env "demo")]
 
           (expect (= "BODY" (get r1 "body")))
-          (expect (= #{"demo"} (:session/loaded-skills @ca)))
+          (expect (= #{"demo"} (get @ca "session_loaded_skills")))
+          (expect (every? string? (keys @ca)))
           (expect (= "already-loaded" (get r2 "status")))
-          (expect (not (contains? r2 "body")))))))
+          (expect (not (contains? r2 "body"))))))
+  (it "does not leak a loaded skill into a new conversation ctx"
+      (with-redefs [d/skill-by-name
+                    (fn [_]
+                      {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
+        (let [first-session {:ctx-atom (atom {})}
+              new-session {:ctx-atom (atom {})}]
+
+          (skill-result first-session "demo")
+          (expect (= "BODY" (get (skill-result new-session "demo") "body")))
+          (expect (= #{"demo"} (get @(get first-session :ctx-atom) "session_loaded_skills")))
+          (expect (= #{"demo"} (get @(get new-session :ctx-atom) "session_loaded_skills")))))))
 
 (defdescribe
   skill-template-text-test
@@ -51,7 +63,7 @@
             {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}
 
             ca
-            (atom {:session/loaded-skills #{"demo"}})]
+            (atom {"session_loaded_skills" #{"demo"}})]
 
         (with-redefs [d/skill-by-name (fn [_]
                                         s)]

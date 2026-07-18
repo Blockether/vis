@@ -5305,6 +5305,15 @@
       [acc extra-cost]
       (merge-with + (select-keys acc cost-map-keys) (select-keys extra-cost cost-map-keys))))
 
+(defn model-pricing
+  "Per-model price table entry (USD per MILLION tokens) for `model`, looked up
+   by exact model name in svar's `MODEL_PRICING` — `{:input :output :cache-read
+   :cached-input …}` — or nil when the model isn't priced. Read-only view over
+   the same table `estimate-token-cost` bills against, so channel pickers show
+   the price that actually gets charged."
+  [model]
+  (when model (get svar-router/MODEL_PRICING (str model))))
+
 (def ^:private loop-give-up-text
   "Markdown surfaced when a turn is force-finalized after the model kept
    repeating without ever landing — and produced no usable answer to fall

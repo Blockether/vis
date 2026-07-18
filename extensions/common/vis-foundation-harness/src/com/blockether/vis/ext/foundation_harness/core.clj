@@ -82,21 +82,23 @@
 
 (defn- loaded-skill-names
   "The skill names already loaded into THIS session's context. Read off the
-   durable `:session/loaded-skills` set on the ctx — which rides the Nippy
-   session snapshot (like `:session/summaries`), so it persists in the DB and
-   survives resume. No transient atom to keep."
+   durable `\"session_loaded_skills\"` set on the string-keyed ctx, which rides
+   the Nippy session snapshot (like `\"session_summaries\"`), so it persists in
+   the DB and survives resume. No transient atom to keep."
   [env]
   (or (some-> env
-              :ctx-atom deref
-              :session/loaded-skills set)
+              :ctx-atom
+              deref
+              (get "session_loaded_skills")
+              set)
       #{}))
 
 (defn- mark-skill-loaded!
-  "Record `nm` as loaded on the session ctx so a later `skill(name)` won't
-   re-inject the body. Persists with the next ctx snapshot."
+  "Record `nm` as loaded on THIS session's string-keyed ctx so a later
+   `skill(name)` won't re-inject the body. Persists with the next ctx snapshot."
   [env nm]
   (when-let [ca (:ctx-atom env)]
-    (swap! ca update :session/loaded-skills (fnil conj #{}) nm)))
+    (swap! ca update "session_loaded_skills" (fnil conj #{}) nm)))
 
 (defn- skill-result
   [env nm]

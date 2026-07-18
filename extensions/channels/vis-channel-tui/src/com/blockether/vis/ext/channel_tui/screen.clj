@@ -4102,6 +4102,34 @@
                      (persist-tabs!)
                      (when notify?
                        (vis/notify! "Opened session" :level :success :ttl-ms copy-success-ttl-ms))))
+                 ;; PENDING (name-only, pre-allocated — see restore-project-tabs!)
+                 ;; tabs hydrate on FIRST FOCUS: one transcript fetch on a worker,
+                 ;; then the normal open path (`:open-session-tab`'s pending
+                 ;; branch) binds + focuses it. The volatile guards duplicate
+                 ;; fetches while one is in flight; polled from the input loop.
+                 hydrating-tabs* (volatile! #{})
+                 hydrate-pending-tab!
+                 (fn []
+                   (let [db @state/app-db
+                         active-id (:active-tab-id db)
+                         entry (when active-id (some #(when (= (:id %) active-id) %) (:tabs db)))
+                         tab-id (:id entry)
+                         sid (:session-id entry)]
+
+                     (when (and (:pending? entry) sid (not (contains? @hydrating-tabs* tab-id)))
+                       (vswap! hydrating-tabs* conj tab-id)
+                       ;; Spinner + Enter-queues-into-:pending-sends while it loads.
+                       (state/dispatch [:mark-tab-loading tab-id true])
+                       (vis/worker-future
+                         "tui-hydrate-pending-tab"
+                         (fn []
+                           (try (if-let [sr (try (chat/resume-session sid) (catch Throwable _ nil))]
+                                  (open-session-tab! sr false)
+                                  (do (state/dispatch [:tab-hydration-failed tab-id])
+                                      (vis/notify! "Session no longer exists"
+                                                   :level :warn
+                                                   :ttl-ms copy-success-ttl-ms)))
+                                (finally (vswap! hydrating-tabs* disj tab-id))))))))
                  start-new-session!
                  ;; Ctrl+N / `+` / `/new-session`. NEVER blocks the input thread on
                  ;; the cold env/runtime build: a warm pool session opens instantly,
@@ -4435,22 +4463,32 @@
                          (if (:reset? choice)
                            (state/dispatch [:set-model nil nil])
                            (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
-                 ;; Open the launch PROJECT's OTHER member sessions as tabs (the
-                 ;; startup tab already opened one). A project IS a tab set; this
-                 ;; restores the whole set in the BACKGROUND so startup stays
-                 ;; responsive. Best effort.
+                 ;; Show the launch PROJECT's OTHER member sessions as NAME-ONLY
+                 ;; tabs immediately (the startup tab already resumed one). A
+                 ;; project IS a tab set: every member's tab appears in the strip
+                 ;; up front — title only, NO transcript fetch, NO focus change —
+                 ;; and its transcript hydrates lazily on first focus (see
+                 ;; hydrate-pending-tab!). One list-sessions scan, zero resumes.
                  restore-project-tabs!
                  (fn restore-project-tabs! []
                    (when-let [pid (ensure-active-project-id!)]
-                     (vis/worker-future "tui-restore-project-tabs"
-                                        (fn []
-                                          (try (doseq [sid (project-member-session-ids pid)]
-                                                 (when-not (state/tab-id-for-session @state/app-db
-                                                                                     sid)
-                                                   (when-let [sr (try (chat/resume-session sid)
-                                                                      (catch Throwable _ nil))]
-                                                     (open-session-tab! sr false))))
-                                               (catch Throwable _ nil))))))
+                     (vis/worker-future
+                       "tui-restore-project-tabs"
+                       (fn []
+                         (try
+                           (let [root (launch-root)
+                                 specs
+                                 (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ nil))
+                                      (filter #(= (str pid) (str (get % "project_id"))))
+                                      (sort-by #(or (get % "project_position") Long/MAX_VALUE))
+                                      (mapv (fn [s]
+                                              (let [title (str (or (get s "title") (:title s)))]
+                                                {:session-id (str (or (get s "id") (:id s)))
+                                                 :label (when-not (str/blank? title) title)
+                                                 :root root}))))]
+
+                             (when (seq specs) (state/dispatch [:preallocate-project-tabs specs])))
+                           (catch Throwable _ nil))))))
                  ;; C-x w — switch the ACTIVE project (its tab set). Pick a
                  ;; project, re-point `active-project-id*`, and open that
                  ;; project's member sessions as tabs. A project IS a tab set.
@@ -4515,6 +4553,10 @@
              (when-not (or (:session-id opts) (:resume opts)) (restore-project-tabs!))
              (loop []
 
+               ;; Hydrate a PENDING pre-allocated tab the moment it is the
+               ;; ACTIVE tab (tab click / C-x cycle / picker): the fetch runs
+               ;; off the input thread while the tab paints its loading state.
+               (hydrate-pending-tab!)
                ;; Layout fields are populated by the render thread after the first paint. Until
                ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
                ;; poll - no rendering on this thread anymore. The

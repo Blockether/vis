@@ -35,6 +35,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [hiccup2.core :as h]
             [ring.core.protocols :as ring-protocols])
@@ -834,6 +835,22 @@
                      (not-empty (str (get turn "turn_id"))))]
     (str prefix ":" tid)))
 
+(defn- with-live-before
+  "Attach `data-live-before` — a live-key PREFIX — to a hiccup element's ROOT.
+   ui.js (and the server-side inflight replay) inserts such a `beforeend`
+   fragment BEFORE the first existing sibling whose `data-live-key` starts
+   with the prefix, falling back to a plain append. Used to pin the
+   `iteration.completed` thinking card ABOVE the iteration's already-streamed
+   tool cards, matching the settled transcript's order (thinking first, then
+   forms). No-op on a nil prefix / non-element node."
+  [prefix node]
+  (if (and prefix (vector? node) (keyword? (first node)))
+    (let [[tag x & more] node]
+      (if (map? x)
+        (into [tag (assoc x :data-live-before (str prefix))] more)
+        (into [tag {:data-live-before (str prefix)}] (when (some? x) (cons x more)))))
+    node))
+
 (defn- attachment-media
   "Inline image attachments shown INSIDE a user bubble. `atts` is
    `[{:media-type :base64 :filename}]` (persisted `session_turn_attachment`
@@ -1500,6 +1517,70 @@
     :aria-label label
     :title label} (icon icon-name) (when (and n (pos? (long n))) [:span.foot-chip-n n])])
 
+(defn- session-usage-totals
+  "Cumulative token + cost totals across the session's turns — the SAME numbers
+   the TUI footer shows on the right, summed from each turn's per-turn `tokens`
+   / `cost` (the gateway populates both uniformly for live + persisted turns).
+   Tokens keep the canonical `input`/`output`/`cached` slots so `vis/meta-tokens`
+   renders them identically to the per-bubble line; cost collapses to one double.
+   Returns `{:tokens {..} :cost <double>}`; either key is absent when nothing
+   carried it yet."
+  [turns]
+  (letfn [(add-slot [acc tokens out-k in-k]
+            (let [v (get tokens in-k)]
+              (if (number? v) (update-in acc [:tokens out-k] (fnil + 0) (long v)) acc)))]
+    (reduce (fn [acc t]
+              (let [tokens
+                    (get t "tokens")
+
+                    cost
+                    (get t "cost")
+
+                    acc
+                    (if (map? tokens)
+                      (-> acc
+                          (add-slot tokens "input" "input")
+                          (add-slot tokens "output" "output")
+                          (add-slot tokens "cached" "cached"))
+                      acc)
+
+                    c
+                    (cond (number? cost) cost
+                          (and (map? cost) (number? (get cost "total_cost"))) (get cost
+                                                                                   "total_cost")
+                          :else nil)]
+
+                (cond-> acc
+                  (number? c)
+                  (update :cost (fnil + 0.0) (double c)))))
+            {}
+            turns)))
+
+(defn- usage-footer
+  "Cumulative session usage chip in the bottom dock — tokens (`11.5k→35
+   (cached 4.1k)`) and cost (`~$0.0070`) summed across every turn, rendered with
+   the SAME `vis/meta-tokens` / `vis/meta-cost` helpers the per-bubble footer and
+   the TUI footer use, so the three surfaces can never drift. nil until a turn
+   carries usage. Re-renders on every `footer` SSE frame like the rest of the dock."
+  [sid]
+  (when sid
+    (let [turns
+          (try (vis/gateway-list-turns sid) (catch Throwable _ nil))
+
+          {:keys [tokens cost]}
+          (session-usage-totals turns)
+
+          tok-text
+          (when tokens (vis/meta-tokens tokens))
+
+          cost-text
+          (vis/meta-cost cost)]
+
+      (when (or tok-text cost-text)
+        [:span.foot-usage {:title "Cumulative session tokens & cost"} (icon "activity")
+         (when tok-text [:span.foot-usage-tok tok-text])
+         (when cost-text [:span.foot-usage-cost cost-text])]))))
+
 (defn- footer-content
   [sid]
   ;; Bottom dock under the composer — ONE compact line: the session's
@@ -1520,7 +1601,7 @@
         res
         (when sid (try (vis/list-resources sid) (catch Throwable _ [])))]
 
-    [:footer.foot (routing-footer sid) (reasoning-footer sid)
+    [:footer.foot (routing-footer sid) (reasoning-footer sid) (usage-footer sid)
      (when sid
        (footer-context-button {:icon-name "folder"
                                :label "Filesystem permissions"
@@ -1734,9 +1815,17 @@
       ;; reasoning + prose pin at `iteration.completed`; the fully rendered
       ;; answer lands at `turn.completed` (settled bubble).
       "content.block.delta"
-      (let [delta (str (get event "text"))]
+      (let [delta
+            (str (get event "text"))
+
+            ;; Reasoning frames also carry the bounded CUMULATIVE text — the
+            ;; increment alone is a sentence fragment, and REPLACING the ticker
+            ;; with it painted a bare/stub THINKING card mid-turn.
+            cumulative
+            (str (get event "cumulative"))]
+
         (if (= "text" (get event "field"))
-          (when-let [thought (block-thinking delta)]
+          (when-let [thought (block-thinking (if (str/blank? cumulative) delta cumulative))]
             [{:event "thinking" :html (html thought)}])
           (when-not (str/blank? delta)
             [{:event "content" :html (str/replace (html-text-escape delta) "\n" "<br>")}])))
@@ -1807,8 +1896,15 @@
 
       "iteration.completed"
       (let [thought
-            (block-thinking (get event "thinking")
-                            (turn-live-key (str "thinking:" (get event "iteration")) event))
+            ;; `with-live-before`: the settled transcript renders an iteration's
+            ;; reasoning ABOVE its tool cards, but this pin streams AFTER the
+            ;; cards — the prefix tells the client to insert it before the
+            ;; iteration's first streamed `code:` card so mid-turn and settled
+            ;; ordering match.
+            (some->> (block-thinking (get event "thinking")
+                                     (turn-live-key (str "thinking:" (get event "iteration"))
+                                                    event))
+                     (with-live-before (str "code:" (get event "iteration") ":")))
 
             prose
             (block-prose (get event "assistant_prose")
@@ -1906,7 +2002,7 @@
   frame can make the browser wait on a multi-MB JSON response."
   32768)
 
-(defn- json-quote [s] (pr-str (str s)))
+(defn- json-quote [s] (wire/json-str (str s)))
 
 (defn- frame-json
   [{:keys [event html]}]
@@ -2236,27 +2332,39 @@
   (if (not-empty color) color (str "hsl(" (project-hue id) " 62% 58%)")))
 
 (defn- session-row-li
-  "One session row in the flat drawer list: the bulk-select checkbox, the row
-   link (active highlight + running dot), and the hover actions — move-to-project
-   + delete. Carries `data-pid` (its project id, or 'none' when unfiled) and,
-   when it belongs to a project, that project's `--proj` accent — so the bottom
-   project dock can filter the list to one project purely client-side and paint
-   the row's rail in the project color. Shared by every session, filed or not."
+  "One session row — inside a project FOLDER or the ungrouped list: the
+   bulk-select checkbox, the row link (active highlight + running dot), and the
+   hover actions. When rendered inside a project folder it also gets reorder
+   arrows (the web twin of dragging a TUI tab); every row gets move-to-project
+   + delete. Carries `data-sid` for delegated JS."
   ([session active-sid] (session-row-li session active-sid nil))
-  ([{:strs [id title status]} active-sid {:keys [pid accent]}]
-   [:li.side-item
-    (cond-> {:data-pid (or (not-empty pid) "none")}
-      (not-empty accent)
-      (assoc :style (str "--proj:" accent)))
+  ([{:strs [id title status]} active-sid {:keys [reorder]}]
+   [:li.side-item {:data-sid (str id)}
     ;; bulk-delete checkbox - hidden until the aside carries .select-mode;
     ;; checked rows ride hx-include to the confirm modal
     [:input.side-check {:type "checkbox" :name "sid" :value (str id) :aria-label "Select session"}]
     [:a
-     {:class (str "side-row"
-                  (when (not-empty accent) " tinted")
-                  (when (= (str id) (str active-sid)) " active"))
-      :href (str "/ui/session/" id)} (when (not-empty accent) [:span.side-row-rail])
-     [:span.side-title (or title "Untitled")] (when (= status "running") [:span.side-dot])]
+     {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
+      :href (str "/ui/session/" id)} [:span.side-title (or title "Untitled")]
+     (when (= status "running") [:span.side-dot])]
+    ;; reorder arrows - only inside a project folder (movable tabs); each posts
+    ;; to /ui/session/:sid/reorder and the drawer re-renders in one hop
+    (when reorder
+      [:span.side-reorder
+       [:button
+        {:type "button"
+         :aria-label "Move up"
+         :disabled (boolean (:first? reorder))
+         :hx-post (str "/ui/session/" id "/reorder")
+         :hx-vals "{\"dir\":\"up\"}"
+         :hx-swap "none"} "\u25b4"]
+       [:button
+        {:type "button"
+         :aria-label "Move down"
+         :disabled (boolean (:last? reorder))
+         :hx-post (str "/ui/session/" id "/reorder")
+         :hx-vals "{\"dir\":\"down\"}"
+         :hx-swap "none"} "\u25be"]])
     ;; hover-revealed move: open the project picker for THIS session
     [:button.side-move
      {:type "button"
@@ -2272,19 +2380,63 @@
       :hx-target "#modal"
       :hx-swap "innerHTML"} (icon "x")]]))
 
+(defn- project-section
+  "One project rendered as a COLLAPSIBLE FOLDER (the Claude/Codex model): an
+   accent-tinted card whose header carries the collapse toggle (chevron + accent
+   dot + name + session count), a '+' that starts a NEW session already filed in
+   this project, and a manage (rename/delete) button — over the nested list of
+   its sessions (each reorderable), or an empty hint. Carries `data-pid` so
+   ui.js can persist the collapsed/expanded state across SSE re-renders."
+  [p sessions active-sid]
+  (let [pid
+        (str (get p "id"))
+
+        nm
+        (or (not-empty (get p "name")) "Project")
+
+        rows
+        (sort-by (juxt #(get % "project_position") #(get % "name")) sessions)
+
+        n
+        (count rows)]
+
+    [:section.side-project {:data-pid pid :style (str "--proj:" (project-accent p))}
+     [:div.side-project-head
+      [:button.side-project-toggle
+       {:type "button" :data-proj-toggle pid :aria-label (str "Collapse or expand " nm)}
+       [:span.side-project-chev (icon "chevron-right")] [:span.side-project-dot]
+       [:span.side-project-name nm] [:span.side-project-count n]]
+      ;; '+' starts a new session INSIDE this project (Claude/Codex 'new chat in project')
+      [:form.side-project-newform {:method "post" :action (str "/ui/project/" pid "/session")}
+       [:button.side-project-new
+        {:type "submit" :aria-label "New session in project" :title "New session in this project"}
+        (icon "plus")]]
+      ;; rename / delete this project
+      [:button.side-project-edit
+       {:type "button"
+        :aria-label "Manage project"
+        :hx-get (str "/ui/project/" pid)
+        :hx-target "#modal"
+        :hx-swap "innerHTML"} (icon "edit")]]
+     (if (seq rows)
+       [:ul.side-list
+        (map-indexed
+          (fn [i s]
+            (session-row-li s active-sid {:reorder {:first? (zero? i) :last? (= i (dec n))}}))
+          rows)]
+       [:div.side-project-empty "No sessions yet"])]))
+
 
 (defn- sidebar-content
-  "Children of the session drawer - extracted so the SSE `sidebar` frame
-   can re-render titles and running dots without replacing the <aside>
-   (which carries the sse-swap target itself). Select-mode (bulk delete)
-   AND the active project filter are CSS state on the <aside>, so both
-   SURVIVE the SSE innerHTML re-render (re-applied by ui.js).
+  "Children of the session drawer - extracted so the SSE `sidebar` frame can
+   re-render titles and running dots without replacing the <aside> (which
+   carries the sse-swap target). Select-mode (bulk delete) is CSS state on the
+   <aside> and SURVIVES the SSE innerHTML re-render (re-applied by ui.js); the
+   per-project collapsed/expanded state is persisted client-side the same way.
 
-   Sessions render as ONE flat list; PROJECTS live in a bottom icon DOCK
-   (the web twin of the TUI navigator's project tab-groups). Each dock chip
-   is that project's accent color and filters the list to its sessions;
-   'All' shows everything, 'Unfiled' the projectless ones, '+' makes a new
-   project. Double-clicking a project chip opens its manage modal."
+   Projects render as COLLAPSIBLE FOLDER GROUPS at the top (the Claude/Codex
+   model) — each a `project-section` grouping its sessions — followed by the
+   ungrouped sessions under a 'Recents' label. New-project lives in the head."
   [active-sid]
   (let [sessions
         (vis/gateway-list-sessions)
@@ -2295,55 +2447,39 @@
         ordered
         (sort-by (juxt #(get % "position") #(get % "name")) projects)
 
-        proj-by-id
-        (into {}
-              (map (fn [p]
-                     [(str (get p "id")) p]))
-              projects)
-
         pid-of
         (fn [s]
           (some-> (get s "project_id")
                   str
                   not-empty))
 
-        accent-of
-        (fn [s]
-          (some-> (pid-of s)
-                  proj-by-id
-                  project-accent))
-
         by-project
         (group-by pid-of sessions)
 
-        ;; flat order: project sessions first (in project + position order),
-        ;; then every projectless session
-        proj-rows
-        (mapcat (fn [p]
-                  (sort-by (juxt #(get % "project_position") #(get % "name"))
-                           (get by-project (str (get p "id")))))
-                ordered)
-
         unfiled
-        (sort-by #(get % "name") (get by-project nil))
-
-        all-rows
-        (concat proj-rows unfiled)
-
-        counts
-        (frequencies (keep pid-of sessions))]
+        (sort-by #(get % "name") (get by-project nil))]
 
     (list [:div.side-head
            [:form.newchat {:method "post" :action "/ui/sessions"}
             [:button.newchat-btn {:type "submit"} [:span.newchat-plus "+"] "New session"]]
+           [:button.side-newproject
+            {:type "button"
+             :aria-label "New project"
+             :title "New project"
+             :hx-get "/ui/projects/new"
+             :hx-target "#modal"
+             :hx-swap "innerHTML"} (icon "folder-plus")]
            [:button.side-select-toggle
             {:type "button" :data-select-toggle "1" :aria-label "Select sessions"}
             [:span.when-idle "Select"] [:span.when-select "Done"]]]
-          ;; ONE flat, scrollable list of every session; the dock filters it
-          [:ul.side-sessions.side-list
-           (map (fn [s]
-                  (session-row-li s active-sid {:pid (pid-of s) :accent (accent-of s)}))
-                all-rows)]
+          ;; the single scroll region: project folders first, then ungrouped
+          [:div.side-scroll
+           (for [p ordered]
+             (project-section p (get by-project (str (get p "id"))) active-sid))
+           (when (seq unfiled)
+             (list (when (seq ordered) [:div.side-project-label "Recents"])
+                   [:ul.side-list.side-ungrouped (map #(session-row-li % active-sid nil) unfiled)]))
+           (when (and (empty? ordered) (empty? unfiled)) [:div.side-empty "No sessions yet"])]
           ;; select-mode action bar - the confirm modal receives the checked ids
           ;; as repeated `sid` query params via hx-include
           [:div.side-bulkbar
@@ -2354,46 +2490,6 @@
              :hx-include ".side-check:checked"
              :hx-target "#modal"
              :hx-swap "innerHTML"} "Delete selected"]]
-          ;; project DOCK: a row of accent-colored project chips pinned above the
-          ;; config foot. Single click filters the list (ui.js); double click a
-          ;; project chip opens its manage modal. Survives SSE re-render.
-          [:div.side-dock {:role "tablist" :aria-label "Filter sessions by project"}
-           [:button.side-dock-chip.all.active
-            {:type "button" :data-dock-pid "" :title "All sessions" :aria-label "All sessions"}
-            (icon "layers")]
-           (for [p
-                 ordered
-
-                 :let [pid
-                       (str (get p "id"))
-
-                       nm
-                       (or (not-empty (get p "name")) "Project")]]
-
-             [:button.side-dock-chip
-              {:type "button"
-               :data-dock-pid pid
-               :style (str "--proj:" (project-accent p))
-               :title (str nm " · double-click to manage")
-               :aria-label nm
-               :hx-get (str "/ui/project/" (get p "id"))
-               :hx-target "#modal"
-               :hx-swap "innerHTML"
-               :hx-trigger "dblclick"} [:span.side-dock-glyph (str/upper-case (subs nm 0 1))]
-              (when-let [c (get counts pid)]
-                [:span.side-dock-count c])])
-           (when (seq unfiled)
-             [:button.side-dock-chip.unfiled
-              {:type "button"
-               :data-dock-pid "none"
-               :title "Unfiled sessions"
-               :aria-label "Unfiled sessions"} (icon "folder")])
-           [:button.side-dock-chip.new
-            {:type "button"
-             :aria-label "New project"
-             :hx-get "/ui/projects/new"
-             :hx-target "#modal"
-             :hx-swap "innerHTML"} (icon "folder-plus")]]
           ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
           ;; in the cramped mobile header.
           [:div.side-foot
@@ -2473,7 +2569,37 @@
         (when event-start-seq (inflight-live-frames sid event-start-seq page-seq))
 
         live-trace-html
-        (apply str (map :html (filter #(= "trace-message" (:event %)) live-frames)))
+        ;; Mirrors ui.js's `data-live-before` placement server-side: a pinned
+        ;; fragment carrying that prefix (the iteration.completed thinking
+        ;; card) lands BEFORE the first already-collected fragment whose
+        ;; live-key starts with the prefix, so a mid-turn refresh paints the
+        ;; same order the live DOM shows.
+        (->> live-frames
+             (filter #(= "trace-message" (:event %)))
+             (map :html)
+             (reduce (fn [acc html]
+                       (let [html
+                             (str html)
+
+                             prefix
+                             (second (re-find #"data-live-before=\"([^\"]+)\"" html))
+
+                             needle
+                             (when prefix (str "data-live-key=\"" prefix))
+
+                             idx
+                             (when needle
+                               (first (keep-indexed (fn [i h]
+                                                      (when (str/includes? (str h) needle) i))
+                                                    acc)))]
+
+                         (if idx
+                           (-> (subvec acc 0 (long idx))
+                               (conj html)
+                               (into (subvec acc (long idx))))
+                           (conj acc html))))
+                     [])
+             (apply str))
 
         live-answer-html
         ;; Replay the beforeend/clear stream server-side so a refresh / session
@@ -3470,6 +3596,20 @@
       (try (vis/gateway-reorder-project-sessions! pid reordered) (catch Throwable _ nil)))
     (hx-refresh)))
 
+(defn- create-project-session-handler
+  "POST /ui/project/:pid/session - create a NEW session already filed under this
+   project, then bounce to it (Claude/Codex 'new chat in project')."
+  [request]
+  (let [pid
+        (path-project-id request)
+
+        id
+        (get (vis/gateway-create-session! {}) "id")]
+
+    (when (and pid id)
+      (try (vis/gateway-assign-project! (parse-uuid (str id)) (str pid)) (catch Throwable _ nil)))
+    {:status 303 :headers {"Location" (str "/ui/session/" id)} :body ""}))
+
 
 ;; ── Backgrounds (managed resources): progressive "add" flow ──────────
 ;;
@@ -4118,6 +4258,18 @@
                    :hx-target "#modal"
                    :hx-swap "innerHTML"} "+ Add provider"])))
 
+(defn- fmt-mtok-price
+  "Compact USD label for a per-MILLION-token price: `5.0` -> \"$5\",
+   `1.75` -> \"$1.75\", `0.75` -> \"$0.75\". nil for non-numbers."
+  [n]
+  (when (number? n)
+    (str "$"
+         (if (== (double n) (Math/floor (double n)))
+           (str (long n))
+           (-> (String/format java.util.Locale/ROOT "%.2f" (object-array [(double n)]))
+               (str/replace #"0+$" "")
+               (str/replace #"\.$" ""))))))
+
 (defn- model-pick-body
   "The picker's SWAPPABLE inner content (active-model line + chips), wrapped
    in `#model-pick`. Picking a chip POSTs /provider and swaps JUST this node
@@ -4138,16 +4290,41 @@
 
         chip
         (fn [provider-id model-name label]
-          [:button
-           {:type "button"
-            :class (str "model-chip"
-                        (when (and (= (not-empty model-name) (:model pref))
-                                   (= (not-empty provider-id) (:provider pref)))
-                          " current"))
-            :hx-post (str "/ui/session/" sid "/provider")
-            :hx-vals (json-text {:provider (or provider-id "") :model (or model-name "")})
-            :hx-target "#model-pick"
-            :hx-swap "outerHTML"} label])]
+          (let [current?
+                (and (= (not-empty model-name) (:model pref))
+                     (= (not-empty provider-id) (:provider pref)))
+
+                router-default?
+                (str/blank? (str model-name))
+
+                price
+                (vis/model-pricing model-name)
+
+                in$
+                (some-> price
+                        :input
+                        fmt-mtok-price)
+
+                out$
+                (some-> price
+                        :output
+                        fmt-mtok-price)]
+
+            [:button
+             {:type "button"
+              :class (str "model-chip" (when current? " current"))
+              :hx-post (str "/ui/session/" sid "/provider")
+              :hx-vals (json-text {:provider (or provider-id "") :model (or model-name "")})
+              :hx-target "#model-pick"
+              :hx-swap "outerHTML"}
+             ;; Icon LEFT (selection state), name, price RIGHT (in / out per 1M).
+             [:span.mc-icon
+              (icon (cond current? "check"
+                          router-default? "star"
+                          :else "cpu"))] [:span.mc-name label]
+             (when (and in$ out$)
+               [:span.mc-price {:title "input / output per 1M tokens"} in$ [:span.mc-price-sep "/"]
+                out$])]))]
 
     [:div#model-pick
      [:p.active-model "This session: "
@@ -4162,7 +4339,7 @@
      (if (seq providers)
        [:div.model-groups
         ;; Router default sits on its own, above the per-provider groups.
-        [:div.model-chips.pick (chip "" "" "★ router default")]
+        [:div.model-chips.pick (chip "" "" "router default")]
         ;; One group per provider: the provider name is a header and the
         ;; models hang under it as bare chips (no repeated `provider/` prefix).
         (for [p
@@ -5694,6 +5871,7 @@
    ["/ui/project/:pid" {:get #'manage-project-handler}]
    ["/ui/project/:pid/rename" {:post #'rename-project-handler}]
    ["/ui/project/:pid/delete" {:post #'delete-project-handler}]
+   ["/ui/project/:pid/session" {:post #'create-project-session-handler}]
    ["/ui/session/:sid/move" {:get #'move-session-modal-handler :post #'assign-session-handler}]
    ["/ui/session/:sid/reorder" {:post #'reorder-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler :delete #'delete-session-ui-handler}]

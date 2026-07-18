@@ -742,41 +742,46 @@
       }
     });
 
-    /* ── project dock: filter the flat session list to one project. The active
-       pid lives on the <aside> dataset so it SURVIVES the SSE innerHTML
-       re-render of the drawer (re-applied after every swap). */
-    function applyDockFilter(aside) {
-      if (!aside) { return; }
-      var f = aside.getAttribute("data-dock-pid") || "";
-      aside.querySelectorAll(".side-dock-chip").forEach(function (c) {
-        c.classList.toggle("active", (c.getAttribute("data-dock-pid") || "") === f);
-      });
-      aside.querySelectorAll(".side-sessions .side-item").forEach(function (it) {
-        var pid = it.getAttribute("data-pid") || "none";
-        it.classList.toggle("dock-hidden", f !== "" && pid !== f);
+    /* ── project folders: collapse / expand. The collapsed set is persisted in
+       localStorage so it survives BOTH the SSE innerHTML re-render of the drawer
+       AND full page reloads (re-applied after every swap) — the Claude/Codex
+       model where a folder stays folded exactly where you left it. */
+    var COLLAPSE_KEY = "vis.collapsedProjects";
+    function collapsedSet() {
+      try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]")); }
+      catch (e) { return new Set(); }
+    }
+    function saveCollapsed(set) {
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(set))); }
+      catch (e) {}
+    }
+    function applyProjectCollapse(root) {
+      if (!root) { return; }
+      var set = collapsedSet();
+      root.querySelectorAll(".side-project").forEach(function (sec) {
+        sec.classList.toggle("collapsed", set.has(sec.getAttribute("data-pid") || ""));
       });
     }
     document.addEventListener("click", function (e) {
-      var chip = e.target.closest ? e.target.closest(".side-dock-chip") : null;
-      if (!chip) { return; }
-      /* the "+ new project" chip and double-click-to-manage are HTMX; only a
-         single click on a filter chip changes the active filter */
-      if (chip.classList.contains("new")) { return; }
-      var aside = chip.closest(".sidebar");
-      if (!aside) { return; }
-      aside.setAttribute("data-dock-pid", chip.getAttribute("data-dock-pid") || "");
-      applyDockFilter(aside);
+      var t = e.target.closest ? e.target.closest("[data-proj-toggle]") : null;
+      if (!t) { return; }
+      var pid = t.getAttribute("data-proj-toggle") || "";
+      var set = collapsedSet();
+      if (set.has(pid)) { set.delete(pid); } else { set.add(pid); }
+      saveCollapsed(set);
+      var sec = t.closest(".side-project");
+      if (sec) { sec.classList.toggle("collapsed", set.has(pid)); }
     });
-    /* re-apply the active filter after the SSE frame re-renders the drawer */
+    /* re-apply folder state after the SSE frame re-renders the drawer */
     document.addEventListener("htmx:afterSwap", function (e) {
       var el = e.target;
-      var aside = (el && el.closest) ? el.closest(".sidebar") : null;
-      if (!aside && el && el.querySelector) { aside = el.querySelector(".sidebar"); }
-      if (aside) { applyDockFilter(aside); }
+      var root = (el && el.closest) ? el.closest(".sidebar") : null;
+      if (!root && el && el.querySelector) { root = el.querySelector(".sidebar"); }
+      if (root) { applyProjectCollapse(root); }
     });
     (function () {
       var sb = document.querySelector(".sidebar");
-      if (sb) { applyDockFilter(sb); }
+      if (sb) { applyProjectCollapse(sb); }
     })();
     /* Keep the bulk-delete button's enabled-state AND label in sync with the
        checked count ("Delete 3 selected"); 0 disables it. One helper, called
@@ -1294,6 +1299,30 @@
     });
   }
 
+  /* A live fragment tagged data-live-before="<key-prefix>" pins ABOVE the
+     first element whose data-live-key starts with that prefix — the settled
+     transcript renders an iteration's thinking above its tool cards, so the
+     iteration.completed pin must slot before the already-streamed code cards
+     instead of appending below them. Falls back to a plain append when no
+     anchor matches (e.g. a tool-less iteration). */
+  function insertLiveHtml(el, html) {
+    var tpl = document.createElement("template");
+    tpl.innerHTML = html || "";
+    var root = tpl.content.firstElementChild;
+    var prefix = root && root.getAttribute("data-live-before");
+    if (prefix) {
+      var nodes = el.querySelectorAll("[data-live-key]");
+      for (var i = 0; i < nodes.length; i++) {
+        var k = nodes[i].getAttribute("data-live-key") || "";
+        if (k.indexOf(prefix) === 0) {
+          nodes[i].insertAdjacentHTML("beforebegin", html);
+          return;
+        }
+      }
+    }
+    el.insertAdjacentHTML("beforeend", html);
+  }
+
   /* Never yank the field the user is typing in out from under them. A live
      innerHTML swap that replaces a container holding the focused textarea/
      input (the #queued editor) destroys that node — dropping focus + caret
@@ -1343,6 +1372,15 @@
         (mode !== "beforeend" && e.target && e.target.innerHTML === data)) {
       e.preventDefault();
     }
+    /* data-live-before placement can't ride the default htmx append — take
+       over the swap and slot the fragment above its anchor card. */
+    if (!e.defaultPrevented && mode === "beforeend" &&
+        data.indexOf("data-live-before=") !== -1) {
+      e.preventDefault();
+      insertLiveHtml(e.target, data);
+      trimLive();
+      if (window.htmx) { window.htmx.process(e.target); }
+    }
   });
 
   /* htmx-sse builds reconnects through this hook (documented override
@@ -1371,7 +1409,7 @@
       if (f.html === "") { el.innerHTML = ""; return; }
       if (mode === "beforeend") {
         if (hasExistingLiveKey(f.html)) { return; }
-        el.insertAdjacentHTML("beforeend", f.html);
+        insertLiveHtml(el, f.html);
         trimLive();
       }
       else {

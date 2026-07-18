@@ -159,7 +159,11 @@
 
     {:active (sid active-id)
      :sessions (vec (keep (fn [entry]
-                            (when-let [s (sid (:id entry))]
+                            (when-let [s (or (sid (:id entry))
+                                             ;; PENDING pre-allocated tab: no locals-bound
+                                             ;; session yet — the id rides on the entry.
+                                             (some-> (:session-id entry)
+                                                     str))]
                               (if-let [root (vh/tab-group-root entry)]
                                 {:id s :root root}
                                 {:id s})))
@@ -846,8 +850,14 @@
       (f db))))
 (defn- tab-session-id
   [db workspace-id]
-  (some-> (get-in db [:tab-locals workspace-id :session :id])
-          str))
+  (or (some-> (get-in db [:tab-locals workspace-id :session :id])
+              str)
+      ;; A PENDING pre-allocated tab has no locals-bound session until its lazy
+      ;; hydration lands — its identity rides on the tab ENTRY's `:session-id`.
+      (some #(when (= (:id %) workspace-id)
+               (some-> (:session-id %)
+                       str))
+            (:tabs db))))
 (defn- reasoning-effort-configurable?
   []
   (let [info (current-model-info)]
@@ -1459,93 +1469,138 @@
                              :paste-counter 0
                              :detail-expansions {})
                       (reconcile-in-flight-state db session)))))
-(reg-event-db :open-session-tab
-              ;; Open `session` (with its `history` + pinned `workspace` record) in a TAB
-              ;; WITHOUT disturbing the active tab. If a tab is already bound to this
-              ;; session, focus it; otherwise mint a new tab and bind it. This is what
-              ;; makes sessions run concurrently: opening/switching never resets the
-              ;; running tab — its turn keeps streaming into its own `:tab-locals`.
-              (fn [db [_ session history workspace]]
-                (let [sid
-                      (some-> session
-                              :id
-                              str)
+(reg-event-fx
+  :open-session-tab
+  ;; Open `session` (with its `history` + pinned `workspace` record) in a TAB
+  ;; WITHOUT disturbing the active tab. If a tab is already bound to this
+  ;; session, focus it; otherwise mint a new tab and bind it. This is what
+  ;; makes sessions run concurrently: opening/switching never resets the
+  ;; running tab — its turn keeps streaming into its own `:tab-locals`.
+  ;;
+  ;; A PENDING pre-allocated tab (name-only, minted by
+  ;; `:preallocate-project-tabs`) matches `existing` through its entry
+  ;; `:session-id`: that is its FIRST real open, so the freshly loaded
+  ;; session + transcript BIND into it in place (keeping its position and
+  ;; title), it gains focus, and anything queued while it hydrated drains.
+  (fn [db [_ session history workspace]]
+    (let [sid
+          (some-> session
+                  :id
+                  str)
 
-                      ;; Freeze the current tab (incl. any in-flight turn) into its locals
-                      ;; before we change focus, so its streaming worker keeps updating it.
-                      db
-                      (-> db
-                          ensure-tabs
-                          sync-active-tab)
+          ;; Freeze the current tab (incl. any in-flight turn) into its locals
+          ;; before we change focus, so its streaming worker keeps updating it.
+          db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
 
-                      entries
-                      (vec (:tabs db))
+          entries
+          (vec (:tabs db))
 
-                      existing
-                      (when sid (some #(when (= sid (tab-session-id db (:id %))) %) entries))
+          existing
+          (when sid (some #(when (= sid (tab-session-id db (:id %))) %) entries))
 
-                      ;; W3 reopen seed: populate the F2 ctx cache immediately from the full
-                      ;; persisted ctx history so live + ARCHIVED tasks render the instant the
-                      ;; tab opens — for BOTH a freshly minted tab AND an already-open one.
-                      ;; Hoisted out of the `new tab` branch so a restored/restarted session
-                      ;; (which hits `existing` → activate-tab) no longer shows an empty F2
-                      ;; until its first turn end. Keyed by the raw session UUID (what screen.clj reads via
-                      ;; [:session :id]). One DB read; tolerate failure.
-                      ;; LATEST ctx only — the old merge-across-ALL-turn-snapshots seed
-                      ;; resurrected dropped plan steps into the TASKS section as if live.
-                      ;; History now has dedicated surfaces: :archived (GC'd entities,
-                      ;; rides the latest snapshot) and :timeline (plan generations from
-                      ;; the append-only task ledger, PLAN HISTORY section).
-                      ;; F2 panel no longer seeds tasks/facts/archived/timeline — gone.
-                      ctx-panel
-                      nil
+          ;; W3 reopen seed: populate the F2 ctx cache immediately from the full
+          ;; persisted ctx history so live + ARCHIVED tasks render the instant the
+          ;; tab opens — for BOTH a freshly minted tab AND an already-open one.
+          ;; Hoisted out of the `new tab` branch so a restored/restarted session
+          ;; (which hits `existing` → activate-tab) no longer shows an empty F2
+          ;; until its first turn end. Keyed by the raw session UUID (what screen.clj reads via
+          ;; [:session :id]). One DB read; tolerate failure.
+          ;; LATEST ctx only — the old merge-across-ALL-turn-snapshots seed
+          ;; resurrected dropped plan steps into the TASKS section as if live.
+          ;; History now has dedicated surfaces: :archived (GC'd entities,
+          ;; rides the latest snapshot) and :timeline (plan generations from
+          ;; the append-only task ledger, PLAN HISTORY section).
+          ;; F2 panel no longer seeds tasks/facts/archived/timeline — gone.
+          ctx-panel
+          nil
 
-                      seed-ctx
-                      (fn [d]
-                        (cond-> d
-                          ctx-panel
-                          (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
+          seed-ctx
+          (fn [d]
+            (cond-> d
+              ctx-panel
+              (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
 
-                  (if existing
-                    ;; Already open — just focus that tab; its view state
-                    ;; (messages, scroll, in-flight turn) lives in :tab-locals.
-                    (seed-ctx (activate-tab db (:id existing)))
-                    (let [n
-                          (next-tab-number entries)
+      (cond (and existing (:pending? existing))
+            (let [tab-id
+                  (:id existing)
 
-                          id
-                          (keyword (str "tab-" n))
+                  db'
+                  (-> db
+                      (update :tabs
+                              (fn [es]
+                                (mapv (fn [e]
+                                        (if (= (:id e) tab-id)
+                                          (cond-> (dissoc e :pending?)
+                                            workspace
+                                            (assoc :workspace workspace)
 
-                          label
-                          (or (some-> workspace
-                                      :label
-                                      not-empty)
-                              untitled-session-label)
+                                            (:root workspace)
+                                            (assoc :workspace/root (:root workspace)))
+                                          e))
+                                      es)))
+                      (update-tab tab-id
+                                  (fn [w]
+                                    (clear-active-turn-state (assoc w
+                                                               :session session
+                                                               :workspace workspace
+                                                               :workspace/root (:root workspace)
+                                                               :title nil
+                                                               :messages (or history [])
+                                                               :input-history (history-user-texts
+                                                                                history)))))
+                      (activate-tab tab-id)
+                      seed-ctx)
 
-                          entry
-                          (cond-> {:id id :label label :active? true}
-                            workspace
-                            (assoc :workspace workspace)
+                  tab-view
+                  (if (= tab-id (current-tab-id db')) db' (get-in db' [:tab-locals tab-id]))]
 
-                            (:root workspace)
-                            (assoc :workspace/root (:root workspace)))
+              {:db db'
+               :fx (cond-> []
+                     (seq (:pending-sends tab-view))
+                     (conj [:dispatch [:drain-pending tab-id]]))})
+            existing
+            ;; Already open — just focus that tab; its view state
+            ;; (messages, scroll, in-flight turn) lives in :tab-locals.
+            {:db (seed-ctx (activate-tab db (:id existing)))}
+            :else (let [n
+                        (next-tab-number entries)
 
-                          db'
-                          (-> db
-                              (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries)
-                                                               entry)
-                                     :active-tab-id id)
-                              ;; Make the new tab the live root state (a fresh session view);
-                              ;; finalize-db snapshots this back into the tab's locals.
-                              (merge (empty-tab-state))
-                              (assoc :session session
-                                     :workspace workspace
-                                     :workspace/root (:root workspace)
-                                     :title nil
-                                     :messages (or history [])
-                                     :input-history (history-user-texts history)))]
+                        id
+                        (keyword (str "tab-" n))
 
-                      (seed-ctx db'))))))
+                        label
+                        (or (some-> workspace
+                                    :label
+                                    not-empty)
+                            untitled-session-label)
+
+                        entry
+                        (cond-> {:id id :label label :active? true}
+                          workspace
+                          (assoc :workspace workspace)
+
+                          (:root workspace)
+                          (assoc :workspace/root (:root workspace)))
+
+                        db'
+                        (-> db
+                            (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries)
+                                                             entry)
+                                   :active-tab-id id)
+                            ;; Make the new tab the live root state (a fresh session view);
+                            ;; finalize-db snapshots this back into the tab's locals.
+                            (merge (empty-tab-state))
+                            (assoc :session session
+                                   :workspace workspace
+                                   :workspace/root (:root workspace)
+                                   :title nil
+                                   :messages (or history [])
+                                   :input-history (history-user-texts history)))]
+
+                    {:db (seed-ctx db')})))))
 (reg-event-db :open-building-tab
               ;; Optimistic new tab for a session whose cold env/runtime is still being
               ;; built on a background worker (chat/make-session-async's `:building`
@@ -1659,6 +1714,71 @@
                        :fx (cond-> []
                              pending?
                              (conj [:dispatch [:drain-pending tab-id]]))})))))
+(reg-event-db :preallocate-project-tabs
+              ;; Pre-allocate NAME-ONLY tabs for `specs` — [{:session-id .. :label ..
+              ;; :root ..} …], the launch project's member sessions in tab order —
+              ;; WITHOUT loading any transcript and WITHOUT moving focus. Each minted
+              ;; entry is `:pending? true` and carries its `:session-id`; the
+              ;; transcript loads lazily on FIRST focus (screen.clj's
+              ;; hydrate-pending-tab! resumes it and `:open-session-tab` binds it).
+              ;; Sessions already open in a tab and anything past `max-tabs` are
+              ;; skipped. Locals seed with an empty view so an early switch paints a
+              ;; blank transcript instead of ghosting the previous tab.
+              (fn [db [_ specs]]
+                (let [db (-> db
+                             ensure-tabs
+                             sync-active-tab)]
+                  (reduce
+                    (fn [db {:keys [session-id label root]}]
+                      (let [sid (some-> session-id
+                                        str)
+                            entries (vec (:tabs db))
+                            open? (when sid (some #(= sid (tab-session-id db (:id %))) entries))]
+
+                        (if (or (nil? sid) open? (>= (count entries) max-tabs))
+                          db
+                          (let [id (keyword (str "tab-" (next-tab-number entries)))
+                                entry (cond-> {:id id
+                                               :label (or (not-empty label) untitled-session-label)
+                                               :session-id sid
+                                               :pending? true}
+                                        root
+                                        (assoc :workspace/root root))]
+
+                            (-> db
+                                (assoc :tabs (insert-tab-grouped entries entry))
+                                (assoc-in [:tab-locals id] (empty-tab-state)))))))
+                    db
+                    specs))))
+(reg-event-db :mark-tab-loading
+              ;; Flip a tab's `:loading?` while its PENDING transcript hydrates on a
+              ;; worker (screen.clj's hydrate-pending-tab!): the spinner shows and any
+              ;; Enter queues into `:pending-sends` (`:send-message` enqueues when
+              ;; `:loading?`) instead of hitting a nil session. Mirrors
+              ;; `:open-building-tab`'s loading shape; the `:open-session-tab` pending
+              ;; bind (or `:tab-hydration-failed`) clears it.
+              (fn [db [_ tab-id on?]]
+                (update-tab db
+                            tab-id
+                            (fn [w]
+                              (if on?
+                                (assoc w
+                                  :loading? true
+                                  :progress (or (:progress w) {:iterations []})
+                                  :turn-start-ms (or (:turn-start-ms w) (System/currentTimeMillis)))
+                                (clear-active-turn-state w))))))
+(reg-event-db :tab-hydration-failed
+              ;; The lazy transcript load for a PENDING tab failed (session deleted
+              ;; elsewhere / gateway hiccup). Drop the pending marker + session binding
+              ;; so the input loop doesn't retry forever, leaving a plain empty tab the
+              ;; user can close.
+              (fn [db [_ tab-id]]
+                (-> db
+                    (update :tabs
+                            (fn [es]
+                              (mapv #(if (= (:id %) tab-id) (dissoc % :pending? :session-id) %)
+                                    es)))
+                    (update-tab tab-id clear-active-turn-state))))
 (reg-event-db :title-loading
               ;; Host auto-title generation started (true) or ended (false). Drives the
               ;; header spinner on the active tab's title. `:set-title` also clears it so

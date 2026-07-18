@@ -561,16 +561,19 @@
 (defn- render-repl-eval-result
   "repl_eval → a collapsed/expanded op-card modeled on the GIT band (the REPL badge
    names the tool). The COLLAPSED chip carries the evaluated FORM (clipped) plus a
-   value/error PREVIEW so a run reads at a glance — `(+ 1 1)  ⇒ 2`, `(/ 1 0)  ✗
-   ArithmeticException`. EXPANDED, the body stacks labeled sections, each fenced and
-   separated by one blank line:
-     - FORM   — only when the form is multi-line / too wide to sit on the chip;
-     - RESULT — the non-nil value; ERROR replaces it on failure;
-     - STDOUT — `:out` when non-blank;
-     - STDERR — `:err` when non-blank (success path only; on failure the stream IS
-                the stacktrace, surfaced under ERROR).
-   `:error_message`/`:trace`/`:error_data` come enriched from the nREPL client; we
-   fall back to the raw `:err` one-liner when no structured trace was captured."
+   value/error/timeout PREVIEW so a run reads at a glance — `(+ 1 1)  ⇒ 2`, `(/ 1 0)  ✗
+   ArithmeticException`, `(Thread/sleep 999999)  ⧖ timed out after 30000ms`. EXPANDED,
+   the body stacks labeled sections, each fenced and separated by one blank line:
+     - FORM    — the evaluated form; shown when multi-line / too wide to sit on the
+                 chip, and ALWAYS on a timeout so the timed-out code is visible;
+     - RESULT  — the non-nil value; ERROR replaces it on failure;
+     - STDOUT  — :out when non-blank;
+     - STDERR  — :err when non-blank;
+     - TIMEOUT — a note (with the deadline in ms) when the eval blew the deadline.
+   :error_message/:trace/:error_data come enriched from the nREPL client; we fall
+   back to the raw :err one-liner when no structured trace was captured. A TIMEOUT is
+   detected from a timed_out flag / a timeout status and renders like a first-class
+   outcome (its own preview + FORM + any partial stdout/stderr)."
   [r]
   (let [code
         (not-empty (str (get r "code")))
@@ -592,6 +595,12 @@
 
         edata
         (get r "error_data")
+
+        timed-out?
+        (boolean (or (get r "timed_out") (some #{"timeout"} (get r "status"))))
+
+        ms
+        (get r "ms")
 
         error?
         (boolean (or emsg
@@ -617,9 +626,9 @@
         (not= "nil" value-preview)
 
         preview
-        (if error?
-          (str "✗ " (if emsg (short-error emsg) "error"))
-          (str "⇒ " (clip-chip value-preview repl-form-inline-max)))
+        (cond timed-out? (str "⧖ timed out" (when ms (str " after " ms "ms")))
+              error? (str "✗ " (if emsg (short-error emsg) "error"))
+              :else (str "⇒ " (clip-chip value-preview repl-form-inline-max)))
 
         summary
         (not-empty (str (when form-chip (str form-chip "  ")) preview))
@@ -631,14 +640,21 @@
                      (when (seq (str edata)) (str "ex-data: " edata))]))
 
         ;; Fixed section order; each gate matches the design. ERROR stands in for
-        ;; RESULT on failure and sits LAST, after any captured stdout.
+        ;; RESULT on failure and sits LAST, after any captured stdout. On a TIMEOUT
+        ;; the FORM is ALWAYS shown (so the timed-out code is visible), followed by
+        ;; whatever partial STDOUT/STDERR was captured and a closing TIMEOUT note.
         sections
-        (if error?
-          [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
-           (sect "ERROR" error-body)]
-          [(when long-form? (sect "FORM" code "clojure"))
-           (when show-result? (sect "RESULT" value "clojure")) (sect "STDOUT" out)
-           (sect "STDERR" err)])
+        (cond timed-out? [(sect "FORM" code "clojure") (sect "STDOUT" out) (sect "STDERR" err)
+                          (sect "TIMEOUT"
+                                (str
+                                  "Evaluation timed out"
+                                  (when ms (str " after " ms "ms"))
+                                  ". The form was still running when the deadline was reached."))]
+              error? [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
+                      (sect "ERROR" error-body)]
+              :else [(when long-form? (sect "FORM" code "clojure"))
+                     (when show-result? (sect "RESULT" value "clojure")) (sect "STDOUT" out)
+                     (sect "STDERR" err)])
 
         body
         (->> sections

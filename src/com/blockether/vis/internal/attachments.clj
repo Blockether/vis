@@ -343,9 +343,11 @@
   ([attachments] (prepare-inline-attachments attachments {}))
   ([attachments
     {:keys [max-bytes max-images] :or {max-bytes max-image-bytes max-images max-image-count}}]
-   (reduce (fn [acc {:keys [base64 filename]}]
+   (reduce (fn [acc att]
              (try
-               (let [^String payload
+               (let [base64 (or (:base64 att) (get att "base64"))
+                     filename (or (:filename att) (get att "filename"))
+                     ^String payload
                      (strip-data-url-prefix (str base64))
 
                      data

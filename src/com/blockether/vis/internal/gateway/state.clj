@@ -37,14 +37,21 @@
 
 (def ^:private RESULT_PR_LIMIT 4000)
 (def ^:private ERROR_PR_LIMIT 2000)
+(def ^:private STREAM_CUMULATIVE_LIMIT
+  "Bound for the cumulative text a live reasoning/content/prose frame carries
+   alongside its increment (`:cumulative`) — plenty for any live band; the
+   boundary `iteration.completed` still ships the complete text."
+  16000)
 
-;; Live reasoning/content/prose deltas arrive per provider token, and every wire
-;; event carries the FULL cumulative text (self-contained frames — consumers
-;; REPLACE, never append). Streaming one frame per token is O(n²) over a long
-;; stream AND reads as jittery token-vomit; instead COALESCE to SENTENCE
-;; granularity: emit when a sentence just closed, with a time cap so even a long
-;; sentence still ticks. Lossless: a skipped frame is subsumed by the next
-;; cumulative one, and `:done?` frames always pass so the final state lands.
+;; Live reasoning/content/prose deltas arrive per provider token. Each emitted
+;; wire frame carries the INCREMENT since the last emit under `:text` (append
+;; consumers, e.g. the web prose stream) PLUS the bounded FULL cumulative text
+;; under `:cumulative` (replace consumers — the web thinking ticker, the TUI
+;; live bands — repaint from it, so a skipped frame is subsumed by the next
+;; one). Streaming one frame per token is O(n²) over a long stream AND reads as
+;; jittery token-vomit; instead COALESCE to SENTENCE granularity: emit when a
+;; sentence just closed, with a time cap so even a long sentence still ticks.
+;; `:done?` frames always pass so the final state lands.
 (def ^:private DELTA_TIME_CAP_MS
   "Backstop for the sentence-coalesced live stream: even mid-sentence, a long
    reasoning/prose run still ticks at least this often so the user sees motion."
@@ -94,14 +101,16 @@
 (defn- coalesce-delta?
   "True when this transient reasoning/content/prose delta should be SKIPPED on
    the wire: still mid-sentence AND within `DELTA_TIME_CAP_MS` of the last emit,
-   so a fresher cumulative frame follows. A just-closed sentence, the time cap,
+   so a fresher frame follows. A just-closed sentence, the time cap,
    `:done?` frames, and every non-streaming phase all pass.
-   `last-emit` is phase -> {:ms emit-epoch :len emitted-text-length}."
-  [last-emit {:keys [phase done?] :as chunk} now]
+   `last-emit` is [phase iteration] -> {:ms emit-epoch :len emitted-text-length}
+   — keyed PER ITERATION so a fresh iteration's stream never inherits the
+   previous iteration's emitted length (which swallowed its first frames)."
+  [last-emit {:keys [phase done? iteration] :as chunk} now]
   (and (contains? streaming-text-phases phase)
        (not done?)
-       (let [{:keys [ms len] :or {len 0}} (get last-emit phase)]
-         ;; No prior record => FIRST frame of this phase: always emit (nil ms).
+       (let [{:keys [ms len] :or {len 0}} (get last-emit [phase (long (or iteration 0))])]
+         ;; No prior record => FIRST frame of this phase+iteration: always emit.
          (and (some? ms)
               (< (- (long now) (long ms)) (long DELTA_TIME_CAP_MS))
               (not (sentence-closed-in-suffix? (delta-text chunk) len))))))
@@ -585,68 +594,79 @@
   ;; `block.output` once lost their forms.
   (or
     (activity-chunk->event chunk)
-    (let [payload (case phase
-                    :form-start
-                    (merge
-                      ;; Carry the native-tool badge identity so a client can hide the
-                      ;; redundant invocation code WHILE the tool runs.
-                      (form/->display chunk)
-                      {:block_id position :code code})
+    (let [payload
+          (case phase
+            :form-start
+            (merge
+              ;; Carry the native-tool badge identity so a client can hide the
+              ;; redundant invocation code WHILE the tool runs.
+              (form/->display chunk)
+              {:block_id position :code code})
 
-                    :form-result
-                    (merge
-                      ;; The native-tool op-card fields (pre-rendered card + badge label
-                      ;; + colour) — projected from ONE canonical list.
-                      (form/->display chunk)
-                      {:block_id position
-                       :code code
-                       :result result
-                       :stdout (when-let [s (:stdout chunk)]
-                                 (wire/bounded-str s RESULT_PR_LIMIT))
-                       :error (when (some? error)
-                                (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                       :silent (boolean (or silent?
-                                            (and (nil? error) (contains? #{"vis_silent"} result))))
-                       :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                                      (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                        (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
+            :form-result
+            (merge
+              ;; The native-tool op-card fields (pre-rendered card + badge label
+              ;; + colour) — projected from ONE canonical list.
+              (form/->display chunk)
+              {:block_id position
+               :code code
+               :result result
+               :stdout (when-let [s (:stdout chunk)]
+                         (wire/bounded-str s RESULT_PR_LIMIT))
+               :error (when (some? error)
+                        (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+               :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))
+               :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                              (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
 
-                    ;; Live thinking, on its OWN wire event so a client paints it as the
-                    ;; thinking trace — distinct from prose. Cumulative; consumers replace.
-                    :reasoning
-                    {:block_id stream-block-id :field "text" :text (or stream-delta "")}
+            ;; Live thinking, on its OWN wire event so a client paints it as the
+            ;; thinking trace — distinct from prose. `:text` is the INCREMENT
+            ;; since the last emit; `:cumulative` is the bounded full text for
+            ;; replace-style consumers (web ticker, TUI live bands).
+            :reasoning
+            {:block_id stream-block-id
+             :field "text"
+             :text (or stream-delta "")
+             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
-                    ;; Live provider Markdown appends to the canonical prose block.
-                    :content
-                    {:block_id stream-block-id :field "markdown" :text (or stream-delta "")}
+            ;; Live provider Markdown appends to the canonical prose block.
+            :content
+            {:block_id stream-block-id
+             :field "markdown"
+             :text (or stream-delta "")
+             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
-                    :assistant-prose
-                    {:block_id stream-block-id :field "markdown" :text (or stream-delta "")}
+            :assistant-prose
+            {:block_id stream-block-id
+             :field "markdown"
+             :text (or stream-delta "")
+             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
-                    ;; The iteration's complete reasoning + complete assistant prose ride
-                    ;; the boundary event too — the canonical, PERSISTED final text.
-                    :iteration-final
-                    (cond-> {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
-                      (some-> assistant-prose
-                              str
-                              str/trim
-                              not-empty)
-                      (assoc :assistant-prose (str/trim (str assistant-prose)))
+            ;; The iteration's complete reasoning + complete assistant prose ride
+            ;; the boundary event too — the canonical, PERSISTED final text.
+            :iteration-final
+            (cond-> {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
+              (some-> assistant-prose
+                      str
+                      str/trim
+                      not-empty)
+              (assoc :assistant-prose (str/trim (str assistant-prose)))
 
-                      (and iteration-id (pos? (long (or attachment-count 0))))
-                      (assoc :attachments (live-attachment-descriptors iteration-id)))
+              (and iteration-id (pos? (long (or attachment-count 0))))
+              (assoc :attachments (live-attachment-descriptors iteration-id)))
 
-                    :iteration-error
-                    ;; Carry the SAME canonical provider-error map the final settled turn
-                    ;; bubble paints the styled CARD from (`provider-error-info` →
-                    ;; `:vis/provider-error-data`).
-                    (cond-> {:error (when (some? error)
-                                      (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                             :thinking (normalize-thinking-text thinking)}
-                      (some? error)
-                      (assoc :provider-error-data (provider-error/provider-error-info error)))
+            :iteration-error
+            ;; Carry the SAME canonical provider-error map the final settled turn
+            ;; bubble paints the styled CARD from (`provider-error-info` →
+            ;; `:vis/provider-error-data`).
+            (cond-> {:error (when (some? error)
+                              (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                     :thinking (normalize-thinking-text thinking)}
+              (some? error)
+              (assoc :provider-error-data (provider-error/provider-error-info error)))
 
-                    {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
+            {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
       [(case phase
          :form-start
          "block.started"
@@ -1087,54 +1107,58 @@
           ;; phase + wall-clock of the latest provider chunk so a wedged
           ;; `:provider-call` phase (no chunks arriving at all) is detectable.
           (when stall (swap! stall assoc :phase (:phase chunk) :last-ms (System/currentTimeMillis)))
-          (try (when caller-on-chunk
-                 (try (caller-on-chunk chunk)
-                      (catch Throwable t
-                        (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
-               (let [phase
-                     (:phase chunk)
+          (try
+            (when caller-on-chunk
+              (try (caller-on-chunk chunk)
+                   (catch Throwable t
+                     (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
+            (let [phase
+                  (:phase chunk)
 
-                     now
-                     (System/currentTimeMillis)]
+                  now
+                  (System/currentTimeMillis)]
 
-                 (when-not (coalesce-delta? @last-delta-ms chunk now)
-                   (let [streaming?
-                         (contains? streaming-text-phases phase)
+              (when-not (coalesce-delta? @last-delta-ms chunk now)
+                (let [streaming?
+                      (contains? streaming-text-phases phase)
 
-                         cumulative
-                         (str (delta-text chunk))
+                      cumulative
+                      (str (delta-text chunk))
 
-                         previous-len
-                         (long (get-in @last-delta-ms [phase :len] 0))
+                      stream-key
+                      (when streaming? [phase (long (or (:iteration chunk) 0))])
 
-                         block-id
-                         (when streaming?
-                           (str tid ":" (name phase) ":" (long (or (:iteration chunk) 0))))
+                      previous-len
+                      (long (get-in @last-delta-ms [stream-key :len] 0))
 
-                         delta
-                         (when streaming? (subs cumulative (min previous-len (count cumulative))))
+                      block-id
+                      (when streaming?
+                        (str tid ":" (name phase) ":" (long (or (:iteration chunk) 0))))
 
-                         chunk
-                         (cond-> chunk
-                           streaming?
-                           (assoc :stream-block-id
-                             block-id :stream-delta
-                             delta))]
+                      delta
+                      (when streaming? (subs cumulative (min previous-len (count cumulative))))
 
-                     (when streaming?
-                       (when-not (contains? @started-blocks block-id)
-                         (vswap! started-blocks conj block-id)
-                         (append-event! sid
-                                        "content.block.started"
-                                        {:turn_id tid
-                                         :block (if (= phase :reasoning)
-                                                  (content/reasoning block-id "" "private")
-                                                  (content/prose block-id ""))}))
-                       (vswap! last-delta-ms assoc phase {:ms now :len (count cumulative)}))
-                     (when-let [[type store? payload] (chunk->event chunk)]
-                       (append-event! sid type (assoc payload :turn_id tid) {:store? store?})))))
-               (catch Throwable t
-                 (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
+                      chunk
+                      (cond-> chunk
+                        streaming?
+                        (assoc :stream-block-id
+                          block-id :stream-delta
+                          delta))]
+
+                  (when streaming?
+                    (when-not (contains? @started-blocks block-id)
+                      (vswap! started-blocks conj block-id)
+                      (append-event! sid
+                                     "content.block.started"
+                                     {:turn_id tid
+                                      :block (if (= phase :reasoning)
+                                               (content/reasoning block-id "" "private")
+                                               (content/prose block-id ""))}))
+                    (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
+                  (when-let [[type store? payload] (chunk->event chunk)]
+                    (append-event! sid type (assoc payload :turn_id tid) {:store? store?})))))
+            (catch Throwable t
+              (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
 
     (try
       (let [opts
@@ -1592,10 +1616,14 @@
         blocks
         (or (get message "content") [])]
 
-    (cond-> (-> (select-keys event
-                             ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
-                              "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
-                              "utilization"])
+    ;; The terminal event is deliberately LEAN ({:turn_id :status}); the
+    ;; registry row (`message`, patched by finish-turn!) owns the settled
+    ;; meta — tokens/cost/model/provider/duration/…. Read the meta from the
+    ;; ROW first, letting any event-carried value win, otherwise the sync
+    ;; submit/attach result drops usage and live bubbles render no
+    ;; tokens/cost meta at all.
+    (cond-> (-> (merge (select-keys message wire/turn-meta-keys)
+                       (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
                 (assoc "content" blocks
                        "iteration_count" (or (get message "iteration_count") 1)
                        "session_turn_id" (or (get message "engine_turn_id") turn-id)))
@@ -1763,7 +1791,9 @@
                 (let [[kind status] @decision]
                   (case kind
                     :updated
-                    (do (append-event! sid "turn.queued.updated" {:turn_id tid :request request}
+                    (do (append-event! sid
+                                       "turn.queued.updated"
+                                       {:turn_id tid :request request}
                                        {:store? false})
                         {:turn (get-turn sid tid)})
 

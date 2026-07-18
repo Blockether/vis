@@ -103,7 +103,35 @@
                                               (and (string? (:cwd r)) (seq (:cwd r)))))))))
              (it "reports :down on a closed port and never throws"
                  (expect (= {:status :down} (nc/probe! {:port 1 :timeout-ms 200})))
+                 (expect (= {:status :down} (nc/probe! {:port 1 :timeout-ms 200})))
                  (expect (= {:status :down} (nc/probe! {:port nil})))))
+
+(defdescribe
+  health-check-test
+  (it "reports :up with a duration when (+ 1 1) evals cleanly against a live server"
+      (with-server (fn [port]
+                     (let [r (nc/health-check! {:port port :timeout-ms 2000})]
+                       (expect (= :up (:status r)))
+                       (expect (number? (:ms r)))))))
+  (it "uses a DEDICATED health session — never clobbers the user session's *1"
+      (with-server (fn [port]
+                     ;; user eval sets *1 = 77 in the long-lived user session
+                     (nc/eval! {:port port :code "(+ 70 7)"})
+                     ;; health probe runs (+ 1 1) through its OWN session
+                     (nc/health-check! {:port port :timeout-ms 2000})
+                     ;; *1 read back through the user session is untouched
+                     (expect (= "77" (get (nc/eval! {:port port :code "*1"}) "value"))))))
+  (it "reports :unresponsive with the form + a kill/restart hint when the eval overruns"
+      (with-server (fn [port]
+                     ;; a 1ms budget cannot complete the round-trip -> wedged-path branch
+                     (let [r (nc/health-check! {:port port :timeout-ms 1})]
+                       (when (= :unresponsive (:status r))
+                         (expect (= "(+ 1 1)" (:form r)))
+                         (expect (re-find #"(?i)unresponsive" (:hint r)))
+                         (expect (re-find #"(?i)restart|reprobe" (:hint r))))))))
+  (it "reports :down (with the form) on a closed port and never throws"
+      (expect (= {:status :down :form "(+ 1 1)"} (nc/health-check! {:port 1 :timeout-ms 200})))
+      (expect (= {:status :down :form "(+ 1 1)"} (nc/health-check! {:port nil})))))
 
 (defn- registry-ids
   "Set of session ids the JVM's nREPL session middleware currently holds. Each
@@ -115,48 +143,53 @@
 
 (defn- msg-session-id [m] (or (:session m) (get m "session")))
 
-(defdescribe session-leak-test
-             (it "close-session! removes the cloned session from the server registry"
-                 (with-server
-                   (fn [port]
-                     (let [conn
-                           (#'nc/connection-for "localhost" port 5000)
+(defdescribe
+  session-leak-test
+  (it "close-session! removes a session from the server registry"
+      (with-server
+        (fn [port]
+          (let [conn
+                (#'nc/connection-for "localhost" port 5000)
 
-                           client
-                           (nrepl/client conn 5000)
+                client
+                (nrepl/client conn 5000)
 
-                           session
-                           (nrepl/client-session client)
+                session
+                (nrepl/client-session client)
 
-                           resp
-                           (doall (session {:op "eval" :code "1"}))
+                resp
+                (doall (session {:op "eval" :code "1"}))
 
-                           id
-                           (some msg-session-id resp)]
+                id
+                (some msg-session-id resp)]
 
-                       (expect (string? id))
-                       (expect (contains? (registry-ids) id))
-                       (#'nc/close-session! session)
-                       ;; the specific session we opened must be gone
-                       (expect (not (contains? (registry-ids) id)))))))
-             (it "eval! closes the session it clones — no leaked session id"
-                 (with-server
-                   (fn [port]
-                     ;; Spy `close-session!`: capture the live session's id just
-                     ;; before it's closed (querying after close would recreate a
-                     ;; fresh id), then delegate to the real close.
-                     (let [closed-id
-                           (atom nil)
+            (expect (string? id))
+            (expect (contains? (registry-ids) id))
+            (#'nc/close-session! session)
+            ;; the specific session we opened must be gone
+            (expect (not (contains? (registry-ids) id)))))))
+  (it "eval! reuses ONE long-lived session across calls — *1 persists, nothing leaks per eval"
+      (with-server
+        (fn [port]
+          (let [before
+                (registry-ids)
 
-                           orig
-                           @#'nc/close-session!]
+                _
+                (nc/eval! {:port port :code "(+ 1 2)" :timeout-ms 5000})
 
-                       (with-redefs [nc/close-session!
-                                     (fn [session]
-                                       (reset! closed-id (some msg-session-id
-                                                               (doall (session {:op "eval"
-                                                                                :code "1"}))))
-                                       (orig session))]
-                         (nc/eval! {:port port :code "(+ 1 2)" :timeout-ms 5000}))
-                       (expect (string? @closed-id))
-                       (expect (not (contains? (registry-ids) @closed-id))))))))
+                r1
+                (nc/eval! {:port port :code "*1" :timeout-ms 5000})
+
+                _
+                (nc/eval! {:port port :code "(+ 4 5)" :timeout-ms 5000})
+
+                new-ids
+                (remove before (registry-ids))]
+
+            ;; `*1` from the PREVIOUS eval is visible → the SAME session was
+            ;; reused across calls (a fresh clone-per-eval would see *1 unbound).
+            (expect (= "3" (get r1 "value")))
+            ;; three evals cloned exactly ONE session and reused it — the old
+            ;; clone-and-close-per-eval churn (its per-eval leak + timeout
+            ;; risk) is gone.
+            (expect (= 1 (count new-ids))))))))

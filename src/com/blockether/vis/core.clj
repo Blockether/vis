@@ -288,7 +288,13 @@
              [display-model-name fmt/display-model-name]
              [humanize-fact-key fmt/humanize-fact-key]
              [meta-summary-line fmt/meta-summary-line]
+             [meta-tokens fmt/meta-tokens]
+             [meta-cost fmt/meta-cost]
              [meta-fallback-note fmt/meta-fallback-note])
+
+;; Per-model price table (USD / MILLION tokens) — the SAME table the loop bills
+;; against, exposed read-only so channel model pickers show the real charge.
+(import-vars [model-pricing lp/model-pricing])
 
 ;; =============================================================================
 ;; Notifications

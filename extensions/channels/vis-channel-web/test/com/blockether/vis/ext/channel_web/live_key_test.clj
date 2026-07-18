@@ -154,3 +154,15 @@
           (expect (str/includes? bubble "durable work"))
           (expect (str/includes? bubble "final answer"))
           (expect (< (.indexOf bubble "durable work") (.indexOf bubble "final answer")))))))
+
+(defdescribe
+  polling-json-test
+  (it "JSON-escapes ANSI control bytes in streamed HTML instead of wedging the poll cursor"
+      (let [encoded
+            (@#'web/frame-json {:event "trace-message" :html (str "before" \u001b "[7mafter")})
+
+            decoded
+            (wire/parse-json encoded)]
+
+        (expect (= "trace-message" (get decoded "event")))
+        (expect (= (str "before" \u001b "[7mafter") (get decoded "html"))))))

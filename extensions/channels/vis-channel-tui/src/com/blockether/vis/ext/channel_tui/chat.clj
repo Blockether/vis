@@ -609,12 +609,18 @@
 
     (case type
       ;; Canonical typed-block delta projected into the TUI's transient progress shape.
+      ;; `text` is the INCREMENT since the gateway's last emit; the tracker's
+      ;; timeline REPLACES per-iteration text (in-process chunks are cumulative),
+      ;; so prefer the bounded `cumulative` the frame also carries — falling back
+      ;; to the increment for older gateways that omit it.
       "content.block.delta"
-      (cond (= "text" (event-get event :field))
-            {:phase :reasoning :iteration iteration :thinking text}
-            (str/includes? (str block-id) ":assistant-prose:")
-            {:phase :assistant-prose :iteration iteration :text text}
-            :else {:phase :content :iteration iteration :content text})
+      (let [full (let [c (str (event-get event :cumulative))]
+                   (when-not (str/blank? c) c))]
+        (cond (= "text" (event-get event :field))
+              {:phase :reasoning :iteration iteration :thinking (or full text)}
+              (str/includes? (str block-id) ":assistant-prose:")
+              {:phase :assistant-prose :iteration iteration :text (or full text)}
+              :else {:phase :content :iteration iteration :content (or full text)}))
 
       "content.block.started"
       nil

@@ -5,13 +5,17 @@
      * One `nrepl.core/connect` socket per `[host port]` key, cached
        on a `defonce` atom so we survive `(require :reload)` during
        development.
-     * On every `eval!` we open a fresh `client-session` against the
-       cached connection. Sessions are *not* shared across calls so a
-       caller's `*1`/`*e`/dynamic var binding never leaks across
-       Vis tool invocations.
+     * ONE long-lived nREPL session per connection, cloned lazily on
+       first use and cached beside the socket — then REUSED by every
+       `eval!`. This is how Cider/Calva/every editor drives nREPL: no
+       per-eval `clone`/`close` round-trip on the hot path (those were
+       what blew the native-tool timeout budget under JVM load), nothing
+       to leak, and session-local state — `*1`/`*2`/`*3`/`*e` and dynamic
+       `set!`s — PERSISTS across calls like a real REPL (`(def …)` was
+       already global; now the whole session is).
      * Stale / closed sockets are detected (`IOException` / `nil`
-       message stream) and the entry is evicted; the next call
-       re-dials.
+       message stream) and the entry is evicted — closing the socket and
+       dropping the cached session — so the next call re-dials + re-clones.
 
    Returned shape (success) — STRING keys (crosses the strings-only boundary
    as a tool `:result`; enrichment adds \"error_message\"/\"error_data\"/\"trace\"):
@@ -40,7 +44,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private connections
-  ;; { [host port] -> {:conn <nrepl-connection> :opened-at ms} }
+  ;; { [host port] -> {:conn <conn> :session <sid> :health-session <sid> :opened-at ms} }
   (atom {}))
 
 (defn- key-of [host port] [(or host "localhost") (long port)])
@@ -70,7 +74,19 @@
            :port port
            :cause (.getMessage t)})))))
 
-(defn- evict! [host port] (swap! connections dissoc (key-of host port)))
+(defn- evict!
+  "Drop the cached connection (and its long-lived session) for `[host port]`,
+   CLOSING the socket so the server promptly reaps the session's executor
+   thread — nothing is left to leak. The next call re-dials and re-clones."
+  [host port]
+  (let [k
+        (key-of host port)
+
+        conn
+        (get-in @connections [k :conn])]
+
+    (swap! connections dissoc k)
+    (when conn (try (.close ^java.io.Closeable conn) (catch Throwable _ nil)))))
 
 (defn- connection-for
   "Get a cached connection or open a new one. The cached value is a
@@ -82,6 +98,33 @@
         (let [c (open! host port timeout-ms)]
           (swap! connections assoc k {:conn c :opened-at (System/currentTimeMillis)})
           c))))
+
+(defn- session-id-for
+  "Get (or lazily clone) the ONE long-lived nREPL session id for this
+   connection, cached beside the socket. Cloned once via `new-session` on
+   first use, then REUSED by every `eval!` so session-local state — `*1`/`*e`
+   and dynamic `set!`s — persists, and so the hot path carries no per-eval
+   `clone`/`close` round-trip (those round-trips, under JVM load, are what
+   blew the native-tool timeout budget). Dropped when the connection evicts."
+  [client host port]
+  (let [k (key-of host port)]
+    (or (get-in @connections [k :session])
+        (let [sid (nrepl/new-session client)]
+          (swap! connections assoc-in [k :session] sid)
+          sid))))
+
+(defn- health-session-id-for
+  "Get (or lazily clone) a DEDICATED health-probe session for this connection,
+   cached beside the socket and REUSED by every `health-check!`. Kept SEPARATE
+   from the user `:session` so the per-turn `(+ 1 1)` liveness eval never
+   clobbers the user session's `*1`/`*2`/`*3`. Dropped when the connection
+   evicts."
+  [client host port]
+  (let [k (key-of host port)]
+    (or (get-in @connections [k :health-session])
+        (let [sid (nrepl/new-session client)]
+          (swap! connections assoc-in [k :health-session] sid)
+          sid))))
 
 (defn close-all!
   "Close every cached connection. Idempotent. Useful from
@@ -423,11 +466,13 @@
        (catch Throwable _ nil)))
 
 (defn- close-session!
-  "Send a `close` op so the nREPL server reaps the cloned session's executor
-   thread. Every `eval!`/`probe!` clones a fresh session; without an explicit
-   close the server keeps a parked `nREPL-session-*` thread per call forever
-   (a real leak over a long dev session). Best-effort and bounded — swallows
-   everything so it can run safely from a `finally`."
+  "Send a `close` op so the nREPL server reaps this session's executor thread.
+   nREPL sessions are NOT reclaimed when their socket closes — only an explicit
+   `close` op (or a full server shutdown) drops one — so when we deliberately
+   evict a connection after a TIMED-OUT eval we close its long-lived session
+   here first; otherwise that single orphaned `nREPL-session-*` thread lingers
+   on the server until it stops. NOT used on the happy path: a reused session is
+   closed only when its connection is torn down. Best-effort and bounded."
   [session]
   (try (collect-op session "close" (+ (System/currentTimeMillis) 2000)) (catch Throwable _ nil)))
 
@@ -468,51 +513,51 @@
                (nrepl/client conn timeout-ms)
 
                session
-               (nrepl/client-session client)]
+               (nrepl/client-session client :session (session-id-for client host port))
 
-           (try
-             (let [req
-                   (cond-> {:op "eval" :code code}
-                     (string? ns)
-                     (assoc :ns ns)
+               req
+               (cond-> {:op "eval" :code code}
+                 (string? ns)
+                 (assoc :ns ns)
 
-                     pretty?
-                     (assoc :nrepl.middleware.print/print
-                       "nrepl.util.print/pprint" :nrepl.middleware.print/options
-                       {:right-margin print-margin}))
+                 pretty?
+                 (assoc :nrepl.middleware.print/print
+                   "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                   {:right-margin print-margin}))
 
-                   responses
-                   (session req)
+               responses
+               (session req)
 
-                   combined
-                   (combine responses deadline)
+               combined
+               (combine responses deadline)
 
-                   combined
-                   (if (eval-error? combined)
-                     (merge combined (fetch-stacktrace! session responses))
-                     combined)
+               combined
+               (if (eval-error? combined)
+                 (merge combined (fetch-stacktrace! session responses))
+                 combined)
 
-                   elapsed
-                   (- (System/currentTimeMillis) start)
+               elapsed
+               (- (System/currentTimeMillis) start)
 
-                   res
-                   (assoc combined
-                     "ms" elapsed
-                     "port" (int port)
-                     "host" host)]
+               res
+               (assoc combined
+                 "ms" elapsed
+                 "port" (int port)
+                 "host" host)]
 
-               ;; A timed-out eval leaves a possibly-desynced keep-alive socket
-               ;; (background reader still parked, late messages pending). Evict it
-               ;; so the NEXT eval reconnects fresh instead of inheriting the wedge
-               ;; — the cascade that historically stalled run_tests past its budget.
-               ;; and interrupt the abandoned server-side eval so it can't run on
-               ;; holding the compile/RT lock and wedge the NEXT eval for minutes.
-               (when (get res "timed_out") (interrupt! session) (evict! host port))
-               res)
-             (finally
-               ;; Reap the cloned session's server-side thread — otherwise every
-               ;; eval leaks a parked nREPL-session-* executor on the server.
-               (close-session! session)))))]
+           ;; A timed-out eval leaves a possibly-desynced keep-alive socket
+           ;; (background reader parked, late messages pending). Evict it so the
+           ;; NEXT eval reconnects + re-clones fresh instead of inheriting the
+           ;; wedge — the cascade that historically stalled run_tests past its
+           ;; budget. Interrupt the abandoned server-side eval first (frees the
+           ;; compile/RT lock so the NEXT eval can't wedge on it), then CLOSE its
+           ;; session — a socket close does NOT reap an nREPL session, so a dropped
+           ;; one would otherwise linger as a parked thread until the server stops.
+           (when (get res "timed_out")
+             (interrupt! session)
+             (close-session! session)
+             (evict! host port))
+           res))]
       (try (try (attempt)
                 (catch IOException _ioe
                   ;; A cached keep-alive socket the server has since reaped fails the FIRST
@@ -632,14 +677,11 @@
             client
             (nrepl/client conn timeout-ms)
 
-            session
-            (nrepl/client-session client)
-
             deadline
             (+ (System/currentTimeMillis) (long timeout-ms))
 
             responses
-            (session {:op "describe"})
+            (nrepl/message client {:op "describe"})
 
             up
             (fn [versions ops]
@@ -651,53 +693,138 @@
                           (assoc m :cwd cwd)
                           m))))]
 
-        (try
-          (loop [rs
-                 responses
+        (loop [rs
+               responses
 
-                 versions
-                 nil
+               versions
+               nil
 
-                 ops
-                 nil
+               ops
+               nil
 
-                 done?
-                 false]
+               done?
+               false]
 
-            (cond done? (up versions ops)
-                  (empty? rs) (if versions (up versions ops) {:status :unresponsive})
-                  (> (System/currentTimeMillis) deadline)
-                  (if versions (up versions ops) {:status :unresponsive})
-                  :else (let [msg
-                              (first rs)
+          (cond done? (up versions ops)
+                (empty? rs) (if versions (up versions ops) {:status :unresponsive})
+                (> (System/currentTimeMillis) deadline)
+                (if versions (up versions ops) {:status :unresponsive})
+                :else (let [msg
+                            (first rs)
 
-                              mg
-                              (fn [k]
-                                (or (get msg k) (get msg (keyword k))))
+                            mg
+                            (fn [k]
+                              (or (get msg k) (get msg (keyword k))))
 
-                              v
-                              (describe-versions (mg "versions"))
+                            v
+                            (describe-versions (mg "versions"))
 
-                              o
-                              (mg "ops")
+                            o
+                            (mg "ops")
 
-                              s
-                              (mg "status")
+                            s
+                            (mg "status")
 
-                              st
-                              (cond (nil? s) #{}
-                                    (string? s) #{s}
-                                    (coll? s) (set (map str s))
-                                    :else #{(str s)})]
+                            st
+                            (cond (nil? s) #{}
+                                  (string? s) #{s}
+                                  (coll? s) (set (map str s))
+                                  :else #{(str s)})]
 
-                          (recur (next rs) (or v versions) (or o ops) (contains? st "done")))))
-          (finally
-            ;; describe clones a session too — close it so probe! stops
-            ;; leaking a server session thread per liveness check.
-            (close-session! session))))
+                        (recur (next rs) (or v versions) (or o ops) (contains? st "done"))))))
       (catch clojure.lang.ExceptionInfo e
         (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
           {:status :down}
           {:status :unresponsive}))
       (catch IOException _ (evict! host port) {:status :down})
       (catch Throwable _ {:status :unresponsive}))))
+
+(def health-form
+  "The canonical liveness eval: cheap, pure, and an unmistakable `\"2\"` result."
+  "(+ 1 1)")
+
+(defn health-check!
+  "REAL eval-based health check — the strong signal `probe!`'s `describe` can't
+   give. Runs `(+ 1 1)` through a DEDICATED health session on the cached
+   connection under a SHORT timeout and confirms it returns `\"2\"`. `describe`
+   only proves the accept loop answers; this proves the JVM actually EVALUATES
+   code, so a wedged eval executor / blocked compile lock is caught even while
+   `describe` still replies. Returns:
+
+     {:status :up           :ms N}
+       — evaluated `\"2\"` cleanly; the eval path is healthy.
+     {:status :unresponsive :form \"(+ 1 1)\" :ms N :hint \"...\"}
+       — connected but the eval TIMED OUT or didn't return `\"2\"`: the REPL is
+         wedged and should be killed & restarted (or reprobed).
+     {:status :down         :form \"(+ 1 1)\"}
+       — could not connect (stale `.nrepl-port` / dead process).
+
+   Uses a SEPARATE session so it never clobbers the user session's
+   `*1`/`*2`/`*3`. Never throws. On a hard socket error the connection is evicted
+   so the next call reconnects fresh."
+  [{:keys [host port timeout-ms] :or {host "localhost" timeout-ms 2000}}]
+  (if-not (pos? (long (or port 0)))
+    {:status :down :form health-form}
+    (let [start
+          (System/currentTimeMillis)
+
+          deadline
+          (+ start (long timeout-ms))]
+
+      (try
+        (let [conn
+              (connection-for host port timeout-ms)
+
+              client
+              (nrepl/client conn timeout-ms)
+
+              session
+              (nrepl/client-session client :session (health-session-id-for client host port))
+
+              responses
+              (session {:op "eval" :code health-form})
+
+              combined
+              (combine responses deadline)
+
+              ms
+              (- (System/currentTimeMillis) start)]
+
+          (cond
+            (get combined "timed_out")
+            {:status :unresponsive
+             :form health-form
+             :ms ms
+             :hint
+             (str "nREPL eval timed out after "
+                  timeout-ms
+                  "ms on "
+                  health-form
+                  " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl_start) or reprobe.")}
+            (= "2" (str/trim (str (get combined "value")))) {:status :up :ms ms}
+            :else
+            {:status :unresponsive
+             :form health-form
+             :ms ms
+             :hint
+             (str
+               "nREPL returned "
+               (pr-str (get combined "value"))
+               " for "
+               health-form
+               " (expected \"2\") — the REPL is UNHEALTHY. Kill & restart it (F4 / repl_start).")}))
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
+            {:status :down :form health-form}
+            {:status :unresponsive
+             :form health-form
+             :hint (str "nREPL connection error on "
+                        health-form
+                        " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl_start).")}))
+        (catch IOException _ (evict! host port) {:status :down :form health-form})
+        (catch Throwable _
+          {:status :unresponsive
+           :form health-form
+           :hint (str "nREPL health check failed unexpectedly on "
+                      health-form
+                      " — the REPL may be UNRESPONSIVE. Kill & restart it (F4 / repl_start).")})))))

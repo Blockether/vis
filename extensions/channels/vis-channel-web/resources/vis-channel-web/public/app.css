@@ -263,7 +263,7 @@ margin:0;max-height:32rem;overflow:auto}
 .block-result-label{color:var(--dim);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-result-summary{min-width:0;margin-left:.45rem;overflow-wrap:anywhere;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
 /* inline `code` in a summary (rg's OR needles, moved/copied paths, …) — the badge row is NOT inside .md, so give its <code> the same chip the body prose gets. */
-.block-result-summary code{font-family:var(--mono);background:var(--code-bg);border-radius:var(--r-xs);padding:.02rem .28rem;font-size:.92em;color:var(--secondary)}
+.block-result-summary code{font-family:var(--mono);background:color-mix(in srgb,var(--primary) 15%,var(--bg));border:1px solid color-mix(in srgb,var(--primary) 30%,var(--line));border-radius:var(--r-xs);padding:.02rem .3rem;font-size:.92em;font-weight:700;color:var(--primary)}
 /* the whole result card is a disclosure: its summary row IS the op badge, chevron in the card's gold accent. */
 summary.block-result-label{padding-left:.1rem;padding-top:0;padding-bottom:0}
 summary.block-result-label::before{color:var(--primary)}
@@ -506,8 +506,7 @@ transition:filter .12s,transform .08s}
 .newchat-btn:active{transform:translateY(1px)}
 .newchat-plus{flex:none;display:inline-flex;align-items:center;justify-content:center;
   width:1em;height:1em;font-weight:700;font-size:.98rem;line-height:1;transform:translateY(-.04em)}
-/* ONLY the session list scrolls; head + foot stay pinned */
-.side-sessions{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.15rem}
+/* legacy flat-list scroller retired — projects scroll inside .side-scroll */
 /* per-row delete: ALWAYS visible (dim, neutral), red only on the
    button itself — the htmx confirm guards the actual delete */
 .side-item{position:relative}
@@ -612,42 +611,26 @@ padding:.42rem .55rem;font-size:.86rem;color:var(--fg);transition:background .1s
 .side-reorder button:disabled{opacity:.25;cursor:default}
 .side-item:has(.side-reorder) .side-row{padding-right:5.35rem}
 .sidebar.select-mode .side-reorder{display:none}
-/* ── project dock: accent chips pinned at the bottom that filter the flat list */
-.side-dock{display:flex;flex-wrap:wrap;align-items:center;gap:.34rem;
-  padding:.5rem .1rem .2rem;margin-top:.15rem;border-top:1px solid var(--line)}
-.side-dock-chip{position:relative;flex:none;display:inline-flex;align-items:center;
-  justify-content:center;width:2rem;height:2rem;border-radius:var(--r-md);
-  border:1px solid var(--line2);background:var(--bg);color:var(--dim);
-  font-size:.78rem;font-weight:700;cursor:pointer;
-  transition:background .12s,color .12s,border-color .12s,box-shadow .12s,transform .08s}
-.side-dock-chip:hover{color:var(--fg);border-color:var(--accent);background:var(--hover)}
-.side-dock-chip:active{transform:translateY(1px)}
-.side-dock-chip .icon{width:15px;height:15px}
-.side-dock-glyph{line-height:1;letter-spacing:.01em}
-/* a project chip carries its own accent, fully lit when it is the active filter */
-.side-dock-chip[style*="--proj"]{color:var(--proj);
-  border-color:color-mix(in srgb,var(--proj) 32%,var(--line));
-  background:color-mix(in srgb,var(--proj) 12%,var(--bg))}
-.side-dock-chip[style*="--proj"]:hover{border-color:color-mix(in srgb,var(--proj) 55%,var(--line));
-  background:color-mix(in srgb,var(--proj) 20%,var(--bg))}
-.side-dock-chip.active{color:var(--fg);border-color:var(--accent);
-  box-shadow:0 0 0 1px var(--accent),0 2px 8px rgba(0,0,0,.22)}
-.side-dock-chip[style*="--proj"].active{color:#fff;border-color:transparent;
-  background:linear-gradient(160deg,color-mix(in srgb,var(--proj) 92%,#fff),var(--proj));
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--proj) 60%,transparent),0 3px 10px color-mix(in srgb,var(--proj) 30%,transparent)}
-.side-dock-chip.new{border-style:dashed}
-.side-dock-chip.new:hover{color:var(--accent);border-color:var(--accent);border-style:solid}
-/* per-chip session count, a tiny corner badge */
-.side-dock-count{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;
-  padding:0 3px;border-radius:var(--r-pill);font-size:.58rem;font-weight:700;line-height:15px;
-  text-align:center;color:var(--bg);background:var(--proj,var(--accent));
-  box-shadow:0 0 0 2px var(--bg)}
-/* rows hidden by the active project filter */
-.side-item.dock-hidden{display:none}
-/* a filed session's row gets a small left rail in its project's accent */
-.side-row-rail{flex:none;width:3px;height:15px;border-radius:2px;background:var(--proj);
-  box-shadow:0 0 4px color-mix(in srgb,var(--proj) 45%,transparent)}
-.side-row.tinted.active{box-shadow:inset 2px 0 0 var(--proj)}
+/* ── collapse toggle: chevron + accent dot + name + count. The whole header
+   left side is ONE button that folds the project; state persisted by ui.js */
+.side-project-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:.5rem;
+  padding:0;border:0;background:transparent;color:inherit;cursor:pointer;text-align:left}
+.side-project-chev{flex:none;display:inline-flex;align-items:center;justify-content:center;
+  color:color-mix(in srgb,var(--proj) 70%,var(--dim));transition:transform .14s ease}
+.side-project-chev .icon{width:13px;height:13px}
+.side-project:not(.collapsed) .side-project-chev{transform:rotate(90deg)}
+/* '+' new-session-in-project, hover-revealed like the manage button */
+.side-project-newform{flex:none;margin:0;display:flex}
+.side-project-new{flex:none;display:flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border:0;border-radius:var(--r-xs);color:var(--dim);background:transparent;opacity:0;cursor:pointer;
+  transition:opacity .12s,background .12s,color .12s}
+.side-project:hover .side-project-new,.side-project:focus-within .side-project-new{opacity:1}
+.side-project-new:hover{background:color-mix(in srgb,var(--proj) 18%,transparent);color:var(--proj)}
+.side-project-new .icon{width:14px;height:14px}
+/* collapsed: hide the body, keep only the header row */
+.side-project.collapsed .side-list,.side-project.collapsed .side-project-empty{display:none}
+/* empty-drawer placeholder (no projects AND no ungrouped sessions) */
+.side-empty{padding:1.4rem .6rem;text-align:center;font-size:.78rem;color:var(--dim)}
 /* new / manage project modal */
 .proj-form{display:flex;flex-direction:column;gap:1rem}
 .proj-input{width:100%;padding:var(--field-py) var(--field-px);border:1px solid var(--line2);
@@ -1247,6 +1230,12 @@ animation:foot-in .2s ease both}
 .foot-routing:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
 .foot-routing .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
 .foot-routing-overload{display:inline-flex;align-items:center;gap:.25rem;color:var(--err);font-weight:650}
+/* Cumulative session tokens & cost chip — a quiet read-only twin of .foot-routing. */
+.foot-usage{display:inline-flex;align-items:center;gap:.35rem;font-family:var(--mono);
+font-size:.7rem;font-weight:600;color:var(--dim);white-space:nowrap;animation:foot-in .2s ease both}
+.foot-usage .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
+.foot-usage-tok,.foot-usage-cost{font-variant-numeric:tabular-nums}
+.foot-usage-cost{color:var(--fg)}
 /* Reasoning effort chip — a twin of .foot-routing for thinking depth. Hidden
    when the resolved model can't take a reasoning level (non-reasoning models,
    zai-thinking, or :reasoning-effort? false); the backend gates it the same way
@@ -1288,6 +1277,15 @@ color:var(--fg);transition:border-color .14s,background .14s,transform .14s,box-
 .model-chip.current{background:color-mix(in srgb,var(--primary) 10%,var(--bg));border-color:var(--primary);
 color:var(--secondary);box-shadow:inset 0 0 0 1px var(--primary)}
 .model-chip.wide{margin:.3rem 0 .5rem}
+/* icon LEFT, model name, price RIGHT — one tidy row inside each chip */
+.model-chip{display:inline-flex;align-items:center;gap:.4rem;text-align:left}
+.model-chip .mc-icon{display:inline-flex;flex:0 0 auto;opacity:.7}
+.model-chip .mc-icon svg{width:13px;height:13px}
+.model-chip.current .mc-icon{opacity:1;color:var(--primary)}
+.model-chip .mc-name{flex:1 1 auto}
+.model-chip .mc-price{flex:0 0 auto;margin-left:.55rem;color:var(--dim);font-size:.7rem;letter-spacing:.01em}
+.model-chip .mc-price .mc-price-sep{margin:0 .18rem;opacity:.55}
+.model-chip:hover .mc-price,.model-chip.current .mc-price{color:var(--secondary)}
 /* per-provider model groups (session picker): provider name as a header,
    its models as chips below — no repeated provider/ prefix on each chip. */
 .model-groups{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
