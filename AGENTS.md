@@ -25,15 +25,14 @@ rules) lives in the CORE system prompt — do not restate it here.
 
 ## Operator workflow
 
-`./bin/dev nrepl` boots the project nREPL on `:7888` and writes
-`.nrepl-port`. Editor/LLM helpers reach it via `clj-nrepl-eval -p
-$(cat .nrepl-port)`. Restart pattern:
+The model's Clojure nREPL(s) are managed by the language pack — start /
+restart / stop them with `repl_start` or the Resources UI (web modal /
+TUI F4). Vis owns the port and deliberately never leaves a `.nrepl-port`
+behind, so that managed REPL is not meant for external editors.
 
-```bash
-old=$(lsof -tiTCP:7888 -sTCP:LISTEN || true); [ -n "$old" ] && kill $old
-rm -f .nrepl-port
-nohup ./bin/dev nrepl > .nrepl.log 2>&1 &
-```
+There is no separate `bin/dev` launcher: the managed REPL is the only dev
+nREPL, and it is reached through `repl_start` / the Resources UI, not an
+external editor.
 
 Persistent DB lives at `$HOME/.vis/vis.mdb/vis.db`. Use `--db :memory`
 for throw-away sessions.

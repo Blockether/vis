@@ -741,6 +741,43 @@
         syncSideBulk(aside);
       }
     });
+
+    /* ── project dock: filter the flat session list to one project. The active
+       pid lives on the <aside> dataset so it SURVIVES the SSE innerHTML
+       re-render of the drawer (re-applied after every swap). */
+    function applyDockFilter(aside) {
+      if (!aside) { return; }
+      var f = aside.getAttribute("data-dock-pid") || "";
+      aside.querySelectorAll(".side-dock-chip").forEach(function (c) {
+        c.classList.toggle("active", (c.getAttribute("data-dock-pid") || "") === f);
+      });
+      aside.querySelectorAll(".side-sessions .side-item").forEach(function (it) {
+        var pid = it.getAttribute("data-pid") || "none";
+        it.classList.toggle("dock-hidden", f !== "" && pid !== f);
+      });
+    }
+    document.addEventListener("click", function (e) {
+      var chip = e.target.closest ? e.target.closest(".side-dock-chip") : null;
+      if (!chip) { return; }
+      /* the "+ new project" chip and double-click-to-manage are HTMX; only a
+         single click on a filter chip changes the active filter */
+      if (chip.classList.contains("new")) { return; }
+      var aside = chip.closest(".sidebar");
+      if (!aside) { return; }
+      aside.setAttribute("data-dock-pid", chip.getAttribute("data-dock-pid") || "");
+      applyDockFilter(aside);
+    });
+    /* re-apply the active filter after the SSE frame re-renders the drawer */
+    document.addEventListener("htmx:afterSwap", function (e) {
+      var el = e.target;
+      var aside = (el && el.closest) ? el.closest(".sidebar") : null;
+      if (!aside && el && el.querySelector) { aside = el.querySelector(".sidebar"); }
+      if (aside) { applyDockFilter(aside); }
+    });
+    (function () {
+      var sb = document.querySelector(".sidebar");
+      if (sb) { applyDockFilter(sb); }
+    })();
     /* Keep the bulk-delete button's enabled-state AND label in sync with the
        checked count ("Delete 3 selected"); 0 disables it. One helper, called
        from every place that flips a checkbox. */

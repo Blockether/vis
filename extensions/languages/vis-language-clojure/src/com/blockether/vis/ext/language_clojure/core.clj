@@ -199,13 +199,12 @@
                    :level (if (= "starting" status) :info :success)
                    :ttl-ms 4000))))
 
-(defn clj-repl-fn
+(defn repl-start-fn
   "Manage THIS session's workspace nREPL(s). Positional op (default \"status\") +
    optional opts dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
 
      \"status\"  — managed-process view for this session (always allowed)
-     \"start\"   — self-start a project nREPL subprocess (always allowed, autostart
-                 is the norm; the model rarely needs to call this by hand)
+     \"start\"   — start a project nREPL subprocess (always allowed)
      \"restart\" — stop then start (always allowed)
      \"stop\"    — stop this session's Vis-managed nREPL (always allowed)
 
@@ -214,8 +213,8 @@
    default to [:dev :test] (full deps/paths, user :main-opts dropped). Live nREPL
    state already rides in ctx under `:session/env :languages :clojure :nrepl`;
    this tool acts on it."
-  ([env] (clj-repl-fn env "status" nil))
-  ([env op] (clj-repl-fn env op nil))
+  ([env] (repl-start-fn env "status" nil))
+  ([env op] (repl-start-fn env op nil))
   ([env op opts]
    (let [root
          (env-root env)
@@ -251,7 +250,7 @@
 
        ("start" "restart")
        (do (when-not (.isDirectory (io/file dir))
-             (throw (ex-info (str "clj_repl \"" op "\" target dir does not exist: " dir)
+             (throw (ex-info (str "repl_start \"" op "\" target dir does not exist: " dir)
                              {:type :clj/bad-args :dir dir})))
            (let [result (if (= op "restart")
                           (do (repl-manager/stop! sid dir)
@@ -264,13 +263,13 @@
 
        (throw
          (ex-info
-           (str "clj_repl unknown op: " (pr-str op))
+           (str "repl_start unknown op: " (pr-str op))
            {:type :clj/bad-args
             :got op
             :examples
-            ["clj_repl()" "clj_repl(\"status\")" "clj_repl(\"start\")"
-             "clj_repl(\"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
-             "clj_repl(\"stop\")" "clj_repl(\"restart\")"]}))))))
+            ["repl_start(\"clojure\")" "repl_start(\"clojure\", \"status\")" "repl_start(\"clojure\", \"start\")"
+             "repl_start(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
+             "repl_start(\"clojure\", \"stop\")" "repl_start(\"clojure\", \"restart\")"]}))))))
 
 (defn ui-start-repl!
   "Channel-invokable nREPL start for the Resources UI (web modal / TUI F4).
@@ -355,25 +354,15 @@
         m))
 
 (defn clj-eval-fn
-  "Evaluate Clojure over the session's nREPL. Target resolution (autostart is ON):
-     - explicit `port` → dial it directly (escape hatch; no autostart/recovery);
+  "Evaluate Clojure over a RUNNING nREPL in this session. Target resolution:
+     - explicit `port` → dial it directly (escape hatch);
      - `id`/`repl_id`  → the REPL registered under that id in THIS session;
-     - `dir`           → the REPL rooted at that dir (resolved against the workspace
-                         root; autostarted there when the session owns none);
-     - no id, 0 REPLs  → AUTOSTART one in `dir` (default: workspace root; :dev :test);
+     - `dir`           → the REPL rooted at that dir (when the session owns one);
      - no id, 1 REPL   → use it (the implicit default);
      - no id, >1 REPLs → the REPL owning `dir` (default: the workspace root) when
-                         present, else the first (dir-sorted).
-   The just-autostarted REPL is mirrored into the session resources on the next
-   ctx render (footer + stop/restart).
-
-   AUTO-RECOVERY lives in ONE place — the resolver's autostart path
-   (`ensure-repl-for-dir!`), which drops a dead/wedged process and reboots it
-   BEFORE handing back a port, and is boot-aware (a still-booting REPL is waited
-   out, never killed mid-flight). We do NOT restart-and-retry around the eval
-   itself: layering a second reboot onto the eval stacks another cold boot inside
-   the tool wall and, done per eval, spins an endless restart cycle. A genuine
-   connect failure therefore surfaces as DATA, so the model can repl_start / wait."
+                         present, else the first (dir-sorted);
+     - no id, 0 REPLs  → error (:clj/no-repl): no running nREPL to hit.
+   A connect failure surfaces as DATA so the model can repl_start / wait."
   ([env arg]
    (let [m
          (coerce-eval-arg arg)
@@ -410,10 +399,9 @@
 
          rid
          ;; A model may carry a stale/previous ctx resource id while also passing
-         ;; an explicit `dir` for the code's project root. If that id is not live
-         ;; in THIS session, let `dir` drive the normal autostart path instead of
-         ;; failing before autostart gets a chance. With no explicit dir, keep the
-         ;; strict id contract and surface the unknown-id error.
+         ;; an explicit `dir`. If that id is not live in THIS session, let `dir`
+         ;; drive the default resolution instead of failing on the unknown id.
+         ;; With no explicit dir, keep the strict id contract and surface the error.
          (when-not (and requested-dir?
                         requested-rid
                         (not (repl-manager/repl-by-id sid requested-rid)))
@@ -426,10 +414,8 @@
          (fn [p repl-label]
            ;; Carry the evaluated FORM back on the result (string key, crosses the
            ;; strings-only boundary) so the repl_eval op-card can show it in the
-           ;; collapsed chip / expanded FORM section — the render fn sees only the
-           ;; result map, never the call args. `repl` names WHICH nREPL actually
-           ;; ran it, so a multi-REPL session always reports the target that was
-           ;; auto-picked (or explicitly named).
+           ;; collapsed chip / expanded FORM section. `repl` names WHICH nREPL
+           ;; actually ran it, so a multi-REPL session reports the target used.
            (-> (nrepl-client/eval! {:host host
                                     :port p
                                     :code code
@@ -441,32 +427,11 @@
                       "repl" repl-label)))]
 
      (if port
-       ;; Explicit port: the escape hatch — dial exactly what was asked, with no
-       ;; autostart and no auto-recovery.
+       ;; Explicit port: the escape hatch — dial exactly what was asked.
        (extension/success {:result (run port (str host ":" port))})
-       (let [target
-             ;; A cold autostart (deps resolve + JVM boot, up to ~2 min) runs
-             ;; OUTSIDE the native tool wall — the eval's timeout_ms bounds only
-             ;; the eval itself, never the boot.
-             (extension/run-outside-tool-wall env
-                                              #(repl-manager/resolve-target! sid rid default-dir))
-
-             tport
-             (:port target)]
-
-         (when-not tport
-           (throw
-             (ex-info
-               "no nREPL port resolved — could not autostart a project nREPL (no deps.edn / project.clj / bb.edn?)"
-               {:type :clj/no-port :workspace-root root})))
-         ;; Recovery of a dead/wedged REPL lives in ONE place: the resolver's
-         ;; boot-aware autostart (`ensure-repl-for-dir!`). We do NOT restart and
-         ;; retry here — a second reboot layered onto the eval stacks another
-         ;; cold boot inside the tool wall and, against a still-booting port,
-         ;; kills real boot progress; done on every eval it spins an endless
-         ;; restart cycle. A genuine connect failure surfaces as DATA (the model
-         ;; can repl_start / wait), never a hidden reload.
-         (extension/success {:result (run tport (:id target))}))))))
+       ;; Resolve a RUNNING REPL. A missing REPL throws :clj/no-repl.
+       (let [target (repl-manager/resolve-target! sid rid default-dir)]
+         (extension/success {:result (run (:port target) (:id target))}))))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
@@ -1088,7 +1053,7 @@
                            :test-fn test-runner/clj-test-fn
                            :repl-eval-fn clj-eval-fn
                            :start-repl-fn (fn [env op opts]
-                                            (clj-repl-fn env op opts))}]
+                                            (repl-start-fn env op opts))}]
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
      ;; extension's lifecycle (no imperative side effects at ns load). They keep
      ;; Clojure source tidy after the foundation's WRITE only (an :after

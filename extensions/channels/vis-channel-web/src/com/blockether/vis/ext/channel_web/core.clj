@@ -35,6 +35,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [hiccup2.core :as h]
             [ring.core.protocols :as ring-protocols])
   (:import [java.io OutputStream]
@@ -755,7 +756,8 @@
         (System/getProperty "user.home")]
 
     (if (and (seq path) home (str/starts-with? path home))
-      (str "~" (subs path (count home)))
+      (let [suffix (subs path (count home))]
+        (if (str/blank? suffix) "~/" (str "~" suffix)))
       path)))
 
 ;; =============================================================================
@@ -806,6 +808,19 @@
       [:span.role-time (.format formatter time)])))
 
 (defn- live-key-attr [k] (when k {:data-live-key (str k)}))
+
+(defn- with-live-key
+  "Attach a `data-live-key` to a hiccup element's ROOT so ui.js dedupes a
+   replayed/reconnected `beforeend` fragment (see `hasExistingLiveKey`). A frame
+   with NO key is appended AGAIN on every replay window — the web-only duplicate
+   the TUI never shows. No-op on a nil key / non-element node."
+  [k node]
+  (if (and k (vector? node) (keyword? (first node)))
+    (let [[tag x & more] node]
+      (if (map? x)
+        (into [tag (merge x (live-key-attr k))] more)
+        (into [tag (live-key-attr k)] (when (some? x) (cons x more)))))
+    node))
 
 (defn- turn-live-key
   "Stable idempotency key for a rendered turn fragment.
@@ -1520,6 +1535,18 @@
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ast->hiccup ir)]))]))
 
+(defn- session-footer-handler
+  "GET /ui/session/:sid/footer — the bottom dock (`footer-content`), lazy-loaded
+   by the session page AFTER first paint (hx-trigger=load). Keeps the dock's
+   several gateway roundtrips (workspace + resources + routing + reasoning) OFF
+   the page's critical render path so a session-switch paints the thread first."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid])
+                    parse-uuid)]
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if (and sid (vis/gateway-soul sid)) (html (footer-content sid)) "")}))
+
 (defn- user-bubble-html
   ([text] (user-bubble-html text nil nil))
   ([text live-key] (user-bubble-html text live-key nil))
@@ -1566,38 +1593,37 @@
     (when (and sid tid) (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"} :body ""}))
 
-(defn- queued-turns
-  [sid]
-  (->> (vis/gateway-list-turns sid)
-       (filter #(= "queued" (get % "status")))
-       vec))
 
 (defn- queued-content
-  [sid]
-  (let [items (seq (queued-turns sid))] ; oldest-first (item #1 fires next, at top) — matches the TUI queue order
-    (when items
-      [:div.queued-panel [:div.queued-title "Queued"]
-       (for [{:strs [turn_id request]} items]
-         [:form.queued-item {:data-turn-id (str turn_id)}
-          [:textarea.queued-edit
-           {:name "request"
-            :rows 2
-            :aria-label "Queued message"
-            :autocomplete "off"
-            :autocapitalize "off"
-            :autocorrect "off"
-            :spellcheck "false"
-            :hx-post (str "/ui/session/" sid "/queued/" turn_id "/update")
-            :hx-trigger "input changed delay:600ms"
-            :hx-swap "none"} (str request)]
-          [:div.queued-actions
-           [:button.queued-del
-            {:type "button"
-             :aria-label "Remove queued message"
-             :title "Remove queued message"
-             :hx-post (str "/ui/session/" sid "/queued/" turn_id "/delete")
-             :hx-target "#queued"
-             :hx-swap "innerHTML"} (icon "trash")]]])])))
+  ;; 1-arity fetches the turns (SSE `queued` frame / OOB swap); the 2-arity
+  ;; reuses turns the caller ALREADY fetched (session-page) so a page render
+  ;; doesn't pay a second `gateway-list-turns` loopback just to find the queue.
+  ([sid] (queued-content sid (vis/gateway-list-turns sid)))
+  ([sid turns]
+   (let [items (seq (filter #(= "queued" (get % "status")) turns))] ; oldest-first (item #1 fires next, at top) — matches the TUI queue order
+     (when items
+       [:div.queued-panel [:div.queued-title "Queued"]
+        (for [{:strs [turn_id request]} items]
+          [:form.queued-item {:data-turn-id (str turn_id)}
+           [:textarea.queued-edit
+            {:name "request"
+             :rows 2
+             :aria-label "Queued message"
+             :autocomplete "off"
+             :autocapitalize "off"
+             :autocorrect "off"
+             :spellcheck "false"
+             :hx-post (str "/ui/session/" sid "/queued/" turn_id "/update")
+             :hx-trigger "input changed delay:600ms"
+             :hx-swap "none"} (str request)]
+           [:div.queued-actions
+            [:button.queued-del
+             {:type "button"
+              :aria-label "Remove queued message"
+              :title "Remove queued message"
+              :hx-post (str "/ui/session/" sid "/queued/" turn_id "/delete")
+              :hx-target "#queued"
+              :hx-swap "innerHTML"} (icon "trash")]]])]))))
 
 (defn- oob-queued [sid] (html [:div#queued {:hx-swap-oob "innerHTML"} (queued-content sid)]))
 
@@ -1750,11 +1776,19 @@
               ;; Work frames stay under the live Vis role.
               code-frame
               (when-not (or (str/blank? (str code)) (vis/hide-tool-code? form))
-                {:event "trace-message" :html (html (block-code code))})
+                {:event "trace-message"
+                 :html (html (with-live-key (turn-live-key (str "code:" (get event "iteration")
+                                                                ":" (get event "block_id"))
+                                                           event)
+                                            (block-code code)))})
 
               result-frame
               (when-let [out (block-result (get event "result") form)]
-                {:event "trace-message" :html (html out)})
+                {:event "trace-message"
+                 :html (html (with-live-key (turn-live-key (str "result:" (get event "iteration")
+                                                                ":" (get event "block_id"))
+                                                           event)
+                                            out))})
 
               error-frame
               (when (get event "error")
@@ -1819,6 +1853,18 @@
 
       nil)))
 
+(def ^:private MAX_INFLIGHT_REPLAY_EVENTS
+  "Upper bound on the number of in-flight EVENTS a session-switch / refresh
+   renders SERVER-SIDE before handing off to the live stream. A turn with
+   hundreds of tool calls emits thousands of events; running every one through
+   `event->frames` on the request thread is what made switching INTO a busy
+   streaming session take many seconds (up to a stall). We only need the RECENT
+   tail — it matches the client's own `LIVE_MAX` trim (ui.js keeps ~400 `#live`
+   nodes) — so the newest state paints instantly and the stream, which resumes
+   at the SAME pinned cursor, carries everything after. Capping the EVENTS (not
+   the frames) is what saves the work: `event->frames` runs on the tail only."
+  500)
+
 (defn- inflight-live-frames
   "Replay the IN-FLIGHT turn's events `(from, to]` through the SAME
    `event->frames` the SSE/poll stream uses, returning its `{:event :html}`
@@ -1829,11 +1875,18 @@
    `turn.started` seq, so its already-server-rendered chrome (the user bubble in
    `turn-block`, the dots/stop/queued the page draws for `running?`) is NOT
    replayed; `to` is the page's pinned cursor, so nothing overlaps what the
-   stream — which now starts at the SAME cursor — will deliver next."
+   stream — which now starts at the SAME cursor — will deliver next.
+
+   Bounded to the last `MAX_INFLIGHT_REPLAY_EVENTS` events: a very long running
+   turn would otherwise render thousands of frames on the request thread and
+   stall the switch. The tail is what's on-screen anyway (ui.js trims older
+   `#live` nodes), and the durable trace re-renders in full once the turn
+   settles. Capping the EVENTS (before `event->frames`) is what avoids the work."
   [sid from to]
-  (->> (vis/gateway-events-since sid from)
-       (take-while #(<= (long (get % "seq")) (long to)))
-       (mapcat #(event->frames sid %))))
+  (let [events (->> (vis/gateway-events-since sid from)
+                    (take-while #(<= (long (get % "seq")) (long to))))]
+    (->> (take-last MAX_INFLIGHT_REPLAY_EVENTS events)
+         (mapcat #(event->frames sid %)))))
 
 (defn- query-long
   "Unsigned long query param by name, or nil when absent/invalid."
@@ -2183,39 +2236,27 @@
   (if (not-empty color) color (str "hsl(" (project-hue id) " 62% 58%)")))
 
 (defn- session-row-li
-  "One session row in the drawer: the bulk-select checkbox, the row link (active
-   highlight + running dot), and the hover actions — move-to-project + delete.
-   Shared by every project bucket AND the projectless list. When `reorder` is
-   supplied ({:pid :first? :last?}) the row also carries up/down controls that
-   move this PROJECT SESSION within its project (persisted via the gateway
-   reorder endpoint) — the web twin of dragging a TUI tab."
+  "One session row in the flat drawer list: the bulk-select checkbox, the row
+   link (active highlight + running dot), and the hover actions — move-to-project
+   + delete. Carries `data-pid` (its project id, or 'none' when unfiled) and,
+   when it belongs to a project, that project's `--proj` accent — so the bottom
+   project dock can filter the list to one project purely client-side and paint
+   the row's rail in the project color. Shared by every session, filed or not."
   ([session active-sid] (session-row-li session active-sid nil))
-  ([{:strs [id title status]} active-sid reorder]
+  ([{:strs [id title status]} active-sid {:keys [pid accent]}]
    [:li.side-item
+    (cond-> {:data-pid (or (not-empty pid) "none")}
+      (not-empty accent)
+      (assoc :style (str "--proj:" accent)))
     ;; bulk-delete checkbox - hidden until the aside carries .select-mode;
     ;; checked rows ride hx-include to the confirm modal
     [:input.side-check {:type "checkbox" :name "sid" :value (str id) :aria-label "Select session"}]
     [:a
-     {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
-      :href (str "/ui/session/" id)} [:span.side-title (or title "Untitled")]
-     (when (= status "running") [:span.side-dot])]
-    ;; hover-revealed reorder: move this project session up / down (movable tabs)
-    (when reorder
-      [:span.side-reorder
-       [:button.side-move-up
-        {:type "button"
-         :disabled (boolean (:first? reorder))
-         :aria-label "Move session up"
-         :hx-post (str "/ui/session/" id "/reorder")
-         :hx-vals "{\"dir\":\"up\"}"
-         :hx-swap "none"} "↑"]
-       [:button.side-move-down
-        {:type "button"
-         :disabled (boolean (:last? reorder))
-         :aria-label "Move session down"
-         :hx-post (str "/ui/session/" id "/reorder")
-         :hx-vals "{\"dir\":\"down\"}"
-         :hx-swap "none"} "↓"]])
+     {:class (str "side-row"
+                  (when (not-empty accent) " tinted")
+                  (when (= (str id) (str active-sid)) " active"))
+      :href (str "/ui/session/" id)} (when (not-empty accent) [:span.side-row-rail])
+     [:span.side-title (or title "Untitled")] (when (= status "running") [:span.side-dot])]
     ;; hover-revealed move: open the project picker for THIS session
     [:button.side-move
      {:type "button"
@@ -2236,12 +2277,14 @@
   "Children of the session drawer - extracted so the SSE `sidebar` frame
    can re-render titles and running dots without replacing the <aside>
    (which carries the sse-swap target itself). Select-mode (bulk delete)
-   is a CSS class on the <aside> toggled in ui.js, so it SURVIVES the
-   SSE innerHTML re-render.
+   AND the active project filter are CSS state on the <aside>, so both
+   SURVIVE the SSE innerHTML re-render (re-applied by ui.js).
 
-   Sessions are grouped into persistent PROJECTS (the web twin of the TUI
-   navigator's Ctrl+B move-to-project): each project is a colored section
-   listing its project sessions, projectless sessions fall to the bottom list."
+   Sessions render as ONE flat list; PROJECTS live in a bottom icon DOCK
+   (the web twin of the TUI navigator's project tab-groups). Each dock chip
+   is that project's accent color and filters the list to its sessions;
+   'All' shows everything, 'Unfiled' the projectless ones, '+' makes a new
+   project. Double-clicking a project chip opens its manage modal."
   [active-sid]
   (let [sessions
         (vis/gateway-list-sessions)
@@ -2249,64 +2292,58 @@
         projects
         (try (vis/gateway-list-projects) (catch Throwable _ nil))
 
-        by-project
-        (group-by #(some-> (get % "project_id")
-                           str)
-                  sessions)
-
-        no-project
-        (get by-project nil)
-
         ordered
-        (sort-by (juxt #(get % "position") #(get % "name")) projects)]
+        (sort-by (juxt #(get % "position") #(get % "name")) projects)
+
+        proj-by-id
+        (into {}
+              (map (fn [p]
+                     [(str (get p "id")) p]))
+              projects)
+
+        pid-of
+        (fn [s]
+          (some-> (get s "project_id")
+                  str
+                  not-empty))
+
+        accent-of
+        (fn [s]
+          (some-> (pid-of s)
+                  proj-by-id
+                  project-accent))
+
+        by-project
+        (group-by pid-of sessions)
+
+        ;; flat order: project sessions first (in project + position order),
+        ;; then every projectless session
+        proj-rows
+        (mapcat (fn [p]
+                  (sort-by (juxt #(get % "project_position") #(get % "name"))
+                           (get by-project (str (get p "id")))))
+                ordered)
+
+        unfiled
+        (sort-by #(get % "name") (get by-project nil))
+
+        all-rows
+        (concat proj-rows unfiled)
+
+        counts
+        (frequencies (keep pid-of sessions))]
 
     (list [:div.side-head
            [:form.newchat {:method "post" :action "/ui/sessions"}
             [:button.newchat-btn {:type "submit"} [:span.newchat-plus "+"] "New session"]]
-           ;; create a persistent project for organizing sessions
-           [:button.side-newproject
-            {:type "button"
-             :aria-label "New project"
-             :hx-get "/ui/projects/new"
-             :hx-target "#modal"
-             :hx-swap "innerHTML"} (icon "folder-plus")]
            [:button.side-select-toggle
             {:type "button" :data-select-toggle "1" :aria-label "Select sessions"}
             [:span.when-idle "Select"] [:span.when-select "Done"]]]
-          ;; ONE scroll region wraps every project section AND the projectless list
-          [:div.side-scroll
-           (for [p
-                 ordered
-
-                 :let [members
-                       (vec (sort-by (juxt #(get % "project_position") #(get % "name"))
-                                     (get by-project (str (get p "id")))))
-
-                       last-idx
-                       (dec (count members))]]
-
-             [:section.side-project {:style (str "--proj:" (project-accent p))}
-              [:div.side-project-head [:span.side-project-dot]
-               [:span.side-project-name (or (not-empty (get p "name")) "Project")]
-               [:span.side-project-count (count members)]
-               [:button.side-project-edit
-                {:type "button"
-                 :aria-label "Manage project"
-                 :hx-get (str "/ui/project/" (get p "id"))
-                 :hx-target "#modal"
-                 :hx-swap "innerHTML"} (icon "edit")]]
-              (if (seq members)
-                [:ul.side-list
-                 (map-indexed (fn [i s]
-                                (session-row-li s
-                                                active-sid
-                                                {:pid (get p "id")
-                                                 :first? (zero? (long i))
-                                                 :last? (= i last-idx)}))
-                              members)]
-                [:p.side-project-empty "empty — move a session here"])])
-           (when (and (seq ordered) (seq no-project)) [:div.side-project-label "No project"])
-           [:ul.side-list (map #(session-row-li % active-sid) no-project)]]
+          ;; ONE flat, scrollable list of every session; the dock filters it
+          [:ul.side-sessions.side-list
+           (map (fn [s]
+                  (session-row-li s active-sid {:pid (pid-of s) :accent (accent-of s)}))
+                all-rows)]
           ;; select-mode action bar - the confirm modal receives the checked ids
           ;; as repeated `sid` query params via hx-include
           [:div.side-bulkbar
@@ -2317,6 +2354,46 @@
              :hx-include ".side-check:checked"
              :hx-target "#modal"
              :hx-swap "innerHTML"} "Delete selected"]]
+          ;; project DOCK: a row of accent-colored project chips pinned above the
+          ;; config foot. Single click filters the list (ui.js); double click a
+          ;; project chip opens its manage modal. Survives SSE re-render.
+          [:div.side-dock {:role "tablist" :aria-label "Filter sessions by project"}
+           [:button.side-dock-chip.all.active
+            {:type "button" :data-dock-pid "" :title "All sessions" :aria-label "All sessions"}
+            (icon "layers")]
+           (for [p
+                 ordered
+
+                 :let [pid
+                       (str (get p "id"))
+
+                       nm
+                       (or (not-empty (get p "name")) "Project")]]
+
+             [:button.side-dock-chip
+              {:type "button"
+               :data-dock-pid pid
+               :style (str "--proj:" (project-accent p))
+               :title (str nm " · double-click to manage")
+               :aria-label nm
+               :hx-get (str "/ui/project/" (get p "id"))
+               :hx-target "#modal"
+               :hx-swap "innerHTML"
+               :hx-trigger "dblclick"} [:span.side-dock-glyph (str/upper-case (subs nm 0 1))]
+              (when-let [c (get counts pid)]
+                [:span.side-dock-count c])])
+           (when (seq unfiled)
+             [:button.side-dock-chip.unfiled
+              {:type "button"
+               :data-dock-pid "none"
+               :title "Unfiled sessions"
+               :aria-label "Unfiled sessions"} (icon "folder")])
+           [:button.side-dock-chip.new
+            {:type "button"
+             :aria-label "New project"
+             :hx-get "/ui/projects/new"
+             :hx-target "#modal"
+             :hx-swap "innerHTML"} (icon "folder-plus")]]
           ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
           ;; in the cramped mobile header.
           [:div.side-foot
@@ -2471,7 +2548,8 @@
           [:div#suggest.suggest {:hidden true}]
           ;; Stop control - SSE fills #turnctl with the stop button on turn.started
           ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
-          [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"} (queued-content sid)]
+          [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"}
+           (queued-content sid all-turns)]
           [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
            (when running? (stop-button sid))]
           [:form.composer
@@ -2507,7 +2585,16 @@
               :aria-label "Dictate"
               :data-voice-url (str "/v1/sessions/" sid "/voice")} (icon "mic")]
             [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]]
-         [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"} (footer-content sid)]]]])))
+         ;; The footer dock (provider/model + reasoning chips, fs/bg counts) makes
+         ;; several gateway roundtrips (workspace + resources + routing + reasoning);
+         ;; loading it AFTER first paint (hx-trigger=load) keeps it off the page's
+         ;; critical render path so a session-switch paints the thread immediately.
+         ;; SSE `footer` frames + the OOB `#footwrap` swaps still refresh it live.
+         [:div#footwrap
+          {:sse-swap "footer"
+           :hx-swap "innerHTML"
+           :hx-get (str "/ui/session/" sid "/footer")
+           :hx-trigger "load"}]]]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -2844,7 +2931,30 @@
         native
         (some-> (re-matches #"(?i)/(settings|providers|switch-session|fork-session)(?:\s.*)?" text)
                 second
-                str/lower-case)]
+                str/lower-case)
+
+        ;; A leading-`/` message that is NOT one of the web-native channel
+        ;; slashes above. Dispatch it through the engine (`run-slash`) so real
+        ;; `/`-commands answer inline.
+        slash?
+        (and sid (str/starts-with? text "/") (not new-m) (nil? native))
+
+        slash-result
+        (when slash?
+          (try (run-slash sid text) (catch Throwable t {:handled? true :error (ex-message t)})))
+
+        ;; PARITY with `run-turn!` (the TUI + Telegram path): a slash NO
+        ;; registered extension claims (`:reason :unknown`) gets one more chance
+        ;; as a PROMPT TEMPLATE — `.vis/prompts/*.md` file prompts and harness
+        ;; `/skill:<name>` skills. When one matches we DON'T answer inline; we
+        ;; fall through to `:else` and submit a normal streaming turn, letting
+        ;; the engine re-expand + run it. The web was the ONLY channel skipping
+        ;; this, so `/skill:impeccable` wrongly answered "Unknown slash command".
+        slash-template?
+        (and slash-result
+             (= :unknown (:reason slash-result))
+             (try (some? (prompt-templates/expand (vis/env-for sid) text))
+                  (catch Throwable _ false)))]
 
     (cond
       ;; Web-native `/new-session [title]` (alias `/new`): create a NEW session
@@ -2913,15 +3023,16 @@
          :body (if fork
                  ""
                  (str (user-bubble-html text) (slash-bubble {:error "could not fork session"})))})
-      (and sid (str/starts-with? text "/"))
-      (let [result (try (run-slash sid text)
-                        (catch Throwable t {:handled? true :error (ex-message t)}))]
-        {:status 200
-         :headers {"Content-Type" "text/html; charset=utf-8"}
-         :body (str (user-bubble-html text)
-                    (if (:handled? result)
-                      (slash-bubble result)
-                      (slash-bubble {:error (str "unknown command: " text)})))})
+      ;; Real engine slash — handled command or genuinely unknown — answered
+      ;; inline. A prompt-template match (`slash-template?`) is deliberately
+      ;; excluded here so it falls to `:else` and runs as a normal turn.
+      (and slash? (not slash-template?)) {:status 200
+                                          :headers {"Content-Type" "text/html; charset=utf-8"}
+                                          :body (str (user-bubble-html text)
+                                                     (if (:handled? slash-result)
+                                                       (slash-bubble slash-result)
+                                                       (slash-bubble
+                                                         {:error (str "unknown command: " text)})))}
       :else
       (let [atts
             (composer-attachments (get-in request [:multipart-params "attachment"]))
@@ -5598,6 +5709,7 @@
    ["/ui/session/:sid/queued/clear" {:post #'queued-clear-handler}]
    ["/ui/session/:sid/turn/:tid/trace" {:get #'turn-trace-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
+   ["/ui/session/:sid/footer" {:get #'session-footer-handler}]
    ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
    ["/ui/session/:sid/fs-remove" {:post #'fs-remove-handler}]
    ["/ui/session/:sid/fs-root" {:post #'fs-root-handler}]

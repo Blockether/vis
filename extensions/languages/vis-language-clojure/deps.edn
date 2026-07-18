@@ -20,31 +20,34 @@
 ;; changed guided newline handling and reflows let/binding forms differently,
 ;; which made `format_code` fight the canonical formatter (spurious churn). Keep
 ;; these two versions in lockstep.
-{:paths ["src" "resources"]
- :deps  {com.blockether/vis {:local/root "../../.."}
-         dev.weavejester/cljfmt  {:mvn/version "0.16.4"}
-         zprint/zprint           {:mvn/version "1.2.9"}
-         nrepl/nrepl             {:mvn/version "1.7.0"}
-         ;; clj-kondo: static analysis / linter, run via its programmatic API
-         ;; (clj-kondo.core/run!) for the `lint_code` language-surface verb.
-         clj-kondo/clj-kondo     {:mvn/version "2026.05.25"}
-         ;; --- Jackson override (audit) ---
-         ;; clj-kondo -> cheshire 5.13.0 drags in Jackson 2.17.0 transitively
-         ;; (vis itself uses charred for JSON, not cheshire). Pin the whole
-         ;; Jackson 2.x set to one deliberate, recent, patched version so the
-         ;; security audit sees a single controlled coordinate instead of a
-         ;; transitive accident. core/smile/cbor MUST stay on the same version.
-         ;; Exclude jackson-databind: cheshire uses only the streaming core +
-         ;; smile/cbor factories, never ObjectMapper binding, so databind was
-         ;; NOT on the classpath before this pin — keep it that way (databind is
-         ;; the historically CVE-prone module).
-         com.fasterxml.jackson.core/jackson-core            {:mvn/version "2.21.1"}
-         com.fasterxml.jackson.dataformat/jackson-dataformat-smile {:mvn/version "2.21.1"
-                                                                    :exclusions [com.fasterxml.jackson.core/jackson-databind]}
-         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor  {:mvn/version "2.21.1"
-                                                                    :exclusions [com.fasterxml.jackson.core/jackson-databind]}
-         ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
-         ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
-         ;; delimiter-error detection).
-         parinferish/parinferish {:mvn/version "0.8.0"}
-         borkdude/edamame        {:mvn/version "1.5.39"}}}
+{:aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "--dir" "test"]}}
+ :deps {com.blockether/vis {:local/root "../../.."}
+        dev.weavejester/cljfmt {:mvn/version "0.16.4"}
+        zprint/zprint {:mvn/version "1.2.9"}
+        nrepl/nrepl {:mvn/version "1.7.0"}
+        ;; clj-kondo: static analysis / linter, run via its programmatic API
+        ;; (clj-kondo.core/run!) for the `lint_code` language-surface verb.
+        clj-kondo/clj-kondo {:mvn/version "2026.05.25"}
+        ;; --- Jackson override (audit) ---
+        ;; clj-kondo -> cheshire 5.13.0 drags in Jackson 2.17.0 transitively
+        ;; (vis itself uses charred for JSON, not cheshire). Pin the whole
+        ;; Jackson 2.x set to one deliberate, recent, patched version so the
+        ;; security audit sees a single controlled coordinate instead of a
+        ;; transitive accident. core/smile/cbor MUST stay on the same version.
+        ;; Exclude jackson-databind: cheshire uses only the streaming core +
+        ;; smile/cbor factories, never ObjectMapper binding, so databind was
+        ;; NOT on the classpath before this pin — keep it that way (databind is
+        ;; the historically CVE-prone module).
+        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.21.1"}
+        com.fasterxml.jackson.dataformat/jackson-dataformat-smile
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.21.1"}
+        com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.21.1"}
+        ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
+        ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
+        ;; delimiter-error detection).
+        parinferish/parinferish {:mvn/version "0.8.0"}
+        borkdude/edamame {:mvn/version "1.5.39"}}
+ :paths ["src" "resources"]}

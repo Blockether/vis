@@ -120,6 +120,30 @@
       ;; ... AND the transient `.live-vis-answer` streaming copy is
       ;; wiped, so the answer never renders twice in the live bubble.
       (expect (seq clears))))
+  (it
+    "streamed code + result trace frames carry a data-live-key so replays dedupe (no web-only duplication)"
+    (let [frames
+          (@#'web/event->frames
+           "session-1"
+           {"type" "block.output"
+            "turn_id" "turn-1"
+            "iteration" 2
+            "block_id" 0
+            "code" "print(1 + 1)"
+            "result" "2"})
+
+          htmls
+          (->> frames
+               (filter #(= "trace-message" (:event %)))
+               (map :html))]
+
+      ;; both the code row and the result row stream as trace messages ...
+      (expect (some #(str/includes? % "code:2:0:turn-1") htmls))
+      (expect (some #(str/includes? % "result:2:0:turn-1") htmls))
+      ;; ... and EVERY streamed trace frame is keyed — a keyless frame is the
+      ;; one ui.js can't dedupe, so it re-appends on every reconnect/poll.
+      (expect (seq htmls))
+      (expect (every? #(str/includes? % "data-live-key") htmls))))
   (it "settles streamed work and the final answer into the same Vis bubble"
       (with-redefs [vis/gateway-turn-trace (constantly [{"thinking" "durable work" "forms" []}])]
         (let [bubble (pr-str (@#'web/settled-vis-bubble

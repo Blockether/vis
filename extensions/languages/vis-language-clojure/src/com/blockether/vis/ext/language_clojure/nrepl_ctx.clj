@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.language-clojure.nrepl-ctx
   "Per-turn `:ext/ctx-fn` contribution for the Clojure pack.
 
-   Instead of forcing the model to call `clj_repl()` over and over, the engine
+   Instead of forcing the model to call `repl_start()` over and over, the engine
    injects live nREPL state into context as standing knowledge, nested UNDER the
    active language so a polyglot repo accumulates
    `:languages {:clojure {...} :typescript {...}}`:

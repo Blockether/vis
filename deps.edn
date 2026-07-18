@@ -10,14 +10,6 @@
                :replace-deps {io.github.clj-holmes/clj-watson
                               {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"
                                :git/tag "v6.1.0"}}}
-  :dev {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                     io.github.tonsky/clj-reload {:mvn/version "1.0.0"}
-                     nrepl/nrepl {:mvn/version "1.7.0"}}
-        :extra-paths ["dev" "test"]
-        :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
-                   "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
-                   "-Djava.awt.headless=true" "-Dapple.awt.UIElement=true"]
-        :main-opts ["-m" "com.blockether.vis.dev"]}
   :format {:deps {io.github.enajski/codestyle {:git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"
                                                :git/url "https://github.com/enajski/codestyle.git"}}
            :main-opts ["-m" "codestyle.advanced-format"]}

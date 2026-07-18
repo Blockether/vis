@@ -329,7 +329,7 @@ overflow-wrap:anywhere;margin-top:0;text-align:justify;hyphens:auto}
 .block-think-body>:last-child{margin-bottom:0}
 .block-think-body p,.block-think-body li{text-align:justify}
 .block-sum{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;min-width:0;align-items:center;gap:.4rem;
-user-select:none;padding:.26rem .5rem;border:1px solid transparent;border-radius:var(--r-sm);
+user-select:none;padding:.26rem .5rem .26rem .15rem;border:1px solid transparent;border-radius:var(--r-sm);
 background:transparent}
 .block-sum::-webkit-details-marker{display:none}
 /* one caret that ROTATES (▸ → ▾) instead of swapping the glyph, so the
@@ -424,7 +424,7 @@ white-space:nowrap;letter-spacing:-.01em}
 .dock{position:relative;padding:.35rem 1.2rem .8rem;background:linear-gradient(to top,var(--bg) 65%,transparent);overflow-anchor:none;contain:layout}
 .composer{max-width:56rem;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-lg);
-padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
+padding:.3rem .4rem .3rem .9rem;box-shadow:var(--shadow);transition:border-color .15s}
 .composer:focus-within{border-color:var(--primary)}
 /* Shell-sugar affordance: a `!`/`!&` composer runs in your shell, not the model.
    Tint the frame + drop a corner pill in the shell tool color (the SAME palette
@@ -436,12 +436,12 @@ padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-col
 /* Keep composer text compact and predictable; the button height, not a tall
    textarea line box, owns the dock's single-line height. */
 .composer textarea{flex:1;border:0;outline:0;resize:none;background:transparent;
-display:block;font:inherit;font-size:.9rem;line-height:20px;height:34px;max-height:200px;padding:7px 0;
-min-height:34px;box-sizing:border-box;overflow-y:auto;color:var(--fg)}
+display:block;font:inherit;font-size:.9rem;line-height:18px;height:30px;max-height:200px;padding:6px 0;
+min-height:30px;box-sizing:border-box;overflow-y:auto;color:var(--fg)}
 .composer textarea::placeholder{color:var(--dim)}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
-.send{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);border:0;cursor:pointer;
-background:var(--primary);color:var(--primary-fg);font-size:1.05rem;font-weight:700;
+.send{flex:none;width:30px;height:30px;border-radius:var(--r-2xs);border:0;cursor:pointer;
+background:var(--primary);color:var(--primary-fg);
 display:flex;align-items:center;justify-content:center;transition:filter .15s}
 .send:hover{filter:brightness(1.07)}
 /* stop control - shown above the composer only while a turn runs */
@@ -555,29 +555,42 @@ padding:.42rem .55rem;font-size:.86rem;color:var(--fg);transition:background .1s
 /* the single scroll region wrapping every project + the ungrouped list */
 .side-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.5rem}
 .side-list{display:flex;flex-direction:column;gap:.15rem;list-style:none;margin:0;padding:0}
-/* a project card: colored left rail + a faint tint of its own accent */
-.side-project{border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;
-  background:color-mix(in srgb,var(--proj) 5%,transparent)}
-.side-project-head{display:flex;align-items:center;gap:.45rem;padding:.4rem .5rem;
-  border-left:3px solid var(--proj);background:color-mix(in srgb,var(--proj) 11%,transparent)}
-.side-project-dot{flex:none;width:9px;height:9px;border-radius:var(--r-circle);background:var(--proj);
-  box-shadow:0 0 0 3px color-mix(in srgb,var(--proj) 22%,transparent)}
+/* a project card: a soft folder with its OWN accent — tinted surface, an
+   accent-lit header, gentle lift on hover so the group reads as one object */
+.side-project{position:relative;border:1px solid color-mix(in srgb,var(--proj) 20%,var(--line));
+  border-radius:var(--r-lg,10px);overflow:hidden;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--proj) 8%,var(--panel2)),color-mix(in srgb,var(--proj) 2%,var(--panel2)));
+  box-shadow:0 1px 2px rgba(0,0,0,.18);
+  transition:border-color .13s,box-shadow .13s}
+.side-project:hover{border-color:color-mix(in srgb,var(--proj) 42%,var(--line));
+  box-shadow:0 4px 12px color-mix(in srgb,var(--proj) 16%,transparent)}
+.side-project-head{display:flex;align-items:center;gap:.5rem;padding:.5rem .55rem .46rem;
+  border-bottom:1px solid color-mix(in srgb,var(--proj) 14%,transparent);
+  background:color-mix(in srgb,var(--proj) 12%,transparent)}
+.side-project-dot{flex:none;width:10px;height:10px;border-radius:3px;
+  background:linear-gradient(145deg,color-mix(in srgb,var(--proj) 88%,#fff),var(--proj));
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--proj) 20%,transparent),0 1px 2px rgba(0,0,0,.28)}
 .side-project-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-size:.82rem;font-weight:650;letter-spacing:.01em}
-.side-project-count{flex:none;font-size:.66rem;font-weight:700;padding:.05rem .42rem;border-radius:var(--r-pill);
-  color:var(--proj);background:color-mix(in srgb,var(--proj) 18%,transparent)}
+  font-size:.82rem;font-weight:650;letter-spacing:.005em;color:var(--fg)}
+.side-project-count{flex:none;min-width:1.2rem;text-align:center;font-size:.66rem;font-weight:700;
+  padding:.08rem .42rem;border-radius:var(--r-pill);line-height:1.25;
+  color:color-mix(in srgb,var(--proj) 74%,var(--fg));
+  background:color-mix(in srgb,var(--proj) 20%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--proj) 30%,transparent)}
 .side-project-edit{flex:none;display:flex;align-items:center;justify-content:center;width:22px;height:22px;
-  border-radius:var(--r-xs);color:var(--dim);opacity:0;transition:opacity .1s,background .1s,color .1s}
+  border-radius:var(--r-xs);color:var(--dim);opacity:0;transition:opacity .12s,background .12s,color .12s}
 .side-project:hover .side-project-edit,.side-project:focus-within .side-project-edit{opacity:1}
-.side-project-edit:hover{background:var(--hover);color:var(--proj)}
+.side-project-edit:hover{background:color-mix(in srgb,var(--proj) 18%,transparent);color:var(--proj)}
 .side-project-edit .icon{width:13px;height:13px}
-.side-project .side-list{padding:.25rem .3rem .3rem}
+.side-project .side-list{padding:.3rem .32rem .34rem;gap:.1rem}
 /* a session's running dot borrows its project's accent, so the whole card reads as one color */
 .side-project .side-dot{background:var(--proj);box-shadow:0 0 0 2px color-mix(in srgb,var(--proj) 25%,transparent)}
-.side-project .side-row.active{background:color-mix(in srgb,var(--proj) 9%,var(--surface))}
-.side-project-empty{margin:0;padding:.4rem .55rem .5rem;font-size:.74rem;color:var(--dim)}
-.side-project-label{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--dim);padding:.1rem .3rem .05rem}
+.side-project .side-row.active{background:color-mix(in srgb,var(--proj) 14%,var(--surface));
+  box-shadow:inset 2px 0 0 var(--proj)}
+.side-project-empty{margin:.12rem .22rem .24rem;padding:.45rem .55rem;font-size:.72rem;color:var(--dim);
+  text-align:center;border:1px dashed color-mix(in srgb,var(--proj) 24%,var(--line));border-radius:var(--r-sm)}
+.side-project-label{font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--dim);padding:.35rem .35rem .1rem}
 /* per-session move-to-project button, hover-revealed left of delete */
 .side-move{position:absolute;right:2.05rem;top:50%;transform:translateY(-50%);
   width:22px;height:22px;border-radius:var(--r-xs);color:var(--dim);
@@ -599,6 +612,42 @@ padding:.42rem .55rem;font-size:.86rem;color:var(--fg);transition:background .1s
 .side-reorder button:disabled{opacity:.25;cursor:default}
 .side-item:has(.side-reorder) .side-row{padding-right:5.35rem}
 .sidebar.select-mode .side-reorder{display:none}
+/* ── project dock: accent chips pinned at the bottom that filter the flat list */
+.side-dock{display:flex;flex-wrap:wrap;align-items:center;gap:.34rem;
+  padding:.5rem .1rem .2rem;margin-top:.15rem;border-top:1px solid var(--line)}
+.side-dock-chip{position:relative;flex:none;display:inline-flex;align-items:center;
+  justify-content:center;width:2rem;height:2rem;border-radius:var(--r-md);
+  border:1px solid var(--line2);background:var(--bg);color:var(--dim);
+  font-size:.78rem;font-weight:700;cursor:pointer;
+  transition:background .12s,color .12s,border-color .12s,box-shadow .12s,transform .08s}
+.side-dock-chip:hover{color:var(--fg);border-color:var(--accent);background:var(--hover)}
+.side-dock-chip:active{transform:translateY(1px)}
+.side-dock-chip .icon{width:15px;height:15px}
+.side-dock-glyph{line-height:1;letter-spacing:.01em}
+/* a project chip carries its own accent, fully lit when it is the active filter */
+.side-dock-chip[style*="--proj"]{color:var(--proj);
+  border-color:color-mix(in srgb,var(--proj) 32%,var(--line));
+  background:color-mix(in srgb,var(--proj) 12%,var(--bg))}
+.side-dock-chip[style*="--proj"]:hover{border-color:color-mix(in srgb,var(--proj) 55%,var(--line));
+  background:color-mix(in srgb,var(--proj) 20%,var(--bg))}
+.side-dock-chip.active{color:var(--fg);border-color:var(--accent);
+  box-shadow:0 0 0 1px var(--accent),0 2px 8px rgba(0,0,0,.22)}
+.side-dock-chip[style*="--proj"].active{color:#fff;border-color:transparent;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--proj) 92%,#fff),var(--proj));
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--proj) 60%,transparent),0 3px 10px color-mix(in srgb,var(--proj) 30%,transparent)}
+.side-dock-chip.new{border-style:dashed}
+.side-dock-chip.new:hover{color:var(--accent);border-color:var(--accent);border-style:solid}
+/* per-chip session count, a tiny corner badge */
+.side-dock-count{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;
+  padding:0 3px;border-radius:var(--r-pill);font-size:.58rem;font-weight:700;line-height:15px;
+  text-align:center;color:var(--bg);background:var(--proj,var(--accent));
+  box-shadow:0 0 0 2px var(--bg)}
+/* rows hidden by the active project filter */
+.side-item.dock-hidden{display:none}
+/* a filed session's row gets a small left rail in its project's accent */
+.side-row-rail{flex:none;width:3px;height:15px;border-radius:2px;background:var(--proj);
+  box-shadow:0 0 4px color-mix(in srgb,var(--proj) 45%,transparent)}
+.side-row.tinted.active{box-shadow:inset 2px 0 0 var(--proj)}
 /* new / manage project modal */
 .proj-form{display:flex;flex-direction:column;gap:1rem}
 .proj-input{width:100%;padding:var(--field-py) var(--field-px);border:1px solid var(--line2);
@@ -794,18 +843,22 @@ height:34px;padding:0 .4rem}
 .wave span{width:3px;min-height:4px;height:4px;border-radius:var(--r-2xs);
 background:linear-gradient(180deg,var(--primary),var(--accent));
 transition:height .09s ease;box-shadow:0 0 6px color-mix(in srgb,var(--primary) 35%,transparent)}
-.mic{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);display:flex;align-items:center;
+.mic{flex:none;width:30px;height:30px;border-radius:var(--r-2xs);display:flex;align-items:center;
 justify-content:center;color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,var(--bg));transition:color .15s,background .15s}
 .mic:hover{background:color-mix(in srgb,var(--accent) 26%,var(--bg));color:var(--accent)}
 .mic.recording{background:var(--err);color:var(--bg);animation:pulse 1.2s infinite}
 .mic.mic-error{color:var(--err)}
 .mic.model-loading{color:var(--secondary);cursor:progress;animation:pulse 1.5s infinite}
-.attach{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);display:flex;align-items:center;
+.attach{flex:none;width:30px;height:30px;border-radius:var(--r-2xs);display:flex;align-items:center;
 justify-content:center;color:var(--secondary);background:color-mix(in srgb,var(--secondary) 15%,var(--bg));cursor:pointer;transition:color .15s,background .15s}
 .attach:hover{background:color-mix(in srgb,var(--secondary) 26%,var(--bg));color:var(--secondary)}
 .attach-input{display:none}
 /* trailing action cluster: attach + mic + send hug each other on the right */
 .composer-actions{flex:none;display:flex;align-items:center;gap:.15rem}
+/* every trailing control is the SAME 30px square that centres its glyph the
+   same way, so attach/mic/send icons line up on one optical baseline */
+.composer-actions>.attach,.composer-actions>.mic,.composer-actions>.send{box-sizing:border-box;padding:0;line-height:0}
+.composer-actions .icon{width:16px;height:16px;margin:0}
 /* attachment preview tray — one removable chip per picked file, wraps to its
    own row above the input so an upload is visible before it is sent */
 .attachments{flex-basis:100%;order:-1;display:flex;flex-wrap:wrap;gap:.4rem;padding:.1rem .1rem .35rem}

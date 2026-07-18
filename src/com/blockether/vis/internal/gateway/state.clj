@@ -770,7 +770,7 @@
           "completed"
 
           "interrupted"
-          "failed"
+          "cancelled"
 
           "error"
           "failed"

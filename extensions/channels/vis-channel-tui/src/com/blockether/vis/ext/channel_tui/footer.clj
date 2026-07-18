@@ -145,7 +145,8 @@
   [^String path]
   (let [home (System/getProperty "user.home")]
     (if (and path home (str/starts-with? path home))
-      (str "~" (subs path (count home)))
+      (let [suffix (subs path (count home))]
+        (if (str/blank? suffix) "~/" (str "~" suffix)))
       (str path))))
 (defn- git-footer-spans
   [{:strs [is_workspace is_draft draft_root] :as status}]

@@ -685,25 +685,41 @@
       (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
                      (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
             out (str (:out res) (:err res))
+            exit (long (or (:exit res) -1))
             cases (some-> (re-find #"Ran (\d+) test" out)
                           second)
             fails (some-> (re-find #"(\d+) failures?" out)
                           second)
+            ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
+            ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
+            ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
+            ;; that as green silently hid whole suites (a real false green).
+            ran? (some? cases)
             tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
 
         ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
         ;; "pass" (a count) — render-test-result reads both.
-        {"mode" "cli"
-         "ns" ns-str
-         "tool" (name tool)
-         "command" (str/join " " cmd)
-         "exit" (:exit res)
-         "is_pass" (zero? (long (or (:exit res) -1)))
-         ;; Surface just the RESULT — the tally is all the caller needs. The
-         ;; runner mechanics (which build tool, live nREPL vs CLI, selector
-         ;; pass-through) are internal plumbing, not something to narrate.
-         "note" tally
-         "output" (cli-tail out)})
+        (cond-> {"mode" "cli"
+                 "ns" ns-str
+                 "tool" (name tool)
+                 "command" (str/join " " cmd)
+                 "exit" exit
+                 "is_pass" (and (zero? exit) ran?)
+                 ;; Surface just the RESULT — the tally is all the caller needs. The
+                 ;; runner mechanics (which build tool, live nREPL vs CLI, selector
+                 ;; pass-through) are internal plumbing, not something to narrate.
+                 "note" tally
+                 "output" (cli-tail out)}
+          (and (zero? exit) (not ran?))
+          (assoc "error"
+            (str "test command exited 0 but printed no \"Ran N test…\" summary"
+                 " — no tests actually ran (often a missing/misconfigured "
+                 (name tool)
+                 " :test alias, so `"
+                 (str/join " " cmd)
+                 "` fell"
+                 " through to a bare REPL). Reported as NOT passing to avoid a"
+                 " false green."))))
       {"mode" "cli"
        "ns" ns-str
        "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in "

@@ -1,3 +1,6 @@
-{:paths ["src" "resources"]
+{:aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "--dir" "test"]}}
  :deps {com.blockether/vis {:local/root "../../.."}
-        org.babashka/http-client {:mvn/version "0.4.23"}}}
+        org.babashka/http-client {:mvn/version "0.4.23"}}
+ :paths ["src" "resources"]}

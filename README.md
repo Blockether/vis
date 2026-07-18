@@ -39,7 +39,6 @@ Use `vis --jvm ...` to skip native and force the JVM path. The JVM path needs a 
 
 ```bash
 vis native          # builds target/vis(.exe) and target/vis.jar
-./bin/dev nrepl    # project nREPL
 ./verify.sh --quick
 ```
 

@@ -1,2 +1,7 @@
 {:paths ["src" "resources"]
- :deps {com.blockether/vis {:local/root "../../.."}}}
+ :deps {com.blockether/vis {:local/root "../../.."}}
+ :aliases
+ {:test {:extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+         :extra-paths ["test"]
+         :main-opts ["-m" "lazytest.main"
+                     "--dir" "test"]}}}

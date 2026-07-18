@@ -211,11 +211,11 @@
         (expect (= {:id "nrepl:/a" :dir "/a" :port 1} (rm/resolve-target! "sess" nil "/other"))))))
 
 (defdescribe
-  clj-repl-tool-gating-test
+  repl-start-tool-gating-test
   (it "\"status\" always succeeds (start/stop are never flag-gated)"
-      (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir) :session-id "s"} "status"))))
+      (expect (:success? (core/repl-start-fn {:workspace/root (tmp-dir) :session-id "s"} "status"))))
   (it "rejects an unknown op"
-      (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir) :session-id "s"} "frobnicate")
+      (let [t (try (core/repl-start-fn {:workspace/root (tmp-dir) :session-id "s"} "frobnicate")
                    :no-throw
                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
         (expect (= :clj/bad-args t)))))
@@ -358,40 +358,16 @@
                  (let [r (rm/ensure-repl-for-dir! "sess-ens-2" (tmp-dir))]
                    (expect (= "no-launcher" (get r "result"))))))
 
-(defdescribe
-  resolve-target-start-failure-test
-  (it "throws :clj/start-failed carrying the launcher's REAL story (exit + message + log tail)"
-      (with-redefs [rm/session-repls
-                    (fn [_]
-                      [])
-
-                    rm/ensure-repl-for-dir!
-                    (fn [_ _]
-                      {"result" "failed"
-                       "exit" 1
-                       "message" "Error building classpath. boom"
-                       "log_tail" ["Error building classpath." "boom"]})]
-
-        (let [e
-              (try (rm/resolve-target! "sess" nil "/p") nil (catch clojure.lang.ExceptionInfo e e))]
-          (expect (some? e))
-          (expect (= :clj/start-failed (:type (ex-data e))))
-          (expect (= 1 (:exit (ex-data e))))
-          (expect (str/includes? (ex-message e) "Error building classpath"))
-          (expect (str/includes? (ex-message e) "(exit 1)")))))
-  (it "still throws :clj/no-launcher when there is truly no build file"
-      (with-redefs [rm/session-repls
-                    (fn [_]
-                      [])
-
-                    rm/ensure-repl-for-dir!
-                    (fn [_ _]
-                      {"result" "no-launcher" "status" "down"})]
-
-        (let [t (try (rm/resolve-target! "sess" nil "/p")
-                     :no-throw
-                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
-          (expect (= :clj/no-launcher t))))))
+(defdescribe resolve-target-no-repl-test
+             ;; Eval is CONNECT-ONLY: with no live REPL, resolve-target! throws :clj/no-repl
+             ;; (it NEVER autostarts). session-repls is stubbed empty so nothing is spawned.
+             (it "throws :clj/no-repl when the session owns no live REPL"
+                 (with-redefs [rm/session-repls (fn [_]
+                                                  [])]
+                   (let [t (try (rm/resolve-target! "sess" nil "/p")
+                                :no-throw
+                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+                     (expect (= :clj/no-repl t))))))
 
 (defdescribe tail-log-test
              (it "returns [] for a missing / blank path and an empty file"

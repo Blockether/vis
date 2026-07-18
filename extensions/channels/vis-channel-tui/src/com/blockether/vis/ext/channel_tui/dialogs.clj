@@ -34,7 +34,8 @@
         (System/getProperty "user.home")]
 
     (if (and (seq path) home (str/starts-with? path home))
-      (str "~" (subs path (count home)))
+      (let [suffix (subs path (count home))]
+        (if (str/blank? suffix) "~/" (str "~" suffix)))
       path)))
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
@@ -5302,37 +5303,38 @@
             header-rows
             (if manager?
               (vec
-                (concat [{:kind :blank :text ""}
-                         {:kind :section
-                          :text (str "ALLOWED  "
-                                     (count roots)
-                                     (if (= 1 (count roots)) " directory" " directories"))}
-                         {:kind :blank :text ""}]
-                        (if (seq roots)
-                          (map (fn [r]
-                                 (assoc r
-                                   :kind :root
-                                   :text (root-row r)))
-                               roots)
-                          [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
-                        [{:kind :blank :text ""}
-                         {:kind :rule :text (apply str (repeat list-w "\u2500"))}
-                         {:kind :blank :text ""}
-                         {:kind :browse
-                          :text (str "IN  " (abbreviate-home (.getPath dir)) "/" filter-suffix)}]
-                        (when notice-here
-                          [{:kind :notice
-                            :text (str (case (second notice-here)
-                                         :error
-                                         "\u2716 "
+                (concat
+                  [{:kind :blank :text ""}
+                   {:kind :section
+                    :text (str "ALLOWED  "
+                               (count roots)
+                               (if (= 1 (count roots)) " directory" " directories"))}
+                   {:kind :blank :text ""}]
+                  (if (seq roots)
+                    (map (fn [r]
+                           (assoc r
+                             :kind :root
+                             :text (root-row r)))
+                         roots)
+                    [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
+                  [{:kind :blank :text ""} {:kind :rule :text (apply str (repeat list-w "\u2500"))}
+                   {:kind :blank :text ""}
+                   {:kind :browse
+                    :text (let [a (abbreviate-home (.getPath dir))]
+                            (str "IN  " a (when-not (str/ends-with? a "/") "/") filter-suffix))}]
+                  (when notice-here
+                    [{:kind :notice
+                      :text (str (case (second notice-here)
+                                   :error
+                                   "\u2716 "
 
-                                         :ok
-                                         "\u2714 "
+                                   :ok
+                                   "\u2714 "
 
-                                         "")
-                                       (nth notice-here 2))
-                            :error? (= :error (second notice-here))}])
-                        [{:kind :blank :text ""}]))
+                                   "")
+                                 (nth notice-here 2))
+                      :error? (= :error (second notice-here))}])
+                  [{:kind :blank :text ""}]))
               [{:kind :blank :text ""}
                {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}
                {:kind :blank :text ""}])
@@ -6189,9 +6191,10 @@
         (atom 0)
 
         ir
-        (try
-          (vis/markdown->ast (str md))
-          (catch Throwable t (tel/log! :warn ["dialogs: markdown->ast failed" (ex-message t)]) nil))]
+        (try (vis/markdown->ast (str md))
+             (catch Throwable t
+               (tel/log! :warn ["dialogs: markdown->ast failed" (ex-message t)])
+               nil))]
 
     (if (nil? ir)
       (text-viewer-dialog! screen title (str md))

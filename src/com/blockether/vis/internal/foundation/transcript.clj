@@ -13,7 +13,7 @@
 
    Lives in foundation because it's an introspection surface, not host
    plumbing. The sandbox-visible public surface is `(session-state)`
-   for data and `(session-report-md)` for Markdown; this namespace
+   for data and `(session-report-html)` for an HTML report; this namespace
    owns the transcript portion behind that deeper interface.
 
    Public Clojure surface:

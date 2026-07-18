@@ -54,8 +54,7 @@
 ;; long agent run touching several monorepo subdirs piled up several idle GB of
 ;; heavyweight JVMs. Each REPL carries a `:last-touch` ms stamp, bumped on every
 ;; eval/test that targets it; a single daemon thread stops any REPL untouched for
-;; `idle-reap-ms`. Reaping is transparent — the next eval autostarts a fresh REPL
-;; on demand. Set VIS_CLJ_REPL_IDLE_MS=0 to disable (or to a custom ms budget).
+;; `idle-reap-ms`. Set VIS_CLJ_REPL_IDLE_MS=0 to disable (or to a custom ms budget).
 (def ^:private idle-reap-ms
   (let [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
                     str/trim
@@ -641,15 +640,15 @@
 
 
 (defn resolve-target!
-  "Resolve — and AUTOSTART when needed — the REPL an eval should hit for
-   `session-id`. `id` is an optional explicit resource id; `default-dir` is where
-   we autostart when the session owns no REPL yet. Returns `{:id :dir :port}`.
+  "Resolve the RUNNING REPL an eval should hit for `session-id`.
+   `id` is an optional explicit resource id; `default-dir`
+   picks the implicit default among several live REPLs. Returns `{:id :dir :port}`.
 
    Rules (the ownership contract):
-     - explicit `id` → that REPL (throws if no such live REPL in this session);
+     - explicit `id` → that REPL (throws :clj/unknown-repl-id if no such live REPL);
      - `id` = `default` (any case) → sentinel, treated as no explicit id (below);
-     - 0 REPLs       → autostart `default-dir` with [:dev :test], use it;
-     - 1 REPL        → use it (it's the implicit default);
+     - 0 REPLs       → throw :clj/no-repl (start one with repl_start, e.g. repl_start(\"clojure\"));
+     - 1 REPL        → use it (the implicit default);
      - >1 REPLs      → use the DEFAULT: the REPL owning `default-dir` (the
                        workspace root) when present, else the first (dir-sorted).
                        Never throws on ambiguity — eval always resolves and the
@@ -664,7 +663,7 @@
 
         ;; "default" is a sentinel, not a real resource id — treat it as "no
         ;; explicit id" so it falls through to the implicit-default resolution
-        ;; (autostart when the session owns none, else the default REPL).
+        ;; (the single owned REPL, else the default REPL among several).
         id
         (when-not (some-> id
                           str/lower-case
@@ -680,29 +679,11 @@
                         {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
-          (let [r (ensure-repl-for-dir! session-id default-dir)]
-            (cond (:port r) (select-keys r [:id :dir :port])
-                  (= "no-launcher" (get r "result"))
-                  (throw (ex-info
-                           (str "no Clojure build file in " default-dir " to autostart an nREPL")
-                           {:type :clj/no-launcher :dir default-dir}))
-                  :else
-                  ;; The start RAN and failed — surface the launcher's own story
-                  ;; (exit + log tail), never a bogus \"no build file\" guess, so
-                  ;; the model sees WHY instead of blindly restarting forever.
-                  (throw (ex-info (str "nREPL autostart failed for "
-                                       default-dir
-                                       (when-let [e (get r "exit")]
-                                         (str " (exit " e ")"))
-                                       (when-let [m (get r "message")]
-                                         (str ": " m))
-                                       (when-let [tail (seq (get r "log_tail"))]
-                                         (str "\nlauncher log tail:\n  "
-                                              (str/join "\n  " (take-last 15 tail)))))
-                                  {:type :clj/start-failed
-                                   :dir default-dir
-                                   :exit (get r "exit")
-                                   :log (get r "log")}))))
+          (throw (ex-info
+                   (str "no running nREPL in this session — start one with "
+                        "repl_start(\"clojure\"), "
+                        "then retry the eval")
+                   {:type :clj/no-repl :dir default-dir}))
           ;; 1+ REPLs: the implicit default is the one owning `default-dir`
           ;; (the workspace root) when live, else the first (dir-sorted).
           (let [r (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))]

@@ -3,7 +3,7 @@
    `:code`. The public state surface is deliberately small:
 
    - `(session-state [session-id])` -> data map, including raw LLM diagnostics
-   - `(session-report-md [session-id])` -> Markdown rendered from that data
+   - `(session-report-html [session-id])` -> HTML report rendered from that data
 
    Everything else in this namespace is implementation detail. The agent
    gets the data once, manipulates it via plain Clojure (`get-in`,
@@ -746,7 +746,7 @@
      :transcript transcript-data}))
 
 ;; ---------------------------------------------------------------------------
-;; Strings-only boundary egress. session_state / sessions / session_report_md
+;; Strings-only boundary egress. session_state / sessions / session_report_html
 ;; are MODEL-FACING verbs: the `:result` they return crosses the Clojure->Python
 ;; boundary, which throws on any keyword/symbol key or value. The internal
 ;; builders + the transcript projection stay idiomatic keyword Clojure (the
@@ -792,22 +792,6 @@
   ([env] (foundation-inspect env (:session-id env)))
   ([env session-id] (session-envelope :session-state (foundation-inspect-data env session-id))))
 
-(defn- foundation-report
-  "Render the same canonical data returned by `foundation-inspect` as
-   Markdown. Returns a Vis tool envelope; sandbox callers receive the
-   unwrapped string."
-  ([env] (foundation-report env (:session-id env)))
-  ([env session-id]
-   (let [data
-         (foundation-inspect-data env session-id)
-
-         report
-         (if-let [transcript-data (:transcript data)]
-           (transcript/transcript->md transcript-data)
-           (str "Session not found: " (:session-id data) "\n"))]
-
-     (session-envelope :session-report-md report))))
-
 (defn- foundation-report-html
   "Render the same canonical data returned by `foundation-inspect` as a
    standalone, vis-light-styled HTML document. Returns a Vis tool
@@ -847,7 +831,7 @@
 (defn- inject-environment [env f args] {:env env :fn f :args (into [env] args)})
 
 ;; -- public, doc-bearing aliases -----------------------------------------------
-;; The two underlying defs (`foundation-inspect`, `foundation-report`) are
+;; The underlying defs (`foundation-inspect`, `foundation-report-html`) are
 ;; private and named for clarity inside this ns. Re-export them under their
 ;; sandbox-visible names with `:doc` and `:arglists` baked into the var meta so
 ;; `vis/symbol` can read both straight off the var.
@@ -864,18 +848,9 @@ sessions (use sessions() for the index)."
   foundation-inspect)
 (def
   ^{:doc
-    "await session_report_md(session_id)  # markdown report for ANOTHER conversation
-Returns a Markdown string: every turn, iteration, code, result, answer. Same data as
-session_state, pre-rendered. Most useful for OTHER sessions — your own live state is
-already in the `session` bag and your transcript is already on the wire."
-    :arglists '([] [session-id])}
-  session-report-md
-  foundation-report)
-(def
-  ^{:doc
     "await session_report_html(session_id)  # standalone HTML report for ANOTHER conversation
 Returns a self-contained HTML document (vis-light themed): every turn, iteration, code,
-result, answer - the same data as session_report_md, styled to match the web TUI. Write it
+result, answer - the same transcript data, styled to match the web TUI. Write it
 to a file to open in a browser. Most useful for OTHER sessions."
     :arglists '([] [session-id])}
   session-report-html
@@ -886,7 +861,7 @@ to a file to open in a browser. Most useful for OTHER sessions."
 Returns [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\", \"modified_at\"} ...],
 newest-first; `modified_at` is the latest turn's timestamp (falls back to `created_at` for
 empty sessions). Pass a channel keyword to filter. Take an id from here into
-session_state(id) / session_report_md(id) to investigate that conversation."
+session_state(id) to investigate that conversation."
     :arglists '([] [channel])}
   sessions
   foundation-sessions)
@@ -894,23 +869,19 @@ session_state(id) / session_report_md(id) to investigate that conversation."
 (def session-state-symbol
   (vis/symbol #'session-state {:before-fn inject-environment :tag :observation}))
 
-(def session-report-md-symbol
-  (vis/symbol #'session-report-md {:before-fn inject-environment :tag :observation}))
-
 (def session-report-html-symbol
   (vis/symbol #'session-report-html {:before-fn inject-environment :tag :observation}))
 
 (def sessions-symbol (vis/symbol #'sessions {:before-fn inject-environment :tag :observation}))
 
-(def all-symbols
-  [session-state-symbol session-report-md-symbol session-report-html-symbol sessions-symbol])
+(def all-symbols [session-state-symbol session-report-html-symbol sessions-symbol])
 
 (def introspection-prompt
-  "Cross-conversation introspection: sessions() lists every past conversation (id, title, turn_count, created_at, modified_at, newest-first — modified_at is the latest turn's time) — pass a channel keyword to filter. Take an id from there into session_state(id) or session_report_md(id).
+  "Cross-conversation introspection: sessions() lists every past conversation (id, title, turn_count, created_at, modified_at, newest-first — modified_at is the latest turn's time) — pass a channel keyword to filter. Take an id from there into session_state(id).
 
 session_state(id) returns ONE dict — pick the keys you need, the whole map stays bound: `session` (identity + per-turn rollup: user_request, outcome, iteration_count, status, cost), `current_turn` (the live/last turn), `failures` (classified provider/tool errors + raw_preview), `diagnosis` (what went wrong + suggested fix), `session_forks` / `turn_retries` (retry + fork lineage), and `transcript` — the FULL payload: `transcript[\"totals\"]` (turns/iterations/tokens/cost), `transcript[\"turns\"]` = [{id, user_request, status, provider, model, iteration_count, failure_count, tokens, cost_usd, answer, iterations:[{id, position, status, duration_ms, blocks:[code/result]}]}], plus `transcript[\"timeline\"]` / `transcript[\"dialog\"]` / `transcript[\"calls\"]` for flattened views. GATHER by iterating those in python_execution — e.g. pull every turn's `answer`, grep code blocks for a symbol, or diff token/cost across turns — never dump the whole dict; slice to what you asked.
 
-For THIS conversation prefer the live `session` bag (session[\"turn\"|\"scope\"|\"utilization\"]) and your on-wire transcript; session_state() on your own id just duplicates them. Reach cross-session mainly for OTHER conversations. Want it pre-rendered? session_report_md(id) is the same data as one Markdown forensic report.")
+For THIS conversation prefer the live `session` bag (session[\"turn\"|\"scope\"|\"utilization\"]) and your on-wire transcript; session_state() on your own id just duplicates them. Reach cross-session mainly for OTHER conversations. Want it as a standalone HTML report? session_report_html(id) renders the same data.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,
