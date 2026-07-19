@@ -8,11 +8,12 @@
 
 (defdescribe
   proxy-and-capture-test
-  (let [env
-        (ep/create-python-context {})
+  (let
+    [env
+     (ep/create-python-context {})
 
-        ctx
-        (:python-context env)]
+     ctx
+     (:python-context env)]
 
     (it "a raw tool-result proxy is NOT json-serializable; after settle it's a REAL mutable dict"
         ;; `test_proxy` is bound via ->py → a ProxyHashMap (ForeignDict). It passes
@@ -23,15 +24,16 @@
         ;; GraalPy surfaces as ForeignNone (`x is None` is False); pyify must normalize
         ;; it or json.dumps chokes.
         (ep/bind-and-bump! env 'test_proxy {"op" "cat" "a" {"b" 1} "eof" nil})
-        (let [r (ep/run-python-block
-                  ctx
-                  (str "import json\n" "try:\n"
-                       "    json.dumps(test_proxy); raw_json = True\n" "except Exception:\n"
-                       "    raw_json = False\n" "x = test_proxy\n" ;; auto-settle → pyify → real dict
-                       "x['added'] = 7\n"                          ;; mutation works on a real dict
-                       "post = (isinstance(x, dict) and (json.dumps(x) is not None)\n"
-                       "        and x['added'] == 7 and isinstance(x['a'], dict))\n"
-                       "print(['raw_json', raw_json, 'post', post])"))]
+        (let
+          [r (ep/run-python-block
+               ctx
+               (str "import json\n" "try:\n"
+                    "    json.dumps(test_proxy); raw_json = True\n" "except Exception:\n"
+                    "    raw_json = False\n" "x = test_proxy\n" ;; auto-settle → pyify → real dict
+                    "x['added'] = 7\n"                          ;; mutation works on a real dict
+                    "post = (isinstance(x, dict) and (json.dumps(x) is not None)\n"
+                    "        and x['added'] == 7 and isinstance(x['a'], dict))\n"
+                    "print(['raw_json', raw_json, 'post', post])"))]
           (expect (re-find #"\['raw_json', False, 'post', True\]" (str (:stdout r))))))
     (it
       "MEASURE: pyify cost across sizes (session-scale ~30/100 vs a large 5000-entry result)"
@@ -69,19 +71,20 @@
       ;; `tp` is a HOST proxy with 'op' → pyify marks it __VisResult__. A model-built
       ;; dict with 'op' is a PLAIN dict → not a __VisResult__ → correctly NOT captured.
       (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
-      (let [real
-            (ep/run-python-block ctx "print(tp)")
+      (let
+        [real
+         (ep/run-python-block ctx "print(tp)")
 
-            ;; proxy result → captured
-            faked
-            (ep/run-python-block ctx "print({'op':'cat'})")
+         ;; proxy result → captured
+         faked
+         (ep/run-python-block ctx "print({'op':'cat'})")
 
-            ;; model dict → NOT captured (robust)
-            plain
-            (ep/run-python-block ctx "print('just text')")
+         ;; model dict → NOT captured (robust)
+         plain
+         (ep/run-python-block ctx "print('just text')")
 
-            two
-            (ep/run-python-block ctx "print(tp); print(tp)")]
+         two
+         (ep/run-python-block ctx "print(tp); print(tp)")]
 
         (expect (= 1 (count (:printed-results real))))
         (expect (= "cat" (get (first (:printed-results real)) "op"))) ;; origin = result "op" (strings-only)
@@ -90,13 +93,40 @@
         (expect (= 2 (count (:printed-results two))))
         (expect (re-find #"'op'" (str (:stdout real)))))) ;; stdout (context) still shows it
     (it
+      "ntr store makes EVERY value dict-probeable: a list/str result answers .get without a type guard"
+      ;; A stored native result can be a LIST (patch/struct_patch/write rows) or a
+      ;; bare STRING, not only a dict. __vis_store__ normalizes each so a uniform
+      ;; `for _id, res in ntr.items(): res.get('op')` sweep never trips — while the
+      ;; value keeps its native list/str behaviour (index/iterate/len/concat).
+      (let
+        [r
+         (ep/run-python-block
+           ctx
+           (str
+             "lst = ntr.__vis_store__('toolu_LST', [{'path': 'a', 'op': 'update'}])\n"
+             "s = ntr.__vis_store__('toolu_STR', 'plain text')\n"
+             "d = ntr.__vis_store__('toolu_DCT', {'op': 'rg', 'hit_count': 2})\n"
+             "ops = [res.get('op') or res.get('tool') for _id, res in ntr.items()]\n"
+             "print(['lst_get', lst.get('op'), 'lst0', lst[0]['op'], 'lst_len', len(lst)])\n"
+             "print(['str_get', s.get('op'), 'str_cat', s + '!'])\n"
+             "print(['dct_get', d.get('op')])\n"
+             "print(['sweep_ok', all(o is None or isinstance(o, str) for o in ops), 'rg_in', 'rg' in ops])"))]
+        (expect (re-find #"'lst_get', None" (str (:stdout r))))
+        (expect (re-find #"'lst0', 'update'" (str (:stdout r))))
+        (expect (re-find #"'lst_len', 1" (str (:stdout r))))
+        (expect (re-find #"'str_cat', 'plain text!'" (str (:stdout r))))
+        (expect (re-find #"'dct_get', 'rg'" (str (:stdout r))))
+        (expect (re-find #"'sweep_ok', True" (str (:stdout r))))
+        (expect (re-find #"'rg_in', True" (str (:stdout r))))))
+    (it
       "mixed print (text + result) keeps :only-printed-results? FALSE so stdout text is never dropped"
       (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
-      (let [pure
-            (ep/run-python-block ctx "print(tp)")
+      (let
+        [pure
+         (ep/run-python-block ctx "print(tp)")
 
-            mixed
-            (ep/run-python-block ctx "print('FOUND:'); print(tp)")]
+         mixed
+         (ep/run-python-block ctx "print('FOUND:'); print(tp)")]
 
         (expect (true? (:only-printed-results? pure)))  ;; pure result print → cards may replace
         (expect (not (:only-printed-results? mixed)))   ;; mixed → show full stdout
@@ -118,11 +148,12 @@
         env
         'edit_fuzzy
         [{"path" "b.clj" "op" "update" "changed" true "passes" ["fuzzy"] "diff" "--- b\n+z"}])
-      (let [exact
-            (ep/run-python-block ctx "print(edit)")
+      (let
+        [exact
+         (ep/run-python-block ctx "print(edit)")
 
-            fuzzy
-            (ep/run-python-block ctx "print(edit_fuzzy)")]
+         fuzzy
+         (ep/run-python-block ctx "print(edit_fuzzy)")]
 
         ;; byte-exact: stdout loses the diff, keeps path/op/changed
         (expect (not (str/includes? (str (:stdout exact)) "diff")))
@@ -147,36 +178,38 @@
    (input schema), and `apropos('')` lists the real tools while excluding Python
    builtins and the async-runtime `asyncio` shim global. Guards the schema→doc
    wiring (`extension/sandbox-symbol-docs`) and the `apropos` non-tool filter."
-  (let [bind
-        (ext/builtin-sandbox-bindings (fn []
-                                        nil))
+  (let
+    [bind
+     (ext/builtin-sandbox-bindings (fn []
+                                     nil))
 
-        ctx
-        (:python-context (ep/create-python-context bind))
+     ctx
+     (:python-context (ep/create-python-context bind))
 
-        run
-        (fn [code]
-          (str (:stdout (ep/run-python-block ctx code))))
+     run
+     (fn [code]
+       (str (:stdout (ep/run-python-block ctx code))))
 
-        ;; The kernel native tools that are ALSO wired into this sandbox — the
-        ;; exact set whose docs must be seeded. Keyed by their Python name.
-        native
-        (for [e
-              (ext/registered-extensions)
+     ;; The kernel native tools that are ALSO wired into this sandbox — the
+     ;; exact set whose docs must be seeded. Keyed by their Python name.
+     native
+     (for
+       [e
+        (ext/registered-extensions)
 
-              s
-              (ext/ext-symbols e)
+        s
+        (ext/ext-symbols e)
 
-              :when (and (ext/symbol-bound? s)
-                         (:ext.symbol/native-tool? s)
-                         (contains? bind (:ext.symbol/symbol s)))]
+        :when (and (ext/symbol-bound? s)
+                   (:ext.symbol/native-tool? s)
+                   (contains? bind (:ext.symbol/symbol s)))]
 
-          (ep/sym->py-name (:ext.symbol/symbol s)))]
+       (ep/sym->py-name (:ext.symbol/symbol s)))]
 
     (it "every wired native tool exposes a non-empty doc WITH a params: block"
         (expect (seq native)) ;; sanity: we actually tested some
-        (let [out (run (str
-                         "import json\nbad=[]\n"
+        (let
+          [out (run (str "import json\nbad=[]\n"
                          "for n in ["
                          (str/join ", " (map pr-str native))
                          "]:\n"
@@ -185,9 +218,10 @@
                          "        bad.append(n)\n" "print('BAD='+json.dumps(bad))"))]
           (expect (re-find #"BAD=\[\]" out))))
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
-        (let [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"
-                            "'len='+str('len' in a)," "'cat='+str('cat' in a),"
-                            "'rg='+str('rg' in a)," "'struct_patch='+str('struct_patch' in a))"))]
+        (let
+          [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"
+                         "'len='+str('len' in a)," "'cat='+str('cat' in a),"
+                         "'rg='+str('rg' in a)," "'struct_patch='+str('struct_patch' in a))"))]
           (expect (re-find #"asyncio=False" out))
           (expect (re-find #"len=False" out))
           (expect (re-find #"cat=True" out))
@@ -202,30 +236,33 @@
    and MUST pass through untouched. Blindly rebuilding by an allowlist silently
    downgraded set/tuple/frozenset → list (and dict-subclasses → dict), so a
    plain `s = set(); s.add(1)` raised \"'list' object has no attribute 'add'\"."
-  (let [ctx
-        (:python-context (ep/create-python-context {}))
+  (let
+    [ctx
+     (:python-context (ep/create-python-context {}))
 
-        run
-        (fn [code]
-          (str (:stdout (ep/run-python-block ctx code))))]
+     run
+     (fn [code]
+       (str (:stdout (ep/run-python-block ctx code))))]
 
     (it "a module-level set/tuple/frozenset/defaultdict keeps its native type"
-        (let [out (run (str "s = set()\n" "s.add(1); s.add(1); s.add(2)\n"
-                            "t = (1, 2, 3)\n" "fs = frozenset([1, 1, 2])\n"
-                            "from collections import defaultdict\n"
-                            "dd = defaultdict(list); dd['x'].append(9)\n"
-                            "print('set='+type(s).__name__, 'add='+str(hasattr(s,'add')))\n"
-                            "print('tuple='+type(t).__name__)\n"
-                            "print('frozenset='+type(fs).__name__)\n"
-                            "print('defaultdict='+type(dd).__name__)"))]
+        (let
+          [out (run (str "s = set()\n" "s.add(1); s.add(1); s.add(2)\n"
+                         "t = (1, 2, 3)\n" "fs = frozenset([1, 1, 2])\n"
+                         "from collections import defaultdict\n"
+                         "dd = defaultdict(list); dd['x'].append(9)\n"
+                         "print('set='+type(s).__name__, 'add='+str(hasattr(s,'add')))\n"
+                         "print('tuple='+type(t).__name__)\n"
+                         "print('frozenset='+type(fs).__name__)\n"
+                         "print('defaultdict='+type(dd).__name__)"))]
           (expect (re-find #"set=set add=True" out))
           (expect (re-find #"tuple=tuple" out))
           (expect (re-find #"frozenset=frozenset" out))
           (expect (re-find #"defaultdict=defaultdict" out))))
     (it "a native set persists as a set (and stays mutable) ACROSS blocks"
         (run "acc = set()\nacc.add('a')")
-        (let [out (run (str "acc.add('b'); acc.add('a')\n"
-                            "print('kind='+type(acc).__name__, 'vals='+str(sorted(acc)))"))]
+        (let
+          [out (run (str "acc.add('b'); acc.add('a')\n"
+                         "print('kind='+type(acc).__name__, 'vals='+str(sorted(acc)))"))]
           (expect (re-find #"kind=set vals=\['a', 'b'\]" out))))))
 
 (defdescribe
@@ -252,14 +289,15 @@
    A keyword or symbol ANYWHERE (key or value, any depth) is a producer bug
    and throws. Pure `boundary-view`, no context needed."
   (it "every key stays a verbatim string — paths, anchors, option keys alike"
-      (let [raw
-            {"matches" {"extensions/channels/vis-channel-tui/src/a.clj" {"2361:abc" "x"}
-                        "src/com/foo-bar.clj" {"44:f14" "y"}}
-             "hit_count" 2
-             "files" ["a-b/c.clj"]}
+      (let
+        [raw
+         {"matches" {"extensions/channels/vis-channel-tui/src/a.clj" {"2361:abc" "x"}
+                     "src/com/foo-bar.clj" {"44:f14" "y"}}
+          "hit_count" 2
+          "files" ["a-b/c.clj"]}
 
-            v
-            (ep/boundary-view raw)]
+         v
+         (ep/boundary-view raw)]
 
         (expect (= raw v))
         (expect (every? string? (keys v)))
@@ -271,22 +309,24 @@
       (let [v (ep/boundary-view {"matches" {"a/b-c.clj" {"1:h" "z"}} "hit_count" 1})]
         (expect (= v (ep/boundary-view v)))))
   (it "a keyword MAP KEY throws with the offending path"
-      (let [e (try (ep/boundary-view {"outer" {:hit-count 1}})
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+      (let
+        [e (try (ep/boundary-view {"outer" {:hit-count 1}})
+                nil
+                (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? e))
         (expect (= :non-string-key (:vis/boundary-violation (ex-data e))))
         (expect (= ["outer"] (:path (ex-data e))))))
   (it "a keyword VALUE throws at any depth"
-      (let [e (try (ep/boundary-view {"changes" [{"status" :added}]})
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+      (let
+        [e (try (ep/boundary-view {"changes" [{"status" :added}]})
+                nil
+                (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? e))
         (expect (= :keyword-value (:vis/boundary-violation (ex-data e))))
         (expect (= :added (:value (ex-data e))))))
   (it "a symbol VALUE throws"
-      (let [e
-            (try (ep/boundary-view {"sym" 'git-fetch!}) nil (catch clojure.lang.ExceptionInfo e e))]
+      (let
+        [e (try (ep/boundary-view {"sym" 'git-fetch!}) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? e))
         (expect (= :symbol-value (:vis/boundary-violation (ex-data e)))))))
 
@@ -329,25 +369,26 @@
    WITHOUT weakening the loud unawaited repr or adding spooky `__getattr__`
    auto-run. The call is built INSIDE a function body so the top-level
    assignment auto-settle doesn't resolve it first."
-  (let [ctx
-        (:python-context (ep/create-python-context {}))
+  (let
+    [ctx
+     (:python-context (ep/create-python-context {}))
 
-        run
-        (fn [code]
-          (str (:stdout (ep/run-python-block ctx code))))]
+     run
+     (fn [code]
+       (str (:stdout (ep/run-python-block ctx code))))]
 
     (it "subscript / len / in on an un-awaited call settle it in place"
-        (let [out
-              (run (str
-                     "def _t():\n"
+        (let
+          [out
+           (run (str "def _t():\n"
                      "    c = __vis_deferred__(lambda: {'stdout': 'hi', 'exit': 0}, 'faketool')()\n"
                      "    kind = type(c).__name__\n"
                      "    return [kind, c['stdout'], len(c), 'exit' in c, 'zzz' in c]\n"
                      "print(_t())"))]
           (expect (re-find #"\['__vis_Call__', 'hi', 2, True, False\]" out))))
     (it "an un-awaited call still repr's a LOUD hint and never silently ran"
-        (let [out (run
-                    (str
+        (let
+          [out (run (str
                       "def _t():\n" "    ran = []\n"
                       "    c = __vis_deferred__(lambda: ran.append(1) or {'k': 1}, 'faketool')()\n"
                       "    r = repr(c)\n"
@@ -357,9 +398,10 @@
           ;; repr must NOT have executed the tool — `ran` stays empty
           (expect (re-find #", \[\]\]" out))))
     (it "no __getattr__ auto-run: a non-slot attribute raises, it does not settle"
-        (let [out (run (str "def _t():\n"
-                            "    c = __vis_deferred__(lambda: {'stdout': 'hi'}, 'faketool')()\n"
-                            "    try:\n" "        c.stdout\n"
-                            "        return 'leaked'\n" "    except AttributeError:\n"
-                            "        return 'safe'\n" "print(_t())"))]
+        (let
+          [out (run (str "def _t():\n"
+                         "    c = __vis_deferred__(lambda: {'stdout': 'hi'}, 'faketool')()\n"
+                         "    try:\n" "        c.stdout\n"
+                         "        return 'leaked'\n" "    except AttributeError:\n"
+                         "        return 'safe'\n" "print(_t())"))]
           (expect (re-find #"safe" out))))))

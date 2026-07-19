@@ -294,7 +294,7 @@ await patch({'path': css})" "t1/i1")]
              (it "pins the facade verb name set"
                  (let [facade (set (map (comp str :ext.symbol/symbol) language-surface/symbols))]
                    (expect (= #{"format_code" "lint_code" "run_tests" "repl_eval" "repl_start"
-                                "repl_stop"}
+                                "repl_stop" "repl_connect"}
                               facade)))))
 
 (defdescribe

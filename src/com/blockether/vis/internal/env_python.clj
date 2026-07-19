@@ -164,9 +164,10 @@
         (.hasHashEntries v) (let [it (.getHashKeysIterator v)]
                               (loop [m (omap/ordered-map)]
                                 (if (.hasIteratorNextElement it)
-                                  (let [k (.getIteratorNextElement it)
-                                        ks (normalize-dict-key
-                                             (if (.isString k) (.asString k) (str (->clj k))))]
+                                  (let
+                                    [k (.getIteratorNextElement it)
+                                     ks (normalize-dict-key
+                                          (if (.isString k) (.asString k) (str (->clj k))))]
 
                                     (recur (assoc m ks (->clj (.getHashValue v k)))))
                                   m)))
@@ -215,18 +216,19 @@
    short names (currently `find` for `find_files`), but the snake name remains
    canonical."
   ^String [sym]
-  (let [s
-        (str sym)
+  (let
+    [s
+     (str sym)
 
-        pred?
-        (str/ends-with? s "?")
+     pred?
+     (str/ends-with? s "?")
 
-        base
-        (-> s
-            (str/replace "?" "")
-            (str/replace "!" "")
-            (str/replace "/" "_")
-            (str/replace "-" "_"))]
+     base
+     (-> s
+         (str/replace "?" "")
+         (str/replace "!" "")
+         (str/replace "/" "_")
+         (str/replace "-" "_"))]
 
     (if pred? (str "is_" base) base)))
 
@@ -401,6 +403,54 @@ class __VisResult__(dict):
     # relies on the 'op' key alone. 'op' stays a normal key (the origin, for render).
     # It IS a dict, so it's invisible to the model — json/mutation/isinstance work.
     pass
+
+class __VisResultList__(list):
+    # A native tool result whose TOP-LEVEL shape is a LIST (patch / struct_patch /
+    # write return one row per file; some tools return a list of hits). It stays a
+    # REAL list — index / iterate / len / json.dumps / {**_}-free code all behave —
+    # but ALSO answers the dict probes (.get/.keys/.items/.values) so a uniform
+    # `for _id, res in ntr.items(): res.get('op')` sweep NEVER trips on it. A list has
+    # no top-level 'op', so .get returns the default and each row stays reachable by
+    # index (res[0]['op']).
+    def get(self, __k__, __d__=None):
+        return __d__
+    def keys(self):
+        return []
+    def items(self):
+        return []
+    def values(self):
+        return []
+
+class __VisResultStr__(str):
+    # A native tool result that is a bare STRING (a tool returning plain text). Still a
+    # real str, but answers the same dict probes, so `.get('op')` yields None instead of
+    # blowing up with a `'str' object has no attribute 'get'` when a mixed ntr sweep hits
+    # it. .keys()/.items()/.values() are empty — a string has no fields.
+    def get(self, __k__, __d__=None):
+        return __d__
+    def keys(self):
+        return []
+    def items(self):
+        return []
+    def values(self):
+        return []
+
+def __vis_as_result__(__vis_v__):
+    # Normalize a STORED native result (ntr[id]) so EVERY value answers the dict probes
+    # (.get/.keys/.items/.values) — the shape the model reaches for when it iterates the
+    # store. A dict passes through untouched (a tool-result dict is already a
+    # __VisResult__). A top-level list/tuple/str is re-typed to a probeable subclass that
+    # KEEPS its native list/str behavior, so `res.get('op')` is safe on the whole set
+    # without an isinstance guard. Rare scalars (int/float/None/bytes) pass through.
+    if isinstance(__vis_v__, dict):
+        return __vis_v__
+    if isinstance(__vis_v__, (__VisResultList__, __VisResultStr__)):
+        return __vis_v__
+    if isinstance(__vis_v__, (list, tuple)):
+        return __VisResultList__(__vis_v__)
+    if isinstance(__vis_v__, str):
+        return __VisResultStr__(__vis_v__)
+    return __vis_v__
 
 try:
     import polyglot as __vis_polyglot__
@@ -762,7 +812,7 @@ class __VisNativeResults__:
     def __vis_store__(self, __vis_id__, __vis_raw__):
         # Stamp the rehydrated proxy into the SAME __VisResult__ shape a fresh
         # native call yields (a dict carrying 'op' → __VisResult__ via pyify).
-        __vis_v__ = __vis_pyify__(__vis_raw__)
+        __vis_v__ = __vis_as_result__(__vis_pyify__(__vis_raw__))
         self.__vis_cache__[__vis_id__] = __vis_v__
         return __vis_v__
 
@@ -879,20 +929,38 @@ def __vis_native_result_scan__(__vis_tree__):
     return __vis_ids__
 ")
 
+(defonce ^:private printer-engine
+  ;; Dedicated permissive GraalVM Engine for the printer context. The printer is
+  ;; `allowAllAccess true` (it marshals arbitrary host values into Python
+  ;; literals), which GraalPy forbids from sharing the restrictive
+  ;; `shared-engine` (host-access must be IDENTICAL across a shared engine). So
+  ;; it gets its OWN engine — but an EXPLICIT, pre-built one, NOT the implicit
+  ;; engine a standalone `Context.build()` spins up. That is the whole point:
+  ;; building a context on a pre-built engine is freeze-proof; the JVM-freezing
+  ;; Truffle safepoint hazard is a STANDALONE `Context.build()` during a live
+  ;; eval only (see `shared-engine`). Costs one extra ~19MB engine to make the
+  ;; printer — the last standalone context — freeze-proof too.
+  (delay (-> (Engine/newBuilder (into-array String ["python"]))
+             (.allowExperimentalOptions true)
+             (.option "engine.WarnVirtualThreadSupport" "false")
+             (.build))))
+
 (defn- build-printer-context
   "Trusted, process-wide GraalPy context whose ONLY job is to pretty-print a
    polyglot value into the canonical Python-literal string. Permissive
    (`allowAllAccess`) because it never runs agent code — only our `__vis_pp__`
    over our own data."
   ^Context []
-  (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
-                ;; inline (helper is defined below): silence the
-                ;; experimental virtual-thread warning on this standalone
-                ;; context's implicit engine.
-                (.allowExperimentalOptions true)
-                (.option "engine.WarnVirtualThreadSupport" "false")
-                (.allowAllAccess true)
-                (.build))]
+  (let
+    [ctx (-> (Context/newBuilder (into-array String ["python"]))
+             ;; Rides a DEDICATED, pre-built permissive engine (`printer-engine`)
+             ;; — NOT a standalone `Context.build()`. Engine-level options
+             ;; (experimental flags, the vthread-warning silence) live on the
+             ;; engine now, so the context builder must NOT re-set them (illegal
+             ;; on a shared engine).
+             (.engine ^Engine @printer-engine)
+             (.allowAllAccess true)
+             (.build))]
     (.eval ctx "python" vis-pp-python)
     ctx))
 
@@ -988,11 +1056,12 @@ def __vis_native_result_scan__(__vis_tree__):
    and reuses the auto-imported `json`). Best-effort: a bad value never
    aborts startup."
   [python-context {:keys [argv env]}]
-  (let [^Context ctx
-        python-context
+  (let
+    [^Context ctx
+     python-context
 
-        g
-        (.getBindings ctx "python")]
+     g
+     (.getBindings ctx "python")]
 
     (when (some? argv)
       (try (.putMember g "__vis_cli_argv_json__" (json/write-json-str (vec argv)))
@@ -1023,11 +1092,21 @@ def __vis_native_result_scan__(__vis_tree__):
 ;; =============================================================================
 
 (defonce ^:private parser-ctx
-  ;; Tiny throwaway context used ONLY to `ast.parse` candidate blocks for
-  ;; validation (no execution). Reused so we don't pay context warmup per check.
+  ;; Tiny context used ONLY to `ast.parse` candidate blocks for validation (no
+  ;; execution). Reused so we don't pay context warmup per check.
+  ;;
+  ;; Built ON the SHARED engine, not standalone. It legally can: its host-access
+  ;; config MATCHES the agent contexts (`allowAllAccess false` ⇒ HostAccess.NONE),
+  ;; the one thing GraalPy requires to be identical across a shared engine (IO /
+  ;; polyglot / thread caps are per-context and may differ). Two wins over the old
+  ;; standalone build: (1) it shares the engine's JIT code cache with the agent
+  ;; contexts, and (2) it is NOT a standalone `Context.build()` — so even if it were
+  ;; ever forced lazily mid-eval it can't freeze the JVM at a Truffle safepoint
+  ;; (that hazard is standalone-only; see `shared-engine`). Engine-level options
+  ;; (experimental flags, the vthread-warning silence) live on the engine now, so
+  ;; the context builder must NOT re-set them (illegal on a shared engine).
   (delay (-> (Context/newBuilder (into-array String ["python"]))
-             (.allowExperimentalOptions true)
-             (.option "engine.WarnVirtualThreadSupport" "false")
+             (.engine ^Engine @shared-engine)
              (.allowAllAccess false)
              (.allowIO IOAccess/NONE)
              (.allowPolyglotAccess PolyglotAccess/NONE)
@@ -1038,11 +1117,12 @@ def __vis_native_result_scan__(__vis_tree__):
    blocks return 0. Raises the underlying `PolyglotException` on a syntax
    error — that's a syntax issue, not a multi-statement issue."
   [code]
-  (let [^Context ctx
-        @parser-ctx
+  (let
+    [^Context ctx
+     @parser-ctx
 
-        b
-        (.getBindings ctx "python")]
+     b
+     (.getBindings ctx "python")]
 
     (.putMember b "__vis_src__" (str code))
     (long (.asLong (.eval ctx "python" "len(__import__('ast').parse(__vis_src__).body)")))))
@@ -1066,21 +1146,23 @@ def __vis_native_result_scan__(__vis_tree__):
    (`BANNED_DEF_HEADS`). Parse failures are silent — the eval that follows
    surfaces a clean syntax error with line/column."
   [code]
-  (try (let [^Context ctx
-             @parser-ctx
+  (try (let
+         [^Context ctx
+          @parser-ctx
 
-             b
-             (.getBindings ctx "python")]
+          b
+          (.getBindings ctx "python")]
 
          (.putMember b "__vis_src__" (str code))
          ;; Collect every Name/attribute id in the AST and intersect with the bans.
          (.putMember b "__vis_banned__" (->py (vec BANNED_DEF_HEADS)))
-         (let [hit (.eval ctx
-                          "python"
-                          (str "next((n.id for n in __import__('ast').walk("
-                               "__import__('ast').parse(__vis_src__)) "
-                               "if isinstance(n, __import__('ast').Name) "
-                               "and n.id in set(__vis_banned__)), None)"))]
+         (let
+           [hit (.eval ctx
+                       "python"
+                       (str "next((n.id for n in __import__('ast').walk("
+                            "__import__('ast').parse(__vis_src__)) "
+                            "if isinstance(n, __import__('ast').Name) "
+                            "and n.id in set(__vis_banned__)), None)"))]
            (when-not (.isNull hit)
              (throw (ex-info (str "Block uses `" (.asString hit)
                                   "` which is banned in the "
@@ -1112,20 +1194,21 @@ def __vis_native_result_scan__(__vis_tree__):
    here, so they stay direct. No-op when the async preamble isn't installed
    (the printer/parser helper contexts never bind tools)."
   [python-context sym val]
-  (let [^Context ctx
-        python-context
+  (let
+    [^Context ctx
+     python-context
 
-        g
-        (python-globals ctx)
+     g
+     (python-globals ctx)
 
-        nm
-        (sym->py-name sym)
+     nm
+     (sym->py-name sym)
 
-        aliases
-        (py-aliases-for-sym sym)
+     aliases
+     (py-aliases-for-sym sym)
 
-        member
-        (if (fn? val) (wrap-ifn val) (->py val))]
+     member
+     (if (fn? val) (wrap-ifn val) (->py val))]
 
     (add-protected-names! g (cons nm aliases))
     (.putMember g nm member)
@@ -1153,11 +1236,12 @@ def __vis_native_result_scan__(__vis_tree__):
    sandbox."
   [python-context sym doc]
   (when (and python-context (string? doc) (not (str/blank? doc)))
-    (let [^Context ctx
-          python-context
+    (let
+      [^Context ctx
+       python-context
 
-          g
-          (python-globals ctx)]
+       g
+       (python-globals ctx)]
 
       (try (.putMember g "__vis_doc_txt__" (str doc))
            (doseq [nm (cons (sym->py-name sym) (py-aliases-for-sym sym))]
@@ -1188,11 +1272,12 @@ def __vis_native_result_scan__(__vis_tree__):
 
 (defn- add-protected-names!
   [^Value g names]
-  (let [existing
-        (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
+  (let
+    [existing
+     (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
 
-        names'
-        (set (map str names))]
+     names'
+     (set (map str names))]
 
     (.putMember g "__vis_protected_names__" (->py (vec (sort (set/union existing names')))))))
 
@@ -1227,11 +1312,12 @@ def __vis_native_result_scan__(__vis_tree__):
    so a future live-vars view can surface name + doc (Python has no var
    metadata channel for doc text)."
   [env sym doc val]
-  (let [python-context
-        (:python-context env)
+  (let
+    [python-context
+     (:python-context env)
 
-        g
-        (python-globals python-context)]
+     g
+     (python-globals python-context)]
 
     (set-python-binding! python-context sym val)
     ;; Stash name -> doc text in a Python dict global that `doc(name)` reads.
@@ -1247,17 +1333,18 @@ def __vis_native_result_scan__(__vis_tree__):
    convention is `_`, but we use `_1/_2/_3` to match the engine's three-deep
    history."
   [env value]
-  (let [python-context
-        (:python-context env)
+  (let
+    [python-context
+     (:python-context env)
 
-        g
-        (python-globals python-context)
+     g
+     (python-globals python-context)
 
-        v1
-        (.getMember g "_1")
+     v1
+     (.getMember g "_1")
 
-        v2
-        (.getMember g "_2")]
+     v2
+     (.getMember g "_2")]
 
     (.putMember g "_3" v2)
     (.putMember g "_2" v1)
@@ -1287,49 +1374,50 @@ def __vis_native_result_scan__(__vis_tree__):
    the wired member keys; `doc` also reports callable-ness + any registered
    `__vis_docs__` text."
   [^Context ctx]
-  (let [g
-        (.getBindings ctx "python")
+  (let
+    [g
+     (.getBindings ctx "python")
 
-        ;; Python's own builtins (`len`, `print`, every `*Error`/`*Warning`
-        ;; class, …) are NOT vis tools, so `apropos` must NOT list them — it is
-        ;; a TOOL-discovery surface, not a dump of the Python stdlib. Captured
-        ;; once (builtins don't change over the context's life). Names starting
-        ;; with `_` (REPL slots `_1`/`_e`, `__vis*`, dunders) are engine
-        ;; bookkeeping and are filtered too.
-        builtin-names
-        (set (try (->clj (.eval ctx "python" "dir(__builtins__)")) (catch Throwable _ nil)))
+     ;; Python's own builtins (`len`, `print`, every `*Error`/`*Warning`
+     ;; class, …) are NOT vis tools, so `apropos` must NOT list them — it is
+     ;; a TOOL-discovery surface, not a dump of the Python stdlib. Captured
+     ;; once (builtins don't change over the context's life). Names starting
+     ;; with `_` (REPL slots `_1`/`_e`, `__vis*`, dunders) are engine
+     ;; bookkeeping and are filtered too.
+     builtin-names
+     (set (try (->clj (.eval ctx "python" "dir(__builtins__)")) (catch Throwable _ nil)))
 
-        ;; Engine DATA-accessors that are baseline globals but NOT callable tools —
-        ;; the prompt teaches them directly, so they must NOT clutter the tool
-        ;; discovery surface (same spirit as filtering `__vis_*`/dunders).
-        ;; `ntr` / `native_tools_results` are the prior-result mappings the model
-        ;; subscripts; `asyncio` is the async-runtime shim global (`asyncio =
-        ;; __vis_asyncio__`, so `import asyncio`/`asyncio.run(...)` work) — a
-        ;; runtime, not a tool.
-        non-tool-names
-        #{"ntr" "native_tools_results" "asyncio"}
+     ;; Engine DATA-accessors that are baseline globals but NOT callable tools —
+     ;; the prompt teaches them directly, so they must NOT clutter the tool
+     ;; discovery surface (same spirit as filtering `__vis_*`/dunders).
+     ;; `ntr` / `native_tools_results` are the prior-result mappings the model
+     ;; subscripts; `asyncio` is the async-runtime shim global (`asyncio =
+     ;; __vis_asyncio__`, so `import asyncio`/`asyncio.run(...)` work) — a
+     ;; runtime, not a tool.
+     non-tool-names
+     #{"ntr" "native_tools_results" "asyncio"}
 
-        ;; Shim MODULES (yaml, numpy, requests, …) publish via `sys.modules` so
-        ;; `import <lib>` works, but many are NOT top-level globals — so they'd
-        ;; miss the member-key scan below. The shim install seeds their names
-        ;; into `__vis_shims__`; fold them in so `apropos` surfaces every shim.
-        shim-names
-        (fn []
-          (try (let [d (.getMember g "__vis_shims__")]
-                 (when (and d (not (.isNull d)) (.hasArrayElements d))
-                   (into #{}
-                         (map #(.asString ^Value (.getArrayElement d (long %))))
-                         (range (.getArraySize d)))))
-               (catch Throwable _ nil)))
+     ;; Shim MODULES (yaml, numpy, requests, …) publish via `sys.modules` so
+     ;; `import <lib>` works, but many are NOT top-level globals — so they'd
+     ;; miss the member-key scan below. The shim install seeds their names
+     ;; into `__vis_shims__`; fold them in so `apropos` surfaces every shim.
+     shim-names
+     (fn []
+       (try (let [d (.getMember g "__vis_shims__")]
+              (when (and d (not (.isNull d)) (.hasArrayElements d))
+                (into #{}
+                      (map #(.asString ^Value (.getArrayElement d (long %))))
+                      (range (.getArraySize d)))))
+            (catch Throwable _ nil)))
 
-        names
-        (fn []
-          (sort (distinct (concat (filter (fn [n]
-                                            (and (not (str/starts-with? n "_"))
-                                                 (not (contains? builtin-names n))
-                                                 (not (contains? non-tool-names n))))
-                                          (map str (seq (.getMemberKeys g))))
-                                  (shim-names)))))]
+     names
+     (fn []
+       (sort (distinct (concat (filter (fn [n]
+                                         (and (not (str/starts-with? n "_"))
+                                              (not (contains? builtin-names n))
+                                              (not (contains? non-tool-names n))))
+                                       (map str (seq (.getMemberKeys g))))
+                               (shim-names)))))]
 
     (.putMember
       g
@@ -1337,32 +1425,34 @@ def __vis_native_result_scan__(__vis_tree__):
       (reify
         ProxyExecutable
           (execute [_ args]
-            (let [pat
-                  (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
+            (let
+              [pat
+               (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
 
-                  matched
-                  (filterv #(str/includes? % pat) (names))
+               matched
+               (filterv #(str/includes? % pat) (names))
 
-                  docs
-                  (let [d (.getMember g "__vis_docs__")]
-                    (when (and d (not (.isNull d)) (.hasHashEntries d)) d))
+               docs
+               (let [d (.getMember g "__vis_docs__")]
+                 (when (and d (not (.isNull d)) (.hasHashEntries d)) d))
 
-                  gist
-                  (fn [nm]
-                    ;; first non-blank line of the registered doc, capped
-                    ;; so `apropos` stays a scannable name -> gist index
-                    ;; (full text is `doc(name)`).
-                    (let [full
-                          (when (and docs (.hasHashEntry docs (->py nm)))
-                            (.asString (.getHashValue docs (->py nm))))
+               gist
+               (fn [nm]
+                 ;; first non-blank line of the registered doc, capped
+                 ;; so `apropos` stays a scannable name -> gist index
+                 ;; (full text is `doc(name)`).
+                 (let
+                   [full
+                    (when (and docs (.hasHashEntry docs (->py nm)))
+                      (.asString (.getHashValue docs (->py nm))))
 
-                          line
-                          (when (seq (str full))
-                            (first (remove str/blank? (str/split-lines (str full)))))]
+                    line
+                    (when (seq (str full))
+                      (first (remove str/blank? (str/split-lines (str full)))))]
 
-                      (cond (str/blank? (str line)) ""
-                            (> (count line) 100) (str (subs line 0 99) "…")
-                            :else line)))]
+                   (cond (str/blank? (str line)) ""
+                         (> (count line) 100) (str (subs line 0 99) "…")
+                         :else line)))]
 
               ;; Return a REAL native Python dict {name -> gist} (order preserved)
               ;; by zipping two parallel arrays guest-side — no ProxyHashMap crosses
@@ -1380,17 +1470,17 @@ def __vis_native_result_scan__(__vis_tree__):
       (reify
         ProxyExecutable
           (execute [_ args]
-            (let [nm
-                  (when (pos? (alength args)) (.asString ^Value (aget args 0)))
+            (let
+              [nm
+               (when (pos? (alength args)) (.asString ^Value (aget args 0)))
 
-                  m
-                  (when nm (.getMember g nm))
+               m
+               (when nm (.getMember g nm))
 
-                  docs
-                  (let [d (.getMember g "__vis_docs__")]
-                    (when
-                      (and d (not (.isNull d)) (.hasHashEntries d) nm (.hasHashEntry d (->py nm)))
-                      (.asString (.getHashValue d (->py nm)))))]
+               docs
+               (let [d (.getMember g "__vis_docs__")]
+                 (when (and d (not (.isNull d)) (.hasHashEntries d) nm (.hasHashEntry d (->py nm)))
+                   (.asString (.getHashValue d (->py nm)))))]
 
               (cond (nil? nm) "doc(name): describe a sandbox global"
                     (and (or (nil? m) (.isNull m)) (nil? docs))
@@ -1733,12 +1823,14 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    a failure in one shim leaves the sandbox without that module but must never
    break context creation, nor stop later shims from installing."
   [^Context ctx ^Value g shim]
-  (try (let [bindings (let [b (:shim/bindings shim)]
-                        (if (fn? b) (b) b))]
+  (try (let
+         [bindings (let [b (:shim/bindings shim)]
+                     (if (fn? b) (b) b))]
          (doseq [[nm f] bindings]
            (.putMember g ^String nm (wrap-ifn f))))
-       (when-let [src (let [p (:shim/preamble shim)]
-                        (if (fn? p) (p) p))]
+       (when-let
+         [src (let [p (:shim/preamble shim)]
+                (if (fn? p) (p) p))]
          (.eval ctx "python" ^String src))
        (catch Throwable t
          (tel/log! {:level :warn :id ::sandbox-shim-install-failed}
@@ -1863,9 +1955,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    library that only knows how to write a file. Best-effort: on any failure returns
    nil (⇒ no outbox tap, the filesystem stays plain-confined)."
   []
-  (try (let [dir (java.nio.file.Files/createTempDirectory
-                   "vis-outbox-"
-                   (make-array java.nio.file.attribute.FileAttribute 0))]
+  (try (let
+         [dir (java.nio.file.Files/createTempDirectory
+                "vis-outbox-"
+                (make-array java.nio.file.attribute.FileAttribute 0))]
          {:dir (str (.toAbsolutePath dir))
           :on-close (fn [^java.nio.file.Path p]
                       (mpl-capture/record-file! p))})
@@ -1897,10 +1990,11 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    nothing (never a Context-build-breaking value). Pure — the unit-testable core of the
    GC-option guard."
   [raw lo hi]
-  (when-let [s (some-> raw
-                       str
-                       str/trim
-                       not-empty)]
+  (when-let
+    [s (some-> raw
+               str
+               str/trim
+               not-empty)]
     (when-let [n (try (Long/parseLong s) (catch NumberFormatException _ nil))]
       (str (min (long hi) (max (long lo) (long n)))))))
 
@@ -1941,83 +2035,84 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
   [custom-bindings roots-fn network-opts]
-  (let [stdout-baos
-        (java.io.ByteArrayOutputStream.)
+  (let
+    [stdout-baos
+     (java.io.ByteArrayOutputStream.)
 
-        net?
-        (boolean (:enabled? network-opts))
+     net?
+     (boolean (:enabled? network-opts))
 
-        allowed
-        (vec (:allowed-domains network-opts))
+     allowed
+     (vec (:allowed-domains network-opts))
 
-        denied
-        (into default-denied-domains (:denied-domains network-opts))
+     denied
+     (into default-denied-domains (:denied-domains network-opts))
 
-        ;; `*` (or an empty allowlist) ⇒ allow everything EXCEPT the denylist.
-        allow-all?
-        (or (empty? allowed) (some #(= "*" (str %)) allowed))
+     ;; `*` (or an empty allowlist) ⇒ allow everything EXCEPT the denylist.
+     allow-all?
+     (or (empty? allowed) (some #(= "*" (str %)) allowed))
 
-        ;; Install the guard whenever there is an actual restriction to enforce —
-        ;; a denylist (always present: defaults) or a non-`*` allowlist. With net
-        ;; off the socket capability is denied outright, so no guard is needed.
-        guard?
-        (and net? (or (seq denied) (not allow-all?)))
+     ;; Install the guard whenever there is an actual restriction to enforce —
+     ;; a denylist (always present: defaults) or a non-`*` allowlist. With net
+     ;; off the socket capability is denied outright, so no guard is needed.
+     guard?
+     (and net? (or (seq denied) (not allow-all?)))
 
-        ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
-        ;; REAL filesystem access CONFINED to the current filesystem roots (Python
-        ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
-        ;; it (tests / no workspace) the sandbox stays IO-NONE; the file tools do
-        ;; the I/O on the Clojure side regardless.
-        ;; NETWORK capability: OFF by default. When the `:network/enabled` toggle is
-        ;; on, host sockets are allowed (urllib/requests/socket work); a non-empty
-        ;; `:network/allowed-domains` allowlist further confines connections (guard
-        ;; installed below). Empty allowlist + enabled = unrestricted network.
-        outbox
-        (when roots-fn (make-outbox))
+     ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
+     ;; REAL filesystem access CONFINED to the current filesystem roots (Python
+     ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
+     ;; it (tests / no workspace) the sandbox stays IO-NONE; the file tools do
+     ;; the I/O on the Clojure side regardless.
+     ;; NETWORK capability: OFF by default. When the `:network/enabled` toggle is
+     ;; on, host sockets are allowed (urllib/requests/socket work); a non-empty
+     ;; `:network/allowed-domains` allowlist further confines connections (guard
+     ;; installed below). Empty allowlist + enabled = unrestricted network.
+     outbox
+     (when roots-fn (make-outbox))
 
-        io-access
-        (if (or roots-fn net?)
-          (-> (IOAccess/newBuilder)
-              (cond->
-                roots-fn
-                (.fileSystem (sandbox-fs/confined-filesystem roots-fn outbox)))
-              (.allowHostSocketAccess net?)
-              (.build))
-          IOAccess/NONE)
+     io-access
+     (if (or roots-fn net?)
+       (-> (IOAccess/newBuilder)
+           (cond->
+             roots-fn
+             (.fileSystem (sandbox-fs/confined-filesystem roots-fn outbox)))
+           (.allowHostSocketAccess net?)
+           (.build))
+       IOAccess/NONE)
 
-        ctx
-        (-> (Context/newBuilder (into-array String ["python"]))
-            ;; Build on the shared Engine — THE thing that makes concurrent
-            ;; child forks safe (see `shared-engine`).
-            (.engine ^Engine @shared-engine)
-            ;; deny-by-default for the DANGEROUS capabilities — no host access,
-            ;; native off. Filesystem is `io-access` above (confined to roots, or
-            ;; NONE). THREADS are allowed, though: the
-            ;; model's Python legitimately spins them up (importlib's import
-            ;; machinery, `threading`, libs that allocate locks via `_thread`),
-            ;; and denying it surfaced an opaque `SecurityException: Operation
-            ;; is not allowed for:` mid-run. Guest threads share the context
-            ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
-            ;; a cheap capability, not a sandbox hole.
-            (.allowAllAccess false)
-            (.allowIO io-access)
-            (.allowCreateThread true)
-            (.allowNativeAccess false)
-            (.allowPolyglotAccess PolyglotAccess/NONE)
-            ;; Capture Python stdout so `run-python-block` can surface a form's
-            ;; printed output to the model (see `ctx->stdout`). `.out` is
-            ;; independent of IOAccess (which governs the filesystem).
-            (.out stdout-baos)
-            ;; Optional GraalPy background cycle-detector tuning (native-ext RSS);
-            ;; a no-op unless a VIS_PY_GC_* env var is set.
-            (apply-py-gc-options!)
-            (.build))
+     ctx
+     (-> (Context/newBuilder (into-array String ["python"]))
+         ;; Build on the shared Engine — THE thing that makes concurrent
+         ;; child forks safe (see `shared-engine`).
+         (.engine ^Engine @shared-engine)
+         ;; deny-by-default for the DANGEROUS capabilities — no host access,
+         ;; native off. Filesystem is `io-access` above (confined to roots, or
+         ;; NONE). THREADS are allowed, though: the
+         ;; model's Python legitimately spins them up (importlib's import
+         ;; machinery, `threading`, libs that allocate locks via `_thread`),
+         ;; and denying it surfaced an opaque `SecurityException: Operation
+         ;; is not allowed for:` mid-run. Guest threads share the context
+         ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
+         ;; a cheap capability, not a sandbox hole.
+         (.allowAllAccess false)
+         (.allowIO io-access)
+         (.allowCreateThread true)
+         (.allowNativeAccess false)
+         (.allowPolyglotAccess PolyglotAccess/NONE)
+         ;; Capture Python stdout so `run-python-block` can surface a form's
+         ;; printed output to the model (see `ctx->stdout`). `.out` is
+         ;; independent of IOAccess (which governs the filesystem).
+         (.out stdout-baos)
+         ;; Optional GraalPy background cycle-detector tuning (native-ext RSS);
+         ;; a no-op unless a VIS_PY_GC_* env var is set.
+         (apply-py-gc-options!)
+         (.build))
 
-        _
-        (.put ctx->stdout ctx stdout-baos)
+     _
+     (.put ctx->stdout ctx stdout-baos)
 
-        g
-        (.getBindings ctx "python")]
+     g
+     (.getBindings ctx "python")]
 
     ;; Tiny stdlib conveniences as Python builtins (not globals):
     ;; `json.dumps(...)` and `shlex.quote(...)` work in every run_python
@@ -2038,17 +2133,18 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; above wired (canonical + aliases). Marshalled as JSON and parsed with the
     ;; auto-imported `json` module so no ProxyHashMap crosses the boundary.
     ;; Best-effort: a registry hiccup must never break context creation.
-    (try (when-let [docs-fn (requiring-resolve
-                              'com.blockether.vis.internal.extension/sandbox-symbol-docs)]
-           (let [sym->doc (docs-fn)
-                 py-docs (reduce (fn [m [sym _]]
-                                   (if-let [d (get sym->doc sym)]
-                                     (reduce #(assoc %1 %2 d)
-                                             m
-                                             (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-                                     m))
-                                 {}
-                                 (or custom-bindings {}))]
+    (try (when-let
+           [docs-fn (requiring-resolve 'com.blockether.vis.internal.extension/sandbox-symbol-docs)]
+           (let
+             [sym->doc (docs-fn)
+              py-docs (reduce (fn [m [sym _]]
+                                (if-let [d (get sym->doc sym)]
+                                  (reduce #(assoc %1 %2 d)
+                                          m
+                                          (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+                                  m))
+                              {}
+                              (or custom-bindings {}))]
 
              (when (seq py-docs)
                (.putMember g "__vis_docs_json__" (json/write-json-str py-docs))
@@ -2075,24 +2171,26 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; module that isn't a top-level global). Same JSON-hop marshalling as the
     ;; tool docs above. Best-effort: a registry hiccup must never break context
     ;; creation.
-    (try (let [shims
-               (registered-sandbox-shims)
+    (try (let
+           [shims
+            (registered-sandbox-shims)
 
-               names
-               (into [] (comp (keep :shim/name) (distinct)) shims)
+            names
+            (into [] (comp (keep :shim/name) (distinct)) shims)
 
-               docs
-               (reduce (fn [m s]
-                         (if-let [nm (:shim/name s)]
-                           (let [d (:shim/description s)
-                                 base (if (and (string? d) (not (str/blank? d)))
-                                        (str "sandbox shim \u2014 " d)
-                                        (str "sandbox shim: a pre-installed `" nm "` module"))]
+            docs
+            (reduce (fn [m s]
+                      (if-let [nm (:shim/name s)]
+                        (let
+                          [d (:shim/description s)
+                           base (if (and (string? d) (not (str/blank? d)))
+                                  (str "sandbox shim \u2014 " d)
+                                  (str "sandbox shim: a pre-installed `" nm "` module"))]
 
-                             (assoc m nm base))
-                           m))
-                       {}
-                       shims)]
+                          (assoc m nm base))
+                        m))
+                    {}
+                    shims)]
 
            (when (seq names)
              (.putMember g "__vis_shims_json__" (json/write-json-str names))
@@ -2138,18 +2236,19 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
       (.putMember g "__vis_allowed_domains__" (->py allowed))
       (.putMember g "__vis_denied_domains__" (->py (vec denied)))
       (.eval ctx "python" network-guard-python))
-    (let [defer-names (->> (or custom-bindings {})
-                           (filter (fn [[_ v]]
-                                     (fn? v)))
-                           (mapcat (fn [[sym _]]
-                                     (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                           (remove #{"session_fold" "__vis_par__" "__vis_par_isolated__"
-                                     ;; ntr/native_tools_results host callbacks:
-                                     ;; plain sync lookups, never awaitable thunks.
-                                     "__vis_native_result_prime__" "__vis_native_result_fetch__"
-                                     "__vis_native_result_ids__"})
-                           distinct
-                           vec)]
+    (let
+      [defer-names (->> (or custom-bindings {})
+                        (filter (fn [[_ v]]
+                                  (fn? v)))
+                        (mapcat (fn [[sym _]]
+                                  (cons (sym->py-name sym) (py-aliases-for-sym sym))))
+                        (remove #{"session_fold" "__vis_par__" "__vis_par_isolated__"
+                                  ;; ntr/native_tools_results host callbacks:
+                                  ;; plain sync lookups, never awaitable thunks.
+                                  "__vis_native_result_prime__" "__vis_native_result_fetch__"
+                                  "__vis_native_result_ids__"})
+                        distinct
+                        vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
       (.eval ctx "python" "__vis_defer_tools__()"))
     {:python-context ctx
@@ -2179,14 +2278,15 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     (when-not (System/getProperty "org.graalvm.nativeimage.imagecode")
       (let [vendor (str (System/getProperty "java.vendor.version"))]
         (when (str/includes? vendor "GraalVM")
-          (let [pinned (some-> (io/resource "META-INF/graalvm/org.graalvm.polyglot/version")
-                               slurp
-                               str/trim
-                               not-empty)
-                ;; Parse the JDK's GraalVM version from the substring AFTER
-                ;; "GraalVM" so a stray leading digit can't win the regex.
-                jdk-ver (graalvm-version-major-minor (subs vendor (str/index-of vendor "GraalVM")))
-                want (graalvm-version-major-minor pinned)]
+          (let
+            [pinned (some-> (io/resource "META-INF/graalvm/org.graalvm.polyglot/version")
+                            slurp
+                            str/trim
+                            not-empty)
+             ;; Parse the JDK's GraalVM version from the substring AFTER
+             ;; "GraalVM" so a stray leading digit can't win the regex.
+             jdk-ver (graalvm-version-major-minor (subs vendor (str/index-of vendor "GraalVM")))
+             want (graalvm-version-major-minor pinned)]
 
             (when (and want jdk-ver (not= want jdk-ver))
               (throw
@@ -2234,18 +2334,20 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    ;; a mismatched built-in Truffle (e.g. GraalVM CE 25.0.2 vs the pinned
    ;; 25.1.3) otherwise dies with an opaque NoClassDefFoundError here.
    @graalvm-runtime-checked
-   ;; Warm the shared auxiliary GraalPy contexts (printer + parser) NOW — at
-   ;; session start, while NO eval is running. Creating a second polyglot Context
-   ;; lazily WHILE an eval is executing on another (virtual) thread DEADLOCKS
-   ;; Truffle (proven: sequential create+use is fine; lazy create during a live
-   ;; eval hangs). Forcing the `defonce` delays here (sequential, pre-eval)
-   ;; guarantees they exist before the first concurrent render/validation call;
-   ;; only the first session in the process pays the warmup.
+   ;; Warm the shared engine + auxiliary GraalPy contexts NOW — at session
+   ;; start, while NO eval is running. EVERY context now rides an EXPLICIT,
+   ;; pre-built engine: the agent + parser contexts share `shared-engine`
+   ;; (deny-by-default); the printer rides its own `printer-engine` because its
+   ;; `allowAllAccess true` host-access config is incompatible with the shared
+   ;; engine's deny-by-default agents. NO standalone `Context.build()` remains,
+   ;; so none of them can DEADLOCK Truffle at a safepoint if forced mid-eval
+   ;; (that hazard is standalone-build-during-a-live-eval only). We still force
+   ;; them here so the first render/validation/eval never pays warmup mid-turn.
+   ;; Only the first session in the process pays this.
+   (try @shared-engine (catch Throwable _ nil))
+   (try @printer-engine (catch Throwable _ nil))
    (try @printer-context (catch Throwable _ nil))
    (try @parser-ctx (catch Throwable _ nil))
-   ;; Force the shared Engine NOW (session start, pre-eval) so the first forked
-   ;; child later doesn't trigger engine init mid-eval.
-   (try @shared-engine (catch Throwable _ nil))
    (build-agent-context custom-bindings roots-fn network-opts)))
 
 (defn fork-context!
@@ -2303,11 +2405,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    marker, or 3+ space-separated word runs), it's prose. A genuine code line with a
    typo elsewhere parses fine alone → no hint, raw error preserved."
   [code]
-  (let [first-real (->> (str/split-lines code)
-                        (map str/trim)
-                        (remove str/blank?)
-                        (remove #(str/starts-with? % "#"))
-                        first)]
+  (let
+    [first-real (->> (str/split-lines code)
+                     (map str/trim)
+                     (remove str/blank?)
+                     (remove #(str/starts-with? % "#"))
+                     first)]
     (when (and (seq first-real)
                (try (count-top-level-forms first-real)
                     false ; parses alone → real code
@@ -2337,11 +2440,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    already carries at top level. Actionable fields (`:reason`, `:unknown`,
    `:failures`, `:loop-hint`, …) survive untouched."
   [d message]
-  (let [d
-        (dissoc d :tool-result)
+  (let
+    [d
+     (dissoc d :tool-result)
 
-        e
-        (:error d)]
+     e
+     (:error d)]
 
     (if-not (map? e)
       d
@@ -2430,19 +2534,24 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
            #"Operation is not allowed for|Operation not permitted|PermissionError|was excluded|UnsupportedPosixFeature"
            (str base))))
 
-     ;; A wrong dict-method call on a tool result — the model must use
-     ;; bracket/index access instead. Two spellings: a still-FOREIGN/polyglot
-     ;; object ("foreign object has no attribute 'get'"), OR — once a top-level
-     ;; result has been pyified to a REAL python list/dict — the NATIVE
-     ;; "'list' object has no attribute 'get'". Same steer either way.
+     ;; A genuine FOREIGN/polyglot value — a tool result whose interop wrapper
+     ;; really lacks that method (GraalPy: "foreign object has no attribute …").
      foreign-attr
      (when (and (not host?) base)
-       (or
-         (second (re-find #"foreign object has no attribute '([^']+)'" (str base)))
-         (second
-           (re-find
-             #"'(?:list|tuple|str|int|float|bool|NoneType|set)' object has no attribute '(get|items|keys|values)'"
-             (str base)))))
+       (second (re-find #"foreign object has no attribute '([^']+)'" (str base))))
+
+     ;; A dict-method call on a value GraalPy names by a base type — `str`,
+     ;; `list`, etc. From the AttributeError text alone this is INDISTINGUISHABLE
+     ;; between a genuine native value (a `python_execution` result in `ntr` is
+     ;; its printed stdout STRING) and a FOREIGN tool-result row reported by its
+     ;; element type (e.g. `await lst()` → a list). Capture [type attr] so the
+     ;; steer NAMES the type and covers BOTH readings instead of asserting one.
+     native-nondict
+     (when (and (not host?) base)
+       (next
+         (re-find
+           #"'(list|tuple|str|int|float|bool|NoneType|set)' object has no attribute '(get|items|keys|values)'"
+           (str base))))
 
      ;; Python indentation slip (a block not indented, or a stray indent).
      indent?
@@ -2470,14 +2579,23 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                 "\")`; if it isn't listed, ask the USER to enable "
                 "it and do NOT retry the name. If it's a variable, define it first. "
                 "Original error: ")
-           foreign-attr
-           (str "`."
-                foreign-attr
-                "` failed because that value is a FOREIGN/polyglot "
-                "object (a tool result), not a native Python dict — dict methods like "
-                ".get / .items / .keys may be absent. If it's a dict, read it with bracket "
-                "access (result[\"key\"]); if it's a list, index it (result[0]); the result's "
-                "shape is in the tool's docstring. Original error: ")
+           foreign-attr (str
+                          "`." foreign-attr
+                          "` failed because that value is a FOREIGN/polyglot object (a tool "
+                          "result whose interop wrapper lacks that method). Read it with bracket "
+                          "access (result[\"key\"]) or index it (result[0]); the result's shape is "
+                          "in the tool's docstring. Original error: ")
+           native-nondict
+           (str "`." (second native-nondict)
+                "` failed because that value is a `" (first native-nondict)
+                "`, not a dict — it has no ." (second native-nondict)
+                ". It is EITHER a FOREIGN tool result (a `" (first native-nondict)
+                "` row / string whose interop wrapper has no dict method — index it "
+                "(result[0]), or bracket-access a dict row: result[\"key\"]) OR a plain "
+                "native value (a `python_execution` result in `ntr` is its printed stdout "
+                "STRING). This is NOT a general polyglot restriction — the value simply "
+                "isn't a dict. Guard the type first (e.g. `if isinstance(res, dict):`) "
+                "before calling dict methods, or index/slice it directly. Original error: ")
            indent? (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
                         "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
                         "statement must start at column 0. Re-indent that region. Original error: ")
@@ -2492,9 +2610,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      (if hint (str hint base) base)]
 
     {:message msg
-     :data (cond-> {:phase (cond host? :python/host
-                                 syntax? :python/syntax
-                                 :else :python/runtime)}
+     :data (cond->
+             {:phase (cond host? :python/host
+                           syntax? :python/syntax
+                           :else :python/runtime)}
              (some? loc)
              (assoc :line
                (.getStartLine loc) :column
@@ -2538,37 +2657,38 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    overlaps awaitables on the host virtual-thread pool. Returns the FLAT sum
    `{:stdout <printed>}` | `{:result <value>}` | `{:error <raised> :stdout?}`."
   [^Context ctx ^Value g code]
-  (let [baos
-        (ctx-stdout-baos ctx)
+  (let
+    [baos
+     (ctx-stdout-baos ctx)
 
-        _
-        (when baos (.reset baos))
+     _
+     (when baos (.reset baos))
 
-        ;; (The per-block print-capture list is reset INSIDE `__vis_run_async__` as
-        ;; a real python list — resetting it from here with `->py []` would make it
-        ;; a non-appendable ProxyArray and lose every capture.)
-        run-async
-        (.getMember g "__vis_run_async__")
+     ;; (The per-block print-capture list is reset INSIDE `__vis_run_async__` as
+     ;; a real python list — resetting it from here with `->py []` would make it
+     ;; a non-appendable ProxyArray and lose every capture.)
+     run-async
+     (.getMember g "__vis_run_async__")
 
-        read-out
-        (fn []
-          (when baos
-            (let [s (baos->str baos)]
-              (when-not (str/blank? s) s))))
+     read-out
+     (fn []
+       (when baos
+         (let [s (baos->str baos)]
+           (when-not (str/blank? s) s))))
 
-        ;; The tool-result objects the model print()ed this block — each a map
-        ;; carrying "op" (its origin). The HOST renders one op-card per result;
-        ;; stdout (context) is untouched.
-        read-printed
-        (fn []
-          (let [p (->clj (.getMember g "__vis_printed_results__"))]
-            (when (seq p) (vec p))))
+     ;; The tool-result objects the model print()ed this block — each a map
+     ;; carrying "op" (its origin). The HOST renders one op-card per result;
+     ;; stdout (context) is untouched.
+     read-printed
+     (fn []
+       (let [p (->clj (.getMember g "__vis_printed_results__"))]
+         (when (seq p) (vec p))))
 
-        sink
-        (atom [])
+     sink
+     (atom [])
 
-        outbox-seen
-        (atom #{})]
+     outbox-seen
+     (atom #{})]
 
     (with-bindings {@current-form-idx-var 0
                     #'mpl-capture/*attachment-sink* sink
@@ -2578,29 +2698,30 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         ;; `__vis_async_result__` and prints to `baos`. (Globals it assigns
         ;; persist NATURALLY in the live interpreter — no pickle, no rebind.)
         (.execute run-async (object-array [code]))
-        (let [res0
-              (->clj (.getMember g "__vis_async_result__"))
+        (let
+          [res0
+           (->clj (.getMember g "__vis_async_result__"))
 
-              res
-              (if (module-value? res0) nil res0)
+           res
+           (if (module-value? res0) nil res0)
 
-              out
-              (read-out)
+           out
+           (read-out)
 
-              printed
-              (read-printed)
+           printed
+           (read-printed)
 
-              ;; true ⇔ the block printed NOTHING but tool results — only then may
-              ;; the human display replace the raw stdout with cards (no text lost).
-              only?
-              (true? (->clj (.getMember g "__vis_only_results__")))
+           ;; true ⇔ the block printed NOTHING but tool results — only then may
+           ;; the human display replace the raw stdout with cards (no text lost).
+           only?
+           (true? (->clj (.getMember g "__vis_only_results__")))
 
-              ;; Artifacts the block PRODUCED (matplotlib show/savefig, vis_attach,
-              ;; or an $VIS_OUTBOX write), captured at the source into the per-block
-              ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
-              ;; NO stdout-fence parsing.
-              attachments
-              (mpl-capture/drain sink)]
+           ;; Artifacts the block PRODUCED (matplotlib show/savefig, vis_attach,
+           ;; or an $VIS_OUTBOX write), captured at the source into the per-block
+           ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
+           ;; NO stdout-fence parsing.
+           attachments
+           (mpl-capture/drain sink)]
 
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
           ;; FLAT sum type — success is ONE CONTEXT channel, never both:
@@ -2629,11 +2750,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
           ;; FLAT sum type — failure branch. The raised error IS the result, in
           ;; ONE place; any partial stdout (and any artifact produced before it)
           ;; rides along.
-          (let [out
-                (read-out)
+          (let
+            [out
+             (read-out)
 
-                attachments
-                (mpl-capture/drain sink)]
+             attachments
+             (mpl-capture/drain sink)]
 
             (cond-> {:error (map-polyglot-error e code)}
               out
@@ -2671,17 +2793,18 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    halt-on-exception decides what ran. A pre-eval protected-rebind violation
    short-circuits to an `:error` instead."
   [python-context code & [_opts]]
-  (let [ctx
-        ^Context python-context
+  (let
+    [ctx
+     ^Context python-context
 
-        g
-        (.getBindings ctx "python")
+     g
+     (.getBindings ctx "python")
 
-        ;; Strip redundant imports of protected builtins (e.g. `from asyncio
-        ;; import gather`) at the AST level BEFORE the protected-rebind check and
-        ;; before running — so they're a silent no-op, not an error.
-        code
-        (strip-protected-imports ctx g code)]
+     ;; Strip redundant imports of protected builtins (e.g. `from asyncio
+     ;; import gather`) at the AST level BEFORE the protected-rebind check and
+     ;; before running — so they're a silent no-op, not an error.
+     code
+     (strip-protected-imports ctx g code)]
 
     (if-let [err (protected-rebind-error ctx g code)]
       {:result nil :forms [{:source code :error err}] :error err}
@@ -2698,20 +2821,21 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    Empty on parse failure; the normal evaluator reports the syntax error."
   [^Context ctx ^Value g code]
   (try (.putMember g "__vis_src__" (str code))
-       (let [v (.eval ctx
-                      "python"
-                      "__vis_assigned_names__(__import__('ast').parse(__vis_src__).body)")]
+       (let
+         [v
+          (.eval ctx "python" "__vis_assigned_names__(__import__('ast').parse(__vis_src__).body)")]
          (set (map str (or (->clj v) []))))
        (catch PolyglotException _ #{})
        (catch Throwable _ #{})))
 
 (defn- protected-rebind-error
   [^Context ctx ^Value g code]
-  (let [protected
-        (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
+  (let
+    [protected
+     (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
 
-        hits
-        (vec (sort (set/intersection protected (assigned-names-in-code ctx g code))))]
+     hits
+     (vec (sort (set/intersection protected (assigned-names-in-code ctx g code))))]
 
     (when (seq hits)
       {:message (str "Block tries to rebind protected sandbox/tool name(s): "
