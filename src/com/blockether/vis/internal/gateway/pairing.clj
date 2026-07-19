@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.pairing
-  "Gateway pairing helpers for mobile companions.
+  "Gateway pairing helpers for remote clients.
 
   The QR payload is deliberately tiny and URL-shaped so native apps can scan it
   without an HTTP round trip:

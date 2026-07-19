@@ -5617,7 +5617,7 @@
      ;; Image attachments: paths of readable image files mentioned in the
      ;; user message (terminal drop pastes the path) become multimodal
      ;; blocks on the initial user message. Engine-side so every channel
-     ;; (TUI/web/Telegram) gets the same behavior; never throws.
+     ;; gets the same behavior; never throws.
      user-attachments
      (let
        [disk (try (attachments/collect-user-images user-request
@@ -9586,13 +9586,6 @@
   "Persist a manual order for the sessions inside `project-id`."
   [project-id session-ids]
   (persistance/db-reorder-project-sessions! (db-info) project-id session-ids))
-
-(defn for-telegram-chat!
-  [chat-id]
-  (let [ext (str chat-id)]
-    (or (when-let [id (persistance/db-find-session-by-external (db-info) :telegram ext)]
-          (by-id id))
-        (create! :telegram {:external-id ext}))))
 
 ;; =============================================================================
 ;; Host title setter + public env accessor

@@ -129,8 +129,7 @@
                     (fn []
                       [{:ext/channel-contributions
                         {:tui.slot/commands [{:id :voice/input :fn #'sample-channel-fn}]
-                         :telegram.slot/preamble [{:id :telegram/preamble
-                                                   :fn #'sample-channel-fn}]}}])]
+                         :api.slot/preamble [{:id :api/preamble :fn #'sample-channel-fn}]}}])]
         (expect
           (= [{:id :voice/input :fn #'sample-channel-fn :channel-id :tui :slot :tui.slot/commands}]
              (extension/channel-contributions-for :tui :tui.slot/commands)))

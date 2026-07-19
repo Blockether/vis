@@ -735,7 +735,7 @@
 ;; The fn returns CANONICAL IR + layout hints; the TUI walks
 ;; the IR to a plain styled string and packs it into the segment
 ;; vec built-ins also feed. Other channels translate the same IR
-;; differently (Telegram: emit as inline markdown; web: HTML span).
+;; differently for their own surface.
 ;;
 ;; `:fg-role` is a channel-agnostic intent keyword (`:warn`,
 ;; `:muted`, `:default`, `:success`, `:error`); each channel maps

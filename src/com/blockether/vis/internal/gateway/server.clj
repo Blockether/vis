@@ -601,7 +601,7 @@
 (defn- toggle-wire-id [id] (str (namespace id) "/" (name id)))
 
 (defn- toggle-json
-  "One settings row as JSON — the wire twin of the web channel's
+  "One settings row as JSON — the wire twin of the server-side
    `toggle-row` hiccup: boolean rows carry `enabled`, enum rows carry
    `value` + `choices`."
   [{:keys [id label description type]}]
@@ -1058,8 +1058,8 @@
 (defn- resources-handler
   "GET /v1/sessions/:sid/resources — the session's live vis-managed resources
    (shell_bg children, managed REPLs, MCP connections, …) FROM THE DAEMON's
-   registry. The web channel reads its own in-process registry directly because
-   it runs INSIDE the daemon, but the TUI and mobile clients run in a DIFFERENT
+   registry. An in-process client reads its own registry directly because
+   it runs INSIDE the daemon, but the TUI and remote clients run in a DIFFERENT
    process from the one the agent's tools execute in; without this endpoint they
    read an empty local registry and never learn a background started."
   [request]
@@ -1687,7 +1687,7 @@
         (rr/create-default-handler
           {:not-found (fn [request]
                         ;; A contribution that owns a `:prefix` may render its
-                        ;; OWN 404 (e.g. the web UI's styled HTML page) instead
+                        ;; OWN 404 (e.g. a styled HTML page) instead
                         ;; of the raw JSON below — same per-prefix dispatch as
                         ;; `:on-unauthorized`. Non-prefixed paths (the API) keep
                         ;; the JSON error.
@@ -1738,8 +1738,8 @@
 (defn- install-toggle-persistence!
   "Hydrate feature toggles from the `:toggles` slot of ~/.vis/config.edn
    and install a listener that writes every change back. Mirrors the
-   TUI's wiring in `channel-tui/screen.clj` so a toggle flipped from the
-   web channel (or any gateway client) survives a gateway restart -
+   TUI's wiring in `channel-tui/screen.clj` so a toggle flipped from any
+   gateway client survives a gateway restart -
    without this, only TUI-hosted processes ever persisted toggles.
    Idempotent: hydration re-runs harmlessly; the save listener installs
    once per process."

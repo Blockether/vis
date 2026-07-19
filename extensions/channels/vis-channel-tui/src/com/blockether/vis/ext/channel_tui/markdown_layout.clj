@@ -438,8 +438,8 @@
         ;; (32→green add, 91→red del, 36→cyan hunk, 90→dim file header) — the SAME
         ;; mechanism that carries zprint syntax color on Clojure fences, so no
         ;; painter change is needed. Context rows stay base fg.
-        ;; `ir/diff-line-kind` is the SHARED classifier the web channel also uses
-        ;; (there → a CSS class), so a diff fence colours identically in both.
+        ;; `ir/diff-line-kind` is the SHARED diff-line classifier, so a
+        ;; diff fence colours consistently wherever it is rendered.
         kind->sgr
         {:meta "90" :hunk "36" :add "32" :del "91" :ctx nil}
 
@@ -463,8 +463,8 @@
         diff-line
         (fn [line]
           ;; Tag each add/del row with its unified-diff kind so the painter can
-          ;; tint the row's BACKGROUND band green/red (mirroring the web channel's
-          ;; `df-add`/`df-del`). Hunk/meta/ctx rows keep the neutral code-block bg
+          ;; tint the row's BACKGROUND band green/red. Hunk/meta/ctx rows
+          ;; keep the neutral code-block bg
           ;; and rely on their ANSI foreground alone.
           (let [kind (ir/diff-line-kind line)]
             (cond-> {:runs (if (= "" line) [] (runs-of line))}

@@ -25,7 +25,7 @@
       :until       <epoch-ms> | nil   ;; nil = sticky / manual dismiss
 
    Levels are advisory metadata for channels: TUI uses them for
-   colour, Telegram could use emoji, CLI could prefix `[notice]` /
+   colour, the CLI could prefix `[notice]` /
    `[warn]`. The host stores them but never interprets them.
 
    Why a flat module instead of a generic event bus: notifications

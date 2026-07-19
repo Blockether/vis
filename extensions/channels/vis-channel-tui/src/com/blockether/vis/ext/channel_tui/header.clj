@@ -32,7 +32,7 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             ;; Channel-agnostic header policy (slot ratios, workspace
             ;; switcher padding/cap, glyphs, default labels). Lives in
-            ;; `internal/header.cljc` so a future web/Telegram channel
+            ;; `internal/header.cljc` so a future non-TUI channel
             ;; reuses the same values without touching TUI code.
             [com.blockether.vis.internal.header :as vh]))
 
@@ -50,7 +50,7 @@
 ;; The fn returns CANONICAL IR (`[:ast {?:align ?:fg-role ...} &
 ;; blocks]`) — channel-agnostic data, NOT a paint thunk. The TUI
 ;; walks the IR via `layout/ast->lines` and paints the resulting
-;; styled lines into rows; other channels (Telegram, web) translate
+;; styled lines into rows; other channels translate
 ;; the same IR to their own surface (markdown, HTML, etc.).
 ;;
 ;; Optional render hints carried on the IR root attrs map:
@@ -64,7 +64,7 @@
 ;; `:voice/foo` (voice indicator). No `requiring-resolve` into
 ;; channel-tui from extension code; channel-tui never imports specific
 ;; extension namespaces. Symmetric with how other channels would
-;; expose their own hook conventions (e.g. `:telegram/preamble`).
+;; expose their own hook conventions (e.g. `:my-channel/preamble`).
 ;;
 ;; See `com.blockether.vis.internal.extension/channel-contributions-for`.
 

@@ -78,7 +78,7 @@
 ;; Channel descriptor - spec
 ;; =============================================================================
 
-;; Stable identity key for the channel, e.g. :tui, :telegram, :web.
+;; Stable identity key for the channel, e.g. :tui, :cli, :api.
 ;; Used as the session-soul `channel` column and as the dedup key
 ;; in the registry.
 (s/def :channel/id keyword?)
@@ -104,7 +104,7 @@
 (s/def :channel/owns-tty? boolean?)
 
 ;; Entry point. (fn [args-vec] -> any). `args-vec` are the CLI tokens
-;; AFTER the channel command (so for `vis channels telegram --foo bar` it is
+;; AFTER the channel command (so for `vis channels tui --foo bar` it is
 ;; `["--foo" "bar"]`).
 ;; Accepts any IFn (functions OR vars) so callers can pass `#'channel-main`
 ;; and benefit from REPL redefinition.
@@ -112,11 +112,11 @@
 
 ;; Optional. (fn [input opts] -> renderer-output) called by the channel's
 ;; emit chokepoint to convert the canonical content blocks into the channel-flavored
-;; output. Telegram registers an :html walker; TUI
-;; registers a :markdown walker. Output type is channel-defined.
+;; output. The TUI registers a :markdown walker; another channel
+;; could register an :html walker. Output type is channel-defined.
 (s/def :channel/messages-renderer-fn ifn?)
 
-;; Channel-owned nested commands, e.g. `vis channels telegram approve`.
+;; Channel-owned nested commands, e.g. `vis channels tui approve`.
 ;; This keeps channel subcommands inside the channel descriptor instead of
 ;; extension namespaces registering global command-registry entries directly.
 (s/def :channel/subcommands
@@ -436,7 +436,7 @@
 (defn channel-subcommands
   "Compose subcommands for the `vis channels` parent from TWO sources:
 
-     1. Every entry in the channel registry (TUI, Telegram, web, ...)
+     1. Every entry in the channel registry (TUI, ...)
      2. Every commandline extension registered with
         `:cmd/parent [\"channels\"]` (escape hatch for non-channel
         adapters that still want to live under `vis channels`)
@@ -457,6 +457,6 @@
     (vec (sort-by :cmd/name (concat from-channels (remove #(names (:cmd/name %)) regd))))))
 
 (register-cmd! {:cmd/name "channels"
-                :cmd/doc "Run a registered channel (TUI, Telegram, ...)."
+                :cmd/doc "Run a registered channel (TUI, ...)."
                 :cmd/usage "vis channels <name> [args...]"
                 :cmd/subcommands #'channel-subcommands})

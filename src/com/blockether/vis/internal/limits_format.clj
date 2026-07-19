@@ -2,10 +2,10 @@
   "Channel-neutral `{:dynamic {:limits [...]}}` row formatters.
 
    Hoisted from the TUI extension (`channel_tui/limits_fmt.clj`) so
-   every channel — TUI footer, TUI provider cards, web provider cards,
-   Telegram — renders the SAME compact account-quota summary from a
-   provider's normalized limits report. The TUI namespace now aliases
-   these vars; the web channel consumes them through `vis.core`.
+   every channel — TUI footer, TUI provider cards — renders the SAME
+   compact account-quota summary from a provider's normalized limits
+   report. The TUI namespace now aliases these vars; other channels
+   consume them through `vis.core`.
 
    The interesting account-level rows (`:zai-coding-plan-5h`,
    `:codex-7d`, `:premium_interactions`, ...) live under

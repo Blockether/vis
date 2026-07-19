@@ -202,9 +202,8 @@
   ;; Channels scanned when resolving a session by short PREFIX (full UUIDs and
   ;; `db-resolve-session-id` hits don't need this). MUST include every channel
   ;; that persists sessions, or a prefix on a missing channel silently resolves
-  ;; to nothing — e.g. `:api` (the gateway/web channel) must be included so a
-  ;; web-session prefix resolves.
-  [:tui :telegram :cli :api :web])
+  ;; to nothing — e.g. `:api` (the gateway channel) must be included.
+  [:tui :cli :api])
 
 (defn- resolve-session-ref
   "Resolve one transcript/session reference to the canonical UUID.

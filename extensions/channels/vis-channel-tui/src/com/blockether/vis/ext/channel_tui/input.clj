@@ -845,8 +845,8 @@
   "Best-effort read of an IMAGE sitting on the system clipboard. Writes it to a
    temp PNG file and returns `{:path :mime}` (mime always `\"image/png\"`), or
    nil when the clipboard holds no image / no helper is available. Lets ⌘V of a
-   screenshot or a copied image attach the pixels, matching the web channel's
-   paste behaviour. Never throws."
+   screenshot or a copied image attach the pixels.
+   Never throws."
   []
   (try (or
          ;; stdout-based helpers: pngpaste / wl-paste / xclip.

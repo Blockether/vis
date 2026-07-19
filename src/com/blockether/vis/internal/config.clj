@@ -571,8 +571,8 @@
 (def ^:private verbatim-key-subtrees
   "Config subtrees whose MAP KEYS are user-owned strings — env var names,
    HTTP header names, provider wire fields. YAML keywordization must never
-   touch them: `TELEGRAM_BOT_TOKEN` under `:environment` stays a verbatim
-   string key, never `:telegram-bot-token`."
+   touch them: `ANTHROPIC_API_KEY` under `:environment` stays a verbatim
+   string key, never `:anthropic-api-key`."
   #{:environment :llm-headers :extra-body})
 
 (def ^:private keyword-valued-keys

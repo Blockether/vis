@@ -24,7 +24,7 @@
       :error        {:message … …}}    ;; only on failure
 
    `:excerpt` is Markdown; the channel renderer parses it through
-   `vis/markdown->ast` so TUI / Telegram / web renderers can present
+   `vis/markdown->ast` so channel renderers can present
    commonmark blocks (headings, lists, code fences) instead of dumping
    the raw blob. Errors are still surfaced inline as a single citation
    with `:error true` AND on the envelope's `:error` slot so failures
@@ -804,7 +804,7 @@
 ;; Envelope helpers
 ;;
 ;; Every search/* fn returns a tool envelope so the channel layer
-;; (TUI / Telegram / web) gets a structured payload AND a custom
+;; gets a structured payload AND a custom
 ;; render-fn that paints citation cards instead of dumping the raw
 ;; markdown blob. Python itself sees the unwrapped `:result` map.
 ;; ----------------------------------------------------------------------------
@@ -1097,8 +1097,8 @@
 ;; Op-card renderer — a boxed citation table + full excerpt cards
 ;; =============================================================================
 ;;
-;; Declared as `:render` on each search symbol. The channel layer (TUI / web /
-;; telegram) calls it with the tool's `:result` map and paints the returned
+;; Declared as `:render` on each search symbol. The channel layer
+;; calls it with the tool's `:result` map and paints the returned
 ;; `{:summary :body}` op-card. `:body` is Markdown: a GFM table the channels
 ;; draw as a boxed grid, then one card per citation with the FULL excerpt.
 ;; Table CELLS render as plain text (the TUI table painter does not re-parse

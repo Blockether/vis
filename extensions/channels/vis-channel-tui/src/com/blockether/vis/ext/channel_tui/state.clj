@@ -663,7 +663,7 @@
    channel — is reflected immediately, and the cycle advances the PROVIDER,
    not just the model name inside an outdated set. The `_config` arg is kept
    for the existing caller but intentionally ignored now that the source is
-   live (this is exactly what the web channel already does)."
+   live."
   [_config]
   (entries-from-providers (try (vis/configured-providers) (catch Throwable _ nil))))
 
@@ -710,8 +710,8 @@
 (def untitled-session-label
   "Default workspace label for a session without a title yet.
 
-   Aliases the channel-agnostic value in `internal/header` so the TUI,
-   web, Telegram, etc. all show the same placeholder. Kept exported
+   Aliases the channel-agnostic value in `internal/header` so the TUI
+   and other channels all show the same placeholder. Kept exported
    here for callers (and tests) that already reach in via the state
    namespace."
   vh/untitled-session-label)

@@ -39,8 +39,8 @@
                               {"input" 112 "output" 69 "cached" 70 "cache_created" 8777})))))
 
 ;; =============================================================================
-;; Shared humanized turn-summary line — the SAME formatter the CLI bracket, TUI
-;; bubble footer, and Telegram tagline all render. `meta-summary-line` is the
+;; Shared humanized turn-summary line — the SAME formatter the CLI bracket and
+;; TUI bubble footer render. `meta-summary-line` is the
 ;; clean main line; `meta-fallback-note` is the routing note the TUI floats on a
 ;; second row and `format-meta-line` folds inline.
 ;; =============================================================================
@@ -96,7 +96,7 @@
              (it "is identical to meta-summary-line when there's no fallback"
                  (expect (= (fmt/meta-summary-line normal-result)
                             (fmt/format-meta-line normal-result))))
-             (it "folds the fallback note inline for single-line surfaces (CLI/Telegram)"
+             (it "folds the fallback note inline for single-line surfaces (CLI)"
                  (expect (= (str (fmt/meta-summary-line fallback-result)
                                  fmt/meta-separator
                                  (fmt/meta-fallback-note fallback-result))

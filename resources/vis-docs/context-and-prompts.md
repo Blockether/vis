@@ -55,7 +55,7 @@ tool surface (file tools, `python_execution`, structural editors). Prefer
 ## Prompt templates: `.vis/prompts/*.md`
 
 A prompt template is a markdown file that expands into a user message when you
-type `/<name> [arguments]` in any channel (TUI, web, Telegram, CLI):
+type `/<name> [arguments]` in any channel (TUI, CLI):
 
 1. `<project>/.vis/prompts/*.md` — project templates (win name collisions)
 2. `~/.vis/prompts/*.md` — user-global templates

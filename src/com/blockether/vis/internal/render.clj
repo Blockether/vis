@@ -527,8 +527,8 @@
 ;;   - LLM-emitted thinking strings (`:thinking` field on iterations);
 ;;   - user-typed input box messages.
 ;; Both arrive as plain markdown strings; this function lifts them into
-;; canonical IR so the entire downstream pipeline (TUI walker, Telegram
-;; renderer, exporter) sees one shape.
+;; canonical IR so the entire downstream pipeline (TUI walker,
+;; exporter) sees one shape.
 
 (def ^:private ^Parser md-parser
   (-> (Parser/builder)
@@ -850,7 +850,7 @@
       (str/replace "]" "\\]")))
 
 ;; =============================================================================
-;; HTML walker — Telegram-flavored
+;; HTML walker
 ;; =============================================================================
 
 ;; render-html <-> render-html-children mutual: html walker dispatches per
@@ -1042,11 +1042,11 @@
             :sup
             (render-html-children children opts)
 
-            ; Telegram has no <sup>
+            ; no <sup> tag
             :sub
             (render-html-children children opts)
 
-            ; Telegram has no <sub>
+            ; no <sub> tag
             ;; unknown tag — pass through children
             (render-html-children children opts)))))
 
@@ -1620,7 +1620,7 @@
 ;; CONTEXT (model surface): the full transcript — the model reads whatever
 ;; it bound, accessors and all.
 ;;
-;; CHANNEL (TUI / Telegram): user-facing. Show TOOL CALL previews
+;; CHANNEL (TUI): user-facing. Show TOOL CALL previews
 ;; (CAT / LS / RG / EDIT badges + bodies) and the final answer.
 ;;
 ;; Channels render the model's raw `:code` directly and unconditionally (the

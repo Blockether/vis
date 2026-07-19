@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.foundation.session-slashes
   "Declarative session-level slash commands shared by every channel.
 
-   These are channel-agnostic: the engine dispatches them for the TUI, the
-   web, and Telegram alike through the same `slash/dispatch` path, and each
+   These are channel-agnostic: the engine dispatches them for every channel
+   through the same `slash/dispatch` path, and each
    handler mutates state via the gateway so the change fans out everywhere.
 
      /rename <new title>   set this session's title

@@ -191,7 +191,7 @@
 (defn base-argv
   "Prefix argv that re-launches vis in a fresh process: the native binary as-is,
    or `java -cp … clojure.main -m com.blockether.vis.core` on the JVM (mirrors the
-   telegram self-restart trick)."
+   self-restart trick)."
   []
   (if (native-image?)
     [(self-executable)]

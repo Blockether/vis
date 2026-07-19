@@ -32,7 +32,7 @@ vulnerable, and what does it do with data.*
   text-producing LLM, with no provider lock-in.
 - **How it ships.** A single self-contained **GraalVM native binary** — no JVM,
   no Python install, no external services required to run. Optional
-  `extensions/*` add channels (TUI, Telegram, web), languages, persistence,
+  `extensions/*` add channels (TUI), languages, persistence,
   voice and search; each is a droppable classpath module.
 - **Where it runs.** Locally, on a developer machine or CI runner. It reaches
   an LLM provider only for inference; everything else is on-box (§9).
@@ -210,15 +210,6 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
 
-### `vis-channel-telegram` extension
-
-_Telegram bot channel._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `org.babashka/http-client` | `0.4.23` | MIT | 16 KB | 3rd-party |
-| `org.clojure/clojure` | `1.12.5` | EPL-1.0 | 4.0 MB | 3rd-party |
-
 ### `vis-channel-tui` extension
 
 _Terminal UI (Lanterna)._
@@ -228,14 +219,6 @@ _Terminal UI (Lanterna)._
 | `com.blockether/lanterna` | `3.1.5-vis.23` | LGPL-3.0 | 592 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 | `org.jcodec/jcodec-javase` | `0.2.5` | BSD | 14 KB | 3rd-party |
-
-### `vis-channel-web` extension
-
-_Web trace / HTML views._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `hiccup/hiccup` | `2.0.0` | EPL-1.0 | 21 KB | 3rd-party |
 
 ### `vis-foundation-bridge` extension
 

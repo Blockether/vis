@@ -5,7 +5,7 @@
    The channel-neutral brain — status probing, limits, live model
    catalogs, presets, persistence shapes — lives in
    `com.blockether.vis.internal.providers` (exposed through `vis.core`)
-   and is SHARED with the web channel. This namespace owns only the
+   and can be SHARED across channels. This namespace owns only the
    lanterna interaction layer.
 
    GitHub Copilot OAuth: a hard dep. The TUI ships with the
@@ -946,7 +946,7 @@
                   :else (recur))))))))))
 
 ;; Channel-neutral status / limits / persistence shapes — the core
-;; provider service (shared with the web channel). Aliased privately so
+;; provider service (channel-neutral). Aliased privately so
 ;; the dialog code below reads unchanged.
 (def ^:private persisted-provider-config vis/provider-persisted-config)
 (def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)

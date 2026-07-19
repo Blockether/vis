@@ -2515,10 +2515,10 @@
     ;; that any OTHER currently-registered extension already owns
     ;; AND whose `:slash/availability-fn` intersects on the known
     ;; channel set. Two specs with the same path but DISJOINT
-    ;; channel availability (e.g. TUI `/voice` vs Telegram `/voice`)
+    ;; channel availability (e.g. TUI `/voice` vs another channel's `/voice`)
     ;; do not collide — the dispatcher resolves them via per-channel availability at runtime.
     (let [known-channels
-          [:tui :telegram :web :discord :cli :repl :slack]
+          [:tui :discord :cli :repl :slack]
 
           slash-channels
           (fn [spec]

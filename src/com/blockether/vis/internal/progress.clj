@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.progress
   "Streaming progress tracker - leaf module.
 
-   Channels (TUI, CLI agent, Telegram) consume the iteration loop's
+   Channels (TUI, CLI agent) consume the iteration loop's
    PHASED chunks via this tracker. Every chunk carries a `:phase`
    keyword that tells the tracker what to do with it; the tracker
    accumulates the chunks into a per-iteration timeline that the

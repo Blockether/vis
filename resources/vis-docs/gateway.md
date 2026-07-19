@@ -1,7 +1,7 @@
 # Gateway, pairing & remote access
 
-Every vis channel — the TUI, the web UI, Telegram, the mobile companion —
-talks to one long-lived **gateway daemon**: an HTTP + SSE runtime that owns
+Every vis channel talks to one long-lived **gateway daemon**: an HTTP + SSE
+runtime that owns
 the sessions, turns, and the live event bus. You rarely start it by hand; a
 channel spawns it for you. This page explains its lifecycle, why
 `vis gateway start` stays in the foreground, the token model (and the

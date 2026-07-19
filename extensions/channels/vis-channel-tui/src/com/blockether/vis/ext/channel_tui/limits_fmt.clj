@@ -3,7 +3,7 @@
 
    The real implementation lives in
    `com.blockether.vis.internal.limits-format` (hoisted from here so
-   the web channel renders the SAME compact quota summaries on its
+   other channels render the SAME compact quota summaries on their
    provider cards). This namespace keeps the TUI-local require sites
    (`footer.clj`, `provider.clj`) and the existing test suite stable."
   (:require [com.blockether.vis.internal.limits-format :as limits-format]))

@@ -133,7 +133,7 @@
   ([] (report! 40))
   ([n-sessions]
    (let [db-info  (vis/db-info)
-         sessions (->> [:tui :telegram :cli :api :web]
+         sessions (->> [:tui :cli :api]
                     (mapcat #(try (vis/db-list-sessions db-info %)
                                (catch Throwable _ [])))
                     (sort-by :created-at)

@@ -793,22 +793,22 @@
         (with-redefs [vis/get-router (constantly nil)
                       vis/registered-extensions
                       (fn []
-                        [{:ext/name "channel-telegram"
-                          :ext/channels [{:channel/id :telegram :channel/cmd "telegram"}]
-                          :ext/settings [{:key :telegram-notify
+                        [{:ext/name "channel-example"
+                          :ext/channels [{:channel/id :example :channel/cmd "example"}]
+                          :ext/settings [{:key :example-notify
                                           :type :toggle
-                                          :label "Telegram notifications"
+                                          :label "Example notifications"
                                           :description "Send channel notifications."}]}])]
 
           (let [rows (settings-rows)
-                row-id [:extension-setting "channel-telegram" :telegram-notify]
+                row-id [:extension-setting "channel-example" :example-notify]
                 row (first (filter #(= row-id (:id %)) rows))]
 
             (expect (contains? (set (->> rows
                                          (filter #(= :section (:type %)))
                                          (mapv :label)))
                                "Channel Settings"))
-            (expect (= ["Telegram"]
+            (expect (= ["Example"]
                        (->> rows
                             (filter #(= :subsection (:type %)))
                             (mapv :label))))

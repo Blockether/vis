@@ -810,7 +810,7 @@
 
 (defn resume-session
   "Resume an existing gateway-managed session by id — ANY channel, so a
-   conversation started in the web (or CLI) resumes here too.
+   conversation started in the CLI or elsewhere resumes here too.
    Accepts full UUID or unambiguous short UUID prefix.
    Returns `{:id UUID :history [...]}` with persisted messages. When a turn is
    IN FLIGHT (started here, in the web, or a sibling process) the map ALSO

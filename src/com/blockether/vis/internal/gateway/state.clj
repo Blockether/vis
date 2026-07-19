@@ -7,7 +7,7 @@
    and turn/cost metrics.
 
    The engine is reached ONLY through the same internal surfaces the
-   TUI/Telegram channels use: `loop/create!`-`send!`-`close!` for the
+   TUI channel uses: `loop/create!`-`send!`-`close!` for the
    lifecycle, `:hooks {:on-chunk ...}` phased chunks for the live
    stream, `ctx-loop/session-snapshot` for the context. No engine state
    lives here - this namespace owns wire bookkeeping (events, turn
@@ -217,7 +217,7 @@
 (defn ingest-mirrored-event!
   "Deliver a FOREIGN gateway event (produced in another process, arriving via
    the cross-process bus, already in the canonical string-keyed wire shape)
-   into THIS process's registry so a web / Telegram / TUI watcher streams a
+   into THIS process's registry so a TUI watcher streams a
    turn running elsewhere in real time.
 
    The foreign event is RE-SEQUENCED onto this process's OWN monotonic `\"seq\"`,
@@ -982,7 +982,7 @@
   "THE canonical wire trace of ONE persisted turn: its iteration rows (each
   with hydrated `:attachments` re-read from the attachment store) through
   `wire/canonical`, same as [[transcript]] — canonicalizing AT THE SOURCE
-  keeps the HTTP hop an identity, so the in-process web channel and a remote
+   keeps the HTTP hop an identity, so an in-process client and a remote
   client (TUI / mobile) render from the SAME maps. Returns a (possibly empty)
   vector for a valid turn id, nil for an unparsable id or a read failure —
   callers use nil to fall back / retry."
@@ -1719,7 +1719,7 @@
 
   Accepts the same request keys as `submit-turn!`; optional `:on-event` is called
   for every replay/live event (canonical string-keyed) for the submitted turn.
-  Returns an engine-shaped result map for in-process clients (CLI/TUI/Telegram)
+  Returns an engine-shaped result map for in-process clients (CLI/TUI)
   that need a blocking call without bypassing the canonical gateway machinery."
   [sid {:keys [on-event] :as opts}]
   (let
@@ -2205,9 +2205,9 @@
   "Wire souls for every persisted session.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
-   in the web is visible in the TUI and vice-versa. Pass a specific
+   in one channel is visible in the others and vice-versa. Pass a specific
    channel keyword only when a caller genuinely needs a single-channel
-   slice (e.g. Telegram resolving a chat by external-id)."
+   slice (e.g. resolving a chat by external-id)."
   ([] (list-sessions :all))
   ([channel]
    (->> (lp/by-channel channel)
@@ -2339,8 +2339,8 @@
 (defonce bus-wiring
   ;; Wire the cross-process bus ONCE at namespace load: foreign events tailed
   ;; from sibling processes flow into `ingest-mirrored-event!`, and the
-  ;; background tailer starts. Every process that touches the gateway (web,
-  ;; TUI, Telegram, the `serve` daemon) both publishes and consumes.
+  ;; background tailer starts. Every process that touches the gateway (the
+  ;; TUI, the `serve` daemon) both publishes and consumes.
   (do
     ;; pass the VAR so a dev-time ns reload is picked up without re-wiring.
     (bus/set-deliver-fn! #'ingest-mirrored-event!)

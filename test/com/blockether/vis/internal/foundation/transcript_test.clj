@@ -394,8 +394,8 @@
 ;; The summary header intentionally shows the session `ID` (a UUID) - that's a
 ;; single, deliberate identity row the operator asked for. The turn/iteration
 ;; BODY must still render `position` (int), never a turn/message `:id` (uuid).
-;; This test pins the rule against the markdown transcript body; sister tests
-;; in render_test.clj (TUI) and bot_test.clj (Telegram) cover their channels.
+;; This test pins the rule against the markdown transcript body; the sister
+;; test in render_test.clj (TUI) covers that channel.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private uuid-pattern

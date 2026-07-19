@@ -491,7 +491,7 @@
      :slash/usage (or (:slash/usage spec) (str "/" path-s))}))
 (defn- slash-available-in-tui?
   "True when a slash spec is safe to expose in TUI slash UX.
-   `registered-slashes` is env-less and includes Telegram-only specs,
+   `registered-slashes` is env-less and includes non-TUI specs,
    so the TUI must apply channel availability itself before rendering
    suggestions."
   [spec]
@@ -515,7 +515,7 @@
   "All slashes harvested from the engine registry for typed `/`
    suggestions / exact slash submission in the TUI. Both top-level
    and nested commands are included. Hidden specs and non-TUI channel
-   specs stay out; this prevents Telegram menu commands (`/help`,
+   specs stay out; this prevents non-TUI menu commands (`/help`,
    `/models`, ...) from leaking into TUI slash UX. Memoized via
    `registry-slash-commands-cache` (registry is session-stable) so the
    first `/` is already warm."
@@ -4339,8 +4339,8 @@
                                         :ttl-ms copy-success-ttl-ms))))))
                  ;; `/clear` (a `:slash/ui {:kind :clear-session}` slash):
                  ;; tear down THIS session (turns + soul + workspace links)
-                 ;; and open a fresh empty one in its place — like Telegram's
-                 ;; /clear, but in the SAME tab slot (open a fresh focused tab,
+                 ;; and open a fresh empty one in its place, in the SAME tab
+                 ;; slot (open a fresh focused tab,
                  ;; drop the old one) so you keep working right where you were.
                  clear-session! (fn []
                                   (when-not (:dialog-open? @state/app-db)
@@ -6295,8 +6295,8 @@
                   ;; threads keep the process alive for ~60s of idle keep-alive,
                   ;; which from the user's seat looks like "Ctrl+C froze vis":
                   ;; the screen is gone, raw mode is restored, but the shell
-                  ;; prompt does not return. CLI / Telegram channel paths already
-                  ;; call `shutdown-agents` after their main loops; the TUI did
+                  ;; prompt does not return. The CLI channel path already
+                  ;; calls `shutdown-agents` after its main loop; the TUI did
                   ;; not, so the hang was channel-specific.
                   (try (shutdown-agents) (catch Throwable _ nil))))
     (when (pos? (long @exit-code)) (System/exit (int @exit-code)))))

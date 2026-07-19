@@ -4,10 +4,9 @@
    Everything a channel needs to render and mutate the provider fleet
    — status probing, account limits, live model catalogs, presets, and
    config persistence — WITHOUT any UI. Hoisted from the TUI extension
-   (`channel_tui/provider.clj`) so the web channel, Telegram, and any
-   future surface manage the SAME fleet through the SAME primitives;
-   the channels keep only their interaction layer (lanterna dialogs,
-   HTMX fragments, ...).
+   (`channel_tui/provider.clj`) so any future surface manages the SAME
+   fleet through the SAME primitives; the channels keep only their
+   interaction layer (lanterna dialogs, ...).
 
    Auth is classified, not implemented, here: `auth-kind` tells a
    channel whether a provider wants an API key, an interactive OAuth

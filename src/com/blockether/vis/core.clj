@@ -81,7 +81,7 @@
 ;; Gateway (HTTP/SSE server over the session/turn runtime)
 ;;
 ;; `gateway-register-routes!` is the classpath auto-mount seam: an
-;; extension (e.g. vis-channel-web) registers a route contribution at
+;; extension registers a route contribution at
 ;; namespace load — and namespaces load via the META-INF/vis-extension
 ;; manifest scan, so dropping the jar mounts the routes with zero wiring.
 ;; The gateway-session/turn helpers below are the host contract a route
@@ -301,7 +301,7 @@
 ;;
 ;; Cross-channel ephemeral signals - \"copied\", \"verify.sh passed\",
 ;; \"provider switched\". Any extension or channel can push via
-;; `notify!`; the TUI banner / Telegram chat / CLI agent each
+;; `notify!`; the TUI banner / CLI agent each
 ;; subscribe with `watch!` and surface entries in their own visual
 ;; idiom. Levels (`:info` / `:success` / `:warn` / `:error`) are
 ;; advisory metadata for the consumer.
@@ -702,7 +702,6 @@
              [create! lp/create!]
              [by-id lp/by-id]
              [by-channel lp/by-channel]
-             [for-telegram-chat! lp/for-telegram-chat!]
              [set-title! lp/set-title!]
              [add-title-listener! titling/add-title-listener!]
              [remove-title-listener! titling/remove-title-listener!]

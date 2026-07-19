@@ -961,9 +961,9 @@
     (mix-rgb bg target t)))
 
 (def web-css-palette-tokens
-  "The shared TUI/web theme contract: CSS custom property -> palette token.
-   The web channel renders these straight from the SAME palette the TUI
-   paints with, so every registered theme works in both places."
+  "The shared TUI/HTML theme contract: CSS custom property -> palette token.
+   The HTML transcript export renders these straight from the SAME palette
+   the TUI paints with, so every registered theme works in both places."
   {"--bg" :terminal-bg
    "--fg" :text-fg
    "--panel2" :dialog-bg

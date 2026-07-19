@@ -12,21 +12,19 @@
   (it "registers /voice as a declarative slash command"
       ;; The TUI-only `:tui.slot/commands` contribution has been
       ;; replaced by a declarative `:ext/slash-commands` entry
-      ;; whose availability spans BOTH TUI and Telegram. One
+      ;; whose availability is TUI-scoped. One
       ;; registration, every channel renders the same surface via the
       ;; engine slash dispatch.
       (let [slashes (:ext/slash-commands core/voice-extension)]
         (expect (some #(= "voice" (:slash/name %)) slashes))
         (let [voice-slash (first (filter #(= "voice" (:slash/name %)) slashes))]
-          ;; voice-ext /voice is TUI-only; the Telegram /voice (with
-          ;; inline-keyboard mode picker) is
-          ;; registered separately by vis-channel-telegram. Per-channel
-          ;; partitioning is what lets both extensions own the same
+          ;; voice-ext /voice is TUI-only. Per-channel availability
+          ;; partitioning is what lets extensions own the same
           ;; slash path without colliding at register time.
           (expect (= #{:channel} (:slash/requires voice-slash)))
           (expect (true? ((:slash/availability-fn voice-slash) {:channel/id :tui})))
-          (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :telegram})))
-          (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :web})))
+          (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :cli})))
+          (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :api})))
           (expect (ifn? (:slash/run-fn voice-slash)))))
       ;; Voice extension no longer contributes a TUI-only commands slot.
       (expect (not-any? #(= :voice/input (:id %))

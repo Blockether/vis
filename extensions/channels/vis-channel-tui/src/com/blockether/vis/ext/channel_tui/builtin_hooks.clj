@@ -14,7 +14,7 @@
         UI's contributor toggle (in dialogs.clj) sees these as
         regular contributors that the user can hide.
 
-     2. Other channels (Telegram, web, ...) reading
+     2. Other channels reading
         `(channel-contributions-for :tui)` get the same model/provider data
         without channel-tui-specific calls.
 

@@ -63,7 +63,7 @@
   "Walk every globally registered extension and return the union of
    their `:ext/slash-commands` specs. Activation-fn filtering is NOT
    applied here — channels that surface slash UX before a session is
-   running (TUI palette overlay, Telegram `setMyCommands`) use this
+   running (TUI palette overlay) use this
    env-less view. The engine dispatch path itself goes through
    `active-slashes env` so per-session activation-fn rules still hold."
   []
@@ -73,7 +73,7 @@
   "True when slash `spec` is safe to surface in `channel`'s slash UX — not
    hidden, and its `:slash/availability-fn` (if any) admits the channel.
    `registered-slashes` is env-less and carries specs from every channel
-   (e.g. Telegram-only `/help`, `/model`), so each channel filters here
+   (e.g. non-TUI `/help`, `/model`), so each channel filters here
    before it renders suggestions."
   [channel spec]
   (and (not (:slash/hidden? spec))
@@ -142,8 +142,8 @@
 (defn- index-by-path
   "Build `{path-vec [slash-spec ...]}` from a vec of slash specs.
    Multiple specs may share a path when their availability-fn
-   predicates partition the channel set (e.g. TUI `/voice` and
-   Telegram `/voice` registered by separate extensions). Per-path
+   predicates partition the channel set (e.g. TUI `/voice` and a
+   non-TUI `/voice` registered by separate extensions). Per-path
    vec is in registration order."
   [slashes]
   (reduce (fn [acc s]
@@ -197,8 +197,8 @@
 (defn- tokenize
   [text]
   ;; Strip the leading `/`, then split on whitespace. Quoted args are
-  ;; out of scope for this revision — the live channels (TUI palette,
-  ;; Telegram bot) never carry shell quotes; their input layer hands
+  ;; out of scope for this revision — the live channels (the TUI
+  ;; palette) never carry shell quotes; their input layer hands
   ;; us pre-trimmed text.
   (->> (str/split (subs text 1) #"\s+")
        (remove str/blank?)
@@ -268,7 +268,7 @@
 (defn dispatch
   "Dispatch slash `text` against `env`. `ctx` carries channel-side knobs:
 
-     :channel/id            keyword, required (:tui, :telegram, ...)
+     :channel/id            keyword, required (:tui, :cli, ...)
      :session/id            session-soul UUID (optional unless slash
                             declares `:slash/requires #{:session}`)
      :workspace/id          workspace UUID (optional unless required)

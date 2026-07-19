@@ -436,7 +436,7 @@
       (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))))
 
 (defn provider-error-info
-  "Structured echo of the facts a chat surface (Telegram) can render
+  "Structured echo of the facts a chat surface can render
    compactly without parsing the IR back out."
   [err]
   (let [message

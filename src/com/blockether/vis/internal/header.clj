@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.header
   "Channel-agnostic header layout & content spec.
 
-   Every channel — terminal TUI, web, Telegram, future surfaces —
+   Every channel — the terminal TUI and future surfaces —
    renders the same conceptual header band:
 
        [LEFT 30%]   [CENTER 40% workspace switcher]   [RIGHT 30%]
@@ -10,11 +10,10 @@
    switcher sizing/visibility caps, default labels, copy id length, glyphs)
    live here as plain Clojure data. A channel imports this namespace,
    reads the values, and projects them onto its medium — TextGraphics
-   cells for Lanterna, divs/spans for HTML, a keyboard row for
-   Telegram, etc.
+   cells for Lanterna, and so on.
 
    No graphics. No I/O. No channel-specific deps. Pure data + tiny
-   pure helpers, written as `.cljc` so a ClojureScript web UI can
+   pure helpers, written as `.cljc` so a future ClojureScript client can
    require it directly."
   (:require [clojure.string :as str]))
 
@@ -22,8 +21,8 @@
 ;;
 ;; The header is conceptually a 3-column flex row with 30 / 40 / 30
 ;; split. Channels free to clamp / re-derive widths, but the ratios
-;; are the same everywhere so a screenshot of the TUI and a screenshot
-;; of the web UI feel like the same product.
+;; are the same everywhere so every channel feels like the same
+;; product.
 
 (def left-slot-ratio "Fraction of the total width given to the LEFT slot (notifications)." 3/10)
 
@@ -165,7 +164,7 @@
 ;;; ── Glyphs ─────────────────────────────────────────────────────────────
 ;;
 ;; Unicode characters render fine in every channel we care about
-;; (Lanterna terminal, modern HTML, Telegram); channels needing ASCII
+;; (Lanterna terminal); channels needing ASCII
 ;; fallbacks can swap on their side.
 
 (def workspace-arrow-left "Glyph for the `previous workspace` overflow affordance." "«")

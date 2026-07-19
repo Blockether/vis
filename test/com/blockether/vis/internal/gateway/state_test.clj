@@ -18,7 +18,7 @@
 (defdescribe
   thinking-newline-normalization-test
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
-   consumers in sync. The web channel may still render defensively, but it must
+   consumers in sync. A client may still render defensively, but it must
    not be the first place where blank-line runs disappear."
   (it "streams reasoning deltas with normalized thinking over the gateway"
       (let [[type store? payload] (#'state/chunk->event

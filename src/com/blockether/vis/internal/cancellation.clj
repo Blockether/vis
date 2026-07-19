@@ -2,7 +2,7 @@
   "Cancellation token - leaf module.
 
    The cancellation token is a tiny two-atom record that lets a UI
-   thread (TUI, Telegram bot, REPL caller) cooperatively abort an
+   thread (TUI, REPL caller) cooperatively abort an
    in-flight `turn!` AND interrupt the worker future hosting the
    blocking provider call. The cooperative side is checked at every
    iteration boundary; the future side hard-cancels any HTTP call

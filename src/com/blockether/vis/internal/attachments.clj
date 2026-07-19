@@ -5,8 +5,8 @@
    terminal's drop behavior — same mechanism pi relies on). At turn start
    the engine scans the user message for path-shaped tokens that resolve
    to real image files, reads them, and attaches them to the initial user
-   message as multimodal content blocks. Channel-neutral: TUI, web, and
-   Telegram all get the same behavior because the scan runs in the engine,
+   message as multimodal content blocks. Channel-neutral: every channel
+   gets the same behavior because the scan runs in the engine,
    not the channel.
 
    Only files the model can genuinely consume are attached: the MIME type

@@ -48,7 +48,7 @@
    pointer (`:workspace-atom`, deref'd by the gateway's `sandbox-roots-fn` on
    every real-fs access) so a `/fs`/`/root` change takes effect THIS turn — not
    only from the next `run-turn!` workspace re-resolve. No-op when the ctx has no
-   atom (web/telegram build their own ctx). Returns `ws` for threading."
+   atom (other channels build their own ctx). Returns `ws` for threading."
   [ctx ws]
   (when ws
     (some-> (:workspace-atom ctx)

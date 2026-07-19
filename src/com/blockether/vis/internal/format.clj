@@ -2,7 +2,7 @@
   "Format helpers - leaf module.
 
    Small, dependency-light formatters used by the SDK facade, the
-   TUI footer, the CLI status output, and the Telegram bot. Each one
+   TUI footer and the CLI status output. Each one
    is a pure transform over basic Clojure / Java values.
 
      `format-date`      - `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
@@ -12,7 +12,7 @@
      `format-cost`      - dollar cost to '~$0.006954'
      `format-iterations`- iteration count to '1 iter' / '3 iters'
      `format-meta-line` - canonical ' / '-joined turn-summary line
-                          (used identically by CLI / TUI / Telegram)
+                          (used identically by CLI / TUI)
 
    No external pretty-printer: data renders through `clojure.pprint`
    (built-in) and source code is shown verbatim. The namespace is free of
@@ -95,11 +95,11 @@
                     (str m "m " s "s"))))))
 
 ;; =============================================================================
-;; Turn-summary helpers (CLI / TUI / Telegram all share these)
+;; Turn-summary helpers (CLI / TUI share these)
 ;;
 ;; Three different surfaces used to format the same data three
-;; different ways: "ctx-in: N, ctx-out: M" (CLI), "↑N / ↓M" (TUI),
-;; "ctx N->M" (Telegram). Inconsistent, and every surface duplicated
+;;   different ways: "ctx-in: N, ctx-out: M" (CLI), "↑N / ↓M" (TUI).
+;;   Inconsistent, and every surface duplicated
 ;; its own `String/format` for the cost. These helpers are the single
 ;; source of truth for the canonical surface form:
 ;;
@@ -110,7 +110,7 @@
 ;;   line     ->  "<iters> / <tokens> / ~$<cost> / <duration>"
 ;;
 ;; Surfaces compose around this output - the TUI prepends the model
-;; name; the CLI wraps in `[...]`; Telegram wraps in italics. The
+;; name; the CLI wraps in `[...]`. The
 ;; INNER content is identical so screenshots / pastes / chat history
 ;; all read the same way.
 ;; =============================================================================
@@ -261,7 +261,7 @@
 
     (when model (if provider (str provider "/" model) model))))
 
-;; ── Humanized turn-summary line (shared verbatim: CLI / TUI / Telegram) ──────
+;; ── Humanized turn-summary line (shared verbatim: CLI / TUI) ──────────
 ;;
 ;; `format-tokens`/`format-cost` above stay PRECISE — other surfaces (the trace
 ;; run-report, transcript export) want exact counts. The turn-summary FOOTER, by
@@ -361,7 +361,7 @@
 
 (def meta-separator
   "Calm separator for the shared turn-summary line — a middot ringed by spaces.
-   Identical across CLI, TUI, and Telegram so every surface reads the same."
+   Identical across CLI and TUI so every surface reads the same."
   "  ·  ")
 
 (defn meta-fallback-note
@@ -370,7 +370,7 @@
    `reason` prefers the HTTP status (429) on the fallback event, then the reason
    keyword, then the free-form error. Retries count `:llm.routing/provider-retry`
    events in the trace. Returns nil when there was no fallback. Shared so the TUI
-   can float it on its own faint row while CLI/Telegram fold it inline."
+   can float it on its own faint row while the CLI folds it inline."
   [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
   (when llm-fallback?
     (let [from
@@ -402,7 +402,7 @@
 
 (defn meta-summary-line
   "The canonical, humanized turn-summary MAIN line, shared verbatim by the CLI
-   bracket, the TUI bubble footer, and the Telegram tagline:
+   bracket and the TUI bubble footer:
 
      <provider/model>  ·  <in→out (cached)>  ·  ~$cost  ·  <duration>
 
@@ -430,8 +430,8 @@
      (when (seq parts) (str/join meta-separator parts)))))
 
 (defn format-meta-line
-  "Single-line turn summary for plain-text surfaces (the CLI `[...]` bracket and
-   the Telegram tagline): the shared `meta-summary-line` with the fallback note
+  "Single-line turn summary for plain-text surfaces (the CLI `[...]` bracket):
+   the shared `meta-summary-line` with the fallback note
    folded inline. The TUI instead uses `meta-summary-line` + `meta-fallback-note`
    directly so it can float the note on its own faint row — same words, same
    numbers, just two rows. Returns \"\" when there's nothing to show."

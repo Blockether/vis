@@ -435,7 +435,7 @@
 ;; =============================================================================
 ;; Error translation
 ;;
-;; Frontends (TUI, CLI, Telegram) all surface persistence exceptions in
+;; Frontends (TUI, CLI) all surface persistence exceptions in
 ;; chat bubbles. The facade stays backend-agnostic: adapters may expose
 ;; `db-error->user-message`; the first non-empty translation wins.
 ;; =============================================================================
@@ -464,7 +464,7 @@
 ;; =============================================================================
 ;; Process-wide shared connection (singleton helper)
 ;;
-;; vis runs every channel (TUI, CLI, Telegram) against one persistence
+;; vis runs every channel (TUI, CLI) against one persistence
 ;; store per process. Owning the singleton here - instead of in any
 ;; particular frontend - keeps the DB lifecycle behind the persistence
 ;; facade. Backend adapters may expose `db-store-stale?` for

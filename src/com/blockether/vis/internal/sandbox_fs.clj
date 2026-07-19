@@ -74,7 +74,7 @@
   "Dirs under `~/.vis` the sandbox may ALWAYS read/write, independent of the
    user's `/fs` roots: the Python-extension dir `~/.vis/extensions` (author or
    debug an extension in any project) and the log dir `~/.vis/logs` (grep vis's
-   own diagnostics — `vis.log`, `telegram.log`, JFR dumps). Each canonicalized
+   own diagnostics — `vis.log`, JFR dumps). Each canonicalized
    ONCE via `real-path` (resolves the real path of `~/.vis`, then re-appends the
    leaf, so it matches even before the dir exists). Held in a delay so the
    syscall happens on first use. Kept SEPARATE from `temp-roots`: a write here is

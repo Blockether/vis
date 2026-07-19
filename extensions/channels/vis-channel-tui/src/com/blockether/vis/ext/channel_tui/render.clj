@@ -1601,9 +1601,9 @@
 
 ;; The assistant footer line + routing fallback note are the SHARED, humanized
 ;; turn-summary formatters in `internal.format` (`vis/meta-summary-line` +
-;; `vis/meta-fallback-note`), so the CLI bracket, this TUI footer, and the
-;; Telegram tagline read identically. The TUI is the only surface that floats
-;; the note on its own faint row; CLI/Telegram fold it inline via
+;; `vis/meta-fallback-note`), so the CLI bracket and this TUI footer
+;; read identically. The TUI is the only surface that floats
+;; the note on its own faint row; the CLI folds it inline via
 ;; `vis/format-meta-line`.
 (def ^:dynamic *image-placements*
   "When bound to an atom holding a vector, `draw-chat-bubble!` conj's the
@@ -1793,8 +1793,8 @@
 
         ;; Below-message meta (assistant only): "blockether/glm-5.1 /
         ;; 1 iter / tok 11461→35 / ~$0.006954 / 4.9s". Same surface
-        ;; form `format-meta-line` produces for the CLI bracket and
-        ;; the Telegram tagline. Provider + model auto-extract from
+        ;; form `format-meta-line` produces for the CLI bracket.
+        ;; Provider + model auto-extract from
         ;; `:cost :provider` / `:cost :model` (where the iteration
         ;; runtime persists them). The chat-state's bare-name `:model`
         ;; field is intentionally NOT passed as the `:model` override
@@ -2494,8 +2494,7 @@
                                            (* 2 (long code-block-h-pad))))
                                    iw)
                           ;; A diff fence tints each add/del row with a subtle
-                          ;; green/red BACKGROUND band (mirroring the web channel's
-                          ;; `df-add`/`df-del`), not just the ANSI foreground. The
+                          ;; green/red BACKGROUND band, not just the ANSI foreground. The
                           ;; kind rides in the line meta from `code-block->lines`;
                           ;; hunk/meta/ctx rows keep the neutral code-block bg.
                           dk (:diff-kind meta)
@@ -3930,7 +3929,7 @@
         ;; persisted on the trace-entry; it renders as its OWN block BETWEEN the
         ;; thinking trace and the code+result (see `prose-body` / the final layout)
         ;; — a "here's what I'm doing" read, placed ABOVE the code to match the
-        ;; live stream and the web channel.
+        ;; live stream.
         ;; `content-stream` is the LIVE stream (prose OR the tool-call code the loop
         ;; re-emits as :content). Once a real `forms` block exists it ALREADY shows the
         ;; code, and genuine prose renders below via `:assistant-prose` — so echoing
@@ -4207,8 +4206,7 @@
                 title-lines
                 []
 
-                ;; Canonical code surface — the SAME contract as web's
-                ;; `block-code` (channel_web/core): paint the model's raw `:code`,
+                ;; Canonical code surface: paint the model's raw `:code`,
                 ;; beautified via ruff (cached; verbatim fallback when ruff is
                 ;; unavailable). NO `:render-segments` / `:vis/show-raw-code`
                 ;; gate — a structurally-silent (engine-chrome / answer) form
@@ -4585,7 +4583,7 @@
         ;; the thinking trace and the code+result — NOT through the thinking
         ;; formatter (it is the model's commentary/answer, not reasoning). Placed
         ;; ABOVE the code to match the live stream (loop emits `:assistant-prose`
-        ;; before the code runs) and the web channel — else it read as missing/
+        ;; before the code runs) — else it read as missing/
         ;; detached at the bottom. Same `:mode :channel` markdown path the per-form
         ;; result text uses, so a bold word / list paints normally instead of as a
         ;; dim italic thinking trace.

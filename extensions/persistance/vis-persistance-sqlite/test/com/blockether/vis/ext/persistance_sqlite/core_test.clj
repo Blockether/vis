@@ -818,18 +818,18 @@
   (it "lists by channel via column"
       (let [s (h/store)]
         (h/store-session! s {:channel :tui :title "A"})
-        (h/store-session! s {:channel :telegram :title "B"})
+        (h/store-session! s {:channel :cli :title "B"})
         (h/store-session! s {:channel :tui :title "C"})
         (expect (= 2 (count (vis/db-list-sessions s :tui))))
-        (expect (= 1 (count (vis/db-list-sessions s :telegram))))))
+        (expect (= 1 (count (vis/db-list-sessions s :cli))))))
   (it "lists across every channel with :all (and nil) — the cross-channel view"
       (let [s (h/store)]
         (h/store-session! s {:channel :tui :title "A"})
-        (h/store-session! s {:channel :telegram :title "B"})
+        (h/store-session! s {:channel :cli :title "B"})
         (h/store-session! s {:channel :api :title "C"})
         (expect (= 3 (count (vis/db-list-sessions s :all))))
         (expect (= 3 (count (vis/db-list-sessions s nil))))
-        (expect (= #{:tui :telegram :api} (set (map :channel (vis/db-list-sessions s :all)))))))
+        (expect (= #{:tui :cli :api} (set (map :channel (vis/db-list-sessions s :all)))))))
   (it "reports fork count after the latest state becomes the fork"
       (let [s
             (h/store)
@@ -846,10 +846,10 @@
             (h/store)
 
             id
-            (h/store-session! s {:channel :telegram :external-id "chat-42"})]
+            (h/store-session! s {:channel :cli :external-id "chat-42"})]
 
-        (expect (= id (vis/db-find-session-by-external s :telegram "chat-42")))
-        (expect (nil? (vis/db-find-session-by-external s :telegram "nope")))))
+        (expect (= id (vis/db-find-session-by-external s :cli "chat-42")))
+        (expect (nil? (vis/db-find-session-by-external s :cli "nope")))))
   (it "updates title on session_state"
       (let [s
             (h/store)

@@ -347,10 +347,10 @@
 
 ;; ── Distribution profiles ───────────────────────────────────────────────────
 ;; Profiles select what ships, via `:profile` on `native` / `uber`:
-;;   :tui       — MINIMAL: the TUI channel only. Web + Telegram channels and
-;;                voice are dropped (agent substrate, providers, languages,
+;;   :tui       — MINIMAL: the TUI channel only. Voice is dropped
+;;                (agent substrate, providers, languages,
 ;;                persistence all stay — a full agent, single-channel/voiceless).
-;;   :cross     — all channels (TUI + web + Telegram), NO voice.
+;;   :cross     — all channels, NO voice.
 ;;   :voice     — all channels + voice ASR (DEFAULT for local builds; the model
 ;;                still downloads on first use unless :with-assets embeds it).
 ;; ── Shipped end-user distributions ──
@@ -361,7 +361,7 @@
 ;; Dropping a dep here removes its whole subtree: vis-foundation-voice is the
 ;; ONLY way sherpa-onnx/onnxruntime JNI libs reach the classpath, so :tui and
 ;; :cross contain zero voice natives for ANY platform. Every channel
-;; soft-resolves voice fns (web answers 501, Telegram/TUI show 'not loaded'),
+;; soft-resolves voice fns (TUI shows 'not loaded'),
 ;; and channels themselves are manifest-discovered extensions, so no code
 ;; change is needed to sever them.
 
@@ -1074,7 +1074,7 @@
    `bin/vis` then proxies to the native binary by default.
 
    Options:
-     :profile :tui       — MINIMAL: TUI channel only (no web, Telegram, voice).
+     :profile :tui       — MINIMAL: TUI channel only (no voice).
      :profile :cross     — all channels, NO voice.
      :profile :voice     — all channels + voice ASR (the default).
      :profile :community — SHIPPED full distribution: every extension incl. web

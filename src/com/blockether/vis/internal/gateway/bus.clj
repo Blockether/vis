@@ -4,7 +4,7 @@
    The gateway's live event log + SSE fan-out (`gateway.state`) is a
    PROCESS-LOCAL in-memory registry: `append-event!` only reaches
    subscribers inside the SAME JVM. That is why a turn streaming in the
-   TUI process is invisible to a web/Telegram process watching the SAME
+   TUI process is invisible to another process watching the SAME
    conversation — each process has its own registry, and the only thing
    they share is the persisted DB (which lands whole turns, not the live
    token stream). So two watchers never stream together.

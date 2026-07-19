@@ -272,7 +272,7 @@ vulnerable, and what does it do with data.*
   text-producing LLM, with no provider lock-in.
 - **How it ships.** A single self-contained **GraalVM native binary** — no JVM,
   no Python install, no external services required to run. Optional
-  `extensions/*` add channels (TUI, Telegram, web), languages, persistence,
+  `extensions/*` add channels (TUI), languages, persistence,
   voice and search; each is a droppable classpath module.
 - **Where it runs.** Locally, on a developer machine or CI runner. It reaches
   an LLM provider only for inference; everything else is on-box (§9).

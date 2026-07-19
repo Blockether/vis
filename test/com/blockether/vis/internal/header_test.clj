@@ -5,7 +5,7 @@
 (defdescribe
   shared-header-spec-test
   (it "ships slot ratios that always sum to <= 1"
-      ;; A future web/Telegram channel can read these ratios verbatim; if
+      ;; A future non-TUI channel can read these ratios verbatim; if
       ;; they ever drift above 1, every layout downstream would overflow.
       (expect (<= (+ (double vh/left-slot-ratio) (double vh/right-slot-ratio)) 1.0)))
   (it "splits a row into [left center right] that adds back up to the original"

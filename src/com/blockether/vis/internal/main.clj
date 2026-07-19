@@ -1791,7 +1791,7 @@
 
 ;;; ── `vis sessions` ─────────────────────────────────────────────────
 
-(def ^:private known-channels #{"tui" "telegram" "cli" "api"})
+(def ^:private known-channels #{"tui" "cli" "api"})
 (def ^:private known-channel-filters (conj known-channels "all"))
 
 (defn- resolve-session-by-prefix
@@ -3262,11 +3262,11 @@
    [{:cmd/name "list"
      :cmd/parent ["sessions"]
      :cmd/doc "List persisted sessions."
-     :cmd/usage "vis sessions list [all|tui|telegram|cli]"
+     :cmd/usage "vis sessions list [all|tui|cli]"
      :cmd/args [{:name "channel"
                  :kind :positional
                  :type :string
-                 :doc "Optional channel filter (all|tui|telegram|cli; default all)."}]
+                 :doc "Optional channel filter (all|tui|cli; default all)."}]
      :cmd/examples ["vis sessions list" "vis sessions list tui"]
      :cmd/run-fn cli-sessions-list!}
     {:cmd/name "show"

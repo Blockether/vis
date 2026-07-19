@@ -144,7 +144,7 @@
             (env-of [(ext "alpha" [voice-spec])])
 
             out
-            (slash/dispatch env {:channel/id :telegram} "/voice")]
+            (slash/dispatch env {:channel/id :api} "/voice")]
 
         (expect (true? (:handled? out)))
         (expect (= :unavailable (:reason out)))))

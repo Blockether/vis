@@ -373,8 +373,8 @@
   (let [dir
         (or model-dir-option (model-dir))
 
-        ;; Vis answers can reach this boundary as raw Markdown (CLI /
-        ;; Telegram) or canonical IR (TUI, after response rendering). The
+        ;; Vis answers can reach this boundary as raw Markdown (CLI) or
+        ;; canonical IR (TUI, after response rendering). The
         ;; TTS engine wants spoken prose, not Markdown syntax.
         spoken
         (answer->speech-text text)]
@@ -633,8 +633,8 @@
     {:level :info :check-id ::ffmpeg :message "ffmpeg: installed"}
     {:level :warn
      :check-id ::ffmpeg
-     :message "ffmpeg: missing; Telegram voice input cannot convert .oga/.opus to WAV for ASR."
-     :remediation "Install ffmpeg and ensure it is on PATH for the Vis/Telegram process."}))
+     :message "ffmpeg: missing; voice input cannot convert .oga/.opus to WAV for ASR."
+     :remediation "Install ffmpeg and ensure it is on PATH for the Vis process."}))
 
 (defn- piper-message
   []
@@ -739,17 +739,7 @@
      :ext/prompt-fn voice-response-prompt
      :ext/doctor-fn doctor-fn
      :ext/settings
-     [{:key :voice/telegram-send-transcript?
-       :type :toggle
-       :label "Telegram transcript text"
-       :description
-       "In Telegram duplex mode, send the transcribed user request before the answer audio."}
-      {:key :voice/telegram-send-answer-text?
-       :type :toggle
-       :label "Telegram answer text"
-       :description
-       "In Telegram duplex mode, send the plain text answer after the answer audio in a collapsible block."}
-      {:key :voice/tui-auto-read?
+     [{:key :voice/tui-auto-read?
        :type :toggle
        :label "TUI auto-read answers"
        :description
@@ -795,11 +785,9 @@
             {:name "parakeet" :kind :flag :type :boolean :doc "Download/check Parakeet ASR model."}
             {:name "all" :kind :flag :type :boolean :doc "Download/check both voice models."}]
            :cmd/run-fn #'voice-models-download-command}]}]}]
-     ;; Declarative slash registration: both TUI and Telegram channels render
-     ;; the same surface via the engine slash registry. The TUI variant of
-     ;; /voice toggles recording via input/toggle-recording!. The Telegram
-     ;; channel has different /voice semantics (mode picker + inline keyboard)
-     ;; and registers its own /voice spec on vis-channel-telegram.
+     ;; Declarative slash registration: the TUI renders /voice via the
+     ;; engine slash registry, toggling recording through
+     ;; input/toggle-recording!.
      :ext/slash-commands [{:slash/name "voice"
                            :slash/doc "Toggle voice recording (TUI)."
                            :slash/usage "/voice"

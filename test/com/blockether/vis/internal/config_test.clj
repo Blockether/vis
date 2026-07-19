@@ -153,10 +153,10 @@
         (expect (= (keywordize {"system-prompt" "x"}) (keywordize {"system_prompt" "x"})))))
   (it "keeps :environment/:llm-headers/:extra-body keys verbatim, coerces keyword-valued fields"
       (let [keywordize @#'config/keywordize-yaml]
-        (expect (= {:environment {"TELEGRAM_BOT_TOKEN" "tok"}
+        (expect (= {:environment {"ANTHROPIC_API_KEY" "tok"}
                     :providers
                     [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
-                   (keywordize {"environment" {"TELEGRAM_BOT_TOKEN" "tok"}
+                   (keywordize {"environment" {"ANTHROPIC_API_KEY" "tok"}
                                 "providers" [{"id" "anthropic"
                                               "api_style" ":anthropic"
                                               "llm-headers" {"X-Custom-Header" "v"}}]})))))

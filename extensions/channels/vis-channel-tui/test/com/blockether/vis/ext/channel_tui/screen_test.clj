@@ -306,9 +306,9 @@
                         :slash/availability-fn (fn [{ch :channel/id}]
                                                  (= :tui ch))}
                        {:slash/name "help"
-                        :slash/doc "Telegram help"
+                        :slash/doc "CLI help"
                         :slash/availability-fn (fn [{ch :channel/id}]
-                                                 (= :telegram ch))}
+                                                 (= :cli ch))}
                        {:slash/name "start" :slash/doc "Hidden alias" :slash/hidden? true}
                        {:slash/name "broken"
                         :slash/doc "Broken availability"
@@ -423,8 +423,8 @@
        the ~60s agent thread-pool keep-alive that looks like 'Ctrl+C froze
        vis'. Regression: TUI used to only call (vis/shutdown!) (Telemere
        handlers); the agent pool's non-daemon threads kept the JVM alive
-       long after the screen was torn down. CLI / Telegram channel paths
-       have always called shutdown-agents - this test pins the same
+       long after the screen was torn down. The CLI channel path
+       has always called shutdown-agents - this test pins the same
        guarantee for the TUI channel."
     (let [calls (atom [])]
       (with-redefs [screen/redirect-stdio-to-log! (fn []

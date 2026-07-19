@@ -452,7 +452,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
 ;; tools register here while a turn runs IN THE DAEMON), so a client in another
-;; process reads/controls them over HTTP. The in-process web channel uses the
+;; process reads/controls them over HTTP. An in-process client uses the
 ;; local registry directly and never touches these.
 ;; ---------------------------------------------------------------------------
 

@@ -202,9 +202,7 @@ runtime never reconstructs and automatically resubmits its request.
 
 Renderers switch on `block.type` and preserve block order and message role:
 
-- Web sanitizes and renders `prose.markdown`.
 - TUI parses prose only while producing styled terminal lines.
-- Telegram converts prose to its safe markup dialect.
 - Clipboard, search, and export derive disposable text or Markdown projections.
 - `code.text` is always literal.
 - Private reasoning remains hidden unless explicitly authorized.

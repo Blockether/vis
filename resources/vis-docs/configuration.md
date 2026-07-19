@@ -33,7 +33,7 @@ YAML maps onto the EDN shape with two rules:
    `system_prompt:` ≡ `system-prompt:` ≡ `:system-prompt`.
 2. **String-keyed blocks stay verbatim.** Keys under `environment`,
    `llm-headers`, and `extra-body` are kept as strings —
-   `TELEGRAM_BOT_TOKEN` is never keywordized or case-mangled.
+   `ANTHROPIC_API_KEY` is never keywordized or case-mangled.
 
 The same config, both ways:
 
@@ -41,7 +41,7 @@ The same config, both ways:
 ;; vis.edn
 {:system-prompt "Prefer restructuredText docstrings."
  :router {:budget {:max-cost 5.0}}
- :environment {"TELEGRAM_BOT_TOKEN" "…"}}
+ :environment {"ANTHROPIC_API_KEY" "…"}}
 ```
 
 ```yaml
@@ -51,7 +51,7 @@ router:
   budget:
     max_cost: 5.0
 environment:
-  TELEGRAM_BOT_TOKEN: "…"
+  ANTHROPIC_API_KEY: "…"
 ```
 
 ## Providers and models
@@ -132,7 +132,7 @@ Omit it and built-in defaults apply. Unknown keys are dropped, never fatal.
 Extensions declare the environment variables they read (API keys and the like). The `:environment` map overrides the process environment per variable — set once in config instead of exporting in every shell:
 
 ```clojure
-{:environment {"TELEGRAM_BOT_TOKEN" "…"}}
+{:environment {"ANTHROPIC_API_KEY" "…"}}
 ```
 
 Config wins over the real environment; removing the entry reveals the process value again.
