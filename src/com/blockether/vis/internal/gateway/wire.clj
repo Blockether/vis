@@ -22,14 +22,15 @@
    them could corrupt user data that legitimately contains hyphens."
   [k]
   (if (or (keyword? k) (symbol? k))
-    (let [n
-          (name k)
+    (let
+      [n
+       (name k)
 
-          n
-          (if (str/ends-with? n "?")
-            (let [base (subs n 0 (dec (count n)))]
-              (if (str/starts-with? base "is-") base (str "is-" base)))
-            n)]
+       n
+       (if (str/ends-with? n "?")
+         (let [base (subs n 0 (dec (count n)))]
+           (if (str/starts-with? base "is-") base (str "is-" base)))
+         n)]
 
       (str/replace n "-" "_"))
     k))
@@ -82,6 +83,18 @@
   [^String s]
   (when-not (str/blank? s) (try (json/read-json s) (catch Throwable _ nil))))
 
+(defn parse-json-stream
+  "Parse JSON straight from an `InputStream`/`Reader` into the canonical wire
+   shape (snake_case STRING keys, identical to [[parse-json]]) in ONE streaming
+   pass — no intermediate whole-body String. Returns nil on empty (EOF),
+   whitespace-only, or malformed input (callers map that to 400). A non-parse
+   exception (e.g. a bounded-stream size trip carrying `ex-data`) PROPAGATES so
+   the caller can turn it into the right status."
+  [source]
+  (try (let [v (json/read-json source :eof-error? false)]
+         (when-not (= :eof v) v))
+       (catch clojure.lang.ExceptionInfo e (throw e))
+       (catch Throwable _ nil)))
 
 (defn bounded-pr
   "Bounded `pr-str` for tool results / errors riding events. Protects the
