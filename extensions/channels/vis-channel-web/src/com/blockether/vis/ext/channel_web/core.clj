@@ -5518,7 +5518,7 @@
         (get wi "filesystem_roots")
 
         extra
-        (set (keep #(norm (get % "trunk")) extras))
+        (set (keep #(norm (get % "dir")) extras))
 
         path-within?
         (fn [root p]

@@ -28,7 +28,7 @@
         (System/getProperty "user.home")]
 
     (cond (nil? path) path
-          (and (seq home) (= path home)) "~"
+          (and (seq home) (= path home)) "~/"
           (and (seq home) (str/starts-with? path (str home "/"))) (str "~" (subs path (count home)))
           :else path)))
 

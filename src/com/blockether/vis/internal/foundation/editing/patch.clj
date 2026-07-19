@@ -702,6 +702,58 @@
             (if (< ti fi)
               {:error {:reason :hashline-range-inverted :from-line (inc fi) :to-line (inc ti)}}
               {:from-line (inc fi) :to-line (inc ti)})))))))
+(defn resolve-anchor-range-read
+  "READ-tolerant twin of `resolve-anchor-range` for the `cat :anchor` path. A read
+   is NON-DESTRUCTIVE, so a stale/missing hash must not block the look the way it
+   (correctly) blocks a WRITE. Each anchor still resolves by CONTENT first —
+   following small drift exactly like the write path — but when its hash matches no
+   live line the anchor's LINE NUMBER is used as a fallback (a read can safely show
+   whatever now sits at that line). Returns `{:from-line N :to-line N :stale? BOOL}`
+   (1-based, INCLUSIVE; lines are ordered so the window never inverts; `:stale?` is
+   true when any hash was missing/misplaced and its line number was used) — or
+   `{:error …}` ONLY for a genuinely unlocatable anchor (`:hashline-malformed` — no
+   line number — or `:hashline-line-out-of-range` — a line outside the file)."
+  [^String current from_anchor to_anchor]
+  (let [lines
+        (split-content-lines current)
+
+        n
+        (long (count lines))
+
+        resolve-read
+        (fn [which anchor]
+          (let [a
+                (parse-anchor anchor)
+
+                r
+                (resolve-one-anchor lines which a)]
+
+            (cond (:index r) (assoc r :stale? false)
+                  ;; Hash gone (content changed) or matches only far lines, but the
+                  ;; anchor still names an in-range line — fall back to it for the READ.
+                  (and (:line a)
+                       (contains? #{:hashline-not-found :hashline-misplaced}
+                                  (get-in r [:error :reason]))
+                       (<= 1 (long (:line a)) n))
+                  {:index (dec (long (:line a))) :stale? true}
+                  :else r)))
+
+        fr
+        (resolve-read :from from_anchor)]
+
+    (if (:error fr)
+      fr
+      (let [tr (if (or (nil? to_anchor) (= (str to_anchor) (str from_anchor)))
+                 fr
+                 (resolve-read :to to_anchor))]
+        (if (:error tr)
+          tr
+          (let [fi (long (:index fr))
+                ti (long (:index tr))]
+
+            {:from-line (inc (min fi ti))
+             :to-line (inc (max fi ti))
+             :stale? (boolean (or (:stale? fr) (:stale? tr)))}))))))
 (defn resolve-anchor-edit-span
   "Resolve a content-addressed line-range edit to a CHAR SPAN against `current`,
    WITHOUT building new content: `{:start S :end E :replacement R :applied-line N}`

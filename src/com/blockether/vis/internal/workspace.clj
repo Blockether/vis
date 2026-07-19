@@ -530,6 +530,22 @@
   [ws]
   (vec (keep root-entry (:filesystem-roots ws))))
 
+(defn public-filesystem-root
+  "PUBLIC wire shape for ONE filesystem root — the single element interface
+   EVERY surface reads (channels AND the model ctx), so no consumer reaches for
+   a producer-private key again. `:dir` is the REAL directory the session
+   operates on (its stable identity — was the internal `:trunk`); `:isolated`
+   is true when edits land in a hidden draft copy instead of `:dir` directly.
+   With `expose-draft?` the map also carries `:draft-dir` — the working-copy
+   path git/status must point at (channels need it; the model ctx OMITS it: the
+   model must always address the real `:dir`, never the hidden clone). Takes an
+   internal root-entry `{:trunk :clone …}` (see `filesystem-roots`)."
+  [{:keys [trunk clone]} expose-draft?]
+  (let [isolated? (boolean (and clone (not= clone trunk)))]
+    (cond-> {:dir trunk :isolated isolated?}
+      (and expose-draft? isolated?)
+      (assoc :draft-dir clone))))
+
 (defn add-filesystem-root!
   "Add `path` to the workspace's extra filesystem roots. Drafts require the same
    isolation capabilities for every added root; live workspaces add it live."

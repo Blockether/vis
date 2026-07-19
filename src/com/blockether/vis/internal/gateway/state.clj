@@ -393,7 +393,7 @@
    nil. `\"id\"` is the workspace-id every filesystem-root mutation
    (`add/remove-filesystem-root!`) needs — WITHOUT it the TUI picker treats the
    session as read-only and C-a silently no-ops. `\"filesystem_roots\"` is the
-   normalized `[{\"trunk\" \"clone\" \"fork_ms\"}]`. Lets the footer announce
+   the PUBLIC element shape `[{\"dir\" \"isolated\" \"draft_dir\"}]`. Lets the footer announce
    that the session — and its extra roots — are isolated drafts. Resolves
    soul → latest state → workspace; never throws."
   [sid]
@@ -406,7 +406,8 @@
                               :repo-root (:repo-root ws)
                               :label (:label ws)
                               :fork-ms (:fork-ms ws)
-                              :filesystem-roots (workspace/filesystem-roots ws)
+                              :filesystem-roots (mapv #(workspace/public-filesystem-root % true)
+                                                      (workspace/filesystem-roots ws))
                               ;; Git working-tree status resolved HERE, in the gateway/daemon
                               ;; that owns the repo on disk — streamed to channels as a cached
                               ;; session fact instead of each client re-walking git locally (a

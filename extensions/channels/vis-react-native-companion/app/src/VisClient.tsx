@@ -210,9 +210,9 @@ export type SuggestRow = {
    TUI directory picker read. `filesystem_roots` are the session's extra roots.
    `draft?` keeps its `?` on the wire (wire-key munges only `-`->`_`). */
 export type FilesystemRoot = {
-  trunk?: string;
-  clone?: string;
-  fork_ms?: number;
+  dir?: string;
+  isolated?: boolean;
+  draft_dir?: string;
 };
 export type WorkspaceInfo = {
   id?: string;

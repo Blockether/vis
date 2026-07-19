@@ -690,20 +690,21 @@
         (expect (= [{:root "/w/proj" :trunk "/w/proj" :label "proj" :draft? false}] roots))))
   (it "extra filesystem roots follow the primary, in order"
       (let [roots (magit/workspace-roots {:root "/w/proj"
-                                          :filesystem-roots [{:trunk "/w/other" :clone "/w/other"}
-                                                             {:trunk "/w/third" :clone "/w/third"}]}
+                                          :filesystem-roots [{:dir "/w/other"}
+                                                             {:dir "/w/third"}]}
                                          nil)]
         (expect (= ["/w/proj" "/w/other" "/w/third"] (mapv :root roots)))
         (expect (= ["proj" "other" "third"] (mapv :label roots)))
         (expect (every? (comp false? :draft?) roots))))
   (it "draft workspace: every entry points at the CLONE, labelled by the trunk"
-      (let [roots (magit/workspace-roots
-                    {:root "/clones/proj"
-                     :repo-root "/real/proj"
-                     :draft? true
-                     :fork-ms 5
-                     :filesystem-roots [{:trunk "/real/other" :clone "/clones/other" :fork-ms 5}]}
-                    nil)]
+      (let [roots (magit/workspace-roots {:root "/clones/proj"
+                                          :repo-root "/real/proj"
+                                          :draft? true
+                                          :fork-ms 5
+                                          :filesystem-roots [{:dir "/real/other"
+                                                              :isolated true
+                                                              :draft-dir "/clones/other"}]}
+                                         nil)]
         (expect (= [{:root "/clones/proj" :trunk "/real/proj" :label "proj" :draft? true}
                     {:root "/clones/other" :trunk "/real/other" :label "other" :draft? true}]
                    roots))))
@@ -713,7 +714,8 @@
                                     :repo-root "/r/p"
                                     :draft? true
                                     :fork-ms 1
-                                    :filesystem-roots [{:trunk "/r/o" :clone "/c/o" :fork-ms 1}]}
+                                    :filesystem-roots
+                                    [{:dir "/r/o" :isolated true :draft-dir "/c/o"}]}
                                    nil)
 
             snake
@@ -721,24 +723,27 @@
                                     :repo_root "/r/p"
                                     :draft? true
                                     :fork_ms 1
-                                    :filesystem_roots [{:trunk "/r/o" :clone "/c/o" :fork_ms 1}]}
+                                    :filesystem_roots
+                                    [{:dir "/r/o" :isolated true :draft_dir "/c/o"}]}
                                    nil)]
 
         (expect (= kebab snake))))
-  (it "an extra root missing its :clone falls back to the trunk path"
-      (let [roots (magit/workspace-roots {:root "/w/proj" :filesystem-roots [{:trunk "/w/other"}]}
+  (it "a non-isolated extra root uses its :dir path"
+      (let [roots (magit/workspace-roots {:root "/w/proj" :filesystem-roots [{:dir "/w/other"}]}
                                          nil)]
         (expect (= "/w/other" (:root (second roots))))
         (expect (false? (:draft? (second roots))))))
-  (it "a clone differing from its trunk marks the extra a draft even without fork-ms"
+  (it "an :isolated extra root is marked a draft and edits its draft-dir"
       (let [roots (magit/workspace-roots {:root "/w/proj"
-                                          :filesystem-roots [{:trunk "/r/o" :clone "/c/o"}]}
+                                          :filesystem-roots
+                                          [{:dir "/r/o" :isolated true :draft-dir "/c/o"}]}
                                          nil)]
-        (expect (true? (:draft? (second roots))))))
+        (expect (true? (:draft? (second roots))))
+        ;; git acts on the draft-dir (the working copy), not the real dir
+        (expect (= "/c/o" (:root (second roots))))))
   (it "dedupes an extra root equal to the primary"
       (let [roots (magit/workspace-roots {:root "/w/proj"
-                                          :filesystem-roots [{:trunk "/w/proj" :clone "/w/proj"}
-                                                             {:trunk "/w/other" :clone "/w/other"}]}
+                                          :filesystem-roots [{:dir "/w/proj"} {:dir "/w/other"}]}
                                          nil)]
         (expect (= ["/w/proj" "/w/other"] (mapv :root roots))))))
 
@@ -786,7 +791,7 @@
                      (->> rows
                           (filter #(= "right.txt" (:path %)))
                           (mapv :root)))))))
-  (it "a non-repo root renders 'Not a git repository' under its header"
+  (it "a non-repo root is dropped — never shown as its own header"
       (let [a
             (init-repo!)
 
@@ -798,13 +803,24 @@
                                {:root plain :trunk plain :label "plain" :draft? false}])
 
             rows
-            (magit/multi-status-rows repos #{} nil)
+            (magit/multi-status-rows repos #{} nil)]
 
-            idx
-            (first (keep-indexed #(when (and (= :repo (:kind %2)) (= plain (:root %2))) %1) rows))]
+        ;; only the real repo survives, so ONE root → no headers, no placeholder
+        (expect (= [a] (mapv :root repos)))
+        (expect (not-any? #(= :repo (:kind %)) rows))
+        (expect (not-any? #(= "Not a git repository" (:text %)) rows))))
+  (it "when NO root is a git repo the primary is kept as the empty-state fallback"
+      (let [plain
+            (temp-dir!)
 
-        (expect (some? idx))
-        (expect (= "Not a git repository" (:text (nth rows (inc idx)))))))
+            repos
+            (magit/load-repos [{:root plain :trunk plain :label "plain" :draft? false}])
+
+            rows
+            (magit/multi-status-rows repos #{} nil)]
+
+        (expect (= [plain] (mapv :root repos)))
+        (expect (= "Not a git repository" (:text (first rows))))))
   (it
     "expanded diffs are scoped per repo even for identical relative paths"
     (let [a
@@ -928,7 +944,7 @@
              :repo_root trunk-a
              :draft? true
              :fork_ms 1
-             :filesystem_roots [{:trunk trunk-b :clone clone-b :fork_ms 1}]}
+             :filesystem_roots [{:dir trunk-b :isolated true :draft_dir clone-b}]}
 
             roots
             (magit/workspace-roots ws nil)

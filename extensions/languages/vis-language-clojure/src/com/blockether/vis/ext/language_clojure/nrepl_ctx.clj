@@ -13,9 +13,10 @@
                               ;; when the (+ 1 1) health check failed:
                               [\"form\" \"hint\"]} ...]}}}}}
 
-   OWNERSHIP: we surface ONLY the REPLs THIS session started + owns (from
-   `repl-manager/session-repls`). There is no external-port discovery and no
-   `.nrepl-port` scanning — a REPL vis did not start is not vis's to show or stop.
+   OWNERSHIP: we surface ONLY the REPLs THIS session started + owns, PLUS any
+   external nREPL the user EXPLICITLY attached via `connect` (both from
+   `repl-manager/session-repls`). There is still NO external-port discovery and
+   no `.nrepl-port` scanning — attachment is explicit consent, never a scan.
 
    The `default` is the id of the SINGLE owned REPL (nil when zero or many): with
    one REPL that id is the implicit eval target; with several, eval still resolves
@@ -71,17 +72,18 @@
       p)))
 
 (defn- probe-all
-  "Probe every port in parallel, each under a hard deadline so one slow host can
-   never stall the render. Each probe is `describe` + a `(+ 1 1)` eval health
-   check. Returns `{port {:status .. [:versions :dialect :form :hint :ms]}}`."
-  [host ports]
+  "Probe every REPL in parallel — each at ITS host (an external attachment may
+   not be on localhost) — each under a hard deadline so one slow host can never
+   stall the render. Each probe is `describe` + a `(+ 1 1)` eval health check.
+   Returns `{port {:status .. [:versions :dialect :form :hint :ms]}}`."
+  [repls]
   (let [budget
         (+ (long probe-timeout-ms) (long health-timeout-ms) 200)
 
         futs
-        (mapv (fn [p]
-                [p (future (probe-one host p))])
-              ports)]
+        (mapv (fn [{:keys [host port]}]
+                [port (future (probe-one (or host "localhost") port))])
+              repls)]
 
     (into {}
           (map (fn [[p f]]
@@ -89,13 +91,13 @@
           futs)))
 
 (defn- liveness-for
-  "Statuses for `ports`, reusing the per-turn cache when the `[turn port-set]` key
-   is unchanged; otherwise probe and store."
-  [host turn ports]
-  (let [k [turn (vec (sort ports))]]
+  "Statuses for `repls`' ports, reusing the per-turn cache when the
+   `[turn port-set]` key is unchanged; otherwise probe and store."
+  [turn repls]
+  (let [k [turn (vec (sort (map :port repls)))]]
     (if (= k (:key @liveness-cache))
       (:statuses @liveness-cache)
-      (let [statuses (probe-all host ports)]
+      (let [statuses (probe-all repls)]
         (reset! liveness-cache {:key k :statuses statuses})
         statuses))))
 
@@ -103,7 +105,7 @@
   "Idempotently mirror one owned nREPL into `session-id`'s resource registry so
    the footer badge + stop/restart dialog see it. No-op when already registered.
    Managed REPLs get stop + restart thunks driving repl-manager."
-  [session-id statuses {:keys [id dir port aliases log]}]
+  [session-id statuses {:keys [id dir port aliases log external? host]}]
   (let [existing
         (when (and session-id id) (vis/get-resource session-id id))
 
@@ -123,11 +125,17 @@
          :language :clojure
          :label (str "nREPL "
                      (.getName (io/file dir))
+                     (when external? " (external)")
                      (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
          :status status
          ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim,
          ;; so it must be boundary-safe already.
          :detail (cond-> {"dir" dir "port" port}
+                   external?
+                   (assoc "host"
+                     (or host "localhost") "external"
+                     true)
+
                    (seq aliases)
                    (assoc "aliases" (mapv name aliases))
 
@@ -136,11 +144,20 @@
          :owner :ext/language-clojure}
         (cond-> {:stop-fn (fn []
                             (repl-manager/stop! session-id dir))
-                 :restart-fn (fn []
-                               (repl-manager/stop! session-id dir)
-                               (let [r (repl-manager/start! session-id dir {:aliases aliases})]
-                                 (vis/unregister-resource! session-id id)
-                                 r))
+                 :restart-fn
+                 (if external?
+                   ;; External: re-CONNECT — never spawn a managed
+                   ;; JVM over the user's REPL (stop! only detaches).
+                   (fn []
+                     (repl-manager/stop! session-id dir)
+                     (let [r (repl-manager/connect! session-id dir {:host host :port port})]
+                       (vis/unregister-resource! session-id id)
+                       r))
+                   (fn []
+                     (repl-manager/stop! session-id dir)
+                     (let [r (repl-manager/start! session-id dir {:aliases aliases})]
+                       (vis/unregister-resource! session-id id)
+                       r)))
                  ;; Keep a FAILED REPL visible (alive while a failure is on
                  ;; record) so the crash + its log tail stay inspectable in F4
                  ;; instead of being pruned the moment the pid dies.
@@ -162,31 +179,39 @@
    STRING keys + STRING enum values. `default` is the SINGLE owned REPL's id."
   [repls statuses]
   {"default" (when (= 1 (count repls)) (:id (first repls)))
-   "repls" (mapv
-             (fn [{:keys [id dir port tool aliases]}]
-               (let [st (get statuses port {:status :unknown})]
-                 (cond-> {"id" id "dir" dir "port" port "status" (name (:status st)) "managed" true}
-                   tool
-                   (assoc "tool" (name tool))
+   "repls" (mapv (fn [{:keys [id dir port tool aliases external? host]}]
+                   (let [st (get statuses port {:status :unknown})]
+                     (cond-> {"id" id
+                              "dir" dir
+                              "port" port
+                              "status" (name (:status st))
+                              "managed" (not external?)}
+                       external?
+                       (assoc "external"
+                         true "host"
+                         (or host "localhost"))
 
-                   (seq aliases)
-                   (assoc "aliases" (mapv name aliases))
+                       tool
+                       (assoc "tool" (name tool))
 
-                   (seq (:versions st))
-                   (assoc "versions" (update-keys (:versions st) name))
+                       (seq aliases)
+                       (assoc "aliases" (mapv name aliases))
 
-                   (:dialect st)
-                   (assoc "dialect" (name (:dialect st)))
+                       (seq (:versions st))
+                       (assoc "versions" (update-keys (:versions st) name))
 
-                   ;; When the `(+ 1 1)` health check failed, carry the exact form
-                   ;; that was run + a plain-language kill/restart hint so the model
-                   ;; sees WHY a REPL is `unresponsive` and what to do about it.
-                   (:form st)
-                   (assoc "form" (:form st))
+                       (:dialect st)
+                       (assoc "dialect" (name (:dialect st)))
 
-                   (:hint st)
-                   (assoc "hint" (:hint st)))))
-             repls)})
+                       ;; When the `(+ 1 1)` health check failed, carry the exact form
+                       ;; that was run + a plain-language kill/restart hint so the model
+                       ;; sees WHY a REPL is `unresponsive` and what to do about it.
+                       (:form st)
+                       (assoc "form" (:form st))
+
+                       (:hint st)
+                       (assoc "hint" (:hint st)))))
+                 repls)})
 
 (defn contribute
   "`:ext/ctx-fn` fn. Returns the `{\"session_env\" {\"languages\" {\"clojure\"
@@ -201,11 +226,8 @@
                repls
                (repl-manager/session-repls sid)
 
-               host
-               "localhost"
-
                statuses
-               (when (seq repls) (liveness-for host (current-turn env) (map :port repls)))]
+               (when (seq repls) (liveness-for (current-turn env) repls))]
 
            (doseq [r repls]
              (try (ensure-resource! sid statuses r)

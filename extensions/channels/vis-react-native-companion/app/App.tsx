@@ -1125,7 +1125,7 @@ function Root() {
   );
 
   /* ── filesystem roots — the session's extra allowed directories, the SAME state
-     (and add/remove mutations) the web footer picker + TUI use. `trunk` is the
+     (and add/remove mutations) the web footer picker + TUI use. `dir` is the
      directory path. ── */
   const roots = workspace?.filesystem_roots ?? [];
 

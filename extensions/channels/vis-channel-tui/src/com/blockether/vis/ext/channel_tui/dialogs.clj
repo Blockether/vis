@@ -2922,14 +2922,16 @@
           (vec root-or-repos)
           (magit/workspace-roots nil root-or-repos))
 
-        primary-root
-        (:root (first repo-entries))
-
-        multi?
-        (> (count repo-entries) 1)
-
         repos*
         (atom (magit/load-repos repo-entries))
+
+        ;; primary-root / multi? read the LOADED repos so non-git roots that
+        ;; load-repos dropped never skew the title or the fallback root.
+        primary-root
+        (:root (first @repos*))
+
+        multi?
+        (> (count @repos*) 1)
 
         expanded
         (atom #{})
@@ -5087,6 +5089,8 @@
                    session's ROOT — shell, file tools, and search work there
                    from the next turn (needs `:session-state-id`)
      Ctrl+N        create a new folder here, then enter it
+     C-x d         remove one of the session's added roots (pick from a list —
+                   works from anywhere, no need to stand in the folder)
      type / Bksp   filter the list incrementally     Esc   close
 
    `:purpose` only sets the dialog title (`:add-root` → \"Add a filesystem
@@ -5174,7 +5178,7 @@
             (norm base)
 
             extra-set
-            (set (keep #(norm (get % "trunk")) extras))
+            (set (keep #(norm (get % "dir")) extras))
 
             path-within?
             (fn [root p]
@@ -5283,7 +5287,7 @@
             (when manager?
               (vec (concat (when base [{:path (str base) :tag "session root"}])
                            (map (fn [e]
-                                  {:path (:trunk e) :tag "added"})
+                                  {:path (get e "dir") :tag "added"})
                                 extras))))
 
             root-row
@@ -5417,6 +5421,41 @@
                                    (reset! notice [dir-canon-str :error
                                                    (or (ex-message t) (str t))]))))))
 
+            ;; C-x d: remove one of this session's ADDED roots via a chooser.
+            ;; Works from ANYWHERE, unlike C-a which only toggles the folder you
+            ;; are currently standing in — so a root you added elsewhere is
+            ;; reachable without navigating back into it. The session root itself
+            ;; is never offered here (C-r repoints it instead).
+            remove-root!
+            (fn []
+              (when manager?
+                (cond (nil? sid) (reset! notice
+                                   [dir-canon-str :error
+                                    "No session yet — send a message first, then remove a root"])
+                      (empty? extra-set)
+                      (reset! notice
+                        [dir-canon-str :error
+                         "No added directories to remove — C-r changes the session root"])
+                      :else (let [items
+                                  (mapv (fn [p]
+                                          {:label (abbreviate-home p) :path p})
+                                        (sort extra-set))
+
+                                  chosen
+                                  (select-dialog! screen "Remove a filesystem directory" items)]
+
+                              (when chosen
+                                (try (let [updated
+                                           (vis/gateway-remove-filesystem-root! sid (:path chosen))]
+                                       (reset! ws-info updated)
+                                       (reset! wid (get updated "id"))
+                                       (reset! notice [dir-canon-str :ok
+                                                       (str "Removed "
+                                                            (abbreviate-home (:path chosen)))]))
+                                     (catch Throwable t
+                                       (reset! notice [dir-canon-str :error
+                                                       (or (ex-message t) (str t))]))))))))
+
             enter!
             (fn []
               ;; Pure navigation: mutate state, then return nil so the
@@ -5545,8 +5584,8 @@
                         inner-w
                         (if manager?
                           [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove permission"]
-                           ["C-r" "set root"] ["C-n" "new folder"] ["Tab" "open tab"]
-                           ["Esc" "close"]]
+                           ["C-x d" "remove root"] ["C-r" "set root"] ["C-n" "new folder"]
+                           ["Tab" "open tab"] ["Esc" "close"]]
                           [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new folder"] ["Tab" "open tab"]
                            ["Esc" "close"]]))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -5561,6 +5600,16 @@
                   ;; Actions are MODIFIER keys, never list rows, so plain typing
                   ;; (incl. the letters a/n) keeps filtering the list.
                   (ctrl-letter? key \a) (do (toggle-root!) (recur))
+                  ;; C-x d chord: pop the remove-root chooser (manager mode only).
+                  ;; C-x reads a second key; `d` fires the remover, anything else
+                  ;; is a harmless no-op that just redraws.
+                  (ctrl-letter? key \x) (do (when manager?
+                                              (let [k2 (read-modal-key! screen)]
+                                                (when (and k2
+                                                           (= KeyType/Character (key-type k2))
+                                                           (= \d (lower-key-character k2)))
+                                                  (remove-root!))))
+                                            (recur))
                   (ctrl-letter? key \r) (do (set-root!) (recur))
                   (ctrl-letter? key \n)
                   (let [nm (text-input-dialog! screen

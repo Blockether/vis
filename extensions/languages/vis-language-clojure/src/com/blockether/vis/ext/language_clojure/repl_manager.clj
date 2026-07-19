@@ -36,9 +36,26 @@
 ;; NO on-disk registry: a managed REPL is bound to THIS vis process + session.
 (defonce ^:private processes (atom {}))
 
+;; { [session-id dir] -> monitor Object }. A stable per-key lock so concurrent
+;; `start!` calls for the SAME [session-id dir] SERIALIZE: the check-then-spawn
+;; is made atomic, so a racing second caller sees the first REPL as
+;; :already-running instead of spawning + orphaning a DUPLICATE JVM.
+(defonce ^:private start-locks (atom {}))
+
+(defn- start-lock
+  "The monitor Object guarding `start!` for `k` = `[session-id dir]`, created
+   once and reused so all starts for that key lock on the SAME object."
+  [k]
+  (or (get @start-locks k) (get (swap! start-locks update k #(or % (Object.))) k)))
+
 (defn- alive? [^Process p] (boolean (and p (.isAlive p))))
 
-(defn- proc-alive? [info] (alive? (:process info)))
+(defn- proc-alive?
+  "Registry-entry liveness. A MANAGED entry is alive while its subprocess is; an
+   EXTERNAL attachment owns no process — it stays registered until detached (its
+   REAL liveness is the port probe in `health` / `ensure-repl-for-dir!`)."
+  [info]
+  (if (:external? info) true (alive? (:process info))))
 
 ;; { [session-id dir] -> {"exit" int? "at" ms "log" path "log_tail" [lines]} }
 ;; Written when a managed launcher dies UNEXPECTEDLY (a startup failure or a
@@ -46,6 +63,34 @@
 ;; by `health` (→ :failed) and `last-failure` so status/eval can surface the
 ;; REAL boot error. Cleared on a successful start and on `stop!`.
 (defonce ^:private last-failures (atom {}))
+
+;; ── Crash-loop guard ────────────────────────────────────────────────────────
+;; VS Code's LSP rule: never restart a server that crashed 5 times in the last
+;; 180 s. Without it, a REPL that dies instantly at boot (bad deps.edn, broken
+;; user.clj) is respawned by `ensure-repl-for-dir!` on EVERY eval/test — each
+;; attempt burning a full JVM boot. { [session-id dir] -> [crash-ms ...] },
+;; appended by `record-failure!` (the one unexpected-death chokepoint), cleared
+;; by `clear-failure!` (successful start / explicit stop = a deliberate reset).
+(def ^:private crash-window-ms 180000)
+(def ^:private max-crashes-in-window 5)
+(defonce ^:private crash-times (atom {}))
+
+(defn- note-crash!
+  [k]
+  (let [now (System/currentTimeMillis)]
+    (swap! crash-times update
+      k
+      (fn [v]
+        (conj (filterv #(< (- now (long %)) crash-window-ms) (or v [])) now)))))
+
+(defn crash-looping?
+  "True when `[session-id dir]`'s managed REPL died `max-crashes-in-window`+
+   times inside `crash-window-ms` — autostart must STOP retrying and surface the
+   failure instead of burning another JVM boot per eval."
+  [session-id dir]
+  (let [now (System/currentTimeMillis)]
+    (>= (count (filter #(< (- now (long %)) crash-window-ms) (get @crash-times [session-id dir])))
+        (long max-crashes-in-window))))
 
 ;; ── Idle reaping ────────────────────────────────────────────────────────────
 ;; A managed REPL is a FULL project JVM (0.5–2 GB resident: the whole :dev:test
@@ -82,7 +127,10 @@
   [session-id dir]
   (get @last-failures [session-id dir]))
 
-(defn- clear-failure! [session-id dir] (swap! last-failures dissoc [session-id dir]))
+(defn- clear-failure!
+  [session-id dir]
+  (swap! last-failures dissoc [session-id dir])
+  (swap! crash-times dissoc [session-id dir]))
 
 ;; Kept in sync with the nrepl/nrepl version pinned in this extension's deps.edn.
 ;; Injected via `-Sdeps` so the launcher works even in target projects that don't
@@ -93,7 +141,7 @@
 ;; while the launcher is STILL ALIVE — a dead launcher short-circuits to a
 ;; :failed result in ≤ ~250ms via `wait-until-up` — so it can be generous
 ;; enough for a cold-cache deps resolve without making real failures slow.
-(def ^:private ^:const start-deadline-ms 120000)
+(def ^:private start-deadline-ms 120000)
 
 (defn- booting?
   "True when `info`'s process is alive and still inside its cold-boot window
@@ -101,7 +149,8 @@
    boot we must WAIT for — never stop+restart it: a restart throws away real
    boot progress and, repeated across evals, spins an endless restart cycle."
   [info]
-  (boolean (and (proc-alive? info)
+  (boolean (and (not (:external? info))
+                (proc-alive? info)
                 (:started-at info)
                 (< (- (System/currentTimeMillis) (long (:started-at info))) start-deadline-ms))))
 
@@ -283,6 +332,7 @@
         tail
         (tail-log log-path 80)]
 
+    (note-crash! [session-id dir])
     (swap! last-failures assoc
       [session-id dir]
       (cond-> {"at" (System/currentTimeMillis)}
@@ -320,6 +370,12 @@
   [dir]
   (try (io/delete-file (io/file dir ".nrepl-port") true) (catch Throwable _ nil)))
 
+(def ^:private wait-poll-ms
+  ;; Pause between port probes in `wait-until-up`. A plain var (NOT ^:const —
+  ;; that inlines and silently breaks with-redefs) so tests can shrink it and
+  ;; run deadline paths in milliseconds.
+  250)
+
 (defn- wait-until-up
   "Poll our OWN chosen `port` until the nREPL accepts a describe round-trip, up
    to `deadline-ms`, while ALSO watching the launcher process itself. Returns
@@ -334,7 +390,8 @@
       (let [st (:status (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 500}))]
         (cond (= :up st) :up
               (and proc (not (.isAlive proc))) :died
-              (< (System/currentTimeMillis) deadline) (do (Thread/sleep 250) (recur))
+              (< (System/currentTimeMillis) deadline) (do (Thread/sleep (long wait-poll-ms))
+                                                          (recur))
               :else :starting)))))
 
 (defn status
@@ -366,20 +423,34 @@
       (and running? pid)
       (assoc "pid" pid)
 
-      running?
+      (:external? info)
+      (assoc "external"
+        true "host"
+        (or (:host info) "localhost"))
+
+      (and running? (not (:external? info)))
       (assoc "log" (or (:log info) (.getAbsolutePath (log-file dir)))))))
 
 (defn health
-  "Coarse LIVE health of THIS session's managed REPL for `dir`:
-     :up       — process alive AND the port answers an nREPL describe
-     :starting — process alive, port not answering yet
+  "Coarse LIVE health of THIS session's REPL for `dir`:
+     :up       — process alive (or external attachment) AND the port answers
+     :starting — managed process alive, port not answering yet
      :failed   — no live process but an UNEXPECTED death is on record
-     :down     — nothing managed (or an intentional stop)
-   Used as the resource registry's `:health-fn`, so footer/F4/ctx status tracks
-   reality instead of the status frozen at registration time."
+     :down     — nothing managed (intentional stop / external gone away)
+   An EXTERNAL attachment has no process to watch, so its health IS the probe:
+   :up or :down, never :starting/:failed. Used as the resource registry's
+   `:health-fn`, so footer/F4/ctx status tracks reality instead of the status
+   frozen at registration time."
   [session-id dir]
   (let [info (get @processes [session-id dir])]
-    (cond (proc-alive? info) (if (= :up
+    (cond (:external? info) (if (= :up
+                                   (:status (nrepl-client/probe! {:host (or (:host info)
+                                                                            "localhost")
+                                                                  :port (:port info)
+                                                                  :timeout-ms 250})))
+                              :up
+                              :down)
+          (proc-alive? info) (if (= :up
                                     (:status (nrepl-client/probe! {:host "localhost"
                                                                    :port (:port info)
                                                                    :timeout-ms 250})))
@@ -411,121 +482,205 @@
          aliases
          (as-keywords (if (seq aliases) aliases default-aliases))]
 
-     (if (proc-alive? (get @processes k))
-       (assoc (status session-id dir) "result" "already-running")
-       (let [port (free-port!)]
-         (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
-           (try
-             (let [log (log-file dir)
-                   pb (doto (ProcessBuilder. ^java.util.List cmd)
-                        (.directory (io/file dir))
-                        (.redirectErrorStream true)
-                        (.redirectOutput log))
-                   proc (.start pb)
-                   pid (try (.pid proc) (catch Throwable _ nil))
-                   info {:id (id-of dir)
-                         :process proc
-                         :port port
-                         :cmd cmd
-                         :tool tool
-                         :aliases (vec aliases)
-                         :pid pid
-                         :dir dir
-                         :log (.getAbsolutePath log)
-                         :started-at (System/currentTimeMillis)
-                         :last-touch (System/currentTimeMillis)}]
+     ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
+     ;; racing second start! (e.g. the repl_start tool + an eval-autostart)
+     ;; could both pass the alive? check and both spawn, orphaning a duplicate
+     ;; JVM. Under the lock the loser re-checks and returns :already-running.
+     ;; (`start-lock` returns a SHARED, atom-stored monitor — not a fresh/local
+     ;; object — so clj-kondo's suspicious-lock heuristic is a false positive.)
+     #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+     (locking (start-lock k)
+       (if (proc-alive? (get @processes k))
+         (assoc (status session-id dir) "result" "already-running")
+         (let [port (free-port!)]
+           (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
+             (try
+               (let [log (log-file dir)
+                     pb (doto (ProcessBuilder. ^java.util.List cmd)
+                          (.directory (io/file dir))
+                          (.redirectErrorStream true)
+                          (.redirectOutput log))
+                     proc (.start pb)
+                     pid (try (.pid proc) (catch Throwable _ nil))
+                     info {:id (id-of dir)
+                           :process proc
+                           :port port
+                           :cmd cmd
+                           :tool tool
+                           :aliases (vec aliases)
+                           :pid pid
+                           :dir dir
+                           :log (.getAbsolutePath log)
+                           :started-at (System/currentTimeMillis)
+                           :last-touch (System/currentTimeMillis)}]
 
-               (swap! processes assoc k info)
-               (ensure-reaper!)
-               (watch-process! session-id dir proc (.getAbsolutePath log))
-               (let [st (wait-until-up proc port start-deadline-ms)]
-                 ;; We passed --port explicitly; never depend on the file the tool
-                 ;; may still write. Remove it so it can't mislead anything.
-                 (delete-stray-port-file! dir)
-                 (when-not (= :up st)
-                   ;; If the launcher died quickly, give the OS one beat to publish
-                   ;; the exit code before deciding whether this is "still starting"
-                   ;; or a real startup failure.
-                   (try (.waitFor proc 100 TimeUnit/MILLISECONDS) (catch Throwable _ nil)))
-                 (let [alive? (alive? proc)
-                       exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
-                       log-path (.getAbsolutePath log)
-                       tail (tail-log log-path 80)
-                       base {"id" (id-of dir)
-                             "dir" dir
-                             "port" port
-                             "tool" (name tool)
-                             "aliases" (mapv name aliases)
-                             "pid" pid
-                             "cmd" cmd
-                             "log" log-path}]
+                 (swap! processes assoc k info)
+                 (ensure-reaper!)
+                 ;; Clean-exit teardown of managed REPLs is owned by vis core:
+                 ;; every spawn is registered as a session resource, and the
+                 ;; gateway server's JVM shutdown hook runs resources/shutdown!
+                 ;; which stops them all before the JVM exits. (kill -9 runs no
+                 ;; hooks anywhere — only a child-side parent watchdog could
+                 ;; cover that.)
+                 (watch-process! session-id dir proc (.getAbsolutePath log))
+                 (let [st (wait-until-up proc port start-deadline-ms)]
+                   ;; We passed --port explicitly; never depend on the file the tool
+                   ;; may still write. Remove it so it can't mislead anything.
+                   (delete-stray-port-file! dir)
+                   (when-not (= :up st)
+                     ;; If the launcher died quickly, give the OS one beat to publish
+                     ;; the exit code before deciding whether this is "still starting"
+                     ;; or a real startup failure.
+                     (try (.waitFor proc 100 TimeUnit/MILLISECONDS) (catch Throwable _ nil)))
+                   (let [alive? (alive? proc)
+                         exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
+                         log-path (.getAbsolutePath log)
+                         tail (tail-log log-path 80)
+                         base {"id" (id-of dir)
+                               "dir" dir
+                               "port" port
+                               "tool" (name tool)
+                               "aliases" (mapv name aliases)
+                               "pid" pid
+                               "cmd" cmd
+                               "log" log-path}]
 
-                   (cond
-                     (= :up st) (do (clear-failure! session-id dir)
-                                    (assoc base
-                                      "result" "started"
-                                      "status" "up"))
-                     (not alive?) (do (swap! processes dissoc k)
-                                      (record-failure! session-id dir proc log-path)
-                                      (cond->
-                                        (assoc base
-                                          "result" "failed"
-                                          "status" "failed"
-                                          "message"
-                                          (str "nREPL launcher exited before accepting connections"
-                                               (when exit (str " (exit " exit ")"))
-                                               ". See log for details.")
-                                          "exit" exit)
-                                        (seq tail)
-                                        (assoc "log_tail" tail)))
-                     :else
-                     (cond->
-                       (assoc base
-                         "result" "starting"
-                         "status" "starting"
-                         "message"
-                         "nREPL launching; not accepting connections yet. Check the log if it stays in this state.")
-                       (seq tail)
-                       (assoc "log_tail" tail))))))
-             (catch java.io.IOException e
-               {"result" "failed"
-                "status" "failed"
-                "id" (id-of dir)
-                "dir" dir
-                "port" port
-                "tool" (name tool)
-                "aliases" (mapv name aliases)
-                "cmd" cmd
-                "log" (.getAbsolutePath (log-file dir))
-                "message" (str "Could not start nREPL launcher: " (.getMessage e))}))
-           {"result" "no-launcher"
-            "status" "down"
-            "dir" dir
-            "message"
-            "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."}))))))
+                     (cond
+                       (= :up st) (do (clear-failure! session-id dir)
+                                      (assoc base
+                                        "result" "started"
+                                        "status" "up"))
+                       (not alive?)
+                       (do (swap! processes dissoc k)
+                           (record-failure! session-id dir proc log-path)
+                           (cond-> (assoc base
+                                     "result" "failed"
+                                     "status" "failed"
+                                     "message"
+                                     (str "nREPL launcher exited before accepting connections"
+                                          (when exit (str " (exit " exit ")"))
+                                          ". See log for details.")
+                                     "exit" exit)
+                             (seq tail)
+                             (assoc "log_tail" tail)))
+                       :else
+                       (cond->
+                         (assoc base
+                           "result" "starting"
+                           "status" "starting"
+                           "message"
+                           "nREPL launching; not accepting connections yet. Check the log if it stays in this state.")
+                         (seq tail)
+                         (assoc "log_tail" tail))))))
+               (catch java.io.IOException e
+                 {"result" "failed"
+                  "status" "failed"
+                  "id" (id-of dir)
+                  "dir" dir
+                  "port" port
+                  "tool" (name tool)
+                  "aliases" (mapv name aliases)
+                  "cmd" cmd
+                  "log" (.getAbsolutePath (log-file dir))
+                  "message" (str "Could not start nREPL launcher: " (.getMessage e))}))
+             {"result" "no-launcher"
+              "status" "down"
+              "dir" dir
+              "message"
+              "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
 
 (defn stop!
-  "Stop THIS session's managed nREPL for `dir` (graceful, then forced). The
-   entry is DEREGISTERED FIRST so the `.onExit` watcher reads the death as an
-   intentional stop, never a failure; any remembered failure for `dir` is
-   cleared too. No-op-safe. Model-facing STRING-keyed result."
+  "Stop THIS session's REPL for `dir`. A MANAGED subprocess is destroyed
+   (graceful, then forced); an EXTERNAL attachment is only DETACHED — vis never
+   kills a process it did not spawn. The entry is DEREGISTERED FIRST so the
+   `.onExit` watcher reads a managed death as an intentional stop, never a
+   failure; any remembered failure/crash history for `dir` is cleared too.
+   No-op-safe. Model-facing STRING-keyed result."
   [session-id dir]
   (let [k
         [session-id dir]
 
-        {:keys [^Process process]}
+        {:keys [^Process process external? host port]}
         (get @processes k)]
 
     (clear-failure! session-id dir)
-    (if process
-      (do (swap! processes dissoc k)
-          (.destroy process)
-          (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
-          {"result" "stopped" "id" (id-of dir) "dir" dir})
-      {"result" "not-managed"
-       "id" (id-of dir)
-       "dir" dir
-       "message" "No Vis-managed nREPL for this directory in this session."})))
+    (cond external? (do (swap! processes dissoc k)
+                        {"result" "detached"
+                         "id" (id-of dir)
+                         "dir" dir
+                         "message" (str "Detached from external nREPL at "
+                                        (or host "localhost")
+                                        ":"
+                                        port
+                                        " — the process keeps running (vis does not own it).")})
+          process (do (swap! processes dissoc k)
+                      (.destroy process)
+                      (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
+                      {"result" "stopped" "id" (id-of dir) "dir" dir})
+          :else {"result" "not-managed"
+                 "id" (id-of dir)
+                 "dir" dir
+                 "message" "No Vis-managed nREPL for this directory in this session."})))
+
+(defn connect!
+  "Attach THIS session to an EXTERNAL nREPL the USER already runs (their editor
+   jack-in, a `clj -M:nrepl` they launched themselves) — the OPT-IN inverse of
+   `start!`: vis never spawns, never kills, and never reaps the process; it only
+   registers the address so eval/test/ctx target it like a managed REPL.
+   Explicit consent only — nothing ever auto-connects or scans for ports.
+
+   - The address is PROBED FIRST (bounded): a dead host:port is REFUSED
+     (\"unreachable\") instead of registered.
+   - An existing live entry for `[session-id dir]` → \"already-running\"
+     (stop/detach it first to switch).
+   - `stop!` on the attachment DETACHES only.
+   Model-facing: STRING keys + STRING enum values."
+  [session-id dir {:keys [host port]}]
+  (let [host
+        (or (some-> host
+                    str/trim
+                    not-empty)
+            "localhost")
+
+        port
+        (long port)
+
+        k
+        [session-id dir]]
+
+    #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+    (locking (start-lock k)
+      (if (proc-alive? (get @processes k))
+        (assoc (status session-id dir) "result" "already-running")
+        (if (= :up (:status (nrepl-client/probe! {:host host :port port :timeout-ms 3000})))
+          (do (swap! processes assoc
+                k
+                {:id (id-of dir)
+                 :process nil
+                 :external? true
+                 :host host
+                 :port port
+                 :dir dir
+                 :started-at (System/currentTimeMillis)
+                 :last-touch (System/currentTimeMillis)})
+              (clear-failure! session-id dir)
+              {"result" "connected"
+               "status" "up"
+               "id" (id-of dir)
+               "dir" dir
+               "host" host
+               "port" port
+               "external" true})
+          {"result" "unreachable"
+           "status" "down"
+           "dir" dir
+           "host" host
+           "port" port
+           "message" (str "No nREPL answering at "
+                          host
+                          ":"
+                          port
+                          " — is it running? Nothing was registered.")})))))
 
 (defonce ^:private reaper (atom nil))
 
@@ -542,6 +697,9 @@
           (for [[[sid dir] info]
                 @processes
 
+                ;; An EXTERNAL attachment holds no JVM of ours — never reap it;
+                ;; the user owns that process and chose to connect it.
+                :when (not (:external? info))
                 :let [t
                       (long (or (:last-touch info) (:started-at info) 0))]
                 :when (> (- now t) (long idle-reap-ms))]
@@ -581,22 +739,29 @@
     (when (seq dead) (apply swap! processes dissoc dead))))
 
 (defn session-repls
-  "Live REPLs OWNED by `session-id`, as a vec of
-   `{:id :dir :port :tool :aliases :pid}` sorted by dir. Prunes dead entries as a
-   side effect. This is the SINGLE source of truth for ctx + eval/test targeting —
-   there is no external-port discovery."
+  "Live REPLs OWNED by (or ATTACHED to) `session-id`, as a vec of
+   `{:id :dir :port :tool :aliases :pid}` (+ `:log` for managed, `:external?
+   :host` for attached) sorted by dir. Prunes dead entries as a side effect.
+   This is the SINGLE source of truth for ctx + eval/test targeting — external
+   REPLs enter it ONLY via an explicit `connect!`, never by discovery."
   [session-id]
   (prune-dead! session-id)
   (->> @processes
        (keep (fn [[[sid _dir] info]]
                (when (and (= sid session-id) (proc-alive? info))
-                 {:id (:id info)
-                  :dir (:dir info)
-                  :port (:port info)
-                  :tool (:tool info)
-                  :aliases (:aliases info)
-                  :pid (:pid info)
-                  :log (or (:log info) (.getAbsolutePath (log-file (:dir info))))})))
+                 (cond-> {:id (:id info)
+                          :dir (:dir info)
+                          :port (:port info)
+                          :tool (:tool info)
+                          :aliases (:aliases info)
+                          :pid (:pid info)}
+                   (:external? info)
+                   (assoc :external?
+                     true :host
+                     (or (:host info) "localhost"))
+
+                   (not (:external? info))
+                   (assoc :log (or (:log info) (.getAbsolutePath (log-file (:dir info)))))))))
        (sort-by :dir)
        vec))
 
@@ -610,16 +775,17 @@
    default :dev :test aliases) when the session owns none for `dir` — OR when the
    recorded process is alive but UNREACHABLE (a boot that never bound its port, or
    a wedged server thread that `proc-alive?` alone cannot see): such a stale
-   process is stopped and REPLACED instead of silently swallowing every eval on a
-   dead socket (the failure that stalls `run_tests` past the tool budget). A
-   still-booting process is given the REMAINING cold-boot window (see
-   `health-probe-ms`) to finish before it is judged wedged, so a legitimately
-   slow cold boot is never killed + restarted mid-flight (which would spin an
-   endless restart cycle across evals). When the (re)start does NOT yield a live
-   process, returns
-   start!'s STRING-keyed lifecycle result (\"failed\"/\"no-launcher\"… with exit +
-   log_tail) instead of swallowing it — callers tell the cases apart by `:port`
-   (live keyword-keyed info) vs `\"result\"` (string-keyed lifecycle map)."
+   process is stopped and REPLACED. A still-booting process is given the
+   REMAINING cold-boot window (see `health-probe-ms`) before being judged wedged.
+
+   Two deliberate REFUSALS, both surfaced as start!-style STRING-keyed results
+   (callers tell live info apart by `:port` vs `\"result\"`):
+     - EXTERNAL attachment unreachable → \"external-unreachable\": vis NEVER
+       silently replaces the user's explicitly-attached REPL with a managed
+       spawn — reconnect or detach is the user's call.
+     - Crash loop (`crash-looping?`, VS Code semantics) → \"crash-looping\":
+       autostart is suspended instead of burning a JVM boot per eval; an
+       explicit stop/restart resets the guard."
   [session-id dir]
   (let [k
         [session-id dir]
@@ -627,16 +793,51 @@
         info
         (get @processes k)]
 
-    (if (and (proc-alive? info)
-             (:port info)
-             (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))
-      (do (touch! session-id dir) info)
-      ;; Dead, or alive-but-wedged (port never answers): drop the stale process
-      ;; first, then autostart — surfacing start!'s lifecycle result when no live
-      ;; process results, exactly as the plain-autostart path does.
-      (do (when (proc-alive? info) (stop! session-id dir))
-          (let [r (start! session-id dir nil)]
-            (or (get @processes k) r))))))
+    (cond (:external? info)
+          (if (= :up
+                 (:status (nrepl-client/probe! {:host (or (:host info) "localhost")
+                                                :port (:port info)
+                                                :timeout-ms 2000})))
+            (do (touch! session-id dir) info)
+            {"result" "external-unreachable"
+             "status" "down"
+             "dir" dir
+             "host" (or (:host info) "localhost")
+             "port" (:port info)
+             "message" (str "External nREPL at "
+                            (or (:host info) "localhost")
+                            ":"
+                            (:port info)
+                            " is not answering — restart it and reconnect"
+                            " (repl_start(\"clojure\", \"connect\", {\"port\": ...})), or"
+                            " repl_start(\"clojure\", \"stop\") to detach.")})
+          (and (proc-alive? info)
+               (:port info)
+               (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))
+          (do (touch! session-id dir) info)
+          (crash-looping? session-id dir)
+          (let [f (last-failure session-id dir)]
+            (cond-> {"result" "crash-looping"
+                     "status" "failed"
+                     "dir" dir
+                     "message" (str "nREPL for this dir crashed "
+                                    max-crashes-in-window
+                                    "+ times in "
+                                    (quot crash-window-ms 60000)
+                                    " min — autostart is SUSPENDED. Fix the boot failure"
+                                    " (see log_tail), then repl_start(\"clojure\", \"restart\")"
+                                    " to reset.")}
+              (get f "exit")
+              (assoc "exit" (get f "exit"))
+
+              (get f "log")
+              (assoc "log" (get f "log"))
+
+              (seq (get f "log_tail"))
+              (assoc "log_tail" (get f "log_tail"))))
+          :else (do (when (proc-alive? info) (stop! session-id dir))
+                    (let [r (start! session-id dir nil)]
+                      (or (get @processes k) r))))))
 
 
 (defn resolve-target!
@@ -679,13 +880,12 @@
                         {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
-          (throw (ex-info
-                   (str "no running nREPL in this session — start one with "
-                        "repl_start(\"clojure\"), "
-                        "then retry the eval")
-                   {:type :clj/no-repl :dir default-dir}))
+          (throw (ex-info (str "no running nREPL in this session — start one with "
+                               "repl_start(\"clojure\"), "
+                               "then retry the eval")
+                          {:type :clj/no-repl :dir default-dir}))
           ;; 1+ REPLs: the implicit default is the one owning `default-dir`
           ;; (the workspace root) when live, else the first (dir-sorted).
           (let [r (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))]
             (touch! session-id (:dir r))
-            (select-keys r [:id :dir :port])))))))
+            (select-keys r [:id :dir :port :host :external?])))))))

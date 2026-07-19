@@ -54,8 +54,8 @@
     (it "is empty on an idle draft (no keybinding nags)"
         (expect (= [] (echo-segments {:input (input/empty-input)})))
         (expect (= [] (echo-segments {:input (input/paste-text (input/empty-input) "hello")}))))
-    (it "shows the C-g cancel hint while a turn is live"
-        (expect (= [(str (keymap/chord keymap/abort-key) " cancel")]
+    (it "shows the C-g / Esc cancel hint while a turn is live"
+        (expect (= [(str (keymap/abort-hint) " cancel")]
                    (mapv :text (echo-segments {:loading? true :input (input/empty-input)})))))
     (it "shows a wait notice while cancelling, not the cancel hint"
         (expect (= ["Cancelling... please wait"]
@@ -95,7 +95,7 @@
           (expect (= #{4} rows))
           (expect (not (str/includes? painted "┌")))
           (expect (not (str/includes? painted "└")))
-          (expect (str/includes? painted (str (keymap/chord keymap/abort-key) " cancel"))))))))
+          (expect (str/includes? painted (str (keymap/abort-hint) " cancel"))))))))
 
 (defdescribe
   build-segments-test

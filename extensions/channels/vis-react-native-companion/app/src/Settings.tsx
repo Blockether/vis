@@ -480,14 +480,14 @@ export const SettingsPane = ({
                     </View>
                   </View>
                   {(ws.filesystem_roots ?? []).map((r, i) => (
-                    <View key={r.trunk ?? String(i)} style={st.row}>
+                    <View key={r.dir ?? String(i)} style={st.row}>
                       <View style={st.rowText}>
                         <Text style={st.rowDesc} numberOfLines={1}>
-                          {r.trunk ?? "\u2014"}
+                          {r.dir ?? "\u2014"}
                         </Text>
                       </View>
                       <Pressable
-                        onPress={() => r.trunk && removeRoot(r.trunk)}
+                        onPress={() => r.dir && removeRoot(r.dir)}
                         hitSlop={6}
                         disabled={wsBusy}
                         style={st.cycle}

@@ -37,7 +37,8 @@
             [clojure.string :as str]
             [nrepl.core :as nrepl]
             [nrepl.transport :as transport])
-  (:import (java.io IOException)))
+  (:import (java.io IOException)
+           (java.net InetSocketAddress Socket)))
 
 ;; ---------------------------------------------------------------------------
 ;; Connection cache
@@ -50,16 +51,26 @@
 (defn- key-of [host port] [(or host "localhost") (long port)])
 
 (defn- open!
-  "Open a fresh nREPL connection. Wraps `connect` failures into a
-   structured ex-info so callers can present a clean message."
+  "Open a fresh nREPL connection with a BOUNDED connect phase.
+
+   `nrepl.core/connect` dials with the blocking `(Socket. host port)`
+   constructor — no connect timeout (and its option map has no `:timeout`
+   key at all, so passing one is a silent no-op). A SYN that is silently
+   dropped instead of refused would hang the caller for the OS default
+   (tens of seconds), blowing every deadline above. So we open the socket
+   ourselves with an explicit `.connect` timeout and hand it to the bencode
+   transport — exactly what `nrepl.core/connect` does internally, minus the
+   unbounded dial. Read timeouts are enforced per-response by `nrepl/client`;
+   eval deadlines separately via combined-response-fn.
+
+   Wraps failures into a structured ex-info so callers can present a clean
+   message."
   [host port timeout-ms]
   (try
-    (nrepl/connect :host (or host "localhost")
-                   :port (int port)
-                   :transport-fn transport/bencode
-                   ;; transport-level read timeout; eval timeout is enforced
-                   ;; separately via combined-response-fn below.
-                   :timeout (long timeout-ms))
+    (let [sock (doto (Socket.)
+                 (.connect (InetSocketAddress. ^String (or host "localhost") (int port))
+                           (int (max 1 (long (or timeout-ms 1000))))))]
+      (transport/bencode sock))
     (catch Throwable t
       (throw
         (ex-info

@@ -238,7 +238,7 @@
 
     ((:handler handler) env payload)))
 
-(def ^:private repl-ops #{"status" "start" "stop" "restart"})
+(def ^:private repl-ops #{"status" "start" "stop" "restart" "connect"})
 
 (defn- repl-op? [x] (and (string? x) (contains? repl-ops x)))
 
@@ -768,6 +768,25 @@
   [env & args]
   (dispatch-start-repl! env args))
 
+(defn connect-repl
+  "Attach to an EXTERNAL, ALREADY-RUNNING REPL the user started themselves — repl_connect(language, {\"port\": N, \"host\"?, \"dir\"?}). Explicit opt-in: vis registers the address as a session REPL resource (eval/test/ctx target it like a managed one) but NEVER spawns, kills, or reaps the process — stopping it merely detaches."
+  [env & args]
+  (let [[language more]
+        (if (and (seq args) (language-like? (first args))) [(first args) (next args)] [nil args])
+
+        opts
+        (coerce-opts (first more))
+
+        dispatch-opts
+        (cond-> opts
+          language
+          (assoc "language" language))
+
+        handler
+        (choose-handler env :start-repl-fn dispatch-opts)]
+
+    ((:handler handler) env "connect" opts)))
+
 (def format-symbol
   (vis/symbol
     #'format-code
@@ -911,18 +930,46 @@
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties
-              {"language"
-               {:type "string"
-                :description
-                "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
-               "id" {:type "string" :description "Resource id for the REPL (default per language)."}
-               "dir" {:type "string" :description "Directory to start the REPL in."}
-               "aliases" {:type "array"
-                          :items {:type "string"}
-                          :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
-              :required ["language"]}
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string"
+                   :description
+                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+       "id" {:type "string" :description "Resource id for the REPL (default per language)."}
+       "dir" {:type "string" :description "Directory to start the REPL in."}
+       "aliases" {:type "array"
+                  :items {:type "string"}
+                  :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}
+       "host" {:type "string"
+               :description "External nREPL host for op \"connect\" (default localhost)."}
+       "port" {:type "integer" :description "External nREPL port — required by op \"connect\"."}}
+      :required ["language"]}
+     :before-fn inject-env
+     :tag :mutation}))
+
+(def connect-repl-symbol
+  (vis/symbol
+    #'connect-repl
+    {:symbol 'repl_connect
+     :native-tool? true
+     :call {:lead-opt "language" :rest :always}
+     :render render-repl-start-result
+     :color-role :tool-color/shell
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string"
+                   :description
+                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+       "port" {:type "integer"
+               :description "Port of the ALREADY-RUNNING external REPL to attach to."}
+       "host" {:type "string" :description "Its host (default localhost)."}
+       "dir"
+       {:type "string"
+        :description
+        "Project dir this REPL serves (default the workspace root) — the attachment is keyed and addressed by it."}}
+      :required ["language" "port"]}
      :before-fn inject-env
      :tag :mutation}))
 
@@ -943,7 +990,8 @@
                :tag :mutation}))
 
 (def symbols
-  [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol repl-stop-symbol])
+  [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol connect-repl-symbol
+   repl-stop-symbol])
 
 (defn prompt
   "The language-facade reference: the AUTO capability matrix (active packs only)
@@ -955,4 +1003,4 @@
     (str
       matrix
       "\n"
-      "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_stop")))
+      "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_connect · repl_stop")))

@@ -68,13 +68,12 @@
       (seq (:filesystem-roots workspace))
       (assoc "filesystem_roots"
         ;; Extra dirs the session may also operate on, addressed by their REAL
-        ;; path (`"dir"`). Edits there are transparently isolated in a draft
-        ;; copy when `"isolated"` — they land on /draft apply. Surfaced so the
-        ;; model KNOWS it can read/write under these dirs.
-        (mapv (fn [{:keys [trunk clone]}]
-                (cond-> {"dir" trunk}
-                  (not= clone trunk)
-                  (assoc "isolated" true)))
+        ;; path (`"dir"`). `"isolated"` marks the ones whose edits land in a
+        ;; hidden draft copy until /draft apply. The clone path itself is
+        ;; deliberately NOT surfaced — the model always reads/writes `"dir"`.
+        (mapv (fn [r]
+                (let [{:keys [dir isolated]} (workspace/public-filesystem-root r false)]
+                  {"dir" dir "isolated" isolated}))
               (workspace/filesystem-roots workspace)))
 
       changed

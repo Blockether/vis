@@ -2191,8 +2191,16 @@
           ;; beta moved from line 2 to line 4; within the drift tolerance the
           ;; `2:hash` anchor still resolves it by content
           (expect (= [[4 "(def beta 2)"]] (patch/anchor-map->tuples (get out "anchors"))))))
-    (it "a missing hash throws back to cat for fresh :anchors"
+    (it "a malformed anchor (no line number) throws back to cat for fresh :anchors"
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :anchor "zzzz"))))
+    (it "a stale hash on a live line falls back to the line number — a READ is tolerant"
+        ;; `3:<wrong-hash>`: line 3 exists but the hash matches no live line. Unlike
+        ;; a WRITE, a non-destructive READ must not be blocked — it falls back to the
+        ;; anchor's line number and flags `anchors_stale`, returning FRESH anchors.
+        (let [out (:result (cat-tool path :anchor "3:dead"))]
+          (expect (= [[3 "(def beta 2)"]] (patch/anchor-map->tuples (get out "anchors"))))
+          (expect (= [3 3] (get out "range")))
+          (expect (true? (get out "anchors_stale")))))
     (it "an unknown 4-arity mode throws"
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :nonsense h-beta h-gamma))))))
 
@@ -2786,11 +2794,19 @@
         (expect (= sweep (rsr ["   "])))
         ;; a blank mixed with a real path still means everything
         (expect (= sweep (rsr ["src" ""])))))
-    (it "when NONE of the paths exist, it errors clearly"
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(rg "x"
-                              {"paths" [(str (temp-root) "/none1.edn")
-                                        (str (temp-root) "/none2.edn")]}))))))
+    (it "a missing / file path resolves to its nearest existing DIRECTORY, never a hard error"
+        (let [d (temp-dir-path "rgd")
+              f (str (temp-root) "/rgd/real.clj")]
+
+          (spit (fs/file f) "needle here\n")
+          ;; a NON-EXISTENT file inside a real dir climbs to that dir and searches it
+          (let [r (rg "needle" {"paths" [(str (temp-root) "/rgd/gone.clj")]})]
+            (expect (:success? r))
+            (expect (= 1 (get-in r [:result "hit_count"]))))
+          ;; a path pointing straight AT a file collapses to its containing dir
+          (let [r (rg "needle" {"paths" [f]})]
+            (expect (:success? r))
+            (expect (= 1 (get-in r [:result "hit_count"]))))))))
 
 (defdescribe
   struct-patch-tool-e2e-test

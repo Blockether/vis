@@ -174,64 +174,107 @@
   [^String needle]
   (boolean (re-find #"[*+?(){}\[\]]" needle)))
 
+(def ^:private rg-fff-enumerate-page-size 5000)
+
+(defn- rg-fff-enumerate-all
+  "The FULL file universe under `roots` via fff — the native, nested-`.gitignore`-aware
+   index — INCLUDING dotfiles (the caller applies hidden/include filtering). Returns a
+   File vec, deduped nowhere (roots are pre-deduped upstream). Pages through fff/search
+   so a huge repo isn't silently truncated at one page.
+
+   This is the hostile-needle fallback (a needle fff reads as regex/glob and can't grep):
+   we still hand the literal `make-line-matcher` the correct git-respecting universe
+   instead of a raw filesystem walk that would descend `.gitignored` trees (node_modules,
+   target, …) at ~280× the cost."
+  [roots]
+  (vec
+    (mapcat (fn [^File root]
+              (if (.isFile root)
+                [root]
+                (with-open [idx (rg-fff-open root)]
+                  (let [base (.getCanonicalFile root)]
+                    (loop [page-index 0
+                           acc (transient [])]
+
+                      (let [{:keys [items total-matched]} (fff/search idx
+                                                                      {:query ""
+                                                                       :page-index page-index
+                                                                       :page-size
+                                                                       rg-fff-enumerate-page-size})
+                            acc (reduce (fn [a {:keys [relative-path]}]
+                                          (cond-> a
+                                            relative-path
+                                            (conj! (io/file base relative-path))))
+                                        acc
+                                        items)]
+
+                        (if (or (empty? items) (>= (count acc) (long (or total-matched 0))))
+                          (persistent! acc)
+                          (recur (inc page-index) acc))))))))
+            roots)))
+
+(defn- rg-hidden-below-root?
+  "True when `f` sits under a HIDDEN segment BELOW one of `roots` (a dotdir/dotfile the
+   default sweep hides). The root's OWN name is exempt — an explicit dot-root (`~/.vis`)
+   is entered on purpose — mirroring the walk's `f == root` hidden-guard. Used only on the
+   fff enumeration path, where fff surfaces dotfiles the manual walk skipped by descent."
+  [roots ^File f]
+  (let [fp (.toPath (.getCanonicalFile f))]
+    (boolean (some (fn [^File root]
+                     (let [rp (.toPath (.getCanonicalFile root))]
+                       (when (.startsWith fp rp)
+                         (some (fn [seg]
+                                 (str/starts-with? (str seg) "."))
+                               (iterator-seq (.iterator (.relativize rp fp)))))))
+                   roots))))
+
 (defn- rg-fff-candidate-files
-  [roots needles files]
+  "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
+   `.gitignore`-aware universe rg then RE-VALIDATES with the literal `make-line-matcher`.
+   fff-first: NO raw filesystem walk, so a `.gitignored` subtree is never descended.
+
+   Normal needles → the union of fff fuzzy-PATH hits and fff native-GREP content hits
+   (a superset of true matches; a path-only hit whose content doesn't match is harmlessly
+   dropped downstream). A needle HOSTILE to fff (a quantifier/bracket char fff reads as
+   regex/glob and would match nothing) → the FULL fff enumeration, so the literal matcher
+   still sees every candidate. Returns a File vec, deduped by canonical path."
+  [roots needles]
   (if (some rg-needle-hostile-to-fff? needles)
-    ;; A needle carrying a quantifier/bracket char (`*workspace-root*`,
-    ;; `(defn foo`, `arr[0]`) makes fff match NOTHING (or error) and yield zero
-    ;; candidate files — and with no fallback the literal `make-line-matcher`
-    ;; never runs, so a query that SHOULD hit returns empty. Skip fff and scan
-    ;; the full walk; make-line-matcher is the literal-substring contract.
-    ;; (`.`/`|`/`^`/`$` only OVER-match — still correct after the literal filter
-    ;; — and `.` is ubiquitous, so they stay on the fff fast path.)
-    (vec files)
-    (let [by-canon
-          (into {}
-                (map (fn [^File f]
-                       [(.getCanonicalPath f) f]))
-                files)
+    (rg-fff-enumerate-all roots)
+    (let [rel-files (fn [^File base items]
+                      (keep (fn [{:keys [relative-path]}]
+                              (some->> relative-path
+                                       (io/file base)))
+                            items))]
+      (->> roots
+           (mapcat
+             (fn [^File root]
+               (cond (.isFile root) [root]
+                     :else (with-open [idx (rg-fff-open root)]
+                             (let [base (.getCanonicalFile root)]
+                               ;; doall: realize the lazy hits INSIDE with-open, before the fresh
+                               ;; instance is closed.
+                               (doall
+                                 (mapcat
+                                   (fn [query]
+                                     (let [path-items
+                                           (:items (fff/search idx {:query query :page-size 1000}))
+                                           grep-items (:matches (fff/grep idx
+                                                                          {:query query
+                                                                           :mode :plain
+                                                                           :page-limit 1000
+                                                                           :max-matches-per-file 1
+                                                                           :time-budget-ms 1500}))]
 
-          queries
-          needles
-
-          mode
-          :plain
-
-          rel-paths
-          (fn [base items]
-            (keep (fn [{:keys [relative-path]}]
-                    (some-> (io/file base relative-path)
-                            .getCanonicalPath))
-                  items))
-
-          candidate-keys
-          (->> roots
-               (mapcat
-                 (fn [^File root]
-                   (cond (.isFile root) [(.getCanonicalPath root)]
-                         :else
-                         (with-open [idx (rg-fff-open root)]
-                           (let [base (.getCanonicalFile root)]
-                             ;; doall: realize the lazy hits INSIDE with-open, before
-                             ;; the fresh instance is closed.
-                             (doall
-                               (mapcat
-                                 (fn [query]
-                                   (let [path-items
-                                         (:items (fff/search idx {:query query :page-size 1000}))
-                                         grep-items (:matches (fff/grep idx
-                                                                        {:query query
-                                                                         :mode mode
-                                                                         :page-limit 1000
-                                                                         :max-matches-per-file 1
-                                                                         :time-budget-ms 1500}))]
-
-                                     (concat (rel-paths base path-items)
-                                             (rel-paths base grep-items))))
-                                 queries)))))))
-               distinct)]
-
-      (vec (keep by-canon candidate-keys)))))
+                                       (concat (rel-files base path-items)
+                                               (rel-files base grep-items))))
+                                   needles)))))))
+           ;; dedup by canonical path, keep File objects
+           (reduce (fn [acc ^File f]
+                     (assoc acc (.getCanonicalPath f) f))
+                   {})
+           vals
+           vec))))
 
 
 (def ^:private default-find-limit 50)
@@ -418,12 +461,24 @@
                           (workspace/filesystem-root-mappings))
                     (str p)))))
 
+(defn- nearest-existing-dir
+  "Climb `f` to the nearest ancestor that exists AS A DIRECTORY. A file
+   resolves to its containing directory; a MISSING path climbs its parents
+   until an existing directory is found (at worst a workspace root, which
+   always exists). Returns nil only if nothing in the chain exists."
+  ^File [^File f]
+  (loop [^File c (.getCanonicalFile ^File f)]
+    (cond (nil? c) nil
+          (and (.exists c) (.isDirectory c)) c
+          :else (recur (.getParentFile c)))))
+
 (defn- resolve-search-roots
-  "Resolve rg/find `paths` to canonical root Files. The DEFAULT/unscoped
-   `[\".\"]` expands to the FULL allowed-roots set — the primary cwd PLUS
-   every bound filesystem-root clone — so an unscoped search sweeps ALL
-   filesystem roots, not just the primary. Explicit paths resolve through
-   `safe-path` (confinement + trunk↔clone remap).
+  "Resolve rg/find `paths` to canonical DIRECTORY root Files — a search NEVER
+   targets a file directly, only directories. The DEFAULT/unscoped `[\".\"]`
+   expands to the FULL allowed-roots set — the primary cwd PLUS every bound
+   filesystem-root clone — so an unscoped search sweeps ALL filesystem roots,
+   not just the primary. Explicit paths resolve through `safe-path`
+   (confinement + trunk↔clone remap).
 
    A BLANK/nil entry (`\"\"`/`nil` — the model routinely tacks an empty string
    onto a `paths` list, e.g. `[\".github\" \"\"]`) is NOT an error: a blank means
@@ -431,11 +486,14 @@
    explicit `\".\"`) widens the whole search to the full allowed-roots set rather
    than erroring on the blank.
 
-   A search is FORGIVING about a MISSING path: the model routinely lists
-   speculative candidates (`[\"deps.edn\" \"vis.edn\" \"src\"]`) where one may not
-   exist — those are SKIPPED so the search still runs over the paths that DO
-   exist. Only when NONE of the given paths exist is it an error (a confinement
-   violation from `safe-path` still propagates — that's not a miss)."
+   Every path is normalized to a DIRECTORY via `nearest-existing-dir`: a file
+   path collapses to its containing directory, and a MISSING path (the model
+   routinely lists speculative candidates like `[\"deps.edn\" \"src/foo.clj\"]`,
+   or points at a file/dir that no longer exists) climbs to its nearest existing
+   ancestor directory instead of erroring. So a search is FORGIVING — it still
+   runs over the closest real directory rather than failing on a stale path.
+   Only when NOTHING in any candidate's chain exists is it an error (a
+   confinement violation from `safe-path` still propagates — that's not a miss)."
   [paths]
   (let [paths (mapv #(let [s (str/trim (str %))]
 
@@ -443,11 +501,11 @@
                     paths)]
     (if (some #{"."} paths)
       (mapv io/file (workspace/allowed-roots))
-      (let [existing (filterv #(.exists ^File %) (map safe-path paths))]
-        (when (empty? existing)
+      (let [dirs (into [] (comp (map safe-path) (keep nearest-existing-dir) (distinct)) paths)]
+        (when (empty? dirs)
           (throw (ex-info (str "None of these paths exist: " (str/join ", " paths))
                           {:type :ext.foundation.editing/path-not-found :paths (vec paths)})))
-        (mapv #(.getCanonicalFile ^File %) existing)))))
+        dirs))))
 
 (defn- ensure-parent-dirs!
   [^File f]
@@ -1110,11 +1168,15 @@
 (defn- read-file-by-anchor
   "Read the inclusive window between the lines hashed `from_anchor`..`to_anchor`
    (`to_anchor` defaults to `from_anchor` — a single line). Resolves the hashes
-   against LIVE file content via `patch/resolve-anchor-range`, so the read
-   addresses lines BY CONTENT, not by drifting line numbers — the symmetric
-   counterpart of `patch :from_anchor`. Returns the same shape as `read-file`
-   plus `:range [from-line to-line]`. Throws ex-info on a missing / ambiguous /
-   inverted hash; the message points back to a fresh read."
+   against LIVE file content via `patch/resolve-anchor-range-read`, so the read
+   addresses lines BY CONTENT (following small drift) — the symmetric counterpart
+   of `patch :from_anchor`, but READ-TOLERANT: unlike a write, a stale/missing hash
+   does NOT throw. When a hash matches no live line the anchor's LINE NUMBER is used
+   as a fallback and the result carries `:stale? true` (surfaced to the model as
+   `anchors_stale`) alongside FRESH `:anchors` for the lines actually read. Returns
+   the same shape as `read-file` plus `:range [from-line to-line]`. Throws ex-info
+   ONLY when an anchor is genuinely unlocatable — malformed (no line number) or a
+   line outside the file — the message points back to a fresh read."
   [path from_anchor to_anchor]
   (let [f
         (ensure-existing-file! (safe-path path))
@@ -1123,17 +1185,20 @@
         (slurp f)
 
         res
-        (patch/resolve-anchor-range content (str from_anchor) (when to_anchor (str to_anchor)))]
+        (patch/resolve-anchor-range-read content
+                                         (str from_anchor)
+                                         (when to_anchor (str to_anchor)))]
 
     (if-let [err (:error res)]
       (throw (ex-info (anchor-read-error-message err)
                       (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
-      (let [{:keys [from-line to-line]} res
+      (let [{:keys [from-line to-line stale?]} res
             n (inc (- (long to-line) (long from-line)))]
 
         (as-> (read-file path from-line n) out
           (assoc out
             :range [from-line to-line]
+            :stale? (boolean stale?)
             :anchors (patch/lines->anchors (:lines out))))))))
 
 (defn- read-file-ranges
@@ -2065,7 +2130,13 @@
 
         glob-matcher
         (fn [pattern]
-          (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" pattern)))
+          ;; ripgrep/gitignore semantics: a leading `**/` matches at ANY depth
+          ;; INCLUDING the root, but Java NIO glob requires `**/` to consume at
+          ;; least one dir (so `**/deps.edn` misses a root-level `deps.edn`).
+          ;; Rewrite the leading `**/` to `{**/,}` so zero leading dirs also match.
+          (let [pattern
+                (if (str/starts-with? pattern "**/") (str "{**/,}" (subs pattern 3)) pattern)]
+            (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" pattern))))
 
         include-matchers
         (mapv glob-matcher include)
@@ -2127,37 +2198,45 @@
                 (and (.isFile f) (include-file? f)) [f]
                 :else []))
 
+        ;; fff-first: on the DEFAULT gitignore-respecting path fff OWNS discovery. It
+        ;; enumerates the correct universe (nested `.gitignore`-aware — NEVER descends
+        ;; node_modules/target/…) and needle-narrows via native grep, ~280× faster than a
+        ;; raw walk. The result is IDENTICAL to the old `walk ∩ fff` (fff already dropped
+        ;; the ignored files the walk kept), just without paying the walk. Skip fff — walk
+        ;; instead — only when the caller opted OUT of gitignore, a tool-only
+        ;; `.ignore`/`.rgignore` is present (its `!` rules re-include files fff would never
+        ;; surface), or the `:search` overlay is active (its gitignore-honoring index would
+        ;; re-drop the re-included files). fff surfaces dotfiles the walk hid by descent, so
+        ;; re-apply the include globs + hidden-below-root guard on the fff path.
+        fff-first?
+        (and is_respect_gitignore
+             (nil? search-overlay)
+             (not (some gitignore/tool-ignore-present? roots)))
+
+        candidates
+        (if fff-first?
+          (->> (rg-fff-candidate-files roots needles)
+               (filter include-file?)
+               (remove (fn [^File f]
+                         (and (not is_hidden) (rg-hidden-below-root? roots f)))))
+          (->> roots
+               (mapcat (fn [root]
+                         (let [ignore-node (when is_respect_gitignore (load-ignore-node root))]
+                           (walk ignore-node root root))))))
+
         files
-        (->> roots
-             (mapcat (fn [root]
-                       (let [ignore-node (when is_respect_gitignore (load-ignore-node root))]
-                         (walk ignore-node root root))))
-             ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths
-             ;; (syscalls). Handing it to `sort-by` directly ran it INSIDE the
-             ;; comparator — O(n·log n) canonicalizations that pinned a full
-             ;; core for minutes on big trees, and with no interrupt checkpoint
-             ;; in the sort the burn OUTLIVED cancellation (orphaned rg workers
-             ;; at 100% CPU each until process exit). Compute the key ONCE per
-             ;; file, polling `check-interrupt!` so Esc/timeout aborts, then
-             ;; sort the cheap precomputed string keys.
+        ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths (syscalls). Handing it
+        ;; to `sort-by` directly ran it INSIDE the comparator — O(n·log n) canonicalizations
+        ;; that pinned a core for minutes on big trees, and with no interrupt checkpoint in
+        ;; the sort the burn OUTLIVED cancellation (orphaned rg workers at 100% CPU until
+        ;; exit). Compute the key ONCE per file, polling `check-interrupt!` so Esc/timeout
+        ;; aborts, then sort the cheap precomputed string keys.
+        (->> candidates
              (mapv (fn [^File f]
                      (check-interrupt!)
                      [(rel-path f) f]))
              (sort-by first)
-             (mapv second)
-             ;; fff's index HONORS .gitignore, so its candidate-narrowing would
-             ;; re-drop the ignored files the walk deliberately kept. Skip fff when
-             ;; the caller opted OUT of gitignore, OR when a tool-only
-             ;; `.ignore`/`.rgignore` is present (its `!` rules re-include files fff
-             ;; would never surface) — scan every walked file the matcher kept.
-             ;; …and skip fff when the `:search` overlay is active, for the same
-             ;; reason: its gitignore-honoring index would re-drop the re-included files.
-             ((if (and is_respect_gitignore
-                       (nil? search-overlay)
-                       (not (some gitignore/tool-ignore-present? roots)))
-                (fn [fs]
-                  (rg-fff-candidate-files roots needles fs))
-                identity)))]
+             (mapv second))]
 
     (cond
       is_files_only (let [out
@@ -3269,28 +3348,32 @@
   [out]
   ;; The internal read pipeline works on keyword-keyed maps (`:lines` tuples);
   ;; this is the single boundary where the string-keyed MODEL payload is built.
-  (letfn [(->win [m]
-            (cond-> {"anchors" (patch/lines->anchor-map (:lines m))}
-              (contains? m :path)
-              (assoc "path" (:path m))
+  (letfn
+    [(->win [m]
+       (cond-> {"anchors" (patch/lines->anchor-map (:lines m))}
+         (contains? m :path)
+         (assoc "path" (:path m))
 
-              (contains? m :next-offset)
-              (assoc "next_offset" (:next-offset m))
+         (contains? m :next-offset)
+         (assoc "next_offset" (:next-offset m))
 
-              (contains? m :eof?)
-              (assoc "eof" (:eof? m))
+         (contains? m :eof?)
+         (assoc "eof" (:eof? m))
 
-              (contains? m :truncated?)
-              (assoc "truncated" (:truncated? m))
+         (contains? m :truncated?)
+         (assoc "truncated" (:truncated? m))
 
-              (contains? m :mtime)
-              (assoc "mtime" (:mtime m))
+         (contains? m :mtime)
+         (assoc "mtime" (:mtime m))
 
-              (contains? m :size)
-              (assoc "size" (:size m))
+         (contains? m :size)
+         (assoc "size" (:size m))
 
-              (contains? m :range)
-              (assoc "range" (:range m))))]
+         (:stale? m)
+         (assoc "anchors_stale" true)
+
+         (contains? m :range)
+         (assoc "range" (:range m))))]
     (cond-> (->win out)
       (seq (:ranges out))
       (assoc "ranges" (mapv ->win (:ranges out))))))

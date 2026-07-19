@@ -1049,7 +1049,7 @@
 
    NORMALLY EMPTY — the row lights up only when there is something to say:
      - C-x prefix armed        → the `which-key` strip (the next keys in the chord)
-     - live turn / cancelling   → the `C-g cancel` abort hint
+     - live turn / cancelling   → the `C-g / Esc cancel` abort hint
      - a transient `:echo` msg  → a one-shot message (the caller clears it)
 
    No idle keybinding nags: discovery of every C-x verb lives in the help
@@ -1057,7 +1057,7 @@
   [{:keys [loading? cancelling? input echo]}]
   (cond (:prefix input) (which-key-segments)
         cancelling? [(hint-segment "Cancelling... please wait" 1)]
-        loading? [(hint-segment (str (keymap/chord keymap/abort-key) " cancel") 1)]
+        loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
         (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
         :else []))
 (defn draw-echo-area!

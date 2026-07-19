@@ -1284,6 +1284,23 @@
              (catch Throwable _ nil)))
       (reset! image-paint-state signature))))
 
+(defn- drop-terminal-images!
+  "Delete every image on the terminal's graphics layer and forget the paint
+   signature so the next full frame re-places them.
+
+   Kitty inline graphics ride ABOVE the text cells, so an image painted for
+   the transcript would otherwise BLEED OVER any modal dialog / overlay drawn
+   on top of it. Dropping them first — and clearing `image-paint-state` so the
+   post-dialog frame repaints — keeps the dialog the top surface. iTerm2 images
+   are cell-bound (repainting the cells erases them), so only Kitty needs the
+   explicit delete; the `image-paint-state` reset still runs for both."
+  []
+  (when (and (= (timg/images-protocol) :kitty) (seq @image-paint-state))
+    (let [^java.io.OutputStream out @vis/tty-out]
+      (try (when out (.write out (.getBytes "\u001b_Ga=d,d=A,q=2\u001b\\" "UTF-8")) (.flush out))
+           (catch Throwable _ nil))))
+  (reset! image-paint-state nil))
+
 (defn- bubble-copy-hit
   [point regions]
   (let [col
@@ -1340,6 +1357,11 @@
    repaint over the dialog area."
   [f]
   (.lock draw-lock)
+  ;; Kitty inline images ride ABOVE text cells, so any transcript image would
+  ;; bleed over the modal we're about to open. Drop them (and clear the paint
+  ;; signature) so the dialog is the top surface; the post-dialog frame
+  ;; re-places them once the lock is released and the render thread wakes.
+  (drop-terminal-images!)
   (try (state/dispatch [:set-dialog-open true])
        (try (f)
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
@@ -1831,8 +1853,12 @@
         ;; `draw-messages-area!` recorded the EXACT painted position of each
         ;; image row into `image-sink`; only those whose full box fits the
         ;; viewport are placed.
-        (paint-terminal-images!
-          (fitting-image-placements @image-sink messages-top messages-bottom)))
+        (if (overlay-locked? db)
+          ;; F1 help / F2 context modal cards own the screen — drop the
+          ;; graphics-layer images so they don't paint over the overlay.
+          (drop-terminal-images!)
+          (paint-terminal-images!
+            (fitting-image-placements @image-sink messages-top messages-bottom))))
       {:cols cols
        :rows rows
        :total-h total-h

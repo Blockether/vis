@@ -166,6 +166,56 @@
           (expect (nil? (rm/last-failure "sess-fail-2" dir)))
           (expect (= :down (rm/health "sess-fail-2" dir)))))))
 
+(defdescribe
+  concurrent-start-no-duplicate-test
+  (it
+    "serializes racing start! calls for one [session dir]: spawns ONE REPL, the rest see already-running (no orphaned duplicate JVM)"
+    (let [dir
+          (tmp-dir)
+
+          sid
+          "sess-race"
+
+          n
+          8
+
+          results
+          (atom [])]
+
+      (with-redefs [rm/launcher-for
+                    (fn [_ _ _]
+                      {:tool :fake :cmd ["sleep" "30"]})
+
+                    ;; the sleep never binds an nREPL; treat the boot as up so
+                    ;; start! KEEPS the process (we exercise the spawn guard,
+                    ;; not the port probe). The small free-port! delay widens
+                    ;; the check->swap window, so a MISSING lock would let
+                    ;; several threads through and orphan duplicate JVMs.
+                    rm/wait-until-up
+                    (fn [& _]
+                      :up)
+
+                    rm/free-port!
+                    (fn []
+                      (Thread/sleep 25)
+                      0)]
+
+        (try (let [threads (mapv (fn [_]
+                                   (Thread. (fn []
+                                              (swap! results conj
+                                                (get (rm/start! sid dir) "result")))))
+                                 (range n))]
+               (run! #(.start ^Thread %) threads)
+               (run! #(.join ^Thread %) threads))
+             (let [freqs (frequencies @results)]
+               ;; exactly one thread spawned; the other n-1 re-checked UNDER the
+               ;; lock and got already-running -- never a second process.
+               (expect (= 1 (get freqs "started")))
+               (expect (= (dec n) (get freqs "already-running")))
+               ;; and the session owns exactly ONE live REPL.
+               (expect (= 1 (count (rm/session-repls sid)))))
+             (finally (rm/stop! sid dir)))))))
+
 (defdescribe id-of-test
              (it "derives a stable nrepl:<dir> id" (expect (= "nrepl:/x/y" (rm/id-of "/x/y")))))
 
@@ -210,15 +260,16 @@
                                         {:id "nrepl:/b" :dir "/b" :port 2}])]
         (expect (= {:id "nrepl:/a" :dir "/a" :port 1} (rm/resolve-target! "sess" nil "/other"))))))
 
-(defdescribe
-  repl-start-tool-gating-test
-  (it "\"status\" always succeeds (start/stop are never flag-gated)"
-      (expect (:success? (core/repl-start-fn {:workspace/root (tmp-dir) :session-id "s"} "status"))))
-  (it "rejects an unknown op"
-      (let [t (try (core/repl-start-fn {:workspace/root (tmp-dir) :session-id "s"} "frobnicate")
-                   :no-throw
-                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
-        (expect (= :clj/bad-args t)))))
+(defdescribe repl-start-tool-gating-test
+             (it "\"status\" always succeeds (start/stop are never flag-gated)"
+                 (expect (:success? (core/repl-start-fn {:workspace/root (tmp-dir) :session-id "s"}
+                                                        "status"))))
+             (it "rejects an unknown op"
+                 (let [t (try (core/repl-start-fn {:workspace/root (tmp-dir) :session-id "s"}
+                                                  "frobnicate")
+                              :no-throw
+                              (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+                   (expect (= :clj/bad-args t)))))
 
 (defdescribe resolve-repl-dir-test
              ;; resolve-repl-dir returns canonical paths (stable process-map keys), so
@@ -262,24 +313,46 @@
                      ;; the same home target resolves to ONE id regardless of spelling
                      (expect (= (resolve root "~") (resolve root home)))))))
 
+(defn- fake-proc
+  "A fake `Process` with fixed liveness — no real child process, no OS timing:
+   `wait-until-up`'s process checks are exercised deterministically."
+  ^Process [alive?]
+  (proxy [Process] [] (isAlive [] (boolean alive?))))
+
 (defdescribe
   wait-until-up-test
+  ;; Hermetic: `probe!` is stubbed (never touches a real socket) and the poll
+  ;; interval shrunk, so every case is deterministic and runs in milliseconds.
+  (it "returns :up as soon as the probe answers"
+      (with-redefs [nrepl-client/probe! (fn [_]
+                                          {:status :up})]
+        (expect (= :up (#'rm/wait-until-up nil 59870 60000)))))
   (it "returns :died immediately when the process exits before binding — never burns the deadline"
-      (let [p (.start (ProcessBuilder. ^"[Ljava.lang.String;"
-                                       (into-array String ["sh" "-c" "exit 3"])))]
-        (.waitFor p)
+      (with-redefs [nrepl-client/probe! (fn [_]
+                                          {:status :down})]
         (let [t0 (System/currentTimeMillis)
-              st (#'rm/wait-until-up p 59871 60000)]
+              st (#'rm/wait-until-up (fake-proc false) 59871 60000)]
 
           (expect (= :died st))
-          (expect (< (- (System/currentTimeMillis) t0) 5000)))))
+          (expect (< (- (System/currentTimeMillis) t0) 1000)))))
   (it "returns :starting when the deadline passes with the process still alive"
-      (let [p (.start (ProcessBuilder. ^"[Ljava.lang.String;"
-                                       (into-array String ["sh" "-c" "sleep 30"])))]
-        (try (expect (= :starting (#'rm/wait-until-up p 59872 600)))
-             (finally (.destroyForcibly p)))))
+      (with-redefs [nrepl-client/probe!
+                    (fn [_]
+                      {:status :down})
+
+                    rm/wait-poll-ms
+                    1]
+
+        (expect (= :starting (#'rm/wait-until-up (fake-proc true) 59872 30)))))
   (it "tolerates a nil process (pure port probe)"
-      (expect (= :starting (#'rm/wait-until-up nil 59873 300)))))
+      (with-redefs [nrepl-client/probe!
+                    (fn [_]
+                      {:status :down})
+
+                    rm/wait-poll-ms
+                    1]
+
+        (expect (= :starting (#'rm/wait-until-up nil 59873 30))))))
 
 (defn- sleep-proc
   "A real, long-lived child process so `proc-alive?` is genuinely true (no
@@ -328,7 +401,10 @@
       (let [dir (tmp-dir)]
         (with-redefs [rm/launcher-for (fn [_ _ _]
                                         {:tool :fake :cmd ["sh" "-c" "sleep 30"]})
-                      rm/start-deadline-ms 600]
+                      nrepl-client/probe! (fn [_]
+                                            {:status :down})
+                      rm/start-deadline-ms 150
+                      rm/wait-poll-ms 5]
 
           (let [r (rm/start! "sess-slow" dir)]
             (expect (= "starting" (get r "result")))
@@ -491,3 +567,106 @@
                      (core/clj-eval-fn {:workspace/root root :session-id "s"}
                                        {"code" "(+ 1 1)" "id" "nrepl:/stale" "dir" "sub"})
                      (expect (= [nil (.getCanonicalPath (io/file root "sub"))] @captured))))))
+
+(defdescribe
+  connect-external-test
+  (it "registers a reachable external nREPL, lists it, and stop! only detaches"
+      (let [sid
+            "s-ext-attach"
+
+            dir
+            (tmp-dir)]
+
+        (with-redefs [nrepl-client/probe! (fn [_]
+                                            {:status :up})]
+          (let [r (rm/connect! sid dir {:host " localhost " :port 59999})]
+            (expect (= "connected" (get r "result")))
+            (expect (true? (get r "external")))
+            (expect (= "localhost" (get r "host"))))
+          (let [repls (rm/session-repls sid)]
+            (expect (= 1 (count repls)))
+            (expect (true? (:external? (first repls))))
+            (expect (= 59999 (:port (first repls)))))
+          (expect (= "already-running" (get (rm/connect! sid dir {:port 59999}) "result")))
+          (expect (= "detached" (get (rm/stop! sid dir) "result")))
+          (expect (empty? (rm/session-repls sid))))))
+  (it "refuses to register an unreachable address"
+      (let [sid
+            "s-ext-refuse"
+
+            dir
+            (tmp-dir)]
+
+        (with-redefs [nrepl-client/probe! (fn [_]
+                                            {:status :down})]
+          (expect (= "unreachable" (get (rm/connect! sid dir {:port 59998}) "result")))
+          (expect (empty? (rm/session-repls sid))))))
+  (it "ensure-repl-for-dir! NEVER replaces an external attachment with a spawn"
+      (let [sid
+            "s-ext-ensure"
+
+            dir
+            (tmp-dir)]
+
+        (with-redefs [nrepl-client/probe! (fn [_]
+                                            {:status :up})]
+          (rm/connect! sid dir {:port 59997})
+          (let [r (rm/ensure-repl-for-dir! sid dir)]
+            (expect (= 59997 (:port r)))
+            (expect (true? (:external? r)))))
+        (with-redefs [nrepl-client/probe!
+                      (fn [_]
+                        {:status :down})
+
+                      rm/start!
+                      (fn [& _]
+                        (throw (ex-info "must not spawn over an external attachment" {})))]
+
+          (expect (= "external-unreachable" (get (rm/ensure-repl-for-dir! sid dir) "result"))))
+        (rm/stop! sid dir))))
+
+(defdescribe crash-loop-guard-test
+             (it "suspends autostart after repeated crashes and an explicit stop resets it"
+                 (let [sid
+                       "s-crash-loop"
+
+                       dir
+                       (tmp-dir)
+
+                       spawned
+                       (atom 0)]
+
+                   (dotimes [_ 5]
+                     (#'rm/note-crash! [sid dir]))
+                   (expect (true? (rm/crash-looping? sid dir)))
+                   (with-redefs [rm/start! (fn [& _]
+                                             (swap! spawned inc)
+                                             {"result" "started"})]
+                     (let [r (rm/ensure-repl-for-dir! sid dir)]
+                       (expect (= "crash-looping" (get r "result")))
+                       (expect (zero? @spawned))))
+                   ;; explicit stop = a deliberate human reset of the guard
+                   (rm/stop! sid dir)
+                   (expect (false? (rm/crash-looping? sid dir)))
+                   (with-redefs [rm/start! (fn [& _]
+                                             (swap! spawned inc)
+                                             {"result" "started"})]
+                     (expect (= "started" (get (rm/ensure-repl-for-dir! sid dir) "result")))
+                     (expect (= 1 @spawned))))))
+
+(defdescribe eval-host-threading-test
+             (it "clj-eval-fn dials the RESOLVED target's host (external, non-localhost)"
+                 (let [captured (atom nil)]
+                   (with-redefs [rm/resolve-target! (fn [_sid _rid _default]
+                                                      {:id "nrepl:/ext"
+                                                       :dir "/ext"
+                                                       :port 4001
+                                                       :host "devbox.internal"
+                                                       :external? true})
+                                 nrepl-client/eval! (fn [{:keys [host port]}]
+                                                      (reset! captured [host port])
+                                                      {"value" "2"})]
+
+                     (core/clj-eval-fn {:workspace/root (tmp-dir) :session-id "s"}
+                                       {"code" "(+ 1 1)"})
+                     (expect (= ["devbox.internal" 4001] @captured))))))

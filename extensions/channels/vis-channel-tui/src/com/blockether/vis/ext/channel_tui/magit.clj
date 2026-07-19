@@ -889,9 +889,9 @@
    `fallback-root`.
 
    DRAFT semantics: each entry's `:root` is the path the session actually
-   EDITS — for a draft that's the CLONE (primary `:root`, extras' `:clone`),
-   never the trunk — with `:trunk` carrying the real dir it was forked from
-   and `:draft?` set. Deduped by `:root`, order preserved.
+   EDITS — for a draft that's the CLONE (primary `:root`, extras' `:draft-dir`
+   when `:isolated`), never the trunk — with `:trunk` carrying the real dir
+   (the extra's `:dir`) and `:draft?` set. Deduped by `:root`, order preserved.
 
    Entry: `{:root abs-path :trunk abs-path :label basename :draft? bool}`."
   [ws fallback-root]
@@ -914,18 +914,20 @@
         extras
         (->> (or (wget ws :filesystem-roots) [])
              (keep (fn [e]
-                     (let [trunk
-                           (wget e :trunk)
+                     (let [dir
+                           (wget e :dir)
 
-                           clone
-                           (or (wget e :clone) trunk)]
+                           isolated?
+                           (boolean (wget e :isolated))
 
-                       (when clone
-                         {:root (str clone)
-                          :trunk (str (or trunk clone))
-                          :label (root-label (or trunk clone))
-                          :draft? (boolean (or (wget e :fork-ms)
-                                               (and trunk (not= (str clone) (str trunk)))))})))))]
+                           working
+                           (or (when isolated? (wget e :draft-dir)) dir)]
+
+                       (when dir
+                         {:root (str working)
+                          :trunk (str dir)
+                          :label (root-label dir)
+                          :draft? isolated?})))))]
 
     (->> (into (if primary [primary] []) extras)
          (reduce (fn [{:keys [seen out] :as acc} {:keys [root] :as entry}]
@@ -969,6 +971,18 @@
 
 (defn load-repos
   "Attach a fresh `:model` snapshot to every repo entry — one `status-model`
-   read per root. The refresh path of a multi-root buffer."
+   read per root — then DROP every root that is not a git repository (`:model`
+   nil). A non-repo root has nothing to show, so it never earns a header in the
+   multi-root buffer. The refresh path of a multi-root buffer.
+
+   Fallback: when NOT ONE root is a git repository the first entry is kept (with
+   its nil `:model`) so a repo-less session still renders the single-root
+   `Not a git repository` empty state instead of a blank buffer."
   [repo-entries]
-  (mapv #(assoc % :model (status-model (:root %))) repo-entries))
+  (let [with-models
+        (mapv #(assoc % :model (status-model (:root %))) repo-entries)
+
+        repos
+        (filterv :model with-models)]
+
+    (if (seq repos) repos (vec (take 1 with-models)))))

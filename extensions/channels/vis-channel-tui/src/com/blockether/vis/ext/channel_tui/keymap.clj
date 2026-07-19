@@ -157,8 +157,21 @@
 (def ^:const quit-key "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
 (def ^:const abort-key
   "C-g — Emacs `keyboard-quit` (abort): cancel a running turn / close a
-   dialog / clear the draft. Mirrors Escape."
+   dialog / clear the draft. The ctrl-char the dispatcher matches; Esc is its
+   mirror. See `abort-keys` for the full advertised set."
   \g)
+(def abort-keys
+  "The COMPLETE set of keys that abort (cancel a running turn / close a dialog /
+   clear the draft): C-g (Emacs `keyboard-quit`) and its Esc mirror. ONE source
+   of truth — the dispatcher recognizes all of them and the footer/echo hint
+   advertises all of them, so an abort key never fires without being shown, and
+   the two never drift apart. Ordered for a stable hint (`abort-hint`)."
+  [(chord abort-key) "Esc"])
+(defn abort-hint
+  "The advertised abort chord for a footer/echo hint — every `abort-keys` label
+   joined, e.g. `C-g / Esc`."
+  []
+  (str/join " / " abort-keys))
 (def ^:const recenter-key
   "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint."
   \l)

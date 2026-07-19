@@ -126,7 +126,7 @@
   ;; shape (keyword keys/values) — that projection is what crosses to the model,
   ;; and its strings-only migration lives in resources.clj (flagged hand-off).
   (when (and session-id
-             (#{"started" "starting" "already-running"} (get result "result"))
+             (#{"started" "starting" "already-running" "connected"} (get result "result"))
              (or (get result "pid") (get result "port")))
     (let [;; Prefer the aliases start! actually booted with (STRING names) so the
           ;; label/detail reflect the real [:dev :test] classpath even when the
@@ -141,7 +141,13 @@
           (get result "log")
 
           status
-          (or (get result "status") :up)]
+          (or (get result "status") :up)
+
+          external?
+          (boolean (get result "external"))
+
+          ext-host
+          (get result "host")]
 
       (vis/register-resource!
         session-id
@@ -149,6 +155,7 @@
          :kind :nrepl
          :label (str "nREPL "
                      (.getName (io/file dir))
+                     (when external? " (external)")
                      (when (seq aliases) (apply str (map #(str " :" %) aliases))))
          :status status
          ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
@@ -157,6 +164,11 @@
          :detail (cond-> {"dir" dir}
                    (get result "port")
                    (assoc "port" (get result "port"))
+
+                   external?
+                   (assoc "host"
+                     (or ext-host "localhost") "external"
+                     true)
 
                    (seq aliases)
                    (assoc "aliases" (vec aliases))
@@ -168,11 +180,22 @@
          :language :clojure}
         (cond-> {:stop-fn (fn []
                             (repl-manager/stop! session-id dir))
-                 :restart-fn (fn []
-                               (repl-manager/stop! session-id dir)
-                               (let [r (repl-manager/start! session-id dir {:aliases aliases})]
-                                 (register-repl-resource! session-id dir aliases r)
-                                 r))
+                 :restart-fn (if external?
+                               ;; External: re-CONNECT — never spawn a managed JVM
+                               ;; over the user's REPL (stop! only detaches).
+                               (fn []
+                                 (repl-manager/stop! session-id dir)
+                                 (let [r (repl-manager/connect! session-id
+                                                                dir
+                                                                {:host ext-host
+                                                                 :port (get result "port")})]
+                                   (register-repl-resource! session-id dir aliases r)
+                                   r))
+                               (fn []
+                                 (repl-manager/stop! session-id dir)
+                                 (let [r (repl-manager/start! session-id dir {:aliases aliases})]
+                                   (register-repl-resource! session-id dir aliases r)
+                                   r)))
                  ;; Keep a FAILED REPL visible (alive while a failure is on
                  ;; record) instead of letting the registry prune it the moment
                  ;; the pid dies — the failure + its log tail stay inspectable
@@ -206,7 +229,9 @@
      \"status\"  — managed-process view for this session (always allowed)
      \"start\"   — start a project nREPL subprocess (always allowed)
      \"restart\" — stop then start (always allowed)
-     \"stop\"    — stop this session's Vis-managed nREPL (always allowed)
+     \"stop\"    — stop a Vis-managed nREPL / DETACH an external one (always allowed)
+     \"connect\" — attach to an EXTERNAL user-started nREPL: opts {\"port\": N,
+                 \"host\"?: S (default localhost)}; vis never spawns/kills it
 
    \"dir\" runs the REPL in a subdir (e.g. an extension) instead of the workspace
    root — that's how MULTIPLE REPLs coexist, each addressed by its id. \"aliases\"
@@ -241,6 +266,27 @@
        "status"
        (extension/success {:result (repl-manager/status sid dir)})
 
+       "connect"
+       (let [port
+             (get opts "port")
+
+             host
+             (get opts "host")]
+
+         (when-not port
+           (throw (ex-info (str
+                             "repl_start \"connect\" needs {\"port\": <the external nREPL's port>}"
+                             " (optional \"host\", \"dir\") — e.g."
+                             " repl_start(\"clojure\", \"connect\", {\"port\": 7888})")
+                           {:type :clj/bad-args :got opts})))
+         (let [r (repl-manager/connect!
+                   sid
+                   dir
+                   {:host host
+                    :port (if (string? port) (Long/parseLong (str/trim port)) (long port))})]
+           (register-repl-resource! sid dir aliases r)
+           (extension/success {:result r})))
+
        "stop"
        (let [r (repl-manager/stop! sid dir)]
          ;; Drop the session's resource mirror (best-effort; the thunk
@@ -267,7 +313,8 @@
            {:type :clj/bad-args
             :got op
             :examples
-            ["repl_start(\"clojure\")" "repl_start(\"clojure\", \"status\")" "repl_start(\"clojure\", \"start\")"
+            ["repl_start(\"clojure\")" "repl_start(\"clojure\", \"status\")"
+             "repl_start(\"clojure\", \"start\")"
              "repl_start(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
              "repl_start(\"clojure\", \"stop\")" "repl_start(\"clojure\", \"restart\")"]}))))))
 
@@ -411,27 +458,27 @@
          (resolve-repl-dir root (get m "dir"))
 
          run
-         (fn [p repl-label]
+         (fn [h p repl-label]
            ;; Carry the evaluated FORM back on the result (string key, crosses the
            ;; strings-only boundary) so the repl_eval op-card can show it in the
            ;; collapsed chip / expanded FORM section. `repl` names WHICH nREPL
            ;; actually ran it, so a multi-REPL session reports the target used.
-           (-> (nrepl-client/eval! {:host host
-                                    :port p
-                                    :code code
-                                    :ns ns
-                                    :pretty? true
-                                    :timeout-ms (or timeout_ms 30000)})
-               strip-blank-repl-fields
-               (assoc "code" code
-                      "repl" repl-label)))]
+           (->
+             (nrepl-client/eval!
+               {:host h :port p :code code :ns ns :pretty? true :timeout-ms (or timeout_ms 30000)})
+             strip-blank-repl-fields
+             (assoc "code" code
+                    "repl" repl-label)))]
 
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked.
-       (extension/success {:result (run port (str host ":" port))})
+       (extension/success {:result (run host port (str host ":" port))})
        ;; Resolve a RUNNING REPL. A missing REPL throws :clj/no-repl.
        (let [target (repl-manager/resolve-target! sid rid default-dir)]
-         (extension/success {:result (run (:port target) (:id target))}))))))
+         ;; An EXTERNAL attachment may live on a non-localhost host — dial ITS
+         ;; host, not the caller's default.
+         (extension/success {:result
+                             (run (or (:host target) host) (:port target) (:id target))}))))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
