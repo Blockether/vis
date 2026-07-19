@@ -144,19 +144,18 @@
     "GET startables returns wire descriptors a remote UI can render, options proposed daemon-side"
     (with-startables! fake-startables
                       (fn []
-                        (let
-                          [resp
-                           ((rv 'startables-handler) {:path-params {:sid (str (random-uuid))}})
+                        (let [resp
+                              ((rv 'startables-handler) {:path-params {:sid (str (random-uuid))}})
 
-                           ;; the wire IS the canonical shape: snake_case STRING keys
-                           startables
-                           (get (wire/parse-json (:body resp)) "startables")
+                              ;; the wire IS the canonical shape: snake_case STRING keys
+                              startables
+                              (get (wire/parse-json (:body resp)) "startables")
 
-                           nrepl
-                           (first startables)
+                              nrepl
+                              (first startables)
 
-                           mcp
-                           (second startables)]
+                              mcp
+                              (second startables)]
 
                           (is (= 200 (:status resp)))
                           ;; nREPL: dir + options proposed from env, hyphenated key survives the wire
@@ -175,34 +174,33 @@
 
 (deftest resource-start-handler-runs-start-fn-daemon-side
   (testing "POST start resolves the startable and runs its :start-fn in the daemon"
-    (let
-      [started
-       (atom [])
+    (let [started
+          (atom [])
 
-       starts
-       [{:kind :nrepl
-         :label "nREPL"
-         :dir? true
-         :start-fn (fn [env selected]
-                     (swap! started conj [:nrepl (:startable/dir env) (vec selected)]))}
-        {:kind :mcp-stdio
-         :label "Add MCP (stdio)"
-         :start-fn (fn [_env fields]
-                     (swap! started conj [:mcp fields]))}
-        {:kind :boom
-         :label "Boom"
-         :start-fn (fn [_ _]
-                     (throw (ex-info "nope" {})))}]
+          starts
+          [{:kind :nrepl
+            :label "nREPL"
+            :dir? true
+            :start-fn (fn [env selected]
+                        (swap! started conj [:nrepl (:startable/dir env) (vec selected)]))}
+           {:kind :mcp-stdio
+            :label "Add MCP (stdio)"
+            :start-fn (fn [_env fields]
+                        (swap! started conj [:mcp fields]))}
+           {:kind :boom
+            :label "Boom"
+            :start-fn (fn [_ _]
+                        (throw (ex-info "nope" {})))}]
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       call
-       (fn [m]
-         (with-startables! starts
-                           (fn []
-                             ((rv 'resource-start-handler)
-                               {:path-params {:sid sid} :body (body-stream m)}))))]
+          call
+          (fn [m]
+            (with-startables! starts
+                              (fn []
+                                ((rv 'resource-start-handler)
+                                  {:path-params {:sid sid} :body (body-stream m)}))))]
 
       ;; The daemon runs :start-fn OFF the request thread (a REPL/nREPL boot is
       ;; slow and would block the POST past the client timeout), so the handler
@@ -229,20 +227,19 @@
     (with-server-state!
       {:require-token? true}
       (fn []
-        (let
-          [wrap-auth
-           (rv 'wrap-auth)
+        (let [wrap-auth
+              (rv 'wrap-auth)
 
-           handler
-           (fn [_req]
-             {:status 200 :body "ok"})
+              handler
+              (fn [_req]
+                {:status 200 :body "ok"})
 
-           app
-           (wrap-auth handler "sekret" [])
+              app
+              (wrap-auth handler "sekret" [])
 
-           req
-           (fn [headers]
-             {:uri "/v1/sessions" :headers headers})]
+              req
+              (fn [headers]
+                {:uri "/v1/sessions" :headers headers})]
 
           (testing "no credential → 401" (is (= 401 (:status (app (req {}))))))
           (testing "Authorization: Bearer with the right token → 200"
@@ -257,32 +254,30 @@
   (testing "with auth off (loopback default) every request passes without a token"
     (with-server-state! {:require-token? false}
                         (fn []
-                          (let
-                            [wrap-auth
-                             (rv 'wrap-auth)
+                          (let [wrap-auth
+                                (rv 'wrap-auth)
 
-                             app
-                             (wrap-auth (fn [_req]
-                                          {:status 200})
-                                        "sekret"
-                                        [])]
+                                app
+                                (wrap-auth (fn [_req]
+                                             {:status 200})
+                                           "sekret"
+                                           [])]
 
                             (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))
 
 (deftest parse-multi-sids-parses-and-filters
   (testing "sid[:cursor] comma list — cursor defaults to 0, unknown/non-UUID sids dropped"
-    (let
-      [sid-a
-       (java.util.UUID/randomUUID)
+    (let [sid-a
+          (java.util.UUID/randomUUID)
 
-       sid-b
-       (java.util.UUID/randomUUID)
+          sid-b
+          (java.util.UUID/randomUUID)
 
-       a
-       (str sid-a)
+          a
+          (str sid-a)
 
-       b
-       (str sid-b)]
+          b
+          (str sid-b)]
 
       (with-redefs-fn {#'state/soul (fn [sid]
                                       (contains? #{sid-a sid-b} sid))}
@@ -321,27 +316,26 @@
         (with-server-state!
           {}
           (fn []
-            (let
-              [multi-sse-body
-               (rv 'multi-sse-body)
+            (let [multi-sse-body
+                  (rv 'multi-sse-body)
 
-               write-body
-               (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+                  write-body
+                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
 
-               sid-a
-               (str (java.util.UUID/randomUUID))
+                  sid-a
+                  (str (java.util.UUID/randomUUID))
 
-               sid-b
-               (str (java.util.UUID/randomUUID))
+                  sid-b
+                  (str (java.util.UUID/randomUUID))
 
-               baos
-               (java.io.ByteArrayOutputStream.)
+                  baos
+                  (java.io.ByteArrayOutputStream.)
 
-               body
-               (multi-sse-body [[sid-a 0] [sid-b 0]] false)
+                  body
+                  (multi-sse-body [[sid-a 0] [sid-b 0]] false)
 
-               fut
-               (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+                  fut
+                  (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
               (Thread/sleep 150)
               (state/append-event! sid-a "test.alpha" {:n 1})
@@ -401,15 +395,14 @@
 
 (deftest resource-handlers-read-rid-from-query-param
   (testing "stop/restart/logs handlers forward the rid QUERY param to the resources ns"
-    (let
-      [seen
-       (atom [])
+    (let [seen
+          (atom [])
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       req
-       {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
+          req
+          {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
 
       (with-redefs-fn {#'resources/stop! (fn [_ rid]
                                            (swap! seen conj [:stop rid])
@@ -421,15 +414,14 @@
                                           (swap! seen conj [:logs rid])
                                           ["line-1"])}
         (fn []
-          (let
-            [stop
-             ((rv 'resource-stop-handler) req)
+          (let [stop
+                ((rv 'resource-stop-handler) req)
 
-             restart
-             ((rv 'resource-restart-handler) req)
+                restart
+                ((rv 'resource-restart-handler) req)
 
-             logs
-             ((rv 'resource-logs-handler) req)]
+                logs
+                ((rv 'resource-logs-handler) req)]
 
             (testing "each handler answers 200 and threads the exact slash-embedding rid through"
               (is (= 200 (:status stop)))
@@ -441,12 +433,11 @@
 
 (deftest resource-handlers-404-on-unknown-session
   (testing "a non-uuid sid is rejected before any resources call — 404, resources ns untouched"
-    (let
-      [touched
-       (atom false)
+    (let [touched
+          (atom false)
 
-       req
-       {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
+          req
+          {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
 
       (with-redefs-fn {#'resources/stop! (fn [& _]
                                            (reset! touched true)
@@ -462,95 +453,34 @@
 (deftest resource-rid-survives-router-as-query-param
   (testing
     "the client's encoded url routes to the static handler and decodes rid back verbatim (no 400)"
-    (let
-      [seen
-       (atom nil)
+    (let [seen
+          (atom nil)
 
-       echo
-       (fn [request]
-         (reset! seen {:sid (get-in request [:path-params :sid])
-                       :rid (get-in request [:query-params "rid"])})
-         {:status 200 :body "ok"})
+          echo
+          (fn [request]
+            (reset! seen {:sid (get-in request [:path-params :sid])
+                          :rid (get-in request [:query-params "rid"])})
+            {:status 200 :body "ok"})
 
-       app
-       (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
-                                        ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
-           ring-params/wrap-params)
+          app
+          (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
+                                           ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
+              ring-params/wrap-params)
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       ;; exactly the shape the client emits: rid percent-encoded into the query
-       enc
-       (fn [s]
-         (java.net.URLEncoder/encode ^String s "UTF-8"))
+          ;; exactly the shape the client emits: rid percent-encoded into the query
+          enc
+          (fn [s]
+            (java.net.URLEncoder/encode ^String s "UTF-8"))
 
-       resp
-       (app {:request-method :get
-             :uri (str "/v1/sessions/" sid "/resources/logs")
-             :query-string (str "rid=" (enc nrepl-rid))})]
+          resp
+          (app {:request-method :get
+                :uri (str "/v1/sessions/" sid "/resources/logs")
+                :query-string (str "rid=" (enc nrepl-rid))})]
 
       (testing "static logs route matches (a path-segment %2F would 404/400 instead)"
         (is (= 200 (:status resp))))
       (testing "the handler sees the sid and the FULL slash-embedding rid, decoded"
         (is (= {:sid sid :rid nrepl-rid} @seen))))))
-
-(defn- ->stream
-  ^java.io.InputStream [^String s]
-  (java.io.ByteArrayInputStream. (.getBytes s java.nio.charset.StandardCharsets/UTF_8)))
-
-(deftest body-json-bounds-and-parses
-  (let
-    [body-json
-     (rv 'body-json)
-
-     max-bytes
-     @(rv 'MAX_BODY_BYTES)
-
-     req
-     (fn [body headers]
-       {:body body :headers headers})
-
-     trip
-     (fn [f]
-       (try (f) :no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
-
-    (testing "a well-formed body parses to the canonical snake_case wire shape"
-      (is (= {"root" "/x" "a" 1} (body-json (req (->stream "{\"a\":1,\"root\":\"/x\"}") {})))))
-    (testing "nil / empty / blank / malformed body all resolve to nil (-> caller's 400)"
-      (is (nil? (body-json (req nil {}))))
-      (is (nil? (body-json (req (->stream "") {}))))
-      (is (nil? (body-json (req (->stream "   ") {}))))
-      (is (nil? (body-json (req (->stream "{not json") {})))))
-    (testing "UTF-8 multibyte survives the streaming decode"
-      (is (= {"k" "caf\u00e9"} (body-json (req (->stream "{\"k\":\"caf\u00e9\"}") {})))))
-    (testing "a declared-oversize Content-Length is rejected before a byte is read"
-      (is (= :body-too-large
-             (trip #(body-json (req (->stream "{}") {"content-length" (str (inc max-bytes))}))))))
-    (testing "an actually-oversize body with no Content-Length trips mid-stream"
-      (let [big (apply str "{\"pad\":\"" (repeat (+ max-bytes 100) \x))]
-        (is (= :body-too-large (trip #(body-json (req (->stream big) {})))))))))
-
-(deftest wrap-errors-maps-body-too-large-to-413
-  (let
-    [wrap-errors
-     (rv 'wrap-errors)
-
-     h413
-     (wrap-errors (fn [_]
-                    (throw (ex-info "too big" {:type :body-too-large :limit 4194304}))))
-
-     h500
-     (wrap-errors (fn [_]
-                    (throw (ex-info "boom" {:type :other}))))
-
-     h200
-     (wrap-errors (fn [_]
-                    {:status 200}))]
-
-    (testing "a :body-too-large trip becomes a 413 payload-too-large response"
-      (is (= 413 (:status (h413 {:uri "/v1/projects"})))))
-    (testing "any other error still becomes a generic 500"
-      (is (= 500 (:status (h500 {:uri "/x"})))))
-    (testing "a healthy handler passes straight through"
-      (is (= 200 (:status (h200 {:uri "/x"})))))))

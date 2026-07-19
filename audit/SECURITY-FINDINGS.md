@@ -40,7 +40,7 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 | 3 | **Provider API keys persisted world-readable.** `save-config!` did `.mkdirs` + `spit` on `~/.vis/config.edn` with no permission tightening; the file holds `:api-key` in plaintext at the process umask (typically `644`). Contrast the gateway token, deliberately `chmod rw-------`. On a shared host any local user could read the LLM provider keys. | `src/com/blockether/vis/internal/config.clj` (`save-config!`) | **fixed** |
 | 4 | **Non-constant-time token comparison.** The bearer token was compared with `=`, a timing side-channel once auth is enabled (non-loopback). | `gateway/server.clj` (`wrap-auth`); `channel_web/core.clj` (`ui-authed?` / `index-handler` / `auth-handler`) | **fixed** |
 | 5 | **`vis_token` cookie has no `Secure` flag.** Set HttpOnly + SameSite=Lax + path=/ but not `:secure`. Behind a TLS-terminating tunnel (Cloudflare — explicitly targeted) any plain-HTTP hop leaks the token. | `channel_web/core.clj` (cookie drop sites) | **fixed** |
-| 6 | **Unbounded request-body slurp.** `body-json` did `(slurp (:body request))` with no size cap on any JSON endpoint → heap-exhaustion DoS from a large POST. | `gateway/server.clj` (`body-json`) | **fixed** |
+| 6 | **Unbounded request-body slurp.** `body-json` does `(slurp (:body request))` with no size cap on any JSON endpoint → heap-exhaustion DoS from a large POST. | `gateway/server.clj:83` | **open** (fix: cap Content-Length / bounded read) |
 | 11 | **UI spoofing via allowed HTML in re-rendered markdown.** The client re-render sanitised with `DOMPurify.sanitize(…, {USE_PROFILES:{html:true}})`, whose default allow-list keeps `class`/`style`/`id`. That is not script-XSS (so #1 didn't catch it), but it let attacker-influenceable markdown (user message, tool-result body, model output) inject raw `<div>`/`<span>` reusing the app's OWN chrome classes + tool color-role vars to forge an authentic-looking system badge, e.g. `<div class="block-result-label" style="color:var(--tool-shell)">SHELL BACKGROUND … running (pid …)</div>` — a phishing / trust-forgery surface. | `resources/vis-channel-web/public/ui.js` (renderProse) | **fixed** |
 
 ### LOW / INFO (mostly documented design choices)
@@ -103,12 +103,3 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
   client. ASCII control chars are stripped before the scheme check so a
   `java\tscript:` newline/tab-smuggled scheme cannot slip past. This closes
   the server render path (#1 already covered the client re-render).
-- **#6 unbounded body slurp — fixed.** `body-json` no longer `slurp`s the whole
-  body. It streams `(:body request)` STRAIGHT into `charred` via
-  `wire/parse-json-stream` through a `bounded-input-stream` capped at
-  `MAX_BODY_BYTES` (4 MiB): a declared-oversize `Content-Length` is rejected
-  before a byte is read, and an actually-oversize / slow-drip body trips a
-  `:body-too-large` ex-info mid-read that `wrap-errors` maps to **413 Payload
-  Too Large** — the read aborts instead of buffering, so the heap can't be
-  exhausted. nil / blank / malformed bodies still resolve to nil (→ the
-  caller's 400), preserving the existing contract.
