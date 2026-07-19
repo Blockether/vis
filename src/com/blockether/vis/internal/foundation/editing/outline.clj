@@ -85,19 +85,38 @@
   (let [l (detect-language path)]
     (when (contains? code-languages l) l)))
 
+(defn- root-cause
+  "Deepest cause in `t`'s exception chain — the throwable that actually
+   explains the failure, below any wrapper layers."
+  ^Throwable [^Throwable t]
+  (loop [t t]
+    (if-let [c (.getCause t)]
+      (recur c)
+      t)))
+
 (defn- structure-items
-  "List<StructureItem> for `source` parsed as `language` (empty when none)."
+  "List<StructureItem> for `source` parsed as `language` (empty when none).
+
+   The pack surfaces every native/decode failure as one opaque
+   `TreeSitterLanguagePackRsException: FFI call failed`, burying the real
+   reason in a nested cause (e.g. a `StructureItem` field the Java binding
+   can't deserialize). A single unparseable item would otherwise nuke the
+   whole outline with zero signal, so we rethrow with the deepest cause's
+   message attached — the actionable detail — while keeping the language
+   and original chain for callers."
   [^String source ^String language]
-  (let [cfg
-        (-> (ProcessConfig/builder)
-            (.withLanguage language)
-            (.withStructure true)
-            (.build))
-
-        ^ProcessResult res
-        (TreeSitterLanguagePack/process source cfg)]
-
-    (or (.structure res) [])))
+  (let [cfg (-> (ProcessConfig/builder)
+                (.withLanguage language)
+                (.withStructure true)
+                (.build))]
+    (try (let [^ProcessResult res (TreeSitterLanguagePack/process source cfg)]
+           (or (.structure res) []))
+         (catch Throwable t
+           (let [cause (root-cause t)]
+             (throw (ex-info (str "tree-sitter structure extraction failed for language " language
+                                  ": " (.getMessage cause))
+                             {:language language :cause-type (.getName (class cause))}
+                             t)))))))
 
 (defn node-span
   "0-based inclusive `[start-line end-line]` of the TOP-LEVEL structural node named
