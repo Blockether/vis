@@ -461,39 +461,35 @@
                           (workspace/filesystem-root-mappings))
                     (str p)))))
 
-(defn- nearest-existing-dir
-  "Climb `f` to the nearest ancestor that exists AS A DIRECTORY. A file
-   resolves to its containing directory; a MISSING path climbs its parents
-   until an existing directory is found (at worst a workspace root, which
-   always exists). Returns nil only if nothing in the chain exists."
-  ^File [^File f]
-  (loop [^File c (.getCanonicalFile ^File f)]
-    (cond (nil? c) nil
-          (and (.exists c) (.isDirectory c)) c
-          :else (recur (.getParentFile c)))))
 
 (defn- resolve-search-roots
-  "Resolve rg/find `paths` to canonical DIRECTORY root Files — a search NEVER
-   targets a file directly, only directories. The DEFAULT/unscoped `[\".\"]`
-   expands to the FULL allowed-roots set — the primary cwd PLUS every bound
-   filesystem-root clone — so an unscoped search sweeps ALL filesystem roots,
-   not just the primary. Explicit paths resolve through `safe-path`
-   (confinement + trunk↔clone remap).
+  "Resolve rg/find `paths` to canonical search-root Files, searched EXACTLY as
+   named — a FILE root is searched as that ONE file, a DIRECTORY root is walked
+   as a tree. This is ripgrep / Claude-Code / Codex semantics: `rg PATTERN
+   a.clj src/` greps `a.clj` as a file and `src/` as a tree in one pass. The
+   whole downstream already supports a FILE root directly — `rg-fff-candidate-files`,
+   `rg-fff-enumerate-all`, `find-scan`, and the manual `walk` each special-case
+   `.isFile` — so a file flows straight through and is scoped PRECISELY to itself.
 
-   A BLANK/nil entry (`\"\"`/`nil` — the model routinely tacks an empty string
-   onto a `paths` list, e.g. `[\".github\" \"\"]`) is NOT an error: a blank means
-   \"the workspace root\", i.e. search EVERYTHING. So any blank entry (or an
-   explicit `\".\"`) widens the whole search to the full allowed-roots set rather
-   than erroring on the blank.
+   The DEFAULT/unscoped `[\".\"]` expands to the FULL allowed-roots set — the
+   primary cwd PLUS every bound filesystem-root clone — so an unscoped search
+   sweeps ALL filesystem roots, not just the primary. A BLANK/nil entry
+   (`\"\"`/`nil`/whitespace — the model routinely tacks an empty string onto a
+   `paths` list, e.g. `[\".github\" \"\"]`) means \"the workspace root\", i.e.
+   search EVERYTHING, so any blank (or an explicit `\".\"`) widens the whole
+   search to the full allowed-roots set rather than erroring on the blank.
 
-   Every path is normalized to a DIRECTORY via `nearest-existing-dir`: a file
-   path collapses to its containing directory, and a MISSING path (the model
-   routinely lists speculative candidates like `[\"deps.edn\" \"src/foo.clj\"]`,
-   or points at a file/dir that no longer exists) climbs to its nearest existing
-   ancestor directory instead of erroring. So a search is FORGIVING — it still
-   runs over the closest real directory rather than failing on a stale path.
-   Only when NOTHING in any candidate's chain exists is it an error (a
-   confinement violation from `safe-path` still propagates — that's not a miss)."
+   Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap).
+   A path that DOES NOT EXIST (the model routinely lists speculative candidates
+   like `[\"deps.edn\" \"src/foo.clj\"]`, or points at a file/dir that is gone) is
+   SILENTLY SKIPPED — never a hard error, and NEVER widened to a parent directory.
+   The old behavior climbed a missing/file path to its nearest existing ANCESTOR
+   directory, which silently BLEW UP scope: a real file `deps.edn` swept its whole
+   dir, and a deep stale path climbed all the way to the workspace root and swept
+   the entire repo — the opposite of the narrow search the caller asked for. Now a
+   miss is just a skip: if NONE of the paths exist the result is EMPTY and the
+   search simply finds nothing, exactly like ripgrep skipping missing operands. A
+   confinement violation from `safe-path` still propagates — that's not a miss."
   [paths]
   (let [paths (mapv #(let [s (str/trim (str %))]
 
@@ -501,11 +497,12 @@
                     paths)]
     (if (some #{"."} paths)
       (mapv io/file (workspace/allowed-roots))
-      (let [dirs (into [] (comp (map safe-path) (keep nearest-existing-dir) (distinct)) paths)]
-        (when (empty? dirs)
-          (throw (ex-info (str "None of these paths exist: " (str/join ", " paths))
-                          {:type :ext.foundation.editing/path-not-found :paths (vec paths)})))
-        dirs))))
+      (into []
+            (comp (map safe-path)
+                  (filter (fn [^File f]
+                            (.exists f)))
+                  (distinct))
+            paths))))
 
 (defn- ensure-parent-dirs!
   [^File f]
@@ -3532,7 +3529,9 @@
    OR the thing is absent; either way more synonyms won't help — widen ONCE to the
    stem (scoped with paths/include) or read a file you already hold.
    Opts (snake_case): paths (default [\".\"]), include [\"**/*.py\"], context N,
-   is_files_only. No regex / no AND — filter the hits in Python for those.
+   is_files_only. A `paths` entry is a FILE (searched as that ONE file) or a
+   DIRECTORY (walked as a tree) — like ripgrep; a path that does NOT exist is
+   silently SKIPPED, never a hard error. No regex / no AND — filter in Python.
 
    Result:
      content:       {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\", \"file_count\", \"first_hit\"}
@@ -4923,7 +4922,9 @@
        "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
        "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
        "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
-       "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
+       "(each a FILE searched as that one file, or a DIRECTORY walked as a tree, like "
+       "ripgrep; a missing path is skipped, never an error) and `include` globs; "
+       "`context` N adds surrounding lines; `is_files_only` "
        "returns just the files that contain a match. No regex / no AND — filter the "
        "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
        "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold. "

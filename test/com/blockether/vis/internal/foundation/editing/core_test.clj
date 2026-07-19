@@ -2794,19 +2794,31 @@
         (expect (= sweep (rsr ["   "])))
         ;; a blank mixed with a real path still means everything
         (expect (= sweep (rsr ["src" ""])))))
-    (it "a missing / file path resolves to its nearest existing DIRECTORY, never a hard error"
-        (let [d (temp-dir-path "rgd")
-              f (str (temp-root) "/rgd/real.clj")]
-
-          (spit (fs/file f) "needle here\n")
-          ;; a NON-EXISTENT file inside a real dir climbs to that dir and searches it
-          (let [r (rg "needle" {"paths" [(str (temp-root) "/rgd/gone.clj")]})]
-            (expect (:success? r))
-            (expect (= 1 (get-in r [:result "hit_count"]))))
-          ;; a path pointing straight AT a file collapses to its containing dir
-          (let [r (rg "needle" {"paths" [f]})]
-            (expect (:success? r))
-            (expect (= 1 (get-in r [:result "hit_count"]))))))))
+    (it
+      "a FILE path is searched as that ONE file (precise — never widened to its dir); a MISSING path is skipped, not climbed, never a hard error"
+      (let [dir    (str (temp-root) "/rgd-precise")
+            _      (when (fs/exists? dir) (fs/delete-tree dir))
+            _      (fs/create-dirs dir)
+            a      (str dir "/a.clj")
+            b      (str dir "/b.clj")
+            needle "zqUNIQUEneedle42"]
+        (spit (fs/file a) (str needle " here\n"))
+        (spit (fs/file b) (str needle " here\n"))
+        ;; naming the DIR walks BOTH files under it
+        (let [r (rg needle {"paths" [dir]})]
+          (expect (:success? r))
+          (expect (= 2 (get-in r [:result "file_count"]))))
+        ;; naming ONE file searches ONLY that file — NOT its sibling in the same
+        ;; dir (the old nearest-existing-dir climb would have swept the whole dir)
+        (let [r (rg needle {"paths" [a]})]
+          (expect (:success? r))
+          (expect (= 1 (get-in r [:result "file_count"])))
+          (expect (= 1 (get-in r [:result "hit_count"]))))
+        ;; a path that does NOT exist is skipped → empty result, still success
+        ;; (no throw, and no climb-to-ancestor that sweeps a whole directory)
+        (let [r (rg needle {"paths" [(str dir "/gone.clj")]})]
+          (expect (:success? r))
+          (expect (= 0 (get-in r [:result "hit_count"]))))))))
 
 (defdescribe
   struct-patch-tool-e2e-test
