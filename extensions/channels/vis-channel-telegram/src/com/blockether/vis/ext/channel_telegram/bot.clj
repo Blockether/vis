@@ -22,14 +22,14 @@
 (defonce ^:private restart-requested? (atom false))
 
 (def ^:private transcript-html-fn
-  ;; Deferred resolve of the web channel's canonical `export-session-html` —
-  ;; the SAME chat view /ui renders (bubbles + inline op-cards + inlined
-  ;; scripts, a session-summary card on top). Resolved at call time to dodge
-  ;; the load cycle (`foundation.transcript` pulls in `vis.core`, which
-  ;; transitively requires this channel).
-  (delay (fn [_db sid]
-           (str ((requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html)
-                  sid)))))
+  ;; Deferred resolve of the canonical standalone transcript renderer — a
+  ;; summary card + turn-by-turn forensic body with all CSS inlined. Resolved
+  ;; at call time to dodge the load cycle (`foundation.transcript` pulls in
+  ;; `vis.core`, which transitively requires this channel).
+  (delay (fn [db sid]
+           ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
+            ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript)
+             db sid)))))
 
 (defonce ^:private chat-state
   ;; {chat-id {:settings {:reasoning-level :balanced

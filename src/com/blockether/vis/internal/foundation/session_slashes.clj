@@ -14,11 +14,12 @@
             [com.blockether.vis.internal.titling :as titling]))
 
 (defn- export-html
-  "Standalone HTML for a session — the SAME chat view /ui renders (bubbles +
-   inline op-cards + inlined scripts), via the web channel's canonical
-   `export-session-html`."
-  [_db sid]
-  (str ((requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html) sid)))
+  "Standalone, vis-light-styled HTML transcript for a session — the canonical
+   `transcript/transcript->html` render (summary card + turn-by-turn forensic
+   body, all CSS inlined). No web extension required."
+  [db sid]
+  ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
+   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
 
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
 

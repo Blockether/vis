@@ -969,6 +969,9 @@
              ;; vis_docs), so without this pattern vis_docs returns zero pages
              ;; in the native binary.
              "-H:IncludeResources=vis-docs/.*"
+             ;; vendored Prism highlighter, inlined into standalone HTML
+             ;; transcript exports at RUNTIME via io/resource.
+             "-H:IncludeResources=vis-transcript/.*"
              ;; tree-sitter pack FFI lib for THIS platform. The pack's own
              ;; metadata ships NO resource glob (unlike fff/rift/ruff's
              ;; prebuilds/**), so without this the shipped binary embeds no

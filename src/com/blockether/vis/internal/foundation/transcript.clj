@@ -1053,10 +1053,9 @@
     ".tx-card{padding:.35rem .85rem .8rem;}}"))
 
 (def ^:private prism-token-css
-  "The vis-light Prism token theme, mirrored from vis-channel-web/public/app.css
-   (its `prism — vis-light token theme` block). Uses the SAME `web-css-root`
-   CSS vars the web /ui does, so exported code highlights IDENTICALLY. Tiny,
-   stable 9-rule block kept in sync by hand."
+  "The vis-light Prism token theme. Uses the SAME `web-css-root` CSS vars the
+   web /ui does, so exported code highlights IDENTICALLY. Tiny, stable 9-rule
+   block kept in sync by hand."
   (str
     ".token.comment,.token.prolog,.token.doctype,.token.cdata{color:var(--dim);font-style:italic}"
     ".token.punctuation{color:var(--dim)}"
@@ -1069,12 +1068,11 @@
     ".token.variable,.token.regex{color:var(--err)}"))
 
 (def ^:private prism-js
-  "The vendored Prism highlighter (from the web channel's resources), read once
-   and INLINED into HTML exports so a standalone file syntax-highlights code
-   blocks with zero network fetch — the SAME highlighter the web /ui loads.
-   nil when that resource isn't on the classpath (export still renders, just
-   without highlighting)."
-  (delay (some-> (io/resource "vis-channel-web/public/prism.min.js")
+  "The vendored Prism highlighter (`resources/vis-transcript/prism.min.js`),
+   read once and INLINED into HTML exports so a standalone file syntax-
+   highlights code blocks with zero network fetch. nil when that resource
+   isn't on the classpath (export still renders, just without highlighting)."
+  (delay (some-> (io/resource "vis-transcript/prism.min.js")
                  slurp)))
 
 (defn- render-summary-html
