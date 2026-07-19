@@ -462,47 +462,81 @@
                     (str p)))))
 
 
+(defn- nearest-existing-dir
+  "Climb `f` to its nearest ancestor that EXISTS as a directory. A file/path that
+   is GONE resolves to the closest real directory above it — parent, then
+   parent-of-parent, … (at worst a filesystem root, which always exists) — so a
+   search for a stale/typo'd path still runs against the nearest place it could
+   live instead of finding nothing. Returns nil only if nothing in the whole
+   chain exists."
+  [^File f]
+  (loop [^File cur f]
+    (cond (nil? cur) nil
+          (and (.exists cur) (.isDirectory cur)) cur
+          :else (recur (.getParentFile cur)))))
+
 (defn- resolve-search-roots
-  "Resolve rg/find `paths` to canonical search-root Files, searched EXACTLY as
-   named — a FILE root is searched as that ONE file, a DIRECTORY root is walked
-   as a tree. This is ripgrep / Claude-Code / Codex semantics: `rg PATTERN
-   a.clj src/` greps `a.clj` as a file and `src/` as a tree in one pass. The
-   whole downstream already supports a FILE root directly — `rg-fff-candidate-files`,
-   `rg-fff-enumerate-all`, `find-scan`, and the manual `walk` each special-case
-   `.isFile` — so a file flows straight through and is scoped PRECISELY to itself.
+  "Resolve rg/find `paths` into `{:roots [File …] :resolutions [{…} …]}`.
 
-   The DEFAULT/unscoped `[\".\"]` expands to the FULL allowed-roots set — the
-   primary cwd PLUS every bound filesystem-root clone — so an unscoped search
-   sweeps ALL filesystem roots, not just the primary. A BLANK/nil entry
-   (`\"\"`/`nil`/whitespace — the model routinely tacks an empty string onto a
-   `paths` list, e.g. `[\".github\" \"\"]`) means \"the workspace root\", i.e.
-   search EVERYTHING, so any blank (or an explicit `\".\"`) widens the whole
-   search to the full allowed-roots set rather than erroring on the blank.
+   `:roots` are the canonical Files actually searched — a FILE root is searched as
+   that ONE file, a DIRECTORY root is walked as a tree (ripgrep / Claude-Code /
+   Codex semantics: `rg PATTERN a.clj src/` greps `a.clj` as a file and `src/` as
+   a tree in one pass; the whole downstream already special-cases `.isFile`).
 
-   Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap).
-   A path that DOES NOT EXIST (the model routinely lists speculative candidates
-   like `[\"deps.edn\" \"src/foo.clj\"]`, or points at a file/dir that is gone) is
-   SILENTLY SKIPPED — never a hard error, and NEVER widened to a parent directory.
-   The old behavior climbed a missing/file path to its nearest existing ANCESTOR
-   directory, which silently BLEW UP scope: a real file `deps.edn` swept its whole
-   dir, and a deep stale path climbed all the way to the workspace root and swept
-   the entire repo — the opposite of the narrow search the caller asked for. Now a
-   miss is just a skip: if NONE of the paths exist the result is EMPTY and the
-   search simply finds nothing, exactly like ripgrep skipping missing operands. A
-   confinement violation from `safe-path` still propagates — that's not a miss."
+   A path that DOES NOT EXIST is NOT silently dropped: it CLIMBS to its nearest
+   existing ANCESTOR directory (parent, then parent-of-parent, …) via
+   `nearest-existing-dir`, so a stale path still searches the closest real place
+   instead of finding nothing. The climb is NOT silent — each requested path is
+   recorded in `:resolutions` as `{:requested :resolved :root :existed :climbed}`,
+   so the caller reports `missing_paths` (what you named that was gone + where it
+   searched instead). Honest middle ground: still productive (climbs like the
+   original), never misleading (reports what it couldn't find).
+
+   The DEFAULT/unscoped `[\".\"]` (or a BLANK/nil entry, which the model routinely
+   tacks on, e.g. `[\".github\" \"\"]`) expands to the FULL allowed-roots set — the
+   primary cwd PLUS every bound filesystem-root clone — and carries NO
+   `:resolutions` (a default sweep names nothing, so nothing is reportable).
+
+   Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap); a
+   confinement violation still propagates — that is not a miss."
   [paths]
   (let [paths (mapv #(let [s (str/trim (str %))]
 
                        (if (str/blank? s) "." s))
                     paths)]
     (if (some #{"."} paths)
-      (mapv io/file (workspace/allowed-roots))
-      (into []
-            (comp (map safe-path)
-                  (filter (fn [^File f]
-                            (.exists f)))
-                  (distinct))
-            paths))))
+      {:roots (mapv io/file (workspace/allowed-roots)) :resolutions []}
+      (let [resolutions
+            (mapv (fn [p]
+                    (let [^File f (safe-path p)]
+                      (if (.exists f)
+                        {:requested p :resolved (rel-path f) :root f :existed true :climbed false}
+                        (let [anc (nearest-existing-dir f)]
+                          {:requested p
+                           :resolved (when anc (rel-path anc))
+                           :root anc
+                           :existed false
+                           :climbed (boolean anc)}))))
+                  paths)
+            roots (into [] (comp (keep :root) (distinct)) resolutions)]
+
+        {:roots roots :resolutions resolutions}))))
+
+(defn- missing-search-paths
+  "From `resolve-search-roots` `:resolutions`, the requested paths that did NOT
+   exist — each `{\"requested\" p \"searched\" ancestor-dir}` (`searched` = the
+   nearest existing directory the search climbed to, omitted when nothing in the
+   chain existed). Empty when every named path was real (and always empty for the
+   default `.` sweep). Surfaced identically on both `rg` and `find_files` as
+   `missing_paths` so a stale/typo'd path is reported, never silently absorbed."
+  [resolutions]
+  (into []
+        (comp (remove :existed)
+              (map (fn [{:keys [requested resolved]}]
+                     (cond-> {"requested" requested}
+                       resolved
+                       (assoc "searched" resolved)))))
+        resolutions))
 
 (defn- ensure-parent-dirs!
   [^File f]
@@ -1636,7 +1670,7 @@
   (let [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit]}
         (coerce-find-spec args)
 
-        roots
+        {roots :roots find-resolutions :resolutions}
         (resolve-search-roots paths)
 
         ;; fff ranks genuine hits first but pads the page with loose subsequence
@@ -1793,7 +1827,10 @@
       (assoc "fuzzy" true)
 
       (seq matched-terms)
-      (assoc "matched_terms" matched-terms))))
+      (assoc "matched_terms" matched-terms)
+
+      (seq (missing-search-paths find-resolutions))
+      (assoc "missing_paths" (missing-search-paths find-resolutions)))))
 
 (defn- find-tool
   "Find files by NAME/PATH — fuzzy subsequence match over the file TREE (fff;
@@ -1811,7 +1848,7 @@
    its name; `cat` once you know the path; `ls` for a literal directory listing.
 
    Returns {\"items\": [{\"path\": P, \"file_name\": N, ...}], \"paths\": [P...],
-   \"item_count\", \"query\", \"searched_paths\", \"limit\"} — plus a \"hint\" when
+   \"item_count\", \"query\", \"searched_paths\", \"missing_paths\", \"limit\"} — plus a \"hint\" when
    nothing matched."
   [& args]
   (let
@@ -2160,8 +2197,14 @@
         (fn [^File f]
           (or (empty? include-matchers) (match-globs? include-matchers f)))
 
+        search-roots
+        (resolve-search-roots paths)
+
+        rg-missing-paths
+        (missing-search-paths (:resolutions search-roots))
+
         roots
-        (->> (resolve-search-roots paths)
+        (->> (:roots search-roots)
              (sort-by (fn [^File f]
                         [(count (iterator-seq (.iterator (.toPath f)))) (.getPath f)]))
              (reduce (fn [acc ^File f]
@@ -2272,6 +2315,7 @@
                             (swap! out conj (rel-path f))
                             (when (>= (count @out) (long limit)) (reset! capped? true)))))
                       {:files (vec @out)
+                       :missing rg-missing-paths
                        :truncated-by (if @capped? :limit :end-of-results)
                        :total-file-count @total-files
                        :total-file-count-exact? (not @breadth-capped?)})
@@ -2328,6 +2372,7 @@
                                 (>= (long @bytes-used) (long max-rg-result-bytes))
                                 (reset! cap-reason :bytes))))))))
               {:hits (vec @out)
+               :missing rg-missing-paths
                :truncated-by (or @cap-reason :end-of-results)
                :total-file-count @total-files
                :total-file-count-exact? (not @breadth-capped?)}))))
@@ -3530,8 +3575,10 @@
    stem (scoped with paths/include) or read a file you already hold.
    Opts (snake_case): paths (default [\".\"]), include [\"**/*.py\"], context N,
    is_files_only. A `paths` entry is a FILE (searched as that ONE file) or a
-   DIRECTORY (walked as a tree) — like ripgrep; a path that does NOT exist is
-   silently SKIPPED, never a hard error. No regex / no AND — filter in Python.
+   DIRECTORY (walked as a tree) — like ripgrep. A path that does NOT exist is
+   never a hard error: it CLIMBS to its nearest existing ancestor dir (parent,
+   then parent-of-parent), and each missing path is REPORTED in `missing_paths`
+   (same field on find_files). No regex / no AND — filter in Python.
 
    Result:
      content:       {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\", \"file_count\", \"first_hit\"}
@@ -3596,11 +3643,13 @@
         ;; `shared` and everything assoc'd onto it below is the model-facing rg
         ;; result — string keys, no keyword values (mode/truncated_by stringified).
         shared
-        {"mode" (if is_files_only "files_only" "content")
-         "needles" needles
-         "truncated_by" (str/replace (name (:truncated-by out)) "-" "_")
-         "paths" paths
-         "limit" limit}
+        (cond-> {"mode" (if is_files_only "files_only" "content")
+                 "needles" needles
+                 "truncated_by" (str/replace (name (:truncated-by out)) "-" "_")
+                 "paths" paths
+                 "limit" limit}
+          (seq (:missing out))
+          (assoc "missing_paths" (:missing out)))
 
         result
         (case mode
@@ -4923,7 +4972,7 @@
        "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
        "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
        "(each a FILE searched as that one file, or a DIRECTORY walked as a tree, like "
-       "ripgrep; a missing path is skipped, never an error) and `include` globs; "
+       "ripgrep; a missing path climbs to its nearest existing dir, reported in missing_paths, never an error) and `include` globs; "
        "`context` N adds surrounding lines; `is_files_only` "
        "returns just the files that contain a match. No regex / no AND — filter the "
        "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "

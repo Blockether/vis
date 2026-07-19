@@ -2774,15 +2774,23 @@
           (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
           (let [r (rg "key" {"paths" [d]})]
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
-    (it "a MISSING path in the list is SKIPPED, not a hard error (vis.edn case)"
-        (let [d (temp-dir-path "rgp")
-              f (str (temp-root) "/rgp/a.clj")]
+    (it
+      "a MISSING path CLIMBS to its nearest existing ancestor dir and is REPORTED in missing_paths (never a hard error)"
+      (let [d (temp-dir-path "rgp")
+            f (str (temp-root) "/rgp/a.clj")
+            ghost (str (temp-root) "/rgp/nope.edn")]
 
-          (spit (fs/file f) "needle here\n")
-          ;; one real dir + one path that does not exist → search the real one
-          (let [r (rg "needle" {"paths" [d (str (temp-root) "/rgp/nope.edn")]})]
-            (expect (:success? r))
-            (expect (= 1 (get-in r [:result "hit_count"]))))))
+        (spit (fs/file f) "needle here\n")
+        ;; one real dir + one path that does not exist. The ghost climbs to its
+        ;; parent (the real dir), so the search still runs — and the ghost is
+        ;; REPORTED, not silently absorbed.
+        (let [r (rg "needle" {"paths" [d ghost]})
+              missing (get-in r [:result "missing_paths"])]
+
+          (expect (:success? r))
+          (expect (= 1 (get-in r [:result "hit_count"])))
+          (expect (= [ghost] (mapv #(get % "requested") missing)))
+          (expect (contains? (first missing) "searched")))))
     (it
       "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
       (let [rsr @#'editing/resolve-search-roots
@@ -2795,30 +2803,37 @@
         ;; a blank mixed with a real path still means everything
         (expect (= sweep (rsr ["src" ""])))))
     (it
-      "a FILE path is searched as that ONE file (precise — never widened to its dir); a MISSING path is skipped, not climbed, never a hard error"
-      (let [dir    (str (temp-root) "/rgd-precise")
-            _      (when (fs/exists? dir) (fs/delete-tree dir))
-            _      (fs/create-dirs dir)
-            a      (str dir "/a.clj")
-            b      (str dir "/b.clj")
+      "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
+      (let [dir (str (temp-root) "/rgd-precise")
+            _ (when (fs/exists? dir) (fs/delete-tree dir))
+            _ (fs/create-dirs dir)
+            a (str dir "/a.clj")
+            b (str dir "/b.clj")
             needle "zqUNIQUEneedle42"]
+
         (spit (fs/file a) (str needle " here\n"))
         (spit (fs/file b) (str needle " here\n"))
         ;; naming the DIR walks BOTH files under it
         (let [r (rg needle {"paths" [dir]})]
           (expect (:success? r))
           (expect (= 2 (get-in r [:result "file_count"]))))
-        ;; naming ONE file searches ONLY that file — NOT its sibling in the same
-        ;; dir (the old nearest-existing-dir climb would have swept the whole dir)
+        ;; naming ONE EXISTING file searches ONLY that file — NOT its sibling in the
+        ;; same dir. An existing file is precise; it is NOT widened to its parent.
         (let [r (rg needle {"paths" [a]})]
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "file_count"])))
-          (expect (= 1 (get-in r [:result "hit_count"]))))
-        ;; a path that does NOT exist is skipped → empty result, still success
-        ;; (no throw, and no climb-to-ancestor that sweeps a whole directory)
-        (let [r (rg needle {"paths" [(str dir "/gone.clj")]})]
+          (expect (= 1 (get-in r [:result "hit_count"])))
+          ;; an existing path is never reported missing
+          (expect (nil? (get-in r [:result "missing_paths"]))))
+        ;; a path that does NOT exist CLIMBS to its nearest existing ancestor dir
+        ;; (here `dir`, holding a.clj + b.clj) so the search still runs — and the
+        ;; ghost is REPORTED in missing_paths, never a hard error, never silent
+        (let [ghost (str dir "/gone.clj")
+              r (rg needle {"paths" [ghost]})]
+
           (expect (:success? r))
-          (expect (= 0 (get-in r [:result "hit_count"]))))))))
+          (expect (= 2 (get-in r [:result "file_count"])))
+          (expect (= [ghost] (mapv #(get % "requested") (get-in r [:result "missing_paths"])))))))))
 
 (defdescribe
   struct-patch-tool-e2e-test
