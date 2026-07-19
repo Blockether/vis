@@ -74,25 +74,24 @@
 
 (defdescribe session-parser-helper-test
              (it "parses in the session context without clobbering the eval scratch global"
-                 (let
-                   [ctx
-                    @py-ctx
+                 (let [ctx
+                       @py-ctx
 
-                    g
-                    (.getBindings ctx "python")]
+                       g
+                       (.getBindings ctx "python")]
 
                    (.putMember g "__vis_src__" "keep-me")
                    (expect (= 3 (ep/count-top-level-forms ctx "x = 1\ny = 2\nz = 3")))
                    (expect (= "keep-me" (.asString (.getMember g "__vis_src__"))))))
              (it "is race-free when many threads parse different sources on one context"
-                 (let
-                   [cases
-                    (vec (take 90 (cycle [["# comment" 0] ["x = 1" 1] ["x = 1\ny = 2\nz = 3" 3]])))
+                 (let [cases
+                       (vec (take 90
+                                  (cycle [["# comment" 0] ["x = 1" 1] ["x = 1\ny = 2\nz = 3" 3]])))
 
-                    jobs
-                    (mapv (fn [[source expected]]
-                            (future (= expected (ep/count-top-level-forms @py-ctx source))))
-                          cases)]
+                       jobs
+                       (mapv (fn [[source expected]]
+                               (future (= expected (ep/count-top-level-forms @py-ctx source))))
+                             cases)]
 
                    (expect (every? true? (mapv deref jobs))))))
 
@@ -129,9 +128,8 @@
         ;; strings-only boundary: dict keys come back as VERBATIM strings
         (expect (= {"a" 2 "b" 1} (:result r)))))
   (it "makes pathlib and Path available without an import in run_python code"
-      (let
-        [r (ep/run-python-block @py-ctx
-                                "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
+      (let [r (ep/run-python-block @py-ctx
+                                   "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
         (expect (nil? (:error r)))
         (expect (= true (:result r)))))
   (it "makes textwrap available without an import in run_python code"
@@ -152,8 +150,8 @@
       (expect (nil? (:error r)))
       (expect (= true (:result r))))
     (it "makes builtins available without an import in run_python code"
-        (let
-          [r (ep/run-python-block @py-ctx "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
+        (let [r (ep/run-python-block @py-ctx
+                                     "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
           (expect (nil? (:error r)))
           (expect (= true (:result r)))))
     (it
@@ -175,15 +173,14 @@
   ;; one. This pins the shape so verb authors read `:models`, not "models".
   (it
     "dict args arrive with KEYWORD-snake keys; values pass through (strings, vectors)"
-    (let
-      [captured
-       (atom nil)
+    (let [captured
+          (atom nil)
 
-       {:keys [python-context]}
-       (ep/create-python-context
-         {'capture_args (fn [prompt subctx & more]
-                          (reset! captured {:prompt prompt :subctx subctx :opts (first more)})
-                          "ok")})]
+          {:keys [python-context]}
+          (ep/create-python-context
+            {'capture_args (fn [prompt subctx & more]
+                             (reset! captured {:prompt prompt :subctx subctx :opts (first more)})
+                             "ok")})]
 
       ;; Tools are async-deferred — run through run-python-block so the bare
       ;; top-level call is SETTLED (executed) before we inspect the capture.
@@ -207,14 +204,13 @@
              ;; yet those forms hard-failed. `__vis_exec_call__` now folds **kwargs into a
              ;; TRAILING DICT positional (matching the tool's `tool(query, {opts})` contract),
              ;; so kwargs work for EVERY tool at once.
-             (let
-               [captured
-                (atom nil)
+             (let [captured
+                   (atom nil)
 
-                {:keys [python-context]}
-                (ep/create-python-context {'capture_args (fn [& args]
-                                                           (reset! captured (vec args))
-                                                           "ok")})]
+                   {:keys [python-context]}
+                   (ep/create-python-context {'capture_args (fn [& args]
+                                                              (reset! captured (vec args))
+                                                              "ok")})]
 
                (it "a positional arg + a kwarg folds to (arg, {kw…}) with VERBATIM STRING keys"
                    (reset! captured nil)
@@ -240,15 +236,13 @@
 
 (defdescribe
   protected-tool-name-test
-  (let
-    [mk (fn []
-          (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                               "patched")})))]
+  (let [mk (fn []
+             (:python-context (ep/create-python-context {'patch (fn [& _]
+                                                                  "patched")})))]
     (it "refuses to overwrite a bound tool name and keeps the callable usable"
-        (let
-          [ctx (mk)
-           r1 (ep/run-python-block ctx "patch = 'not callable'" "t1/i1")
-           r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (let [ctx (mk)
+              r1 (ep/run-python-block ctx "patch = 'not callable'" "t1/i1")
+              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
 
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (str/includes? (get-in r1 [:error :message]) "patch"))
@@ -265,9 +259,8 @@ await patch({'path': css})" "t1/i1")]
                                   'later_patch
                                   (fn [& _]
                                     "late"))
-          (let
-            [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
-             r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
+          (let [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
+                r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
 
             (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
             (expect (nil? (:error r2)))
@@ -278,11 +271,10 @@ await patch({'path': css})" "t1/i1")]
     ;; `format`→`format_code`). So `run_tests` is still hard-protected, while
     ;; `test` — no longer a tool — is a free variable the model may bind.
     (it "still hard-protects the renamed facade verb run_tests"
-        (let
-          [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _]
-                                                                        "ran")}))
-           r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
-           r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
+        (let [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _]
+                                                                           "ran")}))
+              r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
+              r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
 
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (nil? (:error r2)))
@@ -291,22 +283,20 @@ await patch({'path': css})" "t1/i1")]
     ;; to the wrapped block, so it neither persists nor clobbers the callable.
     ;; It must NOT trip the durable-rebind guard.
     (it "allows a `for` loop target that shadows a tool name and keeps the callable usable"
-        (let
-          [ctx (mk)
-           r1 (ep/run-python-block ctx "for patch in ['a', 'b']:\n    pass" "t1/i1")
-           r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (let [ctx (mk)
+              r1 (ep/run-python-block ctx "for patch in ['a', 'b']:\n    pass" "t1/i1")
+              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
 
           (expect (nil? (:error r1)))
           (expect (nil? (:error r2)))
           (expect (= "patched" (:result r2)))))
     (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
-        (let
-          [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                                    "patched")}))
-           r (ep/run-python-block
-               ctx
-               "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
-               "t1/i1")]
+        (let [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
+                                                                       "patched")}))
+              r (ep/run-python-block
+                  ctx
+                  "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
+                  "t1/i1")]
 
           (expect (nil? (:error r)))
           (expect (= "patched" (:result r)))))))
@@ -317,12 +307,11 @@ await patch({'path': css})" "t1/i1")]
              ;; names AND Python builtins, so naming a facade verb that would make the
              ;; strong rebind-guard fire on natural variables is forbidden.
              (it "no facade verb uses a collision-prone bare name"
-                 (let
-                   [facade
-                    (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
+                 (let [facade
+                       (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
 
-                    banned
-                    #{"test" "format" "list" "type" "dict" "set" "str" "input" "id"}]
+                       banned
+                       #{"test" "format" "list" "type" "dict" "set" "str" "input" "id"}]
 
                    (expect (empty? (set/intersection facade banned)))))
              (it "pins the facade verb name set"
@@ -350,10 +339,9 @@ await patch({'path': css})" "t1/i1")]
    unawaited call that leaks into output repr's a loud hint instead of silently
    misbehaving. The await path AST-wraps the program in an `async def` (GraalPy
    rejects top-level await) and drives it, persisting assigned vars by name."
-  (let
-    [mk (fn []
-          (:python-context (ep/create-python-context {'echo (fn [x]
-                                                              (str "<" x ">"))})))]
+  (let [mk (fn []
+             (:python-context (ep/create-python-context {'echo (fn [x]
+                                                                 (str "<" x ">"))})))]
     (it "await runs a NESTED deferred tool call"
         (let [r (ep/run-python-block (mk) "print(await echo(\"hi\"))" "t1/i1")]
           (expect (nil? (:error r)))
@@ -367,9 +355,8 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<oops>" (clojure.string/trim (str (:stdout r)))))))
     (it "an awaited assignment persists in the live interpreter across calls"
-        (let
-          [ctx (mk)
-           r (ep/run-python-block ctx "kept = await echo(\"x\")\nprint(kept)" "t1/i1")]
+        (let [ctx (mk)
+              r (ep/run-python-block ctx "kept = await echo(\"x\")\nprint(kept)" "t1/i1")]
 
           (expect (nil? (:error r)))
           (expect (= "<x>" (clojure.string/trim (str (:stdout r)))))
@@ -378,18 +365,17 @@ await patch({'path': css})" "t1/i1")]
     (it "auto-settles a bare deferred assignment in an await-bearing program"
         ;; `c = await echo("a")` forces the async path; the bare `res = echo("b")`
         ;; has NO await, yet must RUN (settle) so `res` is the value, not a thunk.
-        (let
-          [r (ep/run-python-block (mk)
-                                  "c = await echo(\"a\")\nres = echo(\"b\")\nprint(res)"
-                                  "t1/i1")]
+        (let [r (ep/run-python-block (mk)
+                                     "c = await echo(\"a\")\nres = echo(\"b\")\nprint(res)"
+                                     "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<b>" (clojure.string/trim (str (:stdout r)))))))
     (it "auto-settles a bare deferred assignment EXACTLY once (no double-run)"
-        (let
-          [calls (atom 0)
-           ctx (:python-context (ep/create-python-context {'tick (fn []
-                                                                   (str "n" (swap! calls inc)))}))
-           r (ep/run-python-block ctx "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
+        (let [calls (atom 0)
+              ctx (:python-context (ep/create-python-context {'tick (fn []
+                                                                      (str "n"
+                                                                           (swap! calls inc)))}))
+              r (ep/run-python-block ctx "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
 
           (expect (nil? (:error r)))
           ;; the bare `res = tick()` settles inline exactly once — not twice from
@@ -407,11 +393,11 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<a>" (clojure.string/trim (str (:stdout r)))))))
     (it "await on an already-settled binding does NOT re-run the tool"
-        (let
-          [calls (atom 0)
-           ctx (:python-context (ep/create-python-context {'tick (fn []
-                                                                   (str "n" (swap! calls inc)))}))
-           r (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
+        (let [calls (atom 0)
+              ctx (:python-context (ep/create-python-context {'tick (fn []
+                                                                      (str "n"
+                                                                           (swap! calls inc)))}))
+              r (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
 
           (expect (nil? (:error r)))
           ;; settled ONCE at assignment; the spurious await must not run it again.
@@ -432,24 +418,22 @@ await patch({'path': css})" "t1/i1")]
   ;; `__vis_par__` (the host virtual-thread pool backing `gather`) is supplied by
   ;; loop.clj in production; the test wires a minimal sequential stand-in so the
   ;; gather path resolves — echo is sync, so order/result are deterministic.
-  (let
-    [par
-     (fn [& thunks]
-       (let
-         [ts (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-               (vec (first thunks))
-               (vec thunks))]
-         (mapv (fn [t]
-                 (if (instance? org.graalvm.polyglot.Value t)
-                   (.execute ^org.graalvm.polyglot.Value t (object-array 0))
-                   (t)))
-               ts)))
+  (let [par
+        (fn [& thunks]
+          (let [ts (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+                     (vec (first thunks))
+                     (vec thunks))]
+            (mapv (fn [t]
+                    (if (instance? org.graalvm.polyglot.Value t)
+                      (.execute ^org.graalvm.polyglot.Value t (object-array 0))
+                      (t)))
+                  ts)))
 
-     mk
-     (fn []
-       (:python-context (ep/create-python-context {'echo (fn [x]
-                                                           (str "<" x ">"))
-                                                   (symbol "__vis_par__") par})))]
+        mk
+        (fn []
+          (:python-context (ep/create-python-context {'echo (fn [x]
+                                                              (str "<" x ">"))
+                                                      (symbol "__vis_par__") par})))]
 
     (it
       "asyncio.run(main()) drives a coroutine that awaits tools"
@@ -465,49 +449,46 @@ await patch({'path': css})" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "<x><y>" (clojure.string/trim (str (:stdout r)))))))
     (it "asyncio.gather runs awaitables concurrently via our gather"
-        (let
-          [r (ep/run-python-block
-               (mk)
-               (str "import asyncio\n"
+        (let [r (ep/run-python-block
+                  (mk)
+                  (str
+                    "import asyncio\n"
                     "async def main():\n    return await asyncio.gather(echo(\"a\"), echo(\"b\"))\n"
                     "print(asyncio.run(main()))")
-               "t1/i1")]
+                  "t1/i1")]
           (expect (nil? (:error r)))
           (let [out (str (:stdout r))]
             (expect (clojure.string/includes? out "<a>"))
             (expect (clojure.string/includes? out "<b>")))))
     (it "NO native event-loop/socket crash leaks from asyncio use"
-        (let
-          [r
-           (ep/run-python-block
-             (mk)
-             (str "import asyncio\nasync def main():\n    return await echo(\"z\")\n"
-                  "print(asyncio.run(main()))")
-             "t1/i1")
+        (let [r
+              (ep/run-python-block
+                (mk)
+                (str "import asyncio\nasync def main():\n    return await echo(\"z\")\n"
+                     "print(asyncio.run(main()))")
+                "t1/i1")
 
-           blob
-           (str (:error r) (:stdout r))]
+              blob
+              (str (:error r) (:stdout r))]
 
           (expect (nil? (:error r)))
           (expect (not (clojure.string/includes? blob "socket was excluded")))
           (expect (not (clojure.string/includes? blob "PosixSupport")))))
     (it "from asyncio import run rebinds to the shim; gather stays the builtin"
-        (let
-          [r (ep/run-python-block
-               (mk)
-               (str "from asyncio import run, gather\n"
-                    "async def m():\n    return await gather(echo(\"p\"), echo(\"q\"))\n"
-                    "print(run(m()))")
-               "t1/i1")]
+        (let [r (ep/run-python-block
+                  (mk)
+                  (str "from asyncio import run, gather\n"
+                       "async def m():\n    return await gather(echo(\"p\"), echo(\"q\"))\n"
+                       "print(run(m()))")
+                  "t1/i1")]
           (expect (nil? (:error r)))
           (expect (clojure.string/includes? (str (:stdout r)) "<p>"))))
     (it "import socket is a no-op; touching socket is a clean NameError, not a native crash"
-        (let
-          [r
-           (ep/run-python-block (mk) "import socket\nsocket.socket()" "t1/i1")
+        (let [r
+              (ep/run-python-block (mk) "import socket\nsocket.socket()" "t1/i1")
 
-           blob
-           (str (get-in r [:error :message]) (:stdout r))]
+              blob
+              (str (get-in r [:error :message]) (:stdout r))]
 
           (expect (some? (:error r)))
           (expect (not (clojure.string/includes? blob "PosixSupport")))
@@ -520,9 +501,8 @@ await patch({'path': css})" "t1/i1")]
    opaque `SecurityException: Operation is not allowed for:` mid-run. Threads
    share the GIL-like context and still can't reach IO / native / host, so the
    dangerous capabilities stay denied."
-  (let
-    [mk (fn []
-          (:python-context (ep/create-python-context {})))]
+  (let [mk (fn []
+             (:python-context (ep/create-python-context {})))]
     (it
       "threading.Thread runs to completion"
       (let
@@ -549,22 +529,21 @@ await patch({'path': css})" "t1/i1")]
   file-exists-binding-test
   "`file-exists` binds as the snake_case `file_exists` tool in the sandbox — no `is_exists`/`exists` alias."
   (it "exposes file_exists and NOT the old is_exists name"
-      (let
-        [ctx
-         (:python-context (ep/create-python-context
-                            ;; strings-only boundary: tool results are built with STRING
-                            ;; keys at the source (a keyword-keyed result now throws).
-                            {'file-exists (fn [path]
-                                            {"path" path "exists" (= path "present.txt")})}))
+      (let [ctx
+            (:python-context (ep/create-python-context
+                               ;; strings-only boundary: tool results are built with STRING
+                               ;; keys at the source (a keyword-keyed result now throws).
+                               {'file-exists (fn [path]
+                                               {"path" path "exists" (= path "present.txt")})}))
 
-         via-file
-         (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
+            via-file
+            (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
 
-         via-missing
-         (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
+            via-missing
+            (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
 
-         via-old
-         (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
+            via-old
+            (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
 
         (expect (nil? (:error via-file)))
         (expect (nil? (:error via-missing)))
@@ -610,12 +589,11 @@ await patch({'path': css})" "t1/i1")]
         (expect (nil? (:result r)))
         (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
   (it "E7b — a NameError for an undefined TOOL gets an enrichment hint (toggled-off extension)"
-      (let
-        [r
-         (ep/run-python-block @py-ctx "shell_run(\"echo hi\")")
+      (let [r
+            (ep/run-python-block @py-ctx "shell_run(\"echo hi\")")
 
-         err
-         (:error r)]
+            err
+            (:error r)]
 
         (expect (true? (get-in err [:data :name-undefined?])))
         (expect (= "shell_run" (get-in err [:data :undefined-name])))
@@ -629,24 +607,22 @@ await patch({'path': css})" "t1/i1")]
    `:trace` are dropped; an inner `:error` that adds nothing over the
    top-level message disappears entirely; actionable fields survive."
   (it "collapses a :vis/tool-failure to type+symbol when the inner error is just the message"
-      (let
-        [msg
-         "rg spec has unknown keys: spec."
+      (let [msg
+            "rg spec has unknown keys: spec."
 
-         out
-         (#'ep/sanitize-cause-data
-          {:type :vis/tool-failure
-           :symbol :rg
-           :error {:message msg :trace "clojure.lang.ExceptionInfo: ...\nframe - f.clj:1"}
-           :tool-result {:result nil :success? false :error {:message msg :trace "..."}}}
-          msg)]
+            out
+            (#'ep/sanitize-cause-data
+             {:type :vis/tool-failure
+              :symbol :rg
+              :error {:message msg :trace "clojure.lang.ExceptionInfo: ...\nframe - f.clj:1"}
+              :tool-result {:result nil :success? false :error {:message msg :trace "..."}}}
+             msg)]
 
         (expect (= {:type :vis/tool-failure :symbol :rg} out))))
   (it "keeps actionable inner-error fields, sans trace"
-      (let
-        [out (#'ep/sanitize-cause-data
-              {:type :tool/banned :error {:message "blocked" :reason :policy :trace "..."}}
-              "other message")]
+      (let [out (#'ep/sanitize-cause-data
+                 {:type :tool/banned :error {:message "blocked" :reason :policy :trace "..."}}
+                 "other message")]
         (expect (= {:type :tool/banned :error {:message "blocked" :reason :policy}} out))))
   (it "passes non-map :error through untouched"
       (expect (= {:type :x :error "boom"}
@@ -665,11 +641,10 @@ await patch({'path': css})" "t1/i1")]
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (nil? (:auto-repaired r)))))
   (it "a PARROTED transcript tail (```ctx + r[...]= echoes) ERRORS as a SyntaxError, not salvaged"
-      (let
-        [r (ep/run-python-block @py-ctx
-                                (str "x_e2e = 1\nx_e2e + 41\n"
-                                     "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
-                                     "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
+      (let [r (ep/run-python-block @py-ctx
+                                   (str "x_e2e = 1\nx_e2e + 41\n"
+                                        "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
+                                        "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
         (expect (nil? (:result r)))
         (expect (some? (:error r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
@@ -686,41 +661,36 @@ await patch({'path': css})" "t1/i1")]
    ACTIONABLE hint steering to cat / repl_eval — not the opaque PermissionError /
    `SecurityException: Operation is not allowed for:` the model kept hitting when
    it reached for importlib.exec_module / open() on a project file."
-  (let
-    [mk (fn []
-          (:python-context (ep/create-python-context {})))]
+  (let [mk (fn []
+             (:python-context (ep/create-python-context {})))]
     (it "open() denial → hint points at cat(path) + repl_eval"
-        (let
-          [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
-                     [:error :message])]
+        (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
+                        [:error :message])]
           (expect (some? m))
           (expect (clojure.string/includes? (str m) "cat(path)"))
           (expect (clojure.string/includes? (str m) "repl_eval"))))
     (it "importlib exec_module on a project file → the same steer"
-        (let
-          [m (get-in (ep/run-python-block
-                       (mk)
-                       (str
-                         "import importlib.util\n"
+        (let [m (get-in
+                  (ep/run-python-block
+                    (mk)
+                    (str "import importlib.util\n"
                          "spec = importlib.util.spec_from_file_location('x', '/tmp/zz_nope.py')\n"
                          "mod = importlib.util.module_from_spec(spec)\n"
                          "spec.loader.exec_module(mod)")
-                       "t1/i1")
-                     [:error :message])]
+                    "t1/i1")
+                  [:error :message])]
           (expect (clojure.string/includes? (str m) "repl_eval"))))))
 
 (defdescribe
   precise-hint-test
   "More precise hints by what actually failed — beyond the generic parser error."
-  (let
-    [mk (fn []
-          (:python-context (ep/create-python-context {(quote lst) (fn []
-                                                                    [1 2 3])})))]
+  (let [mk (fn []
+             (:python-context (ep/create-python-context {(quote lst) (fn []
+                                                                       [1 2 3])})))]
     (it "IndentationError → an indentation-specific hint"
         (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1") [:error :message])]
           (expect (clojure.string/includes? (str m) "INDENTATION"))))
     (it ".get on a FOREIGN tool result → bracket/index hint"
-        (let
-          [m (get-in (ep/run-python-block (mk) "r = await lst()\nprint(r.get(\"x\"))" "t1/i1")
-                     [:error :message])]
+        (let [m (get-in (ep/run-python-block (mk) "r = await lst()\nprint(r.get(\"x\"))" "t1/i1")
+                        [:error :message])]
           (expect (clojure.string/includes? (str m) "FOREIGN"))))))

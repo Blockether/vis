@@ -19,7 +19,7 @@
    body, all CSS inlined). No web extension required."
   [db sid]
   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
-   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
+    ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
 
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
 

@@ -2045,7 +2045,7 @@
    body, all CSS inlined). No web extension required."
   [db sid]
   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
-   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
+    ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
 
 (defn- cinema-export-fn
   "Resolve the headless session-cinema exporter from the channel-tui extension,
@@ -3582,8 +3582,7 @@
               not-empty)
       "dev"))
 
-(def ^:private first-party-channel-bootstrap-nses
-  {"tui" 'com.blockether.vis.ext.channel-tui.core})
+(def ^:private first-party-channel-bootstrap-nses {"tui" 'com.blockether.vis.ext.channel-tui.core})
 
 (defn- help-request?
   "True when args request help at any command depth. We can usually render

@@ -155,11 +155,11 @@
       (expect (not (perr/transport-throwable? (ex-info "bad request" {:status 400})))))
   (it "is nil-safe" (expect (not (perr/transport-throwable? nil)))))
 
-(defdescribe empty-content-kind-test
+(defdescribe
+  empty-content-kind-test
   (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
       (let [err {:message "The model produced neither text nor a tool call"
-                 :data {:type :svar.llm/empty-content
-                        :empty-reply-resends 2}}]
+                 :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
         (expect (= :empty-content (perr/provider-error-kind err)))
         (expect (= "Model returned an empty response" (perr/provider-error-title err)))
         (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))
