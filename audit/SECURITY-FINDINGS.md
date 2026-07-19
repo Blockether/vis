@@ -36,7 +36,7 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 | # | Finding | Location | Status |
 |---|---------|----------|--------|
 | 1 | **DOM-XSS in the web channel — no HTML sanitizer.** The client re-render did `el.innerHTML = marked.parse(data-md)` with no sanitisation. Every `data-md` sink carries attacker-influenceable markdown (raw user message, model answer, thinking, tool-result bodies), so `<img src=x onerror=…>` executed JS inside the authenticated `/ui` origin. The server-side `ir->hiccup` path is safe (hiccup2 escapes); the client re-render bypassed it. | `resources/vis-channel-web/public/ui.js` (renderProse) | **fixed** |
-| 2 | **`javascript:` / `data:` link schemes not filtered.** Server-side `ir->hiccup` renders any markdown link href verbatim (`[x](javascript:…)` becomes a clickable JS link — escaping does not stop the scheme). | `src/com/blockether/vis/ext/channel_web/core.clj:282` (server); client re-render now sanitised by #1 | **open** (client path covered by DOMPurify; server path should allowlist `http/https/mailto`) |
+| 2 | **`javascript:` / `data:` link schemes not filtered.** Server-side `ir->hiccup` rendered any markdown link href verbatim (`[x](javascript:…)` becomes a clickable JS link — escaping does not stop the scheme). | `src/com/blockether/vis/ext/channel_web/core.clj` (`ast->hiccup` `a` branch) | **fixed** |
 | 3 | **Provider API keys persisted world-readable.** `save-config!` did `.mkdirs` + `spit` on `~/.vis/config.edn` with no permission tightening; the file holds `:api-key` in plaintext at the process umask (typically `644`). Contrast the gateway token, deliberately `chmod rw-------`. On a shared host any local user could read the LLM provider keys. | `src/com/blockether/vis/internal/config.clj` (`save-config!`) | **fixed** |
 | 4 | **Non-constant-time token comparison.** The bearer token was compared with `=`, a timing side-channel once auth is enabled (non-loopback). | `gateway/server.clj` (`wrap-auth`); `channel_web/core.clj` (`ui-authed?` / `index-handler` / `auth-handler`) | **fixed** |
 | 5 | **`vis_token` cookie has no `Secure` flag.** Set HttpOnly + SameSite=Lax + path=/ but not `:secure`. Behind a TLS-terminating tunnel (Cloudflare — explicitly targeted) any plain-HTTP hop leaks the token. | `channel_web/core.clj` (cookie drop sites) | **fixed** |
@@ -95,3 +95,11 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 - **#10 token-file perm race — fixed.** `ensure-token!` now creates
   `gateway.token` mode `600` atomically via `Files/createFile` +
   `PosixFilePermissions/asFileAttribute`, closing the write-then-chmod window.
+- **#2 link-scheme allowlist — fixed.** Added `safe-href`, gating the
+  `ast->hiccup` `a`-tag branch: only `http` / `https` / `mailto` (plus
+  schemeless relative / `#fragment` / `//host` protocol-relative) hrefs are
+  emitted; `javascript:` / `data:` / `vbscript:` / `file:` are dropped and the
+  anchor renders without an `href` (non-navigable), mirroring DOMPurify on the
+  client. ASCII control chars are stripped before the scheme check so a
+  `java\tscript:` newline/tab-smuggled scheme cannot slip past. This closes
+  the server render path (#1 already covered the client re-render).

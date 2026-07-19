@@ -287,6 +287,30 @@
    "s" :del
    "a" :a})
 
+(def ^:private allowed-link-schemes
+  "URL schemes permitted in a rendered markdown link href. Anything else
+   (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped so a model- or
+   user-authored `[x](javascript:alert(1))` cannot become a clickable
+   code-execution / data-exfil link. Schemeless hrefs (relative paths,
+   `#fragment`, `//host` protocol-relative) are safe — they inherit the page
+   origin and cannot reach a dangerous pseudo-protocol."
+  #{"http" "https" "mailto"})
+
+(defn- safe-href
+  "Return `href` when its scheme is allow-listed (or it is schemeless), else
+   nil so the caller drops the attribute (mirrors DOMPurify on the client).
+   ASCII control chars are stripped first because browsers ignore tab / newline
+   / CR inside a URL when resolving the scheme, so `java\\tscript:` would
+   otherwise execute — the strip closes that smuggling vector."
+  [href]
+  (let [h (-> (str href)
+              (str/replace #"[\u0000-\u001f]" "")
+              str/trim)]
+    (when-not (str/blank? h)
+      (if-let [scheme (second (re-find #"^([a-zA-Z][a-zA-Z0-9+.\-]*):" h))]
+        (when (contains? allowed-link-schemes (str/lower-case scheme)) h)
+        h))))
+
 (defn ast->hiccup
   "Walk a canonical wire IR node (`[\"tag\" {attrs}? & children]`, strings,
    seqs) into hiccup. Total: unknown tags degrade to classed divs,
@@ -296,51 +320,55 @@
         (nil? node) nil
         (number? node) (str node)
         (seq? node) (keep ast->hiccup node)
-        (vector? node) (let [[tag second-el & rest-els]
-                             node
+        (vector? node)
+        (let [[tag second-el & rest-els]
+              node
 
-                             attrs?
-                             (map? second-el)
+              attrs?
+              (map? second-el)
 
-                             attrs
-                             (if attrs? second-el {})
+              attrs
+              (if attrs? second-el {})
 
-                             children
-                             (if attrs? rest-els (cons second-el rest-els))]
+              children
+              (if attrs? rest-els (cons second-el rest-els))]
 
-                         (cond
-                           ;; The renderer-local Markdown AST vocabulary: headings are
-                           ;; `[:h {:level N} …]`, inline code is `[:c …]`, and `[:code
-                           ;; {:lang …} "…"]` is the fenced BLOCK.
-                           (= tag "h") (into [(keyword (str "h"
-                                                            (-> (or (get attrs "level") 2)
-                                                                long
-                                                                (max 1)
-                                                                (min 6))))]
-                                             (keep ast->hiccup children))
-                           (= tag "c") [:code (keep ast->hiccup children)]
-                           (or (= tag "code") (= tag "pre") (= tag "code-block"))
-                           ;; `language-*` is the Prism convention (marked emits it too),
-                           ;; so server-rendered and client-rendered fences highlight alike.
-                           ;; `.ir-pre` is LOAD-BEARING: it carries overflow-x:auto — without
-                           ;; it a wide tool line (cat gutter, diff row) stretches the whole
-                           ;; thread horizontally instead of scrolling inside the block.
-                           ;; A `diff` fence (patch / write evidence) is colored server-side per
-                           ;; line via `diff->hiccup` so adds/dels read without a Prism diff plugin.
-                           (if (= "diff"
-                                  (some-> (get attrs "lang")
-                                          str
-                                          str/lower-case))
-                             [:pre.ir-pre.ir-diff [:code (diff->hiccup children)]]
-                             [:pre.ir-pre
-                              [:code {:class (str "language-" (or (get attrs "lang") "txt"))}
-                               (code-children->hiccup children)]])
-                           (= tag "a") (into [:a {:href (str (get attrs "href")) :rel "noreferrer"}]
-                                             (keep ast->hiccup children))
-                           :else (if-let [html-tag (ir-tag->html tag)]
-                                   (into [html-tag] (keep ast->hiccup children))
-                                   (into [:div {:class (str "ir-" (str tag))}]
-                                         (keep ast->hiccup children)))))
+          (cond
+            ;; The renderer-local Markdown AST vocabulary: headings are
+            ;; `[:h {:level N} …]`, inline code is `[:c …]`, and `[:code
+            ;; {:lang …} "…"]` is the fenced BLOCK.
+            (= tag "h") (into [(keyword (str "h"
+                                             (-> (or (get attrs "level") 2)
+                                                 long
+                                                 (max 1)
+                                                 (min 6))))]
+                              (keep ast->hiccup children))
+            (= tag "c") [:code (keep ast->hiccup children)]
+            (or (= tag "code") (= tag "pre") (= tag "code-block"))
+            ;; `language-*` is the Prism convention (marked emits it too),
+            ;; so server-rendered and client-rendered fences highlight alike.
+            ;; `.ir-pre` is LOAD-BEARING: it carries overflow-x:auto — without
+            ;; it a wide tool line (cat gutter, diff row) stretches the whole
+            ;; thread horizontally instead of scrolling inside the block.
+            ;; A `diff` fence (patch / write evidence) is colored server-side per
+            ;; line via `diff->hiccup` so adds/dels read without a Prism diff plugin.
+            (if (= "diff"
+                   (some-> (get attrs "lang")
+                           str
+                           str/lower-case))
+              [:pre.ir-pre.ir-diff [:code (diff->hiccup children)]]
+              [:pre.ir-pre
+               [:code {:class (str "language-" (or (get attrs "lang") "txt"))}
+                (code-children->hiccup children)]])
+            (= tag "a") (let [href (safe-href (get attrs "href"))]
+                          (into [:a
+                                 (cond-> {:rel "noreferrer"}
+                                   href
+                                   (assoc :href href))]
+                                (keep ast->hiccup children)))
+            :else (if-let [html-tag (ir-tag->html tag)]
+                    (into [html-tag] (keep ast->hiccup children))
+                    (into [:div {:class (str "ir-" (str tag))}] (keep ast->hiccup children)))))
         :else (str node)))
 
 (defn- md->hiccup
