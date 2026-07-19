@@ -12,6 +12,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.paths :as paths]
             [taoensso.telemere :as tel])
   (:import (java.lang ProcessBuilder$Redirect ProcessHandle)
@@ -21,15 +22,11 @@
 (defonce ^:private poll-thread (atom nil))
 (defonce ^:private restart-requested? (atom false))
 
-(def ^:private transcript-html-fn
-  ;; Deferred resolve of the canonical standalone transcript renderer — a
-  ;; summary card + turn-by-turn forensic body with all CSS inlined. Resolved
-  ;; at call time to dodge the load cycle (`foundation.transcript` pulls in
-  ;; `vis.core`, which transitively requires this channel).
-  (delay (fn [db sid]
-           ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
-            ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript)
-             db sid)))))
+(defn- transcript-html-fn
+  "Render one session's canonical standalone HTML transcript — a summary card
+   + turn-by-turn forensic body with all CSS inlined."
+  [db sid]
+  (transcript/transcript->html (transcript/transcript db sid)))
 
 (defonce ^:private chat-state
   ;; {chat-id {:settings {:reasoning-level :balanced
@@ -130,11 +127,12 @@
    pre-step-9)."
   []
   (let [voice? (voice-extension?)]
-    (vec (for [spec (vis/registered-slashes)
-               :when (and (empty? (:slash/parent spec))
-                          (not (:slash/hidden? spec))
-                          (slash-available-for-telegram? spec)
-                          (or voice? (not= "voice" (:slash/name spec))))]
+    (vec (for
+           [spec (vis/registered-slashes)
+            :when (and (empty? (:slash/parent spec))
+                       (not (:slash/hidden? spec))
+                       (slash-available-for-telegram? spec)
+                       (or voice? (not= "voice" (:slash/name spec))))]
 
            {"command" (:slash/name spec)
             "description" (or (:slash/doc spec) (str "/" (:slash/name spec)))}))))
@@ -175,12 +173,12 @@
 
 (defn- configured-allowed-chat-ids
   []
-  (let [config-ids
-        (parse-allowed-chat-ids (get-in (or (vis/load-config-raw) {})
-                                        [:telegram :allowed-chat-ids]))
+  (let
+    [config-ids
+     (parse-allowed-chat-ids (get-in (or (vis/load-config-raw) {}) [:telegram :allowed-chat-ids]))
 
-        env-ids
-        (parse-allowed-chat-ids (System/getenv telegram-allowed-chat-ids-env))]
+     env-ids
+     (parse-allowed-chat-ids (System/getenv telegram-allowed-chat-ids-env))]
 
     (set (concat config-ids env-ids))))
 
@@ -203,20 +201,21 @@
 
 (defn- approve-chat-id!
   [chat-id]
-  (let [chat-id
-        (normalize-chat-id chat-id)
+  (let
+    [chat-id
+     (normalize-chat-id chat-id)
 
-        raw
-        (or (vis/load-config-raw) {})
+     raw
+     (or (vis/load-config-raw) {})
 
-        ids
-        (-> (parse-allowed-chat-ids (get-in raw [:telegram :allowed-chat-ids]))
-            (conj chat-id)
-            sort
-            vec)
+     ids
+     (-> (parse-allowed-chat-ids (get-in raw [:telegram :allowed-chat-ids]))
+         (conj chat-id)
+         sort
+         vec)
 
-        saved
-        (assoc-in raw [:telegram :allowed-chat-ids] ids)]
+     saved
+     (assoc-in raw [:telegram :allowed-chat-ids] ids)]
 
     (vis/save-config! saved)
     (vis/reload-config!)
@@ -270,14 +269,15 @@
 
 (defn- start-fresh-telegram-process!
   []
-  (let [log-file
-        (telegram-log-file)
+  (let
+    [log-file
+     (telegram-log-file)
 
-        pb
-        (doto (restart-process-builder)
-          (.redirectInput ProcessBuilder$Redirect/INHERIT)
-          (.redirectOutput (ProcessBuilder$Redirect/appendTo log-file))
-          (.redirectError (ProcessBuilder$Redirect/appendTo log-file)))]
+     pb
+     (doto (restart-process-builder)
+       (.redirectInput ProcessBuilder$Redirect/INHERIT)
+       (.redirectOutput (ProcessBuilder$Redirect/appendTo log-file))
+       (.redirectError (ProcessBuilder$Redirect/appendTo log-file)))]
 
     (.start pb)))
 
@@ -332,15 +332,16 @@
     (throw (ex-info "ffmpeg is required to convert Telegram voice audio for transcription"
                     {:type :telegram-voice/missing-ffmpeg
                      :source-extension (audio-extension audio-file)})))
-  (let [{:keys [exit err]} (process/sh {:out :string :err :string :continue true}
-                                       "ffmpeg"
-                                       "-y"
-                                       "-i"
-                                       (str audio-file)
-                                       "-ac"
-                                       "1" "-ar"
-                                       "16000" "-f"
-                                       "wav" (str wav-file))]
+  (let
+    [{:keys [exit err]} (process/sh {:out :string :err :string :continue true}
+                                    "ffmpeg"
+                                    "-y"
+                                    "-i"
+                                    (str audio-file)
+                                    "-ac"
+                                    "1" "-ar"
+                                    "16000" "-f"
+                                    "wav" (str wav-file))]
     (when-not (zero? (long exit))
       (throw (ex-info "ffmpeg failed to convert Telegram voice audio for transcription"
                       {:type :telegram-voice/ffmpeg-failed
@@ -361,28 +362,30 @@
 
 (defn- transcribe-audio-file!
   [audio-file]
-  (let [asr-fn
-        (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
-            (throw (ex-info "Parakeet ASR model is not on the classpath" {})))
+  (let
+    [asr-fn
+     (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
+         (throw (ex-info "Parakeet ASR model is not on the classpath" {})))
 
-        {:keys [file delete?]}
-        (asr-ready-audio-file! audio-file)]
+     {:keys [file delete?]}
+     (asr-ready-audio-file! audio-file)]
 
     (try (asr-fn file)
          (finally (when delete? (try (.delete ^java.io.File file) (catch Throwable _)))))))
 
 (defn- download-and-transcribe-voice!
   [token file-id]
-  (let [{:keys [file_path]}
-        (tg/get-file token file-id)
+  (let
+    [{:keys [file_path]}
+     (tg/get-file token file-id)
 
-        suffix
-        (if (and file_path (str/includes? file_path "."))
-          (subs file_path (str/last-index-of file_path "."))
-          ".ogg")
+     suffix
+     (if (and file_path (str/includes? file_path "."))
+       (subs file_path (str/last-index-of file_path "."))
+       ".ogg")
 
-        tmp
-        (java.io.File/createTempFile "vis-telegram-voice-" suffix)]
+     tmp
+     (java.io.File/createTempFile "vis-telegram-voice-" suffix)]
 
     (try (tg/download-file! token file_path tmp)
          (transcribe-audio-file! tmp)
@@ -437,12 +440,14 @@
     ;; Window the RAW text (so we never split an HTML entity), opening at
     ;; the next word boundary so it doesn't start mid-word ("…dd a close
     ;; icon"), THEN escape.
-    (let [windowed (if (> (count thinking) thinking-window-chars)
-                     (let [tail (subs thinking (- (count thinking) thinking-window-chars))
-                           cut (or (str/index-of tail " ") 0)]
+    (let
+      [windowed (if (> (count thinking) thinking-window-chars)
+                  (let
+                    [tail (subs thinking (- (count thinking) thinking-window-chars))
+                     cut (or (str/index-of tail " ") 0)]
 
-                       (str "…" (str/triml (subs tail cut))))
-                     thinking)]
+                    (str "…" (str/triml (subs tail cut))))
+                  thinking)]
       (str "<blockquote expandable>" (esc-html windowed) "</blockquote>"))))
 
 (defn- clip-chars
@@ -455,13 +460,14 @@
   "Bound a live-feed code block: cap lines first, then total chars, so a
    stack of step blocks can never push the bubble past Telegram's limit."
   [code]
-  (let [lines
-        (str/split-lines (str code))
+  (let
+    [lines
+     (str/split-lines (str code))
 
-        clipped
-        (if (> (count lines) step-code-max-lines)
-          (str (str/join "\n" (take step-code-max-lines lines)) "\n…")
-          (str code))]
+     clipped
+     (if (> (count lines) step-code-max-lines)
+       (str (str/join "\n" (take step-code-max-lines lines)) "\n…")
+       (str code))]
 
     (clip-chars clipped step-code-max-chars)))
 
@@ -485,18 +491,19 @@
    whether it is running, succeeded, or failed. Falls back to a one-line
    label when the form carried no code to show."
   [{:keys [code label status]}]
-  (let [badge
-        (step-badge status)
+  (let
+    [badge
+     (step-badge status)
 
-        word
-        (case status
-          :ok
-          "ok"
+     word
+     (case status
+       :ok
+       "ok"
 
-          :error
-          "failed"
+       :error
+       "failed"
 
-          "running")]
+       "running")]
 
     (if (str/blank? (str code))
       (str badge " <i>" word "</i> " (esc-html (or label "form")))
@@ -510,22 +517,23 @@
    turn end it is replaced in place by the final answer, so none of this
    chrome survives."
   [{:keys [thinking-acc status-line steps]}]
-  (let [step-lines
-        (when (seq steps) (str/join "\n\n" (map render-step (take-last max-feed-steps steps))))
+  (let
+    [step-lines
+     (when (seq steps) (str/join "\n\n" (map render-step (take-last max-feed-steps steps))))
 
-        chrome
-        (cond-> ["💭 <b>Thinking…</b>"]
-          (seq step-lines)
-          (conj step-lines)
+     chrome
+     (cond-> ["💭 <b>Thinking…</b>"]
+       (seq step-lines)
+       (conj step-lines)
 
-          (seq status-line)
-          (conj (str "<i>" (esc-html status-line) "</i>")))
+       (seq status-line)
+       (conj (str "<i>" (esc-html status-line) "</i>")))
 
-        full
-        (str/join "\n\n"
-                  (cond-> chrome
-                    (seq thinking-acc)
-                    (conj (thinking-html thinking-acc))))]
+     full
+     (str/join "\n\n"
+               (cond-> chrome
+                 (seq thinking-acc)
+                 (conj (thinking-html thinking-acc))))]
 
     ;; Hard guard: an over-long edit 400s ("message is too long") and
     ;; FREEZES the live bubble mid-turn. Shed weight in order of least
@@ -541,21 +549,23 @@
 
 (defn- chunk-display-code
   [chunk]
-  (let [segments
-        (:render-segments chunk)
+  (let
+    [segments
+     (:render-segments chunk)
 
-        code
-        (if (seq segments)
-          (some (fn [{:keys [kind source]}]
-                  (when (and (= :code kind) (not (str/blank? (str source)))) source))
-                segments)
-          (:code chunk))]
+     code
+     (if (seq segments)
+       (some (fn [{:keys [kind source]}]
+               (when (and (= :code kind) (not (str/blank? (str source)))) source))
+             segments)
+       (:code chunk))]
 
     (when-not (str/blank? (str code))
-      (let [first-line (-> code
-                           str/split-lines
-                           first
-                           str/trim)]
+      (let
+        [first-line (-> code
+                        str/split-lines
+                        first
+                        str/trim)]
         (when (seq first-line) first-line)))))
 
 (defn- form-step-label
@@ -572,18 +582,19 @@
    Unlike `chunk-display-code` this keeps the whole multi-line form, not
    just its first line."
   [chunk]
-  (let [segments
-        (:render-segments chunk)
+  (let
+    [segments
+     (:render-segments chunk)
 
-        code
-        (if (seq segments)
-          (->> segments
-               (filter #(= :code (:kind %)))
-               (map :source)
-               (remove #(str/blank? (str %)))
-               (str/join "\n\n")
-               not-empty)
-          (:code chunk))]
+     code
+     (if (seq segments)
+       (->> segments
+            (filter #(= :code (:kind %)))
+            (map :source)
+            (remove #(str/blank? (str %)))
+            (str/join "\n\n")
+            not-empty)
+       (:code chunk))]
 
     (when-not (str/blank? (str code)) (str/trim (str code)))))
 
@@ -602,22 +613,24 @@
    `[chat-id :live-bubble]` so update-bubble!  / cancel callback can
    find it."
   [token chat-id]
-  (let [initial-html
-        "💭 <b>Thinking…</b>"
+  (let
+    [initial-html
+     "💭 <b>Thinking…</b>"
 
-        ;; Plain sendMessage (NOT sendMessageDraft): the draft method
-        ;; requires a `random_id` we don't supply and 400s with
-        ;; RANDOM_ID_INVALID on every call, which silently disabled the
-        ;; whole live bubble (no stream at all). A regular message + in-
-        ;; place editMessageText is the standard streaming pattern and the
-        ;; one the rest of this namespace already edits/replaces.
-        resp
-        (try (tg/post-message! token chat-id initial-html {:reply-markup (cancel-keyboard chat-id)})
-             (catch Exception _ nil))]
+     ;; Plain sendMessage (NOT sendMessageDraft): the draft method
+     ;; requires a `random_id` we don't supply and 400s with
+     ;; RANDOM_ID_INVALID on every call, which silently disabled the
+     ;; whole live bubble (no stream at all). A regular message + in-
+     ;; place editMessageText is the standard streaming pattern and the
+     ;; one the rest of this namespace already edits/replaces.
+     resp
+     (try (tg/post-message! token chat-id initial-html {:reply-markup (cancel-keyboard chat-id)})
+          (catch Exception _ nil))]
 
-    (if-let [mid (some-> resp
-                         :result
-                         :message_id)]
+    (if-let
+      [mid (some-> resp
+                   :result
+                   :message_id)]
       (do (update-bubble-state! chat-id
                                 (constantly {:message-id mid
                                              :pending-html initial-html
@@ -653,10 +666,11 @@
          (= 400 (:error_code resp))
          (str/includes? (str (:description resp)) "is not modified"))
     (update-bubble-state! chat-id assoc :last-edit-ms (now-ms))
-    (and resp (= 429 (:error_code resp))) (let [retry-after (-> resp
-                                                                :parameters
-                                                                :retry_after
-                                                                (or 1))]
+    (and resp (= 429 (:error_code resp))) (let
+                                            [retry-after (-> resp
+                                                             :parameters
+                                                             :retry_after
+                                                             (or 1))]
                                             (update-bubble-state!
                                               chat-id
                                               assoc
@@ -671,13 +685,13 @@
   (when-let [{:keys [message-id keyboard?] :as state} (bubble-state-for chat-id)]
     (let [new-html (live-bubble-html state)]
       (when (should-edit? state new-html flush?)
-        (let [resp (try (tg/edit-message! token
-                                          chat-id
-                                          message-id
-                                          new-html
-                                          (when keyboard?
-                                            {:reply-markup (cancel-keyboard chat-id)}))
-                        (catch Exception _ nil))]
+        (let
+          [resp (try (tg/edit-message! token
+                                       chat-id
+                                       message-id
+                                       new-html
+                                       (when keyboard? {:reply-markup (cancel-keyboard chat-id)}))
+                     (catch Exception _ nil))]
           (apply-edit-result! chat-id new-html resp))))))
 
 (defn- finalize-live-bubble!
@@ -685,15 +699,16 @@
    actual answer text ships AFTER, as a separate message."
   [token chat-id outcome]
   (when-let [{:keys [message-id thinking-acc]} (bubble-state-for chat-id)]
-    (let [glyph (case outcome
-                  :cancelled
-                  "⊘ <b>Cancelled by user.</b>"
+    (let
+      [glyph (case outcome
+               :cancelled
+               "⊘ <b>Cancelled by user.</b>"
 
-                  :error
-                  "⚠️ <b>Error during thinking.</b>"
+               :error
+               "⚠️ <b>Error during thinking.</b>"
 
-                  "💭 <b>Thinking complete.</b>")
-          html (str glyph (when (seq thinking-acc) (str "\n\n" (thinking-html thinking-acc))))]
+               "💭 <b>Thinking complete.</b>")
+       html (str glyph (when (seq thinking-acc) (str "\n\n" (thinking-html thinking-acc))))]
 
       (try (tg/edit-message! token chat-id message-id html {:reply-markup {:inline_keyboard []}})
            (catch Exception _ nil)))
@@ -722,16 +737,17 @@
     (when (and (bubble-state-for chat-id)
                (not (str/blank? answer-html))
                (<= (count answer-html) telegram-msg-limit))
-      (let [{:keys [message-id]}
-            (bubble-state-for chat-id)
+      (let
+        [{:keys [message-id]}
+         (bubble-state-for chat-id)
 
-            resp
-            (try (tg/edit-message! token
-                                   chat-id
-                                   message-id
-                                   answer-html
-                                   {:reply-markup {:inline_keyboard []}})
-                 (catch Exception _ nil))]
+         resp
+         (try (tg/edit-message! token
+                                chat-id
+                                message-id
+                                answer-html
+                                {:reply-markup {:inline_keyboard []}})
+              (catch Exception _ nil))]
 
         (if (and resp (:ok resp))
           (do (update-bubble-state! chat-id (constantly nil)) true)
@@ -754,33 +770,34 @@
                                (update-bubble-state! chat-id assoc :thinking-acc thinking)
                                (update-live-bubble! token chat-id))
         (= phase :provider-fallback)
-        (do (update-bubble-state!
-              chat-id
-              assoc
-              :status-line
-              (let [failed (:failed-provider chunk)
-                    target (:new-provider chunk)
-                    from (str (or (some-> (:id failed)
-                                          name)
-                                  (some-> (:provider-id failed)
-                                          name)
-                                  "provider")
-                              (when-let [m (:model failed)]
-                                (str "/" m)))
-                    to (when (or (:id target) (:provider-id target) (:model target))
-                         (str (or (some-> (:id target)
-                                          name)
-                                  (some-> (:provider-id target)
-                                          name)
-                                  "provider")
-                              (when-let [m (:model target)]
-                                (str "/" m))))
-                    why (or (:error failed)
-                            (some-> (:reason chunk)
-                                    name)
-                            "fallback")]
+        (do (update-bubble-state! chat-id
+                                  assoc
+                                  :status-line
+                                  (let
+                                    [failed (:failed-provider chunk)
+                                     target (:new-provider chunk)
+                                     from (str (or (some-> (:id failed)
+                                                           name)
+                                                   (some-> (:provider-id failed)
+                                                           name)
+                                                   "provider")
+                                               (when-let [m (:model failed)]
+                                                 (str "/" m)))
+                                     to
+                                     (when (or (:id target) (:provider-id target) (:model target))
+                                       (str (or (some-> (:id target)
+                                                        name)
+                                                (some-> (:provider-id target)
+                                                        name)
+                                                "provider")
+                                            (when-let [m (:model target)]
+                                              (str "/" m))))
+                                     why (or (:error failed)
+                                             (some-> (:reason chunk)
+                                                     name)
+                                             "fallback")]
 
-                (str "↪ Fallback " from (when to (str " → " to)) " — " why)))
+                                    (str "↪ Fallback " from (when to (str " → " to)) " — " why)))
             (update-live-bubble! token chat-id :flush? true))
         ;; Each form the agent runs appends a code block to the live feed
         ;; (`▸` running). Keyed by the form's :position so the result phase
@@ -790,8 +807,9 @@
                                                         update
                                                         :steps
                                                         (fn [steps]
-                                                          (let [pos (:position chunk)
-                                                                steps (or steps [])]
+                                                          (let
+                                                            [pos (:position chunk)
+                                                             steps (or steps [])]
 
                                                             (if (some #(= pos (:position %)) steps)
                                                               steps
@@ -804,29 +822,30 @@
                                   (update-live-bubble! token chat-id :flush? true))
         ;; Result lands → badge the matching block ✅ ok / ❌ failed based on
         ;; whether the form errored. Flush so the pass/fail badge shows now.
-        (= phase :form-result)
-        (do (update-bubble-state! chat-id
-                                  update
-                                  :steps
-                                  (fn [steps]
-                                    (let [pos (:position chunk)
+        (= phase :form-result) (do (update-bubble-state!
+                                     chat-id
+                                     update
+                                     :steps
+                                     (fn [steps]
+                                       (let
+                                         [pos (:position chunk)
                                           status (if (:error chunk) :error :ok)
                                           steps (or steps [])
                                           idx (first (keep-indexed (fn [i s]
                                                                      (when (= pos (:position s)) i))
                                                                    steps))]
 
-                                      (if idx
-                                        (assoc-in steps [idx :status] status)
-                                        ;; No matching start block (e.g. its :form-start was
-                                        ;; suppressed) — append the completed block so the result
-                                        ;; still surfaces.
-                                        (conj steps
-                                              {:position pos
-                                               :label (form-step-label chunk)
-                                               :code (chunk-code-block chunk)
-                                               :status status})))))
-            (update-live-bubble! token chat-id :flush? true))
+                                         (if idx
+                                           (assoc-in steps [idx :status] status)
+                                           ;; No matching start block (e.g. its :form-start was
+                                           ;; suppressed) — append the completed block so the result
+                                           ;; still surfaces.
+                                           (conj steps
+                                                 {:position pos
+                                                  :label (form-step-label chunk)
+                                                  :code (chunk-code-block chunk)
+                                                  :status status})))))
+                                   (update-live-bubble! token chat-id :flush? true))
         (and (= phase :iteration-final) (not (:done? chunk)))
         (do (update-bubble-state! chat-id
                                   assoc
@@ -852,26 +871,28 @@
   ;; stray &/</> never break parsing.
   ;; The gateway result is canonical string-keyed; the shared formatter's
   ;; contract is the TUI-message field map, so pick the fields explicitly.
-  (let [line (vis/format-meta-line {:model (get result "model")
-                                    :provider (get result "provider")
-                                    :tokens (get result "tokens")
-                                    :cost (get result "cost")
-                                    :duration-ms (get result "duration_ms")
-                                    :llm-selected (get result "llm_selected")
-                                    :llm-actual (get result "llm_actual")
-                                    :llm-fallback? (get result "is_llm_fallback")
-                                    :llm-routing-trace (get result "llm_routing_trace")})]
+  (let
+    [line (vis/format-meta-line {:model (get result "model")
+                                 :provider (get result "provider")
+                                 :tokens (get result "tokens")
+                                 :cost (get result "cost")
+                                 :duration-ms (get result "duration_ms")
+                                 :llm-selected (get result "llm_selected")
+                                 :llm-actual (get result "llm_actual")
+                                 :llm-fallback? (get result "is_llm_fallback")
+                                 :llm-routing-trace (get result "llm_routing_trace")})]
     (when (seq line) (str "\n\n<i>🤖 " (esc-html line) "</i>"))))
 
 (defn- normalize-choice
   [allowed aliases default v]
-  (let [k
-        (cond (keyword? v) v
-              (string? v) (keyword (str/lower-case (str/trim v)))
-              :else nil)
+  (let
+    [k
+     (cond (keyword? v) v
+           (string? v) (keyword (str/lower-case (str/trim v)))
+           :else nil)
 
-        k
-        (get aliases k k)]
+     k
+     (get aliases k k)]
 
     (if (some #{k} allowed) k default)))
 
@@ -887,21 +908,23 @@
 
 (defn- persisted-chat-settings
   [chat-id]
-  (let [raw
-        (try (vis/load-config-raw) (catch Throwable _ nil))
+  (let
+    [raw
+     (try (vis/load-config-raw) (catch Throwable _ nil))
 
-        m
-        (get-in raw [:telegram :chat-settings (normalize-chat-id chat-id)])]
+     m
+     (get-in raw [:telegram :chat-settings (normalize-chat-id chat-id)])]
 
     (when (map? m) (select-keys m (keys default-chat-settings)))))
 
 (defn- persist-chat-settings!
   [chat-id settings]
-  (try (let [chat-id
-             (normalize-chat-id chat-id)
+  (try (let
+         [chat-id
+          (normalize-chat-id chat-id)
 
-             raw
-             (or (vis/load-config-raw) {})]
+          raw
+          (or (vis/load-config-raw) {})]
 
          (vis/save-config! (assoc-in raw
                              [:telegram :chat-settings chat-id]
@@ -922,12 +945,13 @@
 
 (defn- update-chat-settings!
   [chat-id f & args]
-  (let [settings (:settings (get (swap! chat-state update
-                                   chat-id
-                                   (fn [state]
-                                     (let [settings (apply f (chat-settings chat-id) args)]
-                                       (assoc (or state {}) :settings settings))))
-                                 chat-id))]
+  (let
+    [settings (:settings (get (swap! chat-state update
+                                chat-id
+                                (fn [state]
+                                  (let [settings (apply f (chat-settings chat-id) args)]
+                                    (assoc (or state {}) :settings settings))))
+                              chat-id))]
     (persist-chat-settings! chat-id settings)
     settings))
 
@@ -991,21 +1015,22 @@
    (`/codex/models?client_version=1.0.0`, etc.) come from the
    platform-agnostic `KNOWN_PROVIDERS` registry, not from telegram."
   [provider]
-  (try (let [probe
-             (cond-> provider
-               (empty? (:models provider))
-               (assoc :models [{:name "probe"}]))
+  (try (let
+         [probe
+          (cond-> provider
+            (empty? (:models provider))
+            (assoc :models [{:name "probe"}]))
 
-             svar-provider
-             (vis/->svar-provider probe)
+          svar-provider
+          (vis/->svar-provider probe)
 
-             ;; Honor `:router` opts from `~/.vis/config.edn` so /models
-             ;; probes use the same retry/network policy as real turns.
-             router
-             (svar/make-router [svar-provider] (vis/router-opts (vis/current-config)))
+          ;; Honor `:router` opts from `~/.vis/config.edn` so /models
+          ;; probes use the same retry/network policy as real turns.
+          router
+          (svar/make-router [svar-provider] (vis/router-opts (vis/current-config)))
 
-             raw
-             (svar/models! router)]
+          raw
+          (svar/models! router)]
 
          (->> raw
               (map (fn [m]
@@ -1018,11 +1043,12 @@
 
 (defn- live-models-for
   [provider]
-  (let [{:keys [fetched-at-ms ttl-ms by-provider]}
-        @model-catalog-cache
+  (let
+    [{:keys [fetched-at-ms ttl-ms by-provider]}
+     @model-catalog-cache
 
-        now
-        (System/currentTimeMillis)]
+     now
+     (System/currentTimeMillis)]
 
     (if (and (< (- (long now) (long fetched-at-ms)) (long ttl-ms))
              (contains? by-provider (:id provider)))
@@ -1056,23 +1082,25 @@
    selection (see `select-model-entry`)."
   [config]
   (->> (:providers config)
-       (mapcat (fn [provider]
-                 (let [configured
-                       (->> (:models provider)
-                            (keep #(model-entry provider %))
-                            vec)
+       (mapcat
+         (fn [provider]
+           (let
+             [configured
+              (->> (:models provider)
+                   (keep #(model-entry provider %))
+                   vec)
 
-                       configured-ids
-                       (into #{} (map :model) configured)
+              configured-ids
+              (into #{} (map :model) configured)
 
-                       live-only
-                       (->> (live-models-for provider)
-                            (remove configured-ids)
-                            (mapv (fn [model-id]
-                                    (-> (model-entry provider {:name model-id})
-                                        (assoc :live-only? true)))))]
+              live-only
+              (->> (live-models-for provider)
+                   (remove configured-ids)
+                   (mapv (fn [model-id]
+                           (-> (model-entry provider {:name model-id})
+                               (assoc :live-only? true)))))]
 
-                   (concat configured live-only))))
+             (concat configured live-only))))
        vec))
 
 (defn- active-model-entry
@@ -1096,13 +1124,14 @@
 
 (defn- move-to-front
   [pred coll]
-  (let [items
-        (vec (or coll []))
+  (let
+    [items
+     (vec (or coll []))
 
-        idx
-        (first (keep-indexed (fn [idx item]
-                               (when (pred item) idx))
-                             items))]
+     idx
+     (first (keep-indexed (fn [idx item]
+                            (when (pred item) idx))
+                          items))]
 
     (if (nil? idx)
       items
@@ -1115,20 +1144,21 @@
           (fn [providers]
             (mapv (fn [provider]
                     (if (= provider-id (:id provider))
-                      (let [models
-                            (or (:models provider) [])
+                      (let
+                        [models
+                         (or (:models provider) [])
 
-                            has?
-                            (some #(= model (vis/model-name %)) models)
+                         has?
+                         (some #(= model (vis/model-name %)) models)
 
-                            ;; Append a live-only model the user just
-                            ;; picked so it persists; `move-to-front`
-                            ;; below promotes it to active.
-                            models
-                            (cond-> models
-                              (not has?)
-                              (-> vec
-                                  (conj {:name model})))]
+                         ;; Append a live-only model the user just
+                         ;; picked so it persists; `move-to-front`
+                         ;; below promotes it to active.
+                         models
+                         (cond-> models
+                           (not has?)
+                           (-> vec
+                               (conj {:name model})))]
 
                         (assoc provider
                           :models (move-to-front (fn [candidate]
@@ -1139,18 +1169,20 @@
 
 (defn- apply-config!
   [config]
-  (let [raw
-        (or (vis/load-config-raw) {})
+  (let
+    [raw
+     (or (vis/load-config-raw) {})
 
-        persistent
-        (assoc raw :providers (vec (:providers config)))]
+     persistent
+     (assoc raw :providers (vec (:providers config)))]
 
     (vis/save-config! persistent)
-    (let [resolved
-          (or (vis/reload-config!) persistent)
+    (let
+      [resolved
+       (or (vis/reload-config!) persistent)
 
-          router
-          (vis/rebuild-router! resolved)]
+       router
+       (vis/rebuild-router! resolved)]
 
       (vis/refresh-cached-routers! router))
     ;; Catalog is provider-keyed; provider rotation may change which
@@ -1165,22 +1197,24 @@
     (or (when (re-matches #"\d+" selection) (nth entries (dec (Long/parseLong selection)) nil))
         (let [needle (str/lower-case selection)]
           (first (filter (fn [entry]
-                           (let [;; Strip optional " (live)" tag so users
-                                 ;; can paste either form.
-                                 label-with-tag (str/lower-case (model-entry-label entry))
-                                 label-bare (str/replace label-with-tag #"\s*\(live\)$" "")
-                                 model (str/lower-case (:model entry))]
+                           (let
+                             [;; Strip optional " (live)" tag so users
+                              ;; can paste either form.
+                              label-with-tag (str/lower-case (model-entry-label entry))
+                              label-bare (str/replace label-with-tag #"\s*\(live\)$" "")
+                              model (str/lower-case (:model entry))]
 
                              (or (= needle label-with-tag) (= needle label-bare) (= needle model))))
                          entries))))))
 
 (defn- select-model!
   [selection]
-  (let [base-config
-        (or (vis/load-config) {:providers []})
+  (let
+    [base-config
+     (or (vis/load-config) {:providers []})
 
-        entries
-        (model-cycle-entries base-config)]
+     entries
+     (model-cycle-entries base-config)]
 
     (cond (empty? entries) {:message "No models configured" :level :warn}
           (str/blank? (or selection "")) {:message "Missing model selection" :level :warn}
@@ -1207,14 +1241,15 @@
 
 (defn- command-models
   [arg]
-  (let [base-config
-        (or (vis/load-config) {:providers []})
+  (let
+    [base-config
+     (or (vis/load-config) {:providers []})
 
-        entries
-        (model-cycle-entries base-config)
+     entries
+     (model-cycle-entries base-config)
 
-        active
-        (active-model-entry base-config)]
+     active
+     (active-model-entry base-config)]
 
     (if (str/blank? (or arg ""))
       ;; The inline keyboard already lists every model (with ✅ on the
@@ -1269,11 +1304,12 @@
 
 (defn- command-status
   [chat-id]
-  (let [{:strs [id title]}
-        (gateway-session-for-telegram-chat! chat-id)
+  (let
+    [{:strs [id title]}
+     (gateway-session-for-telegram-chat! chat-id)
 
-        settings
-        (chat-settings chat-id)]
+     settings
+     (chat-settings chat-id)]
 
     (prose-blocks (str "Session: "
                        (subs (str id) 0 (min 8 (count (str id))))
@@ -1361,11 +1397,12 @@
     {:message (prose-blocks
                 "Voice is not loaded. Install/load vis-foundation-voice, then restart Telegram.")}
     (if (str/blank? (or arg ""))
-      (let [active
-            (:voice-mode (chat-settings chat-id))
+      (let
+        [active
+         (:voice-mode (chat-settings chat-id))
 
-            modes
-            (available-voice-modes)]
+         modes
+         (available-voice-modes)]
 
         {:message (prose-blocks (str "Voice modes\nCurrent: " (name active)
                                      "\n\n" (str/join "\n" (voice-mode-lines active modes))
@@ -1377,11 +1414,12 @@
                                      (if (voice-input-extension?) "yes" "missing")
                                      ", output=" (if (voice-output-extension?) "yes" "missing")))
          :reply-markup (voice-inline-keyboard active modes)})
-      (let [raw
-            (keyword (str/lower-case (str/trim arg)))
+      (let
+        [raw
+         (keyword (str/lower-case (str/trim arg)))
 
-            mode
-            (normalize-voice-mode raw)]
+         mode
+         (normalize-voice-mode raw)]
 
         {:message (prose-blocks
                     (if (and (not= raw mode) (not (contains? #{:on :voice :audio} raw)))
@@ -1401,31 +1439,34 @@
 
 (defn- command-export
   [chat-id]
-  (let [{:strs [id]}
-        (gateway-session-for-telegram-chat! chat-id)
+  (let
+    [{:strs [id]}
+     (gateway-session-for-telegram-chat! chat-id)
 
-        db
-        (vis/db-info)
+     db
+     (vis/db-info)
 
-        markdown
-        (vis/session->markdown db id)]
+     markdown
+     (vis/session->markdown db id)]
 
     ;; Deliver the styled (vis-light) HTML transcript as a downloadable
     ;; attachment alongside the in-chat Markdown. Best-effort: a failure
     ;; here never blocks the Markdown reply.
     (when (and id (seq markdown))
-      (try (let [token
-                 (not-empty (System/getenv "TELEGRAM_BOT_TOKEN"))
+      (try (let
+             [token
+              (not-empty (System/getenv "TELEGRAM_BOT_TOKEN"))
 
-                 html
-                 (@transcript-html-fn db id)]
+              html
+              (transcript-html-fn db id)]
 
              (when (and token html)
-               (let [id8
-                     (subs (str id) 0 8)
+               (let
+                 [id8
+                  (subs (str id) 0 8)
 
-                     tmp
-                     (java.io.File/createTempFile (str "vis-transcript-" id8 "-") ".html")]
+                  tmp
+                  (java.io.File/createTempFile (str "vis-transcript-" id8 "-") ".html")]
 
                  (try (spit tmp html)
                       (tg/send-document! token
@@ -1491,22 +1532,23 @@
     ;; are simply absent, and the session-scoped slashes degrade to their
     ;; own "session not ready" branch (while `/status`, `/export`, `/clear`
     ;; re-resolve inside their run-fns and surface the real error there).
-    (let [db-info
-          (try (vis/db-info) (catch Throwable _ nil))
+    (let
+      [db-info
+       (try (vis/db-info) (catch Throwable _ nil))
 
-          session-id
-          (try (get (gateway-session-for-telegram-chat! chat-id) "id") (catch Throwable _ nil))
+       session-id
+       (try (get (gateway-session-for-telegram-chat! chat-id) "id") (catch Throwable _ nil))
 
-          ctx
-          (cond-> {:channel/id :telegram :telegram/chat-id chat-id :command/raw text}
-            session-id
-            (assoc :session/id session-id)
+       ctx
+       (cond-> {:channel/id :telegram :telegram/chat-id chat-id :command/raw text}
+         session-id
+         (assoc :session/id session-id)
 
-            db-info
-            (assoc :db-info db-info))
+         db-info
+         (assoc :db-info db-info))
 
-          result
-          (vis/slash-dispatch (slash-env) ctx text)]
+       result
+       (vis/slash-dispatch (slash-env) ctx text)]
 
       (cond (not (:handled? result)) false
             (:error result) (do (send! token
@@ -1515,23 +1557,24 @@
                                                           (name (or (:reason result) :error))
                                                           ")\n\n" (:error result))))
                                 true)
-            :else (let [r
-                        (:result result)
+            :else (let
+                    [r
+                     (:result result)
 
-                        raw-body
-                        (:slash/body r)
+                     raw-body
+                     (:slash/body r)
 
-                        ;; Cross-channel slash run-fns (e.g. /dir) may return a raw
-                        ;; string body; render-for-telegram only accepts canonical
-                        ;; [:ast ...]. Coerce strings to IR so non-Telegram-native
-                        ;; slashes render here instead of throwing.
-                        body
-                        (cond (string? raw-body) (prose-blocks raw-body)
-                              (some? raw-body) raw-body
-                              :else (prose-blocks (or (:slash/title r) "Slash handled")))
+                     ;; Cross-channel slash run-fns (e.g. /dir) may return a raw
+                     ;; string body; render-for-telegram only accepts canonical
+                     ;; [:ast ...]. Coerce strings to IR so non-Telegram-native
+                     ;; slashes render here instead of throwing.
+                     body
+                     (cond (string? raw-body) (prose-blocks raw-body)
+                           (some? raw-body) raw-body
+                           :else (prose-blocks (or (:slash/title r) "Slash handled")))
 
-                        reply-markup
-                        (get-in r [:slash/data :reply-markup])]
+                     reply-markup
+                     (get-in r [:slash/data :reply-markup])]
 
                     (send! token chat-id body {:reply-markup reply-markup})
                     true)))))
@@ -1571,63 +1614,64 @@
    line, with HTTP status / request-id / raw provider message folded into
    an expandable blockquote so the chat stays readable."
   [{:keys [kind status request-id provider-message provider-id]}]
-  (let [prov
-        (some-> (provider-id-str provider-id)
-                esc-html)
+  (let
+    [prov
+     (some-> (provider-id-str provider-id)
+             esc-html)
 
-        suffix
-        (when prov (str " — <code>" prov "</code>"))
+     suffix
+     (when prov (str " — <code>" prov "</code>"))
 
-        head
-        (case kind
-          :auth
-          (str "🔐 <b>Authentication failed</b>" suffix)
+     head
+     (case kind
+       :auth
+       (str "🔐 <b>Authentication failed</b>" suffix)
 
-          :invalid-thinking-signature
-          (str "🧠 <b>Invalid thinking signature</b>" suffix)
+       :invalid-thinking-signature
+       (str "🧠 <b>Invalid thinking signature</b>" suffix)
 
-          (str "⚠️ <b>Provider error</b>" suffix))
+       (str "⚠️ <b>Provider error</b>" suffix))
 
-        lead
-        (case kind
-          :auth
-          "The provider rejected Vis's credentials, so the model never ran."
+     lead
+     (case kind
+       :auth
+       "The provider rejected Vis's credentials, so the model never ran."
 
-          :invalid-thinking-signature
-          "The provider rejected a replayed thinking block, so the model never ran."
+       :invalid-thinking-signature
+       "The provider rejected a replayed thinking block, so the model never ran."
 
-          (or (some-> provider-message
-                      esc-html)
-              "The provider rejected the request before the model ran."))
+       (or (some-> provider-message
+                   esc-html)
+           "The provider rejected the request before the model ran."))
 
-        action
-        (case kind
-          :auth
-          (str "→ Re-authenticate: <code>vis providers auth"
-               (when-let [p (provider-id-str provider-id)]
-                 (str " " (esc-html p)))
-               "</code>, then resend.")
+     action
+     (case kind
+       :auth
+       (str "→ Re-authenticate: <code>vis providers auth"
+            (when-let [p (provider-id-str provider-id)]
+              (str " " (esc-html p)))
+            "</code>, then resend.")
 
-          :invalid-thinking-signature
-          "→ Just resend — Vis won't replay the stale thinking state."
+       :invalid-thinking-signature
+       "→ Just resend — Vis won't replay the stale thinking state."
 
-          "→ Resend; if it keeps failing, check this provider's config.")
+       "→ Resend; if it keeps failing, check this provider's config.")
 
-        ;; Mechanics only — never the headline copy. For :generic the
-        ;; provider message is already the lead, so don't repeat it.
-        detail
-        (cond-> []
-          status
-          (conj (str "HTTP " (esc-html (str status))))
+     ;; Mechanics only — never the headline copy. For :generic the
+     ;; provider message is already the lead, so don't repeat it.
+     detail
+     (cond-> []
+       status
+       (conj (str "HTTP " (esc-html (str status))))
 
-          request-id
-          (conj (esc-html (str request-id)))
+       request-id
+       (conj (esc-html (str request-id)))
 
-          (and provider-message (not= kind :generic))
-          (conj (esc-html provider-message)))
+       (and provider-message (not= kind :generic))
+       (conj (esc-html provider-message)))
 
-        block
-        (when (seq detail) (str "<blockquote expandable>" (str/join "\n" detail) "</blockquote>"))]
+     block
+     (when (seq detail) (str "<blockquote expandable>" (str/join "\n" detail) "</blockquote>"))]
 
     (str/join "\n\n"
               (cond-> [head lead action]
@@ -1637,14 +1681,15 @@
 (defn- answer-text
   "Render canonical content blocks to Telegram-safe HTML."
   [result]
-  (let [blocks
-        (get result "content")
+  (let
+    [blocks
+     (get result "content")
 
-        error-block
-        (some #(when (= "error" (get % "type")) %) blocks)
+     error-block
+     (some #(when (= "error" (get % "type")) %) blocks)
 
-        md
-        (content-blocks->markdown blocks)]
+     md
+     (content-blocks->markdown blocks)]
 
     (cond error-block (provider-error-html {"title" (get error-block "code")
                                             "explanation" (get error-block "message")
@@ -1659,11 +1704,12 @@
 (defn- answer-voice-text
   "Plain-text projection of canonical content for voice TTS."
   [result]
-  (let [md
-        (content-blocks->markdown (get result "content"))
+  (let
+    [md
+     (content-blocks->markdown (get result "content"))
 
-        spoken
-        (when-not (str/blank? md) md)]
+     spoken
+     (when-not (str/blank? md) md)]
 
     (if (str/blank? spoken)
       "The assistant returned a structured answer (code or data). See the chat for details."
@@ -1671,14 +1717,15 @@
 
 (defn- voice-config-flag
   [k default]
-  (let [raw
-        (try (vis/load-config-raw) (catch Throwable _ nil))
+  (let
+    [raw
+     (try (vis/load-config-raw) (catch Throwable _ nil))
 
-        qualified
-        (keyword "voice" (name k))
+     qualified
+     (keyword "voice" (name k))
 
-        voice-map
-        (:voice raw)]
+     voice-map
+     (:voice raw)]
 
     (cond (contains? raw qualified) (boolean (get raw qualified))
           (and (map? voice-map) (contains? voice-map k)) (boolean (get voice-map k))
@@ -1692,12 +1739,13 @@
 
 (defn- synthesize-answer-wav!
   [answer]
-  (let [synthesize-fn
-        (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.core/synthesize-file!)
-            (throw (ex-info "Voice TTS is not on the classpath" {})))
+  (let
+    [synthesize-fn
+     (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.core/synthesize-file!)
+         (throw (ex-info "Voice TTS is not on the classpath" {})))
 
-        wav
-        (java.io.File/createTempFile "vis-telegram-answer-" ".wav")]
+     wav
+     (java.io.File/createTempFile "vis-telegram-answer-" ".wav")]
 
     (synthesize-fn answer {:out-file wav})
     wav))
@@ -1705,28 +1753,30 @@
 (defn- wav->ogg-opus!
   [wav]
   (when (executable? "ffmpeg")
-    (let [ogg
-          (java.io.File/createTempFile "vis-telegram-answer-" ".ogg")
+    (let
+      [ogg
+       (java.io.File/createTempFile "vis-telegram-answer-" ".ogg")
 
-          exit
-          (:exit (process/sh {:out :string :err :string :continue true}
-                             "ffmpeg"
-                             "-y"
-                             "-i"
-                             (str wav)
-                             "-c:a"
-                             "libopus" "-b:a"
-                             "32k" (str ogg)))]
+       exit
+       (:exit (process/sh {:out :string :err :string :continue true}
+                          "ffmpeg"
+                          "-y"
+                          "-i"
+                          (str wav)
+                          "-c:a"
+                          "libopus" "-b:a"
+                          "32k" (str ogg)))]
 
       (if (zero? (long exit)) ogg (do (.delete ogg) nil)))))
 
 (defn- send-answer-audio!
   [token chat-id answer]
-  (let [wav
-        (synthesize-answer-wav! answer)
+  (let
+    [wav
+     (synthesize-answer-wav! answer)
 
-        ogg
-        (try (wav->ogg-opus! wav) (catch Throwable _ nil))]
+     ogg
+     (try (wav->ogg-opus! wav) (catch Throwable _ nil))]
 
     (try (if ogg (tg/send-voice! token chat-id ogg) (tg/send-audio! token chat-id wav))
          (finally (try (.delete ^java.io.File wav) (catch Throwable _))
@@ -1735,102 +1785,104 @@
 (defn- handle-user-text!
   ([token chat-id text sender] (handle-user-text! token chat-id text sender nil))
   ([token chat-id text sender {:keys [transcript]}]
-   (let [turn-token
-         (vis/cancellation-token)
+   (let
+     [turn-token
+      (vis/cancellation-token)
 
-         settings
-         (chat-settings chat-id)
+      settings
+      (chat-settings chat-id)
 
-         voice-response?
-         (voice-output-mode? settings)
+      voice-response?
+      (voice-output-mode? settings)
 
-         tracker
-         (vis/make-progress-tracker {:on-update
-                                     (fn [timeline chunk]
-                                       (try (on-tracker-update! token chat-id timeline chunk)
-                                            (catch Exception _ nil)))})
+      tracker
+      (vis/make-progress-tracker {:on-update (fn [timeline chunk]
+                                               (try
+                                                 (on-tracker-update! token chat-id timeline chunk)
+                                                 (catch Exception _ nil)))})
 
-         opts
-         (cond-> {:cancel-token turn-token :hooks {:on-chunk (:on-chunk tracker)}}
-           (turn-reasoning-default settings)
-           (assoc :reasoning-default (turn-reasoning-default settings))
+      opts
+      (cond-> {:cancel-token turn-token :hooks {:on-chunk (:on-chunk tracker)}}
+        (turn-reasoning-default settings)
+        (assoc :reasoning-default (turn-reasoning-default settings))
 
-           (turn-extra-body settings)
-           (assoc :extra-body (turn-extra-body settings))
+        (turn-extra-body settings)
+        (assoc :extra-body (turn-extra-body settings))
 
-           voice-response?
-           (assoc :turn-features {:voice-response? true}))]
+        voice-response?
+        (assoc :turn-features {:voice-response? true}))]
 
      (set-in-flight! chat-id turn-token)
-     (let [bubble-status
-           (start-live-bubble! token chat-id)
+     (let
+       [bubble-status
+        (start-live-bubble! token chat-id)
 
-           fut
-           (future
-             (try
-               (when (= :unavailable bubble-status)
-                 ;; Pre-first-paint failure path — keep the legacy
-                 ;; typing indicator so the chat doesn't look frozen.
-                 (tg/send-chat-action! token chat-id "typing"))
-               (let [{:strs [id]}
-                     (gateway-session-for-telegram-chat! chat-id)
+        fut
+        (future
+          (try
+            (when (= :unavailable bubble-status)
+              ;; Pre-first-paint failure path — keep the legacy
+              ;; typing indicator so the chat doesn't look frozen.
+              (tg/send-chat-action! token chat-id "typing"))
+            (let
+              [{:strs [id]}
+               (gateway-session-for-telegram-chat! chat-id)
 
-                     result*
-                     (vis/gateway-submit-turn-sync! id
-                                                    (-> opts
-                                                        (dissoc :hooks)
-                                                        (assoc :request text
-                                                               :engine-opts
-                                                               (select-keys opts [:hooks]))))
+               result*
+               (vis/gateway-submit-turn-sync! id
+                                              (-> opts
+                                                  (dissoc :hooks)
+                                                  (assoc :request text
+                                                         :engine-opts (select-keys opts [:hooks]))))
 
-                     result
-                     result*]
+               result
+               result*]
 
-                 (if voice-response?
-                   (do
-                     ;; Voice answer is audio, so the streaming bubble
-                     ;; can't become it — collapse the bubble instead.
-                     (finalize-live-bubble! token chat-id :collapse)
-                     (let [voice-text (answer-voice-text result)]
-                       (when (and (voice-config-flag :telegram-send-transcript? true)
-                                  (not (str/blank? (str transcript))))
-                         (send! token chat-id (prose-blocks (transcript-message transcript))))
-                       (tg/send-chat-action! token chat-id "record_voice")
-                       (send-answer-audio! token chat-id voice-text)
-                       (when (voice-config-flag :telegram-send-answer-text? true)
-                         ;; Full HTML answer ships alongside the voice
-                         ;; note so users see code/tables that TTS
-                         ;; deliberately skipped.
-                         (tg/send-message! token chat-id (answer-text result)))))
-                   ;; TEXT answer: the streaming bubble BECOMES the answer
-                   ;; (no separate "thinking complete" remnant).
-                   (let [answer-html (str (answer-text result) (format-footer result))]
-                     (if (and transcript (not (str/blank? (str transcript))))
-                       ;; Transcript must sit ABOVE the answer, but the
-                       ;; bubble was posted first — so drop it and send
-                       ;; transcript + answer fresh, in order.
-                       (do (drop-live-bubble! token chat-id)
-                           (send! token chat-id (prose-blocks (transcript-message transcript)))
-                           (tg/send-message! token chat-id answer-html))
-                       (when-not (replace-bubble-with-answer! token chat-id answer-html)
-                         (tg/send-message! token chat-id answer-html))))))
-               (catch Exception e
-                 (if (vis/cancellation? e)
-                   (do (finalize-live-bubble! token chat-id :cancelled)
-                       (when (= :unavailable bubble-status)
-                         ;; Pre-first-paint cancel — fresh message.
-                         (try (send-plain! token chat-id "Cancelled by user.")
-                              (catch Exception _ nil))))
-                   (do (finalize-live-bubble! token chat-id :error)
-                       (tel/log! {:level :error
-                                  :id ::handle-message
-                                  :data {:sender sender :chat-id chat-id :error (ex-message e)}
-                                  :msg (str "error handling msg from " sender " in chat " chat-id)})
-                       (try (send! token
-                                   chat-id
-                                   (prose-blocks (vis/format-error (vis/db-error->user-message e))))
-                            (catch Exception _ nil)))))
-               (finally (clear-in-flight! chat-id turn-token))))]
+              (if voice-response?
+                (do
+                  ;; Voice answer is audio, so the streaming bubble
+                  ;; can't become it — collapse the bubble instead.
+                  (finalize-live-bubble! token chat-id :collapse)
+                  (let [voice-text (answer-voice-text result)]
+                    (when (and (voice-config-flag :telegram-send-transcript? true)
+                               (not (str/blank? (str transcript))))
+                      (send! token chat-id (prose-blocks (transcript-message transcript))))
+                    (tg/send-chat-action! token chat-id "record_voice")
+                    (send-answer-audio! token chat-id voice-text)
+                    (when (voice-config-flag :telegram-send-answer-text? true)
+                      ;; Full HTML answer ships alongside the voice
+                      ;; note so users see code/tables that TTS
+                      ;; deliberately skipped.
+                      (tg/send-message! token chat-id (answer-text result)))))
+                ;; TEXT answer: the streaming bubble BECOMES the answer
+                ;; (no separate "thinking complete" remnant).
+                (let [answer-html (str (answer-text result) (format-footer result))]
+                  (if (and transcript (not (str/blank? (str transcript))))
+                    ;; Transcript must sit ABOVE the answer, but the
+                    ;; bubble was posted first — so drop it and send
+                    ;; transcript + answer fresh, in order.
+                    (do (drop-live-bubble! token chat-id)
+                        (send! token chat-id (prose-blocks (transcript-message transcript)))
+                        (tg/send-message! token chat-id answer-html))
+                    (when-not (replace-bubble-with-answer! token chat-id answer-html)
+                      (tg/send-message! token chat-id answer-html))))))
+            (catch Exception e
+              (if (vis/cancellation? e)
+                (do (finalize-live-bubble! token chat-id :cancelled)
+                    (when (= :unavailable bubble-status)
+                      ;; Pre-first-paint cancel — fresh message.
+                      (try (send-plain! token chat-id "Cancelled by user.")
+                           (catch Exception _ nil))))
+                (do (finalize-live-bubble! token chat-id :error)
+                    (tel/log! {:level :error
+                               :id ::handle-message
+                               :data {:sender sender :chat-id chat-id :error (ex-message e)}
+                               :msg (str "error handling msg from " sender " in chat " chat-id)})
+                    (try (send! token
+                                chat-id
+                                (prose-blocks (vis/format-error (vis/db-error->user-message e))))
+                         (catch Exception _ nil)))))
+            (finally (clear-in-flight! chat-id turn-token))))]
 
        (vis/cancellation-set-future! turn-token fut)))))
 
@@ -1856,41 +1908,44 @@
 
 (defn- handle-callback-query!
   [token callback]
-  (let [callback-id
-        (:id callback)
+  (let
+    [callback-id
+     (:id callback)
 
-        data
-        (:data callback)
+     data
+     (:data callback)
 
-        chat-id
-        (-> callback
-            :message
-            :chat
-            :id)]
+     chat-id
+     (-> callback
+         :message
+         :chat
+         :id)]
 
     (cond (and chat-id (not (chat-approved? chat-id)))
           (do (tg/answer-callback-query! token callback-id "Chat is not approved")
               (send! token chat-id (prose-blocks (unauthorized-message chat-id)))
               true)
           (and callback-id chat-id (string? data) (str/starts-with? data "model:"))
-          (let [idx-str
-                (subs data (count "model:"))
+          (let
+            [idx-str
+             (subs data (count "model:"))
 
-                result
-                (when (re-matches #"\d+" idx-str)
-                  (select-model! (str (inc (Long/parseLong idx-str)))))]
+             result
+             (when (re-matches #"\d+" idx-str)
+               (select-model! (str (inc (Long/parseLong idx-str)))))]
 
             (tg/answer-callback-query! token callback-id (:message result))
             (send! token chat-id (prose-blocks (or (:message result) "Model selection failed.")))
             true)
           (and callback-id chat-id (string? data) (str/starts-with? data "voice:"))
-          (let [raw
-                (keyword (str/lower-case (subs data (count "voice:"))))
+          (let
+            [raw
+             (keyword (str/lower-case (subs data (count "voice:"))))
 
-                message
-                (if (some #{raw} voice-mode-order)
-                  (set-voice-mode! chat-id raw)
-                  "Voice selection failed.")]
+             message
+             (if (some #{raw} voice-mode-order)
+               (set-voice-mode! chat-id raw)
+               "Voice selection failed.")]
 
             (tg/answer-callback-query! token callback-id message)
             true)
@@ -1907,11 +1962,12 @@
   (or (when-let [callback (:callback_query update)]
         (handle-callback-query! token callback))
       (when-let [message (:message update)]
-        (let [chat-id (-> message
-                          :chat
-                          :id)
-              text (extract-text message)
-              sender (extract-sender message)]
+        (let
+          [chat-id (-> message
+                       :chat
+                       :id)
+           text (extract-text message)
+           sender (extract-sender message)]
 
           (cond (nil? chat-id) nil
                 (not (chat-approved? chat-id))
@@ -1927,15 +1983,15 @@
   (loop [offset 0]
     (if-not @running?
       :stopped
-      (let [updates (try (tg/get-updates token offset poll-timeout-seconds)
-                         (catch InterruptedException _ ::interrupted)
-                         (catch Exception e
-                           (tel/log! {:level :error
-                                      :id ::poll-error
-                                      :data {:error (ex-message e)}
-                                      :msg "poll error"})
-                           (Thread/sleep 2000)
-                           []))]
+      (let
+        [updates
+         (try (tg/get-updates token offset poll-timeout-seconds)
+              (catch InterruptedException _ ::interrupted)
+              (catch Exception e
+                (tel/log!
+                  {:level :error :id ::poll-error :data {:error (ex-message e)} :msg "poll error"})
+                (Thread/sleep 2000)
+                []))]
         (cond (= updates ::interrupted) :stopped
               (seq updates) (do (doseq [u updates]
                                   ;; A single malformed update or a throwing
@@ -1992,11 +2048,12 @@
 (defn start!
   []
   (when (compare-and-set! running? false true)
-    (let [token
-          (resolve-token!)
+    (let
+      [token
+       (resolve-token!)
 
-          t
-          (Thread. ^Runnable #(poll-loop! token) "vis-channel-telegram-poll")]
+       t
+       (Thread. ^Runnable #(poll-loop! token) "vis-channel-telegram-poll")]
 
       (write-pid-file!)
       (install-bot-menu! token)
