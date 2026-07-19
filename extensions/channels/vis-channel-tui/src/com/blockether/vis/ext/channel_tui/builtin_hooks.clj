@@ -110,16 +110,16 @@
                   ;; button's strong color. This is the DEFAULT, channel-level model
                   ;; decoration every provider reuses — no per-provider footer needed.
                   :ast [:ast {}
-                       [:p {}
-                        [:span {}
-                         (str display
-                              " ("
-                              (keymap/label-for :pick-model)
-                              ")"
-                              " (cycle "
-                              pos
-                              (keymap/label-for :cycle-model)
-                              ")")]]]
+                        [:p {}
+                         [:span {}
+                          (str display
+                               " ("
+                               (keymap/label-for :pick-model)
+                               ")"
+                               " (cycle "
+                               pos
+                               (keymap/label-for :cycle-model)
+                               ")")]]]
                   :region :left
                   :priority 2
                   :row 0
@@ -128,11 +128,11 @@
                   :bold? true}]
           overload
           (conj {:ast [:ast {}
-                      [:p {}
-                       [:span {}
-                        (str "⚠ " (:overloaded-model overload)
-                             " overloaded → " (or (:serving-model overload)
-                                                  "no provider available"))]]]
+                       [:p {}
+                        [:span {}
+                         (str "⚠ " (:overloaded-model overload)
+                              " overloaded → " (or (:serving-model overload)
+                                                   "no provider available"))]]]
                  :region :left
                  :priority 3
                  :row 0

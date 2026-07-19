@@ -215,8 +215,12 @@
 
          rows
          (if bucket
-           (let [actual-rows (keep #(window-row now-ms % bucket) fallback-window-specs)
-                 present-ids (set (map :id actual-rows))]
+           (let [actual-rows
+                 (keep #(window-row now-ms % bucket) fallback-window-specs)
+
+                 present-ids
+                 (set (map :id actual-rows))]
+
              (->> fallback-window-specs
                   (remove #(contains? present-ids (:id %)))
                   (map missing-window-row)

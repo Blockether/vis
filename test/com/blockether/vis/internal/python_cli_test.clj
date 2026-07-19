@@ -93,57 +93,61 @@
     (it "a network-enabled context builds without error"
         (expect (some? (python-cli-context {:network? true}))))))
 
-(def ^:private parse-python-cli-args
-  #'com.blockether.vis.internal.main/parse-python-cli-args)
+(def ^:private parse-python-cli-args #'com.blockether.vis.internal.main/parse-python-cli-args)
 
 (def ^:private python-cli-env-overrides->map
   #'com.blockether.vis.internal.main/python-cli-env-overrides->map)
 
-(defdescribe
-  parse-python-cli-args-test
-  (it "-c forwards trailing args as sys.argv after the '-c' marker"
-      (let [p (parse-python-cli-args ["-c" "code" "a" "b"])]
-        (expect (= :code (:mode p)))
-        (expect (= "code" (:code p)))
-        (expect (= ["-c" "a" "b"] (:argv p)))))
-  (it "a FILE selector keeps the filename as argv[0]"
-      (let [p (parse-python-cli-args ["script.py" "x" "--flag"])]
-        (expect (= :file (:mode p)))
-        (expect (= "script.py" (:file p)))
-        (expect (= ["script.py" "x" "--flag"] (:argv p)))))
-  (it "leading --no-network / --no-env / --env are consumed, not argv"
-      (let [p (parse-python-cli-args ["--no-network" "--no-env" "--env" "FOO=bar" "-c" "c" "z"])]
-        (expect (false? (:network? p)))
-        (expect (false? (:inherit-env? p)))
-        (expect (= ["FOO=bar"] (:env-overrides p)))
-        (expect (= ["-c" "z"] (:argv p)))))
-  (it "-- ends option parsing so a flag-named script arg survives"
-      (let [p (parse-python-cli-args ["--" "-" "--no-network"])]
-        (expect (= :stdin (:mode p)))
-        (expect (= ["-" "--no-network"] (:argv p)))))
-  (it "defaults: network + env inherited, interactive with no selector"
-      (let [p (parse-python-cli-args [])]
-        (expect (= :interactive (:mode p)))
-        (expect (true? (:network? p)))
-        (expect (true? (:inherit-env? p))))))
+(defdescribe parse-python-cli-args-test
+             (it "-c forwards trailing args as sys.argv after the '-c' marker"
+                 (let [p (parse-python-cli-args ["-c" "code" "a" "b"])]
+                   (expect (= :code (:mode p)))
+                   (expect (= "code" (:code p)))
+                   (expect (= ["-c" "a" "b"] (:argv p)))))
+             (it "a FILE selector keeps the filename as argv[0]"
+                 (let [p (parse-python-cli-args ["script.py" "x" "--flag"])]
+                   (expect (= :file (:mode p)))
+                   (expect (= "script.py" (:file p)))
+                   (expect (= ["script.py" "x" "--flag"] (:argv p)))))
+             (it "leading --no-network / --no-env / --env are consumed, not argv"
+                 (let [p (parse-python-cli-args ["--no-network" "--no-env" "--env" "FOO=bar" "-c"
+                                                 "c" "z"])]
+                   (expect (false? (:network? p)))
+                   (expect (false? (:inherit-env? p)))
+                   (expect (= ["FOO=bar"] (:env-overrides p)))
+                   (expect (= ["-c" "z"] (:argv p)))))
+             (it "-- ends option parsing so a flag-named script arg survives"
+                 (let [p (parse-python-cli-args ["--" "-" "--no-network"])]
+                   (expect (= :stdin (:mode p)))
+                   (expect (= ["-" "--no-network"] (:argv p)))))
+             (it "defaults: network + env inherited, interactive with no selector"
+                 (let [p (parse-python-cli-args [])]
+                   (expect (= :interactive (:mode p)))
+                   (expect (true? (:network? p)))
+                   (expect (true? (:inherit-env? p))))))
 
-(defdescribe
-  python-cli-env-overrides-test
-  (it "parses K=V, bare K (empty), and keeps later = in the value"
-      (expect (= {"A" "1" "B" "" "C" "x=y"}
-                 (python-cli-env-overrides->map ["A=1" "B" "C=x=y"])))))
+(defdescribe python-cli-env-overrides-test
+             (it "parses K=V, bare K (empty), and keeps later = in the value"
+                 (expect (= {"A" "1" "B" "" "C" "x=y"}
+                            (python-cli-env-overrides->map ["A=1" "B" "C=x=y"])))))
 
 (defdescribe
   python-cli-runtime-test
   (it "argv is forwarded into sys.argv"
-      (let [ctx (python-cli-context {:network? false :argv ["-c" "alpha" "beta"]})
+      (let [ctx
+            (python-cli-context {:network? false :argv ["-c" "alpha" "beta"]})
+
             {:keys [exit out]}
             (run-src ctx "import sys\nprint('argv', sys.argv[0], sys.argv[1], sys.argv[2])")]
+
         (expect (= 0 exit))
         (expect (re-find #"argv -c alpha beta" out))))
   (it "env is merged into os.environ"
-      (let [ctx (python-cli-context {:network? false :env {"VIS_TEST_KEY" "vis-test-val"}})
+      (let [ctx
+            (python-cli-context {:network? false :env {"VIS_TEST_KEY" "vis-test-val"}})
+
             {:keys [exit out]}
             (run-src ctx "import os\nprint('env', os.environ.get('VIS_TEST_KEY'))")]
+
         (expect (= 0 exit))
         (expect (re-find #"env vis-test-val" out)))))

@@ -12,7 +12,7 @@
   com.blockether/vis  {:local/root "../../.."}
   org.babashka/http-client {:mvn/version "0.4.23"}
   babashka/process         {:mvn/version "0.6.25"}
-  com.cnuernber/charred    {:mvn/version "1.039"}
+  com.cnuernber/charred    {:mvn/version "1.041"}
   com.taoensso/telemere    {:mvn/version "1.2.1"}}
 
  :aliases

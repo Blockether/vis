@@ -1570,10 +1570,11 @@
                                              :token)]
         (let [sent-db (:db (send-message-fn db [:send-message text]))
               reset-db (reset-input-fn sent-db [:reset-input])
-              restored-db (:db (message-received-fn
-                                 reset-db
-                                 [:message-received [:ast {} [:p {} [:span {} "Cancelled by user."]]]
-                                  {:status :cancelled}]))]
+              restored-db (:db (message-received-fn reset-db
+                                                    [:message-received
+                                                     [:ast {}
+                                                      [:p {} [:span {} "Cancelled by user."]]]
+                                                     {:status :cancelled}]))]
 
           (expect (= initial-messages (:messages restored-db)))
           (expect (= text (input/input->text (:input restored-db))))

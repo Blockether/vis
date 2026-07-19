@@ -32,29 +32,19 @@
    per-form display projections, the tool-call linkage, and the repair/timeout
    flags channels surface."
   [;; source
-   [:code "code"]
-   [:comment "comment"]
-   [:scope "scope"]
-   [:started-at-ms "started_at_ms"]
+   [:code "code"] [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
    ;; result surfaces — the raw value, the pre-rendered op-card body, and the
    ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
-   [:result "result"]
-   [:result-render "result_render"]
-   [:result-summary "result_summary"]
+   [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
    ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
    [:cards "cards"]
    ;; native-tool op-card badge identity; wire keys intentionally drop namespaces
-   [:vis/tool-name "tool_name"]
-   [:tool-color-role "tool_color_role"]
+   [:vis/tool-name "tool_name"] [:tool-color-role "tool_color_role"]
    ;; display projections
-   [:render-segments "render_segments"]
-   [:result-kind "result_kind"]
-   [:result-detail "result_detail"]
-   [:tag "tag"]
+   [:render-segments "render_segments"] [:result-kind "result_kind"]
+   [:result-detail "result_detail"] [:tag "tag"]
    ;; tool-call linkage + status flags channels surface
-   [:svar/tool-call-id "tool_call_id"]
-   [:timeout? "is_timeout"]
-   [:repaired? "is_repaired"]
+   [:svar/tool-call-id "tool_call_id"] [:timeout? "is_timeout"] [:repaired? "is_repaired"]
    [:auto-repaired? "is_auto_repaired"]])
 
 (def display-keys

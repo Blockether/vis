@@ -435,31 +435,37 @@
                        {"type" "turn.started" "turn_id" "X" "request" "hi"})))
         (expect (not (contains? @reg "never-touched-sid"))))))
 
-(defdescribe queue-drain-mirror-event-test
+(defdescribe
+  queue-drain-mirror-event-test
   (it "broadcasts queue drain live without adding it to replay persistence"
-      (let [sid (str "drain-test-" (java.util.UUID/randomUUID))
-            registry @#'state/registry
-            launched (atom nil)
-            seen (atom [])]
-        (try
-          (swap! registry assoc
-                 sid
-                 {:next-seq 0
-                  :subscribers {"test" #(swap! seen conj %)}
-                  :turns {"q1" {:turn_id "q1"
-                                :session_id sid
-                                :status "queued"
-                                :request "hello"
-                                :queued_at 1}}
-                  :turn-order ["q1"]})
-          (with-redefs-fn {#'state/launch-turn-worker!
-                           (fn [& args] (reset! launched (vec (take 2 args))))}
-            #(#'state/drain-next-queued! sid))
-          (expect (= [sid "q1"] @launched))
-          (expect (= "streaming" (get (state/get-turn sid "q1") "status")))
-          (expect (= ["turn.queued.drained"] (mapv #(get % "type") @seen)))
-          (expect (empty? (state/events-since sid 0)))
-          (finally (swap! registry dissoc sid))))))
+      (let [sid
+            (str "drain-test-" (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            launched
+            (atom nil)
+
+            seen
+            (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :subscribers {"test" #(swap! seen conj %)}
+                :turns
+                {"q1"
+                 {:turn_id "q1" :session_id sid :status "queued" :request "hello" :queued_at 1}}
+                :turn-order ["q1"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (reset! launched (vec (take 2 args))))}
+               #(#'state/drain-next-queued! sid))
+             (expect (= [sid "q1"] @launched))
+             (expect (= "streaming" (get (state/get-turn sid "q1") "status")))
+             (expect (= ["turn.queued.drained"] (mapv #(get % "type") @seen)))
+             (expect (empty? (state/events-since sid 0)))
+             (finally (swap! registry dissoc sid))))))
 
 (defdescribe
   drain-idle-test

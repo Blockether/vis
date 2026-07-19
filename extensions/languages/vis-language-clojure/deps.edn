@@ -24,8 +24,8 @@
                   :extra-paths ["test"]
                   :main-opts ["-m" "lazytest.main" "--dir" "test"]}}
  :deps {com.blockether/vis {:local/root "../../.."}
-        dev.weavejester/cljfmt {:mvn/version "0.16.4"}
-        zprint/zprint {:mvn/version "1.2.9"}
+        dev.weavejester/cljfmt {:mvn/version "0.16.5"}
+        zprint/zprint {:mvn/version "1.3.0"}
         nrepl/nrepl {:mvn/version "1.7.0"}
         ;; clj-kondo: static analysis / linter, run via its programmatic API
         ;; (clj-kondo.core/run!) for the `lint_code` language-surface verb.
@@ -40,14 +40,14 @@
         ;; smile/cbor factories, never ObjectMapper binding, so databind was
         ;; NOT on the classpath before this pin — keep it that way (databind is
         ;; the historically CVE-prone module).
-        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.21.1"}
+        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.22.1"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-smile
-        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.21.1"}
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
-        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.21.1"}
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
         ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
         ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
         ;; delimiter-error detection).
         parinferish/parinferish {:mvn/version "0.8.0"}
-        borkdude/edamame {:mvn/version "1.5.39"}}
+        borkdude/edamame {:mvn/version "1.6.42"}}
  :paths ["src" "resources"]}

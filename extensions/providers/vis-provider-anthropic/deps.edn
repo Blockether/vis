@@ -1,7 +1,7 @@
 ;; Anthropic API-key + Claude subscription OAuth providers.
 {:paths ["src" "resources"]
  :deps {com.blockether/vis {:local/root "../../.."}
-        com.cnuernber/charred {:mvn/version "1.039"}
+        com.cnuernber/charred {:mvn/version "1.041"}
         org.babashka/http-client {:mvn/version "0.4.23"}}
  :aliases
  {:test {:extra-paths ["test"]

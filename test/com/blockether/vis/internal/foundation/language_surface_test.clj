@@ -289,9 +289,11 @@
         (let [{:keys [body]} (render {"code" "x" "value" "1" "out" "hi"})]
           (expect (str/includes? body "```\n\n**STDOUT**"))))
     (it "renders a timeout as ⧖ headline + always-shown FORM + TIMEOUT note"
-        (let [{:keys [summary body]}
-              (render {"code" "(Thread/sleep 999999)" "timed_out" true "ms" 30000
-                       "out" "partial output" "status" ["timeout"]})]
+        (let [{:keys [summary body]} (render {"code" "(Thread/sleep 999999)"
+                                              "timed_out" true
+                                              "ms" 30000
+                                              "out" "partial output"
+                                              "status" ["timeout"]})]
           (expect (= "(Thread/sleep 999999)  ⧖ timed out after 30000ms" summary))
           (expect (str/includes? body "**FORM**"))
           (expect (str/includes? body "(Thread/sleep 999999)"))
@@ -302,8 +304,7 @@
           (expect (not (str/includes? body "**RESULT**")))
           (expect (not (str/includes? body "**ERROR**")))))
     (it "detects a timeout from a timeout status even without a timed_out flag, always showing FORM"
-        (let [{:keys [summary body]}
-              (render {"code" "(loop [] (recur))" "status" ["timeout"]})]
+        (let [{:keys [summary body]} (render {"code" "(loop [] (recur))" "status" ["timeout"]})]
           (expect (str/includes? summary "⧖ timed out"))
           (expect (str/includes? body "**FORM**"))
           (expect (str/includes? body "(loop [] (recur))"))))))

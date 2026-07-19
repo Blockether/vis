@@ -22,9 +22,9 @@
   ;; pulls both via the dep below.
   com.blockether/vis                   {:local/root "../../.."}
   ;; Binary serialization for definition_state.value blobs
-  com.taoensso/nippy                        {:mvn/version "3.7.0-RC2"}
+  com.taoensso/nippy                        {:mvn/version "3.7.0-RC3"}
   ;; JSON (used inside the SQLite query layer for blob round-trips)
-  com.cnuernber/charred                     {:mvn/version "1.039"}
+  com.cnuernber/charred                     {:mvn/version "1.041"}
   ;; SQLite + JDBC
   org.xerial/sqlite-jdbc                    {:mvn/version "3.53.2.0"}
   com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1118"}
@@ -41,10 +41,10 @@
   ;; releases handles.
   com.zaxxer/HikariCP                       {:mvn/version "7.1.0"}
   ;; Flyway core - owns schema migration for this backend.
-  org.flywaydb/flyway-core                  {:mvn/version "12.10.0"}
+  org.flywaydb/flyway-core                  {:mvn/version "12.11.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
   ;; - without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
-  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.10.0"}}
+  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.11.0"}}
 
  :aliases
  {:test

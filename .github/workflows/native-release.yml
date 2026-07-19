@@ -48,7 +48,7 @@ jobs:
           - { os: macos-15, profile: community, bin: target/vis, asset: vis-macos-arm64-community, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
           - { os: macos-15, profile: corporate, bin: target/vis, asset: vis-macos-arm64-corporate, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
       # graalvm-ce-builds asset CI installs. Keeps Oracle GraalVM (GFTC) OUT of
       # the distributed binary, so the redistribution/license story stays FOSS.
@@ -58,7 +58,7 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
@@ -99,7 +99,7 @@ jobs:
           fi
           ./"${{ matrix.bin }}" gateway stop >/dev/null 2>&1 || true
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset }}
           fail_on_unmatched_files: true

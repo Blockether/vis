@@ -63,7 +63,8 @@
                    (expect (= ["use send! here"] (texts lines)))
                    (expect (styled? lines :code))))
              (it "strong + em propagate style flags"
-                 (let [lines (layout/ast->lines [:ast [:p [:strong "bold"] " and " [:em "ital"]]] 80)]
+                 (let [lines (layout/ast->lines [:ast [:p [:strong "bold"] " and " [:em "ital"]]]
+                                                80)]
                    (expect (styled? lines :bold))
                    (expect (styled? lines :italic)))))
 
@@ -93,9 +94,9 @@
              (it "ul renders GFM task-list markers as checklist glyphs"
                  (let [lines
                        (layout/ast->lines [:ast
-                                          [:ul [:li "[x] Completed item"] [:li "[ ] Pending item"]
-                                           [:li "[X] Also completed"]]]
-                                         80)
+                                           [:ul [:li "[x] Completed item"] [:li "[ ] Pending item"]
+                                            [:li "[X] Also completed"]]]
+                                          80)
 
                        ts
                        (texts lines)]
@@ -122,10 +123,10 @@
                  ;; This is the regression target: pre-IR code produced "   foo" continuation.
                  (let [lines
                        (layout/ast->lines [:ast
-                                          [:ul
-                                           [:li "short " [:c "code-token"] " then a long tail "
-                                            "that will force wrapping at the chosen width"]]]
-                                         30)
+                                           [:ul
+                                            [:li "short " [:c "code-token"] " then a long tail "
+                                             "that will force wrapping at the chosen width"]]]
+                                          30)
 
                        ts
                        (texts lines)
@@ -167,9 +168,9 @@
              (it "renders IR tables as boxed rows with semantic table tags"
                  (let [lines
                        (layout/ast->lines [:ast
-                                          [:table [:tr [:th "Name"] [:th "Count"]]
-                                           [:tr [:td "apples"] [:td "12"]]]]
-                                         80)
+                                           [:table [:tr [:th "Name"] [:th "Count"]]
+                                            [:tr [:td "apples"] [:td "12"]]]]
+                                          80)
 
                        ts
                        (texts lines)
@@ -198,8 +199,8 @@
              (it "uses thinking table markers in thinking mode"
                  (let [out
                        (layout/ast->sentinel-strings [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]]
-                                                    80
-                                                    {:mode :thinking})
+                                                     80
+                                                     {:mode :thinking})
 
                        ms
                        (markers out)]
@@ -217,9 +218,10 @@
 
           lines
           (layout/ast->lines [:ast
-                             [:table [:tr [:th "Option"] [:th "Description"]]
-                              [:tr [:td "alpha"] [:td long-desc]] [:tr [:td "beta"] [:td "short"]]]]
-                            40)
+                              [:table [:tr [:th "Option"] [:th "Description"]]
+                               [:tr [:td "alpha"] [:td long-desc]]
+                               [:tr [:td "beta"] [:td "short"]]]]
+                             40)
 
           ts
           (texts lines)
@@ -250,10 +252,10 @@
   (it "continuation rows keep sibling short cells blank-padded"
       (let [lines
             (layout/ast->lines [:ast
-                               [:table [:tr [:th "K"] [:th "V"]]
-                                [:tr [:td "k1"]
-                                 [:td "a long value that needs several rows to fit"]]]]
-                              24)
+                                [:table [:tr [:th "K"] [:th "V"]]
+                                 [:tr [:td "k1"]
+                                  [:td "a long value that needs several rows to fit"]]]]
+                               24)
 
             row-ts
             (texts (filterv #(= :table-row (:block-tag %)) lines))]
@@ -264,11 +266,11 @@
         (expect (every? #(not (str/includes? % "k1")) (rest row-ts)))))
   (it "header cells wrap too, tagged :table-head on every physical row"
       (let [lines
-            (layout/ast->lines [:ast
-                               [:table
-                                [:tr [:th "A"] [:th "an extremely verbose header label that wraps"]]
-                                [:tr [:td "1"] [:td "x"]]]]
-                              24)
+            (layout/ast->lines
+              [:ast
+               [:table [:tr [:th "A"] [:th "an extremely verbose header label that wraps"]]
+                [:tr [:td "1"] [:td "x"]]]]
+              24)
 
             head-lines
             (filterv #(= :table-head (:block-tag %)) lines)]
@@ -280,9 +282,9 @@
       ;; emoji in a width-1 column — the wrap loop must still advance.
       (let [lines
             (layout/ast->lines [:ast
-                               [:table [:tr [:th "😀😀"] [:th "b"]]
-                                [:tr [:td "😀 zażółć gęślą jaźń"] [:td "y"]]]]
-                              8)
+                                [:table [:tr [:th "😀😀"] [:th "b"]]
+                                 [:tr [:td "😀 zażółć gęślą jaźń"] [:td "y"]]]]
+                               8)
 
             ts
             (texts lines)]
@@ -403,8 +405,8 @@
              (it "emits H1/H2/H3 markers for headings, picking by :level"
                  (let [out
                        (layout/ast->sentinel-strings [:ast [:h {:level 1} "A"] [:h {:level 2} "B"]
-                                                     [:h {:level 3} "C"]]
-                                                    80)
+                                                      [:h {:level 3} "C"]]
+                                                     80)
 
                        ms
                        (markers out)]
@@ -439,8 +441,8 @@
                    (expect (str/includes? body (str p/INLINE_CODE_ON "send!" p/INLINE_CODE_OFF)))))
              (it "sentinel adapter is a string-only contract (every entry begins with a marker)"
                  (let [out (layout/ast->sentinel-strings [:ast [:h {:level 1} "T"] [:p "x"]
-                                                         [:ul [:li "y"]] [:code "z"]]
-                                                        80)]
+                                                          [:ul [:li "y"]] [:code "z"]]
+                                                         80)]
                    (expect (every? string? out))
                    (expect (every? #(>= (count %) 1) out))))
              (it "bdc79ae9 fixture round-trips through the sentinel adapter without throwing"
@@ -458,9 +460,10 @@
 (defdescribe retired-disclosure-tags-test
              (it ":details/:summary input is flattened without toggle metadata"
                  (let [entries
-                       (layout/ast->entries
-                         [:ast [:p "intro"] [:details {:open? true} [:summary "toggle"] [:p "body"]]]
-                         80)
+                       (layout/ast->entries [:ast [:p "intro"]
+                                             [:details {:open? true} [:summary "toggle"]
+                                              [:p "body"]]]
+                                            80)
 
                        body
                        (str/join "\n" (map :line entries))]

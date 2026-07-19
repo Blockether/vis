@@ -2,7 +2,7 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis {:local/root "../../.."}
         com.litongjava/sherpa-onnx-java-api {:mvn/version "1.0.1"}
-        com.microsoft.onnxruntime/onnxruntime {:mvn/version "1.17.1"}
+        com.microsoft.onnxruntime/onnxruntime {:mvn/version "1.27.0"}
         org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
  :aliases
  {:test {:extra-paths ["test"]

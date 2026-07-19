@@ -275,7 +275,8 @@
                    (try (f db cols) (catch Throwable _ nil))
 
                    spec
-                   (when (ast-root? ir) (try (ast->header-row-spec ir cols) (catch Throwable _ nil)))]
+                   (when (ast-root? ir)
+                     (try (ast->header-row-spec ir cols) (catch Throwable _ nil)))]
              :when (and spec (pos? (long (or (:height spec) 0))))]
 
          {:id id :spec spec})))

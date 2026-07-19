@@ -88,12 +88,16 @@
    checksum differs are rejected: this flag-day schema has no compatibility or
    repair path."
   [^DataSource ds locations]
-  (let [locs (cond (string? locations) [locations]
-                   (sequential? locations) (vec locations)
-                   :else (throw (ex-info "locations must be a string or coll of strings"
-                                         {:type :persistance/invalid-migration-locations
-                                          :got (type locations)})))
-        rp (index-resource-provider locs)
+  (let [locs
+        (cond (string? locations) [locations]
+              (sequential? locations) (vec locations)
+              :else (throw (ex-info "locations must be a string or coll of strings"
+                                    {:type :persistance/invalid-migration-locations
+                                     :got (type locations)})))
+
+        rp
+        (index-resource-provider locs)
+
         ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
         (cond-> (-> (org.flywaydb.core.Flyway/configure)
                     (.dataSource ds)
@@ -101,6 +105,8 @@
                     (.baselineOnMigrate true)
                     (.baselineVersion "0")
                     (.mixed true))
-          rp (.resourceProvider rp))]
+          rp
+          (.resourceProvider rp))]
+
     (.migrate (.load cfg))
     ds))

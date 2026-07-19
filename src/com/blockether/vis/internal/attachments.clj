@@ -343,52 +343,56 @@
   ([attachments] (prepare-inline-attachments attachments {}))
   ([attachments
     {:keys [max-bytes max-images] :or {max-bytes max-image-bytes max-images max-image-count}}]
-   (reduce (fn [acc att]
-             (try
-               (let [base64 (or (:base64 att) (get att "base64"))
-                     filename (or (:filename att) (get att "filename"))
-                     ^String payload
-                     (strip-data-url-prefix (str base64))
+   (reduce
+     (fn [acc att]
+       (try
+         (let [base64
+               (or (:base64 att) (get att "base64"))
 
-                     data
-                     (.decode (Base64/getDecoder) payload)
+               filename
+               (or (:filename att) (get att "filename"))
 
-                     size
-                     (alength data)
+               ^String payload
+               (strip-data-url-prefix (str base64))
 
-                     label
-                     (or (not-empty (str filename)) "image")
+               data
+               (.decode (Base64/getDecoder) payload)
 
-                     mime
-                     (detect-image-mime data)]
+               size
+               (alength data)
 
-                 (cond
-                   (nil? mime)
-                   (update acc :skipped conj {:path label :reason "not a supported still image"})
-                   (> size (long max-bytes)) (update acc
-                                                     :skipped
-                                                     conj
-                                                     {:path label
-                                                      :reason (str (size-label size)
-                                                                   " exceeds the "
-                                                                   (size-label max-bytes)
-                                                                   " attachment limit")})
-                   (>= (count (:attached acc)) (long max-images))
-                   (update acc
-                           :skipped
-                           conj
-                           {:path label
-                            :reason
-                            (str "attachment limit of " max-images " images per message reached")})
-                   :else (update acc
-                                 :attached
-                                 conj
-                                 {:path label
-                                  :filename label
-                                  :media-type mime
-                                  :base64 (.encodeToString (Base64/getEncoder) data)
-                                  :size size
-                                  :size-label (size-label size)})))
-               (catch Throwable _ acc)))
-           {:attached [] :skipped []}
-           (or attachments []))))
+               label
+               (or (not-empty (str filename)) "image")
+
+               mime
+               (detect-image-mime data)]
+
+           (cond (nil? mime)
+                 (update acc :skipped conj {:path label :reason "not a supported still image"})
+                 (> size (long max-bytes)) (update acc
+                                                   :skipped
+                                                   conj
+                                                   {:path label
+                                                    :reason (str (size-label size)
+                                                                 " exceeds the "
+                                                                 (size-label max-bytes)
+                                                                 " attachment limit")})
+                 (>= (count (:attached acc)) (long max-images))
+                 (update acc
+                         :skipped
+                         conj
+                         {:path label
+                          :reason
+                          (str "attachment limit of " max-images " images per message reached")})
+                 :else (update acc
+                               :attached
+                               conj
+                               {:path label
+                                :filename label
+                                :media-type mime
+                                :base64 (.encodeToString (Base64/getEncoder) data)
+                                :size size
+                                :size-label (size-label size)})))
+         (catch Throwable _ acc)))
+     {:attached [] :skipped []}
+     (or attachments []))))

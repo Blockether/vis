@@ -690,8 +690,7 @@
         (expect (= [{:root "/w/proj" :trunk "/w/proj" :label "proj" :draft? false}] roots))))
   (it "extra filesystem roots follow the primary, in order"
       (let [roots (magit/workspace-roots {:root "/w/proj"
-                                          :filesystem-roots [{:dir "/w/other"}
-                                                             {:dir "/w/third"}]}
+                                          :filesystem-roots [{:dir "/w/other"} {:dir "/w/third"}]}
                                          nil)]
         (expect (= ["/w/proj" "/w/other" "/w/third"] (mapv :root roots)))
         (expect (= ["proj" "other" "third"] (mapv :label roots)))

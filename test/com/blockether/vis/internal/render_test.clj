@@ -140,7 +140,8 @@
         (expect (not (str/includes? rendered "<!-- -->")))
         (expect (= "Confirming missing database and cleaning files\n\nFixed." rendered))))
   (it "keeps non-comment raw HTML visible as escaped/text content"
-      (let [rendered (render/render (render/markdown->ast "<details>secret</details>") :markdown {})]
+      (let [rendered
+            (render/render (render/markdown->ast "<details>secret</details>") :markdown {})]
         (expect (str/includes? rendered "<details>secret</details>")))))
 
 (defdescribe

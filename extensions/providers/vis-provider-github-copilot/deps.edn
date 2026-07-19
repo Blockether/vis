@@ -10,7 +10,7 @@
   ;; HTTP client for the device-flow + token-exchange calls.
   org.babashka/http-client  {:mvn/version "0.4.23"}
   ;; JSON parsing for the OAuth + token-exchange responses.
-  com.cnuernber/charred     {:mvn/version "1.039"}
+  com.cnuernber/charred     {:mvn/version "1.041"}
   com.taoensso/telemere     {:mvn/version "1.2.1"}}
 
  :aliases
