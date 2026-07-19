@@ -261,41 +261,87 @@
 ;; is both bound live and pretty-printed — NO JSON round-trip.
 ;; =============================================================================
 
-(def ^:private vis-pp-python
-  "Deterministic Python pretty-printer for the `ctx` dict. Double-quoted strings,
-   True/False/None, insertion order preserved, inline when it fits `width` else
-   one entry per line (closing bracket aligned under the entry column)."
-  "
-def __vis_pp_str__(s):
-    return '\"' + s.replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"').replace('\\n', '\\\\n').replace('\\r', '\\\\r').replace('\\t', '\\\\t') + '\"'
+(defn- python-string-literal
+  ^String [x]
+  (str "\""
+       (-> (str x)
+           (str/replace "\\" "\\\\")
+           (str/replace "\"" "\\\"")
+           (str/replace "\n" "\\n")
+           (str/replace "\r" "\\r")
+           (str/replace "\t" "\\t"))
+       "\""))
 
-def __vis_pp__(o, indent=0, width=100):
-    pad = ' ' * (indent + 1)
-    cpad = ' ' * indent
-    if isinstance(o, bool):
-        return 'True' if o else 'False'
-    if o is None:
-        return 'None'
-    if isinstance(o, str):
-        return __vis_pp_str__(o)
-    if isinstance(o, dict):
-        if not o:
-            return '{}'
-        items = [(__vis_pp_str__(str(k)), __vis_pp__(v, indent + 1, width)) for k, v in o.items()]
-        inline = '{' + ', '.join(k + ': ' + v for k, v in items) + '}'
-        if '\\n' not in inline and indent + len(inline) <= width:
-            return inline
-        return '{\\n' + ',\\n'.join(pad + k + ': ' + v for k, v in items) + '\\n' + cpad + '}'
-    if isinstance(o, (list, tuple)):
-        if not o:
-            return '[]'
-        items = [__vis_pp__(x, indent + 1, width) for x in o]
-        inline = '[' + ', '.join(items) + ']'
-        if '\\n' not in inline and indent + len(inline) <= width:
-            return inline
-        return '[\\n' + ',\\n'.join(pad + x for x in items) + '\\n' + cpad + ']'
-    return repr(o)
-")
+(defn- python-number-literal
+  ^String [x]
+  (cond (and (instance? Double x) (Double/isNaN ^double x)) "nan"
+        (and (instance? Double x) (Double/isInfinite ^double x)) (if (neg? ^double x) "-inf" "inf")
+        (and (instance? Float x) (Float/isNaN ^float x)) "nan"
+        (and (instance? Float x) (Float/isInfinite ^float x)) (if (neg? ^float x) "-inf" "inf")
+        (instance? java.math.BigDecimal x) (.toPlainString ^java.math.BigDecimal x)
+        (instance? clojure.lang.Ratio x) (str "(" (numerator x) " / " (denominator x) ")")
+        :else (str x)))
+
+(declare python-literal*)
+
+(defn- python-map-literal
+  ^String [m indent width path]
+  (if (empty? m)
+    "{}"
+    (let
+      [items
+       (mapv (fn [[k v]]
+               (let [ks (key->py k path)]
+                 (str (python-string-literal ks)
+                      ": "
+                      (python-literal* v (inc indent) width (conj path ks)))))
+             m)
+
+       inline
+       (str "{" (str/join ", " items) "}")]
+
+      (if (and (not (str/includes? inline "\n")) (<= (+ indent (count inline)) width))
+        inline
+        (str "{\n"
+             (str/join ",\n" (map #(str (apply str (repeat (inc indent) " ")) %) items))
+             "\n"
+             (apply str (repeat indent " "))
+             "}")))))
+
+(defn- python-list-literal
+  ^String [xs indent width path]
+  (if (empty? xs)
+    "[]"
+    (let
+      [items
+       (mapv #(python-literal* % (inc indent) width path) xs)
+
+       inline
+       (str "[" (str/join ", " items) "]")]
+
+      (if (and (not (str/includes? inline "\n")) (<= (+ indent (count inline)) width))
+        inline
+        (str "[\n"
+             (str/join ",\n" (map #(str (apply str (repeat (inc indent) " ")) %) items))
+             "\n"
+             (apply str (repeat indent " "))
+             "]")))))
+
+(defn- python-literal*
+  ^String [x indent width path]
+  (cond (instance? java.util.Map x) (python-map-literal x indent width path)
+        (or (vector? x) (seq? x) (set? x)) (python-list-literal x indent width path)
+        :else (let [v (leaf->py x path)]
+                (cond (nil? v) "None"
+                      (true? v) "True"
+                      (false? v) "False"
+                      (string? v) (python-string-literal v)
+                      (number? v) (python-number-literal v)
+                      (char? v) (python-string-literal v)
+                      ;; Boundary producers should emit plain data. Keep an unexpected
+                      ;; host leaf deterministic and executable instead of leaking a
+                      ;; process-specific <JavaObject ... at 0x...> pseudo-literal.
+                      :else (python-string-literal (str v))))))
 
 (def ^:private async-runtime-python
   "ASYNC-BY-DEFAULT runtime (maki-style, on GraalPy — no asyncio/select/socket).
@@ -321,6 +367,14 @@ def __vis_pp__(o, indent=0, width=100):
    only TOP-LEVEL bare calls otherwise auto-settle."
   "
 import ast as __vis_ast__
+
+def __vis_count_forms__(src):
+    return len(__vis_ast__.parse(src).body)
+
+def __vis_banned_name__(src, banned):
+    banned = set(banned)
+    return next((n.id for n in __vis_ast__.walk(__vis_ast__.parse(src))
+                 if isinstance(n, __vis_ast__.Name) and n.id in banned), None)
 
 class __vis_Call__:
     __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'res')
@@ -929,40 +983,7 @@ def __vis_native_result_scan__(__vis_tree__):
     return __vis_ids__
 ")
 
-(defonce ^:private printer-engine
-  ;; Dedicated permissive GraalVM Engine for the printer context. The printer is
-  ;; `allowAllAccess true` (it marshals arbitrary host values into Python
-  ;; literals), which GraalPy forbids from sharing the restrictive
-  ;; `shared-engine` (host-access must be IDENTICAL across a shared engine). So
-  ;; it gets its OWN engine — but an EXPLICIT, pre-built one, NOT the implicit
-  ;; engine a standalone `Context.build()` spins up. That is the whole point:
-  ;; building a context on a pre-built engine is freeze-proof; the JVM-freezing
-  ;; Truffle safepoint hazard is a STANDALONE `Context.build()` during a live
-  ;; eval only (see `shared-engine`). Costs one extra ~19MB engine to make the
-  ;; printer — the last standalone context — freeze-proof too.
-  (delay (-> (Engine/newBuilder (into-array String ["python"]))
-             (.allowExperimentalOptions true)
-             (.option "engine.WarnVirtualThreadSupport" "false")
-             (.build))))
 
-(defn- build-printer-context
-  "Trusted, process-wide GraalPy context whose ONLY job is to pretty-print a
-   polyglot value into the canonical Python-literal string. Permissive
-   (`allowAllAccess`) because it never runs agent code — only our `__vis_pp__`
-   over our own data."
-  ^Context []
-  (let
-    [ctx (-> (Context/newBuilder (into-array String ["python"]))
-             ;; Rides a DEDICATED, pre-built permissive engine (`printer-engine`)
-             ;; — NOT a standalone `Context.build()`. Engine-level options
-             ;; (experimental flags, the vthread-warning silence) live on the
-             ;; engine now, so the context builder must NOT re-set them (illegal
-             ;; on a shared engine).
-             (.engine ^Engine @printer-engine)
-             (.allowAllAccess true)
-             (.build))]
-    (.eval ctx "python" vis-pp-python)
-    ctx))
 
 (defonce polyglot-noise-silenced
   ;; Route Truffle's own logging into the vis log file — the same sink
@@ -990,7 +1011,6 @@ def __vis_native_result_scan__(__vis_tree__):
 ;; `allowExperimentalOptions` — it gates only option NAMES we set
 ;; explicitly, nothing about sandbox permissions.
 
-(defonce ^:private printer-context (delay (build-printer-context)))
 
 (defonce shared-engine
   ;; ONE process-wide GraalVM Engine. Every AGENT Context — the main session
@@ -1010,16 +1030,15 @@ def __vis_native_result_scan__(__vis_tree__):
              (.build))))
 
 (defn ctx->python-str
-  "Render a Clojure value as the canonical Python-literal string — produced by
-   Python (`__vis_pp__`) inside GraalPy, so it matches `repr`-style Python and
-   the live `ctx` dict the agent reads. The value is marshalled to a polyglot
-   object via `->py` (an ordered `ProxyHashMap`/`ProxyArray` that GraalPy treats
-   as a native `dict`/`list`) and pretty-printed DIRECTLY — no JSON round-trip."
+  "Render plain boundary data as a deterministic, executable Python literal.
+
+   This is deliberately a pure JVM serializer: rendering never enters GraalPy,
+   never waits behind a session's GIL, and needs no process-global printer
+   Context or lock. It mirrors the Clojure->Python boundary (string-only map
+   keys, list-like collections, ISO strings for Date/UUID/Temporal) and keeps
+   insertion order plus the historical 100-column layout."
   ^String [data]
-  (let [^Context ctx @printer-context]
-    (locking ctx
-      (let [^Value pp (.getMember (.getBindings ctx "python") "__vis_pp__")]
-        (.asString (.execute pp (object-array [(->py data)])))))))
+  (python-literal* data 0 100 []))
 
 (declare set-python-binding!)
 
@@ -1091,48 +1110,28 @@ def __vis_native_result_scan__(__vis_tree__):
 ;; Block validation (Python: top-level statement count + banned constructs)
 ;; =============================================================================
 
-(defonce ^:private parser-ctx
-  ;; Tiny context used ONLY to `ast.parse` candidate blocks for validation (no
-  ;; execution). Reused so we don't pay context warmup per check.
-  ;;
-  ;; Built ON the SHARED engine, not standalone. It legally can: its host-access
-  ;; config MATCHES the agent contexts (`allowAllAccess false` ⇒ HostAccess.NONE),
-  ;; the one thing GraalPy requires to be identical across a shared engine (IO /
-  ;; polyglot / thread caps are per-context and may differ). Two wins over the old
-  ;; standalone build: (1) it shares the engine's JIT code cache with the agent
-  ;; contexts, and (2) it is NOT a standalone `Context.build()` — so even if it were
-  ;; ever forced lazily mid-eval it can't freeze the JVM at a Truffle safepoint
-  ;; (that hazard is standalone-only; see `shared-engine`). Engine-level options
-  ;; (experimental flags, the vthread-warning silence) live on the engine now, so
-  ;; the context builder must NOT re-set them (illegal on a shared engine).
-  (delay (-> (Context/newBuilder (into-array String ["python"]))
-             (.engine ^Engine @shared-engine)
-             (.allowAllAccess false)
-             (.allowIO IOAccess/NONE)
-             (.allowPolyglotAccess PolyglotAccess/NONE)
-             (.build))))
 
 (defn count-top-level-forms
-  "Number of top-level Python statements in `code`. Comment-/whitespace-only
-   blocks return 0. Raises the underlying `PolyglotException` on a syntax
-   error — that's a syntax issue, not a multi-statement issue."
-  [code]
+  "Number of top-level Python statements in `code`, parsed inside the session's
+   own GraalPy Context. Comment-/whitespace-only blocks return 0. The source is
+   passed directly to a cached helper — no shared scratch global, auxiliary
+   Context, or cross-thread race."
+  [python-context code]
   (let
     [^Context ctx
-     @parser-ctx
+     python-context
 
-     b
-     (.getBindings ctx "python")]
+     ^Value f
+     (.getMember (.getBindings ctx "python") "__vis_count_forms__")]
 
-    (.putMember b "__vis_src__" (str code))
-    (long (.asLong (.eval ctx "python" "len(__import__('ast').parse(__vis_src__).body)")))))
+    (long (.asLong (.execute f (object-array [(str code)]))))))
 
 (defn validate-non-empty-block!
   "Throws `:vis/empty-block` when `code` parses to zero top-level statements
    (comment-only blocks). Iterations that produce no evidence are rejected at
    the model boundary."
-  [code]
-  (when (zero? (long (count-top-level-forms code)))
+  [python-context code]
+  (when (zero? (long (count-top-level-forms python-context code)))
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
                     {:type :vis/empty-block :form-count 0}))))
 
@@ -1145,29 +1144,22 @@ def __vis_native_result_scan__(__vis_tree__):
   "Throws `:vis/banned-def-head` when `code` references a banned construct
    (`BANNED_DEF_HEADS`). Parse failures are silent — the eval that follows
    surfaces a clean syntax error with line/column."
-  [code]
+  [python-context code]
   (try (let
          [^Context ctx
-          @parser-ctx
+          python-context
 
-          b
-          (.getBindings ctx "python")]
+          ^Value f
+          (.getMember (.getBindings ctx "python") "__vis_banned_name__")
 
-         (.putMember b "__vis_src__" (str code))
-         ;; Collect every Name/attribute id in the AST and intersect with the bans.
-         (.putMember b "__vis_banned__" (->py (vec BANNED_DEF_HEADS)))
-         (let
-           [hit (.eval ctx
-                       "python"
-                       (str "next((n.id for n in __import__('ast').walk("
-                            "__import__('ast').parse(__vis_src__)) "
-                            "if isinstance(n, __import__('ast').Name) "
-                            "and n.id in set(__vis_banned__)), None)"))]
-           (when-not (.isNull hit)
-             (throw (ex-info (str "Block uses `" (.asString hit)
-                                  "` which is banned in the "
-                                  "Python sandbox (sandbox-escape footgun).")
-                             {:type :vis/banned-def-head :head (.asString hit)})))))
+          ^Value hit
+          (.execute f (object-array [(str code) (->py (vec BANNED_DEF_HEADS))]))]
+
+         (when-not (.isNull hit)
+           (throw (ex-info (str "Block uses `" (.asString hit)
+                                "` which is banned in the Python sandbox "
+                                "(sandbox-escape footgun).")
+                           {:type :vis/banned-def-head :head (.asString hit)}))))
        (catch clojure.lang.ExceptionInfo ei
          (if (= :vis/banned-def-head (:type (ex-data ei))) (throw ei) nil))
        (catch Throwable _ nil)))
@@ -1252,10 +1244,10 @@ def __vis_native_result_scan__(__vis_tree__):
            (finally (.putMember g "__vis_doc_sym__" nil) (.putMember g "__vis_doc_txt__" nil))))))
 
 (def ^:private protected-baseline-names
-  "Python globals the agent may CALL but must not rebind. Rebinding a tool name
-   (for example `patch = ...`) shadows the callable in the persistent sandbox;
-   the next `patch(...)` then fails as `'str' object is not callable`."
-  #{"apropos" "doc" "gather" "ntr" "native_tools_results"})
+  "Python globals the agent may CALL but must not rebind. Rebinding a tool or
+   parser-helper name would shadow the persistent session substrate."
+  #{"apropos" "doc" "gather" "ntr" "native_tools_results" "__vis_count_forms__"
+    "__vis_banned_name__"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
@@ -2315,39 +2307,21 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     true))
 
 (defn create-python-context
-  "Create the embedded-GraalPy sandbox context with all available bindings.
+  "Create one persistent, deny-by-default GraalPy Context for a Vis session.
 
-   `custom-bindings` — map of symbol->value (tool fns + engine values). Fns are
-   wired as Python callables; values are marshalled. Returns:
-
-     {:python-context          <org.graalvm.polyglot.Context>
-      :sandbox-ns       :python          ; placeholder (Python has one top scope)
-      :initial-ns-keys  #{...baseline globals...}}
-
-   `roots-fn` (optional) — a 0-arg fn returning the current allowed root path
-   strings; when supplied the sandbox gets REAL filesystem access confined to
-   them. Omitted ⇒ no Python filesystem (IO-NONE)."
+   `custom-bindings` maps symbols to tool/verb functions or values. `roots-fn`
+   optionally grants filesystem access confined to the current workspace roots.
+   Every session Context rides the process-wide `shared-engine`; parsing and
+   extension shims live inside that same Context. Rendering is pure JVM code, so
+   normal sessions allocate no auxiliary GraalPy contexts."
   ([custom-bindings] (create-python-context custom-bindings nil nil))
   ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil))
   ([custom-bindings roots-fn network-opts]
-   ;; Preflight the JVM's GraalVM version BEFORE building any polyglot Context:
-   ;; a mismatched built-in Truffle (e.g. GraalVM CE 25.0.2 vs the pinned
-   ;; 25.1.3) otherwise dies with an opaque NoClassDefFoundError here.
    @graalvm-runtime-checked
-   ;; Warm the shared engine + auxiliary GraalPy contexts NOW — at session
-   ;; start, while NO eval is running. EVERY context now rides an EXPLICIT,
-   ;; pre-built engine: the agent + parser contexts share `shared-engine`
-   ;; (deny-by-default); the printer rides its own `printer-engine` because its
-   ;; `allowAllAccess true` host-access config is incompatible with the shared
-   ;; engine's deny-by-default agents. NO standalone `Context.build()` remains,
-   ;; so none of them can DEADLOCK Truffle at a safepoint if forced mid-eval
-   ;; (that hazard is standalone-build-during-a-live-eval only). We still force
-   ;; them here so the first render/validation/eval never pays warmup mid-turn.
-   ;; Only the first session in the process pays this.
+   ;; Build/force the one process-wide Engine before the session Context. Child
+   ;; sub-loops create their own restrictive Context only when true parallel
+   ;; Python execution is requested; all contexts share this Engine's code cache.
    (try @shared-engine (catch Throwable _ nil))
-   (try @printer-engine (catch Throwable _ nil))
-   (try @printer-context (catch Throwable _ nil))
-   (try @parser-ctx (catch Throwable _ nil))
    (build-agent-context custom-bindings roots-fn network-opts)))
 
 (defn fork-context!
@@ -2404,7 +2378,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    it does NOT parse as Python on its own AND reads like a sentence (markdown
    marker, or 3+ space-separated word runs), it's prose. A genuine code line with a
    typo elsewhere parses fine alone → no hint, raw error preserved."
-  [code]
+  [python-context code]
   (let
     [first-real (->> (str/split-lines code)
                      (map str/trim)
@@ -2412,7 +2386,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                      (remove #(str/starts-with? % "#"))
                      first)]
     (when (and (seq first-real)
-               (try (count-top-level-forms first-real)
+               (try (count-top-level-forms python-context first-real)
                     false ; parses alone → real code
                     (catch PolyglotException _
                       (boolean (or (re-find #"^(#{1,6}\s|[-*]\s|>\s)" first-real) ; heading/bullet/quote
@@ -2463,7 +2437,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    reply (see `prose-leading-syntax-hint`, first-line only), and - via
    `parse-diagnose` - an unbalanced double-quote or an unbalanced (), [], {}
    bracket pinpointed to its line/col."
-  [^PolyglotException e code]
+  [python-context ^PolyglotException e code]
   (let
     [host?
      (.isHostException e)
@@ -2487,7 +2461,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      ;; (CPython's "invalid character", precise wherever it lands - the
      ;; em-dash-at-line-71 case the first-line-only prose detector misses).
      prose-hint
-     (when syntax? (prose-leading-syntax-hint code))
+     (when syntax? (prose-leading-syntax-hint python-context code))
 
      non-ascii?
      (boolean (and syntax? (not prose-hint) base (re-find #"invalid character" base)))
@@ -2757,7 +2731,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
              attachments
              (mpl-capture/drain sink)]
 
-            (cond-> {:error (map-polyglot-error e code)}
+            (cond-> {:error (map-polyglot-error ctx e code)}
               out
               (assoc :stdout out)
 

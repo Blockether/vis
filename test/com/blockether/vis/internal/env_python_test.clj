@@ -7,6 +7,30 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
+  canonical-python-literal-test
+  (it
+    "renders boundary data without a GraalPy printer context"
+    (let
+      [data
+       (array-map "none" nil "flags" [true false] "text" "a\n\"\\\t" "nested" (array-map "x" 1))]
+      (expect
+        (=
+          "{\"none\": None, \"flags\": [True, False], \"text\": \"a\\n\\\"\\\\\\t\", \"nested\": {\"x\": 1}}"
+          (ep/ctx->python-str data)))))
+  (it "keeps scalar and temporal representations Python-compatible"
+      (expect (= ["nan" "inf" "-inf" "\"1970-01-01T00:00:00Z\""
+                  "\"00000000-0000-0000-0000-000000000001\""]
+                 (mapv ep/ctx->python-str
+                       [##NaN ##Inf ##-Inf (java.util.Date. 0)
+                        (java.util.UUID/fromString "00000000-0000-0000-0000-000000000001")]))))
+  (it "preserves the historical multiline layout at the 100-column boundary"
+      (let
+        [rendered (ep/ctx->python-str (array-map "first" (apply str (repeat 100 "x"))
+                                                 "second" [1 2]))]
+        (expect (str/starts-with? rendered "{\n \"first\": "))
+        (expect (str/includes? rendered "\n \"second\": [1, 2]\n}")))))
+
+(defdescribe
   proxy-and-capture-test
   (let
     [env
