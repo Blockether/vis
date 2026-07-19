@@ -4294,9 +4294,6 @@
                 (and (= (not-empty model-name) (:model pref))
                      (= (not-empty provider-id) (:provider pref)))
 
-                router-default?
-                (str/blank? (str model-name))
-
                 price
                 (vis/model-pricing model-name)
 
@@ -4317,11 +4314,9 @@
               :hx-vals (json-text {:provider (or provider-id "") :model (or model-name "")})
               :hx-target "#model-pick"
               :hx-swap "outerHTML"}
-             ;; Icon LEFT (selection state), name, price RIGHT (in / out per 1M).
-             [:span.mc-icon
-              (icon (cond current? "check"
-                          router-default? "star"
-                          :else "cpu"))] [:span.mc-name label]
+             ;; Name LEFT, price RIGHT (in / out per 1M). Selection reads from
+             ;; the highlighted `.current` chip, so no leading icon gutter.
+             [:span.mc-name label]
              (when (and in$ out$)
                [:span.mc-price {:title "input / output per 1M tokens"} in$ [:span.mc-price-sep "/"]
                 out$])]))]

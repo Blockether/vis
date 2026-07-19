@@ -3114,17 +3114,44 @@
 
       (when (seq lines) (str "params:\n" (str/join "\n" lines))))))
 
+(defn symbol-doc-text
+  "Model-facing doc text for ONE symbol ENTRY: the curated
+   `:ext.symbol/description` (the prose the prompt catalog renders) or, failing
+   that, the tool var's `:ext.symbol/doc` docstring, plus a rendered `params:`
+   block from its `:ext.symbol/schema`. Returns nil when the entry carries no
+   usable prose. The SINGLE source of truth for both `sandbox-symbol-docs` (the
+   eager built-in seed) AND the per-binding `__vis_docs__` seeding that ALIASED
+   extensions do at bind time (see `loop/sync-active-extension-symbols!`), so
+   `doc(name)` / `apropos(pat)` read the same text no matter which path bound
+   the symbol."
+  [entry]
+  (let [prose
+        (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
+
+        params
+        (schema->param-doc (:ext.symbol/schema entry))
+
+        text
+        (cond-> prose
+          (and (string? prose) params)
+          (str "\n\n" params))]
+
+    (when (and (string? text) (not (str/blank? text))) text)))
+
 (defn sandbox-symbol-docs
   "Map `{sandbox-symbol -> doc-text}` for every engine-bound symbol across the
    registered extensions, keyed by the `:ext.symbol/symbol` as it is bound in
-   the Python sandbox. `doc-text` prefers the curated `:ext.symbol/description`
-   (the model-facing prose the prompt catalog renders) and falls back to the
-   tool var's `:ext.symbol/doc` docstring.
+   the Python sandbox. `doc-text` comes from `symbol-doc-text`.
 
    `env_python/build-agent-context` seeds the sandbox `__vis_docs__` table from
    this so in-sandbox `doc(name)` returns the tool's real description instead of
    a bare `name (callable)`. Loads built-ins first (idempotent) so the registry
-   is populated before we read it. Symbols absent here simply have no doc entry."
+   is populated before we read it. Symbols absent here simply have no doc entry.
+
+   NOTE: this keys by the BARE symbol, so it only serves BUILT-IN (unaliased)
+   extensions bound eagerly at context creation. Aliased extensions bind their
+   `<alias>_<name>` symbols LATER (per turn) and seed `__vis_docs__` themselves
+   through `symbol-doc-text` — see `loop/sync-active-extension-symbols!`."
   []
   (load-builtin-extensions!)
   (into {}
@@ -3138,17 +3165,9 @@
               :let [sym
                     (:ext.symbol/symbol entry)
 
-                    prose
-                    (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
-
-                    params
-                    (schema->param-doc (:ext.symbol/schema entry))
-
                     text
-                    (cond-> prose
-                      (and (string? prose) params)
-                      (str "\n\n" params))]
-              :when (and sym (string? text) (not (str/blank? text)))]
+                    (symbol-doc-text entry)]
+              :when (and sym text)]
 
           [sym text])))
 

@@ -514,16 +514,22 @@
 (def ^:private prompt-text
   (str
     "MCP servers available. Connect to Model Context Protocol servers (declared in\n"
-    "~/.vis/config.edn under :mcp :servers) and call their tools. Verbs (alias mcp):\n"
+    "~/.vis/config.edn under :mcp :servers) and call their tools.\n" "\n"
+    "These are NATIVE tools. As a DIRECT tool call their names take a DOUBLE\n"
+    "underscore (mcp__servers / mcp__tools / mcp__call / mcp__connect / mcp__disconnect):\n"
     "  mcp__servers()                  — configured servers + connection status + tool counts\n"
     "  mcp__tools(server)              — a server's tools (name/description/input_schema); auto-connects\n"
     "  mcp__call(server, tool, args)   — call a tool; args is a dict matching its input_schema; auto-connects\n"
     "  mcp__connect(server) / mcp__disconnect(server) — manage the connection explicitly\n"
+    "\n" "INSIDE python_execution the sandbox bindings are the SINGLE-underscore snake\n"
+    "names, and you MUST await them (the double-underscore names do NOT exist there):\n"
+    "  await mcp_servers()   ·   await mcp_tools(server)   ·   await mcp_call(server, tool, {...})\n"
+    "  await mcp_connect(server)   ·   await mcp_disconnect(server)\n"
+    "(apropos(\"mcp\") lists them; doc(\"mcp_call\") shows the full signature.)\n"
     "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
     "Connected servers + tool counts also ride in ctx under ctx[\"env\"][\"mcp\"][\"servers\"].\n"
-    "Workflow: mcp__servers() to see what's there → mcp__tools(server) to learn a tool's input_schema →\n"
-    "mcp__call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"].\n"
-    "Results come back to you IN FULL — filter / shape them in python_execution (content is a list: loop, slice, json.loads a text block), never paste a raw tool dump back."))
+    "Workflow: servers to see what's there → tools(server) to learn a tool's input_schema →\n"
+    "call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"].\n"))
 
 (defn- activation-fn
   "Active when at least one MCP server is configured."

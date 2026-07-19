@@ -500,6 +500,7 @@
              [db-list-sessions persistance/db-list-sessions]
              [db-find-session-by-external persistance/db-find-session-by-external]
              [db-update-session-title! persistance/db-update-session-title!]
+             [db-claim-session! persistance/db-claim-session!]
              [db-delete-session-tree! persistance/db-delete-session-tree!]
              [db-fork-session! persistance/db-fork-session!]
              [db-list-session-states persistance/db-list-session-states]

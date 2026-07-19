@@ -649,7 +649,7 @@
                                            :title (get body "title")
                                            :external-id (get body "external_id")
                                            :workspace-id (get body "workspace_id")
-                                           :prewarm? (get body "prewarm")}))))
+                                           :root (get body "root")}))))
 
 (defn- list-sessions-handler [_] (json-response {:sessions (state/list-sessions)}))
 
@@ -1730,7 +1730,11 @@
          ;; Load the persistence backend NOW, single-threaded, so the
          ;; first DB touch never happens on N concurrent request threads.
          _
-         (state/warm-db!)
+         (do (state/warm-db!)
+             (try (state/start-prewarming! [:api :tui])
+                  (catch Throwable t
+                    (tel/log! :warn
+                              ["gateway: startup session prewarm failed" (ex-message t)]))))
 
          ;; A dead process can leave durable turn rows marked :running. Clear
          ;; those stale flags to :interrupted, but NEVER reconstruct or resubmit
@@ -1836,6 +1840,7 @@
     ;; Kill every session's background resources (shell_bg children, REPLs)
     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
     ;; process; once it exits the children reparent to init and leak.
+    (try (state/discard-prewarmed!) (catch Throwable _ nil))
     (try (resources/shutdown!) (catch Throwable _ nil))
     (try (discovery/deregister-self! db) (catch Throwable _ nil))
     (reset! server-state nil)

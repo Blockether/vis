@@ -1906,10 +1906,25 @@
 ;; Session lifecycle + souls
 ;; =============================================================================
 
-(defn create-session!
-  "Create a fresh gateway-managed session. Defaults to `:api`, but in-process
-  clients such as the TUI can pass `:channel :tui` and still use the same
-  gateway turn/event machinery without pretending to be an HTTP client."
+(def ^:private PREWARM_POOL_DEPTH
+  "Empty, fully-built sessions retained per channel. Two absorbs rapid consecutive
+   creates while a background worker replenishes the first slot."
+  2)
+
+(defonce ^:private prewarm-pool (atom {:ready {} :in-flight {} :accepting? false}))
+
+(defonce ^:private prewarm-futures (atom #{}))
+
+
+(defn- session->wire
+  [{:keys [id channel title external-id workspace-id]}]
+  (wire/canonical {:id (str id)
+                   :channel (name channel)
+                   :title title
+                   :external_id external-id
+                   :workspace_id workspace-id}))
+
+(defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root prewarm?]}]
   (let [channel
         (or channel :api)
@@ -1933,11 +1948,153 @@
                       (assoc :prewarm? true)))]
 
     (swap! registry assoc (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
-    (wire/canonical {:id (str (:id created))
-                     :channel (name channel)
-                     :title (:title created)
-                     :external_id (:external-id created)
-                     :workspace_id (:workspace-id created)})))
+    created))
+
+(defn- pop-prewarmed!
+  [channel]
+  (let [[old _] (swap-vals! prewarm-pool
+                            (fn [pool]
+                              (update-in pool
+                                         [:ready channel]
+                                         (fn [ready]
+                                           (let [ready (vec ready)]
+                                             (if (seq ready) (subvec ready 1) ready))))))]
+    (first (get-in old [:ready channel]))))
+
+(defn- reserve-prewarm-slot!
+  [channel]
+  (let [[old new] (swap-vals! prewarm-pool
+                              (fn [pool]
+                                (let [ready (count (get-in pool [:ready channel]))
+                                      building (long (get-in pool [:in-flight channel] 0))]
+
+                                  (if (and (:accepting? pool)
+                                           (< (+ ready building) (long PREWARM_POOL_DEPTH)))
+                                    (assoc-in pool [:in-flight channel] (inc building))
+                                    pool))))]
+    (< (long (get-in old [:in-flight channel] 0)) (long (get-in new [:in-flight channel] 0)))))
+
+(defn- finish-prewarm-slot!
+  [channel]
+  (swap! prewarm-pool update-in [:in-flight channel] #(max 0 (dec (long (or % 0))))))
+
+(defn- add-prewarmed!
+  [channel session]
+  (let [[old _] (swap-vals! prewarm-pool
+                            (fn [pool]
+                              (if (:accepting? pool)
+                                (update-in pool [:ready channel] (fnil conj []) session)
+                                pool)))]
+    (when-not (:accepting? old)
+      (swap! registry dissoc (:id session))
+      (try (lp/delete! (:id session)) (catch Throwable _ nil)))))
+
+(defn- kick-prewarm!
+  [channel]
+  (let [self
+        (promise)
+
+        fut
+        (cancellation/worker-future
+          (str "gateway-session-prewarm-" (name channel))
+          (fn []
+            (try (add-prewarmed! channel (create-session-cold! {:channel channel :prewarm? true}))
+                 (catch Throwable e
+                   (tel/log! :warn
+                             ["gateway: session prewarm failed" (name channel) (ex-message e)]))
+                 (finally (finish-prewarm-slot! channel) (swap! prewarm-futures disj @self)))))]
+
+    (swap! prewarm-futures conj fut)
+    (deliver self fut)
+    fut))
+
+(defn ensure-prewarmed!
+  "Asynchronously top up the gateway-owned warm-session pool for `channel`.
+   Idempotent and race-safe: ready plus in-flight sessions never exceed the pool
+   depth. Does nothing after gateway shutdown has stopped pool acceptance."
+  [channel]
+  (let [channel (or channel :api)]
+    (loop []
+      (when (reserve-prewarm-slot! channel)
+        (kick-prewarm! channel)
+        (recur))))
+  nil)
+
+(defn start-prewarming!
+  "Start gateway-owned warm pools for every supplied channel.
+   This is the sole lifecycle entry point; channels never manage pools directly."
+  [channels]
+  (swap! prewarm-pool assoc :accepting? true)
+  (doseq [channel channels]
+    (ensure-prewarmed! channel))
+  nil)
+
+(defn- request-prewarm!
+  [channel]
+  (try (ensure-prewarmed! channel)
+       (catch Throwable e
+         (tel/log! :warn
+                   ["gateway: failed to schedule session prewarm" (name channel) (ex-message e)])))
+  nil)
+
+(defn- claim-prewarmed!
+  [session title]
+  (let [id (:id session)]
+    (persistance/db-claim-session! (lp/db-info) id)
+    (when title (lp/set-title! id title))
+    (assoc session :title title)))
+
+(defn create-session!
+  "Create or adopt a gateway-managed session.
+
+   Ordinary default-workspace creates consume the gateway-owned warm pool and
+   replenish it in the background. `:workspace-id`, `:root`, and `:external-id`
+   require a purpose-built environment and bypass the pool."
+  [{:keys [channel external-id workspace-id root] :as opts}]
+  (let [channel
+        (or channel :api)
+
+        opts
+        (assoc opts :channel channel)
+
+        pool-eligible?
+        (and (nil? external-id) (nil? workspace-id) (nil? root))
+
+        pooled
+        (when pool-eligible? (pop-prewarmed! channel))]
+
+    (try (let [created
+               (if pooled (claim-prewarmed! pooled (:title opts)) (create-session-cold! opts))]
+           (when pool-eligible? (request-prewarm! channel))
+           (session->wire created))
+         (catch Throwable e
+           (if pooled
+             (do (swap! registry dissoc (:id pooled))
+                 (try (lp/delete! (:id pooled)) (catch Throwable _ nil))
+                 (let [created (create-session-cold! opts)]
+                   (when pool-eligible? (request-prewarm! channel))
+                   (session->wire created)))
+             (throw e))))))
+
+(defn discard-prewarmed!
+  "Cancel warmups and delete every unused pooled session. Gateway shutdown owns
+   this cleanup; channel shutdowns must not discard a pool shared by other clients."
+  []
+  (doseq [fut (first (reset-vals! prewarm-futures #{}))]
+    (try (future-cancel fut) (catch Throwable _ nil)))
+  (let [stopped
+        {:ready {} :in-flight {} :accepting? false}
+
+        ready
+        (mapcat val (:ready (first (reset-vals! prewarm-pool stopped))))]
+
+    (doseq [{:keys [id]} ready]
+      (swap! registry dissoc id)
+      (try (lp/delete! id)
+           (catch Throwable e
+             (tel/log! :warn
+                       ["gateway: failed to discard prewarmed session" (str id) (ex-message e)])))))
+  nil)
 
 (defn soul
   "Canonical (string-keyed) wire soul for one session: persisted record + live

@@ -309,6 +309,7 @@
 (defdelegate db-list-sessions [db-info channel])
 (defdelegate db-find-session-by-external [db-info channel ext-id])
 (defdelegate db-update-session-title! [db-info ref title])
+(defdelegate db-claim-session! [db-info ref])
 (defdelegate db-delete-session-tree! [db-info id])
 (defdelegate db-fork-session! [db-info session-id opts])
 (defdelegate db-list-session-states [db-info session-id])

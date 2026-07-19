@@ -1105,6 +1105,18 @@
                                        :set {:title title}
                                        :where [:= :id (:id state)]})))))))
 
+(defn db-claim-session!
+  "Mark an unclaimed warm-pool soul as a real conversation. Idempotent."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:update :session_soul
+                                   :set {:claimed_at (now-ms)}
+                                   :where [:and [:= :id (->ref session-id)]
+                                           [:= :claimed_at nil]]})))))
+
 (defn db-delete-session-tree!
   [db-info session-soul-id]
   (when (and (ds db-info) session-soul-id)

@@ -678,3 +678,66 @@
               (expect (false? (await-cancel token 1200))))
             (expect (nil? (:stalled? @stall)))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+
+(defdescribe
+  gateway-prewarm-pool-test
+  (it "adopts a ready session and requests an asynchronous refill"
+      (let [pool
+            @#'state/prewarm-pool
+
+            prior
+            @pool
+
+            sid
+            (java.util.UUID/randomUUID)
+
+            refills
+            (atom [])]
+
+        (try
+          (reset! pool
+            {:ready {:api
+                     [{:id sid :channel :api :title nil :external-id nil :workspace-id :workspace}]}
+             :in-flight {}
+             :accepting? true})
+          (with-redefs [state/ensure-prewarmed!
+                        #(swap! refills conj %)
+
+                        state/claim-prewarmed!
+                        (fn [session title]
+                          (assoc session :title title))]
+
+            (let [created (state/create-session! {:channel :api :title "Ready"})]
+              (expect (= (str sid) (get created "id")))
+              (expect (= "Ready" (get created "title")))
+              (expect (= [:api] @refills))
+              (expect (empty? (get-in @pool [:ready :api])))))
+          (finally (reset! pool prior)))))
+  (it "bypasses the pool for a purpose-built workspace"
+      (let [pool
+            @#'state/prewarm-pool
+
+            prior
+            @pool
+
+            pooled-id
+            (java.util.UUID/randomUUID)
+
+            cold-id
+            (java.util.UUID/randomUUID)
+
+            cold-calls
+            (atom [])]
+
+        (try (reset! pool {:ready {:api [{:id pooled-id :channel :api}]}
+                           :in-flight {}
+                           :accepting? true})
+             (with-redefs [state/create-session-cold!
+                           (fn [opts]
+                             (swap! cold-calls conj opts)
+                             {:id cold-id :channel :api :workspace-id (:workspace-id opts)})]
+               (let [created (state/create-session! {:channel :api :workspace-id :branch})]
+                 (expect (= (str cold-id) (get created "id")))
+                 (expect (= [:branch] (mapv :workspace-id @cold-calls)))
+                 (expect (= pooled-id (get-in @pool [:ready :api 0 :id])))))
+             (finally (reset! pool prior))))))

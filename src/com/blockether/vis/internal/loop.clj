@@ -7933,7 +7933,15 @@
            ;; holds for env — one gate, native tools and Python verbs alike.
            (if (and (contains? active-set (:ext/name ext))
                     (extension/symbol-active? (get by-sym sym) environment))
-             (env/set-python-binding! python-context target f)
+             (do (env/set-python-binding! python-context target f)
+                 ;; Seed this symbol's doc into `__vis_docs__` keyed by its bound
+                 ;; py-name, so `doc(git_status)` / `doc(mcp_servers)` /
+                 ;; `apropos("mcp")` carry real descriptions. ALIASED extensions
+                 ;; bind here (per turn), NOT at context creation, so the eager
+                 ;; `build-agent-context` seed never saw them.
+                 (env/set-python-binding-doc! python-context
+                                              target
+                                              (extension/symbol-doc-text (get by-sym sym))))
              (env/remove-python-binding! python-context target))))))
    environment))
 

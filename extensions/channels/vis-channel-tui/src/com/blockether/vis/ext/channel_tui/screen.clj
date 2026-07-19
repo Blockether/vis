@@ -3884,11 +3884,6 @@
            ;; already validated above (before Lanterna started), so here we only need the
            ;; pre-resolved value.
            (when-let [config (:config @state/app-db)]
-             ;; Start warming the empty-session pool the MOMENT a config exists —
-             ;; BEFORE the (possibly slow) resume/restore below — so it is hot by
-             ;; the first Ctrl+N. Idempotent; the post-open `prewarm-session!` just
-             ;; tops it up toward the pool depth.
-             (chat/prewarm-session! config)
              (let [make-startup
                    (fn [config]
                      (cond (:session-id opts) resumed-from-flag
@@ -3941,16 +3936,6 @@
                ;; wouldn't restore it. Also self-heals a stale multi-tab
                ;; sidecar down to what is actually open.
                (persist-tabs!)
-               ;; Warm a fresh empty session in the BACKGROUND now, so the FIRST
-               ;; Ctrl+N / `+` new-session is instant instead of paying the full
-               ;; cold DB+env build on the input thread. The startup tab is
-               ;; usually RESUMED (not built via `make-session`), so nothing else
-               ;; kicks the new-session prewarm — without this the first
-               ;; new-session is slow. Safe to race the just-finished session
-               ;; open: the migration lock serializes same-JVM env builds.
-               ;; `discard-prewarmed-session!` (shutdown hook below) deletes it
-               ;; if the user never opens another tab.
-               (chat/prewarm-session! config)
                ;; Kick off background pre-warm of the LRU. Walks the
                ;; history bottom-up calling project + bubble-height,
                ;; so by the time the user scrolls UP the cache is
@@ -4073,7 +4058,7 @@
                  ;; at USE time from this timestamp — a poll-based decay died
                  ;; between two events of a slow trackpad inertia tail.
                  last-wheel-at-ms (volatile! 0)
-                 prewarm-session!
+                 warm-session-render!
                  (fn [{:keys [id history]}]
                    (virtual/stop-rewarm!)
                    (when (seq history)
@@ -4124,7 +4109,7 @@
                      ;; tab shows live progress instead of frozen history.
                      (state/dispatch [:attach-running-turn
                                       (state/tab-id-for-session @state/app-db id) session-result])
-                     (prewarm-session! session-result)
+                     (warm-session-render! session-result)
                      (persist-tabs!)
                      (when notify?
                        (vis/notify! "Opened session" :level :success :ttl-ms copy-success-ttl-ms))))
@@ -4198,7 +4183,7 @@
                                            (when-let [title (session-db-title id)]
                                              (state/dispatch [:set-title title]))
                                            (ensure-title-listener! id)
-                                           (prewarm-session! {:id id :history (:messages db)})))
+                                           (warm-session-render! {:id id :history (:messages db)})))
                                        (persist-tabs!)
                                        (when notify?
                                          (vis/notify! "Switched workspace"
@@ -6182,9 +6167,8 @@
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (doseq [[_ cleanup] @title-listeners]
                (try (cleanup) (catch Throwable _ nil)))
-             (do (chat/discard-prewarmed-session!)
-                 (doseq [session (workspace-sessions)]
-                   (chat/dispose! session)))
+             (doseq [session (workspace-sessions)]
+               (chat/dispose! session))
              (when-let [cleanup @ssh-passphrase-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))

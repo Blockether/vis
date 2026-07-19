@@ -2315,3 +2315,17 @@
       (expect (= 3 n))
       (expect (= "B" (first order)))
       (expect (= [0 1 2] positions)))))
+
+(defdescribe explicit-session-claim-test
+             (it "explicitly claims a pooled session before its first turn"
+                 (let [s
+                       (h/store)
+
+                       id
+                       (h/store-session! s {:channel :api :title "pool" :claimed? false})]
+
+                   (expect (= [] (vec (vis/db-list-sessions s :all))))
+                   (vis/db-claim-session! s id)
+                   (vis/db-claim-session! s id)
+                   (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))
+                   (expect (= 1 (raw-count s :session_soul))))))

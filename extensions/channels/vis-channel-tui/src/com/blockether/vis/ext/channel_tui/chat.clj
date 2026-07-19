@@ -547,18 +547,6 @@
                :msg (str "Failed to rebuild history: " (ex-message e))})
       [])))
 
-(defonce ^:private prewarmed-sessions (atom []))
-
-(defonce ^:private prewarm-in-flight (atom 0))
-
-(defonce ^:private prewarm-futures (atom #{}))
-
-(def ^:private prewarm-pool-depth
-  "How many empty `:tui` sessions to keep warm ahead of demand. Deep enough
-   that a couple of quick consecutive new-tabs still land on a warm session
-   while the pool refills; shallow enough that the shutdown hook only has a
-   couple of unused sessions to reap."
-  2)
 
 (defn- event-get
   "Read field `k` off a canonical string-keyed wire map — ONE deterministic
@@ -781,147 +769,28 @@
       (try (cleanup) (catch Throwable _ nil)))))
 
 (defn- create-session*
-  [_provider-config {:keys [workspace-id root prewarm?]}]
+  [_provider-config {:keys [workspace-id root]}]
   (let [resp (vis/gateway-create-session! (cond-> {:channel :tui}
                                             workspace-id
                                             (assoc :workspace-id workspace-id)
 
                                             root
-                                            (assoc :root root)
-
-                                            ;; Warm-pool builds are UNCLAIMED: they must
-                                            ;; not surface in the cross-channel session
-                                            ;; list until a tab actually uses one (the
-                                            ;; first turn claims the soul). Real new-tab
-                                            ;; builds (pool miss) omit this and are claimed.
-                                            prewarm?
-                                            (assoc :prewarm true)))]
+                                            (assoc :root root)))]
     {:id (java.util.UUID/fromString (get resp "id")) :history []}))
 
-(defn- pop-prewarmed!
-  "Atomically take one warm session from the pool (FIFO), or nil when empty."
-  []
-  (let [[old _] (swap-vals! prewarmed-sessions
-                            (fn [q]
-                              (if (seq q) (subvec q 1) q)))]
-    (first old)))
 
-(defn- reserve-prewarm-slot!
-  "Atomically claim an in-flight warmup slot iff the pool (already-warm +
-   building) is below `prewarm-pool-depth`. Returns true when a slot was
-   claimed, so the caller must fire exactly one warmup."
-  []
-  (let [ready
-        (count @prewarmed-sessions)
-
-        [old new]
-        (swap-vals! prewarm-in-flight
-                    (fn [n]
-                      (let [n (long n)]
-                        (if (< (+ (long ready) n) (long prewarm-pool-depth)) (inc n) n))))]
-
-    (not= old new)))
-
-(defn- kick-prewarm!
-  "Fire ONE background warmup on a worker. Tracks the future so shutdown can
-   cancel it, joins the built session to the pool on success, and always
-   decrements the in-flight count when it settles. Assumes the caller already
-   reserved a slot via `reserve-prewarm-slot!`."
-  [provider-config]
-  (let [self
-        (promise)
-
-        fut
-        (vis/worker-future
-          "tui-session-prewarm"
-          (fn []
-            (try (let [session (create-session* provider-config {:prewarm? true})]
-                   (swap! prewarmed-sessions conj session))
-                 (catch Throwable e
-                   (t/log! {:level :warn
-                            :id ::prewarm-session-failed
-                            :data (exception->log-data e)
-                            :msg (str "Failed to prewarm TUI session: " (ex-message e))}))
-                 (finally (swap! prewarm-in-flight dec) (swap! prewarm-futures disj @self)))))]
-
-    (swap! prewarm-futures conj fut)
-    (deliver self fut)
-    fut))
-
-(defn prewarm-session!
-  "Keep a small pool of empty `:tui` sessions warm on background workers.
-
-  The gateway facade intentionally couples the cheap session row with the
-  expensive environment/runtime construction, so the practical prewarm unit is
-  a real empty `:tui` session. `make-session` / `make-session-async` consume
-  them atomically; shutdown deletes any left over.
-
-  Idempotent and safe to call from any thread: tops the pool up toward
-  `prewarm-pool-depth`, counting both already-warm sessions and in-flight
-  warmups, so racing callers never over-build."
-  [provider-config]
-  (loop []
-
-    (when (reserve-prewarm-slot!) (kick-prewarm! provider-config) (recur))))
-
-(defn discard-prewarmed-session!
-  "Delete every warmed-but-unused TUI session and stop any in-flight warmups."
-  []
-  (doseq [fut (first (reset-vals! prewarm-futures #{}))]
-    (try (future-cancel fut) (catch Throwable _)))
-  (reset! prewarm-in-flight 0)
-  (doseq [{:keys [id]} (first (reset-vals! prewarmed-sessions []))]
-    (try (vis/gateway-close-session! id)
-         (catch Throwable e
-           (t/log! {:level :warn
-                    :id ::discard-prewarmed-session-failed
-                    :data (exception->log-data e)
-                    :msg (str "Failed to delete prewarmed TUI session: " (ex-message e))})))))
 
 (defn make-session
-  "Create a fresh `:tui` session. BLOCKING on a pool miss (builds inline).
-
-  Prefer `make-session-async` on the input thread; use this only where the
-  caller genuinely needs the session id synchronously.
-
-   Optional opts map (second arity):
-     :workspace-id  pre-spawned workspace to pin the new session to.
-                    Omit and a trunk workspace is auto-minted by
-                    `create-environment`.
-
-   Returns `{:id session-id :history []}`."
+  "Create a fresh `:tui` session through the gateway-owned warm pool."
   ([_provider-config] (make-session _provider-config nil))
-  ([provider-config opts]
-   (if-let [session (when (nil? (:workspace-id opts)) (pop-prewarmed!))]
-     (do (prewarm-session! provider-config) session)
-     (let [session (create-session* provider-config opts)]
-       (when (nil? (:workspace-id opts)) (prewarm-session! provider-config))
-       session))))
+  ([provider-config opts] (create-session* provider-config opts)))
 
 (defn make-session-async
-  "Non-blocking `make-session` for the input thread. Never runs the cold
-  env/runtime build on the caller's thread.
-
-  Returns one of:
-    {:session {:id … :history []}}  a warm session was ready — open it now.
-    {:building fut}                 nothing warm — `fut` (a worker Future)
-                                    resolves to `{:id … :history []}` once the
-                                    cold build finishes. The caller opens an
-                                    optimistic placeholder tab now and binds the
-                                    real session when `fut` lands.
-
-  `:workspace-id` opts always build off-thread (never pooled), so they take the
-  `:building` branch too."
+  "Create a session off the input thread. The gateway normally answers from its
+   warm pool; a pool miss still never blocks TUI input."
   ([provider-config] (make-session-async provider-config nil))
   ([provider-config opts]
-   (if-let [session (when (nil? (:workspace-id opts)) (pop-prewarmed!))]
-     (do (prewarm-session! provider-config) {:session session})
-     {:building (vis/worker-future "tui-session-build"
-                                   (fn []
-                                     (let [session (create-session* provider-config opts)]
-                                       (when (nil? (:workspace-id opts))
-                                         (prewarm-session! provider-config))
-                                       session)))})))
+   {:building (vis/worker-future "tui-session-build" #(create-session* provider-config opts))}))
 
 (defn- resolve-resume-id
   "Resolve a resume id to a full `java.util.UUID`, or nil. Accepts a

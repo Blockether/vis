@@ -1143,6 +1143,30 @@ def __vis_native_result_scan__(__vis_tree__):
               "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
         (finally (.putMember g "__vis_defer1__" nil))))))
 
+(defn set-python-binding-doc!
+  "Record `doc` text for `sym` (and its py-aliases) in the sandbox `__vis_docs__`
+   dict that in-sandbox `doc(name)` / `apropos(pat)` read. Keyed by the SAME
+   py-name(s) `set-python-binding!` binds under, so `doc(\"mcp_servers\")` resolves
+   for ALIASED extensions that bind AFTER context creation (per turn, via
+   `sync-active-extension-symbols!`) — not only the built-ins seeded eagerly in
+   `build-agent-context`. No-op for a blank doc or a helper context with no
+   sandbox."
+  [python-context sym doc]
+  (when (and python-context (string? doc) (not (str/blank? doc)))
+    (let [^Context ctx
+          python-context
+
+          g
+          (python-globals ctx)]
+
+      (try (.putMember g "__vis_doc_txt__" (str doc))
+           (doseq [nm (cons (sym->py-name sym) (py-aliases-for-sym sym))]
+             (.putMember g "__vis_doc_sym__" (str nm))
+             (.eval ctx
+                    "python"
+                    "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__"))
+           (finally (.putMember g "__vis_doc_sym__" nil) (.putMember g "__vis_doc_txt__" nil))))))
+
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding a tool name
    (for example `patch = ...`) shadows the callable in the persistent sandbox;
@@ -1182,7 +1206,15 @@ def __vis_native_result_scan__(__vis_tree__):
   (try (let [g (python-globals python-context)]
          (.removeMember g (sym->py-name sym))
          (doseq [alias (py-aliases-for-sym sym)]
-           (.removeMember g alias)))
+           (.removeMember g alias))
+         ;; Drop any recorded doc too, so a deactivated tool leaves no stale
+         ;; `__vis_docs__` entry that `doc`/`apropos` would keep surfacing.
+         (doseq [nm (cons (sym->py-name sym) (py-aliases-for-sym sym))]
+           (.putMember g "__vis_doc_sym__" (str nm))
+           (.eval ^Context python-context
+                  "python"
+                  "globals().get('__vis_docs__', {}).pop(__vis_doc_sym__, None)"))
+         (.putMember g "__vis_doc_sym__" nil))
        (catch Throwable _ false)))
 
 (defn bind-and-bump!
@@ -1299,13 +1331,49 @@ def __vis_native_result_scan__(__vis_tree__):
                                           (map str (seq (.getMemberKeys g))))
                                   (shim-names)))))]
 
-    (.putMember g
-                "apropos"
-                (reify
-                  ProxyExecutable
-                    (execute [_ args]
-                      (let [pat (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")]
-                        (->py (filterv #(str/includes? % pat) (names)))))))
+    (.putMember
+      g
+      "apropos"
+      (reify
+        ProxyExecutable
+          (execute [_ args]
+            (let [pat
+                  (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
+
+                  matched
+                  (filterv #(str/includes? % pat) (names))
+
+                  docs
+                  (let [d (.getMember g "__vis_docs__")]
+                    (when (and d (not (.isNull d)) (.hasHashEntries d)) d))
+
+                  gist
+                  (fn [nm]
+                    ;; first non-blank line of the registered doc, capped
+                    ;; so `apropos` stays a scannable name -> gist index
+                    ;; (full text is `doc(name)`).
+                    (let [full
+                          (when (and docs (.hasHashEntry docs (->py nm)))
+                            (.asString (.getHashValue docs (->py nm))))
+
+                          line
+                          (when (seq (str full))
+                            (first (remove str/blank? (str/split-lines (str full)))))]
+
+                      (cond (str/blank? (str line)) ""
+                            (> (count line) 100) (str (subs line 0 99) "…")
+                            :else line)))]
+
+              ;; Return a REAL native Python dict {name -> gist} (order preserved)
+              ;; by zipping two parallel arrays guest-side — no ProxyHashMap crosses
+              ;; the boundary, so `list()/in/sorted/set/**` all behave natively.
+              (.putMember g "__vis_apropos_names__" (->py matched))
+              (.putMember g "__vis_apropos_gists__" (->py (mapv gist matched)))
+              (try (.eval ctx
+                          "python"
+                          "dict(zip(list(__vis_apropos_names__), list(__vis_apropos_gists__)))")
+                   (finally (.putMember g "__vis_apropos_names__" nil)
+                            (.putMember g "__vis_apropos_gists__" nil)))))))
     (.putMember
       g
       "doc"

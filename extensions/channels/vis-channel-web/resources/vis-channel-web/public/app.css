@@ -1277,11 +1277,8 @@ color:var(--fg);transition:border-color .14s,background .14s,transform .14s,box-
 .model-chip.current{background:color-mix(in srgb,var(--primary) 10%,var(--bg));border-color:var(--primary);
 color:var(--secondary);box-shadow:inset 0 0 0 1px var(--primary)}
 .model-chip.wide{margin:.3rem 0 .5rem}
-/* icon LEFT, model name, price RIGHT — one tidy row inside each chip */
-.model-chip{display:inline-flex;align-items:center;gap:.4rem;text-align:left}
-.model-chip .mc-icon{display:inline-flex;flex:0 0 auto;opacity:.7}
-.model-chip .mc-icon svg{width:13px;height:13px}
-.model-chip.current .mc-icon{opacity:1;color:var(--primary)}
+/* model name + price — one tidy row inside each chip (no leading icon gutter) */
+.model-chip{display:inline-flex;align-items:center;gap:.5rem;text-align:left}
 .model-chip .mc-name{flex:1 1 auto}
 .model-chip .mc-price{flex:0 0 auto;margin-left:.55rem;color:var(--dim);font-size:.7rem;letter-spacing:.01em}
 .model-chip .mc-price .mc-price-sep{margin:0 .18rem;opacity:.55}
