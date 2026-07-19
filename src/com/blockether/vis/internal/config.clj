@@ -26,7 +26,10 @@
             [com.blockether.vis.internal.registry :as registry]
             [taoensso.telemere :as tel]
             [yamlstar.core :as yamlstar])
-  (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)))
+  (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
+           (java.nio.charset StandardCharsets)
+           (java.nio.file Files OpenOption)
+           (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (def config-dir (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
@@ -795,6 +798,38 @@
                                 (:id provider)
                                 " threw; selection continues")})))))
 
+(defn- ensure-private-dir!
+  "Create `dir` (and parents) if absent, then tighten it to owner-only (700)
+   so files written inside — provider API keys in `config.edn` — are not
+   readable by other local users on a shared host. Best-effort: silently a
+   no-op on a non-POSIX filesystem."
+  [^String dir]
+  (let [f (io/file dir)]
+    (when-not (.exists f) (.mkdirs f))
+    (try (Files/setPosixFilePermissions (.toPath f) (PosixFilePermissions/fromString "rwx------"))
+         (catch Throwable _ nil))))
+
+(defn- spit-private!
+  "Write `content` to `path` as an owner-only (600) file. Creates the file
+   with the restrictive mode set ATOMICALLY (create-with-attribute, not
+   write-then-chmod) so a secret is never briefly world-readable, falling
+   back to plain `spit` on a non-POSIX filesystem."
+  [^String path ^String content]
+  (let [p
+        (.toPath (io/file path))
+
+        attr
+        (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
+
+    (try (Files/deleteIfExists p)
+         (Files/createFile p (into-array FileAttribute [attr]))
+         (Files/write p (.getBytes content StandardCharsets/UTF_8) (make-array OpenOption 0))
+         (catch UnsupportedOperationException _ (spit path content))
+         (catch Throwable _
+           (spit path content)
+           (try (Files/setPosixFilePermissions p (PosixFilePermissions/fromString "rw-------"))
+                (catch Throwable _ nil))))))
+
 (defn save-config!
   "Persist provider config to `~/.vis/config.edn`.
 
@@ -808,13 +843,10 @@
          (active-provider-entry (load-global-config-raw))
 
          selected-provider
-         (active-provider-entry config)
+         (active-provider-entry config)]
 
-         dir
-         (io/file config-dir)]
-
-     (when-not (.exists dir) (.mkdirs dir))
-     (spit config-path (pr-str config))
+     (ensure-private-dir! config-dir)
+     (spit-private! config-path (pr-str config))
      (when (provider-selection-changed? previous-provider selected-provider)
        (emit-provider-selected! {:previous-provider previous-provider
                                  :provider selected-provider

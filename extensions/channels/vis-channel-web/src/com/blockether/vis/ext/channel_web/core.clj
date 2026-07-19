@@ -41,6 +41,7 @@
             [ring.core.protocols :as ring-protocols])
   (:import [java.io OutputStream]
            [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
            [java.time Instant LocalDateTime ZoneId]
            [java.time.format DateTimeFormatter]))
 
@@ -2726,6 +2727,28 @@
 ;; Handlers
 ;; =============================================================================
 
+(defn- constant-time=?
+  "Timing-safe comparison for secret strings (the gateway token vs. the value
+   a request carries). Plain `=` early-outs on the first differing byte,
+   leaking length/prefix through response timing once auth is enabled; nil-safe."
+  [^String a ^String b]
+  (boolean (and a
+                b
+                (MessageDigest/isEqual (.getBytes a StandardCharsets/UTF_8)
+                                       (.getBytes b StandardCharsets/UTF_8)))))
+
+(defn- request-secure?
+  "True when the request reached us over TLS — a direct HTTPS bind or a
+   TLS-terminating proxy that set `X-Forwarded-Proto: https` (Cloudflare and
+   friends). Gates the token cookie's `Secure` flag: mark Secure only on a TLS
+   hop, so a plain-HTTP deployment can still store and return the cookie."
+  [request]
+  (or (= :https (:scheme request))
+      (boolean (some-> (get-in request [:headers "x-forwarded-proto"])
+                       str/trim
+                       str/lower-case
+                       (= "https")))))
+
 (defn- cookie-token [request] (get-in request [:cookies "vis_token" :value]))
 
 (defn- ui-authed?
@@ -2733,7 +2756,7 @@
    request carries the gateway token as the browser cookie. Registered
    as the contribution's :request-authed-fn."
   [request ^String token]
-  (or (not (vis/gateway-auth-required?)) (= token (cookie-token request))))
+  (or (not (vis/gateway-auth-required?)) (constant-time=? token (cookie-token request))))
 
 (defn- epoch-of
   [soul]
@@ -2773,9 +2796,12 @@
   (let [q-token (some-> (get-in request [:query-params "token"])
                         str/trim)]
     (cond (ui-authed? request token) (enter-app nil)
-          (and (vis/gateway-auth-required?) (= token q-token))
-          (enter-app {:cookies {"vis_token"
-                                {:value token :http-only true :same-site :lax :path "/"}}})
+          (and (vis/gateway-auth-required?) (constant-time=? token q-token))
+          (enter-app {:cookies {"vis_token" {:value token
+                                             :http-only true
+                                             :same-site :lax
+                                             :path "/"
+                                             :secure (request-secure? request)}}})
           :else {:status 200
                  :headers {"Content-Type" "text/html; charset=utf-8"}
                  :body (token-form-page)})))
@@ -2783,12 +2809,14 @@
 (defn- auth-handler
   "POST /ui/auth - exchange the bearer token for the HttpOnly cookie."
   [request token]
-  (if (= token
-         (some-> (get-in request [:form-params "token"])
-                 str/trim))
+  (if (constant-time=? token
+                       (some-> (get-in request [:form-params "token"])
+                               str/trim))
     {:status 303
      :headers {"Location" "/ui"}
-     :cookies {"vis_token" {:value token :http-only true :same-site :lax :path "/"}}
+     :cookies
+     {"vis_token"
+      {:value token :http-only true :same-site :lax :path "/" :secure (request-secure? request)}}
      :body ""}
     {:status 401
      :headers {"Content-Type" "text/html; charset=utf-8"}

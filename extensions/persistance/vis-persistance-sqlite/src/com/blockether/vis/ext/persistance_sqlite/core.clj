@@ -313,10 +313,9 @@
   "Per-canonical-dir IN-PROCESS mutex. A `FileLock` is JVM-WIDE: two threads of
    the SAME process locking the same region throw `OverlappingFileLockException`
    instead of blocking (the lock coordinates ACROSS processes, not within one).
-   The TUI hits this when a foreground `make-session` (synchronous, when no
-   session is prewarmed) races the BACKGROUND `prewarm-session!` worker — both
+   Gateway warm-pool workers can race a foreground purpose-built session; both
    open the disk env and reach `with-migration-lock!` on the same path at once
-   (e.g. rapid Ctrl+N new-session). Serialize same-JVM callers on this monitor
+   (for example, rapid consecutive session creation). Serialize same-JVM callers
    BEFORE the cross-process file lock so they queue instead of colliding."
   (java.util.concurrent.ConcurrentHashMap.))
 

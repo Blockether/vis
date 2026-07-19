@@ -615,10 +615,9 @@
 (defdescribe
   sqlite-same-jvm-migration-lock-test
   (it "serializes the migration lock across THREADS of one JVM (no OverlappingFileLockException)"
-      ;; Regression for the rapid-Ctrl+N new-session crash: a `FileLock` is
-      ;; JVM-WIDE, so two THREADS of this process racing `with-migration-lock!` on
-      ;; the same dir threw `OverlappingFileLockException` instead of blocking (a
-      ;; foreground `make-session` raced the background `prewarm-session!` worker).
+      ;; Regression for concurrent session creation: a `FileLock` is JVM-WIDE,
+      ;; so two THREADS of this process racing `with-migration-lock!` on the same
+      ;; dir threw `OverlappingFileLockException` instead of blocking.
       ;; The in-process monitor makes them queue — no error, and the critical
       ;; section is held by at most one thread at a time.
       (let [with-migration-lock!

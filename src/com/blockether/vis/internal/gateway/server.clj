@@ -42,6 +42,7 @@
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
+           [java.security MessageDigest]
            [org.eclipse.jetty.server Server]))
 
 (def ^:private DEFAULT_PORT 7890)
@@ -145,18 +146,28 @@
   (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway.token"])))
 
 (defn- ensure-token!
-  "Read the bearer token at `path`, minting one (mode 600) on first run."
+  "Read the bearer token at `path`, minting one on first run. The token file
+   is CREATED owner-only (600) ATOMICALLY via create-with-attribute rather
+   than write-then-chmod, so the secret is never briefly world-readable at the
+   process umask."
   ^String [^Path path]
   (if (Files/exists path (make-array LinkOption 0))
     (str/trim (String. (Files/readAllBytes path) StandardCharsets/UTF_8))
-    (let [token (str (java.util.UUID/randomUUID))]
+    (let [token
+          (str (java.util.UUID/randomUUID))
+
+          owner-only
+          (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
+
       (some-> (.getParent path)
               (Files/createDirectories (make-array FileAttribute 0)))
+      (try (Files/createFile path (into-array FileAttribute [owner-only]))
+           (catch UnsupportedOperationException _
+             ;; Non-POSIX filesystem: create without the perm attribute.
+             (Files/createFile path (make-array FileAttribute 0))))
       (Files/write path
                    (.getBytes token StandardCharsets/UTF_8)
                    ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
-      (try (Files/setPosixFilePermissions path (PosixFilePermissions/fromString "rw-------"))
-           (catch Throwable _ nil))
       token)))
 
 ;; =============================================================================
@@ -1411,6 +1422,17 @@
   []
   (boolean (:require-token? @server-state)))
 
+(defn- constant-time=?
+  "Timing-safe comparison for secret strings. Plain `=` early-outs on the
+   first differing byte, leaking token length/prefix through response timing
+   once auth is enabled (non-loopback); `MessageDigest/isEqual` compares in
+   constant time. nil-safe — a missing header never matches."
+  [^String a ^String b]
+  (boolean (and a
+                b
+                (MessageDigest/isEqual (.getBytes a StandardCharsets/UTF_8)
+                                       (.getBytes b StandardCharsets/UTF_8)))))
+
 (defn- wrap-auth
   "Token gate (§3). Skipped entirely when [[auth-required?]] is false
    (loopback default). When on: the API sends `Authorization: Bearer`;
@@ -1431,17 +1453,18 @@
                         (= "/docs" uri)
                         (str/starts-with? uri "/docs/")
                         (some #(contains? (or (:open-uris %) #{}) uri) contribs))
-              authed? (or (= expected
-                             (some-> (get-in request [:headers "authorization"])
-                                     str/trim))
+              authed? (or (constant-time=? expected
+                                           (some-> (get-in request [:headers "authorization"])
+                                                   str/trim))
                           ;; The internal same-machine client (TUI/CLI) carries the
                           ;; SAME secret in X-Vis-Gateway-Secret (read from the on-disk
                           ;; registry) — the header it already sends on the /healthz
                           ;; probe. Accept it so a token-gated gateway (any non-loopback
                           ;; bind like --host 0.0.0.0) doesn't 401 its own local clients.
-                          (= (str token)
-                             (some-> (get-in request [:headers "x-vis-gateway-secret"])
-                                     str/trim))
+                          (constant-time=? (str token)
+                                           (some-> (get-in request
+                                                           [:headers "x-vis-gateway-secret"])
+                                                   str/trim))
                           (some (fn [{:keys [request-authed-fn]}]
                                   (when request-authed-fn (request-authed-fn request token)))
                                 contribs))]
@@ -1733,8 +1756,7 @@
          (do (state/warm-db!)
              (try (state/start-prewarming! [:api :tui])
                   (catch Throwable t
-                    (tel/log! :warn
-                              ["gateway: startup session prewarm failed" (ex-message t)]))))
+                    (tel/log! :warn ["gateway: startup session prewarm failed" (ex-message t)]))))
 
          ;; A dead process can leave durable turn rows marked :running. Clear
          ;; those stale flags to :interrupted, but NEVER reconstruct or resubmit

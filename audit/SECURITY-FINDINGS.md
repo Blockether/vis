@@ -37,9 +37,9 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 |---|---------|----------|--------|
 | 1 | **DOM-XSS in the web channel — no HTML sanitizer.** The client re-render did `el.innerHTML = marked.parse(data-md)` with no sanitisation. Every `data-md` sink carries attacker-influenceable markdown (raw user message, model answer, thinking, tool-result bodies), so `<img src=x onerror=…>` executed JS inside the authenticated `/ui` origin. The server-side `ir->hiccup` path is safe (hiccup2 escapes); the client re-render bypassed it. | `resources/vis-channel-web/public/ui.js` (renderProse) | **fixed** |
 | 2 | **`javascript:` / `data:` link schemes not filtered.** Server-side `ir->hiccup` renders any markdown link href verbatim (`[x](javascript:…)` becomes a clickable JS link — escaping does not stop the scheme). | `src/com/blockether/vis/ext/channel_web/core.clj:282` (server); client re-render now sanitised by #1 | **open** (client path covered by DOMPurify; server path should allowlist `http/https/mailto`) |
-| 3 | **Provider API keys persisted world-readable.** `save-config!` does `.mkdirs` + `spit` on `~/.vis/config.edn` with no permission tightening; the file holds `:api-key` in plaintext at the process umask (typically `644`). Contrast the gateway token, deliberately `chmod rw-------`. On a shared host any local user can read the LLM provider keys. | `src/com/blockether/vis/internal/config.clj:544` | **open** (fix: create `~/.vis` `700`, config `600`, mirroring `ensure-token!`) |
-| 4 | **Non-constant-time token comparison.** The bearer token is compared with `=`, a timing side-channel once auth is enabled (non-loopback). | `gateway/server.clj:422`; `channel_web/core.clj:1800,1851` | **open** (fix: `MessageDigest.isEqual` on the bytes) |
-| 5 | **`vis_token` cookie has no `Secure` flag.** Set HttpOnly + SameSite=Lax + path=/ but not `:secure`. Behind a TLS-terminating tunnel (Cloudflare — explicitly targeted) any plain-HTTP hop leaks the token. | `channel_web/core.clj:1841,1855` | **open** (fix: `:secure true` when non-loopback) |
+| 3 | **Provider API keys persisted world-readable.** `save-config!` did `.mkdirs` + `spit` on `~/.vis/config.edn` with no permission tightening; the file holds `:api-key` in plaintext at the process umask (typically `644`). Contrast the gateway token, deliberately `chmod rw-------`. On a shared host any local user could read the LLM provider keys. | `src/com/blockether/vis/internal/config.clj` (`save-config!`) | **fixed** |
+| 4 | **Non-constant-time token comparison.** The bearer token was compared with `=`, a timing side-channel once auth is enabled (non-loopback). | `gateway/server.clj` (`wrap-auth`); `channel_web/core.clj` (`ui-authed?` / `index-handler` / `auth-handler`) | **fixed** |
+| 5 | **`vis_token` cookie has no `Secure` flag.** Set HttpOnly + SameSite=Lax + path=/ but not `:secure`. Behind a TLS-terminating tunnel (Cloudflare — explicitly targeted) any plain-HTTP hop leaks the token. | `channel_web/core.clj` (cookie drop sites) | **fixed** |
 | 6 | **Unbounded request-body slurp.** `body-json` does `(slurp (:body request))` with no size cap on any JSON endpoint → heap-exhaustion DoS from a large POST. | `gateway/server.clj:83` | **open** (fix: cap Content-Length / bounded read) |
 | 11 | **UI spoofing via allowed HTML in re-rendered markdown.** The client re-render sanitised with `DOMPurify.sanitize(…, {USE_PROFILES:{html:true}})`, whose default allow-list keeps `class`/`style`/`id`. That is not script-XSS (so #1 didn't catch it), but it let attacker-influenceable markdown (user message, tool-result body, model output) inject raw `<div>`/`<span>` reusing the app's OWN chrome classes + tool color-role vars to forge an authentic-looking system badge, e.g. `<div class="block-result-label" style="color:var(--tool-shell)">SHELL BACKGROUND … running (pid …)</div>` — a phishing / trust-forgery surface. | `resources/vis-channel-web/public/ui.js` (renderProse) | **fixed** |
 
@@ -50,7 +50,7 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 | 7 | **Loopback gateway is authless** — any local process/user can drive the full agent API with no token. Fine for single-user desktop; on shared hosts it is local privilege escalation. | `gateway/server.clj:398,598` | **accepted** (recommend `--require-token` for multi-user) |
 | 8 | **sandbox-fs TOCTOU.** `confine!` validates the *canonicalised* path but returns the *original* path; the delegate op runs on the original. A symlink swapped between check and use (needs a concurrent thread; `allowCreateThread` is `true`) could escape. Low likelihood, real gap. | `sandbox_fs.clj:80` | **open** (fix: delegate on the resolved real path) |
 | 9 | **Network guard is best-effort** — patched in the model's own interpreter, defeatable by the model. The only hard control is the `:network/enabled` capability. With network capability ON, the model can egress anywhere not on the deny-list. | `env_python.clj:1538` | **accepted** (self-documented) |
-| 10 | **Token-file permission race.** Write-then-chmod leaves a sub-millisecond window at umask. | `gateway/server.clj:59` | **open** (minor; create with restrictive perms atomically) |
+| 10 | **Token-file permission race.** Write-then-chmod left a sub-millisecond world-readable window at umask. | `gateway/server.clj` (`ensure-token!`) | **fixed** |
 
 ## What is solid (credited)
 
@@ -78,3 +78,20 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
   vis-paste highlighting), stripping every other class. Re-rendered markdown can
   no longer reuse the app's structural/chrome classes to impersonate system UI,
   while code-fence highlighting is preserved.
+- **#3 world-readable API keys — fixed.** `save-config!` now writes
+  `~/.vis/config.edn` through `spit-private!`, which creates the file mode
+  `600` via `Files/createFile` with a POSIX perm attribute (atomic, not
+  write-then-chmod), and `ensure-private-dir!` tightens `~/.vis` to `700`.
+  Falls back to plain `spit` on a non-POSIX filesystem.
+- **#4 non-constant-time token compare — fixed.** Added a nil-safe
+  `constant-time=?` (backed by `MessageDigest/isEqual` on UTF-8 bytes) and
+  routed every secret comparison through it: the gateway `wrap-auth`
+  (`Authorization: Bearer` + `X-Vis-Gateway-Secret`) and the web channel's
+  `ui-authed?`, magic-link, and `auth-handler` cookie/form checks.
+- **#5 cookie missing `Secure` — fixed.** The `vis_token` cookie now carries
+  `:secure (request-secure? request)`, set on a TLS hop — a direct HTTPS
+  scheme or `X-Forwarded-Proto: https` from a terminating proxy (Cloudflare).
+  Gated so a plain-HTTP deployment can still store and return the cookie.
+- **#10 token-file perm race — fixed.** `ensure-token!` now creates
+  `gateway.token` mode `600` atomically via `Files/createFile` +
+  `PosixFilePermissions/asFileAttribute`, closing the write-then-chmod window.
