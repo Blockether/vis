@@ -9653,9 +9653,15 @@
     (when-let
       [{:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]} (clojure.core/get @cache
                                                                                               k)]
-      (.lock lock)
-      (try (try (dispose-environment! environment) (catch Exception _ nil))
-           (finally (.unlock lock))))
+      ;; BOUNDED: a running turn holds the lock for the whole turn (minutes),
+      ;; and a wedged one holds it forever. Wait briefly for a clean handoff,
+      ;; then force-dispose anyway — an in-flight turn fails fast against a
+      ;; disposed env, which beats blocking close/delete forever behind a
+      ;; hung provider stream.
+      (if (.tryLock lock 5 java.util.concurrent.TimeUnit/SECONDS)
+        (try (try (dispose-environment! environment) (catch Exception _ nil))
+             (finally (.unlock lock)))
+        (try (dispose-environment! environment) (catch Exception _ nil))))
     (swap! cache dissoc k)))
 
 (defn delete!
@@ -9691,8 +9697,12 @@
 
 (defn close-all!
   []
+  ;; Process-shutdown path: never let one wedged turn hang the whole
+  ;; shutdown. Bounded 2s wait per session, then force-dispose.
   (doseq [[_ {:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]}] @cache]
-    (.lock lock)
-    (try (try (dispose-environment! environment) (catch Exception _ nil)) (finally (.unlock lock))))
+    (if (.tryLock lock 2 java.util.concurrent.TimeUnit/SECONDS)
+      (try (try (dispose-environment! environment) (catch Exception _ nil))
+           (finally (.unlock lock)))
+      (try (dispose-environment! environment) (catch Exception _ nil))))
   (reset! cache {})
   (persistance/db-dispose-shared-connection!))

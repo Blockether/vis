@@ -234,11 +234,14 @@ def __vis_registration__():
       (execute [_ args] (env/->py (apply f (map env/->clj args))))))
 
 (defn- call-py
-  "Enter an extension's context (serialized — Truffle contexts are single-
-   entry; same `locking` pattern as the printer context) and call a Python
-   callable with marshalled args. Returns the `->clj` view of the result."
-  [^Context ctx ^Value f args]
-  (locking ctx (env/->clj (.execute f (object-array (mapv env/->py args))))))
+  "Call a Python callable in an extension's context with marshalled args.
+   Returns the `->clj` view of the result. Deliberately NO host-side lock:
+   GraalPy's own GIL already serializes guest execution inside the context,
+   and a Truffle-managed wait (unlike a JVM monitor) stays cancellable via
+   `Context.interrupt`/`.close(true)` — so a wedged extension can be killed
+   instead of queueing every later caller behind an uninterruptible monitor."
+  [^Context _ctx ^Value f args]
+  (env/->clj (.execute f (object-array (mapv env/->py args)))))
 
 (defn- plainify
   "Deep-convert the `->clj` view of a Python value into plain EDN-printable
@@ -384,11 +387,12 @@ def __vis_registration__():
    resolves through the shared connection / the test binding.
    Returns the `->clj` view of the result."
   [ext-name env ^Context ctx ^Value f args]
-  (binding [extension/*current-extension*
-            (or extension/*current-extension* {:ext/name ext-name})
+  (binding
+    [extension/*current-extension*
+     (or extension/*current-extension* {:ext/name ext-name})
 
-            *state-env*
-            (if (:db-info env) env *state-env*)]
+     *state-env*
+     (if (:db-info env) env *state-env*)]
 
     (call-py ctx f args)))
 
@@ -459,16 +463,17 @@ def __vis_registration__():
   (fn [sctx]
     ;; The payload crosses INTO Python (string keys); the response crossed
     ;; BACK via `->clj` (string keys as well).
-    (let [payload
-          {"channel" (some-> (:channel/id sctx)
-                             name)
-           "args" (mapv str (:command/argv sctx))
-           "raw" (str (:command/raw sctx))
-           "session_id" (some-> (:session/id sctx)
-                                str)}
+    (let
+      [payload
+       {"channel" (some-> (:channel/id sctx)
+                          name)
+        "args" (mapv str (:command/argv sctx))
+        "raw" (str (:command/raw sctx))
+        "session_id" (some-> (:session/id sctx)
+                             str)}
 
-          res
-          (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
+       res
+       (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
 
       (cond (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
             (string? res) {:slash/status :ok :slash/title res}
@@ -491,12 +496,13 @@ def __vis_registration__():
    loop."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw args next-fn]
-    (let [res (try (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
-                   (catch Throwable t
-                     (tel/log! {:level :warn
-                                :id ::op-hook-failed
-                                :data {:extension ext-name :op op-kw :error (ex-message t)}})
-                     nil))]
+    (let
+      [res (try (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
+                (catch Throwable t
+                  (tel/log! {:level :warn
+                             :id ::op-hook-failed
+                             :data {:extension ext-name :op op-kw :error (ex-message t)}})
+                  nil))]
       (if (and (map? res) (= "block" (get res "marker")))
         (extension/failure
           {:result nil
@@ -545,36 +551,40 @@ def __vis_registration__():
 (defn- ->symbol-entry
   "`spec` is a Python registration dict — STRING keys (strings-only boundary)."
   [ext-name alias-sym ^Context ctx spec]
-  (let [sym
-        (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
+  (let
+    [sym
+     (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
 
-        pyfn
-        (get spec "fn")
+     pyfn
+     (get spec "fn")
 
-        argv
-        (cond-> (mapv clojure.core/symbol (get spec "params"))
-          (get spec "varargs")
-          (-> (conj '&)
-              (conj 'args)))]
+     argv
+     (cond-> (mapv clojure.core/symbol (get spec "params"))
+       (get spec "varargs")
+       (-> (conj '&)
+           (conj 'args)))]
 
-    (cond-> #:ext.symbol{:symbol sym
-                         :fn (tool-adapter ext-name sym ctx pyfn)
-                         :doc (str (get spec "doc"))
-                         :arglists [argv]
-                         :tag (get symbol-tags (str (get spec "tag")) :observation)}
+    (cond->
+      #:ext.symbol{:symbol sym
+                   :fn (tool-adapter ext-name sym ctx pyfn)
+                   :doc (str (get spec "doc"))
+                   :arglists [argv]
+                   :tag (get symbol-tags (str (get spec "tag")) :observation)}
       (get spec "hidden")
       (assoc :ext.symbol/hidden? true))))
 
 (defn- ->slash-spec
   [ext-name ^Context ctx spec]
-  (let [doc
-        (get spec "doc")
+  (let
+    [doc
+     (get spec "doc")
 
-        usage
-        (get spec "usage")]
+     usage
+     (get spec "usage")]
 
-    (cond-> {:slash/name (str (get spec "name"))
-             :slash/run-fn (slash-adapter ext-name ctx (get spec "run"))}
+    (cond->
+      {:slash/name (str (get spec "name"))
+       :slash/run-fn (slash-adapter ext-name ctx (get spec "run"))}
       (string? doc)
       (assoc :slash/doc doc)
 
@@ -583,14 +593,15 @@ def __vis_registration__():
 
 (defn- ->op-hook-entries
   [ext-name ^Context ctx spec]
-  (let [before?
-        (= "before" (str (get spec "phase")))
+  (let
+    [before?
+     (= "before" (str (get spec "phase")))
 
-        pyfn
-        (get spec "fn")
+     pyfn
+     (get spec "fn")
 
-        f
-        (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))]
+     f
+     (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))]
 
     ;; `:op` keys the INTERNAL op-hook registry (keyword-keyed, matched against
     ;; canonical tool op keywords). The vocabulary is author-declared config,
@@ -667,20 +678,21 @@ def __vis_registration__():
    `:llm-headers` — exactly the extra preset keys `config/registered-provider-metadata`
    merges into svar for a first-party provider."
   [preset]
-  (let [preset
-        (into {} preset)
+  (let
+    [preset
+     (into {} preset)
 
-        g
-        (fn [& ks]
-          (some #(get preset %) ks))
+     g
+     (fn [& ks]
+       (some #(get preset %) ks))
 
-        passthrough
-        (reduce-kv (fn [m k v]
-                     (if (preset-known-keys (str k))
-                       m
-                       (assoc m (keyword (str/replace (str k) "_" "-")) (plain-keywordize v))))
-                   {}
-                   preset)]
+     passthrough
+     (reduce-kv (fn [m k v]
+                  (if (preset-known-keys (str k))
+                    m
+                    (assoc m (keyword (str/replace (str k) "_" "-")) (plain-keywordize v))))
+                {}
+                preset)]
 
     (cond-> passthrough
       (g "base-url" "base_url")
@@ -706,8 +718,9 @@ def __vis_registration__():
    caller logs it and yields nil)."
   [ext-name ^Context ctx ^Value pyfn args]
   (loop [args (vec args)]
-    (let [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
-                 (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
+    (let
+      [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
+              (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
       (if (contains? r :ok) (:ok r) (recur (:retry r))))))
 
 (defn- provider-fn-adapter
@@ -739,13 +752,14 @@ def __vis_registration__():
    error propagates — the caller (TUI/CLI) frames it as an auth failure."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [print!]
-    (let [printer
-          (->executable (fn [line]
-                          (print! (str line))
-                          nil))
+    (let
+      [printer
+       (->executable (fn [line]
+                       (print! (str line))
+                       nil))
 
-          r
-          (call-py-ext ext-name nil ctx pyfn [printer])]
+       r
+       (call-py-ext ext-name nil ctx pyfn [printer])]
 
       (if (string? r) (get auth-success-results r r) r))))
 
@@ -802,11 +816,12 @@ def __vis_registration__():
    defaults."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [svar-provider router-opts]
-    (try (let [r (call-py-ext ext-name
-                              nil
-                              ctx
-                              pyfn
-                              [(stringify-deep svar-provider) (stringify-deep router-opts)])]
+    (try (let
+           [r (call-py-ext ext-name
+                           nil
+                           ctx
+                           pyfn
+                           [(stringify-deep svar-provider) (stringify-deep router-opts)])]
            (when (sequential? r) (mapv keywordize r)))
          (catch Throwable t
            (tel/log! {:level :warn
@@ -833,16 +848,18 @@ def __vis_registration__():
 (defn- ->provider-entry
   "`spec` is a Python `vis.provider(...)` dict — STRING keys."
   [ext-name ^Context ctx spec]
-  (let [adapt
-        (fn [pk]
-          (let [v (get spec pk)]
-            (when (instance? Value v) (provider-fn-adapter ext-name ctx v))))
+  (let
+    [adapt
+     (fn [pk]
+       (let [v (get spec pk)]
+         (when (instance? Value v) (provider-fn-adapter ext-name ctx v))))
 
-        preset
-        (->preset (get spec "preset"))]
+     preset
+     (->preset (get spec "preset"))]
 
-    (cond-> {:provider/id (clojure.core/keyword (str (get spec "id")))
-             :provider/label (str (get spec "label"))}
+    (cond->
+      {:provider/id (clojure.core/keyword (str (get spec "id")))
+       :provider/label (str (get spec "label"))}
       (seq preset)
       (assoc :provider/preset preset)
 
@@ -882,42 +899,44 @@ def __vis_registration__():
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
   [^Context ctx reg]
-  (let [ext-name
-        (str (get reg "name"))
+  (let
+    [ext-name
+     (str (get reg "name"))
 
-        alias-sym
-        (some-> (get reg "alias")
-                str
-                clojure.core/symbol)
+     alias-sym
+     (some-> (get reg "alias")
+             str
+             clojure.core/symbol)
 
-        symbols
-        (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
+     symbols
+     (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
 
-        slashes
-        (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
+     slashes
+     (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
 
-        op-hooks
-        (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
+     op-hooks
+     (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
-        prompt
-        (get reg "prompt")
+     prompt
+     (get reg "prompt")
 
-        ctx-fn
-        (get reg "ctx")
+     ctx-fn
+     (get reg "ctx")
 
-        activation
-        (get reg "activation")
+     activation
+     (get reg "activation")
 
-        providers
-        (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))]
+     providers
+     (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))]
 
-    (cond-> {:ext/name ext-name
-             :ext/description (str (get reg "description"))
-             :ext/kind (str (or (get reg "kind") "python"))
-             :ext/source-nses ['com.blockether.vis.internal.python-extensions]
-             :ext/engine (cond-> {:ext.engine/symbols symbols}
-                           alias-sym
-                           (assoc :ext.engine/alias alias-sym))}
+    (cond->
+      {:ext/name ext-name
+       :ext/description (str (get reg "description"))
+       :ext/kind (str (or (get reg "kind") "python"))
+       :ext/source-nses ['com.blockether.vis.internal.python-extensions]
+       :ext/engine (cond-> {:ext.engine/symbols symbols}
+                     alias-sym
+                     (assoc :ext.engine/alias alias-sym))}
       (get reg "version")
       (assoc :ext/version (str (get reg "version")))
 
@@ -1027,18 +1046,20 @@ def __vis_registration__():
    Test modules (`test_*.py` / `*_test.py`) are skipped — they are run by
    `test-python-extensions!`, not loaded. Deduped on canonical path."
   [dirs]
-  (let [files (for [^File d (map io/file dirs)
-                    :when (.isDirectory d)
-                    ^File child (sort-by #(.getName ^File %) (.listFiles d))
-                    ^File f (cond (and (.isFile child)
-                                       (str/ends-with? (.getName child) ".py")
-                                       (not (test-file? child)))
-                                  [child]
-                                  (.isDirectory child) (let [ep (io/file child "extension.py")]
-                                                         (when (.isFile ep) [ep]))
-                                  :else nil)]
+  (let
+    [files (for
+             [^File d (map io/file dirs)
+              :when (.isDirectory d)
+              ^File child (sort-by #(.getName ^File %) (.listFiles d))
+              ^File f (cond (and (.isFile child)
+                                 (str/ends-with? (.getName child) ".py")
+                                 (not (test-file? child)))
+                            [child]
+                            (.isDirectory child) (let [ep (io/file child "extension.py")]
+                                                   (when (.isFile ep) [ep]))
+                            :else nil)]
 
-                f)]
+             f)]
     (->> files
          (reduce (fn [[seen acc] ^File f]
                    (let [p (.getCanonicalPath f)]
@@ -1055,20 +1076,21 @@ def __vis_registration__():
    Returns `{:path :sha :ext-name :context}`; throws (with the context
    closed) on any failure."
   [^File f]
-  (let [path
-        (.getCanonicalPath f)
+  (let
+    [path
+     (.getCanonicalPath f)
 
-        parent
-        (.getParent (io/file path))
+     parent
+     (.getParent (io/file path))
 
-        source
-        (slurp f)
+     source
+     (slurp f)
 
-        sha
-        (extension/sha256-hex source)
+     sha
+     (extension/sha256-hex source)
 
-        ctx
-        (build-context)]
+     ctx
+     (build-context)]
 
     (try (bind-host! ctx (.getName f))
          (locking ctx
@@ -1084,20 +1106,22 @@ def __vis_registration__():
                          "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                          "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
            (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
-         (let [g
-               (.getBindings ctx "python")
+         (let
+           [g
+            (.getBindings ctx "python")
 
-               reg
-               (call-py ctx (.getMember g "__vis_registration__") [])]
+            reg
+            (call-py ctx (.getMember g "__vis_registration__") [])]
 
            (when (nil? reg)
              (throw (ex-info (str (.getName f) " never called vis.extension(...)")
                              {:type ::no-registration :file path})))
-           (let [spec
-                 (registration->spec ctx reg)
+           (let
+             [spec
+              (registration->spec ctx reg)
 
-                 validated
-                 (extension/register-extension! spec)]
+              validated
+              (extension/register-extension! spec)]
 
              (tel/log! {:level :info
                         :id ::loaded
@@ -1130,16 +1154,17 @@ def __vis_registration__():
   ([] (load-python-extensions! nil))
   ([{:keys [dirs]}]
    (register-loader-extension!)
-   (let [dirs
-         (or dirs (default-extension-dirs))
+   (let
+     [dirs
+      (or dirs (default-extension-dirs))
 
-         files
-         (scan dirs)
+      files
+      (scan dirs)
 
-         fp
-         (mapv (fn [^File f]
-                 [(.getCanonicalPath f) (extension/sha256-hex (slurp f))])
-               files)]
+      fp
+      (mapv (fn [^File f]
+              [(.getCanonicalPath f) (extension/sha256-hex (slurp f))])
+            files)]
 
      (if (= fp @last-fingerprint)
        {:loaded (count @loaded) :failed (count @failures) :changed? false}
@@ -1152,8 +1177,9 @@ def __vis_registration__():
                   ;; extension name supersedes the earlier one — the
                   ;; registry already swapped the registration; close the
                   ;; superseded context so its adapters can't linger.
-                  (doseq [[opath {oname :ext-name ^Context octx :context}] @loaded
-                          :when (and (= oname ext-name) (not= opath path))]
+                  (doseq
+                    [[opath {oname :ext-name ^Context octx :context}] @loaded
+                     :when (and (= oname ext-name) (not= opath path))]
 
                     (try (.close octx true) (catch Throwable _))
                     (swap! loaded dissoc opath))
@@ -1169,8 +1195,9 @@ def __vis_registration__():
          ;; palette). Without this a /reload only updates the GLOBAL
          ;; registry: new extensions stay invisible to running sessions
          ;; and stale env rows keep calling into the closed contexts.
-         (let [entries (vals @loaded)
-               new-names (set (map :ext-name entries))]
+         (let
+           [entries (vals @loaded)
+            new-names (set (map :ext-name entries))]
 
            (notify-change-listeners! {:extensions (vec (keep :ext entries))
                                       :removed (vec (sort (remove new-names old-names)))}))
@@ -1193,23 +1220,24 @@ def __vis_registration__():
   ;; extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
   ;; templates, and any extension-owned discovery cache registered as a
   ;; reload hook (harness skills/agents).
-  (let [{:keys [loaded failed]}
-        (reload-python-extensions!)
+  (let
+    [{:keys [loaded failed]}
+     (reload-python-extensions!)
 
-        hook-results
-        (extension/run-reload-hooks!)
+     hook-results
+     (extension/run-reload-hooks!)
 
-        failed-hooks
-        (into []
-              (keep (fn [[id r]]
-                      (when-not (:ok? r) id)))
-              hook-results)
+     failed-hooks
+     (into []
+           (keep (fn [[id r]]
+                   (when-not (:ok? r) id)))
+           hook-results)
 
-        guidance
-        (try (agents/reload!) nil (catch Throwable t (ex-message t)))
+     guidance
+     (try (agents/reload!) nil (catch Throwable t (ex-message t)))
 
-        template-cnt
-        (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
+     template-cnt
+     (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
 
     {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
      :slash/title
@@ -1241,11 +1269,12 @@ def __vis_registration__():
     ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
     ;; on the runner (which itself depends on this ns's trusted-context builder
     ;; — the one seam that would otherwise be a require cycle).
-    (let [test-slash
-          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)
+    (let
+      [test-slash
+       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)
 
-          test-cli!
-          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)]
+       test-cli!
+       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)]
 
       (extension/register-extension!
         {:ext/name "python-extensions"
