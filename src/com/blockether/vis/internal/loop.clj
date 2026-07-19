@@ -145,8 +145,8 @@
 
 (def ^:private CONSECUTIVE_PROVIDER_ERROR_LIMIT
   "Circuit breaker for the iteration loop: after this many CONSECUTIVE
-   provider-generate failures (e.g. :svar.llm/empty-content that survived the
-   per-call stream-rewind retries) the turn fails fast as a provider error
+   provider-generate failures (e.g. :svar.llm/empty-content that survived
+   svar's in-call same-model re-sends) the turn fails fast as a provider error
    instead of burning the whole iteration budget re-sending the same request
    (session burned 15/15 iterations on identical empty-content failures).
    Any successful iteration or non-provider error resets the streak."
@@ -363,16 +363,6 @@
              (str/includes? cause-lower "header parser")
              (str/includes? cause-lower "no bytes")
              (str/includes? cause-lower "handshake")))))
-
-(defn- empty-content-error?
-  "True for :svar.llm/empty-content anywhere in the cause chain - the provider
-   streamed reasoning (or nothing) but produced no textual content. This is a
-   transient model hiccup, not a user/program error; retry the provider call
-   instead of surfacing it."
-  [^Throwable t]
-  (boolean (some #(= :svar.llm/empty-content (:type (ex-data %)))
-                 (take-while some? (iterate ex-cause t)))))
-
 (defn- provider-retry-event
   [{:keys [provider model attempt delay-ms error]}]
   (cond-> {:event/type :llm.routing/provider-retry
@@ -426,9 +416,12 @@
                               ;; refused / DNS / TLS) that never started a stream — the safest,
                               ;; most idempotent retry, and the case the old `:stream?` gate
                               ;; silently dropped even while telling the user "just retry".
+                              ;; `:svar.llm/empty-content` is deliberately NOT here: svar
+                              ;; already re-sends an empty reply to the same model (bounded
+                              ;; backoff) inside the call, so retrying it again here would
+                              ;; stack ladders into a 16-send worst case.
                               (or (stream-transport-error? t)
-                                  (perr/transport-throwable? t)
-                                  (empty-content-error? t)))]
+                                  (perr/transport-throwable? t)))]
 
           (if can-retry?
             (let [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
@@ -3809,6 +3802,12 @@
           sticky-routing (cond-> base-routing
                            (not (contains? base-routing :on-transient-error))
                            (assoc :on-transient-error :fallback-model-in-the-same-provider))
+          ;; svar's empty-reply resend ladder (same model, same request) is
+          ;; invisible mid-call — collect each re-send here and surface it as
+          ;; a typed routing-trace event so the UI shows what the heal cost
+          ;; instead of silence.
+          empty-reply-resend-events (atom [])
+
           ask-opts
           (rt/with-default-ask-code-idle-timeout
             (cond-> {;; Native tool calling (codex/maki model): the model
@@ -3824,7 +3823,20 @@
                      :messages (apply-cache-breakpoints messages)
                      :routing sticky-routing
                      :check-context? true
-                     :preserved-thinking? true}
+                     :preserved-thinking? true
+                     :on-empty-reply-resend
+                     (fn [{:keys [attempt max-resends delay-ms]}]
+                       (swap! empty-reply-resend-events conj
+                         (cond-> {:event/type :llm.routing/provider-retry
+                                  :reason :empty-content
+                                  :attempt attempt
+                                  :max-resends max-resends
+                                  :delay-ms delay-ms}
+                           (:provider resolved-model)
+                           (assoc :from-provider (name (:provider resolved-model)))
+
+                           (:name resolved-model)
+                           (assoc :from-model (str (:name resolved-model))))))}
               session-cache-key
               (assoc :cache-key session-cache-key)
 
@@ -3872,7 +3884,7 @@
                                 iteration-position
                                 (fn []
                                   (svar/ask-code! (:router environment) ask-opts)))))
-          ask-result ask-result-raw
+          ask-result (prepend-routing-trace ask-result-raw @empty-reply-resend-events)
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop

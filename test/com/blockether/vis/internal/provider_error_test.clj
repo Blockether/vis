@@ -154,3 +154,19 @@
       (expect (not (perr/transport-throwable? (ex-info "rate limited" {:status 429}))))
       (expect (not (perr/transport-throwable? (ex-info "bad request" {:status 400})))))
   (it "is nil-safe" (expect (not (perr/transport-throwable? nil)))))
+
+(defdescribe empty-content-kind-test
+  (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
+      (let [err {:message "The model produced neither text nor a tool call"
+                 :data {:type :svar.llm/empty-content
+                        :empty-reply-resends 2}}]
+        (expect (= :empty-content (perr/provider-error-kind err)))
+        (expect (= "Model returned an empty response" (perr/provider-error-title err)))
+        (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))
+        (expect (re-find #"2 more times" (perr/provider-error-explanation err)))
+        (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err))))
+        (expect (re-find #"same request to the same" (perr/provider-error-next-step err)))))
+  (it "empty-content without svar resend bookkeeping still classifies and reads honestly"
+      (let [err {:message "blank" :data {:type :svar.llm/empty-content}}]
+        (expect (= :empty-content (perr/provider-error-kind err)))
+        (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err)))))))

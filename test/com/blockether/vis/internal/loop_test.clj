@@ -320,7 +320,57 @@
             (expect (= 4 @calls))
             (expect (= [1 2 3]
                        (mapv :attempt (filter #(= :provider-retry-reset (:phase %)) @chunks))))
-            (expect (= [1 2 3] (mapv :attempt (:routed/trace result)))))))))
+            (expect (= [1 2 3] (mapv :attempt (:routed/trace result))))))))
+  (it "does NOT retry an empty reply — svar owns the same-model re-send ladder"
+      (let [calls (atom 0)]
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(call-provider-with-stream-rewind-retry!
+                            {:cancel-atom (atom false)}
+                            {:iteration-position 1
+                             :provider "anthropic"
+                             :model "claude-x"
+                             :on-chunk (fn [_])
+                             :reset-stream-state! (fn [])}
+                            (fn []
+                              (swap! calls inc)
+                              (throw (ex-info "The model produced neither text nor a tool call."
+                                              {:type :svar.llm/empty-content}))))))
+        (expect (= 1 @calls))))
+  (it "surfaces svar's empty-reply re-sends as :empty-content routing-trace events"
+      (let [env (lp/create-environment ::router {:db :memory})
+            calls (atom 0)]
+        (try
+          (with-redefs [svar/ask-code!
+                        (fn [_router opts]
+                          (swap! calls inc)
+                          ;; simulate svar healing ONE empty reply in-call: the
+                          ;; resend ladder fires the observability hook, then
+                          ;; the re-sent identical request succeeds.
+                          (when-let [on-resend (:on-empty-reply-resend opts)]
+                            (on-resend {:model "claude-x" :provider-id :anthropic
+                                        :attempt 1 :max-resends 3 :delay-ms 2000
+                                        :error (ex-info "empty" {:type :svar.llm/empty-content})}))
+                          {:stop-reason :end
+                           :tool-calls []
+                           :content "ok"
+                           :empty-reply-resends 1
+                           :tokens {}})]
+            (let [result (lp/run-iteration env
+                                           []
+                                           {:iteration 0
+                                            :resolved-model {:provider :anthropic
+                                                             :name "claude-x"}
+                                            :on-chunk (fn [_])})
+                  trace (:llm-routing-trace result)
+                  ev (first (filter #(= :empty-content (:reason %)) trace))]
+              ;; ONE provider call from vis's perspective — the heal happened
+              ;; inside svar — but the trace still shows what it cost.
+              (expect (= 1 @calls))
+              (expect (some? ev))
+              (expect (= :llm.routing/provider-retry (:event/type ev)))
+              (expect (= 1 (:attempt ev)))
+              (expect (= 2000 (:delay-ms ev)))))
+          (finally (lp/dispose-environment! env))))))
 
 (defdescribe native-tool-timeout-settings-test
              (it "uses a 30-second fallback while honoring explicit timeouts"

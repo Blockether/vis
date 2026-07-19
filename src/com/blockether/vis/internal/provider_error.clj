@@ -161,6 +161,22 @@
 
       (transport-error? status text nil))))
 
+(defn empty-content-error?
+  "True when the failure is svar's TYPED `:svar.llm/empty-content` — the
+   provider ACCEPTED the request and answered a normal HTTP-200 stream that
+   carried no text and no tool call. Dispatches on the typed `ex-data`
+   (attached verbatim under `:data` on trace-entry error maps) — NEVER on
+   message text.
+
+   Emphatically NOT a rejection: the model ran and emitted nothing. Presenting
+   it as 'the provider rejected the request' is false and points the user at
+   auth/quota — the wrong place."
+  [err]
+  (= :svar.llm/empty-content
+     (or (:type (:data err))
+         (:type err)
+         (:type (ex-data err)))))
+
 (defn- provider-id-of [data] (or (:provider-id data) (:provider data) (:provider/id data)))
 
 (defn auth-provider-next-step
@@ -207,6 +223,20 @@
         (provider-body-message body-raw)]
 
     (cond
+      (empty-content-error? err)
+      (let [resends (long (or (:empty-reply-resends data) 0))]
+        (str
+          "WHAT HAPPENED: the provider accepted the request and answered with a "
+          "normal HTTP-200 stream, but the model produced no text and no tool "
+          "call (an empty reply)."
+          (when (pos? resends)
+            (str " Vis already re-sent the SAME request to the SAME model "
+              resends
+              (if (= 1 resends) " more time" " more times")
+              " with widening backoff; every attempt came back empty."))
+          " This is a model-side stall on this exact request — not a rejection "
+          "and not an auth, quota, or network problem. Your transcript and tool "
+          "results are intact — nothing was lost."))
       (invalid-thinking-signature-message? provider-message)
       (str
         "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
@@ -247,6 +277,9 @@
   [err]
   (let [message (or (ex-message err) (:message err) (str err))]
     (case (provider-error-kind err)
+      :empty-content
+      "Model returned an empty response"
+
       :invalid-thinking-signature
       "Provider rejected the request"
 
@@ -277,6 +310,12 @@
         (:data err)]
 
     (case (provider-error-kind err)
+      :empty-content
+      (str "NEXT STEP: retry the turn — Vis re-sends the same request to the same "
+        "model, and these stalls usually clear with a little time. If it keeps "
+        "happening, rephrase or trim the last message; switching model "
+        "(TUI: Ctrl+K · CLI: `vis providers`) is a last resort, not a requirement.")
+
       :invalid-thinking-signature
       "NEXT STEP: retry — Vis will resend with only normal transcript/trailer context. If it persists, don't replay preserved-thinking across a provider/model switch."
 
@@ -341,7 +380,8 @@
         provider-message
         (provider-body-message body-raw)]
 
-    (cond (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
+    (cond (empty-content-error? err) :empty-content
+          (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           (auth-provider-error? status provider-message message) :auth
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit
@@ -457,7 +497,7 @@
         (provider-error-info err)
 
         retryable?
-        (contains? #{:rate-limit :transport :overloaded} kind)
+        (contains? #{:rate-limit :transport :overloaded :empty-content} kind)
 
         message
         (str/join "\n\n" (remove str/blank? [title explanation next-step]))]
