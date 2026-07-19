@@ -144,8 +144,11 @@
     (if (> n (long EVENT_RING_MAX)) (subvec events (- n (long EVENT_RING_MAX))) events)))
 
 (defn- fan-out!
-  "Deliver `event` to every local SSE sink for `sid`. A sink that throws is
-   dropped - one dead connection must never poison the appender or siblings."
+  "Deliver `event` to every local SSE sink for `sid`. Runs on the APPENDING
+   (turn) thread, so sinks must be NON-BLOCKING — server.clj registers a
+   bounded-queue enqueue (`sse-sink`), never a raw socket write. A sink that
+   throws is dropped - one dead connection must never poison the appender or
+   siblings."
   [sid event]
   (doseq [[sub-id sink] (get-in @registry [sid :subscribers])]
     (try (sink event)
@@ -306,8 +309,10 @@
 (defn subscribe!
   "Register an SSE sink and return the replay vector (canonical string-keyed
    events with `\"seq\"` > `cursor`) ATOMICALLY with the registration, so no
-   event can fall between replay and live fan-out. The caller serializes replay
-   writes against live sink calls (see server.clj).
+   event can fall between replay and live fan-out. The sink must be
+   NON-BLOCKING (fan-out runs on the appending turn thread); the caller
+   dedups via a seq guard, since a live event may land in both the replay
+   and the sink (see server.clj).
 
    Before capturing replay, HYDRATE any turn currently running in a sibling
    process from the cross-process journal (`bus/hydrate!`) — but only when this
