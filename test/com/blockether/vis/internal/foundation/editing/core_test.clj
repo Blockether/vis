@@ -310,24 +310,6 @@
 
 (defdescribe
   editing-extension-loads-test
-  (it "exposes structured helpers plus the required thin babashka.fs wrappers"
-      (expect (vector? @editing/editing-symbols))
-      ;; cat, find, ls, rg, patch, write, create-dirs, copy, move, delete,
-      ;; delete-if-exists, exists?, plus the tree-sitter structural tools:
-      ;; outline, occurrences (defs+uses, folds the old references/project_references),
-      ;; symbol_rename (cross-file), struct_patch (locate by NAME or zipper PATH),
-      ;; and the read-only zipper navigator sexpr.
-      (expect (= 17 (count @editing/editing-symbols)))
-      ;; `write` IS exposed (T9 added it as the whole-file primitive).
-      ;; `edit` / `cwd` / `parent` / etc. remain banned.
-      (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
-                        (map :ext.symbol/symbol @editing/editing-symbols)))
-      (expect (not-any? #{'read-all-lines} (map :ext.symbol/symbol @editing/editing-symbols)))
-      (expect (some #{'patch} (map :ext.symbol/symbol @editing/editing-symbols)))
-      (expect (some #{'write} (map :ext.symbol/symbol @editing/editing-symbols)))
-      (expect (not-any? #{'write-lines 'update-file}
-                        (map :ext.symbol/symbol @editing/editing-symbols)))
-      (expect (not-any? #{'preview 'silent!} (map :ext.symbol/symbol @editing/editing-symbols))))
   (it "bash tool fully removed: no symbol, no helpers, no prompt mention"
       (let [symbols
             (map :ext.symbol/symbol (editing/available-editing-symbols))

@@ -463,17 +463,26 @@
 
 
 (defn- nearest-existing-dir
-  "Climb `f` to its nearest ancestor that EXISTS as a directory. A file/path that
-   is GONE resolves to the closest real directory above it — parent, then
-   parent-of-parent, … (at worst a filesystem root, which always exists) — so a
-   search for a stale/typo'd path still runs against the nearest place it could
-   live instead of finding nothing. Returns nil only if nothing in the whole
+  "Climb `f` to its nearest ancestor that EXISTS as a directory AND still lies
+   WITHIN the allowed roots. A file/path that is GONE resolves to the closest real
+   directory above it — parent, then parent-of-parent, … — but the climb is BOUNDED
+   by confinement: it NEVER ascends past the allowed roots (the primary cwd, the
+   bound filesystem-root clones, and the always-on temp/vis dirs that `safe-path`
+   admits). An ancestor `safe-path` would reject stops the climb, so a stale/typo'd
+   path resolves to the nearest real directory INSIDE the workspace — at worst an
+   allowed root itself — never a directory above the confinement boundary (e.g. `/`
+   or a parent outside the workspace). Returns nil only if nothing in the confined
    chain exists."
   [^File f]
-  (loop [^File cur f]
-    (cond (nil? cur) nil
-          (and (.exists cur) (.isDirectory cur)) cur
-          :else (recur (.getParentFile cur)))))
+  (letfn [(confined? [^File d]
+            ;; safe-path is the single source of truth for confinement: it accepts
+            ;; a dir under any allowed root and throws :path-escape otherwise.
+            (try (safe-path (.getPath d)) true (catch clojure.lang.ExceptionInfo _ false)))]
+    (loop [^File cur f]
+      (cond (nil? cur) nil
+            (not (confined? cur)) nil
+            (and (.exists cur) (.isDirectory cur)) cur
+            :else (recur (.getParentFile cur))))))
 
 (defn- resolve-search-roots
   "Resolve rg/find `paths` into `{:roots [File …] :resolutions [{…} …]}`.
