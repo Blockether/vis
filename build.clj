@@ -135,7 +135,6 @@
    'com.blockether/vis-persistance-sqlite "SQLite backend for the vis persistence facade."
    'com.blockether/vis-provider-github-copilot "GitHub Copilot OAuth device-flow provider."
    'com.blockether/vis-channel-tui "Lanterna-based TUI channel."
-   'com.blockether/vis-channel-telegram "Telegram bot channel."
    'com.blockether/vis-foundation-exa "Exa MCP web/code search tools for the Vis SCI sandbox."})
 
 (defn- build-pom-data
@@ -367,8 +366,7 @@
 ;; change is needed to sever them.
 
 (def ^:private profile->dropped-libs
-  {:tui #{'com.blockether/vis-foundation-voice
-          'com.blockether/vis-channel-telegram}
+  {:tui #{'com.blockether/vis-foundation-voice}
    :cross #{'com.blockether/vis-foundation-voice}
    :voice #{}
    ;; ── Shipped end-user distributions ──────────────────────────────────────

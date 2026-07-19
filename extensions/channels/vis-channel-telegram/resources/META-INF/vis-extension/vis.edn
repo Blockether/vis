@@ -1,4 +1,0 @@
-;; Telegram bot channel. Loading the ns calls
-;; (channel/register-global! ...). Non-LLM-facing.
-{telegram
- {:nses [com.blockether.vis.ext.channel-telegram.bot]}}

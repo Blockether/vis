@@ -3583,8 +3583,7 @@
       "dev"))
 
 (def ^:private first-party-channel-bootstrap-nses
-  {"tui" 'com.blockether.vis.ext.channel-tui.core
-   "telegram" 'com.blockether.vis.ext.channel-telegram.bot})
+  {"tui" 'com.blockether.vis.ext.channel-tui.core})
 
 (defn- help-request?
   "True when args request help at any command depth. We can usually render

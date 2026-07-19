@@ -92,7 +92,6 @@ jobs:
           - extensions/providers/vis-provider-anthropic
           - extensions/providers/vis-provider-zai
           - extensions/providers/vis-provider-standard
-          - extensions/channels/vis-channel-telegram
           - extensions/channels/vis-channel-tui
           - extensions/common/vis-foundation-bridge
           - extensions/common/vis-foundation-harness
