@@ -1,5 +1,0 @@
-;; Web companion channel (`vis channels web`, gateway /ui). Loading the ns
-;; calls (vis/register-extension! ...) AND registers the /ui route
-;; contribution with the gateway (classpath auto-mount). Non-LLM-facing.
-{web
- {:nses [com.blockether.vis.ext.channel-web.core]}}

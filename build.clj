@@ -367,7 +367,7 @@
 ;; change is needed to sever them.
 
 (def ^:private profile->dropped-libs
-  {:tui #{'com.blockether/vis-foundation-voice 'com.blockether/vis-channel-web
+  {:tui #{'com.blockether/vis-foundation-voice
           'com.blockether/vis-channel-telegram}
    :cross #{'com.blockether/vis-foundation-voice}
    :voice #{}
@@ -962,14 +962,13 @@
              "-H:IncludeResources=vis/VERSION"
              ;; Flyway migration SQL (not in the agent-traced metadata)
              "-H:IncludeResources=db/.*"
-             ;; Web channel UI assets (ui.js/rec-worklet.js/app.css/icons.svg)
-             ;; + the WHOLE embedded docs corpus (markdown pages + manifest +
+             ;; The WHOLE embedded docs corpus (markdown pages + manifest +
              ;; woff2 fonts/logos) — ALL read at RUNTIME via io/resource
              ;; (gateway /docs site AND the model-facing `vis_docs` tool), and
-             ;; NONE of it in the agent-traced metadata (the trace never opened
-             ;; /ui or called vis_docs), so without these two patterns the web
-             ;; UI is blank and vis_docs returns zero pages in the native binary.
-             "-H:IncludeResources=vis-channel-web/public/.*" "-H:IncludeResources=vis-docs/.*"
+             ;; NONE of it in the agent-traced metadata (the trace never called
+             ;; vis_docs), so without this pattern vis_docs returns zero pages
+             ;; in the native binary.
+             "-H:IncludeResources=vis-docs/.*"
              ;; tree-sitter pack FFI lib for THIS platform. The pack's own
              ;; metadata ships NO resource glob (unlike fff/rift/ruff's
              ;; prebuilds/**), so without this the shipped binary embeds no

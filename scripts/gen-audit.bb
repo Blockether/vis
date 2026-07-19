@@ -37,7 +37,6 @@
    "vis-foundation-search"   "_Web/code/paper search tool surface._"
    "vis-channel-tui"         "_Terminal UI (Lanterna)._"
    "vis-channel-telegram"    "_Telegram bot channel._"
-   "vis-channel-web"         "_Web trace / HTML views._"
    "vis-workspace-rift"      "_Rift workspace/FFM integration._"})
 
 ;; Licenses that POMs express oddly / not at all — pin them explicitly so the

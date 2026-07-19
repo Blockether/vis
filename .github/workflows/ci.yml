@@ -94,7 +94,6 @@ jobs:
           - extensions/providers/vis-provider-standard
           - extensions/channels/vis-channel-telegram
           - extensions/channels/vis-channel-tui
-          - extensions/channels/vis-channel-web
           - extensions/common/vis-foundation-bridge
           - extensions/common/vis-foundation-harness
           - extensions/common/vis-foundation-search
