@@ -1,10 +1,25 @@
 (ns com.blockether.vis.internal.foundation.introspection-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe patch-diagnosis-contract-test
+             (let [classify
+                   @#'introspection/classify-expression-failure
+
+                   advice
+                   @#'introspection/advice-for-classification]
+
+               (it "classifies stale anchors and recommends the anchor-only contract"
+                   (expect (= :patch-stale-anchor
+                              (classify "patch([...])" "anchors no longer match the file")))
+                   (let [message (advice :patch-stale-anchor)]
+                     (expect (str/includes? message "lineno:hash"))
+                     (expect (not (str/includes? message "SEARCH")))))))
 
 (defdescribe
   introspection-public-surface-test

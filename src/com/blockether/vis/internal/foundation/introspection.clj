@@ -295,11 +295,13 @@
           :regex-unescaped-quote
           (and (str/includes? tool-name "patch")
                (str/includes? lower-message "unmatched delimiter"))
-          :patch-unbalanced-string
+          :patch-invalid-program
           (and (str/includes? tool-name "patch")
-               (str/includes? lower-message "search block")
-               (str/includes? lower-message "not found"))
-          :patch-no-match
+               (or (str/includes? lower-message "anchor") (str/includes? lower-message "hashline"))
+               (or (str/includes? lower-message "not found")
+                   (str/includes? lower-message "no longer match")
+                   (str/includes? lower-message "stale")))
+          :patch-stale-anchor
           (str/includes? lower-message "unable to resolve symbol") :unresolved-symbol
           :else :code-execution-error)))
 
@@ -315,11 +317,11 @@
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
 
-    :patch-unbalanced-string
-    "The patch payload likely lost the closing quote of a \"search\" or \"replace\" string. Re-emit as the canonical list shape patch([{\"path\": …, \"search\": …, \"replace\": …}]) and write multi-line content with a Python triple-quoted string (\"\"\"line1\\nline2\\n\"\"\") so each line stays on its own physical line and the closing quote stays visible."
+    :patch-invalid-program
+    "The patch payload likely lost the closing quote of its replacement. Re-emit patch([{\"path\": …, \"from_anchor\": …, \"replace\": …}]) and use a Python triple-quoted string for multi-line content."
 
-    :patch-no-match
-    "The SEARCH text did not match the file exactly. Use the near-match data when present, or re-read the smallest file slice and emit an exact-byte SEARCH block."
+    :patch-stale-anchor
+    "The anchor no longer matches. Re-read the smallest file slice and retry once with its fresh lineno:hash anchor."
 
     :unresolved-symbol
     "A reader/string boundary probably split the form and exposed a bare symbol. Check quoting before retrying."
@@ -636,13 +638,13 @@
         (conj
           "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
 
-        (contains? classes :patch-unbalanced-string)
+        (contains? classes :patch-invalid-program)
         (conj
-          "Re-emit patch as a vector of {:path :search :replace} maps; compose multi-line :search/:replace with (str \"line\\n\" \"line\\n\") so each line stays on its own physical line and the closing quote stays visible.")
+          "Re-emit patch as a vector of {:path :from_anchor :replace} maps; use a triple-quoted Python string for multi-line replacement text.")
 
-        (contains? classes :patch-no-match)
+        (contains? classes :patch-stale-anchor)
         (conj
-          "Use any :near-match hint, then re-read the smallest file slice and emit an exact SEARCH block.")))))
+          "Re-read the smallest file slice and retry once with its fresh lineno:hash anchor.")))))
 
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a

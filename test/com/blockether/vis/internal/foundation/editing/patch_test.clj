@@ -1,81 +1,25 @@
 (ns com.blockether.vis.internal.foundation.editing.patch-test
-  "Fuzzy line-matching toolkit covered here. Envelope-mode parser / hunk
-   applier were retired together with `patch`'s envelope grammar; only
-   the per-line fuzzy passes remain.
-
-   Temp files under `target/editing-test/` stay inside cwd so
-   `safe-path` accepts them."
+  "Pure hashline primitives used by the anchor-only patch tool."
   (:require [clojure.string]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe
-  seek-sequence-fuzzy-test
-  (it "exact match wins" (expect (= 1 (patch/seek-sequence ["a" "b" "c"] ["b"] 0 false))))
-  (it "ignores trailing whitespace" (expect (= 0 (patch/seek-sequence ["foo   "] ["foo"] 0 false))))
-  (it "ignores leading+trailing whitespace"
-      (expect (= 0 (patch/seek-sequence ["   foo  "] ["foo"] 0 false))))
-  (it "normalizes typographic punctuation"
-      (expect (= 0 (patch/seek-sequence ["it’s"] ["it's"] 0 false)))
-      (expect (= 0 (patch/seek-sequence ["a—b"] ["a-b"] 0 false))))
-  (it "returns nil when pattern not present"
-      (expect (nil? (patch/seek-sequence ["a" "b"] ["c"] 0 false))))
-  (it "returns nil when pattern longer than input (no panic)"
-      (expect (nil? (patch/seek-sequence ["only"] ["too" "long"] 0 false))))
-  (it "prefers EOF position when eof? is true"
-      (expect (= 2 (patch/seek-sequence ["x" "y" "x"] ["x"] 0 true)))))
-
-(defdescribe seek-sequence-with-pass-test
-             ;; seek-sequence-with-pass is what powers the line-based fuzzy fallback
-             ;; in patch exact-replace mode. It MUST report which fuzzy strategy
-             ;; actually fired so the model can tell the difference between an
-             ;; expected exact hit and a salvage — the prompt nudges humans toward
-             ;; that information.
-             (it "reports :exact for clean matches"
-                 (expect (= {:start 1 :pass :exact}
-                            (patch/seek-sequence-with-pass ["a" "b" "c"] ["b"] 0 false))))
-             (it "reports :rstrip when the file has trailing whitespace but the pattern does not"
-                 (let [hit (patch/seek-sequence-with-pass ["foo   "] ["foo"] 0 false)]
-                   (expect (= :rstrip (:pass hit)))))
-             (it "reports :trim when both sides differ in leading/trailing whitespace"
-                 (let [hit (patch/seek-sequence-with-pass ["   foo  "] ["foo"] 0 false)]
-                   (expect (= :trim (:pass hit)))))
-             (it "reports :unicode when typographic punctuation differs"
-                 (let [hit (patch/seek-sequence-with-pass ["it’s late"] ["it's late"] 0 false)]
-                   (expect (= :unicode (:pass hit)))))
-             (it "reports :relative-indent when only the absolute indentation differs"
-                 ;; Same relative structure (2-line block, deeper inner line) but
-                 ;; the file's block lives 4 spaces deeper than the SEARCH block.
-                 (let [hit (patch/seek-sequence-with-pass ["    def f():" "        return 1"]
-                                                          ["def f():" "    return 1"]
-                                                          0
-                                                          false)]
-                   (expect (= :relative-indent (:pass hit)))
-                   (expect (= 4 (:indent-delta hit)))))
-             (it "returns nil when no pass succeeds"
-                 (expect (nil? (patch/seek-sequence-with-pass ["a" "b"] ["c"] 0 false)))))
-
-(defdescribe
-  apply-indent-delta-test
-  (it "is a no-op when delta is zero" (expect (= ["a" "b"] (patch/apply-indent-delta 0 ["a" "b"]))))
-  (it "pads each non-blank line with N leading spaces for positive delta"
-      (expect (= ["    a" "" "    b"] (patch/apply-indent-delta 4 ["a" "" "b"]))))
-  (it "strips up to N leading whitespace chars for negative delta and leaves blanks alone"
-      (expect (= ["a" "" "b"] (patch/apply-indent-delta -4 ["    a" "" "    b"]))))
-  (it "never strips more than a line actually has"
-      (expect (= ["a" "b"] (patch/apply-indent-delta -10 ["  a" " b"])))))
+(defn- resolve-span-output
+  "Resolve an edit span, then splice it so tests cover both offsets and content."
+  [content from-anchor to-anchor replacement]
+  (let [span (patch/resolve-anchor-edit-span content from-anchor to-anchor replacement)]
+    (if (:error span)
+      span
+      {:content (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))
+       :applied-line (:applied-line span)})))
 
 (defdescribe char-offset-helpers-test
-             (it "char-offset-at-line returns 0 for the first line"
-                 (expect (= 0 (patch/char-offset-at-line "a\nb\nc\n" 0))))
-             (it "char-offset-at-line points past the newline of the previous line"
+             (it "maps line indices to character offsets"
+                 (expect (= 0 (patch/char-offset-at-line "a\nb\nc\n" 0)))
                  (expect (= 2 (patch/char-offset-at-line "a\nb\nc\n" 1)))
-                 (expect (= 4 (patch/char-offset-at-line "a\nb\nc\n" 2))))
-             (it "char-offset-at-line clamps to (count content) when past EOF"
                  (expect (= 6 (patch/char-offset-at-line "a\nb\nc\n" 99))))
-             (it "split-content-lines drops the trailing empty element from a final newline"
+             (it "splits content without a trailing newline element"
                  (expect (= ["a" "b" "c"] (patch/split-content-lines "a\nb\nc\n")))
-                 (expect (= ["a" "b" "c"] (patch/split-content-lines "a\nb\nc")))
                  (expect (= [""] (patch/split-content-lines "\n")))))
 
 (defdescribe
@@ -104,42 +48,41 @@
       (let [lines ["x" "y" "x"]]
         (expect (= [0 2] (patch/indices-matching-hash lines (patch/line-hash "x"))))
         (expect (= [1] (patch/indices-matching-hash lines (patch/line-hash "y"))))))
-  (it "resolve-anchor-edit replaces a single `lineno:hash`-anchored line"
+  (it "anchor values require the canonical text map"
+      (expect (= "x" (patch/anchor-value-text {"text" "x"})))
+      (expect (= :ext.foundation.editing/invalid-anchor-value
+                 (try (patch/anchor-value-text "x")
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+  (it "resolve-anchor-edit-span replaces a single `lineno:hash`-anchored line"
       (let [content "alpha\nbeta\ngamma\n"]
-        (expect (= {:new-content "alpha\nBETA\ngamma\n" :applied-line 2}
-                   (patch/resolve-anchor-edit content (patch/line-anchor 2 "beta") nil "BETA")))))
-  (it "resolve-anchor-edit replaces a from..to `lineno:hash` range"
-      (let [content "a\nb\nc\nd\n"]
-        (expect (= {:new-content "X\nd\n" :applied-line 1}
-                   (patch/resolve-anchor-edit content
-                                              (patch/line-anchor 1 "a")
-                                              (patch/line-anchor 3 "c")
-                                              "X")))))
+        (expect (= {:content "alpha\nBETA\ngamma\n" :applied-line 2}
+                   (resolve-span-output content (patch/line-anchor 2 "beta") nil "BETA")))))
+  (it
+    "resolve-anchor-edit-span replaces a from..to `lineno:hash` range"
+    (let [content "a\nb\nc\nd\n"]
+      (expect
+        (= {:content "X\nd\n" :applied-line 1}
+           (resolve-span-output content (patch/line-anchor 1 "a") (patch/line-anchor 3 "c") "X")))))
   (it "empty replace DELETES the whole line(s) — no leftover blank"
-      ;; Regression: `replace ""` USED to keep the trailing
-      ;; newline outside the span, so a single blank-line delete was a zero-width
-      ;; NO-OP and a multi-line delete left one line behind. Empty replace now
-      ;; means "remove these physical lines".
+      ;; Empty replacement removes the complete physical line span.
       (let [content "a\nb\nc\n"]
         ;; content line: fully removed, not left as a blank
         (expect (= "a\nc\n"
-                   (:new-content
-                     (patch/resolve-anchor-edit content (patch/line-anchor 2 "b") nil ""))))
+                   (:content (resolve-span-output content (patch/line-anchor 2 "b") nil ""))))
         ;; last line at EOF
         (expect (= "a\nb\n"
-                   (:new-content
-                     (patch/resolve-anchor-edit content (patch/line-anchor 3 "c") nil "")))))
+                   (:content (resolve-span-output content (patch/line-anchor 3 "c") nil "")))))
       (let [blanks "x\n\n\n\ny\n"] ; lines 2,3,4 blank
-        ;; single blank line: actually deleted (was a no-op)
+        ;; single blank line
         (expect (= "x\n\n\ny\n"
-                   (:new-content
-                     (patch/resolve-anchor-edit blanks (patch/line-anchor 3 "") nil ""))))
-        ;; multi-blank span: ALL of them gone (was leaving one behind)
+                   (:content (resolve-span-output blanks (patch/line-anchor 3 "") nil ""))))
+        ;; multi-blank span
         (expect (= "x\ny\n"
-                   (:new-content (patch/resolve-anchor-edit blanks
-                                                            (patch/line-anchor 2 "")
-                                                            (patch/line-anchor 4 "")
-                                                            ""))))))
+                   (:content (resolve-span-output blanks
+                                                  (patch/line-anchor 2 "")
+                                                  (patch/line-anchor 4 "")
+                                                  ""))))))
   (it "duplicate lines are addressable by line number — no ambiguity"
       ;; Duplicated content may have many same-hash neighbors; the line coordinate
       ;; is the locator and the hash verifies that exact line before any ambiguity
@@ -147,11 +90,9 @@
       ;; treated as ambiguous.
       (let [content "x\ny\nx\n"]
         (expect (= "X\ny\nx\n"
-                   (:new-content
-                     (patch/resolve-anchor-edit content (patch/line-anchor 1 "x") nil "X"))))
+                   (:content (resolve-span-output content (patch/line-anchor 1 "x") nil "X"))))
         (expect (= "x\ny\nX\n"
-                   (:new-content
-                     (patch/resolve-anchor-edit content (patch/line-anchor 3 "x") nil "X"))))))
+                   (:content (resolve-span-output content (patch/line-anchor 3 "x") nil "X"))))))
   (it "exact line coordinate wins for repeated blank/brace hashes"
       (let [content
             "{\n\n}\n\n}\n\n}\n"
@@ -163,9 +104,9 @@
             (patch/line-anchor 5 "}")]
 
         (expect (= "{\n\n}\nBLANK\n}\n\n}\n"
-                   (:new-content (patch/resolve-anchor-edit content blank-anchor nil "BLANK"))))
+                   (:content (resolve-span-output content blank-anchor nil "BLANK"))))
         (expect (= "{\n\n}\n\nCLOSE\n\n}\n"
-                   (:new-content (patch/resolve-anchor-edit content brace-anchor nil "CLOSE"))))))
+                   (:content (resolve-span-output content brace-anchor nil "CLOSE"))))))
   (it "ambiguous/stale hash with an explicit line resolves to that LINE (line wins)"
       ;; The model named line 5 but gave a hash (blank) shared by several nearby
       ;; lines and NOT matching line 5's own content. The line locates; a dup hash
@@ -179,13 +120,10 @@
 
         ; WRONG, dup hash for line 5
         (expect (= "a\n\nb\n\nREPL\n\nc\n\nd\n"
-                   (:new-content (patch/resolve-anchor-edit content anchor nil "REPL"))))
-        (expect (= 5 (:applied-line (patch/resolve-anchor-edit content anchor nil "REPL"))))))
+                   (:content (resolve-span-output content anchor nil "REPL"))))
+        (expect (= 5 (:applied-line (resolve-span-output content anchor nil "REPL"))))))
   (it "WRONG-LINE GUARD: a valid hash whose content sits far from the stated line is REFUSED"
-      ;; The regression that motivated `lineno:hash`: the model supplies a real,
-      ;; unique hash ('target', actually on line 1) but a wrong/stale line number
-      ;; far away (100). The old bare-hash scheme applied it at line 1 and
-      ;; corrupted the file; now it refuses.
+      ;; A real hash paired with a far-away line number must not relocate the edit.
       (let [base
             (mapv #(str "line" %) (range 1 121))
 
@@ -193,7 +131,7 @@
             (str (clojure.string/join "\n" (assoc base 0 "target")) "\n")
 
             res
-            (patch/resolve-anchor-edit content (str 100 ":" (patch/line-hash "target")) nil "X")]
+            (resolve-span-output content (str 100 ":" (patch/line-hash "target")) nil "X")]
 
         (expect (= :hashline-misplaced
                    (-> res
@@ -207,7 +145,7 @@
                    (-> res
                        :error
                        :found-lines)))
-        (expect (nil? (:new-content res)))))
+        (expect (nil? (:content res)))))
   (it "small drift within tolerance still resolves"
       (let [base
             (mapv #(str "line" %) (range 1 121))
@@ -217,40 +155,35 @@
 
         ; target at line 50
         ;; stated line 55, real line 50 — gap 5 <= tolerance -> applies at 50
-        (expect (= 50
-                   (:applied-line (patch/resolve-anchor-edit content
-                                                             (str 55 ":" (patch/line-hash "target"))
-                                                             nil
-                                                             "X"))))))
-  (it "resolve-anchor-edit reports :hashline-not-found for absent content"
+        (expect
+          (= 50
+             (:applied-line
+               (resolve-span-output content (str 55 ":" (patch/line-hash "target")) nil "X"))))))
+  (it "resolve-anchor-edit-span reports :hashline-not-found for absent content"
       (expect (= :hashline-not-found
-                 (-> (patch/resolve-anchor-edit "a\nb\n" (patch/line-anchor 1 "nope") nil "Z")
+                 (-> (resolve-span-output "a\nb\n" (patch/line-anchor 1 "nope") nil "Z")
                      :error
                      :reason))))
   (it "bare hash (no line number) is REFUSED - hashline requires both coordinates"
       (let [content "alpha\nbeta\ngamma\n"]
-        ;; a bare hash (no `lineno:` prefix) no longer resolves by uniqueness
+        ;; Both coordinates are mandatory.
         (expect (= :hashline-malformed
-                   (-> (patch/resolve-anchor-edit content (patch/line-hash "beta") nil "BETA")
+                   (-> (resolve-span-output content (patch/line-hash "beta") nil "BETA")
                        :error
                        :reason)))
-        ;; nothing is written: the lineno:hash form is mandatory now
-        (expect (nil? (:new-content
-                        (patch/resolve-anchor-edit content (patch/line-hash "beta") nil "BETA"))))
-        ;; a duplicate-line bare hash is likewise refused as malformed (was :hashline-ambiguous)
+        ;; No span is produced.
+        (expect (nil? (:content (resolve-span-output content (patch/line-hash "beta") nil "BETA"))))
+        ;; Duplicate content does not weaken the shape requirement.
         (expect (= :hashline-malformed
-                   (-> (patch/resolve-anchor-edit "x\ny\nx\n" (patch/line-hash "x") nil "N")
+                   (-> (resolve-span-output "x\ny\nx\n" (patch/line-hash "x") nil "N")
                        :error
                        :reason)))))
-  (it "resolve-anchor-edit refuses an inverted range"
+  (it "resolve-anchor-edit-span refuses an inverted range"
       (let [content
             "a\nb\nc\n"
 
             res
-            (patch/resolve-anchor-edit content
-                                       (patch/line-anchor 3 "c")
-                                       (patch/line-anchor 1 "a")
-                                       "X")]
+            (resolve-span-output content (patch/line-anchor 3 "c") (patch/line-anchor 1 "a") "X")]
 
         (expect (= :hashline-range-inverted
                    (-> res

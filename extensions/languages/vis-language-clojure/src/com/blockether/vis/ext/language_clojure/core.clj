@@ -1147,8 +1147,7 @@
                                    true "note"
                                    "unbalanced delimiters auto-repaired (parinfer) before write"))))
                            repaired-plans)
-                 :metadata {:mode :exact-replace
-                            :file-count (count repaired-plans)
+                 :metadata {:file-count (count repaired-plans)
                             :changed-count (count repaired-plans)
                             :auto-repaired-paths (mapv :path (filter :repaired? repaired-plans))
                             :file-befores (mapv #(select-keys % [:path :before])

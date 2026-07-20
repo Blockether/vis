@@ -737,7 +737,7 @@
                                                (fn [_]
                                                  {:success? false :error {:reason :stale}}))]
         (expect (= :stale (get-in out [:error :reason])))))
-  (it "passes a syntax refusal WITHOUT candidate plans straight through (old shape)"
+  (it "passes a syntax refusal without repair candidates straight through"
       (let [out (core/clj-patch-no-fail-around {}
                                                :patch
                                                [[{:path "x.clj"}]]

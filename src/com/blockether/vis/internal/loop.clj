@@ -2677,18 +2677,11 @@
   (and (map? m) (string? (get m "path")) (string? (get m "op")) (contains? m "changed")))
 
 (defn- strip-echo-diff
-  "Drop the `\"diff\"` from ONE edit summary when the applied bytes are exactly what
-   the model authored — a byte-exact edit (no fuzzy `\"passes\"`, no `\"indent_delta\"`
-   auto-shift). In that case the unified diff merely re-describes the model's own
-   `replace` text and carries zero new signal, so it's pure echo-bloat on the wire.
-   Keep it whenever the harness may have changed the edit under the model (a fuzzy
-   pass fired or the indent auto-shifted) — that's the one time the diff is real
-   signal the model can't otherwise know. The HUMAN card keeps the diff regardless
-   (it renders off the un-stripped summary)."
+  "Drop the `\"diff\"` from one model-wire edit summary. Anchor and structural
+   edits apply the exact replacement the model supplied, so the diff is echo-bloat;
+   the human card still renders it from the unstripped result."
   [m]
-  (if (and (contains? m "diff") (not (seq (get m "passes"))) (nil? (get m "indent_delta")))
-    (dissoc m "diff")
-    m))
+  (dissoc m "diff"))
 
 (defn- strip-echo-diffs
   "Model-wire compaction for a patch/write/struct_patch `:result`: strip each

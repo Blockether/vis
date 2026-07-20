@@ -1164,7 +1164,7 @@
   "Human message for a `patch/resolve-anchor-range` `:error` on the cat READ
    path - mirrors the patch hash-error copy and always points back to a
    fresh read for current `:anchors`."
-  [{:keys [reason which hash lines from-line to-line stated-line found-lines anchor]}]
+  [{:keys [reason which hash from-line to-line stated-line found-lines anchor]}]
   (case reason
     :hashline-malformed
     (str "cat hash failed: " (name which)
@@ -1188,17 +1188,6 @@
          " but that content is at line(s) "
          (pr-str found-lines)
          " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
-
-    :hashline-ambiguous
-    (str "cat hash failed: "
-         (name which)
-         "_anchor hash "
-         (pr-str hash)
-         " matches "
-         (count lines)
-         " lines "
-         (pr-str lines)
-         " near that line. Use cat(path, {\"range\": [start, end]}) instead.")
 
     :hashline-range-inverted
     (str "cat hash failed: to_anchor line " to-line " precedes from_anchor line " from-line ".")
@@ -2390,15 +2379,7 @@
 ;; Thin babashka.fs wrappers
 ;; =============================================================================
 
-(def ^:private patch-required-keys #{"path" "replace"})
-(def ^:private patch-locator-keys
-  "Every edit needs the `from_anchor` locator (a `lineno:hash` hashline —
-   content-addressed by the per-line hash `cat` prints). It re-resolves against
-   LIVE content on every edit, so it stays correct under line drift (insertions
-   above, or earlier edits in the same grouped batch) where raw line numbers
-   would silently target the wrong line. (The old `search` text matcher was
-   removed — anchors only.)"
-  #{"from_anchor"})
+(def ^:private patch-required-keys #{"path" "from_anchor" "replace"})
 (def ^:private patch-optional-keys
   "Optional keys recognised on an anchor edit map.
    - to_anchor        end of a hashline range; defaults to from_anchor (single line)
@@ -2410,144 +2391,48 @@
                       unknown key)."
   #{"to_anchor" "expected_mtime" "expected_size" "atomic"})
 
-(def ^:private patch-allowed-keys
-  (set/union patch-required-keys patch-locator-keys patch-optional-keys))
-
-(def ^:private patch-group-required-keys #{"path" "edits"})
-(def ^:private patch-group-optional-keys #{"expected_mtime" "expected_size" "atomic"})
-(def ^:private patch-group-allowed-keys
-  (set/union patch-group-required-keys patch-group-optional-keys))
-
-(defn- grouped-patch-edit? [edit] (and (map? edit) (contains? edit "edits")))
-
-(defn- expand-patch-group
-  [{:strs [path edits expected_mtime expected_size] :as group}]
-  (let [missing
-        (seq (remove #(contains? group %) patch-group-required-keys))
-
-        unknown
-        (seq (remove patch-group-allowed-keys (keys group)))]
-
-    (when missing
-      (throw (ex-info (str "patch grouped edit missing required keys: "
-                           (str/join ", " (map #(str "'" % "'") missing))
-                           " (a group is {'path': ..., 'edits': [...]}).")
-                      {:type :ext.foundation.editing/invalid-patch-edit-group
-                       :missing (vec missing)
-                       :edit group})))
-    (when unknown
-      (throw (ex-info (str "patch grouped edit has unknown keys: "
-                           (str/join ", " (map #(str "'" % "'") unknown))
-                           ".")
-                      {:type :ext.foundation.editing/invalid-patch-edit-group
-                       :unknown (vec unknown)
-                       :allowed (vec patch-group-allowed-keys)
-                       :edit group})))
-    (when-not (sequential? edits)
-      (throw (ex-info "patch grouped \"edits\" must be a vector/seq of edit maps"
-                      {:type :ext.foundation.editing/invalid-patch-edit-group :edits edits})))
-    (when (empty? edits)
-      (throw (ex-info "patch grouped \"edits\" must not be empty"
-                      {:type :ext.foundation.editing/invalid-patch-edit-group :edit group})))
-    (mapv
-      (fn [edit]
-        (when-not (map? edit)
-          (throw (ex-info "patch grouped \"edits\" entries must be maps"
-                          {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-        ;; The LLM-facing JSON schema marks :path as required, so callers
-        ;; routinely echo the group's :path into each grouped edit just to
-        ;; satisfy it. A per-edit :path is REDUNDANT (the group's :path is
-        ;; assoc'd over it below regardless), so treat a blank OR
-        ;; group-matching path as harmless — never HARD-FAIL the whole patch
-        ;; over it (that stranded the model re-issuing the identical call).
-        ;; Only a per-edit path pointing at a DIFFERENT file is a genuine
-        ;; conflict a group can't express — that still refuses.
-        (when-let [stated (some-> (get edit "path")
-                                  str
-                                  str/trim
-                                  not-empty)]
-          (when-not (= stated
-                       (some-> path
-                               str
-                               str/trim))
-            (throw (ex-info (str "patch grouped \"edits\" share the group \"path\" (" path
-                                 "); this edit names a different \"path\" (" stated
-                                 "). Split conflicting paths into separate "
-                                 "groups, one per file.")
-                            {:type :ext.foundation.editing/invalid-patch-edit
-                             :group-path path
-                             :edit-path stated
-                             :edit edit}))))
-        (cond-> (assoc edit "path" path)
-          (some? expected_mtime)
-          (assoc "expected_mtime" expected_mtime)
-
-          (some? expected_size)
-          (assoc "expected_size" expected_size)))
-      edits)))
-
-(defn- normalize-patch-edits-input
-  [edits]
-  (let [edits (if (map? edits) [edits] edits)]
-    (when-not (sequential? edits)
-      (throw (ex-info "patch expects a map, grouped map, or vector of edit maps/groups"
-                      {:type :ext.foundation.editing/invalid-patch-edits :got (type edits)})))
-    (mapcat (fn [edit]
-              (if (grouped-patch-edit? edit) (expand-patch-group edit) [edit]))
-            edits)))
+(def ^:private patch-allowed-keys (set/union patch-required-keys patch-optional-keys))
 
 (defn- coerce-patch-edits
-  "Normalize + validate the user's edit maps. Every edit is anchor-located:
+  "Validate the canonical vector of anchor-located edit maps.
    it must carry `:from_anchor` (and optionally `:to_anchor` for a range).
    A missing anchor, or an unknown key, throws."
   [edits]
-  (let [edits (normalize-patch-edits-input edits)]
-    (mapv
-      (fn [edit]
-        (when-not (map? edit)
-          (throw (ex-info "patch edit must be a map"
-                          {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-        (let [missing (seq (remove #(contains? edit %) patch-required-keys))
-              unknown (seq (remove patch-allowed-keys (keys edit)))]
-
-          (when missing
-            (throw (ex-info (str "patch edit missing required keys: "
-                                 (str/join ", " (map #(str "'" % "'") missing))
-                                 " — every edit needs 'from_anchor' (a lineno:hash"
-                                 " from a fresh cat) plus its replacement content.")
-                            {:type :ext.foundation.editing/invalid-patch-edit
-                             :missing (vec missing)
-                             :edit edit})))
-          ;; The removed text-matcher API (`search`/`nth`/grouped `edits`
-          ;; carrying `search`) keeps getting re-hallucinated. Name it
-          ;; explicitly so the model corrects to anchors in ONE step
-          ;; instead of staring at a generic ":from_anchor missing".
-          (when-let [legacy (seq (filter #(contains? edit %) #{"search" "nth" "replace_all"}))]
-            (throw (ex-info
-                     (str
-                       "patch is ANCHOR-ONLY — `"
-                       (str/join "`/`" legacy)
-                       "` was removed; there is no text search/replace. "
-                       "cat the file, then pass `from_anchor` (a lineno:hash from the "
-                       "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
-                     {:type :ext.foundation.editing/invalid-patch-edit
-                      :removed (vec legacy)
-                      :edit edit})))
-          (when-not (contains? edit "from_anchor")
-            (throw (ex-info "patch edit needs a from_anchor (lineno:hash from cat)."
+  (when-not (sequential? edits)
+    (throw (ex-info "patch expects a vector of edit maps"
+                    {:type :ext.foundation.editing/invalid-patch-edits :got (type edits)})))
+  (when (empty? edits)
+    (throw (ex-info "patch expects at least one edit"
+                    {:type :ext.foundation.editing/invalid-patch-edits :got edits})))
+  (mapv (fn [edit]
+          (when-not (map? edit)
+            (throw (ex-info "patch edit must be a map"
                             {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-          (when unknown
-            (throw (ex-info (str "patch edit has unknown keys: "
-                                 (str/join ", " (map #(str "'" % "'") unknown))
-                                 ". Allowed: "
-                                 (str/join ", " (sort patch-allowed-keys))
-                                 ".")
-                            {:type :ext.foundation.editing/invalid-patch-edit
-                             :unknown (vec unknown)
-                             :allowed (vec patch-allowed-keys)
-                             :edit edit}))))
-        (update edit "path" str))
-      edits)))
+          (let [missing
+                (seq (remove #(contains? edit %) patch-required-keys))
+
+                unknown
+                (seq (remove patch-allowed-keys (keys edit)))]
+
+            (when missing
+              (throw (ex-info (str "patch edit missing required keys: "
+                                   (str/join ", " (map #(str "'" % "'") missing))
+                                   ". Use a fresh lineno:hash from cat as from_anchor.")
+                              {:type :ext.foundation.editing/invalid-patch-edit
+                               :missing (vec missing)
+                               :edit edit})))
+            (when unknown
+              (throw (ex-info (str "patch edit has unknown keys: "
+                                   (str/join ", " (map #(str "'" % "'") unknown))
+                                   ". Allowed: "
+                                   (str/join ", " (sort patch-allowed-keys))
+                                   ".")
+                              {:type :ext.foundation.editing/invalid-patch-edit
+                               :unknown (vec unknown)
+                               :allowed (vec patch-allowed-keys)
+                               :edit edit}))))
+          (update edit "path" str))
+        edits))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
@@ -2611,7 +2496,7 @@
 ;; -----------------------------------------------------------------------------
 ;; patch-analysis (rewritten)
 ;;
-;; Per-edit pipeline (anchor-only — there is no text search):
+;; Per-edit pipeline:
 ;;   1. Coerce/validate edit map (`:from_anchor` required, mtime/size types).
 ;;   2. Read current file content (always the ORIGINAL snapshot, not a prior
 ;;      edit's output, so anchors in one batch can't drift each other).
@@ -2651,7 +2536,7 @@
                     :data data}}))))
 
 ;; Hashline locator resolution lives in the reusable `patch` layer
-;; (`patch/resolve-anchor-edit`, `patch/indices-matching-hash`). The
+;; (`patch/resolve-anchor-edit-span`, `patch/indices-matching-hash`). The
 ;; `:from_anchor`/`:to_anchor` branch of `patch-analysis` calls straight into
 ;; it — no bespoke hash math in this channel/IO namespace.
 
@@ -2707,64 +2592,48 @@
                       current (or (get origs path) (slurp file))
                       origs (assoc origs path current)
                       replace (str replace)
-                      stale (when-not seen? (staleness-check file edit))]
+                      stale (when-not seen? (staleness-check file edit))
+                      base-check {:edit-index idx
+                                  :path rel
+                                  :from_anchor from_anchor
+                                  :to_anchor (or to_anchor from_anchor)}]
 
-                  (if from_anchor
-                    ;; ---- hashline locator (content-addressed by line hash) ----
-                    (let [base-check {:edit-index idx
-                                      :path rel
-                                      :from_anchor from_anchor
-                                      :to_anchor (or to_anchor from_anchor)}]
-                      (if stale
+                  (if stale
+                    (let [check (assoc base-check
+                                  :reason :stale
+                                  :stale stale)]
+                      (recur (inc idx)
+                             (next remaining)
+                             origs
+                             spans
+                             (conj checks check)
+                             (conj failures check)))
+                    (let [res
+                          (patch/resolve-anchor-edit-span current from_anchor to_anchor replace)]
+                      (if-let [err (:error res)]
                         (let [check (assoc base-check
-                                      :reason :stale
-                                      :stale stale)]
+                                      :reason (:reason err)
+                                      :hash-error err)]
                           (recur (inc idx)
                                  (next remaining)
                                  origs
                                  spans
                                  (conj checks check)
                                  (conj failures check)))
-                        (let [res (patch/resolve-anchor-edit-span current
-                                                                  from_anchor
-                                                                  to_anchor
-                                                                  replace)]
-                          (if-let [err (:error res)]
-                            (let [check (assoc base-check
-                                          :reason (:reason err)
-                                          :hash-error err)]
-                              (recur (inc idx)
-                                     (next remaining)
-                                     origs
-                                     spans
-                                     (conj checks check)
-                                     (conj failures check)))
-                            (let [span {:start (:start res)
-                                        :end (:end res)
-                                        :replacement (:replacement res)
-                                        :file file
-                                        :path rel
-                                        :edit-index idx}
-                                  check (assoc base-check
-                                          :pass :hashline
-                                          :applied-positions [(:applied-line res)])]
+                        (let [span {:start (:start res)
+                                    :end (:end res)
+                                    :replacement (:replacement res)
+                                    :file file
+                                    :path rel
+                                    :edit-index idx}
+                              check (assoc base-check :applied-positions [(:applied-line res)])]
 
-                              (recur (inc idx)
-                                     (next remaining)
-                                     origs
-                                     (update spans path (fnil conj []) span)
-                                     (conj checks check)
-                                     failures))))))
-                    ;; ANCHOR-ONLY: the `:search`/`:replace` text matcher was
-                    ;; removed. An edit with no `:from_anchor` cannot be located —
-                    ;; re-read with `cat` and use the `lineno:hash` anchor.
-                    (let [check {:edit-index idx :path rel :reason :missing-anchor}]
-                      (recur (inc idx)
-                             (next remaining)
-                             origs
-                             spans
-                             (conj checks check)
-                             (conj failures check)))))))
+                          (recur (inc idx)
+                                 (next remaining)
+                                 origs
+                                 (update spans path (fnil conj []) span)
+                                 (conj checks check)
+                                 failures))))))))
             {:origs origs :spans spans :checks checks :failures failures}))
 
         ;; PHASE 2 — splice each file's spans into its ORIGINAL, bottom-up so
@@ -2866,9 +2735,6 @@
              (or (:actual-mtime stale) (:actual-size stale))
              "); re-read before retrying.")
 
-        :missing-anchor
-        (str head ": missing from_anchor; use a fresh `lineno:hash` from `cat`.")
-
         (str head " failed.")))))
 
 (defn- failure-family
@@ -2899,9 +2765,6 @@
     :overlapping-edits
     "targets overlap; merge them or use separate patch calls."
 
-    :missing-anchor
-    "missing `from_anchor`; use fresh `lineno:hash` anchors from `cat`."
-
     ;; Edit-specific reasons (path errors, :hashline-malformed, :syntax-error):
     ;; keep the first member's full, precomputed explanation.
     (explain-failure (first failures))))
@@ -2920,12 +2783,7 @@
   (let [atomic "No changes: patch is atomic. "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
-      ;; MULTIPLE failures: GROUP by root-cause family. The classic wall-of-errors
-      ;; is one underlying cause — the file shifted under EVERY anchor (a concurrent
-      ;; write, or an earlier edit this turn), so every edit reports :stale /
-      ;; :hashline-not-found — yet the old report printed N near-identical verbose
-      ;; paragraphs the model then fixated on line-by-line. Collapse each family to
-      ;; ONE clear cause + the compact list of affected edits instead.
+      ;; Group related failures into one cause plus compact affected-edit refs.
       (let [ordered-families (distinct (map failure-family failures))
             groups (group-by failure-family failures)]
 
@@ -2941,50 +2799,73 @@
                                     " × " (family-headline family fs)
                                     "\n      " (str/join "; " (map failure-edit-ref fs))))))))))
 
-(defn- non-exact-passes-for-path
-  "Pull the non-`:exact` fuzzy passes that fired against `rel-path` out
-   of `:checks`, preserving edit order. Returns nil when every check on
-   that path used `:exact` so the caller can omit the `:passes` key
-   entirely (no `:exact` noise in the trailer)."
-  [checks rel-path]
-  (let [ps (->> checks
-                (filter #(= rel-path (:path %)))
-                (keep :pass)
-                (remove #{:exact :hashline})
-                vec)]
-    (when (seq ps) ps)))
+(defn- tracked-patch-failure-result
+  "Attach the per-path retry count and loop hint to one atomic failure result."
+  [failures checks]
+  (let [counts
+        (into {}
+              (keep (fn [path]
+                      (when-let [file (try (safe-path path) (catch Throwable _ nil))]
+                        [path (bump-patch-fail-count! file)])))
+              (distinct (map :path failures)))
 
-(defn- indent-delta-for-path
-  "Pull the FIRST non-zero `:indent-delta` from a `:relative-indent`
-   check for `rel-path`, if any. Used purely as an alarm signal so the
-   model knows the renderer re-shifted its `:replace` payload."
-  [checks rel-path]
-  (some (fn [c]
-          (when (and (= rel-path (:path c))
-                     (= :relative-indent (:pass c))
-                     (some? (:indent-delta c))
-                     (not (zero? (long (:indent-delta c)))))
-            (long (:indent-delta c))))
-        checks))
+        failures
+        (mapv (fn [failure]
+                (cond-> failure
+                  (get counts (:path failure))
+                  (assoc :consecutive-failures (get counts (:path failure)))))
+              failures)
+
+        hint
+        (some (fn [[path n]]
+                (patch-loop-hint n path))
+              counts)]
+
+    {:success? false
+     :failures failures
+     :checks checks
+     :loop-hint hint
+     :message (cond-> (patch-failure-message failures)
+                hint
+                (str "\n" hint))}))
+
+(defn- patch-syntax-failures
+  "Return plans that turn clean supported code into syntactically broken code."
+  [plans]
+  (vec (keep (fn [{:keys [path before after]}]
+               (when-let [lang (index/code-language path)]
+                 (when (and (not (zipper/syntax-broken? lang (str before)))
+                            (zipper/syntax-broken? lang (str after)))
+                   {:edit-index 0
+                    :path path
+                    :reason :syntax-error
+                    :message (str "patch refused: this edit would leave "
+                                  path
+                                  " with a SYNTAX ERROR (unbalanced delimiters / a broken form) — "
+                                  "it parsed cleanly before. NOTHING was written. Re-cat for fresh "
+                                  "anchors and fix the replacement, or use struct_patch.")})))
+             plans)))
+
+(defn- commit-patch-plans!
+  "Write validated plans and clear their retry counters."
+  [plans]
+  (doseq [{:keys [file after]} plans]
+    (spit file after)
+    (capture-temp-write! file))
+  (doseq [{:keys [file]} plans]
+    (clear-patch-fail-count! file)))
 
 (defn patch-safe
-  "Apply exact-replace patch edits to the filesystem.
+  "Apply anchored patch edits to the filesystem.
 
    Returns a structured map; **never throws on normal failure paths**
-   (no-match, anchor-not-found, stale mtime, file not found, path
-   escape, ambiguous selection). Reserves exceptions for genuinely
+   (stale anchor, stale mtime, file not found, path escape). Reserves exceptions for genuinely
    unexpected errors (thread interrupt, disk full, etc.).
 
    Success shape:
      {:success? true
-      :plans    [{:path :before :after :passes? :indent-delta?} ...]
+      :plans    [{:path :before :after} ...]
       :checks   [<per-edit-check> ...]}
-
-   `:passes` lists only meaningful non-anchor alarms that fired against this
-   plan's path, in edit order. The ordinary `:hashline` anchor path is
-   expected and therefore omitted from user/model-facing summaries. Same for
-   `:indent-delta`: present only when a `:relative-indent` pass auto-shifted
-   `:replace`.
 
    Failure shape:
      {:success? false
@@ -2999,106 +2880,21 @@
   [edits]
   (let [{:keys [plans failures checks]} (patch-analysis edits)]
     (if (seq failures)
-      ;; Failure path: bump per-path loop counter, attach hint, return.
-      (let [paths (->> failures
-                       (map :path)
-                       distinct)
-            counts (into {}
-                         (for [p paths]
-                           (let [f (try (safe-path p) (catch Throwable _ nil))]
-                             (when f [p (bump-patch-fail-count! f)]))))
-            failures-with-count (mapv (fn [f]
-                                        (let [n (get counts (:path f))]
-                                          (cond-> f
-                                            n
-                                            (assoc :consecutive-failures n))))
-                                      failures)
-            hint (some (fn [[p n]]
-                         (patch-loop-hint n p))
-                       counts)]
-
-        {:success? false
-         :failures failures-with-count
-         :checks checks
-         :loop-hint hint
-         :message (cond-> (patch-failure-message failures-with-count)
-                    hint
-                    (str "\n" hint))})
-      ;; Success path: RE-PARSE guard, then commit. Refuse only an edit that turns
-      ;; a CLEANLY-parsing file into a BROKEN one — the same safety `struct_patch`/
-      ;; `struct_rename` already give, now on plain `patch` too, so the two verbs
-      ;; stop differing on "which one is safe". TWO gates keep it false-positive-free:
-      ;; (1) `index/code-language` — a CURATED allowlist, so prose/markup/data the
-      ;; pack over-eagerly recognizes (`.txt`→vimdoc, `.md`, `.csv`, `.log`) is never
-      ;; considered; (2) before→after — a file that was already broken can still be
-      ;; FIXED, and strict configs (json/yaml/toml) are protected without surprises.
+      (tracked-patch-failure-result failures checks)
       (let [plans (vec plans)
-            syntax-fails
-            (vec (keep (fn [{:keys [path before after]}]
-                         (when-let [lang (index/code-language path)]
-                           (when (and (not (zipper/syntax-broken? lang (str before)))
-                                      (zipper/syntax-broken? lang (str after)))
-                             {:edit-index 0
-                              :path path
-                              :reason :syntax-error
-                              :message (str "patch refused: this edit would leave "
-                                            path
-                                            " with a SYNTAX ERROR (unbalanced delimiters / a "
-                                            "broken form) — it parsed cleanly before. NOTHING was "
-                                            "written. Re-cat for fresh anchors and fix the "
-                                            "replacement, or use struct_patch for a structural "
-                                            "edit that can't break syntax.")})))
-                       plans))]
+            syntax-failures (patch-syntax-failures plans)]
 
-        (if (seq syntax-fails)
-          (let [counts (into {}
-                             (for [p (distinct (map :path syntax-fails))]
-                               (when-let [f (try (safe-path p) (catch Throwable _ nil))]
-                                 [p (bump-patch-fail-count! f)])))
-                fails (mapv (fn [f]
-                              (let [n (get counts (:path f))]
-                                (cond-> f
-                                  n
-                                  (assoc :consecutive-failures n))))
-                            syntax-fails)
-                hint (some (fn [[p n]]
-                             (patch-loop-hint n p))
-                           counts)]
-
-            {:success? false
-             :failures fails
-             :checks (into (vec checks) fails)
-             :loop-hint hint
-             ;; The WHOLE-BATCH candidates (every planned file, applied but
-             ;; unwritten) ride the refusal so a language pack's :around
-             ;; op-hook can WHOLE-SOURCE-repair the broken ones and commit the
-             ;; batch itself (fragment repair can't fix contextual imbalance —
-             ;; a locally-balanced replacement that swallows/duplicates an
-             ;; enclosing closer only shows up in the full file). Carried on
-             ;; the RESULT, never inside `:error` — the model must not be fed
-             ;; whole files in a failure message.
-             :candidate-plans (mapv #(select-keys % [:path :before :after]) plans)
-             :broken-paths (mapv :path fails)
-             :message (cond-> (patch-failure-message fails)
-                        hint
-                        (str "\n" hint))})
-          (do (doseq [{:keys [file after]} plans]
-                (spit file after)
-                (capture-temp-write! file))
-              (doseq [{:keys [file]} plans]
-                (clear-patch-fail-count! file))
+        (if (seq syntax-failures)
+          (let [result (tracked-patch-failure-result syntax-failures checks)]
+            (assoc result
+              :checks (into (vec checks) (:failures result))
+              ;; Language packs may repair the full unwritten candidates in an
+              ;; :around hook. Never place their source inside the model-facing error.
+              :candidate-plans (mapv #(select-keys % [:path :before :after]) plans)
+              :broken-paths (mapv :path (:failures result))))
+          (do (commit-patch-plans! plans)
               {:success? true
-               :plans (mapv (fn [{:keys [path before after]}]
-                              (let [passes (non-exact-passes-for-path checks path)
-                                    idelta (indent-delta-for-path checks path)]
-
-                                (cond-> {:path path :before before :after after}
-                                  passes
-                                  (assoc :passes passes)
-
-                                  idelta
-                                  (assoc :indent-delta idelta))))
-                            plans)
+               :plans (mapv #(select-keys % [:path :before :after]) plans)
                :checks checks}))))))
 
 ;; =============================================================================
@@ -3897,31 +3693,21 @@
    Minimal shape — every key is necessary signal, no redundant counters:
 
      {:path     <rel-path>
-      :op       :update | :add
-      :changed? <bool>            — false on no-op edits
-      :diff     <unified-diff>    — the WRITE evidence; omitted only
-                                    when both before+after are nil
-      :passes   [<pass-kw> ...]   — ONLY when a non-:exact fuzzy pass
-                                    fired; absent = byte-exact match
-      :indent-delta <n>}          — ONLY when :relative-indent fuzzy
-                                    auto-shifted :replace by N spaces
+     :op       :update | :add
+     :changed? <bool>            — false on no-op edits
+     :diff     <unified-diff>    — the WRITE evidence; omitted only
+                                    when both before+after are nil}
 
    Line counts (`:lines-before` / `:lines-after` / `:delta-lines`) were
    intentionally dropped: the `:diff` carries the exact change and the
    scalars duplicated that information at the cost of trailer bloat."
-  [{:keys [op path before after passes indent-delta]}]
+  [{:keys [op path before after]}]
   ;; Model-facing per-file summary (patch/write/struct_patch result) — string
   ;; keys, enum values stringified to snake_case.
   (let [diff-text (unified-diff-text before after)]
     (cond-> {"path" path "op" (name (or op :update)) "changed" (not= before after)}
       diff-text
-      (assoc "diff" diff-text)
-
-      (seq passes)
-      (assoc "passes" (mapv #(str/replace (name %) "-" "_") passes))
-
-      indent-delta
-      (assoc "indent_delta" indent-delta))))
+      (assoc "diff" diff-text))))
 
 (defn refresh-file-summary
   "Recompute a per-file summary's \"diff\"/\"changed\" from the ORIGINAL `before`
@@ -3948,7 +3734,6 @@
    deletes. Anchors re-resolve against live content, so they survive line drift
    within the batch. Optional per-edit \"expected_mtime\"/\"expected_size\" guards.
 
-   Group several edits to one file: {\"path\": P, \"edits\": [{...}, {...}]}.
    Returns [{\"path\": P, \"op\": \"update\"|\"add\", \"changed\": bool, \"diff\": str}].
    Gotcha: a stale hash that sits FAR from its stated line aborts the WHOLE batch
    (nothing written) — re-cat for fresh anchors. For whole-file writes use write."
@@ -3962,8 +3747,7 @@
                        :path (or (:path (first plans)) ".")
                        :kind :file
                        :result summaries
-                       :metadata {:mode :exact-replace
-                                  :file-count (count summaries)
+                       :metadata {:file-count (count summaries)
                                   :changed-count (count (filter #(get % "changed") summaries))
                                   ;; Pre-edit content per file (relativized path == summary
                                   ;; "path") so an :after op-hook that rewrites the file
@@ -3980,7 +3764,6 @@
                                        :resolved nil
                                        :absolute nil
                                        :kind :file}
-                              :mode :exact-replace
                               :started-at-ms (now-ms)
                               :finished-at-ms (now-ms)
                               :duration-ms 0}
@@ -3996,8 +3779,7 @@
                    :reason (:reason first-failure)
                    :failures (:failures result)
                    :checks (:checks result)
-                   :loop-hint (:loop-hint result)
-                   :mode :exact-replace}})))))
+                   :loop-hint (:loop-hint result)}})))))
 
 (defn- normalize-write-args
   "Accept write args EITHER as a single options map
@@ -5014,13 +4796,8 @@
     #'patch-tool
     {:symbol 'patch
      :native-tool? true
-     ;; patch(edits) OR patch({path, edits}) — carry a single-file top-level
-     ;; `path` through so the {path, edits} form isn't dropped. One positional
-     ;; arg either way. Escape hatch: returns the RAW value (engine renders).
      :call (fn [input]
-             (if-let [p (get input "path")]
-               {:args [{"path" p "edits" (get input "edits")}]}
-               {:args [(get input "edits")]}))
+             {:args [(get input "edits")]})
      :description
      (str "Surgically edit text or unsupported code using fresh anchors from `cat`, `rg`, or "
           "`struct_index`. The batch is atomic and every write stales all anchors. On failure, "
@@ -5031,18 +4808,14 @@
      :schema
      {:type "object"
       :properties
-      {"path" {:type "string"
-               :description
-               "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
-       "edits"
+      {"edits"
        {:type "array"
         :minItems 1
-        :description
-        "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
+        :description "Atomic anchor edits. Every item names its file, so one batch may span files."
         :items
         {:type "object"
          :properties
-         {"path" {:type "string" :description "File path (omit when top-level `path` is set)."}
+         {"path" {:type "string" :minLength 1 :description "File path."}
           "from_anchor" {:type "string" :minLength 1 :description "lineno:hash from a fresh read."}
           "to_anchor"
           {:type "string" :minLength 1 :description "Optional inclusive end anchor for a span."}
@@ -5051,7 +4824,7 @@
           {:type "integer" :minimum 0 :description "Optional file-mtime staleness guard."}
           "expected_size"
           {:type "integer" :minimum 0 :description "Optional file-size staleness guard."}}
-         :required ["from_anchor" "replace"]
+         :required ["path" "from_anchor" "replace"]
          :additionalProperties false}}}
       :required ["edits"]
       :additionalProperties false}

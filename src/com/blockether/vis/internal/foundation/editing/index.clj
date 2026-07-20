@@ -6,7 +6,7 @@
    Every item carries FULL anchors — the same `<lineno>:<hash>` anchors `cat`
    emits and `patch` consumes — for its first and last line, so you can replace
    a whole definition straight from the index with one
-   `patch([{from_anchor start, to_anchor end, replace …}])`, no intermediate
+   `patch([{path P, from_anchor start, to_anchor end, replace …}])`, no intermediate
    `cat`. Each line is:
 
      <kind> <name>  <signature>  @<start-anchor>..<end-anchor>

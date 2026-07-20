@@ -232,7 +232,7 @@
   ;; safe-path is the single gate; this suite proves every mutation
   ;; tool actually routes through it.
   (let [escape-paths ["../escape.txt" "../../etc/passwd" "/etc/passwd" "target/../../escape.txt"]]
-    (it "patch (exact-replace) refuses to write outside cwd"
+    (it "patch refuses to write outside cwd"
         (let [patch (private-fn "patch-safe")]
           (doseq [p escape-paths]
             (let [r (patch [{"path" p "from_anchor" (patch/line-anchor 1 "x") "replace" "y"}])]
@@ -455,7 +455,7 @@
           (before (protected-env
                     [{:glob "target/editing-test/protected/*.txt" :access :read-only :hint hint}])
                   (constantly :ok)
-                  [[{"path" path "search" "old" "replace" "new"}]])
+                  [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
 
           failure
           (:result out)]
@@ -632,10 +632,11 @@
               before
               (:ext.symbol/before-fn (private-fn "patch-symbol"))]
 
-          (before (gate-env seen nil)
-                  (constantly :ok)
-                  [[{"path" "target/editing-test/a.clj" "search" "o" "replace" "n" "atomic" true}
-                    {"path" "target/editing-test/b.clj" "search" "o" "replace" "n"}]])
+          (before
+            (gate-env seen nil)
+            (constantly :ok)
+            [[{"path" "target/editing-test/a.clj" "from_anchor" "1:abc" "replace" "n" "atomic" true}
+              {"path" "target/editing-test/b.clj" "from_anchor" "1:def" "replace" "n"}]])
           (expect (true? (:atomic? @seen)))
           (expect (= #{"target/editing-test/a.clj" "target/editing-test/b.clj"}
                      (set (:paths @seen))))))
@@ -696,7 +697,7 @@
           patch-out
           (patch-before (protected-env rules)
                         (constantly :ok)
-                        [[{"path" path "search" "old" "replace" "new"}]])
+                        [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
 
           cat-out
           (cat-before (protected-env rules)
@@ -707,7 +708,7 @@
           (:result cat-out)]
 
       (expect (not (contains? patch-out :result)))
-      (expect (= [[{"path" path "search" "old" "replace" "new"}]] (:args patch-out)))
+      (expect (= [[{"path" path "from_anchor" "1:abc" "replace" "new"}]] (:args patch-out)))
       (expect (some? failure))
       (expect (false? (:success? failure)))
       (expect (= hint
@@ -1578,80 +1579,6 @@
                        :plans
                        first
                        :after)))))
-  (it "grouped same-file patch map applies several edits without repeating :path"
-      (let [patch
-            (private-fn "patch-safe")
-
-            p
-            (write-temp! "bbfs/patch-grouped.txt" "alpha\nbeta\ngamma\n")
-
-            r
-            (patch {"path" p
-                    "edits" [{"from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
-                             {"from_anchor" (patch/line-anchor 2 "beta") "replace" "BETA"}]})]
-
-        (expect (true? (:success? r)))
-        (expect (= "ALPHA\nBETA\ngamma\n" (slurp p)))
-        (expect (= 1 (count (:plans r))))
-        (expect (= "alpha\nbeta\ngamma\n"
-                   (-> r
-                       :plans
-                       first
-                       :before)))
-        (expect (= "ALPHA\nBETA\ngamma\n"
-                   (-> r
-                       :plans
-                       first
-                       :after)))))
-  (it "grouped same-file patch TOLERATES a redundant per-edit :path echoing the group"
-      (let [patch
-            (private-fn "patch-safe")
-
-            p
-            (write-temp! "bbfs/patch-grouped-echo.txt" "alpha\nbeta\n")
-
-            r
-            ;; A per-edit :path that EQUALS the group's :path is redundant but
-            ;; harmless — the model routinely echoes it to satisfy the required
-            ;; JSON key. It must NOT hard-fail (that stranded the loop re-issuing
-            ;; the identical call); it applies as normal.
-            (patch {"path" p
-                    "edits"
-                    [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}]})]
-
-        (expect (true? (:success? r)))
-        (expect (= "ALPHA\nbeta\n" (slurp p)))))
-  (it "grouped patch rejects a per-edit :path pointing at a DIFFERENT file"
-      (let [patch
-            (private-fn "patch-safe")
-
-            p
-            (write-temp! "bbfs/patch-grouped-conflict.txt" "alpha\nbeta\n")
-
-            err
-            (try (patch {"path" p
-                         "edits" [{"path" "target/editing-test/bbfs/other.txt"
-                                   "from_anchor" (patch/line-anchor 1 "alpha")
-                                   "replace" "ALPHA"}]})
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
-
-        (expect (some? err))
-        (expect (= "alpha\nbeta\n" (slurp p)))))
-  (it "grouped same-file patch preserves all-or-nothing on a bad anchor"
-      (let [patch
-            (private-fn "patch-safe")
-
-            p
-            (write-temp! "bbfs/patch-grouped-bad.txt" "alpha\nbeta\n")
-
-            r
-            (patch {"path" p
-                    "edits" [{"from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
-                             {"from_anchor" (patch/line-anchor 9 "missing") "replace" "x"}]})]
-
-        (expect (false? (:success? r)))
-        (expect (= "alpha\nbeta\n" (slurp p)))))
   (it "editing an unknown path surfaces a structured :file-not-found failure"
       (let [patch
             (private-fn "patch-safe")
@@ -1694,15 +1621,9 @@
                        :stale
                        :reason)))
         (expect (= "hello\n" (slurp p)))))
-  (it "empty edit vector is a no-op success (no failures, no writes)"
-      (let [patch
-            (private-fn "patch-safe")
-
-            r
-            (patch [])]
-
-        (expect (true? (:success? r)))
-        (expect (= [] (:plans r)))))
+  (it "empty edit vector is rejected"
+      (let [patch (private-fn "patch-safe")]
+        (expect (throws? clojure.lang.ExceptionInfo #(patch [])))))
   (it "a single patch invocation cannot move the loop counter past +1 per path"
       ;; Loop counter must be PER INVOCATION, not per failed edit. Two
       ;; failed edits in one call against the same path bump the counter
@@ -1731,20 +1652,6 @@
                          :consecutive-failures)))
           (expect (nil? (:loop-hint r))))
         (clear file)))
-  (it "patch reports :exact-replace as its only mode (envelope retired)"
-      (let [patch-tool
-            (private-fn "patch-tool")
-
-            p
-            (write-temp! "bbfs/dispatch-mode.txt" "alpha\nbeta\n")
-
-            vec-out
-            (-> (patch-tool [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "X"}])
-                :metadata
-                :mode)]
-
-        (expect (= :exact-replace vec-out))
-        (expect (= "X\nbeta\n" (slurp p)))))
   (it "patch diagnostics report per-edit reasons in edit order and write nothing"
       (let [path
             (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
@@ -1926,7 +1833,7 @@
              ;; The summary IS what the model reads back as the patch result
              ;; AND what the channel renderer projects. Every key counts; redundant
              ;; signal pollutes the iteration trailer.
-             (it "anchor-located edit omits routine hashline pass, indent delta, and line counters"
+             (it "anchor-located edit emits only path, operation, change flag, and diff"
                  (let [patch
                        (private-fn "patch-safe")
 
@@ -1945,8 +1852,6 @@
 
                    (expect (true? (:success? r)))
                    (expect (= #{"path" "op" "changed" "diff"} (set (keys s))))
-                   (expect (not (contains? s "passes")))
-                   (expect (not (contains? s "indent_delta")))
                    (expect (not (contains? s "lines_before")))
                    (expect (not (contains? s "lines_after")))
                    (expect (not (contains? s "delta_lines"))))))
@@ -2115,11 +2020,8 @@
           patch
           (private-fn "patch-safe")
 
-          ;; The dup line 'x' is surfaced as `1:hash` / `3:hash` — the line
-          ;; number disambiguates, no `#N` ordinal needed. A BARE content hash
-          ;; (no line number) carries only one coordinate, so it is refused
-          ;; outright (`:hashline-malformed`) — the old bare-hash content
-          ;; -uniqueness fallback is gone (it could land on the wrong dup line).
+          ;; The line coordinate disambiguates duplicate content. A hash without
+          ;; a line coordinate is malformed.
           hashes
           (:anchors (read-file path))
 
@@ -2398,35 +2300,28 @@
         (expect (string/ends-with? (:filename att) ".txt"))
         (expect (= "file" (:kind att)))))))
 
-;; ---------------------------------------------------------------------------
-;; patch is ANCHOR-ONLY — the removed `search`/`replace`/`nth` text-matcher API
-;; keeps getting re-hallucinated by models (the prompt used to teach it). These
-;; guard BOTH the runtime rejection AND the prompt that seeded the mistake.
-;; ---------------------------------------------------------------------------
 (defdescribe
-  patch-anchor-only-test
+  patch-input-contract-test
   (let [coerce (private-fn "coerce-patch-edits")]
     (it "accepts a valid anchor edit (from_anchor + replace)"
         (let [out (coerce [{"path" "p.txt" "from_anchor" "12:abc" "replace" "new"}])]
           (expect (= 1 (count out)))
           (expect (= "12:abc" (get (first out) "from_anchor")))))
-    (it "rejects the removed `search` key with an ANCHOR-ONLY message naming it"
-        (let [ex (try (coerce [{"path" "p.txt" "search" "old" "replace" "new"}])
+    (it "accepts only a non-empty vector of edit maps"
+        (expect (throws? clojure.lang.ExceptionInfo #(coerce [])))
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(coerce {"path" "p.txt" "from_anchor" "12:abc" "replace" "new"}))))
+    (it "rejects unknown edit keys"
+        (let [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" "typo" true}])
                       nil
                       (catch clojure.lang.ExceptionInfo e e))]
           (expect (some? ex))
-          (expect (string/includes? (ex-message ex) "ANCHOR-ONLY"))
-          (expect (string/includes? (ex-message ex) "from_anchor"))
-          (expect (= ["search"] (:removed (ex-data ex))))))
-    (it "rejects the removed `nth` key too"
-        (expect (= :threw
-                   (try (coerce [{"path" "p.txt" "from_anchor" "1:a" "replace" "x" "nth" "all"}])
-                        :no-throw
-                        (catch clojure.lang.ExceptionInfo _ :threw)))))
-    (it "still rejects an edit with no locator (generic from_anchor error)"
+          (expect (string/includes? (ex-message ex) "unknown keys"))
+          (expect (= ["typo"] (:unknown (ex-data ex))))))
+    (it "rejects an edit with no locator"
         (expect (throws? clojure.lang.ExceptionInfo #(coerce [{"path" "p.txt" "replace" "x"}]))))))
 
-(defdescribe editing-native-contract-no-stale-api-test
+(defdescribe editing-native-contract-test
              (let [patch-description
                    (:ext.symbol/description editing/patch-symbol)
 
@@ -2444,10 +2339,11 @@
                    (expect (not (string/includes? patch-description "from_anchor")))
                    (expect (contains? (get-in patch-schema [:properties "edits" :items :properties])
                                       "from_anchor")))
-               (it "does not advertise retired search/replace inputs"
+               (it "advertises exactly the canonical patch fields"
                    (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
-                     (expect (not (contains? fields "search")))
-                     (expect (not (contains? fields "nth")))))))
+                     (expect (= #{"path" "from_anchor" "to_anchor" "replace" "expected_mtime"
+                                  "expected_size"}
+                                (set (keys fields))))))))
 
 (defdescribe editing-native-schema-shape-test
              (it "matches rg's real scalar-or-list query contract"
@@ -2458,14 +2354,13 @@
                    (expect (= 2 (:maxProperties schema)))
                    (expect (= 2 (get-in schema [:properties "range" :minItems])))
                    (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
-             (it "keeps both patch path forms without a provider-rejected root union"
+             (it "uses one portable patch shape with a path on every edit"
                  (let [schema (:ext.symbol/schema editing/patch-symbol)]
                    (expect (= "object" (:type schema)))
                    (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-                   (expect (string/includes? (get-in schema [:properties "path" :description])
-                                             "Single-file form"))
-                   (expect (string/includes? (get-in schema [:properties "edits" :description])
-                                             "Without")))))
+                   (expect (= #{"edits"} (set (keys (:properties schema)))))
+                   (expect (= ["path" "from_anchor" "replace"]
+                              (get-in schema [:properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test
@@ -2644,9 +2539,7 @@
   ;; now says WHICH lines were read.
   (let [render @#'editing/render-cat-result]
     (it "single contiguous range: `L<a>-<b>`, count implied (renders each value's \"text\")"
-        ;; Canonical anchor value is a {"text" line} map (mirrors rg's hit value);
-        ;; the renderer pulls `"text"` for the gutter row. Bare-string values are
-        ;; still tolerated (the summary-only cases below exercise that path).
+        ;; Canonical anchor values mirror rg hits: {"text" line}.
         (let [card (render {"path" "app.css"
                             "anchors"
                             {"1:aa" {"text" "x"} "2:bb" {"text" "y"} "3:cc" {"text" "z"}}})]
@@ -2654,21 +2547,25 @@
           ;; Gutter is sized to the widest line number (1 digit here) — no
           ;; fixed-5 left-pad, so the row is flush `1  x`, not `    1  x`.
           (expect (clojure.string/includes? (:body card) "\n1  x\n"))))
-    (it "single line: bare `L<n>`"
+    (it "single line: `L<n>`"
         (expect (= "`app.css` · L42"
-                   (:summary (render {"path" "app.css" "anchors" {"42:ff" "q"}})))))
+                   (:summary (render {"path" "app.css" "anchors" {"42:ff" {"text" "q"}}})))))
     (it "multiple ranges: overall extent + run count + line total"
         (expect (= "`app.css` · L1-371 (2 ranges) · 4 lines"
                    (:summary (render {"path" "app.css"
-                                      "anchors"
-                                      {"1:aa" "a" "2:bb" "b" "370:cc" "c" "371:dd" "d"}})))))
+                                      "anchors" {"1:aa" {"text" "a"}
+                                                 "2:bb" {"text" "b"}
+                                                 "370:cc" {"text" "c"}
+                                                 "371:dd" {"text" "d"}}})))))
     (it "spans derive from SORTED line numbers, not map iteration order"
         (expect (= "`app.css` · L5-7"
                    (:summary (render {"path" "app.css"
-                                      "anchors" {"7:cc" "c" "5:aa" "a" "6:bb" "b"}})))))
+                                      "anchors" {"7:cc" {"text" "c"}
+                                                 "5:aa" {"text" "a"}
+                                                 "6:bb" {"text" "b"}}})))))
     (it "unparseable anchor key degrades to the count-only summary (total, never throws)"
         (expect (= "`app.css` · 1 line"
-                   (:summary (render {"path" "app.css" "anchors" {"garbage" "g"}})))))
+                   (:summary (render {"path" "app.css" "anchors" {"garbage" {"text" "g"}}})))))
     (it "empty anchors: `0 lines`, no body"
         (let [card (render {"path" "app.css" "anchors" {}})]
           (expect (= "`app.css` · 0 lines" (:summary card)))

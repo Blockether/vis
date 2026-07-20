@@ -2774,32 +2774,16 @@
 (defdescribe
   strip-echo-diffs-test
   ;; A patch/write/struct_patch result carries a per-file unified `"diff"`. On a
-  ;; BYTE-EXACT edit that diff merely re-describes the bytes the model just
-  ;; authored, so it's stripped from the MODEL wire (the human card keeps it).
-  ;; It's kept whenever the harness may have changed the edit under the model —
-  ;; a fuzzy `"passes"` fired or `"indent_delta"` auto-shifted.
+  ;; successful edit that diff merely re-describes the bytes the model supplied,
+  ;; so it is stripped from the MODEL wire. The human card keeps it.
   (let [strip @#'lp/strip-echo-diffs]
     (it "drops the diff from a byte-exact edit summary"
         (expect (= [{"path" "a.clj" "op" "update" "changed" true}]
                    (strip [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"}]))))
-    (it
-      "keeps the diff when a fuzzy pass fired"
-      (let
-        [s
-         {"path" "a.clj" "op" "update" "changed" true "diff" "--- x" "passes" ["relative_indent"]}]
-        (expect (= [s] (strip [s])))))
-    (it "keeps the diff when indent auto-shifted"
-        (let [s {"path" "a.clj" "op" "update" "changed" true "diff" "--- x" "indent_delta" 2}]
-          (expect (= [s] (strip [s])))))
     (it "strips a single-map (write) summary too"
         (expect (= {"path" "a.clj" "op" "add" "changed" true}
                    (strip {"path" "a.clj" "op" "add" "changed" true "diff" "--- x"}))))
-    ;; ORACLE: struct_patch builds its `:result` from the SAME
-    ;; `patch-result-file-summary` as patch/write, off a plan that carries no
-    ;; fuzzy `:passes` / `:indent-delta` (a structural reparse, not an anchor
-    ;; match). So its real per-file summary must strip like any other. Driving
-    ;; the ACTUAL builder guards against a future struct plan gaining a key that
-    ;; silently keeps the diff on the model wire.
+    ;; Drive the shared summary builder so struct_patch cannot silently diverge.
     (it "strips the diff from a real struct_patch/write summary"
         (let
           [summary ((deref #'ed/patch-result-file-summary)
@@ -2960,12 +2944,10 @@
         (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
     (it "file_exists synthesizes its wire name file_exists (bound name matches)"
         (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
-    (it "patch carries a single-file top-level path through (escape hatch)"
-        (expect (= "patch([{\"from_anchor\": \"1:a\"}])"
-                   (synth {:name "patch" :input {"edits" [{"from_anchor" "1:a"}]}})))
-        (expect (= "patch({\"path\": \"a.clj\", \"edits\": [{\"from_anchor\": \"1:a\"}]})"
+    (it "patch projects its one native shape to the edits vector"
+        (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\"}])"
                    (synth {:name "patch"
-                           :input {"path" "a.clj" "edits" [{"from_anchor" "1:a"}]}}))))
+                           :input {"edits" [{"path" "a.clj" "from_anchor" "1:a"}]}}))))
     (it
       "strips the model-drift leading colon at EVERY depth (not just top-level)"
       ;; Regression: the model reads keyword-heavy Clojure source and drifts into
@@ -2974,17 +2956,24 @@
       ;; `patch([{\":from_anchor\": …}])`. Keys normalize at all depths; VALUES
       ;; that happen to start with a colon are untouched.
       (expect (= "cat(\"x\")" (synth {:name "cat" :input {":path" "x"}})))
-      (expect (= "patch([{\"from_anchor\": \"1:a\", \"replace\": \"x\"}])"
-                 (synth {:name "patch" :input {"edits" [{":from_anchor" "1:a" ":replace" "x"}]}})))
+      (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"replace\": \"x\"}])"
+                 (synth {:name "patch"
+                         :input {"edits" [{":path" "a.clj"
+                                            ":from_anchor" "1:a"
+                                            ":replace" "x"}]}})))
       (expect
         (=
-          "patch({\"path\": \"a.clj\", \"edits\": [{\"from_anchor\": \"1:a\", \"to_anchor\": \"2:b\"}]})"
+          "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"to_anchor\": \"2:b\"}])"
           (synth {:name "patch"
-                  :input {":path" "a.clj" "edits" [{":from_anchor" "1:a" ":to_anchor" "2:b"}]}})))
+                  :input {"edits" [{":path" "a.clj"
+                                     ":from_anchor" "1:a"
+                                     ":to_anchor" "2:b"}]}})))
       ;; a VALUE spelled like a keyword survives verbatim — only KEYS are cleaned.
-      (expect (= "patch([{\"from_anchor\": \"1:a\", \"replace\": \":kw-value\"}])"
+      (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"replace\": \":kw-value\"}])"
                  (synth {:name "patch"
-                         :input {"edits" [{"from_anchor" "1:a" "replace" ":kw-value"}]}}))))
+                         :input {"edits" [{"path" "a.clj"
+                                            "from_anchor" "1:a"
+                                            "replace" ":kw-value"}]}}))))
     (it "language facade splits `language` into the leading positional"
         (expect (= "repl_eval(\"clojure\", {\"code\": \"(+ 1 2)\"})"
                    (synth {:name "repl_eval" :input {"language" "clojure" "code" "(+ 1 2)"}})))
