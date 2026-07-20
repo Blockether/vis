@@ -89,7 +89,9 @@
   ^String [line]
   (let
     [h
-     (int (bit-and (.hashCode (str/trim (str line))) (long hash-mask)))
+     (int (bit-and (.hashCode (str/trim (str line)))
+                   #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                   (long hash-mask)))
 
      hex
      (Integer/toHexString h)

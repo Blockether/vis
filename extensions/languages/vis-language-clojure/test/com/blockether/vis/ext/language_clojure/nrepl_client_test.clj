@@ -5,7 +5,8 @@
    eval through our cached-conn client, then stop the server.
    `nrepl-client/close-all!` between tests prevents the cached
    connection from a previous run dialing into a dead socket."
-  (:require [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [lazytest.core :refer [defdescribe expect it]]
             [nrepl.core :as nrepl]
             [nrepl.middleware.session :as mw-session]

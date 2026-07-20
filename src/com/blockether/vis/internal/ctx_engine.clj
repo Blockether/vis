@@ -791,7 +791,7 @@
   ([v ^long depth]
    (let
      [depth
-      (long depth)
+      depth
 
       depth'
       (dec depth)]

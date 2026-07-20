@@ -83,7 +83,7 @@
     (swap! crash-times update
       k
       (fn [v]
-        (conj (filterv #(< (- now (long %)) crash-window-ms) (or v [])) now)))))
+        (conj (filterv #(< (- now (long %)) (long crash-window-ms)) (or v [])) now)))))
 
 (defn crash-looping?
   "True when `[session-id dir]`'s managed REPL died `max-crashes-in-window`+
@@ -91,7 +91,7 @@
    failure instead of burning another JVM boot per eval."
   [session-id dir]
   (let [now (System/currentTimeMillis)]
-    (>= (count (filter #(< (- now (long %)) crash-window-ms) (get @crash-times [session-id dir])))
+    (>= (count (filter #(< (- now (long %)) (long crash-window-ms)) (get @crash-times [session-id dir])))
         (long max-crashes-in-window))))
 
 ;; ── Idle reaping ────────────────────────────────────────────────────────────
@@ -155,7 +155,7 @@
   (boolean (and (not (:external? info))
                 (proc-alive? info)
                 (:started-at info)
-                (< (- (System/currentTimeMillis) (long (:started-at info))) start-deadline-ms))))
+                (< (- (System/currentTimeMillis) (long (:started-at info))) (long start-deadline-ms)))))
 
 (defn- health-probe-ms
   "How long to wait for a recorded REPL to answer a describe before judging it
@@ -163,7 +163,7 @@
    slow legit boot is never killed mid-flight); anything else gets a short grace."
   [info]
   (if (booting? info)
-    (max 5000 (- start-deadline-ms (- (System/currentTimeMillis) (long (:started-at info)))))
+    (max 5000 (- (long start-deadline-ms) (- (System/currentTimeMillis) (long (:started-at info)))))
     5000))
 
 (def ^:private default-aliases
@@ -844,7 +844,7 @@
                "message" (str "nREPL for this dir crashed "
                               max-crashes-in-window
                               "+ times in "
-                              (quot crash-window-ms 60000)
+                              (quot (long crash-window-ms) 60000)
                               " min — autostart is SUSPENDED. Fix the boot failure"
                               " (see log_tail), then repl_start(\"clojure\", \"restart\")"
                               " to reset.")}

@@ -1600,7 +1600,9 @@
   (into []
         (keep (fn [{:keys [path] :as e}]
                 (let [score (find-relevance query path)]
-                  (when (>= (double score) (double find-min-score))
+                  (when (>= (double score)
+                            #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                            (double find-min-score))
                     (assoc e
                       :binary? false
                       :score score)))))
@@ -1675,7 +1677,10 @@
                                       rel (rel-path f)
                                       score (find-relevance query rel)]
 
-                                     (when (and (>= (double score) (double find-min-score))
+                                     (when (and (>= (double score)
+                                                    #_{:clj-kondo/ignore
+                                                       [:redundant-primitive-coercion]}
+                                                    (double find-min-score))
                                                 (or is_hidden (not (.isHidden f)))
                                                 (not (ignored? (load-ignore-node base) f base)))
                                        {:path rel
@@ -2106,7 +2111,11 @@
                           (+ acc (count (str (second x)))))
                         0
                         xs))]
-    (+ (count (str (:text hit))) (long (sum-lens (:before hit))) (long (sum-lens (:after hit))))))
+    (+ (count (str (:text hit)))
+       #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+       (long (sum-lens (:before hit)))
+       #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+       (long (sum-lens (:after hit))))))
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
@@ -3163,7 +3172,7 @@
                         :path rel)]
              :loop-hint (patch-loop-hint n rel)
              :message (cond-> (:message fail)
-                        (>= (long n) (long patch-fail-loop-threshold))
+                        (>= n (long patch-fail-loop-threshold))
                         (str "\n" (patch-loop-hint n rel)))})
           (do (ensure-parent-dirs! file)
               (spit file content)

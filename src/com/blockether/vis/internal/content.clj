@@ -28,7 +28,7 @@
 
 (defn- string-keyed-map? [x] (and (map? x) (json-ready? x)))
 
-(defn- timestamp? [x] (and (integer? x) (not (neg? x))))
+(defn- timestamp? [x] (and (integer? x) (not (neg? (long x)))))
 
 (defmulti block-valid? #(get % "type"))
 
@@ -95,7 +95,7 @@
        (timestamp? (get message "created_at"))
        (or (nil? (get message "completed_at")) (timestamp? (get message "completed_at")))
        (or (nil? (get message "completed_at"))
-           (<= (get message "created_at") (get message "completed_at")))))
+           (<= (long (get message "created_at")) (long (get message "completed_at"))))))
 
 (defn event-valid?
   [event]

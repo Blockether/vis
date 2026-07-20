@@ -594,7 +594,8 @@
 
 (defn- comment-only-block?
   [python-context ^String expr]
-  (try (zero? (long (env/count-top-level-forms python-context (str/trim expr))))
+  (try (zero? #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+              (long (env/count-top-level-forms python-context (str/trim expr))))
        (catch Throwable _ false)))
 
 (defn- literal-code-block-error
@@ -976,6 +977,7 @@
      (System/currentTimeMillis)
 
      timeout-ms
+     #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
      (long (rt/native-tool-timeout-ms input))
 
      deadline
@@ -1136,7 +1138,10 @@
     (and (number? input)
          (number? max-input)
          (pos? (long max-input))
-         (>= (double input) (* (double CONTEXT_OVERFLOW_HOPELESS_FACTOR) (double max-input))))))
+         (>= (double input)
+             (* #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                (double CONTEXT_OVERFLOW_HOPELESS_FACTOR)
+                (double max-input))))))
 
 (def ^:private LAST_USER_PREVIEW_CHARS 500)
 
@@ -2603,8 +2608,9 @@
        (if-let [[base label] (target scopes)]
          (let
            [turn (current-turn)
-            blocked-turns (when turn
-                            (into (sorted-set) (filter #(>= (long %) turn)) (selected-turns base)))]
+            blocked-turns
+            (when turn
+              (into (sorted-set) (filter #(>= (long %) (long turn))) (selected-turns base)))]
 
            (when-not turn
              (throw (ex-info "session_fold cannot prove the current turn; folding is blocked."
@@ -4828,7 +4834,9 @@
      (long (or prev-max 8192))
 
      bumped
-     (long (Math/ceil (* (double base) (double MAX_TOKENS_RETRY_BUMP_FACTOR))))]
+     (long (Math/ceil (* (double base)
+                         #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                         (double MAX_TOKENS_RETRY_BUMP_FACTOR))))]
 
     (assoc (or prev-extra-body {}) :max_tokens bumped)))
 
@@ -6344,105 +6352,106 @@
                                                                        trailer-iters))}
                                         :extra-body current-extra-body})
                         (catch Exception e
-                          (cond (and (stream-truncated-error? e)
-                                     (< (long attempt) (long MAX_STREAM_TRUNCATED_RETRIES)))
-                                (do (tel/log! {:level :warn
-                                               :id ::stream-truncated-retry
-                                               :data {:iteration iteration
-                                                      :attempt (inc (long attempt))
-                                                      :max-retries MAX_STREAM_TRUNCATED_RETRIES
-                                                      :type (:type (ex-data e))}}
-                                              (str "Stream truncated, transparent retry "
-                                                   (inc (long attempt))
-                                                   "/" MAX_STREAM_TRUNCATED_RETRIES))
-                                    ::retry-stream)
-                                ;; Max-tokens cap: model burnt the entire output
-                                ;; budget on hidden reasoning before emitting a
-                                ;; tool call. Double the budget and try once more so the
-                                ;; turn doesn't fail when the same call would have
-                                ;; succeeded with a slightly larger ceiling. Reasoning-
-                                ;; heavy iterations hit this when the provider's
-                                ;; finish_reason: \"length\" leaves content-acc empty.
-                                (and (max-tokens-exceeded-error? e)
-                                     (< (long max-tokens-attempt)
-                                        (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
-                                (let
-                                  [data (ex-data e)
-                                   prev-max
-                                   (or (:output-tokens data) (:max_tokens current-extra-body) 8192)
-                                   bumped (bumped-max-tokens-extra-body current-extra-body
-                                                                        prev-max)]
+                          (cond
+                            (and (stream-truncated-error? e)
+                                 (< (long attempt) (long MAX_STREAM_TRUNCATED_RETRIES)))
+                            (do (tel/log! {:level :warn
+                                           :id ::stream-truncated-retry
+                                           :data {:iteration iteration
+                                                  :attempt (inc (long attempt))
+                                                  :max-retries MAX_STREAM_TRUNCATED_RETRIES
+                                                  :type (:type (ex-data e))}}
+                                          (str "Stream truncated, transparent retry "
+                                               (inc (long attempt))
+                                               "/" MAX_STREAM_TRUNCATED_RETRIES))
+                                ::retry-stream)
+                            ;; Max-tokens cap: model burnt the entire output
+                            ;; budget on hidden reasoning before emitting a
+                            ;; tool call. Double the budget and try once more so the
+                            ;; turn doesn't fail when the same call would have
+                            ;; succeeded with a slightly larger ceiling. Reasoning-
+                            ;; heavy iterations hit this when the provider's
+                            ;; finish_reason: \"length\" leaves content-acc empty.
+                            (and (max-tokens-exceeded-error? e)
+                                 (< (long max-tokens-attempt)
+                                    (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
+                            (let
+                              [data (ex-data e)
+                               prev-max
+                               (or (:output-tokens data) (:max_tokens current-extra-body) 8192)
+                               bumped (bumped-max-tokens-extra-body current-extra-body prev-max)]
 
-                                  (tel/log! {:level :warn
-                                             :id ::max-tokens-exceeded-retry
-                                             :data {:iteration iteration
-                                                    :attempt (inc (long max-tokens-attempt))
-                                                    :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                                    :prev-max prev-max
-                                                    :new-max (:max_tokens bumped)
-                                                    :reasoning-length (:reasoning-length data)}}
-                                            (str "max_tokens exhausted on reasoning (~"
-                                                 (or (:reasoning-length data) "?")
-                                                 " reasoning tokens); retry "
-                                                 (inc (long max-tokens-attempt))
-                                                 "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                                 " with max_tokens=" (:max_tokens bumped)))
-                                  ;; Bump max-tokens-attempt so a second cap-hit
-                                  ;; doesn't loop forever; keep `attempt` flat so a
-                                  ;; subsequent stream-truncated still has its own
-                                  ;; quota.
-                                  {::retry-max-tokens bumped})
-                                ;; Post-refresh auth 401: the token we
-                                ;; JUST force-refreshed 401'd AGAIN. Almost
-                                ;; always OAuth PROPAGATION LAG at the
-                                ;; provider edge (a freshly-minted token is
-                                ;; briefly not-yet-valid), NOT a dead
-                                ;; credential — the same token succeeds
-                                ;; seconds later. Re-minting is what CAUSES
-                                ;; the storm, so DON'T refresh: back off and
-                                ;; retry the SAME token until it settles.
-                                (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
-                                     (refresh-just-failed? e resolved-model))
-                                ::retry-auth-backoff
-                                ;; Auth 401/403 from a refreshable
-                                ;; provider: force an OAuth refresh +
-                                ;; router rebuild, then re-send once.
-                                ;; `try-refresh-provider-token!` does
-                                ;; the work and returns true only when
-                                ;; a refresh actually happened.
-                                (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
-                                     (auth-refreshable-error? e resolved-model)
-                                     (try-refresh-provider-token! resolved-model))
-                                ::retry-auth-refresh
-                                ;; svar gave up on the single pinned
-                                ;; provider (transient 5xx / dropped
-                                ;; connection) and threw its terminal
-                                ;; `provider-unavailable`. On the MAIN
-                                ;; turn we don't hop providers, but a
-                                ;; momentary blip usually clears: back
-                                ;; off (widening delay) and re-send the
-                                ;; SAME request a few times before the
-                                ;; turn fails with the card.
-                                (provider-unavailable-retry? e pu-attempt)
-                                (let [delay-ms (provider-unavailable-retry-delay-ms pu-attempt)]
-                                  (tel/log! {:level :warn
-                                             :id ::provider-unavailable-retry
-                                             :data {:iteration iteration
-                                                    :attempt (inc (long pu-attempt))
-                                                    :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
-                                                    :delay-ms delay-ms
-                                                    :status (:status (ex-data e))}}
-                                            (str "Provider unavailable, transparent retry "
-                                                 (inc (long pu-attempt))
-                                                 "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
-                                  (Thread/sleep (long delay-ms))
-                                  ::retry-provider-unavailable)
-                                :else (handle-iteration-exception! e
-                                                                   {:iteration iteration
-                                                                    :messages effective-messages
-                                                                    :routing effective-routing
-                                                                    :reasoning-level
-                                                                    reasoning-level}))))]
+                              (tel/log! {:level :warn
+                                         :id ::max-tokens-exceeded-retry
+                                         :data {:iteration iteration
+                                                :attempt (inc (long max-tokens-attempt))
+                                                :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                                :prev-max prev-max
+                                                :new-max (:max_tokens bumped)
+                                                :reasoning-length (:reasoning-length data)}}
+                                        (str "max_tokens exhausted on reasoning (~"
+                                             (or (:reasoning-length data) "?")
+                                             " reasoning tokens); retry "
+                                             (inc (long max-tokens-attempt))
+                                             "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                             " with max_tokens=" (:max_tokens bumped)))
+                              ;; Bump max-tokens-attempt so a second cap-hit
+                              ;; doesn't loop forever; keep `attempt` flat so a
+                              ;; subsequent stream-truncated still has its own
+                              ;; quota.
+                              {::retry-max-tokens bumped})
+                            ;; Post-refresh auth 401: the token we
+                            ;; JUST force-refreshed 401'd AGAIN. Almost
+                            ;; always OAuth PROPAGATION LAG at the
+                            ;; provider edge (a freshly-minted token is
+                            ;; briefly not-yet-valid), NOT a dead
+                            ;; credential — the same token succeeds
+                            ;; seconds later. Re-minting is what CAUSES
+                            ;; the storm, so DON'T refresh: back off and
+                            ;; retry the SAME token until it settles.
+                            (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
+                                 (refresh-just-failed? e resolved-model))
+                            ::retry-auth-backoff
+                            ;; Auth 401/403 from a refreshable
+                            ;; provider: force an OAuth refresh +
+                            ;; router rebuild, then re-send once.
+                            ;; `try-refresh-provider-token!` does
+                            ;; the work and returns true only when
+                            ;; a refresh actually happened.
+                            (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
+                                 (auth-refreshable-error? e resolved-model)
+                                 (try-refresh-provider-token! resolved-model))
+                            ::retry-auth-refresh
+                            ;; svar gave up on the single pinned
+                            ;; provider (transient 5xx / dropped
+                            ;; connection) and threw its terminal
+                            ;; `provider-unavailable`. On the MAIN
+                            ;; turn we don't hop providers, but a
+                            ;; momentary blip usually clears: back
+                            ;; off (widening delay) and re-send the
+                            ;; SAME request a few times before the
+                            ;; turn fails with the card.
+                            (provider-unavailable-retry? e pu-attempt)
+                            (let [delay-ms (provider-unavailable-retry-delay-ms pu-attempt)]
+                              (tel/log! {:level :warn
+                                         :id ::provider-unavailable-retry
+                                         :data {:iteration iteration
+                                                :attempt (inc (long pu-attempt))
+                                                :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
+                                                :delay-ms delay-ms
+                                                :status (:status (ex-data e))}}
+                                        (str "Provider unavailable, transparent retry "
+                                             (inc (long pu-attempt))
+                                             "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
+                              (Thread/sleep #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                                            (long delay-ms))
+                              ::retry-provider-unavailable)
+                            :else (handle-iteration-exception! e
+                                                               {:iteration iteration
+                                                                :messages effective-messages
+                                                                :routing effective-routing
+                                                                :reasoning-level
+                                                                reasoning-level}))))]
                      (if-let
                        [[attempt* max-tokens-attempt* pu-attempt*]
                         (next-retry-counters result
@@ -6475,7 +6484,8 @@
                            ;; wait, then re-send the SAME token — no re-mint, no
                            ;; router rebuild. `attempt` grows so backoff widens and
                            ;; the retry budget still bounds it.
-                           (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
+                           (do (Thread/sleep #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                                             (long (auth-propagation-backoff-ms attempt)))
                                (recur attempt*
                                       max-tokens-attempt*
                                       pu-attempt*

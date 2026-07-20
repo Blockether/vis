@@ -294,16 +294,16 @@
                (let [ks (key->py k path)]
                  (str (python-string-literal ks)
                       ": "
-                      (python-literal* v (inc indent) width (conj path ks)))))
+                      (python-literal* v (inc (long indent)) width (conj path ks)))))
              m)
 
        inline
        (str "{" (str/join ", " items) "}")]
 
-      (if (and (not (str/includes? inline "\n")) (<= (+ indent (count inline)) width))
+      (if (and (not (str/includes? inline "\n")) (<= (+ (long indent) (count inline)) (long width)))
         inline
         (str "{\n"
-             (str/join ",\n" (map #(str (apply str (repeat (inc indent) " ")) %) items))
+             (str/join ",\n" (map #(str (apply str (repeat (inc (long indent)) " ")) %) items))
              "\n"
              (apply str (repeat indent " "))
              "}")))))
@@ -314,15 +314,15 @@
     "[]"
     (let
       [items
-       (mapv #(python-literal* % (inc indent) width path) xs)
+       (mapv #(python-literal* % (inc (long indent)) width path) xs)
 
        inline
        (str "[" (str/join ", " items) "]")]
 
-      (if (and (not (str/includes? inline "\n")) (<= (+ indent (count inline)) width))
+      (if (and (not (str/includes? inline "\n")) (<= (+ (long indent) (count inline)) (long width)))
         inline
         (str "[\n"
-             (str/join ",\n" (map #(str (apply str (repeat (inc indent) " ")) %) items))
+             (str/join ",\n" (map #(str (apply str (repeat (inc (long indent)) " ")) %) items))
              "\n"
              (apply str (repeat indent " "))
              "]")))))
@@ -1156,7 +1156,8 @@ def __vis_native_result_scan__(__vis_tree__):
    (comment-only blocks). Iterations that produce no evidence are rejected at
    the model boundary."
   [python-context code]
-  (when (zero? (long (count-top-level-forms python-context code)))
+  (when (zero? #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+               (long (count-top-level-forms python-context code)))
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
                     {:type :vis/empty-block :form-count 0}))))
 
@@ -2538,7 +2539,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
 
         (doseq [idx (range lo (inc hi))]
           (let
-            [pfx (str (format (str "%" width "d") (inc idx)) ": ")
+            [pfx (str (format (str "%" width "d") (inc (long idx))) ": ")
              txt (detab (nth lines idx))]
 
             (.append sb pfx)
@@ -2845,7 +2846,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      every
      (py-block-log-every)]
 
-    (when (and (pos? every) (or (= n 1) (zero? (mod n every))))
+    (when (and (pos? every) (or (= n 1) (zero? (rem (long n) every))))
       (let
         [^Runtime rt
          (Runtime/getRuntime)
@@ -2869,10 +2870,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
          @py-block-prev-n
 
          window
-         (max 1 (- n prev-n))
+         (long (max 1 (- (long n) (long prev-n))))
 
          delta
-         (- used prev)
+         (- used (long prev))
 
          mb
          (fn [^long b]

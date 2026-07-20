@@ -128,7 +128,7 @@
 
 (defn eval-timeout-ms-for-code
   [base-timeout-ms code]
-  (let [base (long (clamp-eval-timeout-ms base-timeout-ms))]
+  (let [base (clamp-eval-timeout-ms base-timeout-ms)]
     (if-let [shell-secs (explicit-shell-timeout-secs code)]
       (clamp-eval-timeout-ms
         (max base (+ (* 1000 (long shell-secs)) (long shell-timeout-eval-grace-ms))))

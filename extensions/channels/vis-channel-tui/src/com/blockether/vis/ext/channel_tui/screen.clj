@@ -1406,7 +1406,7 @@
      (long (max 0 (long cols)))
 
      text-w
-     (long (render/input-text-w cols))
+     (render/input-text-w cols)
 
      left
      (long (max 0 (quot (- cols text-w) 2)))
@@ -1539,7 +1539,7 @@
        " ↓ latest (C-x j) "
 
        w
-       (long (p/display-width label))
+       (p/display-width label)
 
        ;; Horizontally CENTERED, floating just above the echo area — the
        ;; chat-app convention (a centered pill), not tucked in a corner.
@@ -1605,7 +1605,7 @@
      n
      (render/input-visual-row-count lines text-w)]
 
-    (min (long input-max-lines) (max (long input-min-lines) (long n)))))
+    (min (long input-max-lines) (max (long input-min-lines) n))))
 
 (defn- overlay-locked?
   "True when an F1 help / F2 context modal card owns the whole screen.
@@ -1663,7 +1663,7 @@
      (.newTextGraphics screen)
 
      text-rows
-     (long (input-text-rows input cols))
+     (input-text-rows input cols)
 
      input-box-h
      (+ text-rows 2 (* 2 (long render/input-pad-y)))
@@ -1953,7 +1953,7 @@
       ;; "↓ latest" jump-to-bottom chip — only when the user PARKED above the
       ;; live bottom AND content actually sits below (jump-chip-visible?): a
       ;; FOLLOW ease trailing a growing stream must not flash it.
-      (paint-jump-bottom! g cols messages-bottom (max 0 (- (long total-h) (long inner-h))) db)
+      (paint-jump-bottom! g cols messages-bottom (max 0 (- total-h (long inner-h))) db)
       ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
@@ -2304,7 +2304,7 @@
      (long rows)
 
      text-rows
-     (long (input-text-rows input cols))
+     (input-text-rows input cols)
 
      input-box-h
      (+ text-rows 2 (* 2 (long render/input-pad-y)))

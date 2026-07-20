@@ -518,14 +518,14 @@
        (do
          ;; Top: ┌── top-hint ──┐
          (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-         (.putString g 1 (int box-top) (embed-in-bar bar top-hint))
+         (.putString g (int 1) (int box-top) ^String (embed-in-bar bar top-hint))
          (.setCharacter g
                         (int (dec (long cols)))
                         (int box-top)
                         Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
          ;; Bottom: └──────┘ (plain rule - status moved to footer row).
          (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-         (.putString g 1 (int box-bottom) bar)
+         (.putString g (int 1) (int box-bottom) ^String bar)
          (.setCharacter g
                         (int (dec (long cols)))
                         (int box-bottom)
@@ -551,8 +551,8 @@
           padded-bar
           (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
 
-         (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint))
-         (.putString g (int pad) (int box-bottom) padded-bar))))))
+         (.putString g (int pad) (int box-top) ^String (embed-in-bar padded-bar top-hint))
+         (.putString g (int pad) (int box-bottom) ^String padded-bar))))))
 
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
@@ -777,7 +777,7 @@
      (+ (inc box-top) input-pad-y)
 
      text-w
-     (long (input-text-w cols))
+     (input-text-w cols)
 
      {:keys [visual-lines cursor-vrow cursor-vcol]}
      (soft-wrap-input input text-w)
@@ -814,14 +814,15 @@
 
         (.setForegroundColor g t/tool-color-shell)
         (.setBackgroundColor g t/terminal-bg)
-        (.putString g (int pad) (int box-top) (embed-in-bar bar pill))
-        (.putString g (int pad) (int box-bottom) bar)))
+        (.putString g (int pad) (int box-top) ^String (embed-in-bar bar pill))
+        (.putString g (int pad) (int box-bottom) ^String bar)))
     (when more-hint
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)
       (.putString g
-                  (+ (long INPUT_BORDER_HORIZONTAL_PAD) 2)
+                  (int (+ (long INPUT_BORDER_HORIZONTAL_PAD) 2))
                   (int box-top)
+                  ^String
                   (p/truncate-cols more-hint
                                    (max 0 (- cols (* 2 (long INPUT_BORDER_HORIZONTAL_PAD)) 4)))))
     (fill-box-interior! g box-top box-bottom cols)
@@ -847,7 +848,7 @@
 
         (.setForegroundColor g t/tool-color-shell)
         (.setBackgroundColor g t/box-bg)
-        (.putString g (+ input-pad-x lead) text-top bang-pfx)))
+        (.putString g (int (+ input-pad-x lead)) (int text-top) ^String bang-pfx)))
     ;; Cursor position (visual coords)
     [(+ input-pad-x (long cursor-vcol)) (+ text-top (- (long cursor-vrow) v-scroll))]))
 
@@ -912,7 +913,7 @@
      (if file? (p/truncate-middle usage-raw avail) (p/truncate-cols usage-raw avail))
 
      usage-w
-     (long (p/display-width usage))
+     (p/display-width usage)
 
      ;; Inline code chip = usage padded by 1 space on each side.
      chip-w
@@ -1100,7 +1101,7 @@
                 (nth title-hints (dec i))
 
                 k-w
-                (long (p/display-width k))]
+                (p/display-width k)]
 
                (p/styled g
                          [p/BOLD]
@@ -1109,11 +1110,11 @@
                                      title-row
                                      (p/truncate-cols k (max 0 (- (long text-x1) (long col))))))
                (p/put-str! g
-                           (+ (long col) (long k-w))
+                           (+ (long col) k-w)
                            title-row
                            (p/truncate-cols (str " " a)
-                                            (max 0 (- (long text-x1) (+ (long col) (long k-w))))))))
-           (recur (inc (long i)) (+ (long col) (long size) (long gap)))))))))
+                                            (max 0 (- (long text-x1) (+ (long col) k-w)))))))
+           (recur (inc (long i)) (+ (long col) size (long gap)))))))))
 
 (defn draw-slash-command-suggestions!
   "Overlay fuzzy slash-command suggestions immediately above the input box.
@@ -1354,19 +1355,22 @@
      (.setCharacter g (int box-right) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
      (.setCharacter g (int box-left) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
      (.setCharacter g (int box-right) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
-     (.putString g (inc (long box-left)) box-top h-bar)
-     (.putString g (inc (long box-left)) box-bottom h-bar)
+     (.putString g (int (inc (long box-left))) (int box-top) ^String h-bar)
+     (.putString g (int (inc (long box-left))) (int box-bottom) ^String h-bar)
      (doseq [r (range (inc (long box-top)) box-bottom)]
        (.setCharacter g (int box-left) (int r) Symbols/SINGLE_LINE_VERTICAL)
        (.setCharacter g (int box-right) (int r) Symbols/SINGLE_LINE_VERTICAL))
      ;; Title
      (.setForegroundColor g t/dialog-title-bg)
      (let [title-x (+ (long box-left) (quot (- (long box-w) (count title)) 2))]
-       (.putString g title-x (inc (long box-top)) title))
+       (.putString g (int title-x) (int (inc (long box-top))) ^String title))
      ;; Body (wrapped)
      (.setForegroundColor g t/dialog-fg)
      (doseq [[i line] (map-indexed vector text-lines)]
-       (.putString g (+ (long box-left) 3) (+ (long box-top) 3 (long i)) line)))))
+       (.putString g
+                   (int (+ (long box-left) 3))
+                   (int (+ (long box-top) 3 (long i)))
+                   ^String line)))))
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 ;; Line markers live in primitives - aliases for local readability.
 (def ^:private thinking-marker p/MARKER_THINKING)
@@ -1618,7 +1622,7 @@
     (when-let [ci (str/index-of (str raw) stamp)]
       (let [col (p/display-width (subs (str raw) 0 ci))]
         (p/set-colors! g t/dialog-hint bg)
-        (p/styled g [p/ITALIC] (p/put-str! g (+ (long x) (long col)) y stamp))))))
+        (p/styled g [p/ITALIC] (p/put-str! g (+ (long x) col) y stamp))))))
 
 (defn- paint-code-pad-payload!
   "Paint optional code-pad payloads. Blank pad rows only fill bg;
@@ -1798,7 +1802,7 @@
   [^TextGraphics g bx bubble-w footer-row meta-str fallback-note]
   (let
     [right-align (fn [shown]
-                   (+ (long bx) (max 0 (- (long bubble-w) (long (p/display-width shown))))))]
+                   (+ (long bx) (max 0 (- (long bubble-w) (p/display-width shown)))))]
     (when (some? meta-str)
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-hint t/terminal-bg)
@@ -1999,7 +2003,7 @@
         (let
           [right-edge (+ (long bx) (long bubble-w))
            time-w (p/display-width time-str)
-           time-x (- (long right-edge) (long time-w))]
+           time-x (- (long right-edge) time-w)]
 
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g time-x label-row time-str))))
@@ -2064,7 +2068,7 @@
                         bx
                         (- (long btop) (long top-pad))
                         user-fill-w
-                        (+ (max 1 (long bubble-h)) (long top-pad) (long bottom-pad)))))
+                        (+ (max 1 bubble-h) (long top-pad) (long bottom-pad)))))
       ;; Text content - per-line styling via invisible marker prefixes
       ;;
       ;; The \"answer zone\" starts at the first line carrying ANY
@@ -2365,13 +2369,13 @@
                       (p/styled g
                                 [p/BOLD]
                                 (p/put-str! g x y "│")
-                                (when (pos? (long gutter-n)) (p/put-str! g (+ (long x) 2) y ord)))
+                                (when (pos? gutter-n) (p/put-str! g (+ (long x) 2) y ord)))
                       ;; Preview — dim italic, after the ordinal.
                       (p/set-colors! g t/dialog-hint bg-color)
                       (p/styled g
                                 [p/ITALIC]
                                 (p/paint-styled-line! g
-                                                      (+ (long x) 2 (long gutter-n))
+                                                      (+ (long x) 2 gutter-n)
                                                       y
                                                       msg
                                                       t/dialog-hint
@@ -3049,7 +3053,7 @@
            (if footer? 1 0)
 
            footer-row
-           (+ (long btop) (long bubble-h) (long bottom-pad) (long footer-gap))]
+           (+ (long btop) bubble-h (long bottom-pad) (long footer-gap))]
 
           (draw-bubble-footer! g bx bubble-w footer-row meta-str fallback-note)
           ;; Return: rows consumed
@@ -3486,17 +3490,17 @@
      gap-w
      2]
 
-    (if (> (+ (long suffix-w) (long gap-w) 1) (long max-w))
+    (if (> (+ suffix-w (long gap-w) 1) (long max-w))
       (str left " / " suffix)
       (let
         [left-w
-         (max 1 (- (long max-w) (long suffix-w) (long gap-w)))
+         (max 1 (- (long max-w) suffix-w (long gap-w)))
 
          left
          (close-dangling-code-span (ellipsize-cols left left-w))
 
          pad-w
-         (max (long gap-w) (- (long max-w) (long (p/display-width left)) (long suffix-w)))]
+         (max (long gap-w) (- (long max-w) (p/display-width left) suffix-w))]
 
         (str left (repeat-str \space pad-w) suffix)))))
 

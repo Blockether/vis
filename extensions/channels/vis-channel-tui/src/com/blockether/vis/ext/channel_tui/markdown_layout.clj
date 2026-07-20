@@ -284,7 +284,7 @@
      push!
      (fn [a]
        (vswap! line conj a)
-       (vswap! lw #(+ (long %) (long (run-width a)))))]
+       (vswap! lw #(+ (long %) (run-width a))))]
 
     (doseq [a atoms]
       (cond (:break? a) (flush! false)
@@ -299,11 +299,11 @@
             :else (let [aw (run-width a)]
                     (cond
                       ;; fits on current line
-                      (<= (+ (long @lw) (long aw)) (long width)) (push! a)
+                      (<= (+ (long @lw) aw) (long width)) (push! a)
                       ;; current line still has only the prefix → force-fit
                       (= @lw @prefix-w) (do (push! a) (flush! true))
                       :else (do (flush! true) (push! a))))))
-    (when (> (long (line-width {:runs @line})) (long @prefix-w)) (vswap! out conj {:runs @line}))
+    (when (> (line-width {:runs @line}) (long @prefix-w)) (vswap! out conj {:runs @line}))
     @out))
 
 (defn- trim-trailing-ws

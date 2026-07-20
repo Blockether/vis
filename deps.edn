@@ -51,6 +51,9 @@
   com.google.zxing/core                           {:mvn/version "3.5.4"}
   ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
   com.github.mwiede/jsch                          {:mvn/version "2.28.4"}
+  ;; Apache MINA SSHD server backing the paramiko shim's `Transport.start_server`
+  ;; (reverse port-forwarding); JSch above is client-only.
+  org.apache.sshd/sshd-core                       {:mvn/version "2.15.0"}
   ;; Pure-Java OOXML (Apache POI) backing the sandbox `xlsxwriter` + `pptx` shims.
   org.apache.poi/poi-ooxml                        {:mvn/version "5.5.1"}}
  :paths ["src" "resources"]

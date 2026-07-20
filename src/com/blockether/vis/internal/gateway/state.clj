@@ -871,7 +871,7 @@
              (assoc "provider" (:provider row)))
      :created_at created-at
      :completed_at (when (and created-at (:duration-ms row))
-                     (+ created-at (long (:duration-ms row))))}))
+                     (+ (long created-at) (long (:duration-ms row))))}))
 
 (defn list-turns
   "Canonical (string-keyed) wire views of every turn for `sid`, OLDEST-first (chronological, chat order):

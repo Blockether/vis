@@ -513,7 +513,7 @@
   "Total definitions in the structure tree `items` (children included)."
   [items]
   (reduce (fn [n ^StructureItem it]
-            (+ n 1 (count-items (or (.children it) []))))
+            (+ (long n) 1 (long (count-items (or (.children it) [])))))
           0
           items))
 

@@ -844,7 +844,7 @@
 
     (try (Files/deleteIfExists p)
          (Files/createFile p (into-array FileAttribute [attr]))
-         (Files/write p (.getBytes content StandardCharsets/UTF_8) (make-array OpenOption 0))
+         (Files/write p (.getBytes content StandardCharsets/UTF_8) ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
          (catch UnsupportedOperationException _ (spit path content))
          (catch Throwable _
            (spit path content)

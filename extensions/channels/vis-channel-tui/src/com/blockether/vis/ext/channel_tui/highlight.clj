@@ -188,7 +188,7 @@
      idx
      (last-nonblank-index lines)]
 
-    (if (<= idx 0)
+    (if (<= (long idx) 0)
       ;; nothing settled ahead of the growing line — just parse it whole.
       (highlight* grammar source)
       (let

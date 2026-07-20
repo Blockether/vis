@@ -475,7 +475,8 @@
   ([env]
    (if (:db-info env)
      (vec (sort-by (comp #(if-let [c (:created-at %)]
-                            (cond (inst? c) (- (long (inst-ms c)))
+                            (cond (inst? c) (- #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                                               (long (inst-ms c)))
                                   (integer? c) (- (long c))
                                   :else 0) 0)
                          identity)

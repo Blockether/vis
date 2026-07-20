@@ -84,8 +84,9 @@
   [host port timeout-ms]
   (try
     (let
-      [sock (doto (Socket.)
-              (.connect (InetSocketAddress. ^String (or host "localhost") (int port))
+      [^String h (or host "localhost")
+       sock (doto (Socket.)
+              (.connect (InetSocketAddress. h (int port))
                         (int (max 1 (long (or timeout-ms 1000))))))]
       (transport/bencode sock))
     (catch Throwable t
@@ -635,7 +636,7 @@
           [em (str (get combined "error_message"))
            i (str/index-of em ": ")]
 
-          (if i (subs em (+ i 2)) em)))))
+          (if i (subs em (+ (long i) 2)) em)))))
 
 (defn- render-context
   "babashka-style source Context: a ±2-line window of `code` around `line`, each
@@ -653,31 +654,31 @@
      n
      (count lines)]
 
-    (when (and (integer? line) (pos? line) (<= line n))
+    (when (and (integer? line) (pos? (long line)) (<= (long line) n))
       (let
         [lo
-         (max 1 (- line 2))
+         (max 1 (- (long line) 2))
 
          hi
-         (min n (+ line 2))
+         (min n (+ (long line) 2))
 
          pad
          (count (str hi))
 
          src
-         (nth lines (dec line))
+         (nth lines (dec (long line)))
 
          col
-         (or (when (and (integer? column) (pos? column)) column)
+         (or (when (and (integer? column) (pos? (long column))) column)
              (inc (count (take-while #(Character/isWhitespace ^char %) src))))
 
          rows
          (mapcat (fn [i]
-                   (let [row (str (format (str "%" pad "d") i) ": " (nth lines (dec i)))]
+                   (let [row (str (format (str "%" pad "d") i) ": " (nth lines (dec (long i))))]
                      (if (= i line)
-                       [row (str (apply str (repeat (+ pad 2 (dec col)) \space)) "^--- " message)]
+                       [row (str (apply str (repeat (+ pad 2 (dec (long col))) \space)) "^--- " message)]
                        [row])))
-                 (range lo (inc hi)))]
+                 (range lo (inc (long hi))))]
 
         (str/join "\n" rows)))))
 

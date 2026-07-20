@@ -3096,7 +3096,7 @@
   [overrides]
   (reduce (fn [m kv]
             (if-let [i (str/index-of kv "=")]
-              (assoc m (subs kv 0 i) (subs kv (inc i)))
+              (assoc m (subs kv 0 i) (subs kv (inc (long i))))
               (assoc m kv "")))
           {}
           overrides))

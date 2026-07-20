@@ -59,8 +59,8 @@
   (when (and (string? s) (seq s))
     (or (when-let [m (re-find #"\u001b\[6;(\d+);(\d+)t" s)]
           (let
-            [h (parse-long (nth m 1))
-             w (parse-long (nth m 2))]
+            [h (long (parse-long (nth m 1)))
+             w (long (parse-long (nth m 2)))]
 
             (when (and (pos? w) (pos? h)) {:w w :h h})))
         (let
@@ -73,16 +73,16 @@
           (when (and px ch)
             (let
               [hpx
-               (parse-long (nth px 1))
+               (long (parse-long (nth px 1)))
 
                wpx
-               (parse-long (nth px 2))
+               (long (parse-long (nth px 2)))
 
                rows
-               (parse-long (nth ch 1))
+               (long (parse-long (nth ch 1)))
 
                cols
-               (parse-long (nth ch 2))]
+               (long (parse-long (nth ch 2)))]
 
               (when (and (pos? wpx) (pos? hpx) (pos? rows) (pos? cols))
                 {:w (quot wpx cols) :h (quot hpx rows)})))))))

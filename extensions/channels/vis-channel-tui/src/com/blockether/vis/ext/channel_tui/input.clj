@@ -715,7 +715,7 @@
 
           (let [avail (long (try (.available in) (catch Throwable _ -1)))]
             (cond (pos? avail) (let
-                                 [n (long (try (.read in tmp 0 (int (min (long avail) 8192)))
+                                 [n (long (try (.read in tmp 0 (int (min avail 8192)))
                                                (catch Throwable _ -1)))]
                                  (when (pos? n) (.write buf tmp 0 n) (recur)))
                   ;; stream closed / broken — nothing more will arrive
