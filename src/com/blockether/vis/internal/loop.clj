@@ -4320,7 +4320,32 @@
                                                 ;; NOT authored markdown — fence it so the body
                                                 ;; shows VERBATIM instead of being re-styled.
                                                 :body (str "```\n" (subs s (+ (long i) 3)) "\n```")}
-                                               {:summary s}))))
+                                               {:summary s})))
+                          ;; `doc` / `apropos` are ENGINE-level (no extension
+                          ;; symbol) and RETURN authored markdown. Render it
+                          ;; VERBATIM as the card body (channels paint bodies as
+                          ;; markdown) instead of the default python-literal fence,
+                          ;; and lift a real headline: the doc's symbol line, or
+                          ;; the apropos match count.
+                          "doc" (fn [result]
+                                  (let
+                                    [s (str/trim (str result))
+                                     nl (str/index-of s "\n")
+                                     head (if nl (subs s 0 (long nl)) s)]
+
+                                    {:summary (-> head
+                                                  (str/replace #"^#+\s*" "")
+                                                  str/trim
+                                                  not-empty)
+                                     :body (not-empty s)}))
+                          "apropos" (fn [result]
+                                      (let [s (str/trim (str result))]
+                                        (if (str/starts-with? s "|")
+                                          {:summary (let
+                                                      [n (max 0 (- (count (str/split-lines s)) 2))]
+                                                      (str n " tool" (when (not= n 1) "s")))
+                                           :body (not-empty s)}
+                                          {:summary (not-empty s)}))))
        ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
        ;; by the result's `:op` (the only origin handle a printed value carries),
        ;; so `print(await rg(...))` paints rg's card just like a native call.
