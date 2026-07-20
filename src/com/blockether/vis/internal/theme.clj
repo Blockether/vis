@@ -137,7 +137,7 @@
    ;; Filename / path chips inside a RESULT body (e.g. rg's per-file headers):
    ;; a distinct blue band so paths read as clickable headers, not blended ink.
    :result-path-bg [219 234 254]
-   :result-path-fg [30 64 175]
+   :result-path-fg [23 45 130]
    :code-block-fg [30 30 30]
    :code-success-fg [40 160 60]
    :code-error-fg [220 50 50]
@@ -354,7 +354,7 @@
      :result-bg [242 235 223]
      ;; Blue inline-code chips stay distinct from the amber summary headline.
      :result-path-bg [219 234 254]
-     :result-path-fg [30 64 175]
+     :result-path-fg [23 45 130]
      :code-block-fg [38 38 38]
      :code-success-fg [22 163 74]
      :code-error-fg [220 38 38]

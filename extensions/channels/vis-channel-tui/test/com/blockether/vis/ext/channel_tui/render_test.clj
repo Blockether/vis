@@ -2620,6 +2620,34 @@
       (expect (= left (:col code-fill)))
       (expect (= width (:w code-fill)))))
   (it
+    "renders blank fenced-code rows nested in a list"
+    (let [fence
+          (apply str (repeat 3 (char 96)))
+
+          markdown
+          (str "- inspect:\n\n    " fence "clojure\n\n    (+ 1 2)\n    " fence)
+
+          rendered
+          (render/format-answer-markdown-data (vis/markdown->ast markdown) 50 nil)
+
+          nested-blank?
+          (some (fn [[line meta]]
+                  (and (= 1 (count line))
+                       (:list-nested-code? meta)
+                       (= 2 (:list-indent meta))))
+                (map vector (:lines rendered) (:line-meta rendered)))]
+
+      (expect nested-blank?)
+      (expect (pos? (render/draw-chat-bubble! (dummy-text-graphics)
+                                               {:role :assistant
+                                                :text ""
+                                                :prewrapped-lines (:lines rendered)
+                                                :line-meta (:line-meta rendered)}
+                                               4
+                                               2
+                                               50
+                                               {:viewport-h 40})))))
+  (it
     "leaves only the final gap after the user bubble fill"
     (let [fills
           (atom [])

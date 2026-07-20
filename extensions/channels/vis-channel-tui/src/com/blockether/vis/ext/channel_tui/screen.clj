@@ -3489,6 +3489,19 @@
   ;; coalesces the burst into ONE more pass instead of spawning N scans.
   (atom false))
 
+(defonce ^:private refresh-active-tab-running*
+  ;; True while the coalescing active-tab refresh worker is in flight. At most one
+  ;; runs; a burst of switches (held Tab) collapses into one trailing pass.
+  (atom false))
+
+(defonce ^:private refresh-active-tab-pending*
+  ;; A refresh was requested while one was already running — loop once more.
+  (atom false))
+
+(defonce ^:private refresh-active-tab-notify*
+  ;; Whether any coalesced request asked for the "Switched workspace" toast.
+  (atom false))
+
 (defn- launch-root
   "Canonical path of the launch directory (`user.dir`) — the workspace root the
    auto-project binds to."
@@ -4231,18 +4244,49 @@
                                     (vis/notify! (str "Failed to open new session: " (ex-message e))
                                                  :level :error
                                                  :ttl-ms copy-success-ttl-ms)))))))))
-                 refresh-active-tab! (fn [notify?]
-                                       (let [db @state/app-db]
-                                         (when-let [id (current-session-id)]
-                                           (when-let [title (session-db-title id)]
-                                             (state/dispatch [:set-title title]))
-                                           (ensure-title-listener! id)
-                                           (warm-session-render! {:id id :history (:messages db)})))
-                                       (persist-tabs!)
-                                       (when notify?
-                                         (vis/notify! "Switched workspace"
-                                                      :level :success
-                                                      :ttl-ms copy-success-ttl-ms)))
+                 refresh-active-tab-impl! (fn [notify?]
+                                            (let [db @state/app-db]
+                                              (when-let [id (current-session-id)]
+                                                (when-let [title (session-db-title id)]
+                                                  (state/dispatch [:set-title title]))
+                                                (ensure-title-listener! id)
+                                                (warm-session-render! {:id id
+                                                                       :history (:messages db)})))
+                                            (persist-tabs!)
+                                            (when notify?
+                                              (vis/notify! "Switched workspace"
+                                                           :level :success
+                                                           :ttl-ms copy-success-ttl-ms)))
+                 ;; Tab/workspace switches only need to REPAINT — already done by the
+                 ;; `:select-tab-index` dispatch's render-version bump. The title
+                 ;; refresh + bubble warm + persist are settle-after work; running them
+                 ;; inline made every switch block the INPUT THREAD on a gateway title
+                 ;; fetch + a <=200ms warm-worker join + a <=120ms sync warm. Offload to
+                 ;; ONE coalescing worker (a held Tab collapses to a single trailing
+                 ;; pass) so switching is instant regardless of gateway load / history
+                 ;; size. The worker reads app-db fresh, so it always refreshes the tab
+                 ;; that is active WHEN it runs.
+                 refresh-active-tab!
+                 (fn [notify?]
+                   (when notify? (reset! refresh-active-tab-notify* true))
+                   (reset! refresh-active-tab-pending* true)
+                   (when (compare-and-set! refresh-active-tab-running* false true)
+                     (vis/worker-future
+                       "tui-refresh-active-tab"
+                       (fn []
+                         (loop []
+
+                           (reset! refresh-active-tab-pending* false)
+                           (let [notify? (first (reset-vals! refresh-active-tab-notify* false))]
+                             (try (refresh-active-tab-impl! (boolean notify?))
+                                  (catch Throwable _ nil)))
+                           (if @refresh-active-tab-pending*
+                             (recur)
+                             (do (reset! refresh-active-tab-running* false)
+                                 (when (and
+                                         @refresh-active-tab-pending*
+                                         (compare-and-set! refresh-active-tab-running* false true))
+                                   (recur)))))))))
                  switch-session!
                  (fn [choice]
                    ;; No `:loading?` guard: opening or focusing a tab never

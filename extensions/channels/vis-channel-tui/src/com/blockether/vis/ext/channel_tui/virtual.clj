@@ -219,13 +219,29 @@
 (defonce ^:private ^AtomicLong estimate-cache-gen (AtomicLong.))
 (defonce ^:private ^AtomicLong projection-cache-gen (AtomicLong.))
 
+;; Sticky TAIL-PROJECTION cache. The bottom-locked last bubble (auto-scroll or
+;; scroll clamped to max) is rendered with `:tail-lines` so only the visible tail
+;; is styled - but `project-message` still parses the WHOLE message Markdown each
+;; frame to find that tail, so a long completed answer pinned at the bottom re-
+;; parses + re-wraps its full body on every relayout (~0.85 ms / ~4.4 MB for a
+;; 640-row bubble here). The tail projection is a pure function of the message +
+;; `tail-n`, and the LIVE streaming bubble never reaches this path (it is peeled
+;; off as the loading bubble), so a completed last bubble's tail is byte-identical
+;; frame to frame - memoize it under the height key plus `tail-n`. Tiny cap: only
+;; the last bubble (plus a couple during a resize) ever tail-walks.
+(defonce ^:private ^LinkedHashMap tail-projection-cache
+  (proxy [LinkedHashMap] [16 0.75 true]
+    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 32))))
+(defonce ^:private ^AtomicLong tail-projection-cache-gen (AtomicLong.))
+
 (defn invalidate-heights!
   "Drop the sticky height cache AND the estimate memo. Tests + whole-cache
    busts (registry-toggle resync) call this."
   []
   (locking height-cache (.clear height-cache))
   (render/clear-cache! estimate-cache estimate-cache-gen)
-  (render/clear-cache! projection-cache projection-cache-gen))
+  (render/clear-cache! projection-cache projection-cache-gen)
+  (render/clear-cache! tail-projection-cache tail-projection-cache-gen))
 
 (defn height-cache-size
   "Current sticky-height entry count (handy for tests / diagnostics)."
@@ -843,6 +859,23 @@
                                       {:session-id session-id
                                        :detail-expansions detail-expansions})))
 
+(defn- project-message-tail-cached
+  "Memoized tail-walker projection for the bottom-locked LAST bubble. Keyed like
+   `project-message-cached` plus `tail-n` (the tail height, which shifts with the
+   viewport), so the full-body and tail projections never collide. Callers MUST
+   route only a STABLE (non-live) last bubble here - the live streaming bubble is
+   the loading bubble and never tail-walks."
+  [message bubble-w settings detail-expansions session-id tail-n]
+  (render/with-cache
+    tail-projection-cache
+    tail-projection-cache-gen
+    (conj (height-key message bubble-w settings detail-expansions session-id) (long tail-n))
+    (project-message
+      message
+      bubble-w
+      settings
+      {:session-id session-id :detail-expansions detail-expansions :tail-lines (long tail-n)})))
+
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;
 ;; A frame's plan: total height (for scrollbar geometry), clamped scroll
@@ -864,6 +897,24 @@
     (cond (< i n) (assoc v i x)
           (= i n) (conj v x)
           :else (recur (conj v pad) i x pad))))
+
+(defn- cumulative-offsets
+  "Running-sum offsets vector, one entry longer than `heights`:
+   `[0 h0 h0+h1 ...]`. A primitive loop into a transient — replaces
+   `(vec (reductions + 0 (map long heights)))`, whose lazy-seq +
+   `map long` boxing was ~26% of a warm layout tick's allocation
+   (15 KB -> ~2 KB for a 60-message session, byte-identical output)."
+  [heights]
+  (let [n (long (count heights))]
+    (loop
+      [i 0
+       acc 0
+       out (transient [0])]
+
+      (if (< i n)
+        (let [acc (+ acc (long (nth heights i)))]
+          (recur (inc i) acc (conj! out acc)))
+        (persistent! out)))))
 
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`
@@ -948,7 +999,7 @@
        messages)
 
      est-off
-     (vec (reductions + 0 (map long est)))
+     (cumulative-offsets est)
 
      est-tot
      (long (peek est-off))
@@ -1043,16 +1094,16 @@
                 :text text
                 :prewrapped-lines lines
                 :line-meta line-meta))
-            ;; Three projection paths for the LAST bubble:
-            ;;   1. Bottom-locked (auto-scroll OR scroll
-            ;;      clamped to max): tail-walker (A4/A6).
-            ;;   2. Genuine mid-scroll: full render — the
-            ;;      old `window-start` window-walker hook is
-            ;;      kept nil (item-window scrolling never
-            ;;      activated in practice and confused the
-            ;;      live-streaming visibility set).
-            ;;   3. Anything else (older scrollback bubble,
-            ;;      etc.): full render.
+            ;; Two projection paths for the LAST bubble:
+            ;;   1. Bottom-locked (auto-scroll OR scroll clamped to
+            ;;      max): tail-walker (A4/A6) — renders only the
+            ;;      visible tail, cheap even for a huge body.
+            ;;   2. Genuine mid-scroll into a tall body: the message is
+            ;;      STABLE (the LIVE streaming bubble is peeled off
+            ;;      above via `loading-bubble?`), so route it through
+            ;;      the same projection cache every other stable bubble
+            ;;      uses — otherwise each scroll frame re-parses the
+            ;;      Markdown and re-wraps the whole body from scratch.
             (let
               [last?
                (= i (long (dec n)))
@@ -1066,14 +1117,13 @@
                tail-n
                (when bottom-locked? (long (* 2 inner-h)))]
 
-              (if last?
-                (project-message m
-                                 bubble-w
-                                 settings
-                                 (cond->
-                                   {:session-id session-id :detail-expansions detail-expansions}
-                                   tail-n
-                                   (assoc :tail-lines tail-n)))
+              (if (and last? bottom-locked?)
+                (project-message-tail-cached m
+                                             bubble-w
+                                             settings
+                                             detail-expansions
+                                             session-id
+                                             tail-n)
                 (project-message-cached m bubble-w settings detail-expansions session-id))))
 
           pm
@@ -1143,7 +1193,7 @@
                   tail)
 
           offsets'
-          (vec (reductions + 0 (map long heights')))
+          (cumulative-offsets heights')
 
           total-h'
           (long (peek offsets'))
@@ -1192,7 +1242,7 @@
                   projected)
 
           offsets'
-          (vec (reductions + 0 (map long heights')))
+          (cumulative-offsets heights')
 
           total-h'
           (long (peek offsets'))
@@ -1238,7 +1288,7 @@
                   extra-projected)
 
           offsets''
-          (if (seq extra-projected) (vec (reductions + 0 (map long heights''))) offsets')
+          (if (seq extra-projected) (cumulative-offsets heights'') offsets')
 
           total-h''
           (long (peek offsets''))
