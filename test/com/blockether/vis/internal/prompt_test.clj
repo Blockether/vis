@@ -72,7 +72,8 @@
                  ;; directly as `from_anchor` — the old hunk/anchor Python helpers are gone.
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "lineno:hash"))
-                   (expect (str/includes? text "from_anchor"))))
+                   (expect (str/includes? text "from_anchor"))
+                   (expect (not (str/includes? text "\n+    ")))))
              (it
                "keeps the core compact, numbered, and Python structural-first"
                (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt
@@ -152,8 +153,7 @@
           (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
           (expect (str/includes? text "/tmp/repo/AGENTS.md"))
           (expect (str/includes? text "CORE wins"))
-          (doseq [stale-term ["CTX shape" "DONE pipeline" "SANDBOX"]]
-            (expect (not (str/includes? text stale-term))))
+          (expect (not (str/includes? text "contract (CTX shape, DONE pipeline, SANDBOX)")))
           ;; Send order: SYSTEM-PROMPT first, then PROJECT-INSTRUCTIONS.
           (expect (< (str/index-of text "SYSTEM-PROMPT")
                      (str/index-of text "PROJECT-INSTRUCTIONS"))))))

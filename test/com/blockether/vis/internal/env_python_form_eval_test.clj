@@ -794,6 +794,39 @@ await patch({'path': css})" "t1/i1")]
         (expect (= 2 (get-in r [:error :data :line])))
         (expect (not (str/includes? msg "\treturn"))) ;; detabbed so 1 char == 1 column
         (expect (str/includes? msg "^"))))
+  (it
+    "a `raise … from …` inside an except starts the caret on `raise`, not the gutter"
+    (let
+      [r
+       (ep/run-python-block
+         @py-ctx
+         "def go():\n    try:\n        1/0\n    except Exception as e:\n        raise ValueError('oops') from e\ngo()")
+
+       msg
+       (:message (:error r))
+
+       lines
+       (str/split-lines msg)
+
+       ci
+       (first (keep-indexed (fn [i l]
+                              (when (re-find #"^\s*\^+\s*$" l) i))
+                            lines))
+
+       caret
+       (nth lines ci)
+
+       src
+       (nth lines (dec ci))
+
+       col
+       (count (take-while #(= \space %) caret))]
+
+      (expect (= 5 (get-in r [:error :data :line])))
+      (expect (str/includes? msg "raise ValueError('oops') from e"))
+      ;; co_positions reports the handler column (4) for the re-raise; the caret
+      ;; must still land on the `r` of `raise`, never in the leading-space gutter.
+      (expect (= \r (nth src col)))))
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block @py-ctx "print(1 + 2)")]
         (expect (nil? (:error r))))))

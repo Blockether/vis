@@ -5409,23 +5409,21 @@
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
    model loops (identical action code repeated across iterations). Confronts the
-   one-shot urge: shows the best answer so far and forces a commit /
-   justified-continue / blocked decision instead of yet another open-ended
-   probe. `sticky-md` is the best answer so far (Markdown) or nil."
+   one-shot urge: shows the best answer so far and forces a finish / one-tool /
+   blocked decision instead of another open-ended probe. `sticky-md` is the best
+   answer so far (Markdown) or nil."
   [sticky-md]
   (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
        "you have now looped without finalizing.\n\n"
        (if (str/blank? (str sticky-md))
          "You have NOT produced any answer yet.\n\n"
          (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
-       "DECIDE NOW — run NO tools/searches this iteration:\n"
-       "1. COMMIT — if the answer above is good enough, reply with it as plain prose "
-       "(no tool call) — that ends the turn (refine the wording if you must).\n"
-       "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
-       "another iteration, then fetch ONLY that. Repeating a prior search/parse "
-       "is not allowed.\n"
+       "DECIDE NOW:\n"
+       "1. FINISH — reply with the best answer as plain prose; no tool call.\n"
+       "2. ONE TOOL — only if one named missing fact blocks the answer, call exactly "
+       "one NEW tool that can obtain it. Never repeat a prior call.\n"
        "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"
-       "Pick one. Do not investigate further."))
+       "No other investigation."))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist

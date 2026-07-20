@@ -2000,7 +2000,11 @@
                     (expect (str/includes? m "STOP"))
                     (expect (str/includes? m "best answer so far"))
                     (expect (str/includes? m "The atom and token serve distinct roles."))
-                    (expect (str/includes? m "plain prose"))))
+                    (expect (str/includes? m "plain prose"))
+                    (expect (str/includes? m "ONE TOOL"))
+                    (expect (str/includes? m "exactly one NEW tool"))
+                    (expect (not (str/includes? m "run NO tools")))
+                    (expect (not (str/includes? m "CONTINUE")))))
               (it "handles no answer yet"
                   (let [m (msg nil)]
                     (expect (str/includes? m "NOT produced any answer")))))))
@@ -2794,8 +2798,9 @@
                     (fn [name input]
                       (@#'lp/tool-call->python-source shapes {:name name :input input}))]
 
-                   (expect (= "apropos()" (synth "apropos" {})))
-                   (expect (= "apropos(\"struct\")" (synth "apropos" {"query" "struct"})))
+                   (expect (= "__vis_apropos_table__()" (synth "apropos" {})))
+                   (expect (= "__vis_apropos_table__(\"struct\")"
+                              (synth "apropos" {"query" "struct"})))
                    (expect (= "doc(\"struct_patch\")" (synth "doc" {"name" "struct_patch"}))))))
 
 (defdescribe

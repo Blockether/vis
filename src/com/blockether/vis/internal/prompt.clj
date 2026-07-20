@@ -208,14 +208,9 @@
     "- MUST route supported code edits structurally: `struct_index` definitions,\n"
     "  `struct_patch` named nodes, `struct_node` nested nodes, `struct_occurrences`\n"
     "  uses, and `struct_rename` repo-wide.\n"
-    "- Use `patch` for text/unsupported structures. Pass fresh `lineno:hash` from `cat`,\n+    "
-    `rg
-    `or
-    `struct_index
-    `as
-    `from_anchor
-    `; anchors become stale\n"
-     "  after writes. Use `write` only for new files/intentional full rewrites.\n"
+    "- For text/unsupported structures, use `patch` with fresh `lineno:hash` from\n"
+    "  `cat`, `rg`, or `struct_index` as `from_anchor`; anchors stale after writes.\n"
+    "  Use `write` only for new files or intentional full rewrites.\n"
     "- Create no scratch, debug, notes, or report files.\n\n"
     "## 7. Verify\n"
     "- Rerun the same reproduction or smallest relevant test/`repl_eval`; cover obvious\n"

@@ -2501,10 +2501,19 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
             (.append sb txt)
             (.append sb "\n")
             (when (= idx i0)
-              (let [c (if (and col (<= 0 (long col) (count txt))) (long col) 0)
-                    span (max 1 (if (and end-col (> (long end-col) c)) (- (long end-col) c) 1))]
-
-                (.append sb (apply str (repeat (+ (count pfx) c) \space)))
+              (let [c0 (if (and col (<= 0 (long col) (count txt))) (long col) 0)
+                    end (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
+                    ;; Snap the caret start off leading whitespace: a `co_positions`
+                    ;; quirk reports the ENCLOSING handler's column for a
+                    ;; `raise … from …` inside an `except`, landing the caret start
+                    ;; in the indentation gutter. Advance to the first non-space
+                    ;; within the span so the caret always begins on real code (a
+                    ;; no-op when the reported column already points at a token).
+                    c (or (first (filter #(and (< (long %) end) (not= \space (nth txt %)))
+                                         (range c0 (min end (count txt)))))
+                          c0)
+                    span (max 1 (- end (long c)))]
+                (.append sb (apply str (repeat (+ (count pfx) (long c)) \space)))
                 (.append sb (apply str (repeat span \^)))
                 (.append sb "\n")))))
         (str/trimr (str sb))))))
