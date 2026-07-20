@@ -5054,8 +5054,7 @@
          :required ["from_anchor" "replace"]
          :additionalProperties false}}}
       :required ["edits"]
-      :additionalProperties false
-      :anyOf [{:required ["path"]} {:properties {"edits" {:items {:required ["path"]}}}}]}
+      :additionalProperties false}
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))

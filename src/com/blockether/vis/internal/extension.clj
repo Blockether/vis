@@ -397,6 +397,16 @@
 (s/def :ext.symbol/native-tool? boolean?)
 ;; Model-facing JSON schema for the tool input — REQUIRED when `:native-tool?`.
 (s/def :ext.symbol/schema map?)
+
+(def ^:private native-tool-root-union-keys
+  "JSON Schema unions forbidden at a provider tool schema's root. Nested unions
+   remain valid for individual properties."
+  #{:oneOf :allOf :anyOf "oneOf" "allOf" "anyOf"})
+
+(defn- portable-native-tool-schema?
+  [schema]
+  (and (= "object" (or (:type schema) (get schema "type")))
+       (not-any? #(contains? schema %) native-tool-root-union-keys)))
 ;; How this native tool's structured input is synthesized into the Python call that
 ;; runs it (positional-args contract — the sandbox binds tools positionally). The
 ;; SINGLE source of truth for the call shape, co-located with the tool so a new
@@ -1224,6 +1234,13 @@
                                " declares :native-tool? but no :schema — "
                                "every native tool MUST have a :schema.")
                           {:type :extension/native-tool-missing-schema :symbol sym}))
+    (when (and (:ext.symbol/native-tool? entry)
+               (not (portable-native-tool-schema? (:ext.symbol/schema entry))))
+      (anomaly/incorrect! (str
+                            "Native tool " sym
+                            " has a non-portable :schema root — use type object without "
+                            "top-level oneOf, allOf, or anyOf; nested property unions are allowed.")
+                          {:type :extension/native-tool-nonportable-schema :symbol sym}))
     (when (and (:ext.symbol/native-tool? entry) (not (:ext.symbol/description entry)))
       (anomaly/incorrect! (str "Native tool "
                                sym

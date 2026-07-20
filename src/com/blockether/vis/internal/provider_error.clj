@@ -67,6 +67,18 @@
   [message]
   (boolean (and (string? message) (re-find #"(?i)invalid.*signature.*thinking.*block" message))))
 
+(defn tool-schema-rejection-message?
+  "True when a provider rejected a native tool because its input-schema root
+   uses a JSON Schema union that provider tool APIs forbid."
+  [message]
+  (let [text (some-> message
+                     str/lower-case)]
+    (boolean (and text
+                  (or (str/includes? text "input_schema") (str/includes? text "input schema"))
+                  (str/includes? text "does not support")
+                  (str/includes? text "top level")
+                  (some #(str/includes? text %) ["oneof" "allof" "anyof"])))))
+
 (defn auth-provider-error?
   [status message wrapper-message]
   (let [text (str (or message "") "\n" (or wrapper-message ""))]
@@ -217,7 +229,10 @@
         (:status data)
 
         provider-message
-        (provider-body-message body-raw)]
+        (provider-body-message body-raw)
+
+        schema-rejection?
+        (tool-schema-rejection-message? (str provider-message "\n" message))]
 
     (cond
       (empty-content-error? err)
@@ -237,6 +252,11 @@
       (str
         "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
         "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key.")
+      schema-rejection?
+      (str
+        "WHAT HAPPENED: the provider rejected the request before the model ran because one native tool has a top-level `oneOf`, `allOf`, or `anyOf` input schema. "
+        "This is a deterministic Vis/extension schema defect, not an outage, auth failure, or quota problem."
+        (when (seq provider-message) (str " Provider message: " provider-message)))
       (auth-provider-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rejected credentials before the model ran."
            (when (seq provider-message) (str " Provider message: " provider-message)))
@@ -279,6 +299,9 @@
       :invalid-thinking-signature
       "Provider rejected the request"
 
+      :tool-schema
+      "Native tool schema rejected"
+
       :auth
       "Provider authentication failed"
 
@@ -314,6 +337,9 @@
 
       :invalid-thinking-signature
       "NEXT STEP: retry — Vis will resend with only normal transcript/trailer context. If it persists, don't replay preserved-thinking across a provider/model switch."
+
+      :tool-schema
+      "NEXT STEP: update Vis or disable the offending extension, then retry. Retrying the unchanged tool schema cannot work."
 
       :auth
       (auth-provider-next-step data)
@@ -374,10 +400,14 @@
         (:status data)
 
         provider-message
-        (provider-body-message body-raw)]
+        (provider-body-message body-raw)
+
+        schema-rejection?
+        (tool-schema-rejection-message? (str provider-message "\n" message))]
 
     (cond (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
+          schema-rejection? :tool-schema
           (auth-provider-error? status provider-message message) :auth
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit

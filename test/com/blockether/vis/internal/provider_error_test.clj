@@ -156,6 +156,25 @@
   (it "is nil-safe" (expect (not (perr/transport-throwable? nil)))))
 
 (defdescribe
+  tool-schema-rejection-test
+  (let
+    [message
+     "tools.11.custom.input_schema: input_schema does not support oneOf, allOf, or anyOf at the top level"
+
+     err
+     {:message "Exceptional status code: 400"
+      :data {:status 400 :body (str "{\"error\":{\"message\":\"" message "\"}}")}}]
+
+    (it "classifies the deterministic request defect separately from outages"
+        (expect (= :tool-schema (perr/provider-error-kind err)))
+        (expect (= "Native tool schema rejected" (perr/provider-error-title err))))
+    (it "names the cause and forbids an unchanged retry"
+        (expect (re-find #"top-level" (perr/provider-error-explanation err)))
+        (expect (re-find #"deterministic" (perr/provider-error-explanation err)))
+        (expect (re-find #"cannot work" (perr/provider-error-next-step err)))
+        (expect (not (re-find #"transient" (perr/provider-error-next-step err)))))))
+
+(defdescribe
   empty-content-kind-test
   (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
       (let [err {:message "The model produced neither text nor a tool call"

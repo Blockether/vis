@@ -2458,12 +2458,14 @@
                    (expect (= 2 (:maxProperties schema)))
                    (expect (= 2 (get-in schema [:properties "range" :minItems])))
                    (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
-             (it "requires a patch path either once or on every edit"
+             (it "keeps both patch path forms without a provider-rejected root union"
                  (let [schema (:ext.symbol/schema editing/patch-symbol)]
-                   (expect (= 2 (count (:anyOf schema))))
-                   (expect (= ["path"] (get-in schema [:anyOf 0 :required])))
-                   (expect (= ["path"]
-                              (get-in schema [:anyOf 1 :properties "edits" :items :required]))))))
+                   (expect (= "object" (:type schema)))
+                   (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
+                   (expect (string/includes? (get-in schema [:properties "path" :description])
+                                             "Single-file form"))
+                   (expect (string/includes? (get-in schema [:properties "edits" :description])
+                                             "Without")))))
 
 (defdescribe
   outline-path-resolution-test

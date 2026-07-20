@@ -125,7 +125,16 @@
       (expect (try (extension/symbol #'flat-native-tool
                                      {:tag :observation :native-tool? true :name "no_schema_tool"})
                    false
-                   (catch Throwable _ true)))))
+                   (catch Throwable _ true))))
+  (it "rejects provider-incompatible top-level schema unions at build time"
+      (let [err (try (extension/symbol #'flat-native-tool
+                                       {:tag :observation
+                                        :native-tool? true
+                                        :description "Bad root union."
+                                        :schema {:type "object" :anyOf [{:required ["x"]}]}})
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
+        (expect (= :extension/native-tool-nonportable-schema (:type (ex-data err)))))))
 
 (defdescribe prompt-normalization-test
              (it "normalizes string and fn extension prompts"

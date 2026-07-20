@@ -105,6 +105,8 @@ Prefer `:native-tool? true` for operations the agent should call directly. Nativ
 
 Every symbol still passes a Var whose function has a non-blank docstring and concrete arglists. For a native tool, that docstring documents the implementation for developers; the model-facing contract lives only in `:description` and `:schema`. Keep each fact in one place:
 
+For provider portability, every native `:schema` root must be `type: object` without top-level `oneOf`, `allOf`, or `anyOf`. Nested property unions are allowed.
+
 | Owner | Contains | Must not contain |
 | --- | --- | --- |
 | `:description` | Compact routing, preconditions, side effects, and result semantics | Parameter inventories, types, defaults, or required fields |
