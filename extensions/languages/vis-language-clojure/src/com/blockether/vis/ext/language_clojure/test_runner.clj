@@ -43,254 +43,247 @@
         (if-let [path (get ns-files (str n))]
           (load-file path)
           (require n :reload)))
-      (let
-        [only*
-         (set (:only sel))
+      (let [only*
+            (set (:only sel))
 
-         inc*
-         (set (:include sel))
+            inc*
+            (set (:include sel))
 
-         exc*
-         (set (:exclude sel))
+            exc*
+            (set (:exclude sel))
 
-         tags-of
-         (fn [v]
-           (->> (meta v)
-                (keep (fn [[k v]]
-                        (when (true? v) (name k))))
-                set))
+            tags-of
+            (fn [v]
+              (->> (meta v)
+                   (keep (fn [[k v]]
+                           (when (true? v) (name k))))
+                   set))
 
-         vname-of
-         (fn [v]
-           (name (:name (meta v))))
+            vname-of
+            (fn [v]
+              (name (:name (meta v))))
 
-         fqname-of
-         (fn [v]
-           (str (ns-name (:ns (meta v))) "/" (name (:name (meta v)))))
+            fqname-of
+            (fn [v]
+              (str (ns-name (:ns (meta v))) "/" (name (:name (meta v)))))
 
-         keep?
-         (fn [v]
-           (let
-             [tags
-              (tags-of v)
+            keep?
+            (fn [v]
+              (let [tags
+                    (tags-of v)
 
-              nm
-              (vname-of v)
+                    nm
+                    (vname-of v)
 
-              fqn
-              (fqname-of v)]
+                    fqn
+                    (fqname-of v)]
 
-             (cond (some exc* tags) false
-                   (and (seq only*) (not (or (only* nm) (only* fqn)))) false
-                   (and (seq inc*) (not (some inc* tags))) false
-                   :else true)))
+                (cond (some exc* tags) false
+                      (and (seq only*) (not (or (only* nm) (only* fqn)))) false
+                      (and (seq inc*) (not (some inc* tags))) false
+                      :else true)))
 
-         ;; A non-empty :only that selects NOTHING is a caller mistake
-         ;; (wrong var names) — surface it as an error listing what IS
-         ;; available instead of reporting a vacuous 0/0 pass.
-         only-miss
-         (fn [framework all]
-           (when (and (seq only*) (empty? (filter keep? all)))
-             {"framework" framework
-              "error" (str "only " (pr-str (vec (:only sel)))
-                           " matched no test vars in [" (apply str (interpose " " (map str nsyms)))
-                           "] — available vars: " (apply str
-                                                    (interpose " " (sort (map fqname-of all)))))
-              "total" 0
-              "pass" 0
-              "fail" 0
-              "selected" 0
-              "skipped" (count all)
-              "failures" []
-              "errors" []}))
+            ;; A non-empty :only that selects NOTHING is a caller mistake
+            ;; (wrong var names) — surface it as an error listing what IS
+            ;; available instead of reporting a vacuous 0/0 pass.
+            only-miss
+            (fn [framework all]
+              (when (and (seq only*) (empty? (filter keep? all)))
+                {"framework" framework
+                 "error"
+                 (str "only " (pr-str (vec (:only sel)))
+                      " matched no test vars in [" (apply str (interpose " " (map str nsyms)))
+                      "] — available vars: " (apply str (interpose " " (sort (map fqname-of all)))))
+                 "total" 0
+                 "pass" 0
+                 "fail" 0
+                 "selected" 0
+                 "skipped" (count all)
+                 "failures" []
+                 "errors" []}))
 
-         all-ct
-         (mapcat (fn [n]
-                   (filter (fn [v]
-                             (:test (meta v)))
-                           (vals (ns-interns (the-ns n)))))
-                 nsyms)
+            all-ct
+            (mapcat (fn [n]
+                      (filter (fn [v]
+                                (:test (meta v)))
+                              (vals (ns-interns (the-ns n)))))
+                    nsyms)
 
-         lt?
-         (fn [v]
-           (let [m (meta v)]
-             (or (= :lazytest/var (:type m)) (contains? m :lazytest/test))))
+            lt?
+            (fn [v]
+              (let [m (meta v)]
+                (or (= :lazytest/var (:type m)) (contains? m :lazytest/test))))
 
-         all-lt
-         (mapcat (fn [n]
-                   (filter lt? (vals (ns-interns (the-ns n)))))
-                 nsyms)
+            all-lt
+            (mapcat (fn [n]
+                      (filter lt? (vals (ns-interns (the-ns n)))))
+                    nsyms)
 
-         out-writer
-         (java.io.StringWriter.)
-
-         result
-         (binding
-           [clojure.core/*out*
             out-writer
+            (java.io.StringWriter.)
 
-            clojure.core/*err*
-            out-writer]
+            result
+            (binding [clojure.core/*out*
+                      out-writer
 
-           (if (seq all-ct)
-             (or
-               (only-miss "clojure.test" all-ct)
-               (let
-                 [selected
-                  (vec (filter keep? all-ct))
+                      clojure.core/*err*
+                      out-writer]
 
-                  skipped
-                  (- (count all-ct) (count selected))
+              (if (seq all-ct)
+                (or
+                  (only-miss "clojure.test" all-ct)
+                  (let [selected
+                        (vec (filter keep? all-ct))
 
-                  fails
-                  (atom [])
+                        skipped
+                        (- (count all-ct) (count selected))
 
-                  cnt
-                  (atom {:pass 0 :fail 0 :error 0})]
+                        fails
+                        (atom [])
 
-                 (with-redefs
-                   [clojure.test/report
-                    (fn [m]
-                      (when (#{:fail :error :pass} (:type m))
-                        (swap! cnt update (:type m) (fnil inc 0)))
-                      (when (#{:fail :error} (:type m))
-                        (let
-                          [v0 (first clojure.test/*testing-vars*)
-                           vm (meta v0)
-                           thrown (when (= :error (:type m))
-                                    (let [a (:actual m)]
-                                      (when (instance? Throwable a) a)))]
+                        cnt
+                        (atom {:pass 0 :fail 0 :error 0})]
 
-                          (swap! fails conj
-                            {"ns" (str (:ns vm))
-                             "test" (when v0 (str (:name vm)))
-                             "type" (name (:type m))
-                             "message" (if thrown
-                                         (str (.getName (class thrown))
-                                              (when-let [msg (.getMessage ^Throwable thrown)]
-                                                (str ": " msg)))
-                                         (str (or (:message m) (:type m))))
-                             "expected" (pr-str (:expected m))
-                             ;; For an :error the raw :actual is the whole Throwable
-                             ;; (a giant #error map with stacktrace) — the class+message
-                             ;; above already carries the signal, so drop the dump.
-                             "actual" (if thrown "" (pr-str (:actual m)))
-                             ;; clojure.test pins :file/:line to the THROWING JVM frame
-                             ;; for errors (e.g. Numbers.java:190) — fall back to the
-                             ;; test var's own source location so the digest points
-                             ;; at the deftest, not clojure internals.
-                             "file" (if thrown (str (:file vm)) (str (:file m)))
-                             "line" (if thrown (:line vm) (:line m))}))))]
-                   (clojure.test/test-vars selected))
-                 (let
-                   [c
-                    (clojure.core/deref cnt)
+                    (with-redefs [clojure.test/report
+                                  (fn [m]
+                                    (when (#{:fail :error :pass} (:type m))
+                                      (swap! cnt update (:type m) (fnil inc 0)))
+                                    (when (#{:fail :error} (:type m))
+                                      (let [v0 (first clojure.test/*testing-vars*)
+                                            vm (meta v0)
+                                            thrown (when (= :error (:type m))
+                                                     (let [a (:actual m)]
+                                                       (when (instance? Throwable a) a)))]
 
-                    fs
-                    (clojure.core/deref fails)]
+                                        (swap! fails conj
+                                          {"ns" (str (:ns vm))
+                                           "test" (when v0 (str (:name vm)))
+                                           "type" (name (:type m))
+                                           "message" (if thrown
+                                                       (str (.getName (class thrown))
+                                                            (when-let [msg (.getMessage ^Throwable
+                                                                                        thrown)]
+                                                              (str ": " msg)))
+                                                       (str (or (:message m) (:type m))))
+                                           "expected" (pr-str (:expected m))
+                                           ;; For an :error the raw :actual is the whole Throwable
+                                           ;; (a giant #error map with stacktrace) — the class+message
+                                           ;; above already carries the signal, so drop the dump.
+                                           "actual" (if thrown "" (pr-str (:actual m)))
+                                           ;; clojure.test pins :file/:line to the THROWING JVM frame
+                                           ;; for errors (e.g. Numbers.java:190) — fall back to the
+                                           ;; test var's own source location so the digest points
+                                           ;; at the deftest, not clojure internals.
+                                           "file" (if thrown (str (:file vm)) (str (:file m)))
+                                           "line" (if thrown (:line vm) (:line m))}))))]
+                      (clojure.test/test-vars selected))
+                    (let [c
+                          (clojure.core/deref cnt)
 
-                   {"framework" "clojure.test"
-                    "total" (+ (:pass c) (:fail c) (:error c))
-                    "pass" (:pass c)
-                    "fail" (+ (:fail c) (:error c))
-                    "selected" (count selected)
-                    "skipped" skipped
-                    "failures" fs
-                    "errors" (vec (filter (fn [f]
-                                            (= "error" (get f "type")))
-                                          fs))})))
-             (or
-               (only-miss "lazytest" all-lt)
-               (let
-                 [selected
-                  (vec (filter keep? all-lt))
+                          fs
+                          (clojure.core/deref fails)]
 
-                  skipped
-                  (- (count all-lt) (count selected))
+                      {"framework" "clojure.test"
+                       "total" (+ (:pass c) (:fail c) (:error c))
+                       "pass" (:pass c)
+                       "fail" (+ (:fail c) (:error c))
+                       "selected" (count selected)
+                       "skipped" skipped
+                       "failures" fs
+                       "errors" (vec (filter (fn [f]
+                                               (= "error" (get f "type")))
+                                             fs))})))
+                (or
+                  (only-miss "lazytest" all-lt)
+                  (let [selected
+                        (vec (filter keep? all-lt))
 
-                  lt-suite
-                  (requiring-resolve (quote lazytest.suite/suite))
+                        skipped
+                        (- (count all-lt) (count selected))
 
-                  run-suite
-                  (requiring-resolve (quote lazytest.runner/filter-and-run))
+                        lt-suite
+                        (requiring-resolve (quote lazytest.suite/suite))
 
-                  var->suite
-                  (fn [v]
-                    ;; A defdescribe var derefs to a THUNK that builds the
-                    ;; suite; the older style stores it in :lazytest/test
-                    ;; metadata. Mirror lazytest.runner's own extraction.
-                    (let [m (meta v)]
-                      (if (contains? m :lazytest/test)
-                        (:lazytest/test m)
-                        (let [x (deref v)]
-                          (if (fn? x) (x) x)))))
+                        run-suite
+                        (requiring-resolve (quote lazytest.runner/filter-and-run))
 
-                  run-var
-                  (fn [v]
-                    ;; lazytest.runner/run-test-var DROPS the ns-level
-                    ;; :context that set-ns-context! attaches (only
-                    ;; find-ns-suite reads it), so ns fixtures such as
-                    ;; around-each never fire under per-var running.
-                    ;; Rebuild the per-var run suite WITH the ns context so
-                    ;; around-each / before-each wrappers apply. When a ns
-                    ;; has no :context this is nil -> behaves exactly like
-                    ;; run-test-var.
-                    (let [tns (the-ns (symbol (namespace (symbol v))))]
-                      (run-suite (lt-suite {:type :lazytest/run
-                                            :nses [tns]
-                                            :children [(var->suite v)]
-                                            :context (:context (meta tns))})
-                                 {:output []})))
+                        var->suite
+                        (fn [v]
+                          ;; A defdescribe var derefs to a THUNK that builds the
+                          ;; suite; the older style stores it in :lazytest/test
+                          ;; metadata. Mirror lazytest.runner's own extraction.
+                          (let [m (meta v)]
+                            (if (contains? m :lazytest/test)
+                              (:lazytest/test m)
+                              (let [x (deref v)]
+                                (if (fn? x) (x) x)))))
 
-                  rseq
-                  (requiring-resolve (quote lazytest.results/result-seq))
+                        run-var
+                        (fn [v]
+                          ;; lazytest.runner/run-test-var DROPS the ns-level
+                          ;; :context that set-ns-context! attaches (only
+                          ;; find-ns-suite reads it), so ns fixtures such as
+                          ;; around-each never fire under per-var running.
+                          ;; Rebuild the per-var run suite WITH the ns context so
+                          ;; around-each / before-each wrappers apply. When a ns
+                          ;; has no :context this is nil -> behaves exactly like
+                          ;; run-test-var.
+                          (let [tns (the-ns (symbol (namespace (symbol v))))]
+                            (run-suite (lt-suite {:type :lazytest/run
+                                                  :nses [tns]
+                                                  :children [(var->suite v)]
+                                                  :context (:context (meta tns))})
+                                       {:output []})))
 
-                  trees
-                  (mapv (fn [v]
-                          (run-var v))
-                        selected)
+                        rseq
+                        (requiring-resolve (quote lazytest.results/result-seq))
 
-                  results
-                  (mapcat rseq trees)
+                        trees
+                        (mapv (fn [v]
+                                (run-var v))
+                              selected)
 
-                  leaves
-                  (filter (fn [x]
-                            (#{:fail :error :pass} (:type x)))
-                          results)
+                        results
+                        (mapcat rseq trees)
 
-                  fails
-                  (filter (fn [x]
-                            (#{:fail :error} (:type x)))
-                          results)
+                        leaves
+                        (filter (fn [x]
+                                  (#{:fail :error :pass} (:type x)))
+                                results)
 
-                  ->fail
-                  (fn [f]
-                    {"ns" (str (:ns f))
-                     "test" (str (:doc f))
-                     "type" (name (:type f))
-                     "message" (let [m (:message f)]
-                                 (cond (seq (str m)) (str m)
-                                       (:thrown f) (str (.getMessage (:thrown f)))
-                                       :else (str "expected " (pr-str (:expected f))
-                                                  " actual " (pr-str (:actual f)))))
-                     "expected" (pr-str (:expected f))
-                     "actual" (pr-str (:actual f))
-                     "file" (str (:file f))
-                     "line" (:line f)})]
+                        fails
+                        (filter (fn [x]
+                                  (#{:fail :error} (:type x)))
+                                results)
 
-                 {"framework" "lazytest"
-                  "total" (count leaves)
-                  "pass" (count (filter (fn [x]
-                                          (= :pass (:type x)))
-                                        results))
-                  "fail" (count fails)
-                  "selected" (count selected)
-                  "skipped" skipped
-                  "failures" (mapv ->fail fails)
-                  "errors" (mapv ->fail
-                                 (filter (fn [x]
-                                           (= :error (:type x)))
-                                         results))}))))]
+                        ->fail
+                        (fn [f]
+                          {"ns" (str (:ns f))
+                           "test" (str (:doc f))
+                           "type" (name (:type f))
+                           "message" (let [m (:message f)]
+                                       (cond (seq (str m)) (str m)
+                                             (:thrown f) (str (.getMessage (:thrown f)))
+                                             :else (str "expected " (pr-str (:expected f))
+                                                        " actual " (pr-str (:actual f)))))
+                           "expected" (pr-str (:expected f))
+                           "actual" (pr-str (:actual f))
+                           "file" (str (:file f))
+                           "line" (:line f)})]
+
+                    {"framework" "lazytest"
+                     "total" (count leaves)
+                     "pass" (count (filter (fn [x]
+                                             (= :pass (:type x)))
+                                           results))
+                     "fail" (count fails)
+                     "selected" (count selected)
+                     "skipped" skipped
+                     "failures" (mapv ->fail fails)
+                     "errors" (mapv ->fail
+                                    (filter (fn [x]
+                                              (= :error (:type x)))
+                                            results))}))))]
 
         (assoc result "output" (clojure.core/str out-writer))))))
 
@@ -312,21 +305,20 @@
    string literal, once to parse the map inside it."
   ([ns-strs sel] (build-eval-code ns-strs sel {}))
   ([ns-strs sel ns-files]
-   (binding
-     [*print-length*
-      nil
+   (binding [*print-length*
+             nil
 
-      *print-level*
-      nil
+             *print-level*
+             nil
 
-      *print-namespace-maps*
-      false
+             *print-namespace-maps*
+             false
 
-      *print-meta*
-      false
+             *print-meta*
+             false
 
-      *print-dup*
-      false]
+             *print-dup*
+             false]
 
      (str
        "(binding [*print-length* nil *print-level* nil *print-namespace-maps* false *print-meta* false *print-dup* false] (pr-str ("
@@ -357,27 +349,26 @@
   (->> fails
        (map
          (fn [{:strs [ns test message expected actual file line]}]
-           (let
-             [keep?
-              (fn [x]
-                (and x (not (str/blank? (str x))) (not= "nil" (str x))))
+           (let [keep?
+                 (fn [x]
+                   (and x (not (str/blank? (str x))) (not= "nil" (str x))))
 
-              loc
-              (when (keep? file) (str "  (" file (when line (str ":" line)) ")"))
+                 loc
+                 (when (keep? file) (str "  (" file (when line (str ":" line)) ")"))
 
-              head
-              (str "✗ " ns (when (keep? test) (str "/" test)) loc)
+                 head
+                 (str "✗ " ns (when (keep? test) (str "/" test)) loc)
 
-              detail
-              (cond-> []
-                (keep? message)
-                (conj (str "    " message))
+                 detail
+                 (cond-> []
+                   (keep? message)
+                   (conj (str "    " message))
 
-                (keep? expected)
-                (conj (str "    expected: " expected))
+                   (keep? expected)
+                   (conj (str "    expected: " expected))
 
-                (keep? actual)
-                (conj (str "    actual:   " actual)))]
+                   (keep? actual)
+                   (conj (str "    actual:   " actual)))]
 
              (str/join "\n" (cons head detail)))))
        (str/join "\n")))
@@ -388,13 +379,12 @@
    `failures->text` digest when the run failed. Never the framework's per-namespace
    reporter tree, so a green run reads clean and a red one shows only what broke."
   [parsed]
-  (let
-    [cap
-     (not-empty (str/trim (or (strip-ansi (str (get parsed "output"))) "")))
+  (let [cap
+        (not-empty (str/trim (or (strip-ansi (str (get parsed "output"))) "")))
 
-     digest
-     (when-let [fails (seq (get parsed "failures"))]
-       (failures->text fails))]
+        digest
+        (when-let [fails (seq (get parsed "failures"))]
+          (failures->text fails))]
 
     (assoc parsed "output" (str/join "\n\n" (remove nil? [cap digest])))))
 
@@ -429,18 +419,16 @@
    exists). A directory -> every *_test.clj under it; a pure source dir maps each
    source ns to its existing *-test ns. `test-index` is {ns-str file}."
   [^java.io.File f test-index]
-  (let
-    [test-ns (fn [src-ns]
-               (let [tn (source-ns->test-ns src-ns)]
-                 (when (contains? test-index tn) tn)))]
+  (let [test-ns (fn [src-ns]
+                  (let [tn (source-ns->test-ns src-ns)]
+                    (when (contains? test-index tn) tn)))]
     (cond (and (.isFile f) (str/ends-with? (.getName f) "_test.clj")) (keep identity
                                                                             [(ns-of-file f)])
           (and (.isFile f) (str/ends-with? (.getName f) ".clj")) (keep test-ns [(ns-of-file f)])
           (.isDirectory f)
-          (let
-            [test-files (filter (fn [^java.io.File x]
-                                  (and (.isFile x) (str/ends-with? (.getName x) "_test.clj")))
-                                (file-seq f))]
+          (let [test-files (filter (fn [^java.io.File x]
+                                     (and (.isFile x) (str/ends-with? (.getName x) "_test.clj")))
+                                   (file-seq f))]
             (if (seq test-files)
               (keep ns-of-file test-files)
               (->> (file-seq f)
@@ -458,9 +446,8 @@
   (let [test-index (all-test-files root)]
     (->> paths
          (mapcat (fn [p]
-                   (let
-                     [pf (io/file (str p))
-                      f (if (.isAbsolute pf) pf (io/file root (str p)))]
+                   (let [pf (io/file (str p))
+                         f (if (.isAbsolute pf) pf (io/file root (str p)))]
 
                      (path->nses f test-index))))
          distinct
@@ -507,12 +494,11 @@
   "Find a test source file for ns-str under root, even when the live nREPL was
    started without test paths on its classpath."
   [root ns-str]
-  (let
-    [rel
-     (ns->source-relpath ns-str)
+  (let [rel
+        (ns->source-relpath ns-str)
 
-     root-file
-     (io/file root)]
+        root-file
+        (io/file root)]
 
     (some (fn [^java.io.File f]
             (let [p (.getPath f)]
@@ -533,15 +519,14 @@
 
 (defn- run-via-repl
   [root ns-strs sel port]
-  (let
-    [;; Cheap pre-flight: a single `describe` under a short timeout. A dead or
-     ;; wedged nREPL is caught here in ~2s instead of blocking the whole test
-     ;; eval for the multi-minute `default-test-timeout-ms` budget. `probe!`
-     ;; never throws and reuses the same cached connection `eval!` warms, so
-     ;; the healthy path pays only one fast round-trip. It can't recurse into
-     ;; `eval!` from THIS layer (it does from inside `eval!`, which is why the
-     ;; guard lives here at the entry point rather than in the client).
-     probe (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 2000})]
+  (let [;; Cheap pre-flight: a single `describe` under a short timeout. A dead or
+        ;; wedged nREPL is caught here in ~2s instead of blocking the whole test
+        ;; eval for the multi-minute `default-test-timeout-ms` budget. `probe!`
+        ;; never throws and reuses the same cached connection `eval!` warms, so
+        ;; the healthy path pays only one fast round-trip. It can't recurse into
+        ;; `eval!` from THIS layer (it does from inside `eval!`, which is why the
+        ;; guard lives here at the entry point rather than in the client).
+        probe (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 2000})]
     (if (not= :up (:status probe))
       {"mode" "repl"
        "ns" (str/join " " ns-strs)
@@ -552,21 +537,19 @@
                     (name (or (:status probe) :unknown))
                     ") — the server is down or unresponsive.")
        "repl_unusable" true}
-      (let
-        [ns-files (test-files-for root ns-strs)
-         code (build-eval-code ns-strs sel ns-files)
-         ns-disp (str/join " " ns-strs)]
+      (let [ns-files (test-files-for root ns-strs)
+            code (build-eval-code ns-strs sel ns-files)
+            ns-disp (str/join " " ns-strs)]
 
-        (try (let
-               [r
-                ;; The run is parked outside the native tool wall, so THIS timeout is
-                ;; the real budget — a slow / wedged nREPL surfaces as a real timeout
-                ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
-                (nrepl-client/eval!
-                  {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
-                parsed (try (let [x (edn/read-string (get r "value"))]
-                              (if (string? x) (edn/read-string x) x))
-                            (catch Throwable _ nil))]
+        (try (let [r
+                   ;; The run is parked outside the native tool wall, so THIS timeout is
+                   ;; the real budget — a slow / wedged nREPL surfaces as a real timeout
+                   ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
+                   (nrepl-client/eval!
+                     {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
+                   parsed (try (let [x (edn/read-string (get r "value"))]
+                                 (if (string? x) (edn/read-string x) x))
+                               (catch Throwable _ nil))]
 
                (cond
                  ;; nREPL never returned a result within the budget (eval! reports it and
@@ -649,9 +632,8 @@
   [root]
   (try (let [f (io/file root "deps.edn")]
          (when (.isFile f)
-           (let
-             [edn (edn/read-string (slurp f))
-              main-opts (get-in edn [:aliases :test :main-opts])]
+           (let [edn (edn/read-string (slurp f))
+                 main-opts (get-in edn [:aliases :test :main-opts])]
 
              (boolean (some (fn* [p1__44725#] (= "lazytest.main" p1__44725#)) main-opts)))))
        (catch Throwable _ false)))
@@ -665,16 +647,15 @@
      bb.edn      -> bb test          (whole suite; selectors do NOT apply)
    `sel` is the normalized selector map {:nses :only :include :exclude}."
   [root sel]
-  (let
-    [present?
-     (fn [n]
-       (.isFile (io/file root n)))
+  (let [present?
+        (fn [n]
+          (.isFile (io/file root n)))
 
-     ;; A NESTED project whose deps.edn declares no :jvm-opts for :test inherits
-     ;; the workspace's, passed as -J flags so the CLI suite runs with the same
-     ;; JVM options as the managed nREPL (native-access / preview / unsafe-memory).
-     jflags
-     (mapv #(str "-J" %) (repl-manager/inherited-jvm-opts (io/file root) [:test]))]
+        ;; A NESTED project whose deps.edn declares no :jvm-opts for :test inherits
+        ;; the workspace's, passed as -J flags so the CLI suite runs with the same
+        ;; JVM options as the managed nREPL (native-access / preview / unsafe-memory).
+        jflags
+        (mapv #(str "-J" %) (repl-manager/inherited-jvm-opts (io/file root) [:test]))]
 
     (cond (present? "deps.edn")
           (if (lazytest-cli? root)
@@ -695,44 +676,41 @@
    sentence so the RUN_TESTS headline doesn't re-list every namespace.
    `norm` is the canonical selector map {:nses :only :include :exclude}."
   [root norm]
-  (let
-    [ns-str
-     (str/join " " (:nses norm))
+  (let [ns-str
+        (str/join " " (:nses norm))
 
-     sel
-     (select-keys norm [:nses :only :include :exclude])]
+        sel
+        (select-keys norm [:nses :only :include :exclude])]
 
     (if-let [{:keys [tool cmd]} (cli-command-for root sel)]
-      (let
-        [res (try (apply shell/sh (concat cmd [:dir (str root)]))
-                  (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
-         out (str (:out res) (:err res))
-         exit (long (or (:exit res) -1))
-         cases (some-> (re-find #"Ran (\d+) test" out)
-                       second)
-         fails (some-> (re-find #"(\d+) failures?" out)
-                       second)
-         ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
-         ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
-         ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
-         ;; that as green silently hid whole suites (a real false green).
-         ran? (some? cases)
-         tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
+      (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
+                     (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
+            out (str (:out res) (:err res))
+            exit (long (or (:exit res) -1))
+            cases (some-> (re-find #"Ran (\d+) test" out)
+                          second)
+            fails (some-> (re-find #"(\d+) failures?" out)
+                          second)
+            ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
+            ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
+            ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
+            ;; that as green silently hid whole suites (a real false green).
+            ran? (some? cases)
+            tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
 
         ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
         ;; "pass" (a count) — render-test-result reads both.
-        (cond->
-          {"mode" "cli"
-           "ns" ns-str
-           "tool" (name tool)
-           "command" (str/join " " cmd)
-           "exit" exit
-           "is_pass" (and (zero? exit) ran?)
-           ;; Surface just the RESULT — the tally is all the caller needs. The
-           ;; runner mechanics (which build tool, live nREPL vs CLI, selector
-           ;; pass-through) are internal plumbing, not something to narrate.
-           "note" tally
-           "output" (cli-tail out)}
+        (cond-> {"mode" "cli"
+                 "ns" ns-str
+                 "tool" (name tool)
+                 "command" (str/join " " cmd)
+                 "exit" exit
+                 "is_pass" (and (zero? exit) ran?)
+                 ;; Surface just the RESULT — the tally is all the caller needs. The
+                 ;; runner mechanics (which build tool, live nREPL vs CLI, selector
+                 ;; pass-through) are internal plumbing, not something to narrate.
+                 "note" tally
+                 "output" (cli-tail out)}
           (and (zero? exit) (not ran?))
           (assoc "error"
             (str "test command exited 0 but printed no \"Ran N test…\" summary"
@@ -777,17 +755,16 @@
   [session-id root norm result]
   (cond (get result "repl_unusable")
         (do (restart-repl-async! session-id root)
-            (let
-              [cli
-               (run-via-cli root norm)
+            (let [cli
+                  (run-via-cli root norm)
 
-               why
-               (get result "error")
+                  why
+                  (get result "error")
 
-               note
-               (str "nREPL was unusable"
-                    (when why (str " (" why ")"))
-                    " — ran the suite via CLI and restarted the nREPL in the background.")]
+                  note
+                  (str "nREPL was unusable"
+                       (when why (str " (" why ")"))
+                       " — ran the suite via CLI and restarted the nREPL in the background.")]
 
               (-> cli
                   (assoc "recovered" true)
@@ -850,75 +827,74 @@
    The result :mode says which path ran; :language is always clojure so the result is self-describing
    across the language / framework / tool / mode axes."
   ([env arg]
-   (let
-     [root
-      (or (:workspace/root env)
-          (throw (ex-info "clj_test fired without :workspace/root in env"
-                          {:type :clj/no-workspace})))
+   (let [root
+         (or (:workspace/root env)
+             (throw (ex-info "clj_test fired without :workspace/root in env"
+                             {:type :clj/no-workspace})))
 
-      paths
-      (when (map? arg) (or (get arg "paths") (get arg "path")))
+         paths
+         (when (map? arg) (or (get arg "paths") (get arg "path")))
 
-      arg
-      (if (and paths (not (or (get arg "ns") (get arg "namespace") (get arg "namespaces"))))
-        (-> arg
-            (dissoc "paths" "path")
-            (assoc "ns" (paths->test-nses root paths)))
-        arg)
+         arg
+         (if (and paths (not (or (get arg "ns") (get arg "namespace") (get arg "namespaces"))))
+           (-> arg
+               (dissoc "paths" "path")
+               (assoc "ns" (paths->test-nses root paths)))
+           arg)
 
-      {:keys [nses] :as norm}
-      (normalize-arg arg)
+         {:keys [nses] :as norm}
+         (normalize-arg arg)
 
-      ;; Locations the caller EXPLICITLY asked for (requested paths, else the
-      ;; named test namespaces resolved to their files) — used ONLY to find the
-      ;; tests' own project root. Empty for a bare "run everything" call, which
-      ;; stays rooted at the workspace so it never file-seqs per namespace.
-      req-locations
-      (cond (seq paths) (map (fn [p]
-                               (let [pf (io/file (str p))]
-                                 (if (.isAbsolute pf) pf (io/file root (str p)))))
-                             paths)
-            (seq nses) (keep #(some-> (test-file-for root %)
-                                      io/file)
-                             nses)
-            :else nil)
+         ;; Locations the caller EXPLICITLY asked for (requested paths, else the
+         ;; named test namespaces resolved to their files) — used ONLY to find the
+         ;; tests' own project root. Empty for a bare "run everything" call, which
+         ;; stays rooted at the workspace so it never file-seqs per namespace.
+         req-locations
+         (cond (seq paths) (map (fn [p]
+                                  (let [pf (io/file (str p))]
+                                    (if (.isAbsolute pf) pf (io/file root (str p)))))
+                                paths)
+               (seq nses) (keep #(some-> (test-file-for root %)
+                                         io/file)
+                                nses)
+               :else nil)
 
-      ;; Empty selectors = "run everything": when the caller named nothing
-      ;; (no ns AND no paths), default to every *_test namespace under the
-      ;; yielded no tests — that's an explicit-but-empty request and stays
-      ;; an error below. An explicit empty list [] counts as "not given"
-      ;; (empty? is total on nil), so [] and nil behave identically here.
-      {:keys [nses] :as norm}
-      (if (and (empty? nses) (empty? paths))
-        (assoc norm :nses (sort (keys (all-test-files root))))
-        norm)
+         ;; Empty selectors = "run everything": when the caller named nothing
+         ;; (no ns AND no paths), default to every *_test namespace under the
+         ;; yielded no tests — that's an explicit-but-empty request and stays
+         ;; an error below. An explicit empty list [] counts as "not given"
+         ;; (empty? is total on nil), so [] and nil behave identically here.
+         {:keys [nses] :as norm}
+         (if (and (empty? nses) (empty? paths))
+           (assoc norm :nses (sort (keys (all-test-files root))))
+           norm)
 
-      sel
-      (select-keys norm [:only :include :exclude])
+         sel
+         (select-keys norm [:only :include :exclude])
 
-      ;; Boot the nREPL where the tests' OWN build file lives (nearest deps.edn /
-      ;; project.clj / bb.edn at or below the workspace root), so a nested
-      ;; project's deps.edn is honored. Falls back to the workspace root when the
-      ;; request is at the top level or spans several projects.
-      eff-root
-      (if (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations)) root)
+         ;; Boot the nREPL where the tests' OWN build file lives (nearest deps.edn /
+         ;; project.clj / bb.edn at or below the workspace root), so a nested
+         ;; project's deps.edn is honored. Falls back to the workspace root when the
+         ;; request is at the top level or spans several projects.
+         eff-root
+         (if (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations)) root)
 
-      ;; Autostart / reuse THIS session's nREPL. `ensure-repl-for-dir!` already
-      ;; verifies liveness (wait-until-up) and stops+replaces a dead/wedged process,
-      ;; so a keyword-keyed result carrying :port is a VERIFIED-up server. When it
-      ;; can't hand back a live port it returns start!'s STRING-keyed lifecycle map
-      ;; ("no-launcher"/"failed"/"starting"…) instead — the two cases are gated apart
-      ;; below so a boot failure is surfaced, not swallowed into a bare CLI fallback.
-      repl
-      ;; The cold autostart runs OUTSIDE the native tool wall (see
-      ;; extension/run-outside-tool-wall) — the run's timeout bounds only the
-      ;; tests, never the boot.
-      (extension/run-outside-tool-wall env
-                                       #(repl-manager/ensure-repl-for-dir! (:session-id env)
-                                                                           eff-root))
+         ;; Autostart / reuse THIS session's nREPL. `ensure-repl-for-dir!` already
+         ;; verifies liveness (wait-until-up) and stops+replaces a dead/wedged process,
+         ;; so a keyword-keyed result carrying :port is a VERIFIED-up server. When it
+         ;; can't hand back a live port it returns start!'s STRING-keyed lifecycle map
+         ;; ("no-launcher"/"failed"/"starting"…) instead — the two cases are gated apart
+         ;; below so a boot failure is surfaced, not swallowed into a bare CLI fallback.
+         repl
+         ;; The cold autostart runs OUTSIDE the native tool wall (see
+         ;; extension/run-outside-tool-wall) — the run's timeout bounds only the
+         ;; tests, never the boot.
+         (extension/run-outside-tool-wall env
+                                          #(repl-manager/ensure-repl-for-dir! (:session-id env)
+                                                                              eff-root))
 
-      port
-      (:port repl)]
+         port
+         (:port repl)]
 
      (when (empty? nses)
        (throw (ex-info
@@ -926,43 +902,41 @@
                   (str "clj_test found no *_test.clj namespaces under " (pr-str (vec paths)))
                   "clj_test found no *_test.clj namespaces anywhere under the workspace root")
                 {:type :clj/bad-args :got arg})))
-     (let
-       [result
-        (cond
-          ;; nREPL is up and verified — the fast inner loop.
-          port (run-via-repl eff-root nses sel port)
-          ;; No launchable Clojure build file at all → the CLI suite is the
-          ;; correct path (it shells the build tool's own test command).
-          (= "no-launcher" (get repl "result")) (run-via-cli eff-root norm)
-          ;; A build file EXISTS but the nREPL did NOT come up ("failed" /
-          ;; still "starting" / wedged past its grace window). Do NOT silently
-          ;; CLI-fall-back onto a project whose REPL just crashed — surface the
-          ;; launcher's own story (result + message + log tail) so the boot
-          ;; failure IS the reported error instead of a confusing CLI miss.
-          (map? repl) (cond->
-                        {"mode" "repl"
-                         "ns" (str/join " " nses)
-                         "port" (get repl "port")
-                         "error" (str "nREPL for "
-                                      eff-root
-                                      " is not running (status "
-                                      (get repl "result" "unknown")
-                                      ") — "
-                                      (get repl "message" "the server failed to start")
-                                      ". Fix the boot error (see log_tail) and retry.")}
-                        (get repl "log_tail")
-                        (assoc "log_tail" (get repl "log_tail")))
-          ;; Defensive last resort (nil / unexpected shape): the CLI suite.
-          :else (run-via-cli eff-root norm))
+     (let [result
+           (cond
+             ;; nREPL is up and verified — the fast inner loop.
+             port (run-via-repl eff-root nses sel port)
+             ;; No launchable Clojure build file at all → the CLI suite is the
+             ;; correct path (it shells the build tool's own test command).
+             (= "no-launcher" (get repl "result")) (run-via-cli eff-root norm)
+             ;; A build file EXISTS but the nREPL did NOT come up ("failed" /
+             ;; still "starting" / wedged past its grace window). Do NOT silently
+             ;; CLI-fall-back onto a project whose REPL just crashed — surface the
+             ;; launcher's own story (result + message + log tail) so the boot
+             ;; failure IS the reported error instead of a confusing CLI miss.
+             (map? repl) (cond-> {"mode" "repl"
+                                  "ns" (str/join " " nses)
+                                  "port" (get repl "port")
+                                  "error" (str "nREPL for "
+                                               eff-root
+                                               " is not running (status "
+                                               (get repl "result" "unknown")
+                                               ") — "
+                                               (get repl "message" "the server failed to start")
+                                               ". Fix the boot error (see log_tail) and retry.")}
+                           (get repl "log_tail")
+                           (assoc "log_tail" (get repl "log_tail")))
+             ;; Defensive last resort (nil / unexpected shape): the CLI suite.
+             :else (run-via-cli eff-root norm))
 
-        result
-        (recover-if-unusable (:session-id env) eff-root norm result)
+           result
+           (recover-if-unusable (:session-id env) eff-root norm result)
 
-        result'
-        (if (and (get result "error")
-                 (str/includes? (get result "error") "Could not locate lazytest/core"))
-          (run-via-cli eff-root norm)
-          result)]
+           result'
+           (if (and (get result "error")
+                    (str/includes? (get result "error") "Could not locate lazytest/core"))
+             (run-via-cli eff-root norm)
+             result)]
 
        (extension/success {:result (surface/check :test-fn
                                                   (assoc result' "language" "clojure"))})))))

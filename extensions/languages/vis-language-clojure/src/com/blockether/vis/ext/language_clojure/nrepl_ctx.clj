@@ -1,30 +1,20 @@
 (ns com.blockether.vis.ext.language-clojure.nrepl-ctx
-  "Per-turn `:ext/ctx-fn` contribution for the Clojure pack.
+  "Per-turn nREPL resource synchronization for the Clojure pack.
 
-   Instead of forcing the model to call `repl_start()` over and over, the engine
-   injects live nREPL state into context as standing knowledge, nested UNDER the
-   active language so a polyglot repo accumulates
-   `:languages {:clojure {...} :typescript {...}}`:
-
-     {\"session_env\" {\"languages\" {\"clojure\"
-        {\"nrepl\" {\"default\" <id|nil>
-                  \"repls\"   [{\"id\" \"dir\" \"port\" \"aliases\" \"tool\"
-                              \"status\" \"managed\" [\"dialect\" \"versions\"]
-                              ;; when the (+ 1 1) health check failed:
-                              [\"form\" \"hint\"]} ...]}}}}}
+   Live state has one model-facing home:
+   `session[\"resources\"][\"repls\"][\"clojure\"][dir]`. This extension hook
+   probes owned nREPLs and mirrors them into the generic session registry before
+   ctx-loop builds that nested resource view. It returns no legacy
+   `session[\"env\"][\"languages\"]` contribution.
 
    OWNERSHIP: we surface ONLY the REPLs THIS session started + owns, PLUS any
    external nREPL the user EXPLICITLY attached via `connect` (both from
    `repl-manager/session-repls`). There is still NO external-port discovery and
    no `.nrepl-port` scanning — attachment is explicit consent, never a scan.
 
-   The `default` is the id of the SINGLE owned REPL (nil when zero or many): with
-   one REPL that id is the implicit eval target; with several, eval still resolves
-   WITHOUT the model naming an id — it defaults to the workspace-root REPL (else the
-   first) and the eval result reports which REPL ran under its `repl` field, so the
-   model can pass an explicit `id` to override. Each REPL is mirrored into the
-   session resource registry (footer badge
-   + F4 stop/restart) and carries a liveness `status` from a per-turn probe.
+   Eval defaults to the workspace-root REPL (else the first) when several exist;
+   the result reports which REPL ran. Each mirror carries liveness status and
+   diagnostics from a per-turn probe.
 
    All best-effort: any failure degrades to an empty contribution and never
    blocks the render."
@@ -105,17 +95,49 @@
   "Idempotently mirror one owned nREPL into `session-id`'s resource registry so
    the footer badge + stop/restart dialog see it. No-op when already registered.
    Managed REPLs get stop + restart thunks driving repl-manager."
-  [session-id statuses {:keys [id dir port aliases log external? host]}]
+  [session-id statuses {:keys [id dir port tool aliases log external? host]}]
   (let [existing
         (when (and session-id id) (vis/get-resource session-id id))
 
+        probe
+        (get statuses port)
+
         status
-        (or (:status (get statuses port)) :unknown)]
+        (or (:status probe) :unknown)
+
+        detail
+        (cond-> {"dir" dir "port" port "managed" (not external?)}
+          external?
+          (assoc "host"
+            (or host "localhost") "external"
+            true)
+
+          tool
+          (assoc "tool" (name tool))
+
+          (seq aliases)
+          (assoc "aliases" (mapv name aliases))
+
+          log
+          (assoc "log" log)
+
+          (seq (:versions probe))
+          (assoc "versions" (update-keys (:versions probe) name))
+
+          (:dialect probe)
+          (assoc "dialect" (name (:dialect probe)))
+
+          (:form probe)
+          (assoc "form" (:form probe))
+
+          (:hint probe)
+          (assoc "hint" (:hint probe)))]
 
     (when (and session-id
                id
                (or (nil? existing)
                    (not= (name status) (get existing "status"))
+                   (not= detail (get existing "detail"))
                    (and log (not (get existing "can_logs")))
                    (not (get existing "can_health"))))
       (vis/register-resource!
@@ -128,19 +150,8 @@
                      (when external? " (external)")
                      (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
          :status status
-         ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim,
-         ;; so it must be boundary-safe already.
-         :detail (cond-> {"dir" dir "port" port}
-                   external?
-                   (assoc "host"
-                     (or host "localhost") "external"
-                     true)
-
-                   (seq aliases)
-                   (assoc "aliases" (mapv name aliases))
-
-                   log
-                   (assoc "log" log))
+         ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim.
+         :detail detail
          :owner :ext/language-clojure}
         (cond-> {:stop-fn (fn []
                             (repl-manager/stop! session-id dir))
@@ -173,51 +184,10 @@
             (fn []
               (repl-manager/tail-log log))))))))
 
-(defn- nrepl-block
-  "Build the `:nrepl` map from the session's owned REPLs + liveness statuses. This
-   block crosses the strings-only Clojure->Python boundary, so it is built with
-   STRING keys + STRING enum values. `default` is the SINGLE owned REPL's id."
-  [repls statuses]
-  {"default" (when (= 1 (count repls)) (:id (first repls)))
-   "repls" (mapv (fn [{:keys [id dir port tool aliases external? host]}]
-                   (let [st (get statuses port {:status :unknown})]
-                     (cond-> {"id" id
-                              "dir" dir
-                              "port" port
-                              "status" (name (:status st))
-                              "managed" (not external?)}
-                       external?
-                       (assoc "external"
-                         true "host"
-                         (or host "localhost"))
-
-                       tool
-                       (assoc "tool" (name tool))
-
-                       (seq aliases)
-                       (assoc "aliases" (mapv name aliases))
-
-                       (seq (:versions st))
-                       (assoc "versions" (update-keys (:versions st) name))
-
-                       (:dialect st)
-                       (assoc "dialect" (name (:dialect st)))
-
-                       ;; When the `(+ 1 1)` health check failed, carry the exact form
-                       ;; that was run + a plain-language kill/restart hint so the model
-                       ;; sees WHY a REPL is `unresponsive` and what to do about it.
-                       (:form st)
-                       (assoc "form" (:form st))
-
-                       (:hint st)
-                       (assoc "hint" (:hint st)))))
-                 repls)})
-
 (defn contribute
-  "`:ext/ctx-fn` fn. Returns the `{\"session_env\" {\"languages\" {\"clojure\"
-   {\"nrepl\" ...}}}}` slice (STRING-keyed) for THIS session's owned REPLs, and
-   mirrors each into the session resource registry (footer + F4 dialog). `{}` when
-   no workspace root is on env. Never throws — degrades to an empty contribution."
+  "`:ext/ctx-fn` side-effect hook. Probes this session's owned REPLs and mirrors
+   each into the resource registry; always returns `{}` because ctx-loop projects
+   the registry into `session[\"resources\"]`. Never throws."
   [env]
   (try (if (:workspace/root env)
          (let [sid
@@ -236,7 +206,7 @@
                                :id ::sync-resource-failed
                                :data {:id (:id r) :error (ex-message e)}}
                               "Failed to mirror nREPL into the session resource registry"))))
-           {"session_env" {"languages" {"clojure" {"nrepl" (nrepl-block repls statuses)}}}})
+           {})
          {})
        (catch Throwable e
          (tel/log! {:level :warn :id ::contribute-failed :data {:error (ex-message e)}}

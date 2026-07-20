@@ -27,12 +27,11 @@
    shape the result into the uniform lint map. `opts` is merged into the run
    config (e.g. `{:config {...}}`)."
   [lint-arg opts]
-  (let
-    [r
-     (clj-kondo/run! (merge {:lint lint-arg} opts))
+  (let [r
+        (clj-kondo/run! (merge {:lint lint-arg} opts))
 
-     s
-     (:summary r)]
+        s
+        (:summary r)]
 
     {"op" "clj-lint"
      "error" (:error s)

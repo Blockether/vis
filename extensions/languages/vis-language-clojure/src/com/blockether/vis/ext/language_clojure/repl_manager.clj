@@ -874,10 +874,11 @@
     (if id
       (if-let [r (repl-by-id session-id id)]
         (do (touch! session-id (:dir r)) r)
-        (throw (ex-info (str "no nREPL registered under id '"
-                             id
-                             "' in this session — check ctx / session_resources for live REPL ids")
-                        {:type :clj/unknown-repl-id :id id})))
+        (throw (ex-info
+                 (str "no nREPL registered under id '"
+                      id
+                      "' in this session — check session[\"resources\"][\"repls\"][\"clojure\"]")
+                 {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
           (throw (ex-info (str "no running nREPL in this session — start one with "

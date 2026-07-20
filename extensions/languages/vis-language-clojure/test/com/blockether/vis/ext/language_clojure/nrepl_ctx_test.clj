@@ -11,103 +11,63 @@
 
 (defn- reset-cache! [] (reset! @#'nx/liveness-cache {:key nil :statuses {}}))
 
-(defn- nrepl-of
-  [contribution]
-  ;; The contribution is STRING-keyed from the top: the contract key is
-  ;; "session_env" (ctx_loop drops a keyword :session/env), and everything under
-  ;; it crosses the strings-only boundary.
-  (get-in contribution ["session_env" "languages" "clojure" "nrepl"]))
-
 (defn- no-resource-mirror
   "Stub the resource-mirror IO so contribute never touches the real registry."
   [f]
-  (with-redefs [nx/ensure-resource! (fn [_ _]
+  (with-redefs [nx/ensure-resource! (fn [& _]
                                       nil)]
     (f)))
 
 (defdescribe
-  contribute-shape-test
-  (it "surfaces ONE owned REPL with id/port/status/aliases + it is the default"
+  canonical-resource-sync-test
+  (it "returns no legacy env contribution and sends one probed REPL to the resource mirror"
       (reset-cache!)
-      (no-resource-mirror
-        (fn []
-          (with-redefs [rm/session-repls
-                        (fn [_]
-                          [{:id "nrepl:/proj"
-                            :dir "/proj"
-                            :port 7001
-                            :tool :clj
-                            :aliases [:dev :test]}])
+      (let [mirrored (atom nil)]
+        (with-redefs [rm/session-repls (fn [_]
+                                         [{:id "nrepl:/proj"
+                                           :dir "/proj"
+                                           :port 7001
+                                           :tool :clj
+                                           :aliases [:dev :test]}])
+                      nc/probe! (fn [_]
+                                  {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
+                      nc/health-check! (fn [_]
+                                         {:status :up :ms 3})
+                      nx/ensure-resource!
+                      (fn [sid statuses repl]
+                        (reset! mirrored {:sid sid :statuses statuses :repl repl}))]
 
-                        nc/probe!
-                        (fn [_]
-                          {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
-
-                        nc/health-check!
-                        (fn [_]
-                          {:status :up :ms 3})]
-
-            (let [b
-                  (nrepl-of (nx/contribute {:workspace/root "/proj"
-                                            :session-id "s1"
-                                            :ctx-atom (atom {:session/turn 1})}))
-
-                  p
-                  (first (get b "repls"))]
-
-              ;; the SINGLE owned REPL's id is the implicit default
-              (expect (= "nrepl:/proj" (get b "default")))
-              (expect (= "nrepl:/proj" (get p "id")))
-              (expect (= "/proj" (get p "dir")))
-              (expect (= 7001 (get p "port")))
-              (expect (= "up" (get p "status")))
-              (expect (true? (get p "managed")))
-              (expect (= "clj" (get p "tool")))
-              (expect (= "clj" (get p "dialect")))
-              (expect (= ["dev" "test"] (get p "aliases")))
-              (expect (= {"clojure" "1.12.4"} (get p "versions")))))))))
+          (expect (= {}
+                     (nx/contribute {:workspace/root "/proj"
+                                     :session-id "s1"
+                                     :ctx-atom (atom {:session/turn 1})})))
+          (expect (= "s1" (:sid @mirrored)))
+          (expect (= :up (get-in @mirrored [:statuses 7001 :status])))
+          (expect (= :clj (get-in @mirrored [:statuses 7001 :dialect])))
+          (expect (= "nrepl:/proj" (get-in @mirrored [:repl :id])))))))
 
 (defdescribe
   eval-health-block-test
-  (it
-    "marks a REPL whose (+ 1 1) eval wedges as `unresponsive` with the form + a kill/restart hint"
-    (reset-cache!)
-    (no-resource-mirror
-      (fn []
-        (with-redefs
-          [rm/session-repls
-           (fn [_]
-             [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj}])
+  (it "passes unresponsive eval diagnostics to the canonical resource mirror"
+      (reset-cache!)
+      (let [mirrored (atom nil)]
+        (with-redefs [rm/session-repls (fn [_]
+                                         [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj}])
+                      nc/probe! (fn [_]
+                                  {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
+                      nc/health-check! (fn [_]
+                                         {:status :unresponsive
+                                          :form "(+ 1 1)"
+                                          :hint "UNRESPONSIVE — restart or reprobe"})
+                      nx/ensure-resource! (fn [_ statuses _]
+                                            (reset! mirrored (get statuses 7001)))]
 
-           ;; describe answers (server is UP) ...
-           nc/probe!
-           (fn [_]
-             {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
-
-           ;; ... but the real eval health check WEDGES
-           nc/health-check!
-           (fn [_]
-             {:status :unresponsive
-              :form "(+ 1 1)"
-              :ms 2000
-              :hint
-              "nREPL eval timed out after 2000ms on (+ 1 1) — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl_start) or reprobe."})]
-
-          (let [b
-                (nrepl-of (nx/contribute {:workspace/root "/proj"
-                                          :session-id "s1"
-                                          :ctx-atom (atom {:session/turn 1})}))
-
-                p
-                (first (get b "repls"))]
-
-            ;; the eval health check WINS over describe: status flips to unresponsive
-            (expect (= "unresponsive" (get p "status")))
-            (expect (= "(+ 1 1)" (get p "form")))
-            (expect (re-find #"(?i)unresponsive" (get p "hint")))
-            (expect (re-find #"(?i)restart|reprobe" (get p "hint")))
-            ;; describe metadata still rides along
-            (expect (= "clj" (get p "dialect")))))))))
+          (nx/contribute
+            {:workspace/root "/proj" :session-id "s1" :ctx-atom (atom {:session/turn 1})})
+          (expect (= :unresponsive (:status @mirrored)))
+          (expect (= "(+ 1 1)" (:form @mirrored)))
+          (expect (re-find #"(?i)restart|reprobe" (:hint @mirrored)))
+          (expect (= :clj (:dialect @mirrored)))))))
 
 (defdescribe
   resource-mirror-logs-test
@@ -165,39 +125,6 @@
              (@#'nx/ensure-resource! sid {7001 {:status :failed}} {:id rid :dir "/proj" :port 7001})
              (expect (= "failed" (get (vis/get-resource sid rid) "status")))
              (finally (vis/unregister-resource! sid rid))))))
-
-(defdescribe default-selection-test
-             (it "no default when MORE THAN ONE REPL is owned (id must be specified)"
-                 (reset-cache!)
-                 (no-resource-mirror
-                   (fn []
-                     (with-redefs [rm/session-repls
-                                   (fn [_]
-                                     [{:id "nrepl:/a" :dir "/a" :port 1 :tool :clj}
-                                      {:id "nrepl:/b" :dir "/b" :port 2 :tool :clj}])
-
-                                   nc/probe!
-                                   (fn [_]
-                                     {:status :up})]
-
-                       (let [b (nrepl-of (nx/contribute {:workspace/root "/a"
-                                                         :session-id "s1"
-                                                         :ctx-atom (atom {:session/turn 2})}))]
-                         (expect (nil? (get b "default")))
-                         (expect (= 2 (count (get b "repls"))))
-                         (expect (= #{"nrepl:/a" "nrepl:/b"}
-                                    (set (map #(get % "id") (get b "repls"))))))))))
-             (it "emits an empty block (no default, no repls) when the session owns none"
-                 (reset-cache!)
-                 (no-resource-mirror (fn []
-                                       (with-redefs [rm/session-repls (fn [_]
-                                                                        [])]
-                                         (let [b (nrepl-of (nx/contribute
-                                                             {:workspace/root "/proj"
-                                                              :session-id "s1"
-                                                              :ctx-atom (atom {:session/turn 3})}))]
-                                           (expect (nil? (get b "default")))
-                                           (expect (= [] (get b "repls")))))))))
 
 (defdescribe robustness-test
              (it "returns {} when no workspace root is on env" (expect (= {} (nx/contribute {}))))

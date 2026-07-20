@@ -74,6 +74,42 @@
   "Current number of entries (handy for tests/diagnostics)."
   ^long []
   (locking fmt-cache (.size fmt-cache)))
+
+(def ^:private live-body-throttle-ms
+  "Minimum wall-clock gap (ms) between full re-projections of the LIVE
+   progress bubble body. The spinner still advances every `spinner-tick-ms`
+   (it is spliced in fresh by `progress->lines-data`); only the heavy trace
+   re-walk of the actively-growing iteration is debounced. Env
+   `VIS_LIVE_BODY_THROTTLE_MS`; 0 (default) disables the throttle and defers
+   to plain `cached*` — no behaviour change."
+  (or (some-> (System/getenv "VIS_LIVE_BODY_THROTTLE_MS")
+              str/trim
+              not-empty
+              parse-long)
+      0))
+
+(defonce ^:private live-body-throttle-cell
+  ;; One-slot debounce memo for the live progress body: {:key k :body b :at ms}.
+  ;; Only the render thread projects the live bubble, so a single cell suffices.
+  (atom nil))
+
+(defn- live-throttled-cached*
+  "Like `cached*`, but debounces the LIVE progress body. When
+   `live-body-throttle-ms` is positive and the content key `k` changed less
+   than that many ms after the last full re-projection, reuse the previous
+   body instead of re-walking the growing iteration. The SAME content key (a
+   pure spinner tick — no new content) or a 0 throttle falls straight through
+   to `cached*`, so a quiescent stream still recomputes immediately once the
+   window lapses."
+  [k now-ms compute-fn]
+  (if (pos? (long live-body-throttle-ms))
+    (let [{:keys [key body at]} @live-body-throttle-cell]
+      (cond (= key k) (cached* k compute-fn)
+            (and (some? body) (< (- (long now-ms) (long at)) (long live-body-throttle-ms))) body
+            :else (let [b (cached* k compute-fn)]
+                    (reset! live-body-throttle-cell {:key k :body b :at (long now-ms)})
+                    b)))
+    (cached* k compute-fn)))
 (defn repeat-str
   "Allocate a String of `n` copies of `ch`. Drop-in replacement for
    `(apply str (repeat n ch))` - bypasses lazy-seq + per-char
@@ -5104,7 +5140,7 @@
          ;; queued)` in one pass (a following element never changes an earlier
          ;; element's keep/drop decision).
          body
-         (cached*
+         (live-throttled-cached*
            [::progress-body (long content-w) (mapv iteration-fingerprint iterations)
             (boolean (get settings :show-thinking true))
             (boolean (get settings :show-iterations true))
@@ -5114,6 +5150,7 @@
                                          :session-turn-id session-turn-id
                                          :detail-expansions detail-expansions})
             (mapv :text (vec (or pending-sends [])))]
+           now-ms
            (fn []
              (let [trace-entries
                    (trace-render-entries {:iterations iterations

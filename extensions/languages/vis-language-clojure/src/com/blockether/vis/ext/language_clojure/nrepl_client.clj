@@ -79,7 +79,7 @@
             (or host "localhost")
             ":"
             port
-            " — is the REPL running? Check ctx (session_env.languages.clojure.nrepl) or repl_start(\"clojure\").")
+            " — is the REPL running? Check session[\"resources\"][\"repls\"][\"clojure\"] or call repl_start(\"clojure\").")
           {:type :clj/nrepl-connect-failed
            :host (or host "localhost")
            :port port

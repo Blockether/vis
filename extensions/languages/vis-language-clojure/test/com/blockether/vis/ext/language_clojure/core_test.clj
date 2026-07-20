@@ -61,12 +61,11 @@
    sees this extension's manifest even when another extension is also
    on the test classpath."
   []
-  (let
-    [cl
-     (.getContextClassLoader (Thread/currentThread))
+  (let [cl
+        (.getContextClassLoader (Thread/currentThread))
 
-     urls
-     (enumeration-seq (.getResources cl "META-INF/vis-extension/vis.edn"))]
+        urls
+        (enumeration-seq (.getResources cl "META-INF/vis-extension/vis.edn"))]
 
     (mapv (fn [u]
             (read-string (slurp u)))
@@ -83,22 +82,20 @@
              ;; is the public discovery contract; keep it pinned by a test so
              ;; nobody silently deletes it again.
              (it "ships a vis-extension manifest with the language-clojure id on the classpath"
-                 (let
-                   [manifests
-                    (classpath-manifests)
+                 (let [manifests
+                       (classpath-manifests)
 
-                    merged
-                    (reduce merge {} manifests)]
+                       merged
+                       (reduce merge {} manifests)]
 
                    (expect (seq manifests))
                    (expect (contains? merged 'language-clojure))))
              (it "manifest registers the core namespace under the language-clojure id"
-                 (let
-                   [manifests
-                    (classpath-manifests)
+                 (let [manifests
+                       (classpath-manifests)
 
-                    merged
-                    (reduce merge {} manifests)]
+                       merged
+                       (reduce merge {} manifests)]
 
                    (expect (some #{'com.blockether.vis.ext.language-clojure.core}
                                  (get-in merged ['language-clojure :nses]))))))
@@ -112,12 +109,11 @@
                    (expect (nil? (:ext.engine/alias engine)))
                    (expect (empty? (:ext.engine/symbols engine)))))
              (it "registers its repair/no-fail behavior DECLARATIVELY via :ext/op-hooks"
-                 (let
-                   [hooks
-                    (:ext/op-hooks core/vis-extension)
+                 (let [hooks
+                       (:ext/op-hooks core/vis-extension)
 
-                    ops
-                    (set (map (juxt :op :phase) hooks))]
+                       ops
+                       (set (map (juxt :op :phase) hooks))]
 
                    (expect (= 3 (count hooks)))
                    (expect (contains? ops [:write :after]))
@@ -128,18 +124,17 @@
 
 (defdescribe repl-resource-logs-test
              (it "registers managed nREPL resources with tail-able launcher logs"
-                 (let
-                   [dir
-                    (tmp-dir)
+                 (let [dir
+                       (tmp-dir)
 
-                    sid
-                    (str "test-nrepl-logs-" (System/nanoTime))
+                       sid
+                       (str "test-nrepl-logs-" (System/nanoTime))
 
-                    rid
-                    (repl-manager/id-of (.getAbsolutePath dir))
+                       rid
+                       (repl-manager/id-of (.getAbsolutePath dir))
 
-                    log
-                    (io/file dir "nrepl.log")]
+                       log
+                       (io/file dir "nrepl.log")]
 
                    (try (spit log "booting\nready\n")
                         (core/register-repl-resource! sid
@@ -161,16 +156,15 @@
 
 (defdescribe combined-format-test
              (it "format does BOTH parinfer delimiter repair AND cljfmt"
-                 (let
-                   [src
-                    "(defn f [x]\n  (+ x 1)"
+                 (let [src
+                       "(defn f [x]\n  (+ x 1)"
 
-                    ; missing close paren
-                    r
-                    (core/clj-format-fn src)
+                       ; missing close paren
+                       r
+                       (core/clj-format-fn src)
 
-                    out
-                    (core/clj-repair+format src)]
+                       out
+                       (core/clj-repair+format src)]
 
                    (expect (:success? r))
                    (expect (true? (get-in r [:result "repaired"]))) ; a ) was added
@@ -184,16 +178,14 @@
 (defdescribe multi-file-format-test
              (it "formats every file in {\"paths\": [...]} IN PLACE and rolls up per-file changes"
                  (let [dir (tmp-dir)]
-                   (try (let
-                          [f1 (io/file dir "a.clj")
-                           f2 (io/file dir "b.clj")]
+                   (try (let [f1 (io/file dir "a.clj")
+                              f2 (io/file dir "b.clj")]
 
                           (spit f1 "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
                           (spit f2 "(defn g [y] (+ y 1))\n")  ; already tidy -> no change
-                          (let
-                            [r (core/clj-format-fn {:workspace/root (str dir)}
-                                                   {"paths" [(str f1) (str f2)]})
-                             files (get-in r [:result "files"])]
+                          (let [r (core/clj-format-fn {:workspace/root (str dir)}
+                                                      {"paths" [(str f1) (str f2)]})
+                                files (get-in r [:result "files"])]
 
                             (expect (:success? r))
                             (expect (= "clj-format" (get-in r [:result "op"])))
@@ -236,9 +228,8 @@
                (spit (io/file sub "probe.clj") "(ns sub.probe)\n(defn foo [] (let [x 1] 42))\n")
                ;; the relative path exists ONLY under the workspace root, never under CWD
                (expect (not (.exists (io/file (System/getProperty "user.dir") "sub/probe.clj"))))
-               (let
-                 [r (core/clj-lint-fn {:workspace/root (str dir)} {"path" "sub/probe.clj"})
-                  findings (get-in r [:result "findings"])]
+               (let [r (core/clj-lint-fn {:workspace/root (str dir)} {"path" "sub/probe.clj"})
+                     findings (get-in r [:result "findings"])]
 
                  (expect (:success? r))
                  ;; the file under root was actually linted (not silently skipped)
@@ -258,10 +249,9 @@
              ;; unused binding x -> a clj-kondo warning
              (spit (io/file sub "probe.clj") "(ns sub.probe)\n(defn foo [] (let [x 1] 42))\n")
              ;; the model shape: {"code" ""} alongside a real {"path"} (and empty {"paths"})
-             (let
-               [r (core/clj-lint-fn {:workspace/root (str dir)}
-                                    {"code" "" "path" "sub/probe.clj" "paths" []})
-                findings (get-in r [:result "findings"])]
+             (let [r (core/clj-lint-fn {:workspace/root (str dir)}
+                                       {"code" "" "path" "sub/probe.clj" "paths" []})
+                   findings (get-in r [:result "findings"])]
 
                (expect (:success? r))
                ;; the file was actually linted, NOT skipped as a blank snippet
@@ -270,9 +260,8 @@
                (expect (= "unused binding x" (get (first findings) "message"))))
              ;; format sees the same shape: a blank `code` must format the FILE, not ""
              (spit (io/file sub "fmt.clj") "(defn f [x]\n(* x 2))\n")
-             (let
-               [r (core/clj-format-fn {:workspace/root (str dir)}
-                                      {"code" "" "path" "sub/fmt.clj" "paths" []})]
+             (let [r (core/clj-format-fn {:workspace/root (str dir)}
+                                         {"code" "" "path" "sub/fmt.clj" "paths" []})]
                (expect (:success? r))
                (expect (= "sub/fmt.clj" (get-in r [:result "path"])))
                (expect (true? (get-in r [:result "changed"])))
@@ -284,55 +273,51 @@
   (it
     "formats a DIRECTORY in {\"paths\"} RECURSIVELY, skipping non-Clojure files"
     (let [dir (tmp-dir)]
-      (try
-        (let [sub (io/file dir "sub")]
-          (.mkdirs sub)
-          (spit (io/file dir "a.clj") "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
-          (spit (io/file sub "b.cljc") "(defn g [y]\n(+ y 1))\n") ; nested -> changes
-          (spit (io/file sub "c.clj") "(defn h [z] (dec z))\n")   ; tidy -> no change
-          (spit (io/file dir "notes.txt") "not clojure\n") ; must be ignored
-          (let
-            [r (core/clj-format-fn {:workspace/root (str dir)} {"paths" [(str dir)]})
-             files (get-in r [:result "files"])]
+      (try (let [sub (io/file dir "sub")]
+             (.mkdirs sub)
+             (spit (io/file dir "a.clj") "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
+             (spit (io/file sub "b.cljc") "(defn g [y]\n(+ y 1))\n") ; nested -> changes
+             (spit (io/file sub "c.clj") "(defn h [z] (dec z))\n")   ; tidy -> no change
+             (spit (io/file dir "notes.txt") "not clojure\n") ; must be ignored
+             (let [r (core/clj-format-fn {:workspace/root (str dir)} {"paths" [(str dir)]})
+                   files (get-in r [:result "files"])]
 
-            (expect (:success? r))
-            ;; only the 3 Clojure sources, walked recursively; the .txt is skipped
-            (expect (= 3 (count files)))
-            (expect (= ["a.clj" "sub/b.cljc" "sub/c.clj"] (sort (mapv #(get % "path") files))))
-            (expect (= 2 (get-in r [:result "changed"]))) ; a + b changed, c tidy
-            ;; findings/files ALSO grouped under the directory (prefix written once)
-            ;; and the whole result conforms to the language-surface contract
-            (let [by-dir (get-in r [:result "by-dir"])]
-              (expect (= #{"." "sub"} (set (keys by-dir))))
-              (expect (= #{"a.clj"} (set (keys (get by-dir ".")))))
-              (expect (= #{"b.cljc" "c.clj"} (set (keys (get by-dir "sub")))))
-              (expect (true? (get-in by-dir ["." "a.clj" "changed"])))
-              (expect (false? (get-in by-dir ["sub" "c.clj" "changed"]))))
-            (expect (contract/valid? :format-fn (:result r)))
-            (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file dir "a.clj"))))
-            (expect (= "(defn g [y]\n  (+ y 1))\n" (slurp (io/file sub "b.cljc"))))
-            (expect (= "not clojure\n" (slurp (io/file dir "notes.txt"))))))
-        (finally (cleanup dir))))))
+               (expect (:success? r))
+               ;; only the 3 Clojure sources, walked recursively; the .txt is skipped
+               (expect (= 3 (count files)))
+               (expect (= ["a.clj" "sub/b.cljc" "sub/c.clj"] (sort (mapv #(get % "path") files))))
+               (expect (= 2 (get-in r [:result "changed"]))) ; a + b changed, c tidy
+               ;; findings/files ALSO grouped under the directory (prefix written once)
+               ;; and the whole result conforms to the language-surface contract
+               (let [by-dir (get-in r [:result "by-dir"])]
+                 (expect (= #{"." "sub"} (set (keys by-dir))))
+                 (expect (= #{"a.clj"} (set (keys (get by-dir ".")))))
+                 (expect (= #{"b.cljc" "c.clj"} (set (keys (get by-dir "sub")))))
+                 (expect (true? (get-in by-dir ["." "a.clj" "changed"])))
+                 (expect (false? (get-in by-dir ["sub" "c.clj" "changed"]))))
+               (expect (contract/valid? :format-fn (:result r)))
+               (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file dir "a.clj"))))
+               (expect (= "(defn g [y]\n  (+ y 1))\n" (slurp (io/file sub "b.cljc"))))
+               (expect (= "not clojure\n" (slurp (io/file dir "notes.txt"))))))
+           (finally (cleanup dir))))))
 
 (defdescribe default-project-format-test
              (it
                "with no arg / {} formats the workspace's src + test RECURSIVELY, ignoring the rest"
                (let [dir (tmp-dir)]
-                 (try (let
-                        [src (io/file dir "src")
-                         tst (io/file dir "test")]
+                 (try (let [src (io/file dir "src")
+                            tst (io/file dir "test")]
 
                         (.mkdirs src)
                         (.mkdirs tst)
                         (spit (io/file src "a.clj") "(defn f [x]\n(* x 2))\n")
                         (spit (io/file tst "a_test.clj") "(defn t [] 1)\n")
                         (spit (io/file dir "ignored.clj") "(def top 1)\n") ; not under src/test
-                        (let
-                          [empty-map (core/clj-format-fn {:workspace/root (str dir)} {})
-                           nil-arg (core/clj-format-fn {:workspace/root (str dir)} nil)
-                           paths-of #(sort (mapv (fn [x]
-                                                   (get x "path"))
-                                                 (get-in % [:result "files"])))]
+                        (let [empty-map (core/clj-format-fn {:workspace/root (str dir)} {})
+                              nil-arg (core/clj-format-fn {:workspace/root (str dir)} nil)
+                              paths-of #(sort (mapv (fn [x]
+                                                      (get x "path"))
+                                                    (get-in % [:result "files"])))]
 
                           (expect (:success? empty-map))
                           (expect (= ["src/a.clj" "test/a_test.clj"] (paths-of empty-map)))
@@ -348,10 +333,9 @@
       ;; project's `[[:inner 0]]` override than under stock cljfmt.
       (let [dir (tmp-dir)]
         (try (spit (io/file dir ".cljfmt.edn") "{:extra-indents {myblock [[:inner 0]]}}")
-             (let
-               [messy "(myblock a\nb\nc)"
-                with-cfg (core/clj-repair+format messy (.getPath dir))
-                default (core/clj-repair+format messy nil)]
+             (let [messy "(myblock a\nb\nc)"
+                   with-cfg (core/clj-repair+format messy (.getPath dir))
+                   default (core/clj-repair+format messy nil)]
 
                ;; config-driven indentation differs from stock defaults ...
                (expect (not= with-cfg default))
@@ -365,35 +349,32 @@
 (defdescribe
   edit-repair-hook-test
   (it "the :after hook repairs+formats a .clj file in place after a successful edit"
-      (let
-        [dir
-         (tmp-dir)
+      (let [dir
+            (tmp-dir)
 
-         f
-         (io/file dir "x.clj")]
+            f
+            (io/file dir "x.clj")]
 
         (try (spit f "(defn f [x]\n        (+ x 1))\n") ; valid but mis-indented
-             (let
-               [res
-                (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                           :struct_patch
-                                           [{"path" "x.clj"}]
-                                           {:success? true})
+             (let [res
+                   (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+                                              :struct_patch
+                                              [{"path" "x.clj"}]
+                                              {:success? true})
 
-                after
-                (slurp f)]
+                   after
+                   (slurp f)]
 
                (expect (= {:success? true} res)) ; result passes through
                (expect (not= "(defn f [x]\n        (+ x 1))\n" after)) ; reformatted
                (expect (re-find #"\(defn f \[x\]" after)))
              (finally (cleanup dir)))))
   (it "leaves a non-Clojure file untouched"
-      (let
-        [dir
-         (tmp-dir)
+      (let [dir
+            (tmp-dir)
 
-         f
-         (io/file dir "x.py")]
+            f
+            (io/file dir "x.py")]
 
         (try (spit f "def g( ):\n  pass\n")
              (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
@@ -404,34 +385,32 @@
              (finally (cleanup dir)))))
   (it
     "re-diffs the summary against FINAL disk bytes (truthful diff, no false structural flag)"
-    (let
-      [dir
-       (tmp-dir)
+    (let [dir
+          (tmp-dir)
 
-       f
-       (io/file dir "x.clj")
+          f
+          (io/file dir "x.clj")
 
-       before
-       "(defn f [x]\n  (+ x 1))\n"]
+          before
+          "(defn f [x]\n  (+ x 1))\n"]
 
       (try
         ;; the raw edit wrote a mis-indented body to disk; the summary's diff
         ;; still shows that col-0 INTENT (the bug this fixes).
         (spit f "(defn f [x]\n(+ x 2))\n")
-        (let
-          [result
-           {:success? true
-            :result [{"path" "x.clj" "op" "update" "changed" true "diff" "STALE"}]
-            :metadata {:file-befores [{:path "x.clj" :before before}]}}
+        (let [result
+              {:success? true
+               :result [{"path" "x.clj" "op" "update" "changed" true "diff" "STALE"}]
+               :metadata {:file-befores [{:path "x.clj" :before before}]}}
 
-           out
-           (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                      :patch
-                                      [{"path" "x.clj"}]
-                                      result)
+              out
+              (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+                                         :patch
+                                         [{"path" "x.clj"}]
+                                         result)
 
-           summ
-           (first (:result out))]
+              summ
+              (first (:result out))]
 
           ;; cljfmt re-indented the body on disk ...
           (expect (re-find #"\n  \(\+ x 2\)\)" (slurp f)))
@@ -441,33 +420,31 @@
         (finally (cleanup dir)))))
   (it
     "flags a parinfer STRUCTURAL repair loudly on the summary"
-    (let
-      [dir
-       (tmp-dir)
+    (let [dir
+          (tmp-dir)
 
-       f
-       (io/file dir "x.clj")
+          f
+          (io/file dir "x.clj")
 
-       before
-       "(defn f [x]\n  (inc x))\n"]
+          before
+          "(defn f [x]\n  (inc x))\n"]
 
       (try
         ;; raw edit left an unbalanced delimiter (missing final closer) on disk
         (spit f "(defn g [x]\n  (when x\n    (inc x))\n")
-        (let
-          [result
-           {:success? true
-            :result [{"path" "x.clj" "op" "update" "changed" true "diff" "STALE"}]
-            :metadata {:file-befores [{:path "x.clj" :before before}]}}
+        (let [result
+              {:success? true
+               :result [{"path" "x.clj" "op" "update" "changed" true "diff" "STALE"}]
+               :metadata {:file-befores [{:path "x.clj" :before before}]}}
 
-           out
-           (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                      :patch
-                                      [{"path" "x.clj"}]
-                                      result)
+              out
+              (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+                                         :patch
+                                         [{"path" "x.clj"}]
+                                         result)
 
-           summ
-           (first (:result out))]
+              summ
+              (first (:result out))]
 
           ;; parinfer balanced the file ...
           (expect (re-find #"\(inc x\)\)\)" (slurp f)))
@@ -476,12 +453,11 @@
           (expect (re-find #"CHANGED STRUCTURE" (get summ "note"))))
         (finally (cleanup dir)))))
   (it "is a no-op when the edit did NOT succeed"
-      (let
-        [dir
-         (tmp-dir)
+      (let [dir
+            (tmp-dir)
 
-         f
-         (io/file dir "x.clj")]
+            f
+            (io/file dir "x.clj")]
 
         (try (spit f "(defn f [x]\n        (+ x 1))\n")
              (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
@@ -497,20 +473,20 @@
 
 (defdescribe test-runner-fallback-test
              (it "falls back to the project test CLI when the live nREPL lacks lazytest"
-                 (let
-                   [called
-                    (atom false)
+                 (let [called
+                       (atom false)
 
-                    result
-                    (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (constantly {:port 54321})
-                                     #'test-runner/run-via-repl
-                                     (fn [& _]
-                                       {"error" "Could not locate lazytest/core"})
-                                     #'test-runner/run-via-cli
-                                     (fn [_root norm]
-                                       (reset! called true)
-                                       {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
-                      #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+                       result
+                       (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (constantly {:port
+                                                                                         54321})
+                                        #'test-runner/run-via-repl
+                                        (fn [& _]
+                                          {"error" "Could not locate lazytest/core"})
+                                        #'test-runner/run-via-cli
+                                        (fn [_root norm]
+                                          (reset! called true)
+                                          {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
+                         #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
 
                    (expect @called)
                    (expect (= "cli" (get-in result [:result "mode"])))
@@ -518,41 +494,39 @@
 
 (defdescribe test-runner-repl-gate-test
              (it "runs via the CLI suite when there is no launchable build file (no-launcher)"
-                 (let
-                   [called
-                    (atom false)
+                 (let [called
+                       (atom false)
 
-                    result
-                    (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
-                                     (constantly {"result" "no-launcher" "status" "down"})
-                                     #'test-runner/run-via-cli
-                                     (fn [_root norm]
-                                       (reset! called true)
-                                       {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
-                      #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+                       result
+                       (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
+                                        (constantly {"result" "no-launcher" "status" "down"})
+                                        #'test-runner/run-via-cli
+                                        (fn [_root norm]
+                                          (reset! called true)
+                                          {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
+                         #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
 
                    (expect @called)
                    (expect (= "cli" (get-in result [:result "mode"])))))
              (it "surfaces the launcher's boot-failure story instead of silently CLI-falling-back"
-                 (let
-                   [cli-called
-                    (atom false)
+                 (let [cli-called
+                       (atom false)
 
-                    result
-                    (with-redefs-fn
-                      {#'repl-manager/ensure-repl-for-dir!
-                       (constantly {"result" "failed"
-                                    "status" "failed"
-                                    "message"
-                                    "nREPL launcher exited before accepting connections (exit 1)"
-                                    "log_tail" "Syntax error compiling."})
-                       #'test-runner/run-via-cli (fn [& _]
-                                                   (reset! cli-called true)
-                                                   {"mode" "cli"})}
-                      #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))
+                       result
+                       (with-redefs-fn
+                         {#'repl-manager/ensure-repl-for-dir!
+                          (constantly {"result" "failed"
+                                       "status" "failed"
+                                       "message"
+                                       "nREPL launcher exited before accepting connections (exit 1)"
+                                       "log_tail" "Syntax error compiling."})
+                          #'test-runner/run-via-cli (fn [& _]
+                                                      (reset! cli-called true)
+                                                      {"mode" "cli"})}
+                         #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))
 
-                    r
-                    (:result result)]
+                       r
+                       (:result result)]
 
                    (expect (not @cli-called))
                    (expect (= "repl" (get r "mode")))
@@ -564,9 +538,8 @@
   test-runner-nested-root-test
   (it "boots the nREPL at the tests' own nested project root (its deps.edn), not the workspace root"
       (let [root (tmp-dir)]
-        (try (let
-               [svc (io/file root "services" "svc")
-                test-dir (io/file svc "test")]
+        (try (let [svc (io/file root "services" "svc")
+                   test-dir (io/file svc "test")]
 
                (.mkdirs test-dir)
                ;; nested project: deps.edn lives at services/svc, NOT the workspace root
@@ -592,39 +565,38 @@
   "The :around middleware makes a Clojure struct_patch repair + retry instead of
    failing on unbalanced delimiters."
   (it "retries a .clj edit with paren-repaired code after the editor refuses it"
-      (let
-        [seen
-         (atom [])
+      (let [seen
+            (atom [])
 
-         ;; fake editor: refuses unbalanced code, accepts balanced. Model args
-         ;; are STRING-keyed (strings-only boundary).
-         next-fn
-         (fn [args]
-           (let [code (get (first args) "code")]
-             (swap! seen conj code)
-             (if (balanced? code)
-               {:success? true :result code}
-               (throw (ex-info "syntax broken" {:type :ext.foundation.editing/struct-zip-error})))))
+            ;; fake editor: refuses unbalanced code, accepts balanced. Model args
+            ;; are STRING-keyed (strings-only boundary).
+            next-fn
+            (fn [args]
+              (let [code (get (first args) "code")]
+                (swap! seen conj code)
+                (if (balanced? code)
+                  {:success? true :result code}
+                  (throw (ex-info "syntax broken"
+                                  {:type :ext.foundation.editing/struct-zip-error})))))
 
-         out
-         (core/clj-struct-patch-no-fail-around
-           {}
-           :struct_patch
-           [{"path" "x.clj" "code" "(defn f [] (+ 1 2)" "op" "replace"}]
-           next-fn)]
+            out
+            (core/clj-struct-patch-no-fail-around
+              {}
+              :struct_patch
+              [{"path" "x.clj" "code" "(defn f [] (+ 1 2)" "op" "replace"}]
+              next-fn)]
 
         (expect (:success? out))
         (expect (= 2 (count @seen)))        ; raw attempt, then repaired retry
         (expect (balanced? (last @seen))))) ; the retry used balanced code
   (it "passes a NON-clj failure straight through (no repair, no retry)"
-      (let
-        [calls
-         (atom 0)
+      (let [calls
+            (atom 0)
 
-         next-fn
-         (fn [_]
-           (swap! calls inc)
-           (throw (ex-info "boom" {})))]
+            next-fn
+            (fn [_]
+              (swap! calls inc)
+              (throw (ex-info "boom" {})))]
 
         (expect (true? (try (core/clj-struct-patch-no-fail-around {}
                                                                   :struct_patch
@@ -634,9 +606,8 @@
                             (catch clojure.lang.ExceptionInfo _ true))))
         (expect (= 1 @calls))))
   (it "surfaces the ORIGINAL error when repair can't make the edit succeed"
-      (let
-        [next-fn (fn [_]
-                   (throw (ex-info "still broken" {:type :unfixable})))]
+      (let [next-fn (fn [_]
+                      (throw (ex-info "still broken" {:type :unfixable})))]
         (expect (= :unfixable
                    (try (core/clj-struct-patch-no-fail-around {}
                                                               :struct_patch
@@ -661,24 +632,25 @@
         ;; the failing class from session 9c829d10: the replacement line is
         ;; locally balanced but carries a stray `]` — only the FULL file
         ;; shows the imbalance, so fragment repair is a no-op on it.
-        (let
-          [before-a "(def entries\n  [])\n"
-           before-b "(def other 0)\n"
-           broken-candidate "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
-           clean-candidate "(def other 1)\n"
-           refusal {:success? false
-                    :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
-                    :metadata {:candidate-plans
-                               [{:path "a.clj" :before before-a :after broken-candidate}
-                                {:path "b.clj" :before before-b :after clean-candidate}]
-                               :broken-paths ["a.clj"]}}
-           calls (atom 0)
-           out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                              :patch
-                                              [[{:path "a.clj" :from_anchor "1:abc" :replace "x"}]]
-                                              (fn [_]
-                                                (swap! calls inc)
-                                                refusal))]
+        (let [before-a "(def entries\n  [])\n"
+              before-b "(def other 0)\n"
+              broken-candidate
+              "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
+              clean-candidate "(def other 1)\n"
+              refusal {:success? false
+                       :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
+                       :metadata {:candidate-plans
+                                  [{:path "a.clj" :before before-a :after broken-candidate}
+                                   {:path "b.clj" :before before-b :after clean-candidate}]
+                                  :broken-paths ["a.clj"]}}
+              calls (atom 0)
+              out (core/clj-patch-no-fail-around
+                    {:workspace/root (.getPath root)}
+                    :patch
+                    [[{:path "a.clj" :from_anchor "1:abc" :replace "x"}]]
+                    (fn [_]
+                      (swap! calls inc)
+                      refusal))]
 
           (expect (true? (:success? out)))
           (expect (= 1 @calls)) ; no retry — the hook commits itself
@@ -729,16 +701,15 @@
           ;; a candidate with NO delimiter error (fix-delimiters returns it
           ;; unchanged) — the guard flagged it for some non-delimiter reason,
           ;; so the hook must NOT bury the refusal (and must write NOTHING).
-          (let
-            [refusal {:success? false
-                      :error {:reason :syntax-error :message "orig"}
-                      :metadata {:candidate-plans [{:path "a.clj" :after "(def x 1)\n"}]
-                                 :broken-paths ["a.clj"]}}
-             out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                                :patch
-                                                [[{:path "a.clj"}]]
-                                                (fn [_]
-                                                  refusal))]
+          (let [refusal {:success? false
+                         :error {:reason :syntax-error :message "orig"}
+                         :metadata {:candidate-plans [{:path "a.clj" :after "(def x 1)\n"}]
+                                    :broken-paths ["a.clj"]}}
+                out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
+                                                   :patch
+                                                   [[{:path "a.clj"}]]
+                                                   (fn [_]
+                                                     refusal))]
 
             (expect (false? (:success? out)))
             (expect (= "orig" (get-in out [:error :message])))
@@ -746,33 +717,30 @@
           (finally (cleanup root)))))
   (it "surfaces the ORIGINAL refusal when a broken file is NOT Clojure"
       (let [root (tmp-dir)]
-        (try (let
-               [refusal {:success? false
-                         :error {:reason :syntax-error}
-                         :metadata {:candidate-plans [{:path "x.py" :after "def f(:\n"}]
-                                    :broken-paths ["x.py"]}}
-                out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                                   :patch
-                                                   [[{:path "x.py"}]]
-                                                   (fn [_]
-                                                     refusal))]
+        (try (let [refusal {:success? false
+                            :error {:reason :syntax-error}
+                            :metadata {:candidate-plans [{:path "x.py" :after "def f(:\n"}]
+                                       :broken-paths ["x.py"]}}
+                   out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
+                                                      :patch
+                                                      [[{:path "x.py"}]]
+                                                      (fn [_]
+                                                        refusal))]
 
                (expect (false? (:success? out)))
                (expect (not (.exists (io/file root "x.py")))))
              (finally (cleanup root)))))
   (it "passes a NON-syntax failure straight through"
-      (let
-        [out (core/clj-patch-no-fail-around {}
-                                            :patch
-                                            [[{:path "x.clj"}]]
-                                            (fn [_]
-                                              {:success? false :error {:reason :stale}}))]
+      (let [out (core/clj-patch-no-fail-around {}
+                                               :patch
+                                               [[{:path "x.clj"}]]
+                                               (fn [_]
+                                                 {:success? false :error {:reason :stale}}))]
         (expect (= :stale (get-in out [:error :reason])))))
   (it "passes a syntax refusal WITHOUT candidate plans straight through (old shape)"
-      (let
-        [out (core/clj-patch-no-fail-around {}
-                                            :patch
-                                            [[{:path "x.clj"}]]
-                                            (fn [_]
-                                              {:success? false :error {:reason :syntax-error}}))]
+      (let [out (core/clj-patch-no-fail-around {}
+                                               :patch
+                                               [[{:path "x.clj"}]]
+                                               (fn [_]
+                                                 {:success? false :error {:reason :syntax-error}}))]
         (expect (false? (:success? out))))))

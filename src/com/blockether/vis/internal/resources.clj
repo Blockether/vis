@@ -32,13 +32,9 @@
    switches on it; only owners do.
 
    Model ctx stays PURE DATA and groups the flat registry through `model-view`:
-   REPLs live at `session["
-  resources
-  "]["
-  repls
-  "][language][dir]`. It advertises
-   `can_stop`/`can_restart` but never carries a
-   callable. Killing goes through `stop!`/`restart!` (by session + id) — the
+   REPLs live at `session[\"resources\"][\"repls\"][language][dir]`; `dir` is
+   their model-facing identity. It advertises `can_stop`/`can_restart` but never
+   carries a callable. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])

@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.main-test
   (:require [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.main :as main]
-            [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))

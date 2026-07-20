@@ -31,10 +31,9 @@
         (expect (not (str/includes? s "public")))
         (expect (re-find #"@\d+:\w+\.\.\d+:\w+" s))))
   (it "Clojure outline shows clean names, visibility, and docstrings"
-      (let
-        [s (index/file-skeleton
-             "demo.clj"
-             "(def ^:private lim \"the cap\" 10)\n(defn pub \"hi there\" [x] x)\n")]
+      (let [s (index/file-skeleton
+                "demo.clj"
+                "(def ^:private lim \"the cap\" 10)\n(defn pub \"hi there\" [x] x)\n")]
         ;; clean name (metadata stripped), `private` marker, arglist + docstring
         (expect (str/includes? s "constant private lim"))
         (expect (not (str/includes? s "^:private")))
@@ -49,12 +48,11 @@
       (expect (nil? (index/file-skeleton "x.unknownext" "blah"))))
   (it
     "definitions returns STRUCTURED rows — same fields as an occurrences def (name/kind/visibility/signature/doc/anchor/end-anchor) plus nesting depth"
-    (let
-      [defs
-       (index/definitions clj-src "clojure")
+    (let [defs
+          (index/definitions clj-src "clojure")
 
-       add-def
-       (first (filter #(= "add" (:name %)) defs))]
+          add-def
+          (first (filter #(= "add" (:name %)) defs))]
 
       (expect (= 3 (count defs))) ;; ns + add + sub
       (expect (= "fn" (:kind add-def)))
@@ -71,19 +69,17 @@
 (defdescribe zipper-anchor-path-test
              (let [src "(ns demo)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n"]
                (it "resolves a fresh lineno:hash anchor to the node path for that row"
-                   (let
-                     [anchor (patch/line-anchor 6 "(defn bar [y]")
-                      r (zipper/path-at-anchor "clojure" src anchor)]
+                   (let [anchor (patch/line-anchor 6 "(defn bar [y]")
+                         r (zipper/path-at-anchor "clojure" src anchor)]
 
                      (expect (:ok? r))
                      ;; root named children: ns, foo, bar
                      (expect (= [2] (:path r)))
                      (expect (= 6 (:line r)))))
                (it "refuses a stale anchor instead of silently landing on the line"
-                   (let
-                     [stale (patch/line-anchor 6 "(defn bar [y]")
-                      changed (str/replace src "(defn bar [y]" "(defn bar [z]")
-                      r (zipper/path-at-anchor "clojure" changed stale)]
+                   (let [stale (patch/line-anchor 6 "(defn bar [y]")
+                         changed (str/replace src "(defn bar [y]" "(defn bar [z]")
+                         r (zipper/path-at-anchor "clojure" changed stale)]
 
                      (expect (= :hashline-not-found (get-in r [:error :reason])))))))
 
@@ -116,18 +112,17 @@
 
 (defdescribe occurrences-test
              (it "Clojure: the definition is MARKED among the uses (kind/visibility/signature/span)"
-                 (let
-                   [src
-                    "(defn add [a b] (+ a b))\n(def y (add 1 2))\n(println (add y 3))\n"
+                 (let [src
+                       "(defn add [a b] (+ a b))\n(def y (add 1 2))\n(println (add y 3))\n"
 
-                    occ
-                    (structural/occurrences "m.clj" src "add")
+                       occ
+                       (structural/occurrences "m.clj" src "add")
 
-                    defs
-                    (filterv :is-definition occ)
+                       defs
+                       (filterv :is-definition occ)
 
-                    uses
-                    (remove :is-definition occ)]
+                       uses
+                       (remove :is-definition occ)]
 
                    (expect (= 3 (count occ))) ;; 1 def + 2 uses
                    (expect (= 1 (count defs)))
@@ -140,29 +135,27 @@
                      (expect (some? (:end-anchor d)))) ;; span = :anchor..:end-anchor
                    (expect (every? #(and (:anchor %) (nil? (:is-definition %))) uses))))
              (it "Python: the def is marked even under a decorator; uses are not"
-                 (let
-                   [src
-                    "@deco\ndef add(a, b):\n    return add(a, b)\ny = add(1, 2)\n"
+                 (let [src
+                       "@deco\ndef add(a, b):\n    return add(a, b)\ny = add(1, 2)\n"
 
-                    occ
-                    (structural/occurrences "m.py" src "add")
+                       occ
+                       (structural/occurrences "m.py" src "add")
 
-                    defs
-                    (filterv :is-definition occ)]
+                       defs
+                       (filterv :is-definition occ)]
 
                    (expect (= 1 (count defs)))
                    (expect (= "fn" (:kind (first defs))))
                    (expect (= 2 (patch/anchor->line (:anchor (first defs))))))) ;; the `def` line, not @decorator
              (it "Rust: the def is marked"
-                 (let
-                   [src
-                    "pub fn add(a: i32) -> i32 { add(a) }\nfn main() { add(1); }\n"
+                 (let [src
+                       "pub fn add(a: i32) -> i32 { add(a) }\nfn main() { add(1); }\n"
 
-                    occ
-                    (structural/occurrences "m.rs" src "add")
+                       occ
+                       (structural/occurrences "m.rs" src "add")
 
-                    defs
-                    (filterv :is-definition occ)]
+                       defs
+                       (filterv :is-definition occ)]
 
                    (expect (= 1 (count defs)))
                    (expect (= "fn" (:kind (first defs))))))
@@ -217,13 +210,12 @@
       (let [r (edit "demo.clj" clj-src {:op :move-before :target "sub" :anchor "add"})]
         (expect (< (.indexOf ^String r "defn sub") (.indexOf ^String r "defn add")))))
   (it "leaves whitespace ELSEWHERE in the file untouched (no file-wide rewrite)"
-      (let
-        [src
-         (str "(ns demo)\n\n(defn a [x] x)\n\n\n\n(defn far [x] x)\n\n"
-              "(defn mover [x] x)\n\n(defn anchor [x] x)\n")
+      (let [src
+            (str "(ns demo)\n\n(defn a [x] x)\n\n\n\n(defn far [x] x)\n\n"
+                 "(defn mover [x] x)\n\n(defn anchor [x] x)\n")
 
-         r
-         (edit "demo.clj" src {:op :move-after :target "mover" :anchor "anchor"})]
+            r
+            (edit "demo.clj" src {:op :move-after :target "mover" :anchor "anchor"})]
 
         ;; the intentional 3-blank gap between `a` and `far` survives
         (expect (str/includes? r "(defn a [x] x)\n\n\n\n(defn far [x] x)"))))
@@ -232,12 +224,11 @@
   (it "errors on an unknown target"
       (expect (throws? #(edit "demo.clj" clj-src {:op :move-after :target "nope" :anchor "add"}))))
   (it "works for Python too"
-      (let
-        [src
-         "def user():\n    return norm()\n\ndef norm():\n    return 1\n"
+      (let [src
+            "def user():\n    return norm()\n\ndef norm():\n    return 1\n"
 
-         r
-         (edit "m.py" src {:op :move-after :target "user" :anchor "norm"})]
+            r
+            (edit "m.py" src {:op :move-after :target "user" :anchor "norm"})]
 
         (expect (< (.indexOf ^String r "def norm") (.indexOf ^String r "def user"))))))
 
@@ -252,12 +243,11 @@
         (expect (throws?
                   #(edit "demo.clj" s {:op :replace-node :match "(+ a b)" :code "(- a b)"})))))
   (it "scoping disambiguates"
-      (let
-        [s
-         "(defn f [] (+ a b))\n(defn g [] (+ a b))\n"
+      (let [s
+            "(defn f [] (+ a b))\n(defn g [] (+ a b))\n"
 
-         r
-         (edit "demo.clj" s {:op :replace-node :match "(+ a b)" :code "(- a b)" :target "g"})]
+            r
+            (edit "demo.clj" s {:op :replace-node :match "(+ a b)" :code "(- a b)" :target "g"})]
 
         (expect (str/includes? r "(defn f [] (+ a b))"))
         (expect (str/includes? r "(defn g [] (- a b))")))))
@@ -272,33 +262,30 @@
           (expect (str/includes? sk "area :circle"))
           (expect (str/includes? sk "area :rect"))))
     (it "replace targets one defmethod by name+dispatch"
-        (let
-          [r (edit "demo.clj"
-                   s
-                   {:op :replace :target "area :rect" :code "(defmethod area :rect [s] 99)"})]
+        (let [r (edit "demo.clj"
+                      s
+                      {:op :replace :target "area :rect" :code "(defmethod area :rect [s] 99)"})]
           (expect (str/includes? r "(defmethod area :rect [s] 99)"))
           (expect (str/includes? r "(defmethod area :circle [s] 1)"))))))
 
 (defdescribe
   fuzzy-replace-node-test
   (it "matches a snippet despite different whitespace/line breaks"
-      (let
-        [s
-         "(defn f [s]\n  (* 3\n     (:r s)))\n"
+      (let [s
+            "(defn f [s]\n  (* 3\n     (:r s)))\n"
 
-         r
-         (edit "demo.clj" s {:op :replace-node :match "(* 3 (:r s))" :code "(* 9 (:r s))"})]
+            r
+            (edit "demo.clj" s {:op :replace-node :match "(* 3 (:r s))" :code "(* 9 (:r s))"})]
 
         (expect (str/includes? r "(* 9 (:r s))")))))
 
 (defdescribe references-test
              (it "finds every occurrence with line + anchor"
-                 (let
-                   [s
-                    "(defn area [r] (* r r))\n(def a (area 2))\n"
+                 (let [s
+                       "(defn area [r] (* r r))\n(def a (area 2))\n"
 
-                    hits
-                    (structural/references "demo.clj" s "area")]
+                       hits
+                       (structural/references "demo.clj" s "area")]
 
                    (expect (= 2 (count hits)))
                    (expect (every? :anchor hits))
@@ -308,23 +295,21 @@
 
 (defdescribe rename-test
              (it "renames an identifier everywhere (Clojure)"
-                 (let
-                   [s
-                    "(defn add [a b] (+ a b))\n(def y (add 1 2))\n"
+                 (let [s
+                       "(defn add [a b] (+ a b))\n(def y (add 1 2))\n"
 
-                    r
-                    (edit "demo.clj" s {:op :rename :target "add" :code "plus"})]
+                       r
+                       (edit "demo.clj" s {:op :rename :target "add" :code "plus"})]
 
                    (expect (str/includes? r "(defn plus [a b]"))
                    (expect (str/includes? r "(plus 1 2)"))
                    (expect (not (str/includes? r "add")))))
              (it "renames in Python"
-                 (let
-                   [s
-                    "def add(a, b):\n    return add(a, b)\n"
+                 (let [s
+                       "def add(a, b):\n    return add(a, b)\n"
 
-                    r
-                    (edit "m.py" s {:op :rename :target "add" :code "plus"})]
+                       r
+                       (edit "m.py" s {:op :rename :target "add" :code "plus"})]
 
                    (expect (str/includes? r "def plus(a, b):"))
                    (expect (str/includes? r "return plus(a, b)"))))
@@ -382,22 +367,20 @@
 
 (defdescribe replace-doc-langs-test
              (it "Python replace_doc swaps the docstring"
-                 (let
-                   [s
-                    "def f():\n    \"\"\"old\"\"\"\n    return 1\n"
+                 (let [s
+                       "def f():\n    \"\"\"old\"\"\"\n    return 1\n"
 
-                    r
-                    (edit "m.py" s {:op :replace-doc :target "f" :code "\"\"\"new\"\"\""})]
+                       r
+                       (edit "m.py" s {:op :replace-doc :target "f" :code "\"\"\"new\"\"\""})]
 
                    (expect (str/includes? r "\"\"\"new\"\"\""))
                    (expect (not (str/includes? r "old")))))
              (it "Python add_doc then has a doc (refuses a second add)"
-                 (let
-                   [s
-                    "def g():\n    return 1\n"
+                 (let [s
+                       "def g():\n    return 1\n"
 
-                    r
-                    (edit "m.py" s {:op :add-doc :target "g" :code "\"\"\"Doc.\"\"\""})]
+                       r
+                       (edit "m.py" s {:op :add-doc :target "g" :code "\"\"\"Doc.\"\"\""})]
 
                    (expect (str/includes? r "\"\"\"Doc.\"\"\""))
                    (expect (throws?
@@ -407,12 +390,11 @@
              (describe
                "replace_doc"
                (it "swaps an existing Clojure doc"
-                   (let
-                     [s
-                      "(defn add \"old\" [a b] (+ a b))\n"
+                   (let [s
+                         "(defn add \"old\" [a b] (+ a b))\n"
 
-                      r
-                      (edit "demo.clj" s {:op :replace-doc :target "add" :code "\"new\""})]
+                         r
+                         (edit "demo.clj" s {:op :replace-doc :target "add" :code "\"new\""})]
 
                      (expect (str/includes? r "\"new\""))
                      (expect (not (str/includes? r "\"old\"")))))

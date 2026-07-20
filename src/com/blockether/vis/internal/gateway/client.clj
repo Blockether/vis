@@ -61,21 +61,20 @@
    asks for `text/event-stream` with compression disabled so the SSE body stays
    byte-live for the line reader + idle watchdog."
   [{:keys [secret] :as _entry} method path {:keys [body as] :or {as :string}}]
-  (http/request (cond->
-                  {:client @http-client
-                   :method (keyword (str/lower-case method))
-                   :uri (str (base-url _entry) path)
-                   :timeout 30000
-                   :throw false
-                   :as as
-                   :headers (cond->
-                              {"Accept" (if (= as :stream) "text/event-stream" "application/json")
+  (http/request
+    (cond-> {:client @http-client
+             :method (keyword (str/lower-case method))
+             :uri (str (base-url _entry) path)
+             :timeout 30000
+             :throw false
+             :as as
+             :headers (cond-> {"Accept" (if (= as :stream) "text/event-stream" "application/json")
                                "X-Vis-Gateway-Secret" (str secret)}
-                              (= as :stream)
-                              (assoc "Accept-Encoding" "identity"))}
-                  (some? body)
-                  (-> (assoc :body (wire/json-str body))
-                      (assoc-in [:headers "Content-Type"] "application/json")))))
+                        (= as :stream)
+                        (assoc "Accept-Encoding" "identity"))}
+      (some? body)
+      (-> (assoc :body (wire/json-str body))
+          (assoc-in [:headers "Content-Type"] "application/json")))))
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 
@@ -84,15 +83,14 @@
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil))
   ([entry method path body]
-   (let
-     [response
-      (gw-send! entry method path {:body body})
+   (let [response
+         (gw-send! entry method path {:body body})
 
-      status
-      (long (:status response))
+         status
+         (long (:status response))
 
-      parsed
-      (parse-json-body (:body response))]
+         parsed
+         (parse-json-body (:body response))]
 
      (when (>= status 400)
        (throw (if (= status 401)
@@ -119,12 +117,11 @@
 
 (defn- probe-entry?
   [entry]
-  (try (let
-         [response
-          (gw-send! entry "GET" "/healthz" {})
+  (try (let [response
+             (gw-send! entry "GET" "/healthz" {})
 
-          body
-          (parse-json-body (:body response))]
+             body
+             (parse-json-body (:body response))]
 
          (and (= 200 (:status response))
               (= "ok" (get body "status"))
@@ -145,33 +142,32 @@
    in place with the elapsed seconds; off a TTY it logs one line per milestone.
    Never throws."
   []
-  (let
-    [tty
-     (interactive-tty?)
+  (let [tty
+        (interactive-tty?)
 
-     err
-     ^java.io.PrintStream System/err
+        err
+        ^java.io.PrintStream System/err
 
-     state
-     (atom {:label nil :frame 0 :active false})
+        state
+        (atom {:label nil :frame 0 :active false})
 
-     clear
-     (fn []
-       (when tty (.print err "\r\u001b[K")))
+        clear
+        (fn []
+          (when tty (.print err "\r\u001b[K")))
 
-     start
-     (fn [label plain]
-       (swap! state assoc :label label :active true)
-       (if tty (.print err (str "\r\u001b[K⟳ " label "…")) (.println err (str "vis: " plain)))
-       (.flush err))
+        start
+        (fn [label plain]
+          (swap! state assoc :label label :active true)
+          (if tty (.print err (str "\r\u001b[K⟳ " label "…")) (.println err (str "vis: " plain)))
+          (.flush err))
 
-     finish
-     (fn [line]
-       (when (:active @state)
-         (clear)
-         (.println err line)
-         (.flush err)
-         (swap! state assoc :active false)))]
+        finish
+        (fn [line]
+          (when (:active @state)
+            (clear)
+            (.println err line)
+            (.flush err)
+            (swap! state assoc :active false)))]
 
     (fn [{:keys [phase mode elapsed-ms]}]
       (try (case phase
@@ -184,15 +180,14 @@
 
              :tick
              (when (and tty (:active @state))
-               (let
-                 [{:keys [label frame]}
-                  @state
+               (let [{:keys [label frame]}
+                     @state
 
-                  f
-                  (nth spinner-frames (mod frame (count spinner-frames)))
+                     f
+                     (nth spinner-frames (mod frame (count spinner-frames)))
 
-                  secs
-                  (format "%.1f" (/ (double (or elapsed-ms 0)) 1000.0))]
+                     secs
+                     (format "%.1f" (/ (double (or elapsed-ms 0)) 1000.0))]
 
                  (swap! state update :frame inc)
                  (.print err (str "\r\u001b[K" f " " label "… " secs "s"))
@@ -226,31 +221,28 @@
    (let [db (db-target)]
      (when (discovery/memory-db? db)
        (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-     (let
-       [cached @cached-entry
-        now (System/nanoTime)
-        fresh-until (long @entry-fresh-until-ns)
-        fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
-                 true
-                 ;; Window elapsed (or no cached entry): pay for the real
-                 ;; HTTP probe once, then re-open the debounce window.
-                 (when (discovery/registry-fresh? cached probe-entry?)
-                   (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
-                   true))]
+     (let [cached @cached-entry
+           now (System/nanoTime)
+           fresh-until (long @entry-fresh-until-ns)
+           fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+                    true
+                    ;; Window elapsed (or no cached entry): pay for the real
+                    ;; HTTP probe once, then re-open the debounce window.
+                    (when (discovery/registry-fresh? cached probe-entry?)
+                      (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+                      true))]
 
        (if fresh?
          cached
          ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
          ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
          ;; it self-registers, so give it a much longer runway.
-         (let
-           [{:keys [entry] :as result} (discovery/discover-or-start!
-                                         {:db db
-                                          :port (or port DEFAULT_PORT)
-                                          :host (or host DEFAULT_HOST)}
-                                         :probe probe-entry?
-                                         :on-event (progress-reporter)
-                                         :timeout-ms (if (discovery/native-image?) 15000 60000))]
+         (let [{:keys [entry] :as result}
+               (discovery/discover-or-start!
+                 {:db db :port (or port DEFAULT_PORT) :host (or host DEFAULT_HOST)}
+                 :probe probe-entry?
+                 :on-event (progress-reporter)
+                 :timeout-ms (if (discovery/native-image?) 15000 60000))]
            (if entry
              (do (reset! cached-entry entry)
                  (reset! entry-fresh-until-ns (+ (System/nanoTime)
@@ -281,12 +273,11 @@
   (when-not @client-id
     (locking client-id
       (when-not @client-id
-        (let
-          [{:keys [client_id]} (send-json-with-entry! entry
-                                                      "POST"
-                                                      "/v1/clients"
-                                                      {:pid (discovery/current-pid)
-                                                       :kind "clojure-client"})]
+        (let [{:keys [client_id]} (send-json-with-entry! entry
+                                                         "POST"
+                                                         "/v1/clients"
+                                                         {:pid (discovery/current-pid)
+                                                          :kind "clojure-client"})]
           (reset! client-id client_id)
           (ensure-release-hook!)))))
   @client-id)
@@ -312,16 +303,15 @@
    :archived? (bool). Returns the :projects vector."
   ([] (list-projects nil))
   ([{:keys [owner archived?]}]
-   (let
-     [qs
-      (->> [(when owner (str "owner=" (enc owner))) (when archived? "archived=true")]
-           (remove nil?)
-           (str/join "&"))
+   (let [qs
+         (->> [(when owner (str "owner=" (enc owner))) (when archived? "archived=true")]
+              (remove nil?)
+              (str/join "&"))
 
-      path
-      (cond-> "/v1/projects"
-        (seq qs)
-        (str "?" qs))]
+         path
+         (cond-> "/v1/projects"
+           (seq qs)
+           (str "?" qs))]
 
      (get (send-json! "GET" path) "projects"))))
 
@@ -446,15 +436,14 @@
    `set-session-model!` writes through, so a pick made in THIS client shows
    on the very next frame."
   [sid]
-  (let
-    [k
-     (str sid)
+  (let [k
+        (str sid)
 
-     now
-     (System/currentTimeMillis)
+        now
+        (System/currentTimeMillis)
 
-     {:keys [at val]}
-     (get @session-model-cache k)]
+        {:keys [at val]}
+        (get @session-model-cache k)]
 
     (when-not (and at (< (- now (long at)) (long session-model-cache-ttl-ms)))
       (refresh-session-model! sid k))
@@ -498,15 +487,14 @@
    before the first success). Keeping the daemon HTTP round-trip OFF the render
    thread is what stops a busy daemon from stalling every TUI frame."
   [sid]
-  (let
-    [k
-     (str sid)
+  (let [k
+        (str sid)
 
-     now
-     (System/currentTimeMillis)
+        now
+        (System/currentTimeMillis)
 
-     {:keys [at val]}
-     (get @resources-cache k)]
+        {:keys [at val]}
+        (get @resources-cache k)]
 
     (when-not (and at (< (- now (long at)) (long resources-cache-ttl-ms)))
       (refresh-resources! sid k))
@@ -553,18 +541,17 @@
    :media_type …}` on the frame, then pulls the bytes here. HISTORY resolves the
    same way (the trace iteration's `:id` + attachment index)."
   [sid iid idx]
-  (let
-    [entry
-     (ensure-gateway!)
+  (let [entry
+        (ensure-gateway!)
 
-     _
-     (ensure-client! entry)
+        _
+        (ensure-client! entry)
 
-     path
-     (str "/v1/sessions/" (enc sid) "/iterations/" (enc iid) "/attachments/" idx)
+        path
+        (str "/v1/sessions/" (enc sid) "/iterations/" (enc iid) "/attachments/" idx)
 
-     response
-     (gw-send! entry "GET" path {:as :bytes})]
+        response
+        (gw-send! entry "GET" path {:as :bytes})]
 
     (when (< (long (:status response)) 400) (:body response))))
 
@@ -573,11 +560,10 @@
    straight through into the `session-model-cached` snapshot so the footer
    chip flips on the very next frame instead of waiting out the cache TTL."
   [sid provider model]
-  (let
-    [pref (pref<-wire (get (send-json! "PATCH"
-                                       (str "/v1/sessions/" (enc sid) "/model")
-                                       {:provider provider :model model})
-                           "model"))]
+  (let [pref (pref<-wire (get (send-json! "PATCH"
+                                          (str "/v1/sessions/" (enc sid) "/model")
+                                          {:provider provider :model model})
+                              "model"))]
     (swap! session-model-cache assoc (str sid) {:at (System/currentTimeMillis) :val pref})
     pref))
 
@@ -653,12 +639,11 @@
 
 (defn status
   []
-  (let
-    [db
-     (db-target)
+  (let [db
+        (db-target)
 
-     entry
-     (discovery/read-registry db)]
+        entry
+        (discovery/read-registry db)]
 
     (if (discovery/registry-fresh? entry probe-entry?)
       (send-json-with-entry! entry "GET" "/v1/admin/status")
@@ -671,12 +656,11 @@
    fresh daemon is registered, and `:loopback?` flags a 127.0.0.1/::1/localhost
    bind that a phone can never reach."
   []
-  (let
-    [db
-     (db-target)
+  (let [db
+        (db-target)
 
-     {:keys [host port secret] :as entry}
-     (discovery/read-registry db)]
+        {:keys [host port secret] :as entry}
+        (discovery/read-registry db)]
 
     (if (discovery/registry-fresh? entry probe-entry?)
       {:running? true
@@ -688,12 +672,11 @@
 
 (defn stop-daemon!
   []
-  (let
-    [db
-     (db-target)
+  (let [db
+        (db-target)
 
-     entry
-     (discovery/read-registry db)]
+        entry
+        (discovery/read-registry db)]
 
     (if (discovery/registry-fresh? entry probe-entry?)
       (let [res (send-json-with-entry! entry "POST" "/v1/admin/stop")]
@@ -769,10 +752,9 @@
        entry
 
        :absent
-       (let
-         [st (status)
-          clients (long (or (get st "clients") 0))
-          running (long (or (get st "running_turns") 0))]
+       (let [st (status)
+             clients (long (or (get st "clients") 0))
+             running (long (or (get st "running_turns") 0))]
 
          (when (or (> clients 1) (pos? running))
            (throw (ex-info (str "gateway daemon does not serve " path
@@ -794,12 +776,11 @@
 
 (defn provider-status
   [provider-id]
-  (let
-    [path
-     (str "/v1/providers/" (enc (name provider-id)) "/status")
+  (let [path
+        (str "/v1/providers/" (enc (name provider-id)) "/status")
 
-     entry
-     (ensure-gateway-serving! path)]
+        entry
+        (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
     (get (send-json-with-entry! entry "GET" path) "status")))
@@ -822,14 +803,13 @@
 (defn- provider-limit-row<-wire
   [row]
   (when (map? row)
-    (cond->
-      {:id (wire-enum (get row "id"))
-       :label (get row "label")
-       :scope (wire-enum (get row "scope"))
-       :kind (wire-enum (get row "kind"))
-       :precision (wire-enum (get row "precision"))
-       :source (wire-enum (get row "source"))
-       :unlimited? (get row "is_unlimited")}
+    (cond-> {:id (wire-enum (get row "id"))
+             :label (get row "label")
+             :scope (wire-enum (get row "scope"))
+             :kind (wire-enum (get row "kind"))
+             :precision (wire-enum (get row "precision"))
+             :source (wire-enum (get row "source"))
+             :unlimited? (get row "is_unlimited")}
       (some? (get row "subject"))
       (assoc :subject (get row "subject"))
 
@@ -862,43 +842,40 @@
   only those fields."
   [report]
   (when (map? report)
-    (let
-      [static
-       (or (get report "static") {})
+    (let [static
+          (or (get report "static") {})
 
-       dynamic
-       (or (get report "dynamic") {})
+          dynamic
+          (or (get report "dynamic") {})
 
-       limits
-       (get dynamic "limits")
+          limits
+          (get dynamic "limits")
 
-       error
-       (get report "error")]
+          error
+          (get report "error")]
 
-      (cond->
-        {:provider-id (wire-enum (get report "provider_id"))
-         :status (wire-enum (get report "status"))
-         :fetched-at-ms (get report "fetched_at_ms")
-         :static (cond-> {}
-                   (some? (get static "rpm"))
-                   (assoc :rpm (get static "rpm"))
+      (cond-> {:provider-id (wire-enum (get report "provider_id"))
+               :status (wire-enum (get report "status"))
+               :fetched-at-ms (get report "fetched_at_ms")
+               :static (cond-> {}
+                         (some? (get static "rpm"))
+                         (assoc :rpm (get static "rpm"))
 
-                   (some? (get static "tpm"))
-                   (assoc :tpm (get static "tpm")))
-         :dynamic (cond-> {:limits (mapv provider-limit-row<-wire (or limits []))}
-                    (some? (get dynamic "note"))
-                    (assoc :note (get dynamic "note")))}
+                         (some? (get static "tpm"))
+                         (assoc :tpm (get static "tpm")))
+               :dynamic (cond-> {:limits (mapv provider-limit-row<-wire (or limits []))}
+                          (some? (get dynamic "note"))
+                          (assoc :note (get dynamic "note")))}
         (some? error)
         (assoc :error (provider-limit-error<-wire error))))))
 
 (defn provider-limits
   [provider-id]
-  (let
-    [path
-     (str "/v1/providers/" (enc (name provider-id)) "/limits")
+  (let [path
+        (str "/v1/providers/" (enc (name provider-id)) "/limits")
 
-     entry
-     (ensure-gateway-serving! path)]
+        entry
+        (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
     (provider-limits<-wire (get (send-json-with-entry! entry "GET" path) "report"))))
@@ -915,34 +892,32 @@
   "Resolve a terminal event to the canonical settled content. The event has no
    duplicate answer body; fetch the turn message that owns the content array."
   [event fallback-turn-id]
-  (let
-    [failed?
-     (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
+  (let [failed?
+        (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
 
-     cancelled?
-     (= "cancelled" (get event "status"))
+        cancelled?
+        (= "cancelled" (get event "status"))
 
-     needs-input?
-     (= "suspended" (get event "status"))
+        needs-input?
+        (= "suspended" (get event "status"))
 
-     turn-id
-     (or (get event "turn_id") fallback-turn-id)
+        turn-id
+        (or (get event "turn_id") fallback-turn-id)
 
-     message
-     (get-turn (get event "session_id") turn-id)
+        message
+        (get-turn (get event "session_id") turn-id)
 
-     blocks
-     (or (get message "content") [])]
+        blocks
+        (or (get message "content") [])]
 
     ;; Terminal events are LEAN ({:turn_id :status}); the fetched turn row
     ;; (`message`) owns the settled meta (tokens/cost/model/…) — mirror of
     ;; the in-process gateway.state resolution, same shared key list.
-    (cond->
-      (-> (merge (select-keys message wire/turn-meta-keys)
-                 (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
-          (assoc "content" blocks
-                 "iteration_count" (or (get message "iteration_count") 1)
-                 "session_turn_id" (or (get message "engine_turn_id") turn-id)))
+    (cond-> (-> (merge (select-keys message wire/turn-meta-keys)
+                       (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
+                (assoc "content" blocks
+                       "iteration_count" (or (get message "iteration_count") 1)
+                       "session_turn_id" (or (get message "engine_turn_id") turn-id)))
       needs-input?
       (assoc "status" "needs_input")
 
@@ -984,22 +959,22 @@
    false by the reader on normal exit so the watchdog stops touching the stream.
    Returns the Thread (interrupt it to stop early)."
   [^InputStream in last-line-ns* alive?*]
-  (let
-    [check-ms
-     (-> (long sse-idle-timeout-ms)
-         (quot 4)
-         (max 250)
-         (min 5000))
+  (let [check-ms
+        (-> (long sse-idle-timeout-ms)
+            (quot 4)
+            (max 250)
+            (min 5000))
 
-     runnable
-     (fn []
-       (loop []
+        runnable
+        (fn []
+          (loop []
 
-         (when @alive?*
-           (let [idle-ms (long (/ (- (System/nanoTime) (long @last-line-ns*)) 1000000))]
-             (if (>= idle-ms (long sse-idle-timeout-ms))
-               (when @alive?* (try (.close in) (catch Throwable _ nil)))
-               (do (try (Thread/sleep check-ms) (catch InterruptedException _ nil)) (recur)))))))]
+            (when @alive?*
+              (let [idle-ms (long (/ (- (System/nanoTime) (long @last-line-ns*)) 1000000))]
+                (if (>= idle-ms (long sse-idle-timeout-ms))
+                  (when @alive?* (try (.close in) (catch Throwable _ nil)))
+                  (do (try (Thread/sleep check-ms) (catch InterruptedException _ nil))
+                      (recur)))))))]
 
     (doto (Thread. ^Runnable runnable "vis-gateway-sse-idle-watchdog") (.setDaemon true) (.start))))
 
@@ -1029,24 +1004,21 @@
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway SSE HTTP " (:status response))
                       {:http-status (:status response)})))
-    (with-open
-      [^InputStream in (:body response)
-       rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
+    (with-open [^InputStream in (:body response)
+                rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
 
       (when stream* (reset! stream* in))
       (when on-open (on-open))
-      (let
-        [last-line-ns* (atom (System/nanoTime))
-         alive?* (atom true)
-         watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
+      (let [last-line-ns* (atom (System/nanoTime))
+            alive?* (atom true)
+            watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
 
         (try (loop [data-lines []]
                (if-let [line (.readLine rdr)]
                  (do (reset! last-line-ns* (System/nanoTime))
                      (if (str/blank? line)
-                       (let
-                         [data (str/join "\n" data-lines)
-                          event (when (seq data) (wire/parse-json data))]
+                       (let [data (str/join "\n" data-lines)
+                             event (when (seq data) (wire/parse-json data))]
 
                          (if-not event
                            (recur [])
@@ -1066,55 +1038,53 @@
    replay vector because the gateway's SSE endpoint itself handles replay before
    live delivery."
   [sid sub-id sink cursor]
-  (let
-    [entry
-     (ensure-gateway!)
+  (let [entry
+        (ensure-gateway!)
 
-     _
-     (ensure-client! entry)
+        _
+        (ensure-client! entry)
 
-     stream*
-     (atom nil)
+        stream*
+        (atom nil)
 
-     cursor*
-     (atom (long (or cursor 0)))
+        cursor*
+        (atom (long (or cursor 0)))
 
-     fut
-     (future
-       ;; Reconnect (resuming from the last-seen cursor) whenever the daemon
-       ;; drops the stream, so a gateway restart / transient blip no longer
-       ;; kills the live mirror silently. Stops only when unsubscribe!
-       ;; removes the sub from the registry (or closes the stream).
-       (loop [attempt 0]
-         ;; A live mirror never terminates on its own: the handler always
-         ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
-         ;; or throws (non-200 / IO) — either way `dropped?` is true and we
-         ;; reconnect. `on-open` fires once the stream is live, and a drop
-         ;; before we (maybe) reconnect fires the inverse — both delivered
-         ;; through `sink` as synthetic `gateway.connected`/`.disconnected`
-         ;; events so the channel can paint a live connection indicator.
-         (let
-           [dropped? (try (open-sse-events! sid
-                                            @cursor*
-                                            cursor*
-                                            stream*
-                                            (fn [event]
-                                              (sink event)
-                                              nil)
-                                            (fn []
-                                              (try (sink {:type "gateway.connected"})
-                                                   (catch Throwable _ nil))))
-                          true
-                          (catch Throwable _ true))]
-           (when (and dropped? (contains? @subscriptions sub-id))
-             (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
-             (let
-               [delay-ms (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-                interrupted?
-                (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+        fut
+        (future
+          ;; Reconnect (resuming from the last-seen cursor) whenever the daemon
+          ;; drops the stream, so a gateway restart / transient blip no longer
+          ;; kills the live mirror silently. Stops only when unsubscribe!
+          ;; removes the sub from the registry (or closes the stream).
+          (loop [attempt 0]
+            ;; A live mirror never terminates on its own: the handler always
+            ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
+            ;; or throws (non-200 / IO) — either way `dropped?` is true and we
+            ;; reconnect. `on-open` fires once the stream is live, and a drop
+            ;; before we (maybe) reconnect fires the inverse — both delivered
+            ;; through `sink` as synthetic `gateway.connected`/`.disconnected`
+            ;; events so the channel can paint a live connection indicator.
+            (let [dropped? (try (open-sse-events! sid
+                                                  @cursor*
+                                                  cursor*
+                                                  stream*
+                                                  (fn [event]
+                                                    (sink event)
+                                                    nil)
+                                                  (fn []
+                                                    (try (sink {:type "gateway.connected"})
+                                                         (catch Throwable _ nil))))
+                                true
+                                (catch Throwable _ true))]
+              (when (and dropped? (contains? @subscriptions sub-id))
+                (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
+                (let [delay-ms (long (min 5000
+                                          (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+                      interrupted?
+                      (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
 
-               (when-not interrupted? (recur (inc attempt)))))))
-       (swap! subscriptions dissoc sub-id))]
+                  (when-not interrupted? (recur (inc attempt)))))))
+          (swap! subscriptions dissoc sub-id))]
 
     (swap! subscriptions assoc sub-id {:future fut :stream stream*})
     []))
@@ -1160,12 +1130,11 @@
   "Deliver a synthetic connection event to EVERY live sink (shared stream =
    shared connection state), so each tab still paints a live/lost indicator."
   [type]
-  (doseq
-    [[_ {:keys [sinks]}]
-     (:subs @mux)
+  (doseq [[_ {:keys [sinks]}]
+          (:subs @mux)
 
-     [_ sink]
-     sinks]
+          [_ sink]
+          sinks]
 
     (try (sink {:type type}) (catch Throwable _ nil))))
 
@@ -1177,37 +1146,34 @@
    reconnects with the new set) and `[:closed]` on EOF/drop. Throws with
    `:http-status` on a non-200."
   [my-epoch]
-  (let
-    [entry
-     (ensure-gateway!)
+  (let [entry
+        (ensure-gateway!)
 
-     _
-     (ensure-client! entry)
+        _
+        (ensure-client! entry)
 
-     response
-     (gw-send! entry "GET" (str "/v1/events?sids=" (mux-sids-param (:subs @mux))) {:as :stream})]
+        response
+        (gw-send! entry "GET" (str "/v1/events?sids=" (mux-sids-param (:subs @mux))) {:as :stream})]
 
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway mux SSE HTTP " (:status response))
                       {:http-status (:status response)})))
-    (with-open
-      [^InputStream in
-       (:body response)
+    (with-open [^InputStream in
+                (:body response)
 
-       rdr
-       (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
+                rdr
+                (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
 
       (swap! mux assoc :stream in)
       (mux-broadcast! "gateway.connected")
-      (let
-        [last-line-ns*
-         (atom (System/nanoTime))
+      (let [last-line-ns*
+            (atom (System/nanoTime))
 
-         alive?*
-         (atom true)
+            alive?*
+            (atom true)
 
-         watchdog
-         (start-sse-idle-watchdog! in last-line-ns* alive?*)]
+            watchdog
+            (start-sse-idle-watchdog! in last-line-ns* alive?*)]
 
         (try (loop [data-lines []]
                (if (not= my-epoch (:epoch @mux))
@@ -1215,14 +1181,12 @@
                  (if-let [line (.readLine rdr)]
                    (do (reset! last-line-ns* (System/nanoTime))
                        (if (str/blank? line)
-                         (let
-                           [data (str/join "\n" data-lines)
-                            event (when (seq data) (wire/parse-json data))]
+                         (let [data (str/join "\n" data-lines)
+                               event (when (seq data) (wire/parse-json data))]
 
                            (when event
-                             (let
-                               [esid (str (get event "session_id"))
-                                {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
+                             (let [esid (str (get event "session_id"))
+                                   {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
 
                                (when (seq sinks)
                                  (when-let [s (get event "seq")]
@@ -1244,18 +1208,17 @@
    stops for good once a newer epoch takes over, the session set empties, or the
    set was edited (a fresh run already owns the new set)."
   [my-epoch]
-  (future
-    (loop [attempt 0]
-      (let
-        [dropped? (try (not= [:epoch-changed] (open-mux-events! my-epoch))
-                       (catch Throwable _ true))]
-        (when (and dropped? (= my-epoch (:epoch @mux)) (seq (:subs @mux)))
-          (mux-broadcast! "gateway.disconnected")
-          (let
-            [delay-ms (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-             interrupted? (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+  (future (loop [attempt 0]
+            (let [dropped? (try (not= [:epoch-changed] (open-mux-events! my-epoch))
+                                (catch Throwable _ true))]
+              (when (and dropped? (= my-epoch (:epoch @mux)) (seq (:subs @mux)))
+                (mux-broadcast! "gateway.disconnected")
+                (let [delay-ms (long (min 5000
+                                          (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+                      interrupted?
+                      (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
 
-            (when-not interrupted? (recur (inc attempt)))))))))
+                  (when-not interrupted? (recur (inc attempt)))))))))
 
 (defn- restart-mux!
   "Bump the epoch, close the live stream (unblocking the parked reader), cancel
@@ -1277,15 +1240,14 @@
    zero-arg cleanup fn. Every sink sees gateway.connected / gateway.disconnected
    on connection changes, exactly like the per-session [[subscribe!]]."
   [sid sink cursor]
-  (let
-    [sid
-     (str sid)
+  (let [sid
+        (str sid)
 
-     sub-id
-     (str (java.util.UUID/randomUUID))
+        sub-id
+        (str (java.util.UUID/randomUUID))
 
-     changed-session-set?
-     (volatile! false)]
+        changed-session-set?
+        (volatile! false)]
 
     (swap! mux (fn [m]
                  (let [existing (get-in m [:subs sid])]
@@ -1306,23 +1268,21 @@
    was the last watched session)."
   ([sid] (mux-unsubscribe! sid nil))
   ([sid sub-id]
-   (let
-     [sid
-      (str sid)
+   (let [sid
+         (str sid)
 
-      changed-session-set?
-      (volatile! false)]
+         changed-session-set?
+         (volatile! false)]
 
      (swap! mux (fn [m]
-                  (let
-                    [path
-                     [:subs sid]
+                  (let [path
+                        [:subs sid]
 
-                     entry
-                     (get-in m path)
+                        entry
+                        (get-in m path)
 
-                     entry'
-                     (if sub-id (update entry :sinks dissoc sub-id) nil)]
+                        entry'
+                        (if sub-id (update entry :sinks dissoc sub-id) nil)]
 
                     (if (seq (:sinks entry'))
                       (assoc-in m path entry')
@@ -1343,12 +1303,11 @@
    record was pulled back into an editor before it ever ran, so a cancelled
    terminal is synthesized instead of blocking on a turn that never starts."
   [event wanted-turn-id]
-  (let
-    [type
-     (get event "type")
+  (let [type
+        (get event "type")
 
-     own?
-     (= (str (get event "turn_id")) (str wanted-turn-id))]
+        own?
+        (= (str (get event "turn_id")) (str wanted-turn-id))]
 
     (cond (and own? (contains? #{"turn.completed" "turn.failed"} type)) [:terminal event]
           (and own? (= "turn.queued.deleted" type)) [:terminal
@@ -1392,15 +1351,14 @@
   [sid cursor wanted-turn-id on-event]
   (let [cursor* (atom (long (or cursor 0)))]
     (loop [attempt 0]
-      (let
-        [outcome (try (read-sse-stream! sid @cursor* wanted-turn-id on-event cursor*)
-                      (catch java.io.IOException _ [:closed])
-                      ;; A non-200 mid-turn (502/503 while the daemon
-                      ;; restarts) throws from open-sse-events!; treat it as a
-                      ;; drop and reconnect, same as an EOF — otherwise a
-                      ;; transient 5xx would strand the turn.
-                      (catch clojure.lang.ExceptionInfo e
-                        (if (:http-status (ex-data e)) [:closed] (throw e))))]
+      (let [outcome (try (read-sse-stream! sid @cursor* wanted-turn-id on-event cursor*)
+                         (catch java.io.IOException _ [:closed])
+                         ;; A non-200 mid-turn (502/503 while the daemon
+                         ;; restarts) throws from open-sse-events!; treat it as a
+                         ;; drop and reconnect, same as an EOF — otherwise a
+                         ;; transient 5xx would strand the turn.
+                         (catch clojure.lang.ExceptionInfo e
+                           (if (:http-status (ex-data e)) [:closed] (throw e))))]
         (if (= :terminal (first outcome))
           (second outcome)
           ;; Stream closed before a terminal event → the daemon dropped us
@@ -1414,15 +1372,14 @@
 
 (defn submit-turn-sync!
   [sid {:keys [on-event] :as opts}]
-  (let
-    [submitted
-     (submit-turn! sid (dissoc opts :on-event))
+  (let [submitted
+        (submit-turn! sid (dissoc opts :on-event))
 
-     turn
-     (:turn submitted)
+        turn
+        (:turn submitted)
 
-     turn-id
-     (get turn "turn_id")]
+        turn-id
+        (get turn "turn_id")]
 
     (when-let [e (or (:error submitted) (get submitted "error"))]
       (throw (ex-info (or (:message submitted) (get submitted "message") (str e)) submitted)))

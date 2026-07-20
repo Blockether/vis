@@ -84,8 +84,16 @@
 ;; =============================================================================
 
 ;; One failing/erroring test. The map carries \"ns\"/\"test\"/\"message\"/\"file\"/
-;; \"line\"; only \"message\" is type-pinned so an extra key never rejects.
-(s/def ::test-failure (s/and map? (opt "message" string?)))
+;; \"line\". Like `::finding`, every present field is type-pinned (strings for
+;; ns/test/message/file, a non-negative line), but all stay OPTIONAL so a branch
+;; that omits a field never rejects — close parity with lint's `::finding`.
+(s/def ::test-failure
+  (s/and map?
+         (opt "message" string?)
+         (opt "ns" string?)
+         (opt "test" string?)
+         (opt "file" string?)
+         (opt "line" nat-int?)))
 
 ;; The uniform run_tests result. \"mode\" (repl|cli) and \"language\" are the two
 ;; invariants EVERY branch returns; counts / exit / flags are per-branch optional.

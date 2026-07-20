@@ -59,10 +59,9 @@
       (expect (not (contract/valid? :lint-fn (assoc lint-ok "findings" [{"file" "a.clj"}]))))
       (expect (not (contract/valid? :lint-fn (dissoc lint-ok "findings")))))
   (it "check throws a tagged contract-violation ex-info on a bad result"
-      (let
-        [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
-                 nil
-                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (let [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (expect (= :surface/contract-violation (:type ed)))
         (expect (= :lint-fn (:capability ed)))
         (expect (some? (:explain-data ed)))))
@@ -80,6 +79,20 @@
       (expect (not (contract/valid? :test-fn (dissoc test-ok "mode")))))
   (it "rejects a test result whose pass count is not a number"
       (expect (not (contract/valid? :test-fn (assoc test-ok "pass" "3")))))
+  (it "accepts a test failure carrying typed ns/test/file/line (parity with ::finding)"
+      (expect (contract/valid? :test-fn
+                               (assoc test-ok
+                                 "fail" 1
+                                 "failures" [{"ns" "my.app.core-test"
+                                              "test" "adds-test"
+                                              "file" "core_test.clj"
+                                              "line" 12
+                                              "message" "expected 3"}]))))
+  (it "rejects a test failure whose line is not a non-negative int"
+      (expect (not (contract/valid? :test-fn
+                                    (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
+      (expect (not (contract/valid? :test-fn
+                                    (assoc test-ok "failures" [{"message" "boom" "ns" 7}])))))
   (it "passes a capability with no registered spec straight through"
       (expect (contract/valid? :repl-eval-fn {:anything :goes}))
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
