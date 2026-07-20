@@ -101,7 +101,9 @@ Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject 
 
 ## Native tool contracts
 
-Native tools declare `:native-tool? true`. Keep each fact in one place:
+Prefer `:native-tool? true` for operations the agent should call directly. Native tools are discoverable and validated from the provider tool specification, so CORE and extension prompts can stay lean. Keep a symbol Python-only when it is primarily a composable helper or data-preparation primitive for `python_execution`, rather than a direct agent action.
+
+Every symbol still passes a Var whose function has a non-blank docstring and concrete arglists. For a native tool, that docstring documents the implementation for developers; the model-facing contract lives only in `:description` and `:schema`. Keep each fact in one place:
 
 | Owner | Contains | Must not contain |
 | --- | --- | --- |
@@ -129,7 +131,7 @@ Native tools declare `:native-tool? true`. Keep each fact in one place:
 
 Both `:description` and `:schema` are mandatory. Close the top-level schema with `:additionalProperties false` unless unknown keys are intentional. `doc(name)` renders the compact description plus schema-derived parameters exactly once; it never substitutes the implementation docstring. `vis/render-prompt` also skips native symbols, preventing a prompt fragment from duplicating their provider contract.
 
-For a tool with a large replay-only argument, declare the policy on its symbol: `:replay {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}`. Vis keeps the original call for execution and forensics, but replaces a completed oversized call with a hashed textual receipt. A matching failed call can be retried by id without resending its arguments. svar remains a faithful provider codec and never elides arguments itself.
+For a tool with a large replay-only argument, declare the policy on its symbol: `:replay {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}`. Vis keeps the original call for execution and forensics, but replaces a successful or approved-retry oversized call with a hashed textual receipt. A matching failed call can be retried by id without resending its arguments. svar remains a faithful provider codec and never elides arguments itself.
 
 ## Sandbox shims and autoloads
 
