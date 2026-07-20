@@ -990,13 +990,36 @@
      ;; - no more `total-h` jitter on scroll, no more
      ;; click-to-position landing in the wrong row.
      est
-     (mapv
-       (fn [idx m]
-         (or
-           (height-cache-get m bubble-w settings detail-expansions session-id)
-           (estimated-height-cached messages settings bubble-w idx m detail-expansions session-id)))
-       (range n)
-       messages)
+     ;; Primitive-indexed loop into a transient, not `(mapv f (range n)
+     ;; messages)`: the two-collection mapv builds a chunked `(range n)`
+     ;; seq and boxes each index every tick — ~14KB of pure iteration
+     ;; garbage per 60-message layout that the transient loop avoids. This
+     ;; runs on EVERY layout (live + scroll), so it scales with session
+     ;; length. `nth` on the messages vector is O(1).
+     (loop
+       [i
+        0
+
+        acc
+        (transient [])]
+
+       (if (< i n)
+         (let
+           [m
+            (nth messages i)
+
+            h
+            (or (height-cache-get m bubble-w settings detail-expansions session-id)
+                (estimated-height-cached messages
+                                         settings
+                                         bubble-w
+                                         i
+                                         m
+                                         detail-expansions
+                                         session-id))]
+
+           (recur (unchecked-inc i) (conj! acc h)))
+         (persistent! acc)))
 
      est-off
      (cumulative-offsets est)
