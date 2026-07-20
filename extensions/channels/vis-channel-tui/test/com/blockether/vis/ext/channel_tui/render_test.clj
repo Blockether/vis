@@ -36,6 +36,26 @@
              (StringBuilder.)
              x))))
 
+(defn- put->styled-runs
+  "Expand a `putString` 3rd argument into the styled RUNS it paints, so recording
+   proxies observe the same per-run [text {:fg :bg :sgr}] structure regardless of
+   overload. A String is one run at the graphics' current `fg`/`bg`/`sgr`; a
+   `TextCharacter[]` (the pre-segmented overload `blit-styled-line!` uses) is split
+   into consecutive runs of equal fg/bg/modifiers, read straight from the cells --
+   a STRONGER check than trusting g's transient per-call SGR state."
+  [x fg bg sgr]
+  (if (string? x)
+    [[x {:fg fg :bg bg :sgr sgr}]]
+    (->> (seq x)
+         (partition-by (fn [^com.googlecode.lanterna.TextCharacter tc]
+                         [(.getForegroundColor tc) (.getBackgroundColor tc)
+                          (set (.getModifiers tc))]))
+         (mapv (fn [cells]
+                 (let [^com.googlecode.lanterna.TextCharacter c0 (first cells)]
+                   [(apply str (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) cells))
+                    {:fg (.getForegroundColor c0) :bg (.getBackgroundColor c0)
+                     :sgr (set (.getModifiers c0))}]))))))
+
 (defdescribe result-summary-color-test
              (it "keeps native-tool headlines flush on the quiet result band"
                  (expect (= t/result-bg (result-row-bg {:kind :result-headline} false)))
@@ -1565,7 +1585,7 @@
        (setForegroundColor [c] (reset! fg c) this)
        (setBackgroundColor [c] (reset! bg c) this)
        (putString
-         ([col row text] (swap! captured conj [text {:fg @fg :bg @bg :sgr @active}]) this)))]
+         ([col row text] (swap! captured into (put->styled-runs text @fg @bg @active)) this)))]
 
     (describe
       "paint-styled-line! inherits the wrapping SGR modifiers"
@@ -1666,7 +1686,7 @@
          (setForegroundColor [c] (reset! fg c) this)
          (setBackgroundColor [c] (reset! bg c) this)
          (putString
-           ([col row text] (swap! captured conj [text {:fg @fg :bg @bg :sgr @active}]) this)))
+           ([col row text] (swap! captured conj [(put-text text) {:fg @fg :bg @bg :sgr @active}]) this)))
 
        line
        (str "Searched " p/INLINE_CODE_ON
@@ -1785,7 +1805,7 @@
                     (setBackgroundColor [c] (reset! bg c) this)
                     (fillRectangle [_pos _size _ch] this)
                     (setCharacter [_col _row _ch] this)
-                    (putString ([_col _row text] (swap! captured conj text) this)))
+                    (putString ([_col _row text] (swap! captured conj (put-text text)) this)))
 
                   line
                   (str p/MARKER_ANSWER_TXT
