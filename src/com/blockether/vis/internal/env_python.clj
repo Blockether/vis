@@ -2512,8 +2512,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                     c (or (first (filter #(and (< (long %) end) (not= \space (nth txt %)))
                                          (range c0 (min end (count txt)))))
                           c0)
-                    span (max 1 (- end (long c)))]
-                (.append sb (apply str (repeat (+ (count pfx) (long c)) \space)))
+                    end* (min (long end) (count txt))
+                    pad (+ (count pfx) (long c))
+                    span (max 1 (- end* (long c)))]
+                (.append sb (apply str (repeat pad \space)))
                 (.append sb (apply str (repeat span \^)))
                 (.append sb "\n")))))
         (str/trimr (str sb))))))
@@ -2948,6 +2950,21 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
          (if (and v (.isString v)) (.asString v) (str code)))
        (catch Throwable _ (str code))))
 
+(defn- empty-block-error
+  "Op-error when `code` has NO top-level statements — only comments/whitespace, or
+   everything got stripped (e.g. a lone `from asyncio import gather`). Returns nil
+   otherwise. Replaces the leaked async-wrapper internal
+   `ValueError: empty body on AsyncFunctionDef` with a clean, actionable message.
+   A parse failure (invalid syntax) is NOT empty — swallow it and return nil so the
+   normal evaluator surfaces the precise `:python/syntax` error."
+  [^Context ctx code]
+  (when (zero? (long (try (count-top-level-forms ctx code)
+                          (catch Throwable _ -1))))
+    {:message (str "Empty block — nothing to execute. The code is only comments or "
+                   "whitespace, so this iteration produces no evidence. Write at least "
+                   "one statement, and print() what you want back.")
+     :data {:phase :python/empty-block :empty-block? true}}))
+
 (defn run-python-block
   "Evaluate one Python `code` block in `python-context` as ONE WHOLE-BLOCK
    coroutine, returning the FLAT sum-typed outcome:
@@ -2975,7 +2992,8 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         code
         (strip-protected-imports ctx g code)]
 
-    (if-let [err (protected-rebind-error ctx g code)]
+    (if-let [err (or (empty-block-error ctx code)
+                     (protected-rebind-error ctx g code))]
       {:result nil :forms [{:source code :error err}] :error err}
       ;; ONE whole-block path. `__vis_run_async__` AST-wraps the program in an
       ;; `async def`, AUTO-SETTLES every bare top-level tool call (so `cat(x)`

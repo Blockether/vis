@@ -818,13 +818,7 @@
      (var-get #'lp/apply-summaries)
 
      prior-scope-index
-     (var-get #'lp/prior-turn-scope-index)
-
-     fold-candidates
-     (var-get #'lp/fold-candidates)
-
-     over-hint
-     (var-get #'lp/over-utilization-hint)]
+     (var-get #'lp/prior-turn-scope-index)]
 
     (it "scope-key parses iter + form scopes, dropping the form index"
         (expect (= [1 2] (scope-key "t1/i2")))
@@ -884,39 +878,6 @@
         (expect (= 1 (count (filter :dropped? out))))
         (expect (not-any? #(re-find #"^t1/i1/" (str (:scope %))) out)) ; no raw forms from i1
         (expect (some #(= "t1/i2/f1" (:scope %)) out))))
-    (it "fold-candidates ranks heaviest non-folded, excluding most-recent + folded"
-        (let
-          [big
-           (apply str (repeat 4000 "x"))
-
-           ; ~1000 tok
-           trailer
-           [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout big :src "(cat)"}]}]
-            [1 {:forms-vec [{:scope "t1/i2/f1" :stdout "y" :src "(ls)"}]}]
-            [2 {:forms-vec [{:scope "t1/i3/f1" :stdout big :src "(cat)"}]}]]
-
-           ; most-recent
-           cands
-           (fold-candidates trailer [])]
-
-          (expect (= ["t1/i1" "t1/i2"] (mapv :scope cands))) ; t1/i3 excluded
-          (expect (> (:tokens (first cands)) (:tokens (second cands))))
-          (expect (= ["t1/i2"] (mapv :scope (fold-candidates trailer [{"scopes" #{"t1/i1"}}]))))))
-    (it "over-utilization-hint stays nil under budget, names heaviest steps when firing"
-        (let
-          [big
-           (apply str (repeat 8000 "x"))
-
-           trailer
-           [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout big :src "(cat)"}]}]
-            [1 {:forms-vec [{:scope "t1/i2/f1" :stdout "z" :src "(ls)"}]}]]]
-
-          (expect (nil? (over-hint 10 1000 trailer []))) ; under 50% → silent
-          (let [hint (over-hint 600 1000 trailer [])]    ; over 50% → fires
-            (expect (string? hint))
-            (expect (re-find #"session_fold" hint))
-            (expect (re-find #"Heaviest live steps" hint))
-            (expect (re-find #"t1/i1" hint)))))
     (it "supersede-summaries collapses summary-of-summary (subset dropped, superset/newer wins)"
         (let [supersede (var-get #'eng/supersede-summaries)]
           ;; proper subset is covered by the broader fold → only the superset survives

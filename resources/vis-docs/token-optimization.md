@@ -39,15 +39,17 @@ struct_patch({"op": "replace", "target": "add", "code": "(defn add [a b c] (+ a 
 
 The agent writes code; intermediate results bind to vars in the sandbox. A 200 KB query result lives as a var and is summarized, filtered, or piped onward by more code — it never has to round-trip through the token budget. A compact **var index** tells the model what it has defined.
 
-## Fold spent history in place
+## Fold completed prior turns in place
 
-A fold is **distillation, not deletion** — it drops steps off the **wire** only, never from the database, so it is always safe and always recoverable. Once a step's output has served its purpose, the agent replaces it with a one-line gist:
+A fold is **distillation, not deletion** — it drops steps off the **wire** only, never from the database. At the start of a new turn, the agent first understands the new intent, then folds completed earlier-turn work that is no longer relevant:
 
 ```
 session_fold(["t2/i4"], "http timeout lives at src/vis/net/http.py:52")
 ```
 
-The whole step — the tool call **and** its output — collapses off the wire, so later requests stop paying for it. The gist is the fold's **rationale**: what the steps established and why the hunt is now safe to drop — the decision, the number, and the **anchor** as a FULL workspace-relative `path:line` (never a bare filename or lone `@anchor`) that makes the fact addressable later, so a reader scanning back sees *why* those steps went away. What it drops is the **noise**: search sweeps, raw dumps, dead ends, superseded reads.
+The current turn is never foldable. Its reproduction output, reads, patch anchors, edits, failures, and verification remain live until the turn completes. The runtime rejects current and future scopes; there is no context-pressure nudge that can interrupt an active dependency chain.
+
+The gist records what the completed work established: the finding, rationale or consequence, full workspace-relative `path:line`, and relevant symbol or test. Include a current `<lineno>:<hash>` anchor when useful, but refresh it before editing because writes make hash anchors stale. What disappears is prior-turn noise: search sweeps, raw dumps, dead ends, and superseded reads.
 
 One fold can target several steps at once — a list, a whole turn (a bare `"tN"`), or a range: `{"through": "tN/iN"}` (up to a step), `{"since": "tN/iN"}` (from a step onward), or `{"from": …, "to": …}` (a window). A wider fold **supersedes** a finer one it already covers, so the ledger never accumulates overlapping breadcrumbs.
 
@@ -55,15 +57,24 @@ One fold can target several steps at once — a list, a whole turn (a bare `"tN"
 
 The gist lands **in place** — a `# ⋯ folded <scopes> · saved ~<N>k tokens · ~<P>% of window · context <U>% · <gist>` breadcrumb replaces the step exactly where it collapsed, so the wire it reclaimed — in ~tokens and as a fraction of the model's per-call limit — plus the finding's anchors, are read in context as the model scans back through history. The `~<P>%` is the fold's OWN reduction, not an absolute "how full am I" level: that would baseline on the ever-growing `last_request_tokens` and so RISE across iterations even when the fold helped (fold → tool call → fold → the number climbs). Riding beside it, `context <U>%` DOES report the live window fullness — but straight from the provider's authoritative `saturation` (the same figure `session["utilization"]["now"]` shows), so it reads as a separate, absolute level and can't be mistaken for the fold's own reduction. The breadcrumb is written **once** and never re-transmitted.
 
-### Folding never loses anything
+### Folded history remains recoverable
 
-A fold is a render-time **intent**, not a delete: it hides steps from the wire, but the database keeps every one. Introspection stays available at all times — any folded **native** tool result is re-fetchable by its id via `ntr[...]` (this turn or a past turn, even after a restart clears the sandbox vars), and a whole past turn is readable via `session_state(id)`. Because a fold is reversible, the agent can collapse aggressively and re-fetch the rare detail it later needs.
+A fold is a render-time **intent**, not a delete: it hides completed prior-turn steps from the wire, but the database keeps every one. Any folded **native** tool result is re-fetchable by its id via `ntr[...]`, and a whole past turn is readable via `session_state(id)`.
+
+For the current session, recover turn `N` without dumping the transcript:
+
+```python
+state = await session_state()
+turn = next(t for t in state["transcript"]["turns"] if t["position"] == N)
+```
+
+`turn["iterations"]` contains the original blocks, code, results, errors, and verification output. Pass a session id only when recovering a different conversation.
 
 ### One live budget, in the token meter
 
 The only thing re-emitted each turn is a tiny budget line, carried **inside the token meter** — the model reads it in the same place it reads how full the window is:
 
-- `session["utilization"]["now"]` — `saved <C>/<T> (<P>%) · live <scopes>`: how much of the wire is folded away, and which steps are still live = the next fold candidates (compressed `tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`). `<T>` counts only scopes still on the wire, so folds that have scrolled off the trailer never inflate the percentage. Scopes and counts only — no gists (those live once, in the breadcrumbs), no position (the `# tN/iN` step tag already carries it) — so re-emitting it each iteration costs a handful of tokens.
+- `session["utilization"]["now"]` — `saved <C>/<T> (<P>%) · live <scopes>`: how much of the wire is folded away and which scopes remain. `live` is accounting, not permission to fold the current turn. `<T>` counts only scopes still on the wire, so folds that have scrolled off the trailer never inflate the percentage.
 
 ## The net effect
 

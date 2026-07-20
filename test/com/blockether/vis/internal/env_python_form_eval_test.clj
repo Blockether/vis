@@ -827,6 +827,42 @@ await patch({'path': css})" "t1/i1")]
       ;; co_positions reports the handler column (4) for the re-raise; the caret
       ;; must still land on the `r` of `raise`, never in the leading-space gutter.
       (expect (= \r (nth src col)))))
+  (it "a CJK glyph before the token aligns the caret by CODEPOINT columns"
+      (let
+        [r
+         (ep/run-python-block @py-ctx "名前 = missing_var + 1")
+
+         msg
+         (:message (:error r))
+
+         lines
+         (str/split-lines msg)
+
+         caret
+         (first (filter #(re-find #"^\s*\^+\s*$" %) lines))
+
+         pad
+         (count (take-while #(= \space %) caret))
+
+         span
+         (count (filter #(= \^ %) caret))]
+
+        (expect (= 1 (get-in r [:error :data :line])))
+        ;; The caret is padded by CHARACTER count, not terminal display width:
+        ;; "1: " (3) + "名前 = " (5 codepoints) = 8, so it lands on `missing_var`
+        ;; at the same char index the LLM reads (no double-width fudge).
+        (expect (= 8 pad))
+        ;; caret spans all of `missing_var` (11 chars).
+        (expect (= 11 span))))
+  (it "an empty / comment-only / stripped block returns a clean message, not the async internal"
+      (doseq [code ["# just a comment\n# nothing here" "   \n\t\n  " "from asyncio import gather"]]
+        (let [err (:error (ep/run-python-block @py-ctx code))]
+          (expect (= :python/empty-block (get-in err [:data :phase])))
+          (expect (true? (get-in err [:data :empty-block?])))
+          (expect (str/includes? (:message err) "nothing to execute"))
+          ;; the leaked async-wrapper internal must NEVER surface.
+          (expect (not (str/includes? (:message err) "AsyncFunctionDef")))
+          (expect (not (str/includes? (:message err) "empty body"))))))
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block @py-ctx "print(1 + 2)")]
         (expect (nil? (:error r))))))

@@ -13,6 +13,8 @@
         (expect (contains? symbols 'session-state))
         (expect (contains? symbols 'session-report-html))
         (expect (contains? symbols 'sessions))
+        (expect (re-find #"recovery path for a folded current-session"
+                         (:doc (meta #'introspection/session-state))))
         ;; engine-symbol-* tools were retired in favour of the bare
         ;; `doc` / `apropos` engine system calls.
         (expect (not (contains? symbols 'engine-symbol-documentation)))

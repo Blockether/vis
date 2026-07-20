@@ -53,7 +53,7 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.internal.render :as ast])
-  (:import [java.util LinkedHashMap]
+  (:import [java.util IdentityHashMap LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -97,6 +97,24 @@
   (proxy [LinkedHashMap] [128 0.75 true]
     (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
 
+;; Identity memo for the message fingerprint. `layout` pass-1 recomputed
+;; `(hash (dissoc message ...))` for EVERY message EVERY tick (~2x per bubble,
+;; via height-cache-get + the projection height-key). The `dissoc` allocates a
+;; fresh map whose hashCode is never cached, so each call fully re-walks the
+;; map — ~6 us / 20 KB per 60-message pass, on every 80ms live tick.
+;;
+;; Messages are immutable once finalised into app-db (`update :messages conj`
+;; only appends; see render.clj), so the STABLE prefix keeps object identity
+;; across live ticks — only the growing live/last bubble churns its identity.
+;; Memoize the fingerprint under the message OBJECT (IdentityHashMap == key
+;; equality). Identity ⟹ identical content ⟹ identical fingerprint, so a hit is
+;; always correct; a miss (churned/rebuilt object) recomputes exactly today's
+;; value. This never becomes the CACHE KEY (that stays the content fingerprint),
+;; so it can't reintroduce the identityHashCode scroll-jump the doc below warns of.
+;; Bounded by clear-on-overflow; messages are alive in app-db anyway, so the map
+;; holds no reference the session doesn't already.
+(defonce ^:private ^IdentityHashMap message-fp-memo (IdentityHashMap. 256))
+
 (defn- message-content-fingerprint
   "Content-derived fingerprint of a message map for the height-cache.
    Stable across reducer rebuilds (assoc creates a new map identity
@@ -109,9 +127,17 @@
    Excludes volatile keys the painter assoc's into a copy of the
    message during projection (`:text`, `:prewrapped-lines`,
    `:line-meta`, `:turn-separator?`) so cache hits even after
-   projection has decorated the map."
+   projection has decorated the map.
+
+   Memoized by object identity (see comment above): a stable bubble
+   computes its fingerprint once, then every later tick is a lookup."
   [message]
-  (hash (dissoc message :text :prewrapped-lines :line-meta :turn-separator?)))
+  (locking message-fp-memo
+    (or (.get message-fp-memo message)
+        (let [fp (hash (dissoc message :text :prewrapped-lines :line-meta :turn-separator?))]
+          (when (> (.size message-fp-memo) 4096) (.clear message-fp-memo))
+          (.put message-fp-memo message fp)
+          fp))))
 
 (def ^:private settings-fingerprint-keys
   [:show-thinking :show-iterations :show-silent :show-iteration-headers :preview/default-lines])

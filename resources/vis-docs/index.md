@@ -14,17 +14,14 @@ expensive, and eventually has to be compacted. What sets Vis apart is *who*
 manages that window and *when*.
 
 - **The engine owns the context, not the transcript.** Each step is tagged and
-  addressable. Once a step has served its purpose, the engine folds it away —
-  the tool call *and* its output collapse into a one-line summary you write
-  (`session_fold`), or drop entirely (`session_fold` with no summary). The window stays a
-  curated ledger of live facts, not an append-only log.
+  addressable. At the start of a new turn, after the new intent is understood,
+  completed earlier-turn work can collapse into a one-line summary
+  (`session_fold`) or disappear from the wire (`session_fold` with no summary).
 
-- **Summarization is continuous, not an emergency.** Other agents compact
-  *reactively* — a separate, ad-hoc pass that fires only when the window is
-  about to overflow, throwing away context in a panic. Vis compacts
-  *proactively, while it works*: finished steps are folded in the same flow as
-  the real task. No sliding window, no emergency truncation, no losing the
-  thread mid-task.
+- **Compaction happens at a safe boundary, not under pressure.** Vis never emits
+  a context-pressure nudge and rejects folds aimed at the current or a future
+  turn. Reproduction output, reads, patch anchors, edits, and verification stay
+  live until the turn completes.
 
 - **The compression is structural, done by the same agent.** Because the agent
   that did the work is the one that folds it, the summary is written with full

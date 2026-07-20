@@ -1784,10 +1784,9 @@
    `ctx-engine/folds-view` resolves fold selectors + computes the still-live
    ledger against the SAME scopes the wire folds against. ALSO stamps
    `engine_iter_weights`: a `{scope → ~tokens}` map priced with the SAME estimator
-   `fold-candidates` ranks by (clipped wire chars / 4), so the `session_fold` card
-   can report how much wire a fold reclaims. A scope created THIS iteration (not
-   yet sent) has no weight until the next send — the card just omits its token
-   clause, exactly as the over-budget nudge does. Engine-ephemeral (an `engine_*`
+   the `session_fold` card prices by (clipped wire chars / 4), so it can report how
+   much wire a fold reclaims. A scope created THIS iteration (not yet sent) has no
+   weight until the next send — the card just omits its token clause. Engine-ephemeral (an `engine_*`
    key, stripped at persist by `strip-ephemeral`); overwritten every send so it
    always reflects the live trailer."
   [ctx-atom trailer-iters]
@@ -2321,7 +2320,7 @@
 ;;    ...,
 ;;    <mutable context tail>]
 ;;
-;; Compaction (`summarize` / auto-fold) REWRITES pins → the frozen
+;; Compaction (`session_fold`) REWRITES pins → the frozen
 ;; messages change → one deliberate cache bust, paid only under window
 ;; pressure instead of on every call.
 ;; -----------------------------------------------------------------------------
@@ -2418,6 +2417,28 @@
             (let [ss (->set scopes)]
               (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))]))))
 
+        current-turn
+        (fn []
+          (let [v (some-> ctx-atom deref (get "session_turn"))]
+            (cond (integer? v) (long v)
+                  (string? v) (parse-long (str/trim v))
+                  :else nil)))
+
+        scope-turn
+        (fn [scope]
+          (or (some-> (ctx-engine/scope-key scope) first)
+              (ctx-engine/turn-key scope)))
+
+        selected-turns
+        (fn [intent]
+          (let [ctx (some-> ctx-atom deref)
+                universe (get ctx "engine_iter_universe")
+                resolved (first (ctx-engine/expand-through [intent] (or universe [])))
+                refs (concat (get resolved "scopes")
+                             (get intent "scopes")
+                             (keep #(get intent %) ["through" "since" "from" "to"]))]
+            (into #{} (keep scope-turn) refs)))
+
         record!
         (fn [intent]
           (when ctx-atom (swap! ctx-atom update "session_summaries" (fnil conj []) intent)))
@@ -2488,21 +2509,39 @@
     {'session-fold
      (fn session-fold [scopes & [gist]]
        (if-let [[base label] (target scopes)]
-         (let [g (some-> gist
-                         str
-                         str/trim
-                         not-empty)
-               note (priced base)
-               intent (cond-> base
-                        g
-                        (assoc "gist" g)
+         (let [turn (current-turn)
+               blocked-turns (when turn
+                               (into (sorted-set)
+                                     (filter #(>= (long %) turn))
+                                     (selected-turns base)))]
+           (when-not turn
+             (throw (ex-info "session_fold cannot prove the current turn; folding is blocked."
+                             {:type :vis/session-fold-turn-unknown})))
+           (when (seq blocked-turns)
+             (throw
+               (ex-info
+                 (str "session_fold accepts only completed prior-turn scopes. "
+                      "Current/future turn scopes must stay live through verification; "
+                      "retry at the start of the next turn.")
+                 {:type :vis/session-fold-active-turn
+                  :current-turn turn
+                  :blocked-turns blocked-turns})))
+           (let [g (some-> gist
+                           str
+                           str/trim
+                           not-empty)
+                 note (priced base)
+                 intent (cond-> base
+                          g
+                          (assoc "gist" g)
 
-                        (not (str/blank? note))
-                        (assoc "note" note))]
+                          (not (str/blank? note))
+                          (assoc "note" note))]
 
-           (record! intent)
-           (tel/log! {:level :info :id ::session-fold :data {:intent intent}} "model folded scopes")
-           (str "folded " label note (when g (str " → " g))))
+             (record! intent)
+             (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
+                       "model folded scopes")
+             (str "folded " label note (when g (str " → " g)))))
          (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
               "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
               "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))
@@ -3140,129 +3179,6 @@
                       :else (count (str (:stdout f)))))]
     (long (min n (long MAX_FORM_WIRE_CHARS)))))
 
-(defn- fold-candidates
-  "Heaviest NON-folded iterations in `trailer-iters`, ranked by ~token weight
-   (clipped wire chars / 4) descending — the concrete fold targets surfaced in
-   the over-budget nudge so the model folds the biggest stale steps first.
-   Excludes (a) the most-recent iteration (the step about to be acted on, never a
-   target) and (b) any iteration a fold/drop already covers (resolved through the
-   SAME `expand-through` the wire uses). Pure; same inputs → same order."
-  [trailer-iters summaries]
-  (let [iter-scope-of
-        (fn [rec]
-          (some iter-of-scope (keep :scope (:forms-vec rec))))
-
-        older
-        (vec (butlast trailer-iters))
-
-        folded
-        (into #{}
-              (mapcat #(get % "scopes"))
-              (ctx-engine/expand-through (or summaries [])
-                                         (keep iter-scope-of (map second older))))]
-
-    (->> older
-         (keep (fn [[_ rec]]
-                 (let [isc
-                       (iter-scope-of rec)
-
-                       chars
-                       (long
-                         (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec)))))]
-
-                   (when (and isc (not (contains? folded isc)) (pos? chars))
-                     {:scope isc :tokens (quot (long chars) 4)}))))
-         (sort-by :tokens >)
-         vec)))
-
-(def ^:private OVER_UTILIZATION_FRACTION
-  "SOFT trigger for the compaction nudge: once the NEXT request's input would
-   reach this fraction of the model's input window, the loop appends a one-shot,
-   ephemeral hint asking the model to `session_fold(...)` stale scopes. Set LOW
-   on purpose — fire EARLY (with headroom) so the model compacts deliberately
-   instead of losing detail under last-moment pressure. A FRACTION of the real
-   window (not a fixed token count) so it neither pesters 1M-context models nor
-   under-warns 128K ones."
-  0.5)
-
-(def ^:private URGENT_UTILIZATION_FRACTION
-  "HARD escalation: past this fraction the nudge turns urgent (compact NOW,
-   before any other work) — the window ceiling is close and an over-limit
-   request would be rejected outright."
-  0.8)
-
-(defn- over-utilization-hint
-  "The compaction nudge STRING when the next request (`req-tokens`) reaches
-   `OVER_UTILIZATION_FRACTION` of `window-tokens`; nil otherwise. Escalates to an
-   URGENT variant past `URGENT_UTILIZATION_FRACTION`. Pure — the caller decides
-   placement. Recomputed every send and never persisted, so it appears only
-   while over budget and self-clears once a `session_fold(...)` brings the request
-   back down. When it fires, names the heaviest non-folded steps (from
-   `trailer-iters`, via `fold-candidates`) as concrete targets — that ranking is
-   computed ONLY here, after the threshold check, so it costs nothing otherwise."
-  [req-tokens window-tokens trailer-iters summaries]
-  (let [req
-        (long (or req-tokens 0))
-
-        win
-        (long (or window-tokens 0))]
-
-    (when (and (pos? req)
-               (pos? win)
-               (>= req (long (* (double OVER_UTILIZATION_FRACTION) (double win)))))
-      (let [pct
-            (long (Math/round (* 100.0 (/ (double req) (double win)))))
-
-            urgent?
-            (>= req (long (* (double URGENT_UTILIZATION_FRACTION) (double win))))
-
-            fmt-tok
-            (fn [t]
-              (if (>= (long t) 1000)
-                (str (long (Math/round (/ (double t) 1000.0))) "k")
-                (str (long t))))
-
-            ;; Non-essential enrichment: NEVER let ranking (which serializes
-            ;; arbitrary result values) break the send — degrade to no list.
-            cands
-            (try (take 5 (fold-candidates trailer-iters summaries)) (catch Throwable _ nil))
-
-            heavy
-            (when (seq cands)
-              (str " Heaviest live steps (fold the ones you've finished with): "
-                   (str/join ", " (map #(str (:scope %) " (~" (fmt-tok (:tokens %)) " tok)") cands))
-                   "."))]
-
-        (str (if urgent?
-               (str "# ⚠⚠ URGENT: context is at " pct
-                    "% of the window (" req
-                    "/" win
-                    " tokens) — near the ceiling. COMPACT NOW before any other work, "
-                    "or an over-limit request will be REJECTED. ")
-               (str "# ⚠ context is at " pct
-                    "% of the window (" req
-                    "/" win
-                    " tokens). " "Before you continue, COMPACT: "))
-             "call `session_fold([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
-             "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
-             "takeaway — or omit the gist to just drop steps that no longer matter."
-             heavy
-             " This reminder clears itself once you're back under budget.")))))
-
-(defn- append-over-utilization-hint
-  "Append `over-utilization-hint` to the MUTABLE TAIL of `messages` (after the
-   whole cached/append-only suffix) when over budget — so adding/removing it
-   never churns the prefix cache. Merges into the trailing `user` results
-   message when there is one (keeps strict role alternation); otherwise rides as
-   its own trailing `user` message. No-op (returns `messages`) under budget."
-  [messages req-tokens window-tokens trailer-iters summaries]
-  (if-let [hint (over-utilization-hint req-tokens window-tokens trailer-iters summaries)]
-    (let [last-msg (peek messages)]
-      (if (= "user" (:role last-msg))
-        (conj (pop messages) (update last-msg :content #(str % "\n\n" hint)))
-        (conj (vec messages) {:role "user" :content hint})))
-    messages))
-
 ;; ── Native tool surface (maki-style HYBRID) ──────────────────────────────────
 ;; Prefer `python_execution` for batched / filtered / chained workflows; a single
 ;; simple operation may use its native tool directly. Each native schema mirrors
@@ -3338,7 +3254,7 @@
    ctx-atom closure is reused — no separate Clojure handler."
   []
   {:name "session_fold"
-   :description (str "Compact PAST steps out of the conversation to keep context lean: fold "
+   :description (str "Compact COMPLETED PRIOR-TURN steps out of the conversation: fold "
                      "the named steps (each tagged `# tN/iN` in its result) off the wire, "
                      "replaced by ONE optional gist line. `target` selects what to fold; "
                      "`gist` is the single takeaway kept in their place — its RATIONALE: what "
@@ -3347,7 +3263,8 @@
                      "replaces a finer one (one breadcrumb, never a stack). Folding is WIRE-ONLY: "
                      "it NEVER deletes from the DB, so it is always reversible — a folded native "
                      "tool result stays fetchable by its id via `ntr[...]` (this turn or a past "
-                     "turn). Same verb is callable inside python_execution as "
+                     "turn). Current and future turn scopes are rejected so live reproduction, "
+                     "anchors, edits, and verification cannot disappear. Same verb is callable inside python_execution as "
                      "`session_fold(target, gist)`.")
    :schema
    {:type "object"
@@ -6018,12 +5935,8 @@
                                         ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))))
                     ;; Standing context render + budget guard.
                     ;;
-                    ;; Budget is NOT pre-estimated here: the over-utilization
-                    ;; nudge (append-over-utilization-hint, below) reacts to the
-                    ;; PROVIDER-reported `:last-iter-input` from the prior call —
-                    ;; which already includes the `:tools` schemas the provider
-                    ;; counts — and asks the model to `summarize(...)`. The engine
-                    ;; never silently drops data; the model owns compaction.
+                    ;; The engine never silently drops data; the model owns
+                    ;; deliberate prior-turn compaction through `session_fold`.
                     ;; This turn's append-only suffix: [assistant-replay,
                     ;; <results>] pairs per prior iteration, so the model sees
                     ;; both its reasoning AND what its code returned.
@@ -6051,23 +5964,6 @@
                                                                         (get "session_summaries")))
                                                (replay-context pre-resolved-model))
                     provider-messages (into (vec messages) conversation-suffix-msgs)
-                    ;; Over-budget compaction nudge: ephemeral, tail-only (after
-                    ;; the cached suffix → cache-safe), present only while the
-                    ;; next request would cross OVER_UTILIZATION_FRACTION of the
-                    ;; window. Self-clears once a `session_fold(...)` shrinks it.
-                    ;; Passes the live trailer + folds so the nudge can name the
-                    ;; heaviest non-folded steps as concrete targets.
-                    provider-messages (append-over-utilization-hint
-                                        provider-messages
-                                        (let [u @usage-atom]
-                                          (if (pos? (long (:iter-count u)))
-                                            (long (:last-iter-input u))
-                                            (long (:previous-request-input u))))
-                                        effective-context-limit
-                                        trailer-iters
-                                        (some-> (:ctx-atom environment)
-                                                deref
-                                                (get "session_summaries")))
                     effective-messages provider-messages
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})

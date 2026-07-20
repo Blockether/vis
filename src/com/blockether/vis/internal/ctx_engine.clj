@@ -585,8 +585,8 @@
               when `weights` are stamped — in reclaimed context (`~<toks> tok`,
               summed from `engine_iter_weights` with the SAME estimator the
               `session_fold` card and the over-budget nudge use); and `live` the
-              compressed scopes STILL on the wire = fold candidates. No gists, no
-              compressed scopes STILL on the wire = fold candidates. `context` the
+              compressed scopes STILL on the wire (accounting only; current-turn
+              scopes are not foldable). No gists. `context` is the
               LIVE per-call saturation (`util`'s `saturation`), so the same delta
               carries how full the window is now. No gists, no position (the `# tN/iN`
               step tag the model already sees carries that) — so re-emitting it every

@@ -2575,12 +2575,10 @@
 (defn- patch-loop-hint
   [^long n path]
   (when (>= n (long patch-fail-loop-threshold))
-    (str "Consecutive patch failures on " path
-         ": " n
-         ". STOP retrying with similar search. Re-read the file (cat(path, {\"tail\": N})"
-         " or with the offset shown above), then build ONE cohesive edit plan with"
-         " from_anchor..to_anchor anchors or nth selection. If you are rewriting the"
-         " whole file, switch to write(...).")))
+    (str "Patch failed " n
+         " times on " path
+         ". Stop retrying: re-read the target, verify the intended structure, then use"
+         " fresh anchors or the correct structural operation.")))
 
 ;; -----------------------------------------------------------------------------
 ;; Staleness check: :expected_mtime / :expected_size
@@ -2818,82 +2816,58 @@
       (case reason
         :hashline-malformed
         (str head
-             " failed: " (name (:which hash-error))
-             "_anchor " (pr-str (:anchor hash-error))
-             " is not a `lineno:hash` anchor"
-             " - every :from_anchor needs BOTH the line number AND the hash"
-             " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor" " cat printed.")
+             ": malformed "
+             (name (:which hash-error))
+             "_anchor "
+             (pr-str (:anchor hash-error))
+             "; use a fresh `lineno:hash` from `cat`.")
 
         :hashline-line-out-of-range
         (str head
-             " failed: " (name (:which hash-error))
-             "_anchor line " (:line hash-error)
-             " is outside the file (it has " (:lines hash-error)
-             " lines). Re-read with cat for fresh" " `lineno:hash` anchors, then resend the batch.")
+             ": anchor line "
+             (:line hash-error)
+             " is outside the "
+             (:lines hash-error)
+             "-line file; refresh it with `cat`.")
 
         :hashline-not-found
         (str head
-             " failed: " (name (:which hash-error))
-             "_anchor hash " (pr-str (:hash hash-error))
-             " matches no line in the current file"
-             " (that line changed or the file moved — anchors go STALE after"
-             " any write/patch)."
-             (if-let [ca (:current-anchor hash-error)]
-               (str " Line " (:stated-line hash-error)
-                    " is NOW `" ca
-                    "`" (when-let [t (:current-text hash-error)]
-                          (str " = "
-                               (pr-str (cond-> (str t)
-                                         (> (count (str t)) 80)
-                                         (-> (subs 0 80)
-                                             (str " …"))))))
-                    ". Use that anchor if it's still your target; otherwise re-`cat`"
-                    " the exact lines for fresh :anchors, then resend the batch.")
-               (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
-                    " then resend the batch.")))
+             ": stale " (name (:which hash-error))
+             "_anchor" (if-let [ca (:current-anchor hash-error)]
+                         (str "; line " (:stated-line hash-error) " is now `" ca "`.")
+                         "; refresh the target with `cat`."))
 
         :hashline-misplaced
         (str head
-             " failed: "
-             (name (:which hash-error))
-             "_anchor "
-             (pr-str (:hash hash-error))
-             " says line "
+             ": anchor says line "
              (:stated-line hash-error)
-             " but that content is at line(s) "
+             " but matches line(s) "
              (pr-str (:found-lines hash-error))
-             " — too far to be drift, so this looks like a stale/misattributed"
-             " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
-             " editing (this guard is what stops an edit landing on the wrong line).")
+             "; refresh the target before editing.")
 
         :overlapping-edits
-        (str head
-             " failed: this edit's target overlaps another edit"
-             " in the same file — two edits touch the same lines. Merge"
-             " them into ONE edit, or split into separate patch calls.")
+        (str head ": overlapping targets; merge them or use separate patch calls.")
 
         :hashline-range-inverted
         (str head
-             " failed: :to_anchor line "
+             ": to_anchor line "
              (:to-line hash-error)
-             " precedes :from_anchor line "
+             " precedes from_anchor line "
              (:from-line hash-error)
              ".")
 
         :stale
         (str head
-             " failed: file changed since :expected-"
+             ": file changed since expected "
              (name (:reason stale))
-             " check (expected "
+             " (expected "
              (or (:expected_mtime stale) (:expected_size stale))
              ", actual "
              (or (:actual-mtime stale) (:actual-size stale))
-             "). Re-read the file before retrying.")
+             "); re-read before retrying.")
 
         :missing-anchor
-        (str head
-             " failed: no :from_anchor — patch is anchor-only."
-             " Re-read with cat and use the `lineno:hash` anchor it prints.")
+        (str head ": missing from_anchor; use a fresh `lineno:hash` from `cat`.")
 
         (str head " failed.")))))
 
@@ -2920,17 +2894,13 @@
   [family failures]
   (case family
     :stale-anchors
-    (str "their `lineno:hash` anchors no longer match the file — it changed since"
-         " you grabbed them (a concurrent write, or an earlier edit this turn)."
-         " Re-`cat` the file for fresh anchors, then resend the whole batch.")
+    "anchors no longer match the file; re-`cat` once, then resend the batch."
 
     :overlapping-edits
-    (str "their targets overlap — two edits touch the same lines. Merge them into"
-         " ONE edit, or split them across separate patch calls.")
+    "targets overlap; merge them or use separate patch calls."
 
     :missing-anchor
-    (str "no `from_anchor` — patch is anchor-only. Re-`cat` and use the"
-         " `lineno:hash` anchor it prints.")
+    "missing `from_anchor`; use fresh `lineno:hash` anchors from `cat`."
 
     ;; Edit-specific reasons (path errors, :hashline-malformed, :syntax-error):
     ;; keep the first member's full, precomputed explanation.
@@ -2947,9 +2917,7 @@
   ;; patch is ATOMIC — a single failed edit rejects the WHOLE batch and writes
   ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
   ;; must not assume a partial application and must not re-read to "repair" it.
-  (let
-    [atomic
-     "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
+  (let [atomic "No changes: patch is atomic. "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
       ;; MULTIPLE failures: GROUP by root-cause family. The classic wall-of-errors

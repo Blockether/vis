@@ -35,7 +35,7 @@
    Returns [ctx-atom eval-fn]; eval-fn runs Python and returns the result string."
   []
   (let [ca
-        (atom {})
+        (atom {"session_turn" 99})
 
         ctx
         (:python-context (ep/create-python-context (compaction-verbs ca)))]
@@ -182,7 +182,36 @@
             (ev "session_fold({\"bogus\": \"t1/i1\"})")]
 
         (expect (nil? (get @ca "session_summaries")))
-        (expect (re-find #"nothing to fold" out)))))
+        (expect (re-find #"nothing to fold" out))))
+  (it "rejects current and future turns before recording any fold"
+      (let [ca
+            (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t2/i1"]})
+
+            sf
+            (get (compaction-verbs ca) 'session-fold)]
+
+        (doseq [target [["t2/i1"] ["t2"] {"through" "t2/i1"} ["t3/i1"]]]
+          (let [ex (try (sf target "unsafe") nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (= :vis/session-fold-active-turn (:type (ex-data ex))))
+            (expect (= 2 (:current-turn (ex-data ex))))))
+        (expect (nil? (get @ca "session_summaries")))))
+  (it "allows completed prior turns after the new turn has started"
+      (let [ca
+            (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1"]})
+
+            sf
+            (get (compaction-verbs ca) 'session-fold)]
+
+        (expect (re-find #"^folded t1" (sf ["t1"] "done")))
+        (expect (= [{"scopes" #{"t1"} "gist" "done"}] (get @ca "session_summaries")))))
+  (it "fails closed when the current turn is unavailable"
+      (let [sf
+            (get (compaction-verbs (atom {})) 'session-fold)
+
+            ex
+            (try (sf ["t1/i1"] "unknown") nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= :vis/session-fold-turn-unknown (:type (ex-data ex)))))))
 
 ;; ── layer 2: selector resolution against a live universe ─────────────────────
 
@@ -555,7 +584,8 @@
    per-scope ~token weights (`stamp-iter-universe!`), and the provider-measured
    utilization — everything the `session_fold` card prices its suffix from."
   []
-  (atom {"engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t2/i1"]
+  (atom {"session_turn" 3
+         "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t2/i1"]
          "engine_iter_weights" {"t1/i1" 12000 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
          "engine_utilization"
          {"saturation" 44 "last_request_tokens" 42000 "model_input_limit" 96000}}))
@@ -643,5 +673,5 @@
           (= "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% · big cat dump"
              line))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
-      (let [sf (get (compaction-verbs (atom {})) 'session-fold)]
+      (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))

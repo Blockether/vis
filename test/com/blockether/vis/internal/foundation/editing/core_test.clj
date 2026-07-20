@@ -1503,7 +1503,9 @@
         (let [r (run!)]
           (expect (false? (:success? r)))
           (expect (some? (:loop-hint r)))
-          (expect (string/includes? (:message r) "Consecutive patch failures"))
+          (expect (string/includes? (:message r) "Patch failed 3 times"))
+          (expect (< (count (:message r)) 400))
+          (expect (not (string/includes? (:message r) "nth selection")))
           (expect (= 3
                      (-> r
                          :failures
