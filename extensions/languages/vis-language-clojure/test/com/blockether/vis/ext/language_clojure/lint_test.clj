@@ -32,11 +32,12 @@
                    (expect (number? (get r "info")))
                    (expect (vector? (get r "findings")))))
              (it "flags an unused binding as a warning"
-                 (let [r
-                       (lint/lint-code "(ns a) (defn h [a b] a)")
+                 (let
+                   [r
+                    (lint/lint-code "(ns a) (defn h [a b] a)")
 
-                       findings
-                       (get r "findings")]
+                    findings
+                    (get r "findings")]
 
                    (expect (pos? (get r "warning")))
                    ;; the finding carries the uniform per-item shape
@@ -53,11 +54,12 @@
 
 (defdescribe lint-paths-test
              (it "lints a file on disk and reports its findings"
-                 (let [dir
-                       (tmp-dir)
+                 (let
+                   [dir
+                    (tmp-dir)
 
-                       f
-                       (io/file dir "bad.clj")]
+                    f
+                    (io/file dir "bad.clj")]
 
                    (try (spit f "(ns bad) (defn h [a b] a)")
                         (let [r (lint/lint-paths [(.getAbsolutePath f)])]
@@ -115,8 +117,9 @@
             (spit (io/file root-kondo "config.edn")
                   "{:linters {:unused-binding {:level :warning}}}"))
           ;; nested project silences unused-binding
-          (let [sub-kondo (io/file dir "sub" ".clj-kondo")
-                src (io/file dir "sub" "src" "x.clj")]
+          (let
+            [sub-kondo (io/file dir "sub" ".clj-kondo")
+             src (io/file dir "sub" "src" "x.clj")]
 
             (.mkdirs sub-kondo)
             (spit (io/file sub-kondo "config.edn") "{:linters {:unused-binding {:level :off}}}")
@@ -141,4 +144,58 @@
                (expect (= "clj-lint" (get res "op")))
                (expect (pos? (get res "files")))
                (expect (pos? (get res "warning"))))
+             (finally (cleanup dir))))))
+
+;; ── provider tag + by-path grouping ───────────────────────────────────────
+
+(defdescribe provider-and-grouping-test
+             (it "tags each clj-kondo finding with \"provider\" \"clj-kondo\""
+                 (let [findings (get (lint/lint-code "(ns a) (defn h [a b] a)") "findings")]
+                   (expect (seq findings))
+                   (expect (every? #(= "clj-kondo" (get % "provider")) findings))))
+             (it "group-by-path buckets findings by file then by level"
+                 (let
+                   [grouped (lint/group-by-path [{"file" "x.clj" "level" "warning" "type" "a"}
+                                                 {"file" "x.clj" "level" "error" "type" "b"}
+                                                 {"file" "y.clj" "level" "warning" "type" "c"}])]
+                   (expect (= #{"x.clj" "y.clj"} (set (keys grouped))))
+                   (expect (= 1 (count (get-in grouped ["x.clj" "warning"]))))
+                   (expect (= 1 (count (get-in grouped ["x.clj" "error"]))))
+                   (expect (= 1 (count (get-in grouped ["y.clj" "warning"]))))
+                   (expect (nil? (get-in grouped ["y.clj" "error"]))))))
+
+;; ── the :general provider through the facade (only on executed code) ──────────
+
+(defdescribe
+  general-provider-facade-test
+  (it "runs BOTH providers over a code string and reports them"
+      (let [res (lint-result {} "(ns demo) (defn r [x] (.length x))")]
+        (expect (= ["clj-kondo" "general"] (get res "providers")))
+        ;; the reflection warning comes from :general (clj-kondo does not flag it)
+        (expect (some #(and (= "reflection" (get % "type")) (= "general" (get % "provider")))
+                      (get res "findings")))
+        (expect (pos? (get res "warning")))))
+  (it "flags boxed math via the :general provider"
+      (let [res (lint-result {} "(ns demo) (defn add [a b] (+ a b))")]
+        (expect (some #(= "boxed-math" (get % "type")) (get res "findings")))))
+  (it "exposes the by-path grouped view keyed by file"
+      (let
+        [res
+         (lint-result {} "(ns demo) (defn h [a b] (.length a))")
+
+         grouped
+         (get res "by-path")]
+
+        ;; clj-kondo (unused b) + general (reflection) group under one <stdin>
+        (expect (contains? grouped "<stdin>"))
+        (expect (= #{"clj-kondo" "general"}
+                   (set (map #(get % "provider") (get-in grouped ["<stdin>" "warning"])))))))
+  (it "does NOT run the :general provider on paths at rest (not executed)"
+      (let [dir (tmp-dir)]
+        (try (let [src (io/file dir "src" "g.clj")]
+               (.mkdirs (.getParentFile src))
+               (spit src "(ns g) (defn h [a b] (.length a))"))
+             (let [res (lint-result {:workspace/root (.getAbsolutePath dir)} {"path" "src/g.clj"})]
+               (expect (= ["clj-kondo"] (get res "providers")))
+               (expect (not (some #(= "general" (get % "provider")) (get res "findings")))))
              (finally (cleanup dir))))))

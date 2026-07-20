@@ -131,7 +131,7 @@ def summarize_trace(trace: Path) -> dict[str, Any]:
         return stats
     max_iteration = 0
     tool_ids: set[str] = set()
-    file_read_tools = {"cat", "rg", "find_files", "ls", "outline"}
+    file_read_tools = {"cat", "rg", "find_files", "ls", "index"}
     for line in trace.read_text(errors="replace").splitlines():
         try:
             obj = json.loads(line)

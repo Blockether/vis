@@ -1,0 +1,8 @@
+{
+  "lang": "python",
+  "prompt": "Use index on lib.py to locate compute_total, then show me the complete source code of ONLY that function — just that one function, nothing else. If you use cat with index anchors, pass {\"anchor\": [start_anchor, end_anchor]} as an array, not a quoted string.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": ["weights[i] for i"],
+  "want_tools": ["index"]
+}

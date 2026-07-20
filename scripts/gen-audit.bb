@@ -19,9 +19,9 @@
 ;; it fresh (see .github/workflows/audit-md.yml).
 
 (require '[clojure.edn :as edn]
-  '[clojure.string :as str]
-  '[babashka.fs :as fs]
-  '[babashka.http-client :as http])
+         '[clojure.string :as str]
+         '[babashka.fs :as fs]
+         '[babashka.http-client :as http])
 
 (def repos ["https://repo.clojars.org" "https://repo1.maven.org/maven2"])
 
@@ -58,11 +58,11 @@
   "Every direct mvn coord a deps.edn declares (top :deps + all alias deps)."
   [deps]
   (apply merge
-    (coords-from-map (:deps deps))
-    (for [[_ a] (:aliases deps)]
-      (merge (coords-from-map (:extra-deps a))
-        (coords-from-map (:replace-deps a))
-        (coords-from-map (:deps a))))))
+         (coords-from-map (:deps deps))
+         (for [[_ a] (:aliases deps)]
+           (merge (coords-from-map (:extra-deps a))
+                  (coords-from-map (:replace-deps a))
+                  (coords-from-map (:deps a))))))
 
 (defn- module-label [rel-path]
   (if (= rel-path "deps.edn")
@@ -74,12 +74,12 @@
    first then the rest by path. e2e scenario fixtures are skipped."
   [root]
   (let [edns (->> (cons (fs/file root "deps.edn") (fs/glob root "**/deps.edn"))
-               (map #(str (fs/relativize root %)))
-               distinct
-               (remove #(str/includes? % "/e2e/"))
-               (remove #(str/includes? % "/target/"))
-               sort
-               (sort-by #(if (= % "deps.edn") "" %)))]
+                  (map #(str (fs/relativize root %)))
+                  distinct
+                  (remove #(str/includes? % "/e2e/"))
+                  (remove #(str/includes? % "/target/"))
+                  sort
+                  (sort-by #(if (= % "deps.edn") "" %)))]
     (for [rel edns
           :let [deps   (edn/read-string (slurp (fs/file root rel)))
                 coords (module-coords deps)]
@@ -99,13 +99,13 @@
   (some (fn [repo]
           (let [ext  (if (= method :pom) "pom" "jar")
                 url  (format "%s/%s/%s/%s-%s.%s"
-                       repo (coord->path sym) version (name sym) version ext)
+                             repo (coord->path sym) version (name sym) version ext)
                 verb (if (= method :pom) http/get http/head)]
             (try
               (let [resp (verb url {:throw false :headers {"User-Agent" "vis-audit"}})]
                 (when (http-ok? resp) resp))
               (catch Exception _ nil))))
-    repos))
+        repos))
 
 (defn- normalize-license
   "Map a raw POM <license><name> string to a short SPDX-ish id."
@@ -114,9 +114,9 @@
     (cond
       (str/blank? s)                                     "UNKNOWN"
       (or (str/includes? s "lesser general public")
-        (str/includes? s "lgpl"))                      "LGPL-3.0"
+          (str/includes? s "lgpl"))                      "LGPL-3.0"
       (or (str/includes? s "gnu general public")
-        (re-find #"\bgpl\b" s))                        "GPL"
+          (re-find #"\bgpl\b" s))                        "GPL"
       (str/includes? s "eclipse public")
       (if (str/includes? s "2.0") "EPL-2.0" "EPL-1.0")
       (str/includes? s "apache")                         "Apache-2.0"
@@ -124,14 +124,14 @@
       (re-find #"\bupl\b" s)                             "UPL-1.0"
       (str/includes? s "bsd")
       (cond (str/includes? s "2") "BSD-2-Clause"
-        (str/includes? s "3") "BSD-3-Clause"
-        :else "BSD")
+            (str/includes? s "3") "BSD-3-Clause"
+            :else "BSD")
       (re-find #"\bmit\b" s)                             "MIT"
       (or (str/includes? s "public domain")
-        (str/includes? s "unlicense")
-        (str/includes? s "cc0"))                       "Public-Domain"
+          (str/includes? s "unlicense")
+          (str/includes? s "cc0"))                       "Public-Domain"
       (or (str/includes? s "python software")
-        (str/includes? s "psf"))                       "PSF"
+          (str/includes? s "psf"))                       "PSF"
       :else raw)))
 
 (defn- pom-license [pom-body]
@@ -141,16 +141,16 @@
 
 (defn- pom-url [repo group artifact version]
   (format "%s/%s/%s/%s/%s-%s.pom"
-    repo (str/replace group "." "/") artifact version artifact version))
+          repo (str/replace group "." "/") artifact version artifact version))
 
 (defn- fetch-pom-body [group artifact version]
   (some (fn [repo]
           (try
             (let [r (http/get (pom-url repo group artifact version)
-                      {:throw false :headers {"User-Agent" "vis-audit"}})]
+                              {:throw false :headers {"User-Agent" "vis-audit"}})]
               (when (http-ok? r) (:body r)))
             (catch Exception _ nil)))
-    repos))
+        repos))
 
 (defn- parent-coords
   "[group artifact version] of the POM's <parent>, if any."
@@ -169,8 +169,8 @@
    (when (and version (< depth 6))
      (when-let [pom (fetch-pom-body group artifact version)]
        (or (pom-license pom)
-         (when-let [[g a v] (parent-coords pom)]
-           (resolve-license g a v (inc depth))))))))
+           (when-let [[g a v] (parent-coords pom)]
+             (resolve-license g a v (inc depth))))))))
 
 (defn- jar-size-bytes [head-resp]
   (some-> head-resp :headers (get "content-length") parse-long))
@@ -191,8 +191,8 @@
     {:license "(floating)" :size-bytes nil :floating true}
     (let [head (fetch-first :head sym version)]
       {:license    (or (license-overrides (str sym))
-                     (resolve-license (namespace sym) (name sym) version)
-                     "UNKNOWN")
+                       (resolve-license (namespace sym) (name sym) version)
+                       "UNKNOWN")
        :size-bytes (jar-size-bytes head)})))
 
 ;; ------------------------------------------------------------------- rendering
@@ -212,16 +212,16 @@
 
 (defn- render-module [label rows]
   (str/join "\n"
-    (concat
-      [(section-header label) ""]
-      (when-let [b (blurbs label)] [b ""])
-      ["| Dependency | Version | License | Jar size | Ownership |"
-       "|---|---|---|---|---|"]
-      (for [[_ sym version info] rows]
-        (format "| `%s` | `%s` | %s | %s | %s |"
-          (str sym) version (:license info) (fmt-size (:size-bytes info))
-          (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
-      [""])))
+            (concat
+             [(section-header label) ""]
+             (when-let [b (blurbs label)] [b ""])
+             ["| Dependency | Version | License | Jar size | Ownership |"
+              "|---|---|---|---|---|"]
+             (for [[_ sym version info] rows]
+               (format "| `%s` | `%s` | %s | %s | %s |"
+                       (str sym) version (:license info) (fmt-size (:size-bytes info))
+                       (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
+             [""])))
 
 (defn- gen [root]
   (binding [*out* *err*] (println "Discovering modules…"))
@@ -230,15 +230,15 @@
         by-mod   (group-by first rows)
         licenses (frequencies (map (comp :license #(nth % 3)) rows))
         heavy    (->> rows
-                   (keep (fn [[_ sym v info]]
-                           (when-let [b (:size-bytes info)]
-                             (when (>= b (* 1024 1024)) [sym v b]))))
-                   (sort-by #(- (nth % 2))))
+                      (keep (fn [[_ sym v info]]
+                              (when-let [b (:size-bytes info)]
+                                (when (>= b (* 1024 1024)) [sym v b]))))
+                      (sort-by #(- (nth % 2))))
         total-b  (reduce + 0 (keep #(:size-bytes (nth % 3)) rows))
         copyleft (filter #(re-find #"GPL" (str (:license (nth % 3)))) rows)
         today    (subs (str (java.time.LocalDate/now)) 0 10)]
     (str
-      "# vis — Security & Dependency Audit
+     "# vis — Security & Dependency Audit
 
 > Generated " today ".
 
@@ -409,12 +409,12 @@ distinguishes **Blockether in-house** libraries (we control the source and
 release cadence) from **3rd-party** open source.
 
 "
-      (str/join "\n"
-        (for [[label _ _] modules
-              :let [mrows (by-mod label)]
-              :when (seq mrows)]
-          (render-module label mrows)))
-      "
+     (str/join "\n"
+               (for [[label _ _] modules
+                     :let [mrows (by-mod label)]
+                     :when (seq mrows)]
+                 (render-module label mrows)))
+     "
 ---
 
 ## 6. Licenses & code ownership
@@ -424,27 +424,27 @@ release cadence) from **3rd-party** open source.
 | License | Count |
 |---|---|
 "
-      (str/join "\n"
-        (for [[lic n] (sort-by (comp - val) licenses)]
-          (format "| %s | %d |" lic n)))
-      "
+     (str/join "\n"
+               (for [[lic n] (sort-by (comp - val) licenses)]
+                 (format "| %s | %d |" lic n)))
+     "
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
 under **Apache-2.0**"
-      (if (seq copyleft)
-        (str " — **with the copyleft exception(s) below that need legal sign-off:**\n\n"
-          (str/join "\n"
-            (for [[_ sym v info] copyleft]
-              (format
-                "> **WARNING — `%s` (`%s`) is %s** (copyleft). LGPL is generally fine for dynamic
+     (if (seq copyleft)
+       (str " — **with the copyleft exception(s) below that need legal sign-off:**\n\n"
+            (str/join "\n"
+                      (for [[_ sym v info] copyleft]
+                        (format
+                         "> **WARNING — `%s` (`%s`) is %s** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
 > the distributed binary (see §4.3)."
-                (str sym) v (:license info)))))
-        " with no copyleft exceptions.")
-      "
+                         (str sym) v (:license info)))))
+       " with no copyleft exceptions.")
+     "
 
 ### Code ownership
 
@@ -518,10 +518,10 @@ Heaviest direct artifacts (>= 1 MB):
 | Dependency | Version | Jar size |
 |---|---|---|
 "
-      (str/join "\n"
-        (for [[sym v b] heavy]
-          (format "| `%s` | `%s` | %s |" (str sym) v (fmt-size b))))
-      "
+     (str/join "\n"
+               (for [[sym v b] heavy]
+                 (format "| `%s` | `%s` | %s |" (str sym) v (fmt-size b))))
+     "
 
 Notes:
 - The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
@@ -621,8 +621,8 @@ Keep the two channels separate: security disclosures stay private
         (do (println "audit/README.md is up to date.") (System/exit 0))
         (do (binding [*out* *err*]
               (println "audit/README.md is STALE — run `bb scripts/gen-audit.bb`."))
-          (System/exit 1))))
+            (System/exit 1))))
     (do (fs/create-dirs (fs/parent target))
-      (spit target md)
-      (println "Wrote" (str (fs/relativize root target)))
-      (System/exit 0))))
+        (spit target md)
+        (println "Wrote" (str (fs/relativize root target)))
+        (System/exit 0))))

@@ -82,6 +82,34 @@
         (expect (= 0 @provider-calls))
         (expect (= :vis/unsupported-reasoning-effort (:type (ex-data thrown))))
         (expect (= ["high" "max"] (:supported (ex-data thrown))))))
+  (it "does not inject a prompt for models without native reasoning"
+      (let [environment
+            (lp/create-environment ::router {:db :memory})
+
+            seen
+            (atom nil)
+
+            messages
+            [{:role "system" :content "core"} {:role "user" :content "task"}]
+
+            message-text
+            (fn [{:keys [content]}]
+              (if (string? content) content (apply str (keep :text content))))]
+
+        (try (with-redefs [svar/ask-code!
+                           (fn [_router opts]
+                             (reset! seen opts)
+                             {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+               (lp/run-iteration environment
+                                 messages
+                                 {:iteration 0
+                                  :reasoning-level :deep
+                                  :resolved-model
+                                  {:provider :lmstudio :name "local-model" :reasoning? false}})
+               (expect (= ["system" "user"] (mapv :role (:messages @seen))))
+               (expect (= ["core" "task"] (mapv message-text (:messages @seen))))
+               (expect (not (contains? @seen :reasoning))))
+             (finally (lp/dispose-environment! environment)))))
   (it "builds valid evidence for same-model retries"
       (let [iteration
             {:iteration 1
@@ -2626,6 +2654,30 @@
           "mcp__connect" {:pos ["server"]}
           "mcp__disconnect" {:pos ["server"]}}))
 
+(defdescribe native-introspection-tools-test
+             (it "advertises apropos and doc as native tools before the execution tools"
+                 (let [tools
+                       (@#'lp/native-tools [] nil nil)
+
+                       by-name
+                       (into {} (map (juxt :name identity)) tools)]
+
+                   (expect (= ["apropos" "doc" "session_fold" "python_execution"]
+                              (mapv :name tools)))
+                   (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
+                   (expect (= ["name"] (get-in by-name ["doc" :schema :required])))))
+             (it "dispatches native discovery through the existing Python functions"
+                 (let [shapes
+                       (var-get #'lp/engine-native-tool-call-shapes)
+
+                       synth
+                       (fn [name input]
+                         (@#'lp/tool-call->python-source shapes {:name name :input input}))]
+
+                   (expect (= "apropos()" (synth "apropos" {})))
+                   (expect (= "apropos(\"struct\")" (synth "apropos" {"query" "struct"})))
+                   (expect (= "doc(\"struct_patch\")" (synth "doc" {"name" "struct_patch"}))))))
+
 (defdescribe
   tool-call->python-source-test
   ;; A no-`:handler` native tool is dispatched by synthesizing a bare Python call
@@ -2648,8 +2700,8 @@
                    (synth {:name "find_files" :input {"query" "x"}})))
         (expect (= "occurrences({\"name\": \"foo\"})"
                    (synth {:name "occurrences" :input {"name" "foo"}})))
-        (expect (= "outline({\"path\": \"src/x.clj\"})"
-                   (synth {:name "outline" :input {"path" "src/x.clj"}})))
+        (expect (= "index({\"path\": \"src/x.clj\"})"
+                   (synth {:name "index" :input {"path" "src/x.clj"}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
@@ -2766,7 +2818,7 @@
         {"cat" :observation
          "rg" :observation
          "find_files" :observation
-         "outline" :observation
+         "index" :observation
          "occurrences" :observation
          "file_exists" :observation
          "sexpr" :observation

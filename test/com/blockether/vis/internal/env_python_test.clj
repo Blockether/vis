@@ -240,7 +240,12 @@
           (expect (re-find #"len=False" out))
           (expect (re-find #"cat=True" out))
           (expect (re-find #"rg=True" out))
-          (expect (re-find #"struct_patch=True" out))))))
+          (expect (re-find #"struct_patch=True" out))))
+    (it "apropos and doc describe their own callable contracts"
+        (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
+          (expect (str/includes? out "apropos(query='')"))
+          (expect (str/includes? out "doc(name)"))
+          (expect (str/includes? out "result shape"))))))
 
 (defdescribe
   native-container-preservation-test

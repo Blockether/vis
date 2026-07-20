@@ -2435,15 +2435,15 @@
 
 (defdescribe
   outline-path-resolution-test
-  "Regression: outline must route through safe-path like every other file tool —
+  "Regression: index must route through safe-path like every other file tool —
    it used the RAW path (slurp resolves against the JVM user.dir, not the
    workspace cwd), so a nested `src/foo.clj` 404'd under `vis --source` while cat
-   found it. The proof is that safe-path confinement now applies to outline."
-  (let [outline-tool (private-fn "outline-tool")]
+   found it. The proof is that safe-path confinement now applies to index."
+  (let [index-tool (private-fn "index-tool")]
     (it "resolves a NESTED workspace-relative path"
         (let [dir (temp-dir-path "outline-nested/src")
               _ (spit (fs/file (str dir "/foo.clj")) "(ns foo)\n(defn bar [x] (+ x 1))\n")
-              r (outline-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
+              r (index-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
 
           (expect (:success? r))
           (expect (clojure.string/includes? (str (get-in r [:result "skeleton"])) "bar"))
@@ -2459,7 +2459,7 @@
             (expect (string? (get bar "end_anchor")))
             (expect (= 0 (get bar "depth"))))))
     (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
-        (expect (true? (try (outline-tool "/etc/hosts")
+        (expect (true? (try (index-tool "/etc/hosts")
                             false
                             (catch clojure.lang.ExceptionInfo _ true)))))))
 
@@ -2690,19 +2690,19 @@
               (expect (pos? (get res "count")))))))))
 
 (defdescribe
-  outline-tool-e2e-test
-  "The `outline` TOOL over a real file — positional AND the dict form the native
-   tool-call path synthesizes (`outline({\"path\": …})`)."
-  (let [outline (private-fn "outline-tool")]
+  index-tool-e2e-test
+  "The `index` TOOL over a real file — positional AND the dict form the native
+   tool-call path synthesizes (`index({\"path\": …})`)."
+  (let [index (private-fn "index-tool")]
     (it "positional and dict forms both return the same skeleton"
         (let [_ (temp-dir-path "outl")
               f (str (temp-root) "/outl/m.clj")]
 
           (spit (fs/file f) "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
-          (let [r1 (outline f) ;; outline("m.clj")
-                r2 (outline {"path" f})]
+          (let [r1 (index f) ;; index("m.clj")
+                r2 (index {"path" f})]
 
-            ;; outline({"path": "m.clj"}) — native shape
+            ;; index({"path": "m.clj"}) — native shape
             (expect (:success? r1))
             (expect (:success? r2))
             (expect (clojure.string/includes? (get-in r1 [:result "skeleton"]) "add"))
@@ -3156,7 +3156,7 @@
             (extension/symbol-active? sym nil)))
 
         struct-syms
-        [editing/struct-patch-symbol editing/outline-symbol editing/occurrences-symbol
+        [editing/struct-patch-symbol editing/index-symbol editing/occurrences-symbol
          editing/symbol-rename-symbol editing/sexpr-symbol]]
 
     (it "a Clojure project advertises every structural editor"

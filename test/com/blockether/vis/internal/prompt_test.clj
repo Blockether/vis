@@ -48,28 +48,54 @@
                    (expect (not (str/includes? (text-for :web) marker)))
                    (expect (not (str/includes? (text-for nil) marker))))))
 
-(defdescribe prompt-core-test
-             (it "documents engine-owned forms as bare, not extension tools"
-                 ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.
-                 ;; Engine fns are emitted without namespace qualification.
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "bare snake_case"))
-                   (expect (str/includes? text "namespace-qualif"))
-                   (expect (str/includes? text "Session titles are host-generated"))))
-             (it "carries Epistemic + Identity stance so the model probes the project first"
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "Epistemic stance"))
-                   (expect (str/includes? text "runtime > source > docs > assumption"))
-                   (expect (str/includes? text "Identity"))
-                   (expect (str/includes? text "host project"))
-                   ;; Identity must be project-agnostic: it has to work in any repo.
-                   (expect (not (str/includes? text "the Vis PROJECT")))))
-             (it "teaches anchored editing: cat's lineno:hash passed straight to patch from_anchor"
-                 ;; Native `patch` takes the `lineno:hash` the model sees in cat output
-                 ;; directly as `from_anchor` — the old hunk/anchor Python helpers are gone.
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "lineno:hash"))
-                   (expect (str/includes? text "from_anchor")))))
+(defdescribe
+  prompt-core-test
+  (it "documents engine-owned forms as bare, not extension tools"
+      ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.
+      ;; Engine fns are emitted without namespace qualification.
+      (let [text (prompt/build-system-prompt {})]
+        (expect (str/includes? text "bare snake_case"))
+        (expect (str/includes? text "namespace-qualif"))
+        (expect (str/includes? text "Session titles are host-generated"))))
+  (it "carries Epistemic + Identity stance so the model probes the project first"
+      (let [text (prompt/build-system-prompt {})]
+        (expect (str/includes? text "Epistemic stance"))
+        (expect (str/includes? text "runtime > source > docs > assumption"))
+        (expect (str/includes? text "Identity"))
+        (expect (str/includes? text "host project"))
+        ;; Identity must be project-agnostic: it has to work in any repo.
+        (expect (not (str/includes? text "the Vis PROJECT")))))
+  (it "teaches anchored editing: cat's lineno:hash passed straight to patch from_anchor"
+      ;; Native `patch` takes the `lineno:hash` the model sees in cat output
+      ;; directly as `from_anchor` — the old hunk/anchor Python helpers are gone.
+      (let [text (prompt/build-system-prompt {})]
+        (expect (str/includes? text "lineno:hash"))
+        (expect (str/includes? text "from_anchor"))))
+  (it "keeps the core compact, numbered, and Python structural-first"
+      (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
+        (expect (< (count text) 5000))
+        (doseq [step ["## 1. Identity" "## 2. Inspect" "## 3. Act" "## 4. Use tools" "## 5. Edit"
+                      "## 6. Verify" "## 7. Manage context" "## 8. Style and finish"]]
+          (expect (str/includes? text step)))
+        (expect (str/includes? text "Prefer `python_execution`"))
+        (expect (str/includes? text "Prefer structural editing for code"))
+        (expect (str/includes? text "`apropos(query)`"))
+        (expect (str/includes? text "`doc(name)`"))
+        (expect (str/includes? text "native-only"))
+        (expect (str/includes? text "Step N of M complete"))
+        (expect (str/includes? text "location → cause → fix"))
+        (expect (str/includes? text "MUST OBEY"))
+        (expect (str/includes? text "≤120 words"))
+        (expect (str/includes? text "≤3 bullets"))
+        (expect (str/includes? text "essential evidence"))
+        (expect (str/includes? text "brief rationale"))
+        (expect (str/includes? text "material consequences"))
+        (expect (str/includes? text "canonical decision"))
+        (expect (str/includes? text "maximum 5 rows"))
+        (expect (str/includes? text "never a menu"))
+        (expect (str/includes? text "If ambiguity could materially change the result"))
+        (expect (str/includes? text "correct or redirect you"))
+        (expect (not (str/includes? text "ambiguous, large, or risky"))))))
 
 (defdescribe
   project-instructions-hoist-test
@@ -132,29 +158,6 @@
                    (expect (= 1 @calls))
                    (prompt/assemble-stable-prompt-messages env {:active-extensions active})
                    (expect (= 1 @calls)))))
-
-(defdescribe reasoning-via-comments-nudge-test
-             "Reason-via-code-comments fallback for non-reasoning models."
-             (it "inserts a system nudge after leading system messages, before the conversation"
-                 (let [msgs
-                       [{:role "system" :content "core"} {:role "system" :content "project"}
-                        {:role "user" :content "do the thing"}]
-
-                       out
-                       (prompt/with-reasoning-comments-nudge msgs)]
-
-                   ;; one message added
-                   (expect (= (inc (count msgs)) (count out)))
-                   ;; inserted at the system/conversation boundary (index 2), still a system msg
-                   (expect (= "system" (:role (nth out 2))))
-                   (expect (str/includes? (:content (nth out 2)) ";;"))
-                   ;; leading systems untouched, user message still last
-                   (expect (= "core" (:content (first out))))
-                   (expect (= "user" (:role (last out))))))
-             (it "prepends when there are no leading system messages"
-                 (let [out (prompt/with-reasoning-comments-nudge [{:role "user" :content "x"}])]
-                   (expect (= "system" (:role (first out))))
-                   (expect (= 2 (count out))))))
 
 (defdescribe
   assemble-initial-messages-images-test

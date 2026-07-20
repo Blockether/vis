@@ -6,7 +6,8 @@
    default source paths, and returns a uniform result map (STRING keys — crosses
    the strings-only boundary as a tool `:result`):
    `{\"op\" \"clj-lint\" \"error\" N \"warning\" N \"info\" N \"files\" N \"findings\" [...]}`
-   where each finding is `{\"file\" \"row\" \"col\" \"level\" \"type\" \"message\"}`."
+   where each finding is `{\"file\" \"row\" \"col\" \"level\" \"type\" \"message\" \"provider\"}`
+   (clj-kondo findings carry `\"provider\" \"clj-kondo\"`)."
   (:require [clj-kondo.core :as clj-kondo]))
 
 (defn- finding->map
@@ -18,18 +19,20 @@
                    name)
    "type" (some-> (:type f)
                   name)
-   "message" (:message f)})
+   "message" (:message f)
+   "provider" "clj-kondo"})
 
 (defn run-lint
   "Run clj-kondo over `lint-arg` (a vector of paths or `[\"-\"]` for stdin) and
    shape the result into the uniform lint map. `opts` is merged into the run
    config (e.g. `{:config {...}}`)."
   [lint-arg opts]
-  (let [r
-        (clj-kondo/run! (merge {:lint lint-arg} opts))
+  (let
+    [r
+     (clj-kondo/run! (merge {:lint lint-arg} opts))
 
-        s
-        (:summary r)]
+     s
+     (:summary r)]
 
     {"op" "clj-lint"
      "error" (:error s)
@@ -65,3 +68,19 @@
              "findings" (into (vec (get a "findings")) (get b "findings"))})
           empty-result
           results))
+
+(defn group-by-path
+  "Regroup a flat `findings` vector into a by-path map — the shape a UI walks
+   file-by-file: `{<file> {\"error\" [...] \"warning\" [...] \"info\" [...]}}`.
+   Each finding keeps its full uniform shape (including its `\"provider\"`), so a
+   single file's group can mix providers (clj-kondo + general). Levels with no
+   findings for a file are simply absent."
+  [findings]
+  (reduce-kv (fn [m file fs]
+               (assoc m
+                 file (reduce (fn [g f]
+                                (update g (or (get f "level") "info") (fnil conj []) f))
+                              {}
+                              fs)))
+             {}
+             (group-by #(get % "file") (vec findings))))

@@ -1464,7 +1464,18 @@ def __vis_native_result_scan__(__vis_tree__):
                     (str nm ": <not found> — try apropos(\"\")")
                     :else (str nm
                                (when (and m (not (.isNull m)) (.canExecute m)) " (callable)")
-                               (when docs (str " — " docs))))))))))
+                               (when docs (str " — " docs))))))))
+    ;; These two helpers are installed by the engine rather than the extension
+    ;; registry, so seed their own docs here. This keeps native `doc` and
+    ;; in-Python `doc(...)` equally useful without a copied prompt table.
+    (set-python-binding-doc!
+      ctx
+      'apropos
+      "apropos(query='') -> {name: gist}. List live Python sandbox tools; filter names by an optional substring.")
+    (set-python-binding-doc!
+      ctx
+      'doc
+      "doc(name) -> str. Show one live Python sandbox tool's callable contract, arguments, result shape, and mechanics.")))
 
 (def ^:private posix-compat-shim-src
   "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`

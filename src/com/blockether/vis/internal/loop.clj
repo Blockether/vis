@@ -818,7 +818,7 @@
 ;; All-observation concurrent batch
 ;;
 ;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
-;; OBSERVATIONS (cat / rg / find_files / ls / outline / occurrences / sexpr /
+;; OBSERVATIONS (cat / rg / find_files / ls / index / occurrences / sexpr /
 ;; file_exists — anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
 ;; the whole batch CONCURRENTLY through the isolated virtual-thread pool
@@ -3237,14 +3237,12 @@
     messages))
 
 ;; ── Native tool surface (maki-style HYBRID) ──────────────────────────────────
-;; The model calls the file tools DIRECTLY (cat / rg / find / patch / move /
-;; delete / ls) as native tools — no Python for the common case — and reaches for
-;; `python_execution` only to transform / filter / chain results. Each native
-;; tool's `:schema` mirrors the signature of the SAME tool that's bound into the
-;; GraalPy sandbox; native dispatch synthesizes a call into that bound fn (see
-;; `dispatch-native-tool!`), so confinement / anchors / rendering data come from
-;; ONE definition. The tools are STILL importable inside `python_execution` for
-;; composition. Replying with plain text and NO tool call ends the turn.
+;; Prefer `python_execution` for batched / filtered / chained workflows; a single
+;; simple operation may use its native tool directly. Each native schema mirrors
+;; the SAME function bound into GraalPy, and native dispatch synthesizes a call to
+;; that function, so both surfaces share confinement, anchors, rendering, and
+;; docs. Explicitly native-only handler tools are the exception. Replying with
+;; plain text and NO tool call ends the turn.
 
 (defn- python-execution-capability-line
   "The ONE line that tells the model what the sandbox can actually reach THIS
@@ -3280,22 +3278,25 @@
       (str fs-part " " net-part))))
 
 (defn- python-execution-tool
-  "The engine-level `python_execution` tool schema. NOT the default action surface
-   — only for transforming / filtering / chaining tool results in one shot so
-   intermediate data never lands in context. The file tools (cat/rg/find/patch/…)
-   are ALSO async fns in scope here for composition. The capability line is built
-   from `caps` so fs/network claims match what the sandbox can actually do."
+  "The engine-level `python_execution` tool schema. Preferred for batched,
+   transformed, filtered, chained, and structural workflows so intermediate data
+   never lands in context. Active engine-bound native tools share this sandbox;
+   explicitly native-only handlers are the exception. The capability line is
+   built from `caps` so fs/network claims match what the sandbox can actually do."
   [caps]
   {:name "python_execution"
-   :description
-   (str "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER / "
-        "CHAIN tool results in one shot — its RETURN is the text it print()s (the "
-        "last-expression value is NOT returned, so print() what you want back). State "
-        "(vars, imports, defs) persists across calls AND turns. The file tools are async "
-        "fns in scope — `await` them; `await gather(a, b)` runs independent calls "
-        "concurrently. Prefer the direct file tools for plain actions — reach here only "
-        "to compute over their output." (when-let [cap (python-execution-capability-line caps)]
-                                          (str "\n" cap)))
+   :description (str
+                  "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER / "
+                  "CHAIN tool results in one shot — its RETURN is the text it print()s (the "
+                  "last-expression value is NOT returned, so print() what you want back). State "
+                  "(vars, imports, defs) persists across calls AND turns. Active engine-bound "
+                  "native tools are bare snake_case functions here; explicitly native-only tools "
+                  "and python_execution itself are exceptions. Action tools are async: `await` "
+                  "them, and use `await gather(a, b)` for independent calls. `apropos` and `doc` "
+                  "are synchronous. Prefer this surface for multi-tool or structural work; use a "
+                  "direct native call for one simple operation."
+                  (when-let [cap (python-execution-capability-line caps)]
+                    (str "\n" cap)))
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
@@ -3339,14 +3340,49 @@
                   "with no summary line.")}}
     :required ["target"]}})
 
+(defn- apropos-tool
+  "Engine-level native schema for the sandbox's existing `apropos(query)`
+   discovery function. Native dispatch synthesizes the same Python call, so the
+   direct and `python_execution` surfaces always list the same live bindings."
+  []
+  {:name "apropos"
+   :description (str "List available Python sandbox tools as a compact "
+                     "{name: one-line gist} map. Omit `query` to list all tools. "
+                     "This is the same `apropos(query)` function available inside "
+                     "python_execution; use `doc` for one tool's full contract.")
+   :schema {:type "object"
+            :properties {"query" {:type "string"
+                                  :description "Optional substring used to filter tool names."}}}})
+
+(defn- doc-tool
+  "Engine-level native schema for the sandbox's existing `doc(name)` function.
+   Native dispatch synthesizes the same Python call; documentation therefore
+   stays sourced from the live sandbox registry rather than a copied table."
+  []
+  {:name "doc"
+   :description (str "Show one Python sandbox tool's exact callable contract, "
+                     "including arguments, result shape, and mechanics. This is "
+                     "the same `doc(name)` function available inside python_execution.")
+   :schema {:type "object"
+            :properties {"name" {:type "string" :description "Exact tool name from apropos."}}
+            :required ["name"]}})
+
+(def ^:private engine-native-tool-call-shapes
+  {"apropos" {:opt-pos ["query"]}
+   "doc" {:pos ["name"]}
+   "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
+
 (defn- native-tools
   "The native tool surface advertised to the model: the file tools declared via
    each extension's `vis/symbol` `:native-tool` opt (single source of truth —
-   schema lives WITH the symbol), plus the engine-level `python_execution` for
-   transforms. Order: the registered file tools, then python_execution. `caps`
-   (`:sandbox-caps` from the env) tailors python_execution's fs/network line."
+   schema lives WITH the symbol), plus native `apropos` / `doc`, context folding,
+   and `python_execution`. Order: extension tools, discovery tools, session_fold,
+   python_execution. `caps` (`:sandbox-caps` from the env) tailors the latter's
+   fs/network line."
   [active-extensions caps env]
   (conj (extension/native-tool-schemas active-extensions env)
+        (apropos-tool)
+        (doc-tool)
         (session-fold-tool)
         (python-execution-tool caps)))
 
@@ -3471,7 +3507,7 @@
    default) — it returns RAW argument values (no `py-literal`, so tool namespaces
    need no engine dependency) which THIS fn renders. A tool with NO shape → the
    generic `name({…whole input…})` form (correct for struct_patch, symbol_rename,
-   rg, find_files, occurrences, outline …).
+   rg, find_files, occurrences, index …).
 
    `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
    Python program, passed through verbatim. This is deliberately the ONLY `code`
@@ -3654,15 +3690,6 @@
                                     (throw (ex-info "Invalid :reasoning-level."
                                                     {:type :vis/invalid-reasoning-level
                                                      :got reasoning-level}))))
-          ;; Reasoning fallback: when the turn asked for reasoning but the model
-          ;; has no native thinking channel (`:reasoning?` absent — e.g. a local
-          ;; LM Studio model), give it a scratchpad in the code itself via
-          ;; `;;` comments. Effort-configurable models reason natively and skip it.
-          reason-via-comments?
-          (and (nil? reasoning-effort) (some? reasoning-level) (not (:reasoning? resolved-model)))
-          messages (cond-> messages
-                     reason-via-comments?
-                     prompt/with-reasoning-comments-nudge)
           turn-state-atom (or (:turn-state-atom environment)
                               (throw (ex-info "environment missing :turn-state-atom"
                                               {:type :vis/missing-turn-state-atom})))
@@ -3950,10 +3977,8 @@
           native-handlers (extension/native-tool-handlers active-extensions environment)
           ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
           ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
-          call-shapes (assoc (extension/native-tool-call-shapes active-extensions environment)
-                        ;; Engine-level session_fold: synthesize a POSITIONAL
-                        ;; `session_fold(target, gist)` into the bound verb.
-                        "session_fold" {:pos ["target"] :opt-pos ["gist"]})
+          call-shapes (merge (extension/native-tool-call-shapes active-extensions environment)
+                             engine-native-tool-call-shapes)
           blocks (if answer-md
                    []
                    (mapv (fn [tc]

@@ -20,9 +20,7 @@
 
    We deliberately do NOT infer `:reasoning?` — LM Studio's API exposes no
    reasoning signal, and since svar 0.7.4 routing no longer requires it, a
-   non-reasoning model still routes (reasoning is best-effort). Leaving models
-   unflagged also lets the host apply the reason-via-code-comments fallback for
-   genuinely non-reasoning local models (see prompt/with-reasoning-comments-nudge).
+   non-reasoning model still routes (reasoning is best-effort).
 
    Contract (`:provider/enrich-models-fn`): `(svar-provider router-opts) ->
    models-vec`. Precedence per key: explicit model value (config override) >

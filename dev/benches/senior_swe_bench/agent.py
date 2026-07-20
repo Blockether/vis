@@ -163,7 +163,7 @@ def _summarize_trace(trace: Path) -> dict[str, Any]:
     }
     max_iteration = 0
     tool_ids: set[str] = set()
-    file_read_tools = {"cat", "rg", "find_files", "ls", "outline"}
+    file_read_tools = {"cat", "rg", "find_files", "ls", "index"}
     if not trace.exists():
         return stats
     for line in trace.read_text(errors="replace").splitlines():

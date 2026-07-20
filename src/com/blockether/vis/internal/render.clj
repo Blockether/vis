@@ -625,7 +625,7 @@
 (defn- path-like-code-literal?
   "A file-path-looking code literal (`src/foo/bar.clj`, `~/x/y.edn`): no
    whitespace, at least one `/`, and no URL/bookmarklet scheme prefix. These
-   stay INLINE chips however long — rg/patch/outline op-cards title every
+   stay INLINE chips however long — rg/patch/index op-cards title every
    per-file section with one, and the chip styling is what makes the path read
    as a header (the TUI paints it on the `result-path` accent, the web as an
    inline `<code>`). Promoting them to `:code` blocks silently dropped that."
