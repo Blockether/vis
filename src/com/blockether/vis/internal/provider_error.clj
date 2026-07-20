@@ -232,7 +232,13 @@
         (provider-body-message body-raw)
 
         schema-rejection?
-        (tool-schema-rejection-message? (str provider-message "\n" message))]
+        (tool-schema-rejection-message? (str provider-message "\n" message))
+
+        tool-name
+        (:tool-name data)
+
+        schema-field
+        (:tool-schema-field data)]
 
     (cond
       (empty-content-error? err)
@@ -254,7 +260,11 @@
         "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key.")
       schema-rejection?
       (str
-        "WHAT HAPPENED: the provider rejected the request before the model ran because one native tool has a top-level `oneOf`, `allOf`, or `anyOf` input schema. "
+        "WHAT HAPPENED: the provider rejected the request before the model ran because native tool `"
+        (or tool-name "unknown")
+        "` has a top-level `oneOf`, `allOf`, or `anyOf` in `"
+        (or schema-field "input_schema")
+        "`. "
         "This is a deterministic Vis/extension schema defect, not an outage, auth failure, or quota problem."
         (when (seq provider-message) (str " Provider message: " provider-message)))
       (auth-provider-error? status provider-message message)
@@ -291,7 +301,12 @@
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
   [err]
-  (let [message (or (ex-message err) (:message err) (str err))]
+  (let [message
+        (or (ex-message err) (:message err) (str err))
+
+        data
+        (:data err)]
+
     (case (provider-error-kind err)
       :empty-content
       "Model returned an empty response"
@@ -300,7 +315,9 @@
       "Provider rejected the request"
 
       :tool-schema
-      "Native tool schema rejected"
+      (if-let [tool-name (:tool-name data)]
+        (str "Native tool schema rejected: " tool-name)
+        "Native tool schema rejected")
 
       :auth
       "Provider authentication failed"
@@ -431,7 +448,16 @@
         (or (:request-id data) (:request_id data))
 
         provider-id
-        (provider-id-of data)]
+        (provider-id-of data)
+
+        tool-name
+        (:tool-name data)
+
+        schema-field
+        (:tool-schema-field data)
+
+        schema-path
+        (:tool-schema-path data)]
 
     (cond-> []
       (and (seq message) (not (generic-wrapper-message? message)))
@@ -442,6 +468,15 @@
 
       provider-id
       (conj ["Provider" (str provider-id)])
+
+      tool-name
+      (conj ["Tool" (str tool-name)])
+
+      schema-field
+      (conj ["Schema" (str schema-field)])
+
+      schema-path
+      (conj ["Provider path" (str schema-path)])
 
       request-id
       (conj ["Request id" (str request-id)]))))

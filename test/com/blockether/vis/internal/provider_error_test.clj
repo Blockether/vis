@@ -163,16 +163,28 @@
 
      err
      {:message "Exceptional status code: 400"
-      :data {:status 400 :body (str "{\"error\":{\"message\":\"" message "\"}}")}}]
+      :data {:status 400
+             :body (str "{\"error\":{\"message\":\"" message "\"}}")
+             :tool-index 11
+             :tool-name "patch"
+             :tool-schema-field "input_schema"
+             :tool-schema-path "tools.11.custom.input_schema"}}]
 
     (it "classifies the deterministic request defect separately from outages"
         (expect (= :tool-schema (perr/provider-error-kind err)))
-        (expect (= "Native tool schema rejected" (perr/provider-error-title err))))
-    (it "names the cause and forbids an unchanged retry"
+        (expect (= "Native tool schema rejected: patch" (perr/provider-error-title err))))
+    (it "names the exact tool and schema, then forbids an unchanged retry"
+        (expect (re-find #"`patch`" (perr/provider-error-explanation err)))
+        (expect (re-find #"`input_schema`" (perr/provider-error-explanation err)))
         (expect (re-find #"top-level" (perr/provider-error-explanation err)))
         (expect (re-find #"deterministic" (perr/provider-error-explanation err)))
         (expect (re-find #"cannot work" (perr/provider-error-next-step err)))
-        (expect (not (re-find #"transient" (perr/provider-error-next-step err)))))))
+        (expect (not (re-find #"transient" (perr/provider-error-next-step err)))))
+    (it "renders exact structured facts instead of making the user count array entries"
+        (expect (some #{["Tool" "patch"]} (perr/provider-error-facts err)))
+        (expect (some #{["Schema" "input_schema"]} (perr/provider-error-facts err)))
+        (expect (some #{["Provider path" "tools.11.custom.input_schema"]}
+                      (perr/provider-error-facts err))))))
 
 (defdescribe
   empty-content-kind-test
