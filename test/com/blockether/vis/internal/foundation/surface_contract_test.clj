@@ -7,11 +7,12 @@
 
 (def ^:private format-ok
   {"op" "clj-format"
-   "files" [{"path" "a.clj" "changed" true "wrote" true}
+   "files" [{"path" "a.clj" "changed" true "wrote" true "formatter" "zprint"}
             {"path" "sub/b.clj" "changed" false "wrote" false}]
    "changed" 1
    "by-dir" {"." {"a.clj" {"changed" true "wrote" true}}
-             "sub" {"b.clj" {"changed" false "wrote" false}}}})
+             "sub" {"b.clj" {"changed" false "wrote" false}}}
+   "formatters" ["zprint"]})
 
 (def ^:private lint-ok
   {"error" 0
@@ -50,6 +51,11 @@
       (expect (= lint-ok (contract/check :lint-fn lint-ok))))
   (it "accepts a minimal single-file format result (no files / no by-dir)"
       (expect (contract/valid? :format-fn {"op" "clj-format" "changed" true "chars" -3})))
+  (it "accepts a single-file format result naming the formatter that ran"
+      (expect (contract/valid? :format-fn
+                               {"op" "clj-format" "changed" true "chars" -3 "formatter" "zprint"})))
+  (it "rejects a format result whose formatters set is not strings"
+      (expect (not (contract/valid? :format-fn (assoc format-ok "formatters" [1 2])))))
   (it "rejects a format result whose by-dir is not a nested dir->file->map"
       (expect (not (contract/valid? :format-fn (assoc format-ok "by-dir" ["oops"]))))
       (expect (not (contract/valid? :format-fn (assoc format-ok "by-dir" {"." ["flat"]})))))

@@ -45,14 +45,20 @@
 (s/def ::format-file
   (s/and map?
          #(string? (get % "path"))
-         #(contains? % "changed")))
+         #(contains? % "changed")
+         ;; the backend that formatted THIS file ("zprint" | "cljfmt"), when reported
+         (opt "formatter" string?)))
 
 (s/def ::format-result
   (s/and map?
          #(string? (get % "op"))
          (opt "changed" #(or (boolean? %) (nat-int? %)))
          (opt "files" #(s/valid? (s/coll-of ::format-file) %))
-         (opt "by-dir" #(s/valid? ::by-dir %))))
+         (opt "by-dir" #(s/valid? ::by-dir %))
+         ;; which backend(s) ran: "formatter" on a single-file/code result, the
+         ;; distinct "formatters" set on a batch — so the result NAMES the provider
+         (opt "formatter" string?)
+         (opt "formatters" #(s/valid? (s/coll-of string?) %))))
 
 ;; =============================================================================
 ;; lint_code result

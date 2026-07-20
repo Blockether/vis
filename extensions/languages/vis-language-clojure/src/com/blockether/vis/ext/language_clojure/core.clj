@@ -689,7 +689,8 @@
     {"path" (relativize-path (io/file (or (:workspace/root env) ".")) path)
      "changed" (not= out code)
      "repaired" (not= (or (repair/fix-delimiters code) code) code)
-     "wrote" (not= out code)}))
+     "wrote" (not= out code)
+     "formatter" (name (fmt/formatter-for (or path (:workspace/root env))))}))
 
 (defn- group-format-by-dir
   "Nest the per-file format results under their DIRECTORY so each directory
@@ -722,7 +723,10 @@
      - nothing / {}                         -> format the whole project's source
          roots (every deps.edn module's :paths + test), skipping build/vendor
          dirs (target, dist, node_modules, .clj-kondo, .clojure-lsp, .cpcache…)
-   Paths are resolved against the workspace root when relative."
+   dirs (target, dist, node_modules, .clj-kondo, .clojure-lsp, .cpcache…)
+   Paths are resolved against the workspace root when relative. Every result
+   NAMES the backend that ran: `\"formatter\"` (\"zprint\" | \"cljfmt\") on a
+   single file / code string, and the distinct `\"formatters\"` set on a batch."
   ([arg] (clj-format-fn nil arg))
   ([env arg]
    (let
@@ -754,12 +758,14 @@
 
      (if batch
        (let [files (mapv #(clj-format-one-file! env %) batch)]
-         (extension/success {:result (contract/check :format-fn
-                                                     {"op" "clj-format"
-                                                      "files" files
-                                                      "changed" (count (filter #(get % "changed")
-                                                                               files))
-                                                      "by-dir" (group-format-by-dir files)})}))
+         (extension/success {:result (contract/check
+                                       :format-fn
+                                       {"op" "clj-format"
+                                        "files" files
+                                        "changed" (count (filter #(get % "changed") files))
+                                        "by-dir" (group-format-by-dir files)
+                                        "formatters" (vec (sort (distinct (keep #(get % "formatter")
+                                                                                files))))})}))
        (let
          [code
           (cond
@@ -789,7 +795,8 @@
                         {"op" "clj-format"
                          "changed" (not= out code)
                          "chars" (- (count out) (count code))
-                         "repaired" (not= (or (repair/fix-delimiters code) code) code)}
+                         "repaired" (not= (or (repair/fix-delimiters code) code) code)
+                         "formatter" (name (fmt/formatter-for (or path (:workspace/root env))))}
                         path
                         (assoc "path"
                           (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"

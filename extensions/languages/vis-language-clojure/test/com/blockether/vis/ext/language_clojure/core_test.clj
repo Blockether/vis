@@ -178,6 +178,8 @@
                    (expect (true? (get-in r [:result "changed"])))
                    (expect (number? (get-in r [:result "chars"])))
                    (expect (not (contains? (:result r) "text")))
+                   ;; the result NAMES the backend that ran (zprint | cljfmt)
+                   (expect (contains? #{"zprint" "cljfmt"} (get-in r [:result "formatter"])))
                    ;; the repaired output is stable: re-running the formatter is a no-op
                    (expect (= out (core/clj-repair+format out))))))
 

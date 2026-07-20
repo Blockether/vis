@@ -144,3 +144,11 @@
    (if (zprint-config-file path)
      (zprint-string source (zprint-opts-for path))
      (format-string source (cljfmt-opts-for path)))))
+
+(defn formatter-for
+  "Which backend `format-source` picks for `path`: `:zprint` when a
+   `.zprint.edn`/`.zprintrc` is found walking UP, otherwise `:cljfmt`. Callers
+   surface this so a format result NAMES the provider that actually ran — the
+   dispatch in `format-source` is otherwise invisible."
+  [path]
+  (if (zprint-config-file path) :zprint :cljfmt))
