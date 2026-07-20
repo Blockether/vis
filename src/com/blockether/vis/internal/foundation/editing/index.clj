@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.editing.index
-  "Structural outline: a high-level, line-ranged skeleton of a source file
+  "Structural INDEX: a high-level, line-ranged skeleton of a source file
    produced via tree-sitter (com.blockether/tree-sitter-language-pack, which
    sources Clojure from our own grammar fork).
 
@@ -27,7 +27,7 @@
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
   (:import [dev.kreuzberg.treesitterlanguagepack TreeSitterLanguagePack ProcessConfig ProcessResult
-            StructureItem Span ImportInfo]))
+            StructureItem Span ImportInfo DocstringInfo]))
 
 (def ^:private extra-extension->language
   "Clojure-family file extensions the pack's grammar table does NOT map, but that
@@ -112,6 +112,7 @@
              (.withLanguage language)
              (.withStructure true)
              (.withImports true)
+             (.withDocstrings true)
              (.build))]
     (try (TreeSitterLanguagePack/process source cfg)
          (catch Throwable t
@@ -126,22 +127,47 @@
   [^String source ^String language]
   (or (.structure (process-source source language)) []))
 
+(def ^:private kind-aliases
+  "Terse canonical names for the pack's verbose `StructureKind`s — what `:kind`
+   carries in the `index`/`occurrences` DATA (and what struct_patch's `kind`
+   disambiguator matches). Only `function` → `fn` so far; all else passes through."
+  {"function" "fn"})
+
+(def ^:private kind-aliases-inverse
+  "Reverse of `kind-aliases`: terse kind → the pack's raw StructureKind name."
+  (into {} (map (juxt val key)) kind-aliases))
+
+(defn- canonical-kind
+  "Normalise a raw kind to the terse canonical form the DATA carries
+   (`function` → `fn`), lower-cased; nil/blank → nil."
+  [kind]
+  (when-some
+    [k (some-> kind
+               str
+               str/lower-case
+               not-empty)]
+    (get kind-aliases k k)))
+
+(defn pack-kind
+  "Inverse of `canonical-kind`: map a terse `:kind` (`fn`) BACK to the pack's raw
+   StructureKind name (`function`) so struct_patch's `kind` disambiguator matches
+   the pack. Unknown/other kinds pass through unchanged; nil/blank → nil."
+  [kind]
+  (when-some
+    [k (some-> kind
+               str
+               str/lower-case
+               not-empty)]
+    (get kind-aliases-inverse k k)))
+
 (defn node-span
   "0-based inclusive `[start-line end-line]` of the TOP-LEVEL structural node named
    `target` (optionally narrowed by `kind`, case-insensitive), or nil if not found.
    Used by the structural `move` op to extract a node's exact source text by name."
   [^String source ^String language ^String target kind]
-  (let
-    [k (some-> kind
-               str
-               str/lower-case)]
+  (let [k (canonical-kind kind)]
     (some (fn [^StructureItem it]
-            (when (and (= target (.name it))
-                       (or (nil? k)
-                           (= k
-                              (some-> (.kind it)
-                                      str
-                                      str/lower-case))))
+            (when (and (= target (.name it)) (or (nil? k) (= k (canonical-kind (.kind it)))))
               (let [^Span span (.span it)]
                 [(.startLine span) (.endLine span)])))
           (structure-items source language))))
@@ -151,13 +177,51 @@
   ;; lines is 0-based; ln is 1-based.
   (nth lines (dec (long ln)) ""))
 
+(def ^:private ^:dynamic *docstrings*
+  "Result-level docstrings for the file currently being indexed, bound by the
+   entry points so `doc-snippet` can fall back to them. For languages whose
+   doc lives INSIDE the body (Python triple-quote, …) the structure tagger
+   leaves `docComment` empty and the pack surfaces the doc via this separate
+   list instead — keyed to a def by name + span. nil outside an index run."
+  nil)
+
+(defn- strip-doc-delims
+  "Strip the surrounding string delimiters from a raw docstring so the gist
+   reads clean — a Python triple-quote / single-quote body (with an optional
+   r/b/u/f prefix). A leading-comment `docComment` has no delimiters, so this
+   only ever fires on the docstrings-list fallback."
+  [^String s]
+  (-> s
+      str/trim
+      (str/replace #"(?s)^[rRbBuUfF]{0,3}(\"\"\"|'''|\"|')" "")
+      (str/replace #"(\"\"\"|'''|\"|')\s*$" "")))
+
+(defn- docstring-for
+  "Docstring text for `it` from the result-level `*docstrings*` list (the doc a
+   language carries inside the body, e.g. Python), matched by name + span
+   containment and de-delimited. nil when nothing matches."
+  [^StructureItem it]
+  (when-let [ds *docstrings*]
+    (let
+      [^Span isp (.span it)
+       is (.startLine isp)
+       ie (.endLine isp)
+       nm (.name it)]
+
+      (some
+        (fn [^DocstringInfo d]
+          (let [^Span dsp (.span d)]
+            (when (and (= nm (.associatedItem d)) (>= (.startLine dsp) is) (<= (.endLine dsp) ie))
+              (strip-doc-delims (.text d)))))
+        ds))))
+
 (defn- doc-snippet
   "First non-blank line of a definition's doc string, trimmed and clipped to a
    single readable gist (nil when there is none). The pack populates `docComment`
    from the def's own doc string / leading comment — Clojure docstrings, and the
    `//` / JSDoc block written directly above a JS/TS/TSX def."
   [^StructureItem it]
-  (when-let [d (.docComment it)]
+  (when-let [d (or (.docComment it) (docstring-for it))]
     (when-let
       [line (->> (str/split-lines d)
                  (map str/trim)
@@ -241,9 +305,7 @@
      (inc (.endLine span))]
 
     {:name (.name it)
-     :kind (some-> (.kind it)
-                   str
-                   str/lower-case)
+     :kind (canonical-kind (.kind it))
      :visibility (some-> (.visibility it)
                          str
                          str/lower-case
@@ -285,10 +347,20 @@
    the language is unsupported or nothing structural was found."
   ([source language] (definitions source language nil))
   ([source language name]
-   (let [lines (str/split-lines source)]
-     (cond->> (defs-tree lines (structure-items source language))
-       (some? name)
-       (filterv #(= name (:name %)))))))
+   (let
+     [res
+      (process-source source language)
+
+      items
+      (or (.structure res) [])
+
+      lines
+      (str/split-lines source)]
+
+     (binding [*docstrings* (.docstrings res)]
+       (cond->> (defs-tree lines items)
+         (some? name)
+         (filterv #(= name (:name %))))))))
 
 (defn file-skeleton
   "Skeleton string for `path` (items + line ranges + full start..end anchors),
@@ -297,10 +369,14 @@
   ([path] (file-skeleton path (slurp path)))
   ([path source]
    (when-let [language (detect-language path)]
-     (let [items (structure-items source language)]
+     (let
+       [res (process-source source language)
+        items (or (.structure res) [])]
+
        (when (seq items)
-         (let [lines (str/split-lines source)]
-           (str/join "\n" (walk-items lines items 0))))))))
+         (binding [*docstrings* (.docstrings res)]
+           (let [lines (str/split-lines source)]
+             (str/join "\n" (walk-items lines items 0)))))))))
 
 (defn- basename
   "Final path segment of `path` — its display name in the index header."
@@ -366,7 +442,7 @@
    section header instead of repeated on every def row."
   {"namespace" "namespaces"
    "constant" "constants"
-   "function" "functions"
+   "function" "fn"
    "macro" "macros"
    "class" "classes"
    "method" "methods"
@@ -516,9 +592,10 @@
         lines (str/split-lines source)]
 
        (when (or (seq items) (seq imps))
-         (let [import-rows (mapv #(import->row lines %) imps)]
-           {:language language
-            :line-count (count lines)
-            :skeleton (index-skeleton path language (count lines) lines items import-rows)
-            :definitions (defs-tree lines items)
-            :imports import-rows}))))))
+         (binding [*docstrings* (.docstrings res)]
+           (let [import-rows (mapv #(import->row lines %) imps)]
+             {:language language
+              :line-count (count lines)
+              :skeleton (index-skeleton path language (count lines) lines items import-rows)
+              :definitions (defs-tree lines items)
+              :imports import-rows})))))))

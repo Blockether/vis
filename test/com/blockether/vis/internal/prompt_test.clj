@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.prompt-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.agents :as agents]
+            [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -93,9 +94,23 @@
         (expect (str/includes? text "canonical decision"))
         (expect (str/includes? text "maximum 5 rows"))
         (expect (str/includes? text "never a menu"))
+        (expect (str/includes? text "reproduce before editing"))
+        (expect (str/includes? text "Prefer a live REPL"))
+        (expect (str/includes? text "rerun the same reproduction"))
         (expect (str/includes? text "If ambiguity could materially change the result"))
         (expect (str/includes? text "correct or redirect you"))
-        (expect (not (str/includes? text "ambiguous, large, or risky"))))))
+        (expect (not (str/includes? text "ambiguous, large, or risky")))))
+  (it "advertises concise Python guidance and every auto-imported name"
+      (let [text (#'prompt/sandbox-shims-prompt-block)]
+        (expect (< (count text) 1000))
+        (expect (not (str/includes? text "Not supported:")))
+        (expect (str/includes? text "fully functional within sandbox limits"))
+        (expect (str/includes? text "stdlib data preparation"))
+        (expect (str/includes? text "project Python REPL"))
+        (expect (str/includes? text "Preinstalled shims"))
+        (expect (str/includes? text "doc(name)"))
+        (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
+          (expect (str/includes? text (str "`" name "`")))))))
 
 (defdescribe
   project-instructions-hoist-test

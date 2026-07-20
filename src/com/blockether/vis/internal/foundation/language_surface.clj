@@ -376,15 +376,26 @@
   (if-let [files (get r "files")]
     (let
       [n (count files)
-       changed (or (get r "changed") 0)]
+       changed (or (get r "changed") 0)
+       by-dir (get r "by-dir")]
 
       {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
-       :body (fence nil
-                    (str/join "\n"
-                              (for [f files]
-                                (str (get f "path")
-                                     " "
-                                     (if (get f "changed") "(changed)" "(no change)")))))})
+       :body (fence
+               nil
+               (if (map? by-dir)
+                 ;; grouped: each directory prefix written ONCE, its files indented
+                 (str/join
+                   "\n"
+                   (mapcat (fn [[dir entries]]
+                             (cons (str dir "/")
+                                   (for [[base v] (sort-by key entries)]
+                                     (str "  " base
+                                          " " (if (get v "changed") "(changed)" "(no change)")))))
+                           (sort-by key by-dir)))
+                 (str/join
+                   "\n"
+                   (for [f files]
+                     (str (get f "path") " " (if (get f "changed") "(changed)" "(no change)"))))))})
     (let
       [changed (get r "changed")
        note (if changed "(changed)" "(no change)")

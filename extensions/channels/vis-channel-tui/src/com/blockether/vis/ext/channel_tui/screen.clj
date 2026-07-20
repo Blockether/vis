@@ -3401,17 +3401,25 @@
        (sort-by #(or (date->millis %) 0))
        last))
 (defn- session-summary
+  "Summary row for the session picker. The gateway now folds `turn_count` +
+   `modified_at` into every `list-sessions` soul server-side (ONE grouped SQL
+   for the whole store), so the common path is a pure local default. The
+   per-session `gateway-list-turns` hydration survives ONLY as a fallback for
+   an older daemon that doesn't ship the summary fields — it was 1 HTTP
+   round-trip PER session (~7.5s at 54 sessions) and froze C-x b."
   [session]
-  (let
-    [turns
-     (try (vec (vis/gateway-list-turns (get session "id"))) (catch Throwable _ []))
+  (if (contains? session "turn_count")
+    (assoc session "modified_at" (or (get session "modified_at") (get session "created_at")))
+    (let
+      [turns
+       (try (vec (vis/gateway-list-turns (get session "id"))) (catch Throwable _ []))
 
-     modified-at
-     (or (latest-turn-created-at turns) (get session "created_at"))]
+       modified-at
+       (or (latest-turn-created-at turns) (get session "created_at"))]
 
-    (assoc session
-      "turn_count" (count turns)
-      "modified_at" modified-at)))
+      (assoc session
+        "turn_count" (count turns)
+        "modified_at" modified-at))))
 (defn- empty-untitled-session?
   [s]
   (let [title (get s "title")]
@@ -3485,11 +3493,13 @@
    read from the session's pinned workspace. Working dir = the project root
    the session edits in: for a draft that's the trunk it was cloned from
    (`:repo-root`); for trunk it's the root itself. `:draft-label` is nil on
-   trunk."
+   trunk. Prefers the lean `workspace` map the gateway folds into every
+   `list-sessions` soul (zero extra round-trips); falls back to the
+   per-session workspace fetch only against an older daemon."
   [s]
   (let
     [ws
-     (session-workspace (get s "id"))
+     (or (get s "workspace") (session-workspace (get s "id")))
 
      draft?
      (some? (get ws "fork_ms"))]
@@ -3510,7 +3520,9 @@
    (first launch here after the sidecar was lost, or every saved id is
    dead). Probes newest-first summaries, matching each session's pinned
    workspace root (trunk `:root`, draft `:repo-root`) against the launch
-   dir, capped at `project-session-probe-cap` probes."
+   dir, capped at `project-session-probe-cap` probes. Reads the summary's
+   folded `workspace` map first; only an older daemon costs a per-session
+   workspace fetch."
   []
   (try (let
          [canonical
@@ -3522,15 +3534,18 @@
          (->> (tui-session-summaries)
               (remove empty-untitled-session?)
               (take project-session-probe-cap)
-              (some (fn [{:keys [id]}]
+              (some (fn [s]
                       (let
-                        [ws
-                         (session-workspace id)
+                        [sid
+                         (get s "id")
+
+                         ws
+                         (or (get s "workspace") (session-workspace sid))
 
                          root
                          (or (get ws "repo_root") (get ws "root"))]
 
-                        (when (and root (= place (canonical root))) id))))))
+                        (when (and root (= place (canonical root))) sid))))))
        (catch Throwable _ nil)))
 
 (defonce ^:private active-project-id*

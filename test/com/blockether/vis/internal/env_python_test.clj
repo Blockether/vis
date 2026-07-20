@@ -28,6 +28,23 @@
         (expect (str/starts-with? rendered "{\n \"first\": "))
         (expect (str/includes? rendered "\n \"second\": [1, 2]\n}")))))
 
+(defdescribe auto-imported-python-names-test
+             (it "makes every advertised Python name available without an import"
+                 (let [ctx
+                       (:python-context (ep/create-python-context {}))
+
+                       names
+                       (ep/ctx->python-str ep/AUTO_IMPORTED_PYTHON_NAMES)
+
+                       result
+                       (ep/run-python-block
+                         ctx
+                         (str "names = " names
+                              "\n"
+                              "print([name for name in names if not hasattr(builtins, name)])"))]
+
+                   (expect (= "[]\n" (:stdout result))))))
+
 (defdescribe
   proxy-and-capture-test
   (let [env

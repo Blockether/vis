@@ -4,16 +4,26 @@ Vis is built around one idea: **don't pay tokens for what you can address by ref
 
 ## Read structure before bytes
 
-Before reading a file, the agent reads its **outline** — a tree-sitter skeleton of every definition with line-ranged, patchable anchors:
+Before reading a file, the agent reads its **index** — a tree-sitter skeleton of the whole file: a `file · language · N lines` header, the file's `imports`/`require` dependencies, then every definition grouped by kind, each with line-ranged, patchable anchors:
 
 ```
-namespace foo.bar   @1:571..1:571
-function add        @5:89f..5:89f
-struct Point        @7:4a4..7:4a4
-protocol Shape      @9:f90..9:f90
+core.clj · clojure · 524 lines
+
+imports (3):
+  clojure.string :as str  @6:1a2
+  foo.bar :as bar         @7:9c4
+
+definitions (29):
+  constants:
+    code-languages           @68:3de..78:8d3
+  fn:
+    private path-extension   [^String path]  @41:81b..52:39c
+    detect-language          [^String path]  @54:a53..66:58d
+  structs:
+    Point                    @90:4a4..94:11e
 ```
 
-The outline costs a few tokens and tells the model exactly which range to read — instead of paging the whole file into context. Every item carries a `<lineno>:<hash>` anchor, so the model can jump straight to an edit without a second read.
+The index costs a few tokens and tells the model exactly which range to read — instead of paging the whole file into context. The kind is named once as a section header (`fn:`, `constants:`) rather than repeated on every row, and nested definitions (a class's methods) sit under their parent. Every item carries a `<lineno>:<hash>` anchor, so the model can jump straight to an edit — `cat` that one span, or feed the anchor to `struct_patch` — without a second read. Alongside the text skeleton, `index` also returns a structured `definitions`/`imports` list (each row `{:name :kind :visibility :signature :doc :anchor :end-anchor :depth}`) that code can consume directly.
 
 ## Edit by name, not by diff
 
@@ -57,4 +67,4 @@ The only thing re-emitted each turn is a tiny budget line, carried **inside the 
 
 ## The net effect
 
-Reading is the dominant cost in most agents. By making the agent read outlines, edit by name, and hold state in the environment, Vis spends tokens on decisions — not on re-transcribing the codebase every turn.
+Reading is the dominant cost in most agents. By making the agent read a file's index before its bytes, edit by name, and hold state in the environment, Vis spends tokens on decisions — not on re-transcribing the codebase every turn.

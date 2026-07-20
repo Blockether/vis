@@ -153,22 +153,23 @@
    tiny registrar + heavy implementation pair. Throws a useful error
    when the backend is missing the fn."
   [db-spec-or-store fn-name]
-  (let [bid
-        (pick-backend-id db-spec-or-store)
+  (let
+    [bid
+     (pick-backend-id db-spec-or-store)
 
-        ns-sym
-        (get-in @backends [bid :ns])
+     ns-sym
+     (get-in @backends [bid :ns])
 
-        _
-        (when-not ns-sym
-          (throw (ex-info (str "Backend " bid " not registered")
-                          {:backend bid :registered (vec (keys @backends))})))
+     _
+     (when-not ns-sym
+       (throw (ex-info (str "Backend " bid " not registered")
+                       {:backend bid :registered (vec (keys @backends))})))
 
-        _
-        (require-backend-ns! bid ns-sym)
+     _
+     (require-backend-ns! bid ns-sym)
 
-        v
-        (ns-resolve ns-sym fn-name)]
+     v
+     (ns-resolve ns-sym fn-name)]
 
     (when-not v
       (throw (ex-info (str "Backend " bid " (" ns-sym ") does not implement '" fn-name "'")
@@ -192,11 +193,12 @@
    selection still throws because the store/spec itself is invalid.
    Auto-loads the backend ns the same way `resolve-impl` does."
   [db-spec-or-store fn-name]
-  (let [bid
-        (pick-backend-id db-spec-or-store)
+  (let
+    [bid
+     (pick-backend-id db-spec-or-store)
 
-        ns-sym
-        (get-in @backends [bid :ns])]
+     ns-sym
+     (get-in @backends [bid :ns])]
 
     (when-not ns-sym
       (throw (ex-info (str "Backend " bid " not registered")
@@ -228,17 +230,18 @@
    any backend-providing namespaces from the classpath."
   [db-spec]
   (manifest/scan-extensions!)
-  (let [normalized
-        (normalize-spec db-spec)
+  (let
+    [normalized
+     (normalize-spec db-spec)
 
-        bid
-        (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
+     bid
+     (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
 
-        f
-        @(resolve-impl {:backend bid} 'db-open!)
+     f
+     @(resolve-impl {:backend bid} 'db-open!)
 
-        store
-        (f normalized)]
+     store
+     (f normalized)]
 
     (cond (nil? store) nil
           (map? store) (assoc store :backend bid)
@@ -334,6 +337,7 @@
 (defdelegate db-update-session-turn! [db-info session-turn-id opts])
 (defdelegate db-list-session-turns-by-status [db-info status])
 (defdelegate db-list-session-turns [db-info session-ref])
+(defdelegate db-session-turn-stats [db-info])
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
 (defdelegate db-list-session-turn-states [db-info session-turn-id])
 (defdelegate db-list-turn-attachments [db-info session-turn-soul-id])

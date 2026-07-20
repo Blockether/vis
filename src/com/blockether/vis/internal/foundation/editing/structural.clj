@@ -142,7 +142,8 @@
                                    code
                                    target
                                    (some-> kind
-                                           name))
+                                           name
+                                           index/pack-kind))
 
         :rename
         (StructuralApi/rename source language target code)
@@ -162,7 +163,8 @@
                               jop
                               target
                               (some-> kind
-                                      name)
+                                      name
+                                      index/pack-kind)
                               code)))
       (catch clojure.lang.ExceptionInfo e (throw e))
       (catch Throwable e

@@ -1744,6 +1744,13 @@ __vis_install_posix_compat__()
 del __vis_install_posix_compat__
 ")
 
+(def AUTO_IMPORTED_PYTHON_NAMES
+  "Python names installed into builtins for every `python_execution` context.
+   This is the model-facing inventory; keep it synchronized with
+   `auto-imports-python` and its real-context regression test."
+  ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "pathlib" "Path" "textwrap"
+   "base64" "math" "socket" "builtins"])
+
 (def ^:private auto-imports-python
   "Install tiny convenience imports into Python builtins so agents can use them
    without repeating imports in every run_python block."

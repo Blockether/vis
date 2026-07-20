@@ -57,7 +57,7 @@
        (first (filter #(= "add" (:name %)) defs))]
 
       (expect (= 3 (count defs))) ;; ns + add + sub
-      (expect (= "function" (:kind add-def)))
+      (expect (= "fn" (:kind add-def)))
       (expect (= "public" (:visibility add-def)))
       (expect (= "[a b]" (:signature add-def)))
       (expect (= 0 (:depth add-def)))
@@ -133,7 +133,7 @@
                    (expect (= 1 (count defs)))
                    (let [d (first defs)]
                      (expect (= 1 (patch/anchor->line (:anchor d)))) ;; anchor IS the position
-                     (expect (= "function" (:kind d)))
+                     (expect (= "fn" (:kind d)))
                      (expect (= "public" (:visibility d)))
                      (expect (= "[a b]" (:signature d)))
                      (expect (some? (:anchor d)))
@@ -151,7 +151,7 @@
                     (filterv :is-definition occ)]
 
                    (expect (= 1 (count defs)))
-                   (expect (= "function" (:kind (first defs))))
+                   (expect (= "fn" (:kind (first defs))))
                    (expect (= 2 (patch/anchor->line (:anchor (first defs))))))) ;; the `def` line, not @decorator
              (it "Rust: the def is marked"
                  (let
@@ -165,7 +165,7 @@
                     (filterv :is-definition occ)]
 
                    (expect (= 1 (count defs)))
-                   (expect (= "function" (:kind (first defs))))))
+                   (expect (= "fn" (:kind (first defs))))))
              (it "unknown language → empty"
                  (expect (= [] (structural/occurrences "x.unknownext" "add add" "add")))))
 

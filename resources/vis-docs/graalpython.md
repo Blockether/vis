@@ -4,7 +4,7 @@ The agent's actions are **code**, and that code runs in an embedded Python inter
 
 ## In-process, not a subprocess
 
-GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares the process with the Clojure core. Tools are exposed to the sandbox as ordinary async functions — `cat`, `outline`, `struct_patch`, `rg`, `find_files` — so the model composes them in code: filter, map, summarize, pipe one tool's output into another, all without any of it touching the prompt.
+GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares the process with the Clojure core. Tools are exposed to the sandbox as ordinary async functions — `cat`, `index`, `struct_patch`, `rg`, `find_files` — so the model composes them in code: filter, map, summarize, pipe one tool's output into another, all without any of it touching the prompt.
 
 ## Sandboxed by design
 

@@ -2227,8 +2227,47 @@
          :current_turn_id (:current-turn entry)
          :last_active_at (:last-active entry)}))))
 
+(defn- session-summary-extras
+  "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
+   `modified_at` (ONE grouped `db-session-turn-stats` query for the whole
+   store) and a lean `workspace` map ({root repo_root label fork_ms}) — the
+   facts the TUI session picker previously fetched with TWO HTTP round-trips
+   PER session (109 sequential calls / ~7.5s at 54 sessions). Deliberately NO
+   git status here: that stays in the per-session `session-workspace-info`."
+  [souls]
+  (let
+    [db
+     (try (lp/db-info) (catch Throwable _ nil))
+
+     stats
+     (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})]
+
+    (mapv (fn [s]
+            (let
+              [st
+               (get stats (str (get s "id")))
+
+               ws
+               (when db
+                 (try (when-let [w (resolve-workspace db (get s "id"))]
+                        (wire/canonical {:root (:root w)
+                                         :repo-root (:repo-root w)
+                                         :label (:label w)
+                                         :fork-ms (:fork-ms w)}))
+                      (catch Throwable _ nil)))]
+
+              (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
+                (:latest-turn-at st)
+                (assoc "modified_at" (:latest-turn-at st))
+
+                ws
+                (assoc "workspace" ws))))
+          souls)))
+
 (defn list-sessions
-  "Wire souls for every persisted session.
+  "Wire souls for every persisted session, each decorated with the bulk
+   summary facts (`turn_count`, `modified_at`, lean `workspace`) so ONE
+   `GET /v1/sessions` is enough to paint a session picker.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
    in one channel is visible in the others and vice-versa. Pass a specific
@@ -2238,7 +2277,8 @@
   ([channel]
    (->> (lp/by-channel channel)
         (keep (comp soul :id))
-        vec)))
+        vec
+        session-summary-extras)))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 

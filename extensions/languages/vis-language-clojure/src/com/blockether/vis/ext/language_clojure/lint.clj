@@ -69,18 +69,38 @@
           empty-result
           results))
 
-(defn group-by-path
-  "Regroup a flat `findings` vector into a by-path map — the shape a UI walks
-   file-by-file: `{<file> {\"error\" [...] \"warning\" [...] \"info\" [...]}}`.
-   Each finding keeps its full uniform shape (including its `\"provider\"`), so a
-   single file's group can mix providers (clj-kondo + general). Levels with no
-   findings for a file are simply absent."
+(defn- fs-parent
+  "The file's parent directory, or `\".\"` when it has none (e.g. `<stdin>` or a
+   bare basename)."
+  [file]
+  (or (.getParent (java.io.File. ^String file)) "."))
+
+(defn- fs-name
+  "The file's basename — the directory prefix stripped off."
+  [file]
+  (.getName (java.io.File. ^String file)))
+
+(defn group-by-dir
+  "Regroup a flat `findings` vector into a directory-nested map that writes each
+   file's directory ONCE:
+   `{<dir> {<basename> {\"error\" [...] \"warning\" [...] \"info\" [...]}}}`.
+   `<dir>` is the file's parent (`\".\"` when it has none, e.g. `<stdin>`) and the
+   inner key is just the basename, so the long directory prefix isn't repeated
+   per file — saving characters over a flat by-file map. Each finding keeps its
+   full uniform shape (including its `\"provider\"`), so a single file's group can
+   mix providers (clj-kondo + general). Levels with no findings are absent."
   [findings]
-  (reduce-kv (fn [m file fs]
+  (reduce-kv (fn [m dir fs]
                (assoc m
-                 file (reduce (fn [g f]
-                                (update g (or (get f "level") "info") (fnil conj []) f))
-                              {}
-                              fs)))
+                 dir (reduce-kv (fn [g file gs]
+                                  (assoc g
+                                    (fs-name file)
+                                    (reduce
+                                      (fn [lvls f]
+                                        (update lvls (or (get f "level") "info") (fnil conj []) f))
+                                      {}
+                                      gs)))
+                                {}
+                                (group-by #(get % "file") fs))))
              {}
-             (group-by #(get % "file") (vec findings))))
+             (group-by #(fs-parent (get % "file")) (vec findings))))

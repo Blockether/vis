@@ -23,6 +23,7 @@
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
+            [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -482,12 +483,31 @@
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked.
        (extension/success {:result (run host port (str host ":" port))})
-       ;; Resolve a RUNNING REPL. A missing REPL throws :clj/no-repl.
-       (let [target (repl-manager/resolve-target! sid rid default-dir)]
-         ;; An EXTERNAL attachment may live on a non-localhost host — dial ITS
-         ;; host, not the caller's default.
-         (extension/success {:result
-                             (run (or (:host target) host) (:port target) (:id target))}))))))
+       ;; Resolve a RUNNING REPL. A missing/unknown REPL is an EXPECTED,
+       ;; actionable condition — catch it and return a TIGHT failure envelope
+       ;; so the model sees just the one-line message + hint, NOT the raw
+       ;; `clojure.lang.ExceptionInfo` class + `{:type … :dir …}` ex-data and
+       ;; the internal nREPL/Compiler stack trace `ex->op-error` would attach.
+       (try (let [target (repl-manager/resolve-target! sid rid default-dir)]
+              ;; An EXTERNAL attachment may live on a non-localhost host — dial ITS
+              ;; host, not the caller's default.
+              (extension/success {:result
+                                  (run (or (:host target) host) (:port target) (:id target))}))
+            (catch clojure.lang.ExceptionInfo e
+              (case (:type (ex-data e))
+                :clj/no-repl
+                (extension/failure {:error {:message
+                                            "no REPL running — start one: repl_start(\"clojure\")"
+                                            :hint "then retry the eval"}})
+
+                :clj/unknown-repl-id
+                (extension/failure {:error
+                                    {:message (str "no REPL under id '"
+                                                   (:id (ex-data e))
+                                                   "' — check session_resources for live REPL ids")
+                                     :hint "pass a live id, or omit it to use the default REPL"}})
+
+                (throw e))))))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
@@ -670,6 +690,28 @@
      "repaired" (not= (or (repair/fix-delimiters code) code) code)
      "wrote" (not= out code)}))
 
+(defn- group-format-by-dir
+  "Nest the per-file format results under their DIRECTORY so each directory
+   prefix is written once: `{<dir> {<basename> {\"changed\" .. \"repaired\" ..
+   \"wrote\" ..}}}`. `<dir>` is the file's parent (`\".\"` when it has none); the
+   inner key is the basename, its payload the per-file map minus the now-implied
+   `\"path\"`. Mirrors `lint/group-by-dir` so format and lint share one shape."
+  [files]
+  (reduce (fn [m f]
+            (let
+              [jf
+               (java.io.File. ^String (get f "path"))
+
+               dir
+               (or (.getParent jf) ".")
+
+               base
+               (.getName jf)]
+
+              (assoc-in m [dir base] (dissoc f "path"))))
+          {}
+          files))
+
 (defn clj-format-fn
   "Format Clojure source via the language facade (`format_code`). Accepts:
      - a raw code string / {\"code\": ...}   -> report changed? + char delta (NO text)
@@ -711,9 +753,12 @@
 
      (if batch
        (let [files (mapv #(clj-format-one-file! env %) batch)]
-         (extension/success {:result {"op" "clj-format"
-                                      "files" files
-                                      "changed" (count (filter #(get % "changed") files))}}))
+         (extension/success {:result (contract/check :format-fn
+                                                     {"op" "clj-format"
+                                                      "files" files
+                                                      "changed" (count (filter #(get % "changed")
+                                                                               files))
+                                                      "by-dir" (group-format-by-dir files)})}))
        (let
          [code
           (cond
@@ -737,15 +782,17 @@
 
          (when (and path (not= out code)) (spit (str path) out))
          (extension/success
-           {:result (cond->
-                      {"op" "clj-format"
-                       "changed" (not= out code)
-                       "chars" (- (count out) (count code))
-                       "repaired" (not= (or (repair/fix-delimiters code) code) code)}
-                      path
-                      (assoc "path"
-                        (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"
-                        (not= out code)))}))))))
+           {:result (contract/check
+                      :format-fn
+                      (cond->
+                        {"op" "clj-format"
+                         "changed" (not= out code)
+                         "chars" (- (count out) (count code))
+                         "repaired" (not= (or (repair/fix-delimiters code) code) code)}
+                        path
+                        (assoc "path"
+                          (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"
+                          (not= out code))))}))))))
 
 (defn- nearest-kondo-dir
   "The nearest `.clj-kondo` config directory walking UP from `file`, or nil when
@@ -787,13 +834,12 @@
    Findings come from one or more PROVIDERS, tagged per finding as `\"provider\"`
    and listed under `\"providers\"`: `\"clj-kondo\"` (static analysis, every
    branch) and `\"general\"` (the compiler's reflection + boxed-math warnings).
-   Reflection/boxed-math only exist at compile time, so `"
-  general
-  "` COMPILES its
+   Reflection/boxed-math only exist at compile time, so `\"general\"` COMPILES its
    target: the code-string snippet, or every source file the lint targets (path /
    paths / whole project) — each in a throwaway namespace that is torn down. The
-   flat `\"findings\"` vector is also grouped under `\"by-path\"` as
-   `{<file> {\"error\"/\"warning\"/\"info\" [...]}}`."
+   flat `\"findings\"` vector is also grouped under `\"by-dir\"` — nested by
+   directory to write each path prefix once:
+   `{<dir> {<basename> {\"error\"/\"warning\"/\"info\" [...]}}}`."
   [env arg]
   (let
     [root
@@ -848,8 +894,7 @@
                                                      :else (discover-project-source-paths root)))]
            (merge-general (lint-grouped src-files)
                           (into []
-                                (mapcat #(reflection/compile-warnings (slurp %)
-                                                                      (.getPath ^java.io.File %)))
+                                (mapcat #(reflection/compile-warnings (slurp (io/file %)) (str %)))
                                 src-files)))))
 
      providers
@@ -858,14 +903,15 @@
      findings
      (mapv #(update % "file" (partial relativize-path root)) (get base "findings"))]
 
-    (extension/success {:result (cond->
-                                  (assoc base
-                                    "findings" findings
-                                    "language" "clojure"
-                                    "providers" providers
-                                    "by-path" (lint/group-by-path findings))
-                                  (seq targets)
-                                  (assoc "targets" (vec targets)))})))
+    (extension/success {:result (contract/check :lint-fn
+                                                (cond->
+                                                  (assoc base
+                                                    "findings" findings
+                                                    "language" "clojure"
+                                                    "providers" providers
+                                                    "by-dir" (lint/group-by-dir findings))
+                                                  (seq targets)
+                                                  (assoc "targets" (vec targets))))})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
 

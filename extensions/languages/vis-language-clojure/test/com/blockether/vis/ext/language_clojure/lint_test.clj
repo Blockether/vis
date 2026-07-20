@@ -153,18 +153,19 @@
                  (let [findings (get (lint/lint-code "(ns a) (defn h [a b] a)") "findings")]
                    (expect (seq findings))
                    (expect (every? #(= "clj-kondo" (get % "provider")) findings))))
-             (it "group-by-path buckets findings by file then by level"
+             (it "group-by-dir nests findings by directory then basename then level"
                  (let
-                   [grouped (lint/group-by-path [{"file" "x.clj" "level" "warning" "type" "a"}
-                                                 {"file" "x.clj" "level" "error" "type" "b"}
-                                                 {"file" "y.clj" "level" "warning" "type" "c"}])]
-                   (expect (= #{"x.clj" "y.clj"} (set (keys grouped))))
-                   (expect (= 1 (count (get-in grouped ["x.clj" "warning"]))))
-                   (expect (= 1 (count (get-in grouped ["x.clj" "error"]))))
-                   (expect (= 1 (count (get-in grouped ["y.clj" "warning"]))))
-                   (expect (nil? (get-in grouped ["y.clj" "error"]))))))
+                   [grouped (lint/group-by-dir
+                              [{"file" "src/x.clj" "level" "warning" "type" "a"}
+                               {"file" "src/x.clj" "level" "error" "type" "b"}
+                               {"file" "test/y.clj" "level" "warning" "type" "c"}])]
+                   (expect (= #{"src" "test"} (set (keys grouped))))
+                   (expect (= 1 (count (get-in grouped ["src" "x.clj" "warning"]))))
+                   (expect (= 1 (count (get-in grouped ["src" "x.clj" "error"]))))
+                   (expect (= 1 (count (get-in grouped ["test" "y.clj" "warning"]))))
+                   (expect (nil? (get-in grouped ["test" "y.clj" "error"]))))))
 
-;; ── the :general provider through the facade (only on executed code) ──────────
+;; ── the :general provider through the facade (code strings AND paths) ─────────
 
 (defdescribe
   general-provider-facade-test
@@ -178,24 +179,26 @@
   (it "flags boxed math via the :general provider"
       (let [res (lint-result {} "(ns demo) (defn add [a b] (+ a b))")]
         (expect (some #(= "boxed-math" (get % "type")) (get res "findings")))))
-  (it "exposes the by-path grouped view keyed by file"
+  (it "exposes the by-dir grouped view nested directory → basename"
       (let
         [res
          (lint-result {} "(ns demo) (defn h [a b] (.length a))")
 
          grouped
-         (get res "by-path")]
+         (get res "by-dir")]
 
-        ;; clj-kondo (unused b) + general (reflection) group under one <stdin>
-        (expect (contains? grouped "<stdin>"))
+        ;; <stdin> has no directory → grouped under "." then its basename;
+        ;; clj-kondo (unused b) + general (reflection) mix under one file group
+        (expect (contains? grouped "."))
         (expect (= #{"clj-kondo" "general"}
-                   (set (map #(get % "provider") (get-in grouped ["<stdin>" "warning"])))))))
-  (it "does NOT run the :general provider on paths at rest (not executed)"
+                   (set (map #(get % "provider") (get-in grouped ["." "<stdin>" "warning"])))))))
+  (it "runs the :general provider on paths too (compiling each targeted file)"
       (let [dir (tmp-dir)]
         (try (let [src (io/file dir "src" "g.clj")]
                (.mkdirs (.getParentFile src))
                (spit src "(ns g) (defn h [a b] (.length a))"))
              (let [res (lint-result {:workspace/root (.getAbsolutePath dir)} {"path" "src/g.clj"})]
-               (expect (= ["clj-kondo"] (get res "providers")))
-               (expect (not (some #(= "general" (get % "provider")) (get res "findings")))))
+               (expect (= ["clj-kondo" "general"] (get res "providers")))
+               (expect (some #(and (= "reflection" (get % "type")) (= "general" (get % "provider")))
+                             (get res "findings"))))
              (finally (cleanup dir))))))

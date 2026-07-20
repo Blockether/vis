@@ -10,6 +10,7 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
@@ -171,9 +172,10 @@
     "- Trust order: runtime > source > docs > assumption. Inspect before guessing;\n"
     "  never fabricate tool output.\n\n"
     "## 2. Inspect\n"
-    "- For repository work, locate and read before answering. First reply: inspect\n"
-    "  with tools; if there is possibility to use the REPL do it, BUGS should be always reproducible with REPL if available; next reply: use the returned evidence. Pure knowledge questions\n"
-    "  may be answered directly.\n"
+    "- For repository work, inspect before answering; pure knowledge may answer directly.\n"
+    "- For bugs, reproduce before editing when feasible. Prefer a live REPL for isolated\n"
+    "  behavior; otherwise use the smallest failing test/command. Capture the failure,\n"
+    "  then rerun the same reproduction after the fix. If impossible, state why.\n"
     "- Use `find_files` for vague paths, `rg` for exact text, and `index` for code\n"
     "  structure. Read the whole relevant region once. Batch independent reads.\n\n"
     "## 3. Act autonomously\n"
@@ -187,8 +189,8 @@
     "- Every reply is exactly ONE tool call or a plain-text finish. Tool results\n"
     "  arrive on the NEXT reply; never decide from a result you have not seen.\n\n"
     "## 4. Use tools efficiently\n"
-    "- Prefer `python_execution` for batched work, transforms, chaining, and\n"
-    "  structural editing. Use a direct native call only for one simple operation.\n"
+    "- Prefer `python_execution` for data preparation, batched work, transforms,\n"
+    "  chaining, and structural editing. Use a native call for one simple operation.\n"
     "- Except native-only tools and `python_execution` itself, every active native\n"
     "  tool is also a bare snake_case Python function. Never import or namespace-qualify it.\n"
     "- Inside `python_execution`, action tools are async: `await` used values and run\n"
@@ -206,10 +208,10 @@
     "- Use `patch` for text or unsupported structures. Pass a fresh `lineno:hash`\n"
     "  from `cat`, `rg`, or `index` directly as `from_anchor`; anchors become stale\n"
     "  after a write. Use `write` only for new files or intentional full rewrites.\n"
-    "- Do not create scratch, debug, notes, or report files.\n\n" "## 6. Verify\n"
-    "- After editing, run the smallest relevant test or `repl_eval`; cover the\n"
-    "  obvious nil, empty, or boundary case. An edit diff proves only that text\n"
-    "  changed. Read verification output on the next reply before finishing.\n"
+    "- Do not create scratch, debug, notes, or report files.\n\n"
+    "## 6. Verify\n"
+    "- After editing, rerun the reproduction or smallest relevant test/`repl_eval`;\n"
+    "  cover obvious boundaries. A diff is not proof; read output before finishing.\n"
     "- If verification is impossible, state exactly why.\n\n"
     "## 7. Manage context\n"
     "- `session` is a read-only Python dict containing identity, workspace, runtime,\n"
@@ -538,38 +540,34 @@
     (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
 (defn- sandbox-shims-prompt-block
-  "Advertise the Python sandbox SHIMS — pure-JVM / pure-Python re-implementations
-   of popular Python libraries, PRE-INSTALLED in the `python_execution` sandbox so
-   `import <lib>` just works (no pip, no native wheels). Each line is the shim's
-   own `:shim/description`, which states what library it stands in for AND what of
-   it is NOT supported (a shim with no caveat is 100% compatible). Enumerated from
-   the extension registry (`extension/sandbox-shims`) so every shim — built-in or
-   third-party — advertises itself with ZERO prompt edits. Also discoverable
-   in-sandbox via `apropos(\"\")` / `doc(\"<name>\")`."
+  "Advertise Python's execution boundary, auto-imports, and live shim names.
+   Full shim contracts stay in `doc(name)` so this provider prompt remains small."
   []
   (let [shims
         (try (extension/sandbox-shims) (catch Throwable _ nil))
 
-        lines
+        shim-names
         (->> shims
-             (keep
-               (fn [s]
-                 (when-let [nm (:shim/name s)]
-                   (let [d (:shim/description s)]
-                     (str "  " nm (when (and (string? d) (not (str/blank? d))) (str " — " d)))))))
-             (distinct)
-             (sort))]
+             (keep :shim/name)
+             distinct
+             sort)
 
-    (when (seq lines)
-      (prompt-block "sandbox-shims"
-                    (str "Python sandbox SHIMS — pure-JVM / pure-Python re-implementations of "
-                         "popular Python libraries, PRE-INSTALLED in the `python_execution` "
-                         "sandbox so `import <lib>` just works (no pip, no native wheels). Each "
-                         "line describes the shim and, after `Not supported:`, its gaps versus "
-                         "the real library — treat those as HARD limits and don't rely on them; "
-                         "a shim with no such caveat is 100% compatible:\n" (str/join "\n" lines)
-                         "\nDiscover them in the sandbox too: `apropos(\"\")` lists them, "
-                         "`doc(\"<name>\")` describes one.")))))
+        auto-imports
+        (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
+
+    (prompt-block
+      "sandbox-shims"
+      (str "`python_execution` is persistent and fully functional within sandbox limits; "
+           "prefer it for stdlib data preparation, transforms, filtering, and tool glue. "
+           "Use a project Python REPL, when available, for installed project packages.\n"
+           "Auto-imported (no `import`): `"
+           auto-imports
+           "`."
+           (when (seq shim-names)
+             (str "\nPreinstalled shims (import normally; no pip): `"
+                  (str/join "`, `" shim-names)
+                  "`."))
+           "\nUse `apropos(\"\")` to discover and `doc(name)` for exact support and limits."))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

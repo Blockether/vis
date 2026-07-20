@@ -77,7 +77,7 @@
   (let [clients (:clients @server-state)]
     (->> clients
          (filter (fn [[_ {:keys [pid]}]]
-                   (or (nil? pid) (discovery/pid-alive? pid))))
+                   (or (nil? pid) (discovery/pid-alive-cached? pid))))
          (map key)
          set)))
 

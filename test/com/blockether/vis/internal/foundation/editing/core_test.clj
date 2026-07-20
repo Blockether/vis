@@ -2453,7 +2453,7 @@
                 bar (first (filter #(= "bar" (get % "name")) defs))]
 
             (expect (vector? defs))
-            (expect (= "function" (get bar "kind")))
+            (expect (= "fn" (get bar "kind")))
             (expect (= "[x]" (get bar "signature")))
             (expect (string? (get bar "anchor")))
             (expect (string? (get bar "end_anchor")))
@@ -2665,7 +2665,7 @@
               (expect (= 1 (get res "definition_count")))
               (expect (= 1 (count defs)))
               (expect (= "widget" (get (first defs) "name")))
-              (expect (= "function" (get (first defs) "kind")))
+              (expect (= "fn" (get (first defs) "kind")))
               (expect (= "[x]" (get (first defs) "signature")))
               ;; every non-def occurrence still carries a patch anchor
               (expect (every? #(get % "anchor") all))
