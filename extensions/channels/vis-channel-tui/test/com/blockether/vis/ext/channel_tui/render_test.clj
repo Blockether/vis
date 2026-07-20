@@ -1308,6 +1308,79 @@
           (expect (< (long spinner-idx) (long queued-idx)))))))
 
 (defdescribe
+  live-body-throttle-test
+  ;; VIS_LIVE_BODY_THROTTLE_MS debounces the heavy live re-projection: within
+  ;; the window a content change reuses the previous body, while the spinner
+  ;; row (spliced in fresh) still advances. Default 0 = disabled, so streamed
+  ;; growth is reflected on every tick (no behaviour change).
+  (let [cell
+        @#'render/live-body-throttle-cell
+
+        throttle-var
+        #'render/live-body-throttle-ms
+
+        with-throttle
+        (fn [ms f]
+          (alter-var-root throttle-var (constantly ms))
+          (try (f) (finally (alter-var-root throttle-var (constantly 0)))))
+
+        prog
+        (fn [txt]
+          {:iterations [{:assistant-prose txt}]})
+
+        extra
+        (fn [now]
+          {:now-ms now :turn-start-ms 1699999900000})
+
+        body-lines
+        (fn [d]
+          (remove #(str/includes? (str %) "Esc to cancel") (:lines d)))
+
+        spinner
+        (fn [d]
+          (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
+
+    (it "default (0) reflects streamed growth on every tick"
+        (render/invalidate-cache!)
+        (reset! cell nil)
+        (let [a
+              (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
+
+              b
+              (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000001000))]
+
+          (expect (not= (body-lines a) (body-lines b)))))
+    (it "enabled reuses the body within the window yet still advances the spinner"
+        (render/invalidate-cache!)
+        (reset! cell nil)
+        (with-throttle
+          500
+          (fn []
+            (let [a
+                  (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
+
+                  ;; +300ms < 500ms window: heavy trace re-walk skipped, body reused.
+                  b
+                  (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000300))]
+
+              (expect (= (body-lines a) (body-lines b)))
+              (expect (not= (spinner a) (spinner b)))))))
+    (it "enabled recomputes once the window lapses"
+        (render/invalidate-cache!)
+        (reset! cell nil)
+        (with-throttle
+          100
+          (fn []
+            (let [a
+                  (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
+
+                  ;; +500ms > 100ms window: fresh content projected.
+                  b
+                  (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000500))]
+
+              (expect (not= (body-lines a) (body-lines b)))))))))
+
+(defdescribe
   iteration-live-ordering-test
   (describe "ordered live progress events"
             (it "renders reasoning before code in the post-:events flat layout"

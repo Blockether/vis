@@ -80,13 +80,13 @@
    progress bubble body. The spinner still advances every `spinner-tick-ms`
    (it is spliced in fresh by `progress->lines-data`); only the heavy trace
    re-walk of the actively-growing iteration is debounced. Env
-   `VIS_LIVE_BODY_THROTTLE_MS`; 0 (default) disables the throttle and defers
-   to plain `cached*` — no behaviour change."
+   `VIS_LIVE_BODY_THROTTLE_MS`; defaults to 150. Set to 0 to disable the
+   throttle and defer to plain `cached*` (spinner-smooth, no debounce)."
   (or (some-> (System/getenv "VIS_LIVE_BODY_THROTTLE_MS")
               str/trim
               not-empty
               parse-long)
-      0))
+      150))
 
 (defonce ^:private live-body-throttle-cell
   ;; One-slot debounce memo for the live progress body: {:key k :body b :at ms}.
@@ -262,65 +262,16 @@
       [line]
       (mapv #(str marker %) (wrap-unmarked-line body max-width)))
     (wrap-unmarked-line line max-width)))
-(defn- sgr-escape-end
-  ^long [^String s ^long esc-idx]
-  (let [n (.length s)]
-    (if-not (and (< (inc esc-idx) n) (= \[ (.charAt s (inc esc-idx))))
-      -1
-      (let [m-idx (str/index-of s "m" (+ esc-idx 2))]
-        (if (and m-idx
-                 (every? #(or (Character/isDigit ^char %) (= \; %)) (subs s (+ esc-idx 2) m-idx)))
-          (long m-idx)
-          -1)))))
 (defn- truncate-ansi-cols
-  "Like `p/truncate-cols`, but preserves ANSI SGR escapes as zero-width.
-   Zprint emits ANSI-colored Clojure code; feeding those rows directly to
-   Lanterna's grapheme splitter throws on ESC (0x1b), which can blank the
-   whole TUI before first paint."
+  "ANSI-SGR-aware column clip: preserves `\u001b[..m` escapes as zero-width and
+   never lets a raw ESC (0x1b) reach Lanterna's grapheme splitter (which throws on
+   it, blanking the TUI before first paint). Zprint emits ANSI-colored Clojure
+   code, so trace rows carry SGR escapes. Delegates to the lanterna fork's
+   `TerminalTextUtils/ansiTruncateColumns` (>= 3.1.5-vis.29) — the CHOP sibling of
+   `p/ansi-fold-cols`/`p/ansi-slice-cols`; a malformed/non-SGR escape renders as a
+   single middle dot."
   ^String [s ^long max-cols]
-  (let [s
-        (str s)
-
-        max-cols
-        (max 0 max-cols)]
-
-    (cond (zero? max-cols) ""
-          (not (str/includes? s "\u001b")) (p/truncate-cols s max-cols)
-          :else (let [n
-                      (.length s)
-
-                      sb
-                      (StringBuilder.)]
-
-                  (loop [i
-                         0
-
-                         used
-                         0]
-
-                    (cond (>= (long i) (long n)) (.toString sb)
-                          (>= used max-cols) (.toString sb)
-                          :else (let [esc-idx (or (str/index-of s "\u001b" i) n)]
-                                  (if (< (long i) (long esc-idx))
-                                    (let [chunk (subs s i esc-idx)
-                                          w (p/display-width chunk)]
-
-                                      (if (<= (+ used w) max-cols)
-                                        (do (.append sb chunk) (recur esc-idx (+ used w)))
-                                        (do (.append sb (p/truncate-cols chunk (- max-cols used)))
-                                            (.toString sb))))
-                                    (let [m-idx (sgr-escape-end s esc-idx)]
-                                      (if (neg? m-idx)
-                                        ;; Unknown control escape: never let it reach Lanterna.
-                                        ;; Render it visibly as a middle dot and continue.
-                                        (let [w 1]
-                                          (if (<= (+ used w) max-cols)
-                                            (do (.append sb /)
-                                                (recur (inc (long esc-idx))
-                                                       (+ (long used) (long w))))
-                                            (.toString sb)))
-                                        (do (.append sb s (int esc-idx) (int (inc m-idx)))
-                                            (recur (inc m-idx) used))))))))))))
+  (p/ansi-truncate-cols s max-cols))
 (defn- clip-line-preserving-marker
   "Clip a formatted chat-bubble row to `max-width` display columns.
 

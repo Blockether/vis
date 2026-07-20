@@ -198,6 +198,9 @@
         (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl_start"))
         (expect (str/includes? m "python : repl_eval · repl_start"))
         (expect (str/includes? m "session[\"resources\"][\"repls\"][language][dir]"))
+        (expect (str/includes? m "Keep managed REPLs alive across turns"))
+        (expect (str/includes? m "host stops them when the session closes"))
+        (expect (str/includes? m "Never kill an externally attached REPL; detach only"))
         (expect (not (str/includes? m "session[\"env\"][\"languages\"]")))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"
       (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))

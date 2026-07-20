@@ -97,6 +97,8 @@
 
 ;; The uniform run_tests result. \"mode\" (repl|cli) and \"language\" are the two
 ;; invariants EVERY branch returns; counts / exit / flags are per-branch optional.
+;; "by-dir" is the SAME directory-nested grouping format + lint expose — here
+;; `{<dir> {<basename> {\"failures\" [...] \"errors\" [...]}}}` off each fault's file.
 (s/def ::test-result
   (s/and map?
          #(contains? #{"repl" "cli"} (get % "mode"))
@@ -113,7 +115,8 @@
          (count-key "selected")
          (count-key "skipped")
          (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
-         (opt "errors" #(s/valid? (s/coll-of ::test-failure) %))))
+         (opt "errors" #(s/valid? (s/coll-of ::test-failure) %))
+         (opt "by-dir" #(s/valid? ::by-dir %))))
 
 ;; =============================================================================
 ;; Capability -> spec + the check the packs run

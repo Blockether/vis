@@ -103,6 +103,7 @@
       "\n  → FIRST read `session[\"resources\"][\"repls\"][language][dir]` (`dir` is `\".\"` at workspace root). Reuse status `up`; otherwise call repl_start(language, {\"dir\": dir}) before project execution. This session path is REPL ground truth.\n"
       "  → Use repl_eval(language, code) for project code/dependencies; use python_execution for stdlib scratch work. Globals persist.\n"
       "  → Disk edits do not reload live source. Reload it before repeating the same eval/test (Clojure: `(require 'my.ns :reload)`).\n"
+      "  → Keep managed REPLs alive across turns; the host stops them when the session closes. Stop only on user request, when unhealthy, or to restart. Never kill an externally attached REPL; detach only.\n"
       "  → Use run_tests(language) for project tests and format_code for hand-written source. Always pass language first except path-based format_code/lint_code.")))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))

@@ -59,9 +59,10 @@
       (expect (not (contract/valid? :lint-fn (assoc lint-ok "findings" [{"file" "a.clj"}]))))
       (expect (not (contract/valid? :lint-fn (dissoc lint-ok "findings")))))
   (it "check throws a tagged contract-violation ex-info on a bad result"
-      (let [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
-                    nil
-                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (let
+        [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (expect (= :surface/contract-violation (:type ed)))
         (expect (= :lint-fn (:capability ed)))
         (expect (some? (:explain-data ed)))))
@@ -93,6 +94,25 @@
                                     (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
       (expect (not (contract/valid? :test-fn
                                     (assoc test-ok "failures" [{"message" "boom" "ns" 7}])))))
+  (it "accepts a test result carrying the shared by-dir grouping"
+      (let
+        [fail
+         {"ns" "my.core-test" "file" "src/com/blockether/vis/core.clj" "line" 12 "message" "boom"}
+
+         err
+         {"message" "kaboom"}
+
+         by-dir
+         {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
+          "." {"<unknown>" {"errors" [err]}}}]
+
+        (expect (contract/valid? :test-fn
+                                 (assoc test-ok
+                                   "fail" 1
+                                   "by-dir" by-dir)))))
+  (it "rejects a test result whose by-dir is not a nested dir->file->map"
+      (expect (not (contract/valid? :test-fn (assoc test-ok "by-dir" ["oops"]))))
+      (expect (not (contract/valid? :test-fn (assoc test-ok "by-dir" {"." ["flat"]})))))
   (it "passes a capability with no registered spec straight through"
       (expect (contract/valid? :repl-eval-fn {:anything :goes}))
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
