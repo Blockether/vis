@@ -2172,7 +2172,26 @@
 
 (def ^:private magit-hints
   "Hint-bar chords for the magit status buffer — the most important magit
-   verbs, one key each, faithful to magit's own bindings."
+   verbs, one key each. Keys are CASE-SENSITIVE, exactly like Emacs magit
+   (`s` ≠ `S`, `u` ≠ `U`, `f` ≠ `F`). See the full key-for-key reference banner
+   atop `magit.clj`; the same usage is summarised here:
+
+   Navigation  ↑/↓ move a row · n/p next/prev SECTION · PageUp/Down page
+               Home/End top/bottom · TAB fold diff · RET visit · q/Esc close
+   Staging     s/u stage/unstage at point · S/U stage/unstage ALL
+   Discard     x (or k) discard at point (asks first)
+   Commit      c commit flow (prompt; amend)
+   History     l log graph · y copy sha/path/ref
+   Remote      P push · F pull · f fetch
+   Branch      b branch flow      Stash  z stash flow
+   Buffer      g (or r) refresh
+
+   DIVERGES from vanilla Emacs magit (do not trust muscle memory):
+     x   here discard; in magit x = RESET (magit-reset-quickly), discard = k.
+     r   here refresh (alias of g); in magit r opens the REBASE transient.
+     y   here copy; in magit y shows refs (magit-show-refs).
+     n/p here SECTION motion; in magit those are line-motion/search (M-n/M-p
+         move sections). PageUp/Down: magit scrolls the diff with SPC/DEL."
   [["↑/↓" "move"] ["n/p" "section"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"]
    ["x" "discard"] ["c" "commit"] ["l" "log"] ["y" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"]
    ["b" "branch"] ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])

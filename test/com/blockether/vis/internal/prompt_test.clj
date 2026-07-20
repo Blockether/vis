@@ -99,6 +99,7 @@
       (expect (str/includes? text "Maximum 5 rows"))
       (expect (str/includes? text "never use `ctx` or `context`"))
       (expect (str/includes? text "`sessions`/`session_state`"))
+      (expect (str/includes? text "Debug from evidence"))
       (expect (str/includes? text "`await vis_docs()`"))
       (expect (str/includes? text "never a menu"))
       (expect (str/includes? text "reproduce before editing"))

@@ -282,6 +282,8 @@ def __vis_install_numpy__():
             _flatten_into(obj, flat)
             dn = _dtype_name(dtype) if dtype is not None else _values_dtype(flat)
             return _mk([_cast(v, dn) for v in flat], shape, dn)
+        if hasattr(obj, '__array__'):
+            return _asarray(obj.__array__(), dtype)
         dn = _dtype_name(dtype) if dtype is not None else _values_dtype([obj])
         return _mk([_cast(obj, dn)], (), dn)
 

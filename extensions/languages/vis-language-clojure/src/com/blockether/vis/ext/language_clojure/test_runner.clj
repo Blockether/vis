@@ -346,6 +346,36 @@
   [s]
   (when s (str/replace s #"\u001b\[[0-9;]*[A-Za-z]" "")))
 
+(defn- rel-fault-file
+  "Rewrite a fault map's absolute \"file\" to one relative to workspace `root`, so
+   digests read `test/foo_test.clj` instead of the machine-absolute
+   `/Users/…/test/foo_test.clj` (load-file pins the compiled frame to the absolute
+   path it was handed). Paths outside root and non-path sentinels pass through."
+  [^java.io.File root fault]
+  (let [raw (get fault "file")
+        s (str raw)]
+    (if (and root (not (str/blank? s)))
+      (try (let [rp (.toPath (.getCanonicalFile root))
+                 fp (.toPath (.getCanonicalFile (io/file s)))]
+             (if (.startsWith fp rp)
+               (assoc fault "file" (str (.relativize rp fp)))
+               fault))
+           (catch Throwable _ fault))
+      fault)))
+
+(defn- relativize-faults
+  "Rewrite every fault's \"file\" in `parsed` (both \"failures\" and \"errors\") to a
+   path relative to workspace `root`. Idempotent — an already-relative path is left
+   as-is."
+  [root parsed]
+  (let [root-file (io/file (str root))]
+    (reduce (fn [m k]
+              (if (seq (get m k))
+                (update m k (partial mapv (partial rel-fault-file root-file)))
+                m))
+            parsed
+            ["failures" "errors"])))
+
 (defn- failures->text
   "Concise, framework-neutral digest of the structured failure/error maps a
    run-form result carries: one `✗ ns/test (file:line)` line per failure with its
@@ -612,6 +642,7 @@
                                (when (seq (str (get r "err"))) (str " nREPL err: " (get r "err"))))
                   "repl_wedged" true}
                  (map? parsed) (-> parsed
+                                   (->> (relativize-faults root))
                                    (compose-repl-output)
                                    (assoc "mode" "repl"
                                           "ns" ns-disp

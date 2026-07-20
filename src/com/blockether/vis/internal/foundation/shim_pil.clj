@@ -1819,6 +1819,16 @@ def __vis_install_pil__():
                 return [px[band] for px in data]
             return data
 
+        def __array__(self, dtype=None):
+            w, h = self._w, self._h
+            data = self.getdata()
+            if self.mode in ('L', '1', 'I', 'F', 'P'):
+                rows = [list(data[y * w:(y + 1) * w]) for y in range(h)]
+            else:
+                rows = [[list(px) for px in data[y * w:(y + 1) * w]]
+                        for y in range(h)]
+            return rows
+
         def putdata(self, data, scale=1.0, offset=0.0):
             ba = bytearray()
             for px in data:

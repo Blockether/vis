@@ -211,7 +211,19 @@
                   "      and np.median(np.array([[1,2,3],[4,5,6]]), axis=1).tolist() == [2.0,5.0]\n"
                   "      and np.sort(np.array([[3,1],[2,4]]), axis=0).tolist() == [[2,1],[3,4]]\n"
                   "      and np.flip(np.array([[1,2],[3,4]]), axis=1).tolist() == [[2,1],[4,3]])\n"
-                  "ok")))))))
+                  "ok"))))))
+  (it "np.array(pil_image) honors the __array__ protocol (was: int() argument not Image)"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "import numpy as np\n" "from PIL import Image\n"
+                  "g = Image.new('L', (4, 3), 0); g.putdata(list(range(12)))\n"
+                  "a = np.array(g)\n"
+                  "rgb = np.array(Image.new('RGB', (2, 2), (0, 0, 0)))\n"
+                  "ok = (a.shape == (3, 4) and a.mean(axis=1).tolist() == [1.5, 5.5, 9.5]\n"
+                  "      and rgb.shape == (2, 2, 3))\n" "ok")))))))
 
 (defdescribe
   pandas-extra-surface-test

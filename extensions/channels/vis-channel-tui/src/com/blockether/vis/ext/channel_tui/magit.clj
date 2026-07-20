@@ -23,6 +23,70 @@
             [com.blockether.vis.internal.git :as git])
   (:import [java.io File]))
 
+;; ============================================================================
+;; MAGIT KEYBINDINGS — the TUI status buffer (C-x g), key-for-key
+;; ============================================================================
+;;
+;; This is the reference for every key the magit status buffer answers to.
+;; The keys themselves are DISPATCHED in the dialog layer, not here:
+;;   - single-verb dispatch : dialogs.clj `magit-char-action!`  (case on the char)
+;;   - navigation / motion  : dialogs.clj magit-dialog! key loop (arrows, TAB, …)
+;; This porcelain file supplies the ACTIONS those keys call (`stage-file!`,
+;; `commit!`, `push!`, …). Keys are CASE-SENSITIVE, exactly like Emacs magit:
+;; `s` ≠ `S`, `u` ≠ `U`, `f` ≠ `F`.
+;;
+;; ── Navigation / cursor ─────────────────────────────────────────────────────
+;;   ↑ / ↓        move the cursor one selectable row (files, commits, stashes)
+;;   n / p        jump to next / previous SECTION header (magit section motion)
+;;   PageUp/Down  scroll the buffer a page (magit uses SPC/DEL for this)
+;;   Home / End   first selectable row / bottom of the buffer
+;;   TAB          fold/unfold the diff under the row (a file/commit/stash's patch)
+;;   RET          visit: open a file's contents, or a commit/stash's full patch
+;;   q / Esc      bury (close) the status buffer
+;;
+;; ── Staging (the heart of magit) ────────────────────────────────────────────
+;;   s            stage the thing at point — a whole file, or just its hunk
+;;   u            unstage the thing at point — a whole file, or just its hunk
+;;   S            stage ALL unstaged + untracked changes
+;;   U            unstage EVERYTHING back to the working tree
+;;
+;; ── Discarding / committing ─────────────────────────────────────────────────
+;;   x  (or k)    discard the change at point (throw it away — asks first)
+;;   c            commit flow (message prompt; supports amend)
+;;
+;; ── History / inspection ────────────────────────────────────────────────────
+;;   l            log — the graph log viewer
+;;   y            copy the sha / path / ref at point to the clipboard
+;;
+;; ── Remote / sync ───────────────────────────────────────────────────────────
+;;   P            push flow (upstream, force, remote, dry-run, no-verify; Gerrit-aware)
+;;   F            pull  (fetch + merge/rebase the upstream)
+;;   f            fetch (no merge)
+;;
+;; ── Branch / stash ──────────────────────────────────────────────────────────
+;;   b            branch flow (checkout / create / delete)
+;;   z            stash flow (push / pop / apply / drop)
+;;
+;; ── Buffer ──────────────────────────────────────────────────────────────────
+;;   g  (or r)    refresh the status buffer from disk
+;;
+;; ── Where this DIVERGES from vanilla Emacs magit (know before muscle memory) ──
+;;   x            here = discard. In magit `x` is RESET (magit-reset-quickly);
+;;                magit's discard is `k` (we bind BOTH x and k to discard).
+;;   r            here = refresh (alias of g). In magit `r` opens the REBASE
+;;                transient — a destructive collision; avoid relying on `r`.
+;;   y            here = copy. In magit `y` shows the refs buffer (magit-show-refs).
+;;   n / p        here = section motion. In magit those are line-motion / search;
+;;                magit moves sections with M-n / M-p.
+;;   PageUp/Down  magit scrolls the diff with SPC / DEL.
+;;
+;; NOT (yet) implemented vs vanilla magit: diff/ediff transients (d/D/e/E),
+;; rebase (r), merge (m), revert (V), reset transient (X), cherry-pick (A),
+;; apply/reverse (a/v), tag (t), remote (M), run-git (!), gitignore (i/I),
+;; jump (j), diff-context (+/-/0), refresh-all (G), section sibling/parent
+;; motion (M-n/M-p, ^), and visibility cycling (C-TAB/S-TAB).
+;; ============================================================================
+
 (set! *unchecked-math* :warn-on-boxed)
 
 (def ^:private network-timeout-secs

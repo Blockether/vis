@@ -3550,9 +3550,12 @@
                    (reap-idle-envs!)
                    (expect (contains? @env-cache k)))
                  (finally (deliver release true) (.join holder 1000) (swap! env-cache dissoc k))))))
-    (it "heap-pressure? is disabled when the watermark is <= 0"
-        (expect (false? (with-redefs [lp/env-heap-watermark-pct 0]
-                          (heap-pressure?)))))))
+    (it "heap-pressure? is disabled when BOTH gates are off"
+        (expect (false? (with-redefs [lp/env-heap-watermark-pct 0 lp/env-heap-budget-mb 0]
+                          (heap-pressure?)))))
+    (it "heap-pressure? fires on the absolute MB budget when the percent watermark can't reach"
+        (expect (true? (with-redefs [lp/env-heap-watermark-pct 0 lp/env-heap-budget-mb 1]
+                         (heap-pressure?)))))))
 
 (def ^:private bump-turns! (deref #'lp/bump-turns!))
 (def ^:private recycle-env! (deref #'lp/recycle-env!))

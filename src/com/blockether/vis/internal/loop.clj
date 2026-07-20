@@ -9156,6 +9156,20 @@
               parse-long)
       85))
 
+(def ^:private env-heap-budget-mb
+  "Absolute JVM heap-used ceiling, in MEGABYTES, at or above which the reaper
+   treats the process as under memory pressure and force-evicts EVERY idle
+   session env this sweep — the MACHINE-INDEPENDENT twin of
+   `env-heap-watermark-pct`. The percent watermark is measured against the MAX
+   heap, which under `-XX:MaxRAMPercentage` is tens of GB on a big box, so the
+   percent valve effectively NEVER fires there; this absolute budget is the real
+   backstop against runaway GraalPy Context growth. Override with
+   `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables. Default 4096 (4 GB)."
+  (or (some-> (System/getenv "VIS_ENV_HEAP_BUDGET_MB")
+              str/trim
+              parse-long)
+      4096))
+
 (defn- heap-used-pct
   "Current JVM heap utilization as an integer percent of the max heap
    (used = total - free). 0 when the max heap is unknown."
@@ -9169,10 +9183,16 @@
     (if (pos? mx) (long (/ (* 100 (- (.totalMemory rt) (.freeMemory rt))) mx)) 0)))
 
 (defn- heap-pressure?
-  "True when the watermark is enabled and current heap use is at/above it."
+  "True when EITHER pressure gate trips: the percent watermark (used/max heap) OR
+   the absolute used-MB budget. The absolute budget is what actually protects a
+   process whose MAX heap is huge (`-XX:MaxRAMPercentage`), where the percent
+   valve can't reach."
   []
-  (and (pos? (long env-heap-watermark-pct))
-       (>= (long (heap-used-pct)) (long env-heap-watermark-pct))))
+  (or (and (pos? (long env-heap-watermark-pct))
+           (>= (long (heap-used-pct)) (long env-heap-watermark-pct)))
+      (and (pos? (long env-heap-budget-mb))
+           (let [rt (Runtime/getRuntime)]
+             (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long env-heap-budget-mb) 1024 1024))))))
 
 (defn- new-cache-entry
   "Build a cache entry wrapping `env`: the environment, its per-session
