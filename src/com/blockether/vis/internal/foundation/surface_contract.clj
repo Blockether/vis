@@ -1,8 +1,9 @@
 (ns com.blockether.vis.internal.foundation.surface-contract
   "clojure.spec CONTRACT for the language-surface tool RESULTS (`format_code`,
-   `lint_code`).
+   `lint_code`, `run_tests`).
 
-   Every language pack that registers a `:format-fn` / `:lint-fn` under
+   Every language pack that registers a `:format-fn` / `:lint-fn` / `:test-fn`
+   under
    `:ext/language-tools` returns a result map that MUST conform to these specs,
    so the shape is UNIFORM across packs (clojure, and a future python / js) and
    can never silently drift. Both results share the directory-nested `by-dir`
@@ -79,13 +80,41 @@
          (opt "by-dir" #(s/valid? ::by-dir %))))
 
 ;; =============================================================================
+;; run_tests result
+;; =============================================================================
+
+;; One failing/erroring test. The map carries \"ns\"/\"test\"/\"message\"/\"file\"/
+;; \"line\"; only \"message\" is type-pinned so an extra key never rejects.
+(s/def ::test-failure (s/and map? (opt "message" string?)))
+
+;; The uniform run_tests result. \"mode\" (repl|cli) and \"language\" are the two
+;; invariants EVERY branch returns; counts / exit / flags are per-branch optional.
+(s/def ::test-result
+  (s/and map?
+         #(contains? #{"repl" "cli"} (get % "mode"))
+         #(string? (get % "language"))
+         (opt "ns" string?)
+         (opt "framework" string?)
+         (opt "tool" string?)
+         (opt "port" nat-int?)
+         (opt "exit" int?)
+         (opt "is_pass" boolean?)
+         (count-key "total")
+         (count-key "pass")
+         (count-key "fail")
+         (count-key "selected")
+         (count-key "skipped")
+         (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
+         (opt "errors" #(s/valid? (s/coll-of ::test-failure) %))))
+
+;; =============================================================================
 ;; Capability -> spec + the check the packs run
 ;; =============================================================================
 
 (def capability->spec
   "Maps a language-tool capability keyword to the spec its result must satisfy.
-   Capabilities absent here (`:test-fn`, `:repl-eval-fn`, ...) are unconstrained."
-  {:format-fn ::format-result :lint-fn ::lint-result})
+   Capabilities absent here (`:repl-eval-fn`, ...) are unconstrained."
+  {:format-fn ::format-result :lint-fn ::lint-result :test-fn ::test-result})
 
 (defn valid?
   "True when `result` conforms to the contract for `capability` (or the

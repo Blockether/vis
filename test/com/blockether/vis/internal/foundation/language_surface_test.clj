@@ -196,7 +196,9 @@
             (language-surface/capability-matrix env)]
 
         (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl_start"))
-        (expect (str/includes? m "python : repl_eval · repl_start"))))
+        (expect (str/includes? m "python : repl_eval · repl_start"))
+        (expect (str/includes? m "session[\"resources\"][\"repls\"][language][dir]"))
+        (expect (not (str/includes? m "session[\"env\"][\"languages\"]")))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"
       (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))
 

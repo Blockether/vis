@@ -27,6 +27,18 @@
    "language" "clojure"
    "by-dir" {"." {"a.clj" {"warning" [{"level" "warning" "message" "unused binding b"}]}}}})
 
+(def ^:private test-ok
+  {"mode" "repl"
+   "language" "clojure"
+   "ns" "my.app.core-test"
+   "framework" "clojure.test"
+   "total" 3
+   "pass" 3
+   "fail" 0
+   "failures" []
+   "errors" []
+   "output" ""})
+
 (defdescribe
   surface-contract-test
   (it "accepts a conforming format result and returns it unchanged"
@@ -56,8 +68,20 @@
         (expect (some? (:explain-data ed)))))
   (it "explain yields a string for a non-conforming result"
       (expect (string? (contract/explain :lint-fn (dissoc lint-ok "findings")))))
-  (it "passes capabilities with no registered spec straight through"
-      (expect (contract/valid? :test-fn {:anything :goes}))
+  (it "accepts a conforming test result and returns it unchanged"
+      (expect (contract/valid? :test-fn test-ok))
+      (expect (= test-ok (contract/check :test-fn test-ok))))
+  (it "accepts a minimal cli test result"
+      (expect (contract/valid?
+                :test-fn
+                {"mode" "cli" "language" "clojure" "ns" "" "exit" 0 "is_pass" true})))
+  (it "rejects a test result whose mode is not repl/cli"
+      (expect (not (contract/valid? :test-fn (assoc test-ok "mode" "wat"))))
+      (expect (not (contract/valid? :test-fn (dissoc test-ok "mode")))))
+  (it "rejects a test result whose pass count is not a number"
+      (expect (not (contract/valid? :test-fn (assoc test-ok "pass" "3")))))
+  (it "passes a capability with no registered spec straight through"
+      (expect (contract/valid? :repl-eval-fn {:anything :goes}))
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
-  (it "capability->spec is the single source of truth for format + lint"
-      (expect (= #{:format-fn :lint-fn} (set (keys contract/capability->spec))))))
+  (it "capability->spec is the single source of truth for format + lint + test"
+      (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->spec))))))

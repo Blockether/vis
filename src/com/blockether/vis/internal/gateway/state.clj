@@ -1506,13 +1506,34 @@
 
 (defn drain-idle!
   "Start the oldest queued turn for `sid` IF the session is idle (no turn in
-   flight). No-op returning nil when a turn is already running or nothing is
-   queued. Lets an attaching channel kick an orphaned backlog — left queued by a
-   cancel, or submitted from another channel while this one was away — into
+   flight) AND the backlog was not deliberately left queued by a user cancel.
+   No-op returning nil otherwise. Lets an attaching channel kick an orphaned
+   backlog — submitted from another channel while this one was away — into
    motion the moment a client opens/resumes, instead of letting it sit forever.
+
+   PROVENANCE GATE: a head turn queued BEFORE the session's most recent cancel
+   fired was left queued by Esc on purpose — stop means stop (the same policy
+   `queued-after-cancel?` encodes for the turn-terminal path). Auto-draining it
+   from a background attach (tab open, project switch) would resurrect work the
+   user explicitly stopped. A head queued AFTER the last cancel — or with no
+   cancel in the session at all — drains normally.
+
    Safe to call redundantly: `drain-next-queued!` guards on `:current-turn`."
   [sid]
-  (drain-next-queued! sid))
+  (let
+    [entry
+     (get @registry sid)
+
+     [_ head]
+     (first-queued-turn entry)
+
+     last-cancel
+     (reduce max 0 (map long (keep :cancelling_at (vals (:turns entry)))))]
+
+    (when (and head
+               (or (zero? (long last-cancel))
+                   (>= (long (or (:queued_at head) 0)) (long last-cancel))))
+      (drain-next-queued! sid))))
 
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.

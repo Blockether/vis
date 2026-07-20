@@ -1303,101 +1303,120 @@
                      (some #(when (= target-id (tab-session-id db (:id %))) %) entries))]
 
                   (if entry (activate-tab db (:id entry)) db))))
-(reg-event-fx :close-tab
-              ;; Close one tab (default: the active tab). Removes it from `:tabs`,
-              ;; drops its `:tab-locals` snapshot, and — if it was active — activates
-              ;; the neighbor (same index, clamped). Refuses to close the last tab.
-              ;;
-              ;; RESOURCE RELEASE: when the closed tab was the LAST open view of an
-              ;; IDLE session (no running turn, no queued/pending sends, and the sid
-              ;; is not still open in another tab) we emit `:release-session-listener`
-              ;; (drop the SSE title-listener) + `:release-session-runtime` (tell the
-              ;; daemon to stop that session's shell_bg children / REPLs and drop its
-              ;; live runtime). A session with a running or queued turn is LEFT alone —
-              ;; it stays resumable and keeps streaming; only process exit force-stops.
-              (fn [db [_ tab-id keep-project?]]
-                (let
-                  [db
-                   (-> db
-                       ensure-tabs
-                       sync-active-tab)
+(reg-event-fx
+  :close-tab
+  ;; Close one tab (default: the active tab). Removes it from `:tabs`,
+  ;; drops its `:tab-locals` snapshot, and — if it was active — activates
+  ;; the neighbor (same index, clamped). Refuses to close the last tab.
+  ;;
+  ;; RESOURCE RELEASE: when the closed tab was the LAST open view of an
+  ;; IDLE session (no running turn, no queued/pending sends, and the sid
+  ;; is not still open in another tab) we emit `:release-session-listener`
+  ;; (drop the SSE title-listener) + `:release-session-runtime` (tell the
+  ;; daemon to stop that session's shell_bg children / REPLs and drop its
+  ;; live runtime). A session with a running or queued turn is LEFT alone —
+  ;; it stays resumable and keeps streaming; only process exit force-stops.
+  (fn [db [_ tab-id keep-project?]]
+    (let
+      [db
+       (-> db
+           ensure-tabs
+           sync-active-tab)
 
-                   entries
-                   (vec (:tabs db))
+       entries
+       (vec (:tabs db))
 
-                   active-id
-                   (current-tab-id db)
+       active-id
+       (current-tab-id db)
 
-                   target-id
-                   (or tab-id active-id)
+       target-id
+       (or tab-id active-id)
 
-                   idx
-                   (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
+       idx
+       (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
 
-                  (if (or (nil? idx) (<= (count entries) 1))
-                    {:db db}
-                    (let
-                      [;; `sync-active-tab` above snapshotted the active tab into
-                       ;; `:tab-locals`, so EVERY tab's session + idle state now
-                       ;; lives there — read the closing tab's before we drop it.
-                       closing-snap
-                       (get-in db [:tab-locals target-id])
+      (if (or (nil? idx) (<= (count entries) 1))
+        {:db db}
+        (let
+          [;; `sync-active-tab` above snapshotted the active tab into
+           ;; `:tab-locals`, so EVERY tab's session + idle state now
+           ;; lives there — read the closing tab's before we drop it.
+           closing-snap
+           (get-in db [:tab-locals target-id])
 
-                       closing-sid
-                       (some-> closing-snap
-                               :session
-                               :id
-                               str)
+           closing-sid
+           (some-> closing-snap
+                   :session
+                   :id
+                   str)
 
-                       closing-idle?
-                       (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
+           closing-idle?
+           (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
 
-                       remaining
-                       (vec (concat (subvec entries 0 idx) (subvec entries (inc (long idx)))))
+           ;; AUTHORED submissions that never reached the gateway
+           ;; (no :turn-id — submit failed, or the session was
+           ;; busy/building when the tab closed programmatically,
+           ;; e.g. a project switch). Dropping :tab-locals below
+           ;; destroys their ONLY copy, so hand them to the
+           ;; gateway queue of record instead (:submit-orphan-sends).
+           orphan-texts
+           (into []
+                 (comp (remove :turn-id)
+                       (keep (fn [{:keys [text]}]
+                               (let
+                                 [t (some-> text
+                                            str)]
+                                 (when-not (str/blank? t) t)))))
+                 (:pending-sends closing-snap))
 
-                       db
-                       (-> db
-                           (assoc :tabs remaining)
-                           (update :tab-locals dissoc target-id))
+           remaining
+           (vec (concat (subvec entries 0 idx) (subvec entries (inc (long idx)))))
 
-                       open-elsewhere?
-                       (boolean (and closing-sid
-                                     (some #(= closing-sid (tab-session-id db (:id %))) remaining)))
+           db
+           (-> db
+               (assoc :tabs remaining)
+               (update :tab-locals dissoc target-id))
 
-                       db
-                       (if (= target-id active-id)
-                         (let
-                           [next-idx
-                            (min (long idx) (dec (count remaining)))
+           open-elsewhere?
+           (boolean (and closing-sid (some #(= closing-sid (tab-session-id db (:id %))) remaining)))
 
-                            next-id
-                            (:id (nth remaining next-idx))]
+           db
+           (if (= target-id active-id)
+             (let
+               [next-idx
+                (min (long idx) (dec (count remaining)))
 
-                           (-> db
-                               (assoc :active-tab-id next-id)
-                               (update :tabs
-                                       (fn [es]
-                                         (mapv (fn [entry]
-                                                 (cond-> (dissoc entry :active?)
-                                                   (= (:id entry) next-id)
-                                                   (assoc :active? true)))
-                                               es)))
-                               (restore-tab next-id)))
-                         db)]
+                next-id
+                (:id (nth remaining next-idx))]
 
-                      {:db db
-                       :fx (cond-> []
-                             ;; Tabs ARE the project's member sessions: an explicit close
-                             ;; removes the session from the active project (it survives as a
-                             ;; loose session, reachable via the navigator). Skipped on a
-                             ;; project SWITCH (keep-project? swaps the VIEW without disowning
-                             ;; the old set) or when the sid is still open in another tab.
-                             (and closing-sid (not keep-project?) (not open-elsewhere?))
-                             (conj [:unassign-session-project closing-sid])
+               (-> db
+                   (assoc :active-tab-id next-id)
+                   (update :tabs
+                           (fn [es]
+                             (mapv (fn [entry]
+                                     (cond-> (dissoc entry :active?)
+                                       (= (:id entry) next-id)
+                                       (assoc :active? true)))
+                                   es)))
+                   (restore-tab next-id)))
+             db)]
 
-                             (and closing-sid closing-idle? (not open-elsewhere?))
-                             (into [[:release-session-listener closing-sid]
-                                    [:release-session-runtime closing-sid]]))})))))
+          {:db db
+           :fx (cond-> []
+                 ;; Tabs ARE the project's member sessions: an explicit close
+                 ;; removes the session from the active project (it survives as a
+                 ;; loose session, reachable via the navigator). Skipped on a
+                 ;; project SWITCH (keep-project? swaps the VIEW without disowning
+                 ;; the old set) or when the sid is still open in another tab.
+                 (and closing-sid (not keep-project?) (not open-elsewhere?))
+                 (conj [:unassign-session-project closing-sid])
+
+                 (and closing-sid (seq orphan-texts))
+                 (conj [:submit-orphan-sends closing-sid orphan-texts])
+
+                 (and closing-sid closing-idle? (not open-elsewhere?))
+                 (into [[:release-session-listener closing-sid]
+                        [:release-session-runtime closing-sid]]))})))))
 (reg-event-db :set-mouse-selection
               (fn [db [_ selection]]
                 (assoc db :mouse-selection selection)))
@@ -3917,6 +3936,23 @@
         (fn [sid tid]
           (when (and sid tid)
             (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))
+(reg-fx :submit-orphan-sends
+        ;; A closing tab still held AUTHORED submissions that never reached the
+        ;; gateway (no :turn-id). Submit each to the gateway — the server-side queue
+        ;; of record — so the text survives the tab close: it runs/queues under the
+        ;; session and is visible on the next reattach. Best effort off the input
+        ;; thread; a failure surfaces as a warning notification, never a throw.
+        (fn [sid texts]
+          (vis/worker-future "tui-submit-orphan-sends"
+                             (fn []
+                               (doseq [text texts]
+                                 (try (vis/gateway-submit-turn! sid {:request text})
+                                      (catch Throwable t
+                                        (try (vis/notify! (str "Re-queue of unsent message failed: "
+                                                               (or (ex-message t) (str t)))
+                                                          :level :warn
+                                                          :ttl-ms 3000)
+                                             (catch Throwable _ nil)))))))))
 
 (reg-fx :gateway-cancel-turn
         ;; Fire-and-forget cancel of a RUNNING gateway turn. Used by `:sync-turn-clock`

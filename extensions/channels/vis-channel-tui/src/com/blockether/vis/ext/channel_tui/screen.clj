@@ -4691,21 +4691,51 @@
                           (persist-tabs!)
                           (reset! active-project-id* pid)
                           (let
-                            [old-tab-ids (mapv :id (:tabs @state/app-db))
-                             ids (project-member-session-ids pid)
-                             opened (atom 0)]
+                            [root (launch-root)
+                             ;; One list-sessions scan — the target project's
+                             ;; members in manual tab order, like startup's
+                             ;; restore-project-tabs!.
+                             members (->> (try (vis/gateway-list-sessions :all)
+                                               (catch Throwable _ nil))
+                                          (filter #(= pid (str (get % "project_id"))))
+                                          (sort-by #(or (get % "project_position") Long/MAX_VALUE))
+                                          vec)
+                             specs (mapv (fn [s]
+                                           (let [title (str (get s "title"))]
+                                             {:session-id (str (get s "id"))
+                                              :label (when-not (str/blank? title) title)
+                                              :root root}))
+                                         members)
+                             db @state/app-db
+                             ;; Member sessions ALREADY open KEEP their tabs —
+                             ;; a switch must never eat a live member view.
+                             keep-ids (into #{}
+                                            (keep #(state/tab-id-for-session db (str (get % "id"))))
+                                            members)
+                             close-ids (->> (:tabs db)
+                                            (mapv :id)
+                                            (remove keep-ids)
+                                            vec)]
 
-                            (doseq [sid ids]
-                              (when-not (state/tab-id-for-session @state/app-db sid)
-                                (when-let
-                                  [sr (try (chat/resume-session sid) (catch Throwable _ nil))]
-                                  (open-session-tab! sr false)
-                                  (swap! opened inc))))
-                            (when (zero? (long @opened))
+                            ;; NAME-ONLY tabs for members not yet open — no
+                            ;; transcript fetch, no focus move; each hydrates
+                            ;; lazily on first focus (hydrate-pending-tab!).
+                            ;; Open member tabs are deduped, never duplicated.
+                            (when (seq specs) (state/dispatch [:preallocate-project-tabs specs]))
+                            ;; A project with NO members gets one fresh session
+                            ;; so the strip never empties (and only then — a
+                            ;; project WITH members must not gain a stray
+                            ;; empty session on switch).
+                            (when (empty? members)
                               (when-let [config (:config @state/app-db)]
                                 (open-session-tab! (chat/make-session config) false)))
-                            (doseq [tid old-tab-ids]
+                            (doseq [tid close-ids]
                               (state/dispatch [:close-tab tid true]))
+                            ;; Members skipped by the max-tabs cap while old
+                            ;; tabs still filled the strip get a second pass
+                            ;; now that they are closed (idempotent — open
+                            ;; sessions are deduped).
+                            (when (seq specs) (state/dispatch [:preallocate-project-tabs specs]))
                             (persist-tabs!))))))))]
 
              ;; --resume opens the session picker at startup, like `pi -r`.

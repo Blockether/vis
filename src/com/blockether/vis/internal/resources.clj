@@ -18,8 +18,7 @@
 
      - DATA (serializable, STRING-KEYED): id, kind, label, status, detail,
        pid, owner, session, can_stop, can_restart, created_at. This is
-       what ctx carries (crossing the Python boundary as session[resources]),
-       what the footer renders, and what persists to `~/.vis/resources.edn` so a
+       what the footer renders and what persists to `~/.vis/resources.edn` so a
        resource survives a vis restart (display + pid re-attach).
      - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :restart-fn :alive-fn
        :logs-fn :health-fn`. Never serialized. Across a restart the OWNER
@@ -32,10 +31,17 @@
    `:kind` is OPEN-ENDED — a bare keyword, no closed enum. The registry never
    switches on it; only owners do.
 
-   ctx stays PURE DATA: it advertises `can_stop`/`can_restart` but never carries a
+   Model ctx stays PURE DATA and groups the flat registry through `model-view`:
+   REPLs live at `session["
+  resources
+  "]["
+  repls
+  "][language][dir]`. It advertises
+   `can_stop`/`can_restart` but never carries a
    callable. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
-  (:require [clojure.java.io :as io])
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str])
   (:import (java.lang ProcessHandle)))
 
 ;; ---------------------------------------------------------------------------
@@ -296,6 +302,72 @@
   (prune! session)
   (refresh-health! session)
   (mapv :data (vals (get @registry (skey session)))))
+
+(defn- repl-kind? [kind] (str/ends-with? (str/lower-case (str kind)) "repl"))
+
+(defn- model-dir
+  "Canonical workspace-relative REPL directory for model lookup. The workspace
+   root is `\".\"`; nested dirs use forward slashes; external dirs stay absolute."
+  [root dir]
+  (try (let [root
+             (some-> root
+                     io/file
+                     .getCanonicalFile)
+
+             target
+             (cond (and dir (.isAbsolute (io/file (str dir)))) (.getCanonicalFile (io/file (str
+                                                                                             dir)))
+                   root (.getCanonicalFile (io/file root (str (or dir ""))))
+                   dir (.getCanonicalFile (io/file (str dir)))
+                   :else nil)]
+
+         (cond (nil? target) "."
+               (nil? root) (.getPath target)
+               (.startsWith (.toPath target) (.toPath root))
+               (let [rel (str (.relativize (.toPath root) (.toPath target)))]
+                 (if (str/blank? rel) "." (str/replace rel java.io.File/separator "/")))
+               :else (.getPath target)))
+       (catch Throwable _
+         (or (some-> dir
+                     str)
+             "."))))
+
+(defn model-view
+  "Nested model-facing resource ground truth. REPLs are directly addressable as
+   `[\"repls\"][language][workspace-relative-dir]`; active languages are seeded
+   with empty maps so absence at a dir means inactive. Non-REPL resources live
+   under `[\"other\"][kind][id]`. The registry/footer keep their flat DATA API."
+  [resource-data {:keys [root languages]}]
+  (let [seed-repls
+        (into (sorted-map)
+              (map (fn [language]
+                     [(str/lower-case (str language)) (sorted-map)]))
+              languages)
+
+        {:keys [repls other]}
+        (reduce (fn [{:keys [repls other] :as acc} resource]
+                  (let [kind (get resource "kind")]
+                    (if (repl-kind? kind)
+                      (let [language (str/lower-case (str (or (get resource "language") "unknown")))
+                            detail (or (get resource "detail") {})
+                            dir (model-dir root (get detail "dir"))
+                            leaf (-> resource
+                                     (dissoc "detail")
+                                     (merge detail)
+                                     (assoc "dir" dir))]
+
+                        (assoc acc :repls (assoc-in repls [language dir] leaf)))
+                      (assoc acc
+                        :other (assoc-in other [(str kind) (get resource "id")] resource)))))
+                {:repls seed-repls :other (sorted-map)}
+                (sort-by #(get % "id") resource-data))]
+
+    (cond-> (array-map)
+      (seq repls)
+      (assoc "repls" repls)
+
+      (seq other)
+      (assoc "other" other))))
 
 (defn get-resource
   "DATA map for `session`+`id`, or nil."

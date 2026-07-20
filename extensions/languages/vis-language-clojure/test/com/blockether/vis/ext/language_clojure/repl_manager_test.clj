@@ -618,10 +618,15 @@
       (with-redefs
         [rm/resolve-target! (fn [_sid _rid default-dir]
                               (throw (ex-info "boom" {:type :clj/no-repl :dir default-dir})))]
-        (let [res (core/clj-eval-fn {:workspace/root (tmp-dir) :session-id "s"} {"code" "(+ 1 1)"})]
+        (let
+          [root (tmp-dir)
+           res (core/clj-eval-fn {:workspace/root root :session-id "s"} {"code" "(+ 1 1)"})]
+
           (expect (false? (:success? res)))
           (expect (not (contains? (:error res) :trace)))
           (expect (str/includes? (get-in res [:error :message]) "repl_start"))
+          ;; message names the DIR the resolution ran against (from :dir ex-data)
+          (expect (str/includes? (get-in res [:error :message]) (.getCanonicalPath (io/file root))))
           (expect (some? (get-in res [:error :hint]))))))
   (it "turns :clj/unknown-repl-id into a clean failure echoing the bad id"
       (with-redefs

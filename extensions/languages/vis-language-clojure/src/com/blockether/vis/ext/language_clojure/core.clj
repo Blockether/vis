@@ -496,8 +496,9 @@
             (catch clojure.lang.ExceptionInfo e
               (case (:type (ex-data e))
                 :clj/no-repl
-                (extension/failure {:error {:message
-                                            "no REPL running — start one: repl_start(\"clojure\")"
+                (extension/failure {:error {:message (str "no REPL running in "
+                                                          (:dir (ex-data e))
+                                                          " — start one: repl_start(\"clojure\")")
                                             :hint "then retry the eval"}})
 
                 :clj/unknown-repl-id

@@ -46,12 +46,11 @@
   (->> (active-extensions env)
        (mapcat :ext/language-tools)
        (keep (fn [entry]
-               (let
-                 [language
-                  (normalize-language (:language entry))
+               (let [language
+                     (normalize-language (:language entry))
 
-                  f
-                  (get entry capability)]
+                     f
+                     (get entry capability)]
 
                  (when f
                    (assoc entry
@@ -76,14 +75,13 @@
    in ctx (`session[\"language_tools\"]`) so the model can read it programmatically
    AND it always reflects the current turn."
   [env]
-  (let
-    [by-lang (reduce (fn [m cap]
-                       (reduce (fn [m h]
-                                 (update m (:language h) (fnil conj #{}) (capability->tool cap)))
-                               m
-                               (registered-handlers env cap)))
-                     {}
-                     (keys capability->tool))]
+  (let [by-lang (reduce (fn [m cap]
+                          (reduce (fn [m h]
+                                    (update m (:language h) (fnil conj #{}) (capability->tool cap)))
+                                  m
+                                  (registered-handlers env cap)))
+                        {}
+                        (keys capability->tool))]
     (when (seq by-lang)
       (into (sorted-map)
             (for [[lang tools] by-lang]
@@ -102,8 +100,10 @@
       (str/join "\n"
                 (for [[lang tools] data]
                   (str "  " lang " : " (str/join " · " tools))))
-      ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) A REPL must be RUNNING before repl_eval/run_tests can hit it: the live REPL state rides in ctx at `session[\"env\"][\"languages\"][<language>][\"nrepl\"]` — when its `repls` list is EMPTY there is NO REPL and repl_eval/run_tests will FAIL, so START one with repl_start(language) FIRST (that is the ONLY way — never a shell command or CLI), then reuse it for every eval. A REPL is LIVE and long-lived: repl_eval runs your code AS-IS and run_tests reloads only the TEST namespace — NEITHER auto-reloads the source namespaces you edit on disk, so after editing a source file RELOAD it yourself before you re-eval/re-test it (Clojure: `(require 'my.ns :reload)`, or `(load-file \"path/to/file.clj\")` for the exact file). Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns a lean changed? + char-delta ack) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). ALWAYS pass the `language` as the FIRST arg to repl_eval/run_tests/repl_start (e.g. repl_eval(\"clojure\", code)) — do NOT rely on workspace inference; being explicit avoids running in the wrong pack in a mixed repo. Only format_code/lint_code may omit it for the {\"path\": file} form (then it's inferred).")))
+      "\n  → FIRST read `session[\"resources\"][\"repls\"][language][dir]` (`dir` is `\".\"` at workspace root). Reuse status `up`; otherwise call repl_start(language, {\"dir\": dir}) before project execution. This session path is REPL ground truth.\n"
+      "  → Use repl_eval(language, code) for project code/dependencies; use python_execution for stdlib scratch work. Globals persist.\n"
+      "  → Disk edits do not reload live source. Reload it before repeating the same eval/test (Clojure: `(require 'my.ns :reload)`).\n"
+      "  → Use run_tests(language) for project tests and format_code for hand-written source. Always pass language first except path-based format_code/lint_code.")))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
@@ -162,24 +162,23 @@
 
 (defn- choose-handler
   [env capability opts]
-  (let
-    [handlers
-     (vec (registered-handlers env capability))
+  (let [handlers
+        (vec (registered-handlers env capability))
 
-     by-lang
-     (group-by :language handlers)
+        by-lang
+        (group-by :language handlers)
 
-     explicit
-     (normalize-language (opts-language opts))
+        explicit
+        (normalize-language (opts-language opts))
 
-     ;; First candidate resolving to EXACTLY one handler wins; a candidate
-     ;; matching several is genuinely ambiguous and stops the search there.
-     picked
-     (some (fn [l]
-             (let [ms (get by-lang l)]
-               (cond (= 1 (count ms)) {:handler (first ms)}
-                     (seq ms) {:ambiguous l :matches ms})))
-           (candidate-languages env explicit))]
+        ;; First candidate resolving to EXACTLY one handler wins; a candidate
+        ;; matching several is genuinely ambiguous and stops the search there.
+        picked
+        (some (fn [l]
+                (let [ms (get by-lang l)]
+                  (cond (= 1 (count ms)) {:handler (first ms)}
+                        (seq ms) {:ambiguous l :matches ms})))
+              (candidate-languages env explicit))]
 
     (cond (empty? handlers) (throw (ex-info
                                      (str "No language extension registered for " (name capability))
@@ -233,12 +232,11 @@
 
 (defn- dispatch!
   [env capability args]
-  (let
-    [{:keys [opts payload]}
-     (parse-language-call args)
+  (let [{:keys [opts payload]}
+        (parse-language-call args)
 
-     handler
-     (choose-handler env capability opts)]
+        handler
+        (choose-handler env capability opts)]
 
     ((:handler handler) env payload)))
 
@@ -248,11 +246,10 @@
 
 (defn- start-repl-payload
   [args]
-  (let
-    [[language more]
-     (if (and (seq args) (language-like? (first args)) (not (repl-op? (first args))))
-       [(first args) (next args)]
-       [nil args])]
+  (let [[language more]
+        (if (and (seq args) (language-like? (first args)) (not (repl-op? (first args))))
+          [(first args) (next args)]
+          [nil args])]
     (case (count more)
       0
       {:language language :id nil :op "start" :opts {}}
@@ -291,25 +288,24 @@
 
 (defn- dispatch-start-repl!
   [env args]
-  (let
-    [{:keys [language id op opts]}
-     (start-repl-payload args)
+  (let [{:keys [language id op opts]}
+        (start-repl-payload args)
 
-     dispatch-opts
-     (cond-> (coerce-opts opts)
-       language
-       (assoc "language" language)
+        dispatch-opts
+        (cond-> (coerce-opts opts)
+          language
+          (assoc "language" language)
 
-       id
-       (assoc "id" id))
+          id
+          (assoc "id" id))
 
-     handler
-     (choose-handler env :start-repl-fn dispatch-opts)
+        handler
+        (choose-handler env :start-repl-fn dispatch-opts)
 
-     opts
-     (cond-> (or opts {})
-       id
-       (assoc "id" id))]
+        opts
+        (cond-> (or opts {})
+          id
+          (assoc "id" id))]
 
     ((:handler handler) env op opts)))
 
@@ -329,15 +325,14 @@
   "List REPL resources, optionally filtered by language or id."
   ([env] (repl-status env nil))
   ([env arg]
-   (let
-     [opts
-      (coerce-opts arg)
+   (let [opts
+         (coerce-opts arg)
 
-      lang
-      (or (opts-language opts) (when (language-like? arg) arg))
+         lang
+         (or (opts-language opts) (when (language-like? arg) arg))
 
-      id
-      (or (get opts "id") (get opts "repl_id"))]
+         id
+         (or (get opts "id") (get opts "repl_id"))]
 
      (extension/success {:result {"resources" (cond->> (repl-resources env lang)
                                                 id
@@ -374,10 +369,9 @@
    formatted, else the formatted text as a code block."
   [r]
   (if-let [files (get r "files")]
-    (let
-      [n (count files)
-       changed (or (get r "changed") 0)
-       by-dir (get r "by-dir")]
+    (let [n (count files)
+          changed (or (get r "changed") 0)
+          by-dir (get r "by-dir")]
 
       {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
        :body (fence
@@ -396,13 +390,12 @@
                    "\n"
                    (for [f files]
                      (str (get f "path") " " (if (get f "changed") "(changed)" "(no change)"))))))})
-    (let
-      [changed (get r "changed")
-       note (if changed "(changed)" "(no change)")
-       delta (get r "chars")
-       mag (when (and changed (number? delta) (not (zero? (long delta))))
-             (str " (" (if (pos? (long delta)) "+" "-") (Math/abs (long delta)) " chars)"))
-       label (str note mag)]
+    (let [changed (get r "changed")
+          note (if changed "(changed)" "(no change)")
+          delta (get r "chars")
+          mag (when (and changed (number? delta) (not (zero? (long delta))))
+                (str " (" (if (pos? (long delta)) "+" "-") (Math/abs (long delta)) " chars)"))
+          label (str note mag)]
 
       (if-let [path (get r "path")]
         {:summary (str "`" path "` " label)}
@@ -416,52 +409,51 @@
    file path appears ONCE as a header with its findings (`  row:col level: message`)
    indented beneath it, so a path is never repeated line after line — in the body."
   [r]
-  (let
-    [errors
-     (long (or (get r "error") 0))
+  (let [errors
+        (long (or (get r "error") 0))
 
-     warnings
-     (long (or (get r "warning") 0))
+        warnings
+        (long (or (get r "warning") 0))
 
-     infos
-     (long (or (get r "info") 0))
+        infos
+        (long (or (get r "info") 0))
 
-     findings
-     (get r "findings")
+        findings
+        (get r "findings")
 
-     clean?
-     (and (zero? errors) (zero? warnings) (zero? infos))
+        clean?
+        (and (zero? errors) (zero? warnings) (zero? infos))
 
-     lines
-     (let [grouped (group-by #(get % "file") findings)]
-       (mapcat (fn [file]
-                 (cons file
-                       (for [f (get grouped file)]
-                         (str "  "
-                              (get f "row")
-                              ":"
-                              (get f "col")
-                              " "
-                              (get f "level")
-                              ": "
-                              (get f "message")
-                              (when-let [p (get f "provider")]
-                                (str " [" p "]"))))))
-               (distinct (map #(get % "file") findings))))
+        lines
+        (let [grouped (group-by #(get % "file") findings)]
+          (mapcat (fn [file]
+                    (cons file
+                          (for [f (get grouped file)]
+                            (str "  "
+                                 (get f "row")
+                                 ":"
+                                 (get f "col")
+                                 " "
+                                 (get f "level")
+                                 ": "
+                                 (get f "message")
+                                 (when-let [p (get f "provider")]
+                                   (str " [" p "]"))))))
+                  (distinct (map #(get % "file") findings))))
 
-     targets
-     (get r "targets")
+        targets
+        (get r "targets")
 
-     n
-     (get r "files")
+        n
+        (get r "files")
 
-     head
-     (cond (= 1 (count targets)) (str "`" (first targets)
-                                      "`" (when (and n (> (long n) 1)) (str " (" n " files)")))
-           (seq targets) (str (count targets)
-                              " targets"
-                              (when (and n (> (long n) (count targets))) (str " (" n " files)")))
-           n (if (= 1 n) "snippet" (str n " files")))]
+        head
+        (cond (= 1 (count targets)) (str "`" (first targets)
+                                         "`" (when (and n (> (long n) 1)) (str " (" n " files)")))
+              (seq targets) (str (count targets)
+                                 " targets"
+                                 (when (and n (> (long n) (count targets))) (str " (" n " files)")))
+              n (if (= 1 n) "snippet" (str n " files")))]
 
     {:summary (not-empty (str head
                               (when head
@@ -489,41 +481,40 @@
    the raw result so the user always sees *something* went wrong, never an
    empty card."
   [r]
-  (let
-    [pass
-     (get r "pass")
+  (let [pass
+        (get r "pass")
 
-     fail
-     (get r "fail")
+        fail
+        (get r "fail")
 
-     total
-     (get r "total")
+        total
+        (get r "total")
 
-     error
-     (get r "error")
+        error
+        (get r "error")
 
-     ok
-     (and (not error)
-          (cond (number? fail) (zero? (long fail))
-                (contains? r "is_pass") (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
-                :else (boolean (get r "pass"))))
+        ok
+        (and (not error)
+             (cond (number? fail) (zero? (long fail))
+                   (contains? r "is_pass") (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
+                   :else (boolean (get r "pass"))))
 
-     parts
-     (some-> (get r "ns")
-             str
-             str/trim
-             not-empty
-             (str/split #"\s+"))
+        parts
+        (some-> (get r "ns")
+                str
+                str/trim
+                not-empty
+                (str/split #"\s+"))
 
-     ns-disp
-     (cond (empty? parts) nil
-           (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
-           :else (first parts))
+        ns-disp
+        (cond (empty? parts) nil
+              (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
+              :else (first parts))
 
-     detail
-     (or (not-empty (str (get r "output")))
-         (not-empty (str error))
-         (when-not ok (str "no test result returned — " (pr-str r))))]
+        detail
+        (or (not-empty (str (get r "output")))
+            (not-empty (str error))
+            (when-not ok (str "no test result returned — " (pr-str r))))]
 
     {:summary (str (when-not ok "✗ ")
                    ns-disp
@@ -543,19 +534,18 @@
    `NullPointerException: null` → `NullPointerException`. Capped so a long
    message never blows out the one-line summary badge."
   [s]
-  (let
-    [head
-     (-> (str s)
-         str/split-lines
-         first
-         (or "")
-         str/trim)
+  (let [head
+        (-> (str s)
+            str/split-lines
+            first
+            (or "")
+            str/trim)
 
-     cls
-     (-> head
-         (str/split #":" 2)
-         first
-         str/trim)]
+        cls
+        (-> head
+            (str/split #":" 2)
+            first
+            str/trim)]
 
     (subs cls 0 (min 60 (count cls)))))
 
@@ -604,91 +594,91 @@
    detected from a timed_out flag / a timeout status and renders like a first-class
    outcome (its own preview + FORM + any partial stdout/stderr)."
   [r]
-  (let
-    [code
-     (not-empty (str (get r "code")))
+  (let [code
+        (not-empty (str (get r "code")))
 
-     value
-     (get r "value")
+        value
+        (get r "value")
 
-     out
-     (get r "out")
+        out
+        (get r "out")
 
-     err
-     (get r "err")
+        err
+        (get r "err")
 
-     emsg
-     (not-empty (str (get r "error_message")))
+        emsg
+        (not-empty (str (get r "error_message")))
 
-     trace
-     (get r "trace")
+        trace
+        (get r "trace")
 
-     edata
-     (get r "error_data")
+        edata
+        (get r "error_data")
 
-     timed-out?
-     (boolean (or (get r "timed_out") (some #{"timeout"} (get r "status"))))
+        timed-out?
+        (boolean (or (get r "timed_out") (some #{"timeout"} (get r "status"))))
 
-     ms
-     (get r "ms")
+        ms
+        (get r "ms")
 
-     error?
-     (boolean (or emsg
-                  (not-empty (str (get r "ex")))
-                  (not-empty (str (get r "root_ex")))
-                  (some #{"eval-error"} (get r "status"))))
+        error?
+        (boolean (or emsg
+                     (not-empty (str (get r "ex")))
+                     (not-empty (str (get r "root_ex")))
+                     (some #{"eval-error"} (get r "status"))))
 
-     long-form?
-     (boolean (and code
-                   (or (str/includes? code "\n") (> (count code) (long repl-form-inline-max)))))
+        long-form?
+        (boolean (and code
+                      (or (str/includes? code "\n") (> (count code) (long repl-form-inline-max)))))
 
-     ;; The form on the chip: single-lined + clipped. Short → it's the whole
-     ;; story; long → it's a teaser and the full form leads the expanded body.
-     form-chip
-     (some-> code
-             one-line
-             (clip-chip repl-form-inline-max))
+        ;; The form on the chip: single-lined + clipped. Short → it's the whole
+        ;; story; long → it's a teaser and the full form leads the expanded body.
+        form-chip
+        (some-> code
+                one-line
+                (clip-chip repl-form-inline-max))
 
-     value-preview
-     (or (one-line value) "nil")
+        value-preview
+        (or (one-line value) "nil")
 
-     show-result?
-     (not= "nil" value-preview)
+        show-result?
+        (not= "nil" value-preview)
 
-     preview
-     (cond timed-out? (str "⧖ timed out" (when ms (str " after " ms "ms")))
-           error? (str "✗ " (if emsg (short-error emsg) "error"))
-           :else (str "⇒ " (clip-chip value-preview repl-form-inline-max)))
+        preview
+        (cond timed-out? (str "⧖ timed out" (when ms (str " after " ms "ms")))
+              error? (str "✗ " (if emsg (short-error emsg) "error"))
+              :else (str "⇒ " (clip-chip value-preview repl-form-inline-max)))
 
-     summary
-     (not-empty (str (when form-chip (str form-chip "  ")) preview))
+        summary
+        (not-empty (str (when form-chip (str form-chip "  ")) preview))
 
-     error-body
-     (str/join "\n"
-               (remove str/blank?
-                 [(or emsg (str err)) (when (seq trace) (str/join "\n" trace))
-                  (when (seq (str edata)) (str "ex-data: " edata))]))
+        error-body
+        (str/join "\n"
+                  (remove str/blank?
+                    [(or emsg (str err)) (when (seq trace) (str/join "\n" trace))
+                     (when (seq (str edata)) (str "ex-data: " edata))]))
 
-     ;; Fixed section order; each gate matches the design. ERROR stands in for
-     ;; RESULT on failure and sits LAST, after any captured stdout. On a TIMEOUT
-     ;; the FORM is ALWAYS shown (so the timed-out code is visible), followed by
-     ;; whatever partial STDOUT/STDERR was captured and a closing TIMEOUT note.
-     sections
-     (cond timed-out? [(sect "FORM" code "clojure") (sect "STDOUT" out) (sect "STDERR" err)
-                       (sect "TIMEOUT"
-                             (str "Evaluation timed out"
+        ;; Fixed section order; each gate matches the design. ERROR stands in for
+        ;; RESULT on failure and sits LAST, after any captured stdout. On a TIMEOUT
+        ;; the FORM is ALWAYS shown (so the timed-out code is visible), followed by
+        ;; whatever partial STDOUT/STDERR was captured and a closing TIMEOUT note.
+        sections
+        (cond timed-out? [(sect "FORM" code "clojure") (sect "STDOUT" out) (sect "STDERR" err)
+                          (sect "TIMEOUT"
+                                (str
+                                  "Evaluation timed out"
                                   (when ms (str " after " ms "ms"))
                                   ". The form was still running when the deadline was reached."))]
-           error? [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
-                   (sect "ERROR" error-body)]
-           :else [(when long-form? (sect "FORM" code "clojure"))
-                  (when show-result? (sect "RESULT" value "clojure")) (sect "STDOUT" out)
-                  (sect "STDERR" err)])
+              error? [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
+                      (sect "ERROR" error-body)]
+              :else [(when long-form? (sect "FORM" code "clojure"))
+                     (when show-result? (sect "RESULT" value "clojure")) (sect "STDOUT" out)
+                     (sect "STDERR" err)])
 
-     body
-     (->> sections
-          (remove nil?)
-          (str/join "\n\n"))]
+        body
+        (->> sections
+             (remove nil?)
+             (str/join "\n\n"))]
 
     {:summary summary :body (when (seq body) (str "\n" body))}))
 
@@ -708,42 +698,41 @@
   [r]
   (if (contains? r "resources")
     (render-repl-status-result r)
-    (let
-      [status
-       (or (get r "status") "ready")
+    (let [status
+          (or (get r "status") "ready")
 
-       failed?
-       (or (= "failed" status) (= "failed" (get r "result")))
+          failed?
+          (or (= "failed" status) (= "failed" (get r "result")))
 
-       prefix
-       (if failed? "✗ REPL " "REPL ")
+          prefix
+          (if failed? "✗ REPL " "REPL ")
 
-       summary
-       (str prefix
-            (or (get r "id") (get r "language") "")
-            " "
-            status
-            (when-let [p (get r "port")]
-              (str " :" p)))
+          summary
+          (str prefix
+               (or (get r "id") (get r "language") "")
+               " "
+               status
+               (when-let [p (get r "port")]
+                 (str " :" p)))
 
-       log-tail
-       (get r "log_tail")
+          log-tail
+          (get r "log_tail")
 
-       sections
-       [(when-let [m (get r "message")]
-          (str "MESSAGE\n" m))
-        (when-let [exit (get r "exit")]
-          (str "EXIT\n" exit))
-        (when-let [log (get r "log")]
-          (str "LOG\n" log))
-        (when-let [cmd (seq (get r "cmd"))]
-          (str "CMD\n" (str/join " " (map str cmd))))
-        (when (seq log-tail) (str "LOG TAIL\n" (str/join "\n" log-tail)))]
+          sections
+          [(when-let [m (get r "message")]
+             (str "MESSAGE\n" m))
+           (when-let [exit (get r "exit")]
+             (str "EXIT\n" exit))
+           (when-let [log (get r "log")]
+             (str "LOG\n" log))
+           (when-let [cmd (seq (get r "cmd"))]
+             (str "CMD\n" (str/join " " (map str cmd))))
+           (when (seq log-tail) (str "LOG TAIL\n" (str/join "\n" log-tail)))]
 
-       body
-       (->> sections
-            (remove nil?)
-            (str/join "\n\n"))]
+          body
+          (->> sections
+               (remove nil?)
+               (str/join "\n\n"))]
 
       {:summary summary :body (when (seq body) (str "\n" body))})))
 
@@ -780,42 +769,40 @@
   ;; minutes, so the language pack's OWN budget bounds the run (e.g. the
   ;; clojure pack's 290s nREPL eval timeout), wedge-guarded by
   ;; MAX_EVAL_TIMEOUT_MS while the wall is parked.
-  (let
-    [start
-     (System/currentTimeMillis)
+  (let [start
+        (System/currentTimeMillis)
 
-     result
-     (extension/run-outside-tool-wall env #(dispatch! env :test-fn args))]
+        result
+        (extension/run-outside-tool-wall env #(dispatch! env :test-fn args))]
 
     (if (map? result) (assoc result :ms (- (System/currentTimeMillis) start)) result)))
 
 (defn repl-eval
-  "Evaluate code in a language REPL. ALWAYS pass the language FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id` to target a registered REPL resource, and `dir` to target/auto-start the REPL in a subdirectory (e.g. a monorepo app dir) — REQUIRED when the code must run under that dir's config (tsconfig, package.json); defaults to the workspace root."
+  "Evaluate code in a language REPL. FIRST check `session[\"resources\"][\"repls\"][language][dir]`; call repl_start when it is not up. ALWAYS pass the language FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id` or `dir` to target a subdirectory REPL; defaults to workspace root."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start/manage a language REPL resource. ALWAYS pass the language FIRST — repl_start(language, opts); opts may include `id` and language-specific options."
+  "Start/manage a language REPL resource after checking session resources. ALWAYS pass the language FIRST — repl_start(language, opts); opts may include `id`, `dir`, and language-specific options."
   [env & args]
   (dispatch-start-repl! env args))
 
 (defn connect-repl
   "Attach to an EXTERNAL, ALREADY-RUNNING REPL the user started themselves — repl_connect(language, {\"port\": N, \"host\"?, \"dir\"?}). Explicit opt-in: vis registers the address as a session REPL resource (eval/test/ctx target it like a managed one) but NEVER spawns, kills, or reaps the process — stopping it merely detaches."
   [env & args]
-  (let
-    [[language more]
-     (if (and (seq args) (language-like? (first args))) [(first args) (next args)] [nil args])
+  (let [[language more]
+        (if (and (seq args) (language-like? (first args))) [(first args) (next args)] [nil args])
 
-     opts
-     (coerce-opts (first more))
+        opts
+        (coerce-opts (first more))
 
-     dispatch-opts
-     (cond-> opts
-       language
-       (assoc "language" language))
+        dispatch-opts
+        (cond-> opts
+          language
+          (assoc "language" language))
 
-     handler
-     (choose-handler env :start-repl-fn dispatch-opts)]
+        handler
+        (choose-handler env :start-repl-fn dispatch-opts)]
 
     ((:handler handler) env "connect" opts)))
 

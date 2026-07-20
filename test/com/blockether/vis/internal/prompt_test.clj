@@ -93,6 +93,8 @@
         (expect (str/includes? text "material consequences"))
         (expect (str/includes? text "canonical decision"))
         (expect (str/includes? text "maximum 5 rows"))
+        (expect (str/includes? text "`session[\"resources\"][\"repls\"][language][dir]`"))
+        (expect (str/includes? text "FIRST for code or bugs"))
         (expect (str/includes? text "never a menu"))
         (expect (str/includes? text "reproduce before editing"))
         (expect (str/includes? text "Prefer a live REPL"))

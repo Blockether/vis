@@ -74,3 +74,32 @@
                           (expect (some? r))
                           (expect (= "failed" (get r "status"))))
                         (finally (resources/unregister! sid "r5"))))))
+
+(defdescribe model-view-test
+             (it "indexes REPL state by language and workspace-relative dir without a flat mirror"
+                 (let [view (resources/model-view
+                              [{"id" "main"
+                                "kind" "nrepl"
+                                "language" "clojure"
+                                "status" "up"
+                                "detail" {"dir" "/repo" "port" 7888}}
+                               {"id" "api"
+                                "kind" "repl"
+                                "language" "python"
+                                "status" "starting"
+                                "detail" {"dir" "/repo/apps/api" "cmd" "python -i"}}]
+                              {:root "/repo" :languages ["clojure" "python" "typescript"]})]
+                   (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
+                   (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))
+                   (expect (= "starting" (get-in view ["repls" "python" "apps/api" "status"])))
+                   (expect (= {} (get-in view ["repls" "typescript"])))
+                   (expect (not (vector? view)))))
+             (it "groups non-REPL resources without reviving the flat legacy shape"
+                 (let [resource
+                       {"id" "server" "kind" "process" "status" "up"}
+
+                       view
+                       (resources/model-view [resource] {:root "/repo"})]
+
+                   (expect (= resource (get-in view ["other" "process" "server"])))
+                   (expect (nil? (get view "repls"))))))

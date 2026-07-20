@@ -206,14 +206,20 @@
         ;; Session-scoped live resources — same registry the footer reads, so
         ;; `session["resources"]` and the footer can never disagree.
         rsrc
-        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
+        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
+
+        rsrc-view
+        (resources/model-view rsrc
+                              {:root (or (:workspace/root env)
+                                         (get-in ext-ctx ["session_workspace" "root"]))
+                               :languages (keys (get ext-ctx "session_language_tools"))})]
 
     (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
       (seq env-block)
       (assoc "session_env" env-block)
 
-      (seq rsrc)
-      (assoc "session_resources" rsrc)
+      (seq rsrc-view)
+      (assoc "session_resources" rsrc-view)
 
       ;; current model + available models, so the agent can route a sub_loop
       ;; child by cost (read-only). `:routing env` is loop-internal; its VALUE
@@ -252,4 +258,3 @@
 ;;   t<N>/i<M>/f<K>  — form K (1-based) of iteration M of turn N
 ;; All DB-backed against `session_turn_iteration.forms`.
 ;; =============================================================================
-
