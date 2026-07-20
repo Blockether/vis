@@ -818,7 +818,7 @@
 ;; All-observation concurrent batch
 ;;
 ;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
-;; OBSERVATIONS (cat / rg / find_files / ls / index / occurrences / sexpr /
+;; OBSERVATIONS (cat / rg / find_files / ls / struct_index / struct_occurrences / struct_node /
 ;; file_exists — anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
 ;; the whole batch CONCURRENTLY through the isolated virtual-thread pool
@@ -3517,8 +3517,8 @@
    is an escape hatch for the two irreducible ones (`patch` reshape, `ls` path
    default) — it returns RAW argument values (no `py-literal`, so tool namespaces
    need no engine dependency) which THIS fn renders. A tool with NO shape → the
-   generic `name({…whole input…})` form (correct for struct_patch, symbol_rename,
-   rg, find_files, occurrences, index …).
+   generic `name({…whole input…})` form (correct for struct_patch, struct_rename,
+   rg, find_files, struct_occurrences, struct_index …).
 
    `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
    Python program, passed through verbatim. This is deliberately the ONLY `code`

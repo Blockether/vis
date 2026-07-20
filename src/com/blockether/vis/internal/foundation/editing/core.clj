@@ -100,7 +100,7 @@
 
 (def ^:private fff-scan-max-concurrency
   "Permit count for `fff-scan-semaphore`: the max number of FRESH fff index
-   scans (rg / find_files / occurrences — everything that goes through
+   scans (rg / find_files / struct_occurrences — everything that goes through
    `rg-fff-open`) allowed to run at once. A fresh scan spins fff's own worker
    threads over the whole tree — cheap for a small repo (~11ms), but up to the
    `rg-fff-scan-timeout-ms` (~30s) ceiling for a large one — so an UNBOUNDED
@@ -3058,7 +3058,7 @@
                     (str "\n" hint))})
       ;; Success path: RE-PARSE guard, then commit. Refuse only an edit that turns
       ;; a CLEANLY-parsing file into a BROKEN one — the same safety `struct_patch`/
-      ;; `symbol_rename` already give, now on plain `patch` too, so the two verbs
+      ;; `struct_rename` already give, now on plain `patch` too, so the two verbs
       ;; stop differing on "which one is safe". TWO gates keep it false-positive-free:
       ;; (1) `index/code-language` — a CURATED allowlist, so prose/markup/data the
       ;; pack over-eagerly recognizes (`.txt`→vimdoc, `.md`, `.csv`, `.log`) is never
@@ -4210,9 +4210,9 @@
 
 (defn- def->wire
   "One `index/definitions` entry → snake_case wire map. Deliberately the SAME
-   shape as a DEFINITION row from `occurrences` (`kind`/`visibility`/`signature`/
+   shape as a DEFINITION row from `struct_occurrences` (`kind`/`visibility`/`signature`/
    `doc`/`anchor`/`end_anchor`) so the two structural lenses read alike — plus the
-   def's `name` (`index` lists many) and nesting `depth` (0 = top-level). Nil
+   def's `name` (`struct_index` lists many) and nesting `depth` (0 = top-level). Nil
    fields are dropped to keep the row lean."
   [d]
   (cond-> {"name" (:name d)
@@ -4261,16 +4261,16 @@
    as-is (it is already clean — no `^:private`/type-hint noise), and pair it with
    <kind> when two defs
    share a name.
-     await index(path)
+     await struct_index(path)
    Returns {\"skeleton\": \"...\", \"definitions\": [{\"name\",\"kind\",\"visibility\",
    \"signature\",\"doc\",\"anchor\",\"end_anchor\",\"depth\"} …], \"imports\":
    [{\"source\",\"alias\",\"items\",\"wildcard\",\"anchor\"} …], \"language\": \"...\",
    \"line_count\": N}. `definitions` is the machine-addressable data — each row the
-   SAME shape as an `occurrences` definition (read `anchor`/`end_anchor` as fields,
+   SAME shape as an `struct_occurrences` definition (read `anchor`/`end_anchor` as fields,
    no parsing the skeleton blob). When a language has no structural index yet,
    returns a note — fall back to cat(path)."
   [& args]
-  ;; Accept index("x") (positional) AND index({"path":"x"}) — the native
+  ;; Accept struct_index("x") (positional) AND struct_index({"path":"x"}) — the native
   ;; tool-call path synthesizes the dict form.
   (let [a
         (first args)
@@ -4297,7 +4297,7 @@
         (index/detect-language abs)]
 
     (tool-success
-      {:op :index
+      {:op :struct_index
        :path path
        :kind :file
        :result (cond idx {"skeleton" (:skeleton idx)
@@ -4339,6 +4339,15 @@
                   (if (and b (= x (inc b))) (conj (pop acc) [a x]) (conj acc [x x]))))
               []
               (sort nums)))))
+
+(defn- disp-path
+  "A file path shown on an op-card headline: workspace-relative paths pass
+   through unchanged, but an out-of-workspace ABSOLUTE path under $HOME is
+   abbreviated to `~/…` (matching the footer/navigator) so a cat/patch/… on a
+   sibling repo reads `~/other-repo/x.clj` instead of a long absolute path.
+   Nil-safe."
+  [p]
+  (paths/abbreviate-home p))
 
 (defn- render-cat-result
   "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
@@ -4415,7 +4424,7 @@
         counted
         (str n " line" (when (not= 1 n) "s"))]
 
-    {:summary (str "`" (get r "path")
+    {:summary (str "`" (disp-path (get r "path"))
                    "` · " (cond (nil? loc) counted
                                 (= 1 (count spans)) loc
                                 :else (str loc " · " counted)))
@@ -4425,7 +4434,7 @@
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
    `{\"path\" \"exists\"}`."
   [r]
-  {:summary (str "`" (get r "path") "` " (if (get r "exists") "exists ✓" "missing ✗"))})
+  {:summary (str "`" (disp-path (get r "path")) "` " (if (get r "exists") "exists ✓" "missing ✗"))})
 
 (defn- kw->str
   "Coerce a result map KEY/VALUE to its string form. The strings-only boundary
@@ -4577,7 +4586,7 @@
                   (for [[path hits] (get r "matches")]
                     (let [width (rg-gutter-width hits)]
                       (str "`"
-                           (kw->str path)
+                           (disp-path (kw->str path))
                            "`\n\n```\n"
                            (str/join "\n"
                                      (mapcat (fn [[k v]]
@@ -4608,7 +4617,7 @@
 
         file-label
         (fn [{:strs [path op changed]}]
-          (str (if changed (str (or op "update") " ") "(no change) ") "`" path "`"))
+          (str (if changed (str (or op "update") " ") "(no change) ") "`" (disp-path path) "`"))
 
         labels
         (mapv file-label summaries)]
@@ -4631,7 +4640,7 @@
                                     ;; single file: summary already names it — show just the diff
                                     (or diff-block "")
                                     (str (if changed (str (or op "update") " ") "(no change) ")
-                                         "`" path
+                                         "`" (disp-path path)
                                          "`" (when diff-block (str "\n" diff-block)))))))
                     not-empty
                     ;; leading blank = op-card BREATHE spacer (see tool-card-entries head-gap?)
@@ -4693,30 +4702,31 @@
              (when scope-chip (str " · " scope-chip)))]
 
     {:summary head
-     :body (cond (seq paths) (str "\n```\n" (str/join "\n" (map kw->str paths)) "\n```")
+     :body (cond (seq paths)
+                 (str "\n```\n" (str/join "\n" (map (comp disp-path kw->str) paths)) "\n```")
                  ;; 0 results: show the steer (filename-vs-content) instead of a
                  ;; blank card — the same hint the model reads, so the user sees
                  ;; WHY it found nothing.
                  hint (str "\n" hint))}))
 
 (defn- render-index-result
-  "index → `{:summary :body}`: a path headline (like cat) + the skeleton
+  "struct_index → `{:summary :body}`: a path headline (like cat) + the skeleton
    string (already anchored/nested). `r` is `{:skeleton str :language str :path str}`
    or a no-structure shape."
   [r]
   (let [loc (some-> (get r "path")
-                    str
+                    disp-path
                     not-empty
                     (#(str "`" % "`")))]
     (if-let [sk (some-> (get r "skeleton")
                         kw->str
                         not-empty)]
-      {:summary (or loc "index") :body (str "\n```\n" sk "\n```")}
-      {:summary (str (or loc "index") " · no structural index")})))
+      {:summary (or loc "struct_index") :body (str "\n```\n" sk "\n```")}
+      {:summary (str (or loc "struct_index") " · no structural index")})))
 
 (defn- render-occurrences-result
-  "occurrences → `{:summary :body}`: a `N · K defs in M files of `name` · <scope>`
-   headline (no leading 'occurrences' word — the op-card badge already names it);
+  "struct_occurrences → `{:summary :body}`: a `N · K defs in M files of `name` · <scope>`
+   headline (no leading 'struct_occurrences' word — the op-card badge already names it);
    <scope> is `project-wide` for the default/whole-project scan, else `in <paths>`,
    then per file the DEFINITION(s) (kind/visibility/signature + span anchors) on their
    own lines and the use lines (derived from each use's anchor) compacted. `r` is
@@ -4763,7 +4773,7 @@
                                     us (remove #(get % "is_definition") occ)]
 
                                 (str "`"
-                                     (kw->str (get f "path"))
+                                     (disp-path (kw->str (get f "path")))
                                      "`\n```\n"
                                      (str/join "\n"
                                                (concat (for [d ds]
@@ -4785,7 +4795,7 @@
                                      "\n```"))))))}))
 
 (defn- render-symbol-rename-result
-  "symbol_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
+  "struct_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
    the changed paths. `r` is `{:files [{:path :changed}] :file_count :failed}`."
   [r]
   (let [files
@@ -4802,38 +4812,47 @@
                    " file"
                    (when (not= 1 fc) "s")
                    (when (seq failed) (str " · " (count failed) " failed")))
-     :body
-     (when (seq files)
-       (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (get % "path"))) files)) "\n```"))}))
+     :body (when (seq files)
+             (str "\n```\n"
+                  (str/join "\n" (map #(str "  " (disp-path (kw->str (get % "path")))) files))
+                  "\n```"))}))
 
 (defn- render-move-result
   "move → `{:summary}` only: `moved `src` → `dest``. `r` is `{:src :dest}`."
   [r]
-  {:summary (str "moved `" (kw->str (get r "src")) "` → `" (kw->str (get r "dest")) "`")})
+  {:summary (str "moved `"
+                 (disp-path (kw->str (get r "src")))
+                 "` → `"
+                 (disp-path (kw->str (get r "dest")))
+                 "`")})
 
 (defn- render-delete-result
   "delete → `{:summary}` only: `deleted `path`` (or a no-op note). `r` is
    `{:path :deleted}`."
   [r]
   {:summary (str (if (false? (get r "deleted")) "nothing to delete at `" "deleted `")
-                 (kw->str (get r "path"))
+                 (disp-path (kw->str (get r "path")))
                  "`")})
 
 (defn- render-copy-result
   "copy → `{:summary}` only: `copied `src` → `dest``. `r` is `{:src :dest :path}`."
   [r]
-  {:summary (str "copied `" (kw->str (get r "src")) "` → `" (kw->str (get r "dest")) "`")})
+  {:summary (str "copied `"
+                 (disp-path (kw->str (get r "src")))
+                 "` → `"
+                 (disp-path (kw->str (get r "dest")))
+                 "`")})
 
 (defn- render-create-dirs-result
   "create_dirs → `{:summary}` only: created / already-existed note. `r` is
    `{:path :created :already_existed}`."
   [r]
   {:summary (str (if (get r "created") "created dir `" "dir already exists `")
-                 (kw->str (get r "path"))
+                 (disp-path (kw->str (get r "path")))
                  "`")})
 
 (defn- render-sexpr-result
-  "sexpr → `{:summary :body}`: a `<kind> @line..end_line` headline + the node's
+  "struct_node → `{:summary :body}`: a `<kind> @line..end_line` headline + the node's
    text as a code block. `r` is the zip shape `{:path :kind :line :end_line :text
    :children :can}`."
   [r]
@@ -4894,7 +4913,7 @@
 (def index-symbol
   (vis/symbol
     #'index-tool
-    {:symbol 'index
+    {:symbol 'struct_index
      :native-tool? true
      :active-fn structural-supported?
      :description
@@ -4907,16 +4926,16 @@
        "range you need — then `cat` that def's anchors, "
        "cat(path, {anchor: [start_anchor, end_anchor]}), to read that ONE def's source — and to patch a "
        "whole def straight from its anchors. Returns a structured `definitions` list "
-       "(each row the SAME shape as an `occurrences` definition: name/kind/visibility/"
+       "(each row the SAME shape as an `struct_occurrences` definition: name/kind/visibility/"
        "signature/doc/anchor/end_anchor + nesting depth) plus an `imports` list, beside the human `skeleton`.")
      :render render-index-result
      :color-role :tool-color/read
      :schema {:type "object"
               :properties {"path" {:type "string" :description "Path to a source file."}}
               :required ["path"]}
-     :before-fn (path-protected-before-fn :index :file :read first-arg-paths)
+     :before-fn (path-protected-before-fn :struct_index :file :read first-arg-paths)
      :tag :observation
-     :on-error-fn (tool-failure-on-error :index :file nil)}))
+     :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
 
 (def cat-symbol
   (vis/symbol
@@ -5152,11 +5171,11 @@
    ops (by PATH/`at`): replace | insert_before | insert_after | append_child |
      prepend_child (append/prepend = inside the node, after last / before first
      child; delete = replace with \"\"). `at` is the named-child index path from
-     sexpr(path); `nav` adds relative moves — the full clojure.zip vocabulary:
+     struct_node(path); `nav` adds relative moves — the full clojure.zip vocabulary:
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
-     {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with sexpr(...) first,
+     {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_node(...) first,
      then edit the same path here.
-   Locate targets with index(path) / sexpr(path) / occurrences(name).
+   Locate targets with struct_index(path) / struct_node(path) / struct_occurrences(name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
   (let [path
@@ -5277,15 +5296,15 @@
     {:symbol 'struct_patch
      :native-tool? true
      :active-fn structural-supported?
-     :description (str
-                    "Structural edit via tree-sitter (every language): locate a node by NAME "
-                    "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
-                    "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
-                    "for code. ops by name: replace | insert_before | insert_after | append | "
-                    "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
-                    "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
-                    "replace | insert_before | insert_after | append_child | prepend_child. "
-                    "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
+     :description
+     (str "Structural edit via tree-sitter (every language): locate a node by NAME "
+          "(`target`) or by a zipper PATH (`at`/`nav` from struct_node), then edit — the file "
+          "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
+          "for code. ops by name: replace | insert_before | insert_after | append | "
+          "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
+          "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
+          "replace | insert_before | insert_after | append_child | prepend_child. "
+          "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -5305,12 +5324,12 @@
        "anchor"
        {:type "string"
         :description
-        "Dual use: for move_before/move_after the def NAME to relocate next to; otherwise a `lineno:hash` anchor (from index/occurrences/cat) that enters the zipper at the node starting on that line (compose with `nav`)."}
+        "Dual use: for move_before/move_after the def NAME to relocate next to; otherwise a `lineno:hash` anchor (from struct_index/struct_occurrences/cat) that enters the zipper at the node starting on that line (compose with `nav`)."}
        "at"
        {:type "array"
         :items {:type "integer"}
         :description
-        "Named-child index path from sexpr(path) (path-based ops). Or use `anchor` to enter by a lineno:hash row instead."}
+        "Named-child index path from struct_node(path) (path-based ops). Or use `anchor` to enter by a lineno:hash row instead."}
        "nav" {:type "array"
               :description "Relative zipper moves applied after `at` (strings or maps)."}}
       :required ["path"]}
@@ -5334,7 +5353,7 @@
 
 (defn- zip-shape
   ;; `r` is zipper/inspect's internal (keyword) node data; this projects it onto
-  ;; the model-facing sexpr result — string keys, no keyword values.
+  ;; the model-facing struct_node result — string keys, no keyword values.
   [r]
   {"path" (:path r)
    "kind" (:kind r)
@@ -5352,10 +5371,10 @@
   "The tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary, any
    language). A node's location is a PATH = list of NAMED-child indices from the
    file root, so the cursor round-trips through async tool calls.
-     await sexpr(path)                                    # root + its named children
-     await sexpr(path, {\"at\": [2, 0]})                    # jump to an absolute path
-     await sexpr(path, {\"at\": [2], \"nav\": [\"down\", \"right\"]})  # cursor moves
-     await sexpr(path, {\"nav\": [{\"find\": \"my_fn\"}]})            # jump to a node by text
+     await struct_node(path)                                    # root + its named children
+     await struct_node(path, {\"at\": [2, 0]})                    # jump to an absolute path
+     await struct_node(path, {\"at\": [2], \"nav\": [\"down\", \"right\"]})  # cursor moves
+     await struct_node(path, {\"nav\": [{\"find\": \"my_fn\"}]})            # jump to a node by text
    nav moves — the full clojure.zip / rewrite-clj vocabulary (single-letter
    aliases): SIBLING/PARENT/CHILD down|d|b up|u|t left|l right|r leftmost|first
    rightmost|last root|home {\"child\": i}; DEPTH-FIRST next|n prev|p; SEARCH
@@ -5374,7 +5393,7 @@
         source
         (slurp (safe-path path))
 
-        ;; anchor entry: a `lineno:hash` from an index/occurrences/cat row
+        ;; anchor entry: a `lineno:hash` from a struct_index/struct_occurrences/cat row
         ;; resolves straight to the node's path, then `nav` composes on top.
         base
         (when-let [a (get opts "anchor")]
@@ -5387,11 +5406,11 @@
 
     (if (:error nav)
       (extension/failure {:result nil
-                          :op :sexpr
-                          :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
+                          :op :struct_node
+                          :metadata {:target {:requested (str path) :kind :file} :mode :struct_node}
                           :error {:message (get-in nav [:error :message])
                                   :reason (get-in nav [:error :reason])
-                                  :mode :sexpr}})
+                                  :mode :struct_node}})
       (let [at
             (:path nav)
 
@@ -5400,12 +5419,13 @@
 
         (if (:error r)
           (extension/failure {:result nil
-                              :op :sexpr
-                              :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
+                              :op :struct_node
+                              :metadata {:target {:requested (str path) :kind :file}
+                                         :mode :struct_node}
                               :error {:message (get-in r [:error :message])
                                       :reason (get-in r [:error :reason])
-                                      :mode :sexpr}})
-          (tool-success {:op :sexpr
+                                      :mode :struct_node}})
+          (tool-success {:op :struct_node
                          :path path
                          :kind :file
                          :result (assoc (zip-shape r)
@@ -5414,9 +5434,9 @@
 (def sexpr-symbol
   (vis/symbol
     #'sexpr-tool
-    {:symbol 'sexpr
+    {:symbol 'struct_node
      :native-tool? true
-     ;; sexpr(path, {opts}) — path positional, the rest a Python options dict.
+     ;; struct_node(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
      :active-fn structural-supported?
      :description (str
@@ -5440,21 +5460,21 @@
        "anchor"
        {:type "string"
         :description
-        "A `lineno:hash` anchor (from index/occurrences/cat) to enter the zipper at the node starting on that line — one hop from a listed row to its cursor; `nav` composes on top. Alternative to `at`."}}
+        "A `lineno:hash` anchor (from struct_index/struct_occurrences/cat) to enter the zipper at the node starting on that line — one hop from a listed row to its cursor; `nav` composes on top. Alternative to `at`."}}
       :required ["path"]}
-     :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
+     :before-fn (path-protected-before-fn :struct_node :file :read first-arg-paths)
      :tag :observation
-     :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
+     :on-error-fn (tool-failure-on-error :struct_node :file nil)}))
 
 ;; sexpr_edit was FOLDED INTO struct_patch — which now takes a zipper `at`/`nav`
 ;; path as an alternative to a `target` name. ONE structural editor (locate by
 ;; name OR by path), so the model isn't choosing between two near-identical
-;; mutation verbs. `sexpr` stays as the read-only navigator that produces paths.
+;; mutation verbs. `struct_node` stays as the read-only navigator that produces paths.
 
 (defn- occurrence->wire
   "One `structural/occurrences` entry → snake_case wire map. Plain USE rows stay
    anchors-only (the `lineno:hash` is the sole position). DEFINITION rows mirror
-   `index` `definitions` rows where possible: `name`/`kind`/`visibility`/`signature`/
+   `struct_index` `definitions` rows where possible: `name`/`kind`/`visibility`/`signature`/
    `doc`/`anchor`/`end_anchor`, with nil metadata dropped."
   [name o]
   ;; Model-facing occurrence row — string keys, no keyword values.
@@ -5484,8 +5504,8 @@
    tree-sitter — real identifier boundaries, never inside a bigger token / string
    / comment. The DEFINITION occurrences are MARKED with their kind, visibility,
    signature, doc, and full span; plain uses carry just location + a patch anchor:
-     await occurrences(\"handle_click\")            # whole project
-     await occurrences(\"foo\", paths=[\"src/api\"]) # scoped
+     await struct_occurrences(\"handle_click\")            # whole project
+     await struct_occurrences(\"foo\", paths=[\"src/api\"]) # scoped
    Result: {\"name\", \"files\": [{\"path\", \"occurrences\": [{\"anchor\"  # a use:
    the sole position, a `lineno:hash` patch handle
    , \"is_definition\": true, \"name\", \"kind\", \"visibility\", \"signature\", \"doc\",
@@ -5497,72 +5517,73 @@
    definition across the project is marked, so `definition_count` > 1 means the
    name is ambiguous — each carries its own path + signature to disambiguate."
   [& args]
-  (let [[a & more]
-        args
+  (let
+    [[a & more]
+     args
 
-        spec
-        (cond (and (= 1 (count args)) (string? a)) {"name" a}
-              (and (= 1 (count args)) (map? a)) a
-              (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) "name" a)
-              :else (throw
-                      (ex-info
-                        "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
-                        {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
+     spec
+     (cond
+       (and (= 1 (count args)) (string? a)) {"name" a}
+       (and (= 1 (count args)) (map? a)) a
+       (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) "name" a)
+       :else
+       (throw
+         (ex-info
+           "struct_occurrences takes struct_occurrences(name) or struct_occurrences(name, paths=[...])."
+           {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
 
-        name
-        (get spec "name")
+     name
+     (get spec "name")
 
-        _
-        (when-not (and (string? name) (not (str/blank? name)))
-          (throw (ex-info "occurrences needs a non-blank `name`."
-                          {:type :ext.foundation.editing/invalid-occurrences-args :name name})))
+     _
+     (when-not (and (string? name) (not (str/blank? name)))
+       (throw (ex-info "struct_occurrences needs a non-blank `name`."
+                       {:type :ext.foundation.editing/invalid-occurrences-args :name name})))
 
-        paths
-        (let [p (or (get spec "paths") ["."])]
-          (if (string? p) [p] (vec p)))
+     paths
+     (let [p (or (get spec "paths") ["."])]
+       (if (string? p) [p] (vec p)))
 
-        ;; rg prefilters the files that mention the name (smart-case would over-
-        ;; match casing, but a definition keeps the name's case, so a case-
-        ;; sensitive identifier still lands among these files); each is parsed.
-        files
-        ;; occurrences PARSES every matching file, so the rg prefilter must not
-        ;; cap the candidate set at `default-grep-limit` (250) — a large dir /
-        ;; project would silently drop every file past the 250th, contradicting
-        ;; the "Not truncated" contract. Pass an unbounded limit.
-        (vec (or (:files
-                   (rg-search
-                     {"query" [name] "is_files_only" true "paths" paths "limit" Integer/MAX_VALUE}))
-                 []))
+     ;; rg prefilters the files that mention the name (smart-case would over-
+     ;; match casing, but a definition keeps the name's case, so a case-
+     ;; sensitive identifier still lands among these files); each is parsed.
+     files
+     ;; struct_occurrences PARSES every matching file, so the rg prefilter must not
+     ;; cap the candidate set at `default-grep-limit` (250) — a large dir /
+     ;; project would silently drop every file past the 250th, contradicting
+     ;; the "Not truncated" contract. Pass an unbounded limit.
+     (vec (or (:files
+                (rg-search
+                  {"query" [name] "is_files_only" true "paths" paths "limit" Integer/MAX_VALUE}))
+              []))
 
-        ;; `per`/`failed` entries are the model-facing result payload — string keys.
-        {:keys [per failed]}
-        (reduce (fn [acc path]
-                  (try (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
-                         (cond-> acc
-                           (seq occ)
-                           (update :per
-                                   conj
-                                   {"path" path
-                                    "occurrences" (mapv #(occurrence->wire name %) occ)})))
-                       (catch Exception e
-                         (update acc
-                                 :failed
-                                 conj
-                                 {"path" path "error" (or (ex-message e) (str (class e)))}))))
-                {:per [] :failed []}
-                files)
+     ;; `per`/`failed` entries are the model-facing result payload — string keys.
+     {:keys [per failed]}
+     (reduce
+       (fn [acc path]
+         (try
+           (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
+             (cond-> acc
+               (seq occ)
+               (update :per
+                       conj
+                       {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
+           (catch Exception e
+             (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
+       {:per [] :failed []}
+       files)
 
-        total
-        (reduce + 0 (map #(count (get % "occurrences")) per))
+     total
+     (reduce + 0 (map #(count (get % "occurrences")) per))
 
-        defs
-        (reduce +
-                0
-                (map (fn [f]
-                       (count (filter #(get % "is_definition") (get f "occurrences"))))
-                     per))]
+     defs
+     (reduce +
+             0
+             (map (fn [f]
+                    (count (filter #(get % "is_definition") (get f "occurrences"))))
+                  per))]
 
-    (tool-success {:op :occurrences
+    (tool-success {:op :struct_occurrences
                    :kind :dir
                    :result {"name" name
                             "files" per
@@ -5575,7 +5596,7 @@
 
 (def occurrences-symbol
   (vis/symbol #'occurrences-tool
-              {:symbol 'occurrences
+              {:symbol 'struct_occurrences
                :native-tool? true
                :active-fn structural-supported?
                :description
@@ -5596,7 +5617,7 @@
                                               "Restrict to these paths (default whole project)."}}
                         :required ["name"]}
                :tag :observation
-               :on-error-fn (tool-failure-on-error :occurrences :dir nil)}))
+                :on-error-fn (tool-failure-on-error :struct_occurrences :dir nil)}))
 
 (defn- symbol-rename-tool
   "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
@@ -5607,13 +5628,13 @@
    `:as` aliases intact (then move the defining file with move(old, new)). Returns
    {\"files\": [{\"path\", \"changed\"}], \"file_count\", \"failed\": [{\"path\",
    \"error\"}]}.
-     await symbol_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
+     await struct_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
   [& args]
   (let [spec
         (cond (and (= 2 (count args)) (string? (first args)) (string? (second args)))
               {"name" (first args) "new_name" (second args)}
               (and (= 1 (count args)) (map? (first args))) (first args)
-              :else (throw (ex-info "symbol_rename takes symbol_rename(name, new_name)."
+              :else (throw (ex-info "struct_rename takes struct_rename(name, new_name)."
                                     {:type :ext.foundation.editing/invalid-symbol-rename-args
                                      :got args})))
 
@@ -5628,7 +5649,7 @@
                        (not (str/blank? name))
                        (string? new_name)
                        (not (str/blank? new_name)))
-          (throw (ex-info "symbol_rename needs non-blank `name` and `new_name`."
+          (throw (ex-info "struct_rename needs non-blank `name` and `new_name`."
                           {:type :ext.foundation.editing/invalid-symbol-rename-args :spec spec})))
 
         files
@@ -5659,7 +5680,7 @@
                 {:changed [] :failed []}
                 files)]
 
-    (tool-success {:op :symbol_rename
+    (tool-success {:op :struct_rename
                    :kind :dir
                    ;; Model-facing result — string keys, no keyword values.
                    :result {"files" (mapv (fn [p]
@@ -5669,28 +5690,28 @@
                             "failed" (:failed out)}})))
 
 (def symbol-rename-symbol
-  (vis/symbol #'symbol-rename-tool
-              {:symbol 'symbol_rename
-               :native-tool? true
-               :name "symbol_rename"
-               :call {:pos ["name" "new_name"]}
-               :active-fn structural-supported?
-               :description
-               (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
-                    "tree-sitter — at real identifier boundaries (never a string/comment/larger "
-                    "token), re-parsed per file so a syntax-breaking rename is refused. For a "
-                    "Clojure NAMESPACE it's the cross-file ns rename (ns form + :require/:use + "
-                    "qualified usages; then move the defining file). Run `occurrences(name)` first "
-                    "to preview the blast radius.")
-               :render render-symbol-rename-result
-               :color-role :tool-color/edit
-               :schema {:type "object"
-                        :properties
-                        {"name" {:type "string" :description "Current identifier / namespace."}
-                         "new_name" {:type "string" :description "New identifier / namespace."}}
-                        :required ["name" "new_name"]}
-               :tag :mutation
-               :on-error-fn (tool-failure-on-error :symbol_rename :dir nil)}))
+  (vis/symbol
+    #'symbol-rename-tool
+    {:symbol 'struct_rename
+     :native-tool? true
+     :name "struct_rename"
+     :call {:pos ["name" "new_name"]}
+     :active-fn structural-supported?
+     :description
+     (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
+          "tree-sitter — at real identifier boundaries (never a string/comment/larger "
+          "token), re-parsed per file so a syntax-breaking rename is refused. For a "
+          "Clojure NAMESPACE it's the cross-file ns rename (ns form + :require/:use + "
+          "qualified usages; then move the defining file). Run `struct_occurrences(name)` first "
+          "to preview the blast radius.")
+     :render render-symbol-rename-result
+     :color-role :tool-color/edit
+     :schema {:type "object"
+              :properties {"name" {:type "string" :description "Current identifier / namespace."}
+                           "new_name" {:type "string" :description "New identifier / namespace."}}
+              :required ["name" "new_name"]}
+     :tag :mutation
+                :on-error-fn (tool-failure-on-error :struct_rename :dir nil)}))
 
 (def create-dirs-symbol
   (vis/symbol
@@ -5854,45 +5875,34 @@
     (str/join
       "\n"
       (concat
-        (keep
-          identity
-          [lang-line
-           (str
-             "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / patch / move / delete / copy / file_exists / write"
-             (when struct? " / index / struct_patch / sexpr / occurrences / symbol_rename")
-             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only. (delete_if_exists is python_execution-ONLY, not native — call it inside python_execution; `delete` now takes {is_missing_ok: True} to cover the delete_if_exists case.)")
-           ""])
+        (keep identity
+              [lang-line
+               "EDITING WORKFLOW — follow these 5 steps; step 4 applies only after refusal."])
+        ["1. EXECUTE"
+         "   One simple operation → call its native tool directly. Two or more calls, filtering, or chaining → use python_execution; editing tools are bare async functions there. Example: a, b = await gather(cat(P1), cat(P2)); print only needed evidence. Use doc(name) for exact contracts. Canonical path only."
+         "" "2. LOCATE + INSPECT"
+         "   Unknown path → find_files. Exact symbol/text/error → rg. Known directory → ls. Known file → cat; its anchors map provides patch handles. Batch independent reads in python_execution."]
         (if struct?
-          ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
-           "  3 code lenses: index = every DEFINITION + the file's imports (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
-           "  λ inspect:"
-           "    shape(file)   → index(path)   # header + imports + every kind VISIBILITY name SIGNATURE + docstring, @anchor..end_anchor, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
-           "    body(symbol)  → cat(path, {\"anchor\": [index_anchor, index_end_anchor]}) | sexpr(path, nav=[find(name)])   # one def's source"
-           "    usages(name)  → occurrences(name)   # tree-sitter identifier hits across the repo, each anchor-carrying, definition(s) marked (filter is_definition) — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
-           "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
-           "  λ edit  (structural by name/path, or patch by anchor — ALL code editors RE-PARSE and refuse a syntax break):"
-           "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
-           "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
-           "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
-           "    new_file      → write(path, content)"
-           "    refused? ladder: ambiguous name → add kind | node struct_patch can't name → sexpr | unsupported language/node → patch by anchor."
-           "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
-           "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."]
-          ;; No structurally-supported code in this project → anchor-based editing only.
-          ["EDIT (no tree-sitter language detected here — structural editors are OFF):"
-           "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # anchor-only, atomic, re-parsed for known formats  (span: add \"to_anchor\"; delete: replace \"\")"
-           "    new_file      → write(path, content)"
-           "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
-        [""
-         "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
-         "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
-         "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": {\"text\": line}} map — MIRRORS rg's hit value, so read v[\"text\"] for the line (iterate `for a, v in c[\"anchors\"].items(): v[\"text\"]`); there is NO top-level \"lines\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
-         "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\"} — the hit VALUE is a {\"text\": line} map (WITH context it ALSO carries \"before\"/\"after\" {anchor: {\"text\": line}} maps — same shape throughout), so read v[\"text\"] uniformly; every line patchable by its anchor; is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
-         "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
-         "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
-        (when struct?
-          ["  struct_patch / sexpr → tree-sitter, every language; doc(\"struct_patch\") / doc(\"sexpr\") for ops + the zipper nav vocabulary. File ops: exists / copy / move / delete."])
-        ["" "INVARIANTS" "  - Paths stay inside the workspace root."]))))
+          ["   Supported code → struct_index before cat; read only the target definition. Nested node → struct_node. Uses or rename impact → struct_occurrences."
+           "" "3. EDIT THE MATCHING SCENARIO" "   | Scenario | Route |" "   |---|---|"
+           "   | Named definition | struct_patch |"
+           "   | Nested node | struct_node → struct_patch |"
+           "   | Repo-wide rename | struct_occurrences → struct_rename |"
+           "   | Text or unsupported structure | patch |"
+           "   | New file or deliberate full rewrite | write |"]
+          ["" "3. EDIT THE MATCHING SCENARIO" "   | Scenario | Route |" "   |---|---|"
+           "   | Existing text | patch |" "   | New file or deliberate full rewrite | write |"])
+        [""]
+        (if struct?
+          ["4. RECOVER FROM REFUSAL"
+           "   Ambiguous target → add kind. Unnamed target → struct_node. Unsupported node → patch. Stale anchor → reread. Never retry unchanged."
+           "   patch is ANCHOR-ONLY and atomic: fresh lineno:hash from cat/rg/struct_index → from_anchor; add to_anchor for a span. Anchors go STALE after ANY write or patch."]
+          ["4. RECOVER FROM REFUSAL"
+           "   Unsupported structure → patch. Stale anchor → reread. Never retry unchanged."
+           "   patch is ANCHOR-ONLY and atomic: fresh lineno:hash from cat/rg → from_anchor; add to_anchor for a span. Anchors go STALE after ANY write or patch."])
+        ["   Never rebuild a file from cat output; it may truncate." "" "5. VERIFY"
+         "   A diff proves only text changed. Rerun the original reproduction with repl_eval, or the smallest run_tests target when no project REPL exists. Read the result."
+         "" "INVARIANT: paths stay inside the workspace root."]))))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. A `delay` so the language/env

@@ -23,8 +23,8 @@
 
 (defn- vis-ize-error
   "The Java engine is shared with maki, so its messages name the `index` tool
-   — which, since vis renamed its outline tool to `index`, is now ALSO vis's
-   name, so the leaked name needs no rewrite. For a missing-definition miss, add
+   — maki's outline tool, whereas vis's tool is now `struct_index`, so the
+   engine's leaked `index` gets vis's steer below. For a missing-definition miss, add
    the vis fallback. (All bundled languages now have working def queries as of
    pack 1.10.3-blockether.24 — a miss means the name/kind is wrong, not that the
    language is unsupported.) Keep the engine's specifics; only add the steer."
@@ -32,7 +32,7 @@
   (let [m (str msg)]
     (if (str/includes? m "No definition named")
       (str m
-           " (Re-check the name/`kind` against index(path); or edit with"
+           " (Re-check the name/`kind` against struct_index(path); or edit with"
            " write(path, content) or patch(...).)")
       m)))
 
@@ -91,7 +91,7 @@
                              target
                              (some-> kind
                                      name))
-            (throw (ex-info (str "No definition named '" target "' to move (check index(path)).")
+            (throw (ex-info (str "No definition named '" target "' to move (check struct_index(path)).")
                             {:type :ext.foundation.editing/struct-move-no-target :target target})))
 
         text

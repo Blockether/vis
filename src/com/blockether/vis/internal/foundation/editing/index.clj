@@ -32,7 +32,7 @@
 (def ^:private extra-extension->language
   "Clojure-family file extensions the pack's grammar table does NOT map, but that
    the `clojure` grammar parses cleanly — EDN is a subset of the Clojure reader,
-   so `deps.edn` / `vis.edn` / config data get real structural editing (sexpr,
+   so `deps.edn` / `vis.edn` / config data get real structural editing (struct_node,
    node replace) instead of a refused-`patch` fallback. Consulted ONLY when the
    pack's own `detectLanguageFromPath` returns nil, so it never overrides the
    pack. Drop an entry here once the pack ships it on the `clojure` grammar."
@@ -127,7 +127,7 @@
 
 (def ^:private kind-aliases
   "Terse canonical names for the pack's verbose `StructureKind`s — what `:kind`
-   carries in the `index`/`occurrences` DATA (and what struct_patch's `kind`
+   carries in the `struct_index`/`struct_occurrences` DATA (and what struct_patch's `kind`
    disambiguator matches). Only `function` → `fn` so far; all else passes through."
   {"function" "fn"})
 
@@ -313,8 +313,8 @@
      :anchor (patch/line-anchor start (line-text lines start))
      :end-anchor (patch/line-anchor end (line-text lines end))
      ;; Nesting depth (0 = top-level). The flat list drops parent linkage; depth
-     ;; lets a consumer rebuild the tree. occurrences rows are flat (no depth);
-     ;; every other def field is name-for-name the SAME as an occurrences def row.
+     ;; lets a consumer rebuild the tree. struct_occurrences rows are flat (no depth);
+     ;; every other def field is name-for-name the SAME as a struct_occurrences def row.
      :depth depth}))
 
 (defn- defs-tree
@@ -334,7 +334,7 @@
    `[{:name :kind :visibility :signature :doc :anchor :end-anchor :depth} …]`
    where the def's span is patch-ready `lineno:hash` anchors — the SOLE position
    (no redundant start/end line; `patch/anchor->line` recovers the number). So
-   `index` → `patch` needs no re-cat. With `name`, only the definitions with that
+   `struct_index` → `patch` needs no re-cat. With `name`, only the definitions with that
    exact name (there may be several — same name in different scopes). Empty when
    the language is unsupported or nothing structural was found."
   ([source language] (definitions source language nil))

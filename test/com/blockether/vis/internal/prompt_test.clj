@@ -87,7 +87,10 @@
                  (expect (str/includes? text "`unresponsive` → restart"))
                  (expect (str/includes? text "host teardown stops them"))
                  (expect (str/includes? text "attach/detach, never kill"))
-                 (expect (str/includes? text "Prefer structural editing for code"))
+                 (expect (str/includes? text "MUST route supported code edits structurally"))
+                 (doseq [tool ["`struct_index`" "`struct_patch`" "`struct_node`"
+                               "`struct_occurrences`" "`struct_rename`"]]
+                   (expect (str/includes? text tool)))
                  (expect (str/includes? text "`apropos(query)`"))
                  (expect (str/includes? text "`doc(name)`"))
                  (expect (str/includes? text "native-only"))

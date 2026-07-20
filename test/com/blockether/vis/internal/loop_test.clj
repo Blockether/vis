@@ -2819,10 +2819,10 @@
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
         (expect (= "find_files({\"query\": \"x\"})"
                    (synth {:name "find_files" :input {"query" "x"}})))
-        (expect (= "occurrences({\"name\": \"foo\"})"
-                   (synth {:name "occurrences" :input {"name" "foo"}})))
-        (expect (= "index({\"path\": \"src/x.clj\"})"
-                   (synth {:name "index" :input {"path" "src/x.clj"}})))
+        (expect (= "struct_occurrences({\"name\": \"foo\"})"
+                   (synth {:name "struct_occurrences" :input {"name" "foo"}})))
+        (expect (= "struct_index({\"path\": \"src/x.clj\"})"
+                   (synth {:name "struct_index" :input {"path" "src/x.clj"}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
@@ -2854,8 +2854,8 @@
         (expect (= "cat(\"a.clj\")" (synth {:name "cat" :input {"path" "a.clj"}})))
         (expect (= "cat(\"a.clj\", {\"range\": [1, 2]})"
                    (synth {:name "cat" :input {"path" "a.clj" "range" [1 2]}})))
-        (expect (= "sexpr(\"a.clj\", {\"nav\": [\"down\"]})"
-                   (synth {:name "sexpr" :input {"path" "a.clj" "nav" ["down"]}})))
+        (expect (= "struct_node(\"a.clj\", {\"nav\": [\"down\"]})"
+                   (synth {:name "struct_node" :input {"path" "a.clj" "nav" ["down"]}})))
         (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
         (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
                    (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
@@ -2870,8 +2870,8 @@
         (expect (= "shell_bg(\"x\", \"sleep 1\")"
                    (synth {:name "shell_bg" :input {"id" "x" "cmd" "sleep 1"}})))
         (expect (= "shell_logs(\"x\", 50)" (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
-        (expect (= "symbol_rename(\"a\", \"b\")"
-                   (synth {:name "symbol_rename" :input {"name" "a" "new_name" "b"}})))
+        (expect (= "struct_rename(\"a\", \"b\")"
+                   (synth {:name "struct_rename" :input {"name" "a" "new_name" "b"}})))
         (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
     (it "file_exists synthesizes its wire name file_exists (bound name matches)"
         (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
@@ -2940,10 +2940,10 @@
      {"cat" :observation
       "rg" :observation
       "find_files" :observation
-      "index" :observation
-      "occurrences" :observation
+      "struct_index" :observation
+      "struct_occurrences" :observation
       "file_exists" :observation
-      "sexpr" :observation
+      "struct_node" :observation
       "patch" :mutation
       "write" :mutation
       "struct_patch" :mutation}

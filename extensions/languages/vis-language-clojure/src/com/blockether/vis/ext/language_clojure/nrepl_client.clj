@@ -476,30 +476,121 @@
                      (when (map? m) (not-empty m)))))))
          (catch Throwable _ nil))))
 
+(defn- form-spans
+  "Start positions of every TOP-LEVEL form in `code` as `[line column end-line]`
+   (all 1-based), using only stdlib readers — no dependency. Skips whitespace,
+   commas, and line comments before each form; stops at EOF or the first form
+   that fails to read. Lets `error-location` name the failing top-level form by
+   index (the count of nREPL `values` emitted before the error) even when the
+   JVM stack carries no usable source position."
+  [code]
+  (let
+    [rdr
+     (clojure.lang.LineNumberingPushbackReader. (java.io.StringReader. code))
+
+     eof
+     (Object.)
+
+     skip-lead!
+     (fn []
+       (loop []
+
+         (let [ch (.read rdr)]
+           (cond (= ch -1) nil
+                 (Character/isWhitespace ch) (recur)
+                 (= (char ch) \,) (recur)
+                 (= (char ch) \;) (do (loop []
+
+                                        (let [c (.read rdr)]
+                                          (when (and (not= c -1) (not= (char c) \newline))
+                                            (recur))))
+                                      (recur))
+                 :else (.unread rdr ch)))))]
+
+    (loop [acc []]
+      (skip-lead!)
+      (let
+        [line (.getLineNumber rdr)
+         col (.getColumnNumber rdr)
+         form (try (read {:eof eof :read-cond :allow} rdr) (catch Throwable _ eof))
+         end-line (.getLineNumber rdr)]
+
+        (if (identical? form eof) acc (recur (conj acc [line col end-line])))))))
+
+(def ^:private synthetic-dispatch-re
+  "Munged names Clojure gives synthetic protocol/interface dispatch fns: their
+   compiled source line is the `defprotocol`, never the call site."
+  #"\$fn\$G\b|\$G__|/G--|G__\d")
+
+(defn- synthetic-dispatch?
+  "True when the frame carrying the error's source position is a synthetic
+   protocol-dispatch fn — its `(REPL:n)`/`NO_SOURCE_FILE:n` line points at the
+   protocol definition, so it must NOT override the value-count form position."
+  [combined]
+  (let
+    [err-frame
+     (some #(when (re-find #"\(REPL:" %) %) (str/split-lines (str (get combined "err"))))
+
+     top-trace
+     (first (get combined "trace"))]
+
+    (boolean (or (and err-frame (re-find synthetic-dispatch-re err-frame))
+                 (and top-trace
+                      (re-find #"NO_SOURCE_FILE" (str top-trace))
+                      (re-find synthetic-dispatch-re (str top-trace)))))))
+
 (defn- error-location
   "Best-effort [line column] (1-based) of the failing form WITHIN the evaluated
-   `code`, recovered from a combined eval-error map. Prefers the compiler
-   `error_data` position (`:clojure.error/line`/`:column`), then the `err`
-   headline's `(REPL:L[:C])`, then the top NO_SOURCE_FILE trace frame. Returns
-   nil when the failure carries no in-code position (e.g. deep in library code)."
-  [combined]
-  (or (let
-        [ed
-         (get combined "error_data")
+   `code`. Priority: the compiler `error_data` position
+   (`:clojure.error/line`/`:column`); then the `err` headline's `(REPL:L[:C])`
+   marker or the top `NO_SOURCE_FILE` trace frame — but ONLY when that frame is
+   real code, not a synthetic protocol-dispatch fn; then, for failures the JVM
+   leaves unlocated or misattributes to a synthetic frame (macro-expansion
+   arity, protocol method on a non-implementing type), the START of the failing
+   TOP-LEVEL form, named by counting the per-form `values` nREPL emitted before
+   the error. nil when no in-code position is recoverable (deep library code)."
+  [combined code]
+  (let
+    [ed
+     (get combined "error_data")
 
-         m
-         (when (string? ed) (try (edn/read-string ed) (catch Throwable _ nil)))
+     m
+     (when (string? ed) (try (edn/read-string ed) (catch Throwable _ nil)))
 
-         l
-         (and (map? m) (:clojure.error/line m))]
+     edl
+     (when (and (map? m) (integer? (:clojure.error/line m)))
+       [(:clojure.error/line m) (:clojure.error/column m)])
 
-        (when (integer? l) [l (:clojure.error/column m)]))
-      (let [[_ l c] (re-find #"\(REPL:(\d+)(?::(\d+))?\)" (str (get combined "err")))]
-        (when l [(Long/parseLong l) (when c (Long/parseLong c))]))
-      (some (fn [frame]
-              (when-let [[_ l] (re-find #"NO_SOURCE_FILE:(\d+)" (str frame))]
-                [(Long/parseLong l) nil]))
-            (get combined "trace"))))
+     [_ ml mc]
+     (re-find #"\(REPL:(\d+)(?::(\d+))?\)" (str (get combined "err")))
+
+     marker
+     (when ml [(Long/parseLong ml) (when mc (Long/parseLong mc))])
+
+     trace-line
+     (some (fn [frame]
+             (when-let [[_ l] (re-find #"NO_SOURCE_FILE:(\d+)" (str frame))]
+               (Long/parseLong l)))
+           (get combined "trace"))
+
+     synthetic?
+     (synthetic-dispatch? combined)
+
+     spans
+     (when (string? code) (form-spans code))
+
+     idx
+     (count (get combined "values"))
+
+     [fl fc]
+     (when (and spans (< idx (count spans))) (nth spans idx))]
+
+    (cond edl edl
+          (and marker (not synthetic?)) marker
+          (and trace-line (not synthetic?)) [trace-line nil]
+          fl [fl fc]
+          marker marker
+          trace-line [trace-line nil])))
 
 (defn- error-headline
   "The human message line for the caret: clojure.main's `err` message line (the
@@ -522,7 +613,10 @@
   [code line column message]
   (let
     [lines
-     (vec (str/split-lines code))
+     ;; Detab (one space per tab) so 1 char == 1 display column: the caret
+     ;; padding is space-based, and the compiler counts a tab as one column,
+     ;; so this keeps both the reported column and the caret aligned.
+     (mapv #(str/replace % "\t" " ") (str/split-lines code))
 
      n
      (count lines)]
@@ -561,7 +655,7 @@
    location is recoverable, so the base result is untouched."
   [combined code]
   (when (string? code)
-    (when-let [[line column] (error-location combined)]
+    (when-let [[line column] (error-location combined code)]
       (render-context code line column (error-headline combined)))))
 
 (defn- interrupt!

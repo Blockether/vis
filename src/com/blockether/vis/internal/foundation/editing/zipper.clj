@@ -53,7 +53,7 @@
   "True when `source` parses to a tree whose root carries an ERROR node (nil when
    the language can't be parsed at all — fail-open, so callers never block on an
    unparseable input). Public so `patch` can re-parse its result and refuse a
-   syntax-breaking edit, the same guard `struct_patch`/`symbol_rename` already run."
+   syntax-breaking edit, the same guard `struct_patch`/`struct_rename` already run."
   [^String lang ^String source]
   (when-let [^Tree t (parse-tree lang source)]
     (try (let [^Node r (.rootNode t)]
@@ -526,7 +526,7 @@
    exists), next / prev (depth-first) — plus its `index` among siblings and the
    sibling count (so `lefts` = index, `rights` = siblings-1-index)."
   [lang source path]
-  ;; This map is embedded verbatim into the model-facing sexpr `"can"` result,
+  ;; This map is embedded verbatim into the model-facing struct_node `"can"` result,
   ;; so it crosses the strings-only boundary — build it with string keys.
   (let [path
         (vec (or path []))
@@ -550,7 +550,7 @@
      "siblings" (when pc (long pc))}))
 
 ;; ── ANCHOR → PATH — enter the zipper straight from a `lineno:hash` row ──────────
-;; The `lineno:hash` anchor every index / occurrences / cat row carries IS the
+;; The `lineno:hash` anchor every struct_index / struct_occurrences / cat row carries IS the
 ;; zipper entry handle (vis's `@eXXXX`): validate it against live source (the same
 ;; staleness guard `patch` uses — the hash must still agree with the stated line),
 ;; then resolve to the NAMED-child index path of the node that begins there. One
@@ -576,7 +576,7 @@
               (recur (inc i)))))))))
 
 (defn path-at-anchor
-  "Resolve a `lineno:hash` `anchor` (an index / occurrences / cat row's SOLE
+  "Resolve a `lineno:hash` `anchor` (a struct_index / struct_occurrences / cat row's SOLE
    position) to a named-child index PATH — the zipper entry point for that row.
    The hash is verified against `source` with the SAME machinery `patch` uses
    (`patch/resolve-anchor-range`): a stale / misplaced anchor is refused, not
@@ -608,6 +608,6 @@
                                                  (pr-str anchor)
                                                  ") — the anchor "
                                                  "points INSIDE a form, not at its start; use "
-                                                 "sexpr(path) and nav to the node instead.")}})
+                                                 "struct_node(path) and nav to the node instead.")}})
                         (finally (.close root))))
                  (finally (.close tree)))))))))

@@ -350,7 +350,17 @@
       (expect (string/includes? @editing/editing-prompt "rg"))
       (expect (string/includes? @editing/editing-prompt "ls"))
       (expect (string/includes? @editing/editing-prompt "cat"))
-      nil))
+      nil)
+  (it "uses one compact Python-first five-step editing workflow"
+      (let [prompt (editing/available-editing-prompt)]
+        (doseq [step ["1. EXECUTE" "2. LOCATE + INSPECT" "3. EDIT THE MATCHING SCENARIO"
+                      "4. RECOVER FROM REFUSAL" "5. VERIFY"]]
+          (expect (string/includes? prompt step)))
+        (expect (string/includes? prompt "One simple operation → call its native tool directly"))
+        (expect (string/includes? prompt "Two or more calls"))
+        (expect (string/includes? prompt "use python_execution"))
+        (expect (string/includes? prompt "| Scenario | Route |"))
+        (expect (< (count prompt) 3000)))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
     ;; The classification table + presentation map live in
@@ -3166,7 +3176,14 @@
         (doseq [s struct-syms]
           (expect (false? (active? s ["markdown" "text"]))))
         (doseq [s [editing/cat-symbol editing/rg-symbol editing/find-symbol]]
-          (expect (true? (active? s ["markdown" "text"])))))
+          (expect (true? (active? s ["markdown" "text"]))))
+        (with-redefs [environment/snapshot (fn []
+                                             {:languages {:languages [{:language "markdown"}
+                                                                      {:language "text"}]}})]
+          (let [prompt (editing/available-editing-prompt)]
+            (doseq [name ["struct_index" "struct_patch" "struct_node" "struct_occurrences"
+                          "struct_rename"]]
+              (expect (not (string/includes? prompt name)))))))
     (it "a mixed repo with ANY supported language keeps them (markdown + json)"
         (expect (true? (active? editing/struct-patch-symbol ["markdown" "json"]))))
     (it "shell reconciles to bash (scan says `shell`, tree-sitter says `bash`)"

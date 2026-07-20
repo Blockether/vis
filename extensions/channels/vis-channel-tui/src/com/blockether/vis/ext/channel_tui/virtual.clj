@@ -158,12 +158,28 @@
   (proxy [LinkedHashMap] [128 0.75 true]
     (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
 
+;; Sticky PROJECTION cache — the pass-2 companion to `height-cache`.
+;; `layout` re-projects every VISIBLE bubble each frame; during a live turn
+;; the ~12Hz tick re-runs `project-message` (markdown re-wrap -> a fresh
+;; `:prewrapped-lines` vector, ~25-30 KB) for every STABLE bubble above the
+;; growing live one, even though their content is byte-identical frame to
+;; frame. That churn dominated layout allocation (~1 MB / call -> ~10-14 MB/s
+;; of garbage while streaming -> Serial-GC pauses in the log's slow frames).
+;; Memoize the projection under the SAME content key the height cache uses.
+;; The live / last bubble and windowed (`:tail-lines`) slices are NEVER routed
+;; here, so a hit only ever returns a projection identical to a fresh render.
+;; Smaller cap than the height cache: each entry pins a wrapped-line vector.
+(defonce ^:private ^LinkedHashMap projection-cache
+  (proxy [LinkedHashMap] [128 0.75 true]
+    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 512))))
+
 (defn invalidate-heights!
   "Drop the sticky height cache AND the estimate memo. Tests + whole-cache
    busts (registry-toggle resync) call this."
   []
   (locking height-cache (.clear height-cache))
-  (locking estimate-cache (.clear estimate-cache)))
+  (locking estimate-cache (.clear estimate-cache))
+  (locking projection-cache (.clear projection-cache)))
 
 (defn height-cache-size
   "Current sticky-height entry count (handy for tests / diagnostics)."
@@ -750,6 +766,19 @@
                  strip-ts))
            :else (strip-ts message)))))
 
+(defn- project-message-cached
+  "Memoized `project-message` for STABLE (non-live) bubbles, keyed exactly
+   like `height-cache-get`. Callers MUST NOT route the live / last bubble or
+   a windowed (`:tail-lines`) slice through here - those change every tick."
+  [message bubble-w settings detail-expansions session-id]
+  (let [k (height-key message bubble-w settings detail-expansions session-id)]
+    (or (locking projection-cache (.get projection-cache k))
+        (let [pm (project-message message bubble-w settings
+                                  {:session-id session-id
+                                   :detail-expansions detail-expansions})]
+          (locking projection-cache (.put projection-cache k pm))
+          pm))))
+
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;
 ;; A frame's plan: total height (for scrollbar geometry), clamped scroll
@@ -974,13 +1003,15 @@
                         tail-n
                         (when bottom-locked? (long (* 2 inner-h)))]
 
-                    (project-message m
-                                     bubble-w
-                                     settings
-                                     (cond-> {:session-id session-id
-                                              :detail-expansions detail-expansions}
-                                       tail-n
-                                       (assoc :tail-lines tail-n)))))
+                    (if last?
+                      (project-message m
+                                       bubble-w
+                                       settings
+                                       (cond-> {:session-id session-id
+                                                :detail-expansions detail-expansions}
+                                         tail-n
+                                         (assoc :tail-lines tail-n)))
+                      (project-message-cached m bubble-w settings detail-expansions session-id))))
 
                 pm
                 (with-turn-separator pm messages settings i)

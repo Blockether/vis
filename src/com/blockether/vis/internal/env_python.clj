@@ -1485,15 +1485,14 @@ def __vis_native_result_scan__(__vis_tree__):
     ;; :py-name call-shape points here); in-Python `apropos(query)` stays a real
     ;; dict for filtering. This wrapper reuses that dict and formats one
     ;; `| tool | gist |` table. Underscore-prefixed so `apropos` never lists it.
-    (try (.eval ^Context ctx "python"
-                (str "def __vis_apropos_table__(query=''):\n"
-                     "    d = apropos(query)\n"
+    (try (.eval ^Context ctx
+                "python"
+                (str "def __vis_apropos_table__(query=''):\n" "    d = apropos(query)\n"
                      "    if not d:\n"
                      "        return 'apropos(' + repr(query) + '): no tools match.'\n"
                      "    def __cell(s):\n"
                      "        return str(s).replace('\\n', ' ').replace('|', '\\\\|')\n"
-                     "    rows = ['| tool | gist |', '| --- | --- |']\n"
-                     "    for k in d:\n"
+                     "    rows = ['| tool | gist |', '| --- | --- |']\n" "    for k in d:\n"
                      "        rows.append('| `' + __cell(k) + '` | ' + __cell(d[k]) + ' |')\n"
                      "    return '\\n'.join(rows)\n"))
          (catch Throwable _ nil))
@@ -2659,6 +2658,89 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    entry."
   (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*)))
 
+;; ── Per-block eval instrumentation (memory-leak observability) ──────────────
+;; Every python_execution block is compiled to a FRESH GraalPython code unit
+;; (`exec(compile(mod,'<prog>','exec'), g)` inside `__vis_run_async__`), and
+;; BytecodeDSL keeps the source AST attached to each unit. A suspected leak
+;; retains one unit per block for the life of the JVM, so heap climbs
+;; monotonically with block count. This counter + periodic heap SAMPLE makes
+;; that growth visible in the logs: watch `heap-used-mb` (and the per-block
+;; delta) rise in lock-step with `blocks`. Cheap — Runtime totals only, no heap
+;; histogram. Cadence via VIS_PY_BLOCK_LOG_EVERY (default 25; 0 disables).
+(defonce ^:private py-block-count (atom 0))
+(defonce ^:private py-block-prev-heap (atom 0))
+(defonce ^:private py-block-prev-n (atom 0))
+
+(defn- py-block-log-every
+  "Sample cadence (blocks between heap logs) from VIS_PY_BLOCK_LOG_EVERY; 25 by
+   default, 0 disables logging, malformed input falls back to 25."
+  ^long []
+  (let [raw (System/getenv "VIS_PY_BLOCK_LOG_EVERY")]
+    (if (str/blank? raw) 25 (try (max 0 (Long/parseLong (str/trim raw))) (catch Exception _ 25)))))
+
+(defn- log-block-eval!
+  "Count one executed block and emit a heap sample: an immediate baseline on the
+   FIRST block, then every Nth. Auto-enabled — cadence 25 with NO env var needed;
+   set VIS_PY_BLOCK_LOG_EVERY=0 to silence. Called from a `finally` so both
+   successful and error blocks count (the compile happens regardless)."
+  []
+  (let
+    [n
+     (swap! py-block-count inc)
+
+     every
+     (py-block-log-every)]
+
+    (when (and (pos? every) (or (= n 1) (zero? (mod n every))))
+      (let
+        [^Runtime rt
+         (Runtime/getRuntime)
+
+         used
+         (- (.totalMemory rt) (.freeMemory rt))
+
+         max-m
+         (.maxMemory rt)
+
+         prev
+         @py-block-prev-heap
+
+         prev-n
+         @py-block-prev-n
+
+         window
+         (max 1 (- n prev-n))
+
+         delta
+         (- used prev)
+
+         mb
+         (fn [^long b]
+           (quot b 1048576))
+
+         per-blk-kb
+         (quot delta (* window 1024))]
+
+        (reset! py-block-prev-heap used)
+        (reset! py-block-prev-n n)
+        (tel/log! {:level :info
+                   :id ::python-block-eval
+                   :data {:blocks n
+                          :heap-used-mb (mb used)
+                          :heap-max-mb (mb max-m)
+                          :heap-delta-mb (mb delta)
+                          :approx-kb-per-block per-blk-kb
+                          :sample-window window}}
+                  (format
+                    "python-block-eval blocks=%d heap=%dMB/%dMB Δ=%+dMB (~%+dKB/block over last %d)"
+                    n
+                    (mb used)
+                    (mb max-m)
+                    (mb delta)
+                    per-blk-kb
+                    window))))))
+
+
 (defn- run-async-program
   "Run the program as ONE driven coroutine. `__vis_run_async__` AST-wraps it in
    an `async def` (with `global` decls for its assigned names so they persist in
@@ -2771,7 +2853,8 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
               (assoc :stdout out)
 
               attachments
-              (assoc :attachments attachments))))))))
+              (assoc :attachments attachments))))
+        (finally (log-block-eval!))))))
 
 (declare protected-rebind-error)
 

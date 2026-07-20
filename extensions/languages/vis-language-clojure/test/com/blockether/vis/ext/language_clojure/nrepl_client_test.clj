@@ -16,11 +16,12 @@
    Always closes cached client connections so the next test sees a
    clean cache."
   [f]
-  (let [srv
-        (server/start-server :port 0)
+  (let
+    [srv
+     (server/start-server :port 0)
 
-        port
-        (:port srv)]
+     port
+     (:port srv)]
 
     (try (f port) (finally (nc/close-all!) (server/stop-server srv)))))
 
@@ -85,10 +86,11 @@
 
 (defdescribe connect-failure-test
              (it "throws :clj/nrepl-connect-failed on an obviously-closed port"
-                 (let [thrown? (try (nc/eval! {:port 1 :code "(+ 1 1)"})
-                                    false
-                                    (catch clojure.lang.ExceptionInfo e
-                                      (= :clj/nrepl-connect-failed (:type (ex-data e)))))]
+                 (let
+                   [thrown? (try (nc/eval! {:port 1 :code "(+ 1 1)"})
+                                 false
+                                 (catch clojure.lang.ExceptionInfo e
+                                   (= :clj/nrepl-connect-failed (:type (ex-data e)))))]
                    (expect thrown?))))
 
 (defdescribe probe-test
@@ -148,20 +150,21 @@
   (it "close-session! removes a session from the server registry"
       (with-server
         (fn [port]
-          (let [conn
-                (#'nc/connection-for "localhost" port 5000)
+          (let
+            [conn
+             (#'nc/connection-for "localhost" port 5000)
 
-                client
-                (nrepl/client conn 5000)
+             client
+             (nrepl/client conn 5000)
 
-                session
-                (nrepl/client-session client)
+             session
+             (nrepl/client-session client)
 
-                resp
-                (doall (session {:op "eval" :code "1"}))
+             resp
+             (doall (session {:op "eval" :code "1"}))
 
-                id
-                (some msg-session-id resp)]
+             id
+             (some msg-session-id resp)]
 
             (expect (string? id))
             (expect (contains? (registry-ids) id))
@@ -171,20 +174,21 @@
   (it "eval! reuses ONE long-lived session across calls — *1 persists, nothing leaks per eval"
       (with-server
         (fn [port]
-          (let [before
-                (registry-ids)
+          (let
+            [before
+             (registry-ids)
 
-                _
-                (nc/eval! {:port port :code "(+ 1 2)" :timeout-ms 5000})
+             _
+             (nc/eval! {:port port :code "(+ 1 2)" :timeout-ms 5000})
 
-                r1
-                (nc/eval! {:port port :code "*1" :timeout-ms 5000})
+             r1
+             (nc/eval! {:port port :code "*1" :timeout-ms 5000})
 
-                _
-                (nc/eval! {:port port :code "(+ 4 5)" :timeout-ms 5000})
+             _
+             (nc/eval! {:port port :code "(+ 4 5)" :timeout-ms 5000})
 
-                new-ids
-                (remove before (registry-ids))]
+             new-ids
+             (remove before (registry-ids))]
 
             ;; `*1` from the PREVIOUS eval is visible → the SAME session was
             ;; reused across calls (a fresh clone-per-eval would see *1 unbound).
@@ -193,3 +197,129 @@
             ;; clone-and-close-per-eval churn (its per-eval leak + timeout
             ;; risk) is gone.
             (expect (= 1 (count new-ids))))))))
+
+(defdescribe
+  error-context-test
+  (it "renders a babashka-style source Context with a caret at the failing form"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval! {:port port
+                                   :code
+                                   "(defn foo [x]\n  (let [y (inc x)]\n    (/ y 0)))\n(foo 41)"
+                                   :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       ;; the offending source line is echoed, numbered
+                       (expect (re-find #"3: .*\(/ y 0\)" ctx))
+                       ;; a caret marks the position, tagged with the message
+                       (expect (re-find #"\^--- .*Divide by zero" ctx))))))
+  (it "points the caret at an unresolved symbol's compile position"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval! {:port port
+                                   :code "(let [a 1\n      b 2]\n  (undefined-symbol a b))"
+                                   :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (string? ctx))
+                       (expect (re-find #"3: .*undefined-symbol" ctx))
+                       (expect (re-find #"\^--- .*[Uu]nable to resolve" ctx))))))
+  (it "points the caret at a compiler syntax error (too many args to if)"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval!
+                          {:port port :code "(defn h []\n  (if true 1 2 3))" :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       (expect (re-find #"2: .*\(if true 1 2 3\)" ctx))
+                       (expect (re-find #"\^--- .*[Tt]oo many arguments to if" ctx))))))
+  (it "points the caret at a reader error (unmatched delimiter)"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval! {:port port
+                                   :code "(defn f [x]\n  (let [y (+ x 1])\n    y))"
+                                   :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       (expect (re-find #"2: .*\(let \[y" ctx))
+                       (expect (re-find #"\^--- .*[Uu]nmatched delimiter" ctx))))))
+  (it "aligns the caret under tab-indented source (detab keeps 1 char == 1 column)"
+      (with-server
+        (fn [port]
+          (let
+            [r
+             (nc/eval! {:port port :code "(defn tb [x]\n\t(/ x 0))\n(tb 1)" :timeout-ms 5000})
+
+             ctx
+             (str (get r "context"))
+
+             lines
+             (clojure.string/split-lines ctx)
+
+             src-row
+             (some #(when (clojure.string/starts-with? % "2: ") %) lines)
+
+             caret-row
+             (some #(when (clojure.string/includes? % "^---") %) lines)]
+
+            (expect (string? (get r "context")))
+            ;; no raw tab survives into the rendered snippet
+            (expect (not (clojure.string/includes? ctx "\t")))
+            ;; the caret column lines up with the offending form
+            (expect (= (clojure.string/index-of src-row "(/")
+                       (clojure.string/index-of caret-row "^")))
+            (expect (re-find #"\^--- .*Divide by zero" ctx))))))
+  (it "names the failing top-level form when the JVM leaves it unlocated (macro-expansion arity)"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval! {:port port
+                                   :code "(defmacro two [a b] `(+ ~a ~b))\n(two 1)"
+                                   :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       (expect (re-find #"2: .*\(two 1\)" ctx))
+                       (expect (re-find #"\^--- .*Wrong number of args" ctx))))))
+  (it "points the caret at the call site for a protocol method on a non-implementing type"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval!
+                          {:port port
+                           :code "(defprotocol P (dothing [_]))\n(defrecord R [])\n(dothing (->R))"
+                           :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       (expect (re-find #"3: .*\(dothing \(->R\)\)" ctx))
+                       (expect (re-find #"\^--- .*No implementation of method" ctx))))))
+  (it "leaves a clean eval untouched — no Context on success"
+      (with-server (fn [port]
+                     (let [r (nc/eval! {:port port :code "(+ 1 2 3)" :timeout-ms 5000})]
+                       (expect (= "6" (get r "value")))
+                       (expect (not (contains? r "context"))))))))
