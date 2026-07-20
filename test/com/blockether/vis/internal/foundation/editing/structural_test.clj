@@ -12,7 +12,9 @@
             [lazytest.core :refer [defdescribe expect it describe]]))
 
 (def ^:private clj-src "(ns demo)\n(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
+
 (def ^:private py-src "def add(a, b):\n    return a + b\n")
+
 (def ^:private rs-src "fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n")
 
 (defn- edit [path src m] (structural/edit-source path src m))

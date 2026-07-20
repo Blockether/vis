@@ -144,8 +144,11 @@
     nil))
 
 (def ^:private AUTO_TITLE_MAX_CHARS 80)
+
 (def ^:private AUTO_TITLE_TTFT_MS 15000)
+
 (def ^:private AUTO_TITLE_IDLE_MS 10000)
+
 (def ^:private AUTO_TITLE_SEMANTIC_MS 30000)
 
 (def ^:private AUTO_TITLE_HARD_DEADLINE_MS

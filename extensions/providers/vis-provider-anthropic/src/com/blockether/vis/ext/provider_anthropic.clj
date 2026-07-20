@@ -26,14 +26,20 @@
            java.nio.charset.StandardCharsets/UTF_8))
 
 (def ^:private authorize-url "https://claude.ai/oauth/authorize")
+
 (def ^:private token-url "https://platform.claude.com/v1/oauth/token")
+
 (def ^:private usage-url "https://api.anthropic.com/api/oauth/usage")
+
 (def ^:private redirect-uri "http://localhost:53692/callback")
+
 (def ^:private scopes
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
+
 (def ^:private auth-file (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
 ;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
+
 (def ^:private secure-random (delay (SecureRandom.)))
 
 (defn- random-bytes

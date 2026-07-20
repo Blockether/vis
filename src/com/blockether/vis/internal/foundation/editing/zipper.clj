@@ -59,6 +59,7 @@
     (try (let [^Node r (.rootNode t)]
            (try (.hasError r) (finally (.close r))))
          (finally (.close t)))))
+
 (defn error-nodes
   "Every ERROR / MISSING node tree-sitter finds in `source` (parsed as `lang`),
    as [{:line :col :end-line :end-col :kind :missing? :text} …] in document

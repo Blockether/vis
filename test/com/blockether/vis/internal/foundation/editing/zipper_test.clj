@@ -12,6 +12,7 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private clj-src "(ns foo)\n(defn bar [x] (+ x 1))\n")
+
 (def ^:private py-src "def foo(x):\n    return x + 1\n")
 
 (defn- child-idx-containing

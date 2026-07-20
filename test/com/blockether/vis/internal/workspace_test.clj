@@ -183,6 +183,7 @@
                     (expect (try (ws/apply! store {:workspace-id "nope"})
                                  false
                                  (catch clojure.lang.ExceptionInfo _ true)))))))
+
 (defdescribe
   fresh-draft-roundtrip-test
   (it

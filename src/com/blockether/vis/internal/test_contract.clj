@@ -50,8 +50,11 @@
 (s/def ::ns
   (s/or :one string?
         :many (s/coll-of string?)))
+
 (s/def ::only (s/coll-of string?))
+
 (s/def ::include (s/coll-of string?))
+
 (s/def ::exclude (s/coll-of string?))
 
 ;; The selector map a runner tool accepts on its opts dict (all keys optional).
@@ -62,23 +65,37 @@
 ;; =============================================================================
 
 (s/def ::language string?)
+
 (s/def ::mode #{"repl" "cli"})
+
 (s/def ::framework string?)
+
 (s/def ::tool string?)
+
 (s/def ::test (s/nilable string?))
+
 (s/def ::message (s/nilable string?))
+
 (s/def ::file (s/nilable string?))
+
 (s/def ::line (s/nilable int?))
 
 (s/def ::failure (s/keys :opt-un [::ns ::test ::message ::file ::line]))
 
 (s/def ::total nat-int?)
+
 (s/def ::pass nat-int?)
+
 (s/def ::fail nat-int?)
+
 (s/def ::selected nat-int?)
+
 (s/def ::skipped nat-int?)
+
 (s/def ::failures (s/coll-of ::failure))
+
 (s/def ::errors (s/coll-of ::failure))
+
 (s/def ::output string?)
 
 ;; The uniform result map every language pack's runner returns. :output is the

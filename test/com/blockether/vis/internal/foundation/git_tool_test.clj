@@ -4,6 +4,7 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private render #'gt/render-git-result)
+
 (def ^:private verbose-add #'gt/verbose-add-tokens)
 
 (defdescribe git-native-contract-test

@@ -64,6 +64,7 @@
 ;; =============================================================================
 
 (def ^:private default-grep-limit 250)
+
 (def ^:private max-rg-result-bytes
   "Total-bytes ceiling on a content-mode rg result — pi DEFAULT_MAX_BYTES parity
    (50KB). Once the accumulated hit text crosses it, rg stops and marks
@@ -304,6 +305,7 @@
 ;; and the next iteration stops with `:truncated? true :next-offset N`,
 ;; which the model already knows how to page through.
 (def ^:private default-cat-limit 2000)
+
 (def ^:private max-cat-window-bytes (* 50 1024)) ; 50KB — pi parity
 
 ;; =============================================================================
@@ -2434,6 +2436,7 @@
 ;; =============================================================================
 
 (def ^:private patch-required-keys #{"path" "from_anchor" "replace"})
+
 (def ^:private patch-optional-keys
   "Optional keys recognised on an anchor edit map.
    - to_anchor        end of a hashline range; defaults to from_anchor (single line)
@@ -2500,6 +2503,7 @@
 ;; -----------------------------------------------------------------------------
 
 (def ^:private patch-fail-counts (atom {}))
+
 (def ^:private patch-fail-loop-threshold 3)
 
 (defn- bump-patch-fail-count!
@@ -2984,10 +2988,12 @@
 ;; =============================================================================
 
 (def ^:private write-required-keys #{"path" "content"})
+
 (def ^:private write-optional-keys
   ;; "atomic" = the documented multi-file escape flag (read from raw args by
   ;; `mutation-atomic?`); allowed here so it isn't refused as unknown.
   #{"expected_mtime" "expected_size" "is_overwrite" "atomic" "allow_dirty"})
+
 (def ^:private write-allowed-keys (set/union write-required-keys write-optional-keys))
 
 (defn- coerce-write-args
@@ -3610,7 +3616,9 @@
          (assoc :file-count (get result "file_count")))})))
 
 (def ^:private ^:const patch-diff-context-lines 3)
+
 (def ^:private ^:const patch-diff-max-render-lines 240)
+
 (def ^:private ^:const patch-java-diff-max-lines 5000)
 
 (defn- cap-diff-lines

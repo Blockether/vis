@@ -10,14 +10,23 @@
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
+
 (def ^:private input-more-hint @#'render/input-more-hint)
+
 (def ^:private bang-prefix @#'render/bang-prefix)
+
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
+
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
+
 (def ^:private result-row-bg @#'render/result-row-bg)
+
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
+
 (def ^:private coalesce-forms vis/coalesce-forms)
+
 (def ^:private format-iteration-entry-entries @#'render/format-iteration-entry-entries)
+
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
 (defn- put-text
@@ -3364,6 +3373,7 @@
             (expect (str/includes? txt "1200×800")))))))
 
 (def ^:private render-iteration-entries @#'render/render-iteration-entries)
+
 (def ^:private tool-card-entries @#'render/tool-card-entries)
 
 (defn- entry-text

@@ -866,6 +866,7 @@ use sessions() for the index, then pass that session id."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)
+
 (def
   ^{:doc
     "await session_report_html(session_id)  # standalone HTML report for ANOTHER conversation
@@ -875,6 +876,7 @@ to a file to open in a browser. Most useful for OTHER sessions."
     :arglists '([] [session-id])}
   session-report-html
   foundation-report-html)
+
 (def
   ^{:doc
     "await sessions()  # index of EVERY past conversation, newest-first

@@ -25,10 +25,15 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
+
 (def ^:private apply-summaries (var-get #'lp/apply-summaries))
+
 (def ^:private expand-through (var-get #'eng/expand-through))
+
 (def ^:private session-fold-tool (var-get #'lp/session-fold-tool))
+
 (def ^:private tool-call->python-source (var-get #'lp/tool-call->python-source))
+
 (def ^:private irm (var-get #'lp/iteration-results-message))
 
 (defn- with-verbs

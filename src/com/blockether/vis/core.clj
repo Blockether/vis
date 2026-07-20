@@ -323,6 +323,7 @@
 ;; canonical answers are string-keyed content blocks.
 ;; =============================================================================
 (import-vars [session->markdown ir/session->markdown])
+
 (import-vars [render ir/render] [->ast ir/->ast])
 ;; Canonical per-form DISPLAY contract — channels project the whole form-display
 ;; field set through ONE list (see internal/form.clj): `->display` outbound,
@@ -548,6 +549,7 @@
   "Build extension spec and stamp caller namespace for reload/source tracking."
   [spec]
   `(extension/extension (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
+
 (import-vars [symbol extension/symbol]
              [value extension/value]
              [render-prompt extension/render-prompt]
@@ -730,10 +732,13 @@
 ;; =============================================================================
 (def add-channel-event-listener!
   (requiring-resolve 'com.blockether.vis.internal.channel-events/add-channel-event-listener!))
+
 (def remove-channel-event-listener!
   (requiring-resolve 'com.blockether.vis.internal.channel-events/remove-channel-event-listener!))
+
 (def publish-channel-event!
   (requiring-resolve 'com.blockether.vis.internal.channel-events/publish-channel-event!))
+
 (def channel-event-listeners
   (requiring-resolve 'com.blockether.vis.internal.channel-events/channel-event-listeners))
 

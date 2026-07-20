@@ -106,10 +106,13 @@
 (def ^:private action-by-char
   "Lowercase DIRECT-chord char → action (empty now)."
   (into {} (map (juxt :key :action)) bindings))
+
 (def ^:private binding-by-action (into {} (map (juxt :action identity)) bindings))
+
 (def ^:private prefix-action-by-char
   "Lowercase SECOND-key char → action, for the C-x prefix."
   (into {} (map (juxt :key :action)) prefix-commands))
+
 (def ^:private prefix-binding-by-action (into {} (map (juxt :action identity)) prefix-commands))
 
 (defn action-for
@@ -155,11 +158,13 @@
 ;; Help (toggle overlay) is NOT a structural const — it's a normal C-x prefix
 ;; command (C-x h) like every other vis verb, so it lives in `prefix-commands`.
 (def ^:const quit-key "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
+
 (def ^:const abort-key
   "C-g — Emacs `keyboard-quit` (abort): cancel a running turn / close a
    dialog / clear the draft. The ctrl-char the dispatcher matches; Esc is its
    mirror. See `abort-keys` for the full advertised set."
   \g)
+
 (def abort-keys
   "The COMPLETE set of keys that abort (cancel a running turn / close a dialog /
    clear the draft): C-g (Emacs `keyboard-quit`) and its Esc mirror. ONE source
@@ -167,19 +172,23 @@
    advertises all of them, so an abort key never fires without being shown, and
    the two never drift apart. Ordered for a stable hint (`abort-hint`)."
   [(chord abort-key) "Esc"])
+
 (defn abort-hint
   "The advertised abort chord for a footer/echo hint — every `abort-keys` label
    joined, e.g. `C-g / Esc`."
   []
   (str/join " / " abort-keys))
+
 (def ^:const recenter-key
   "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint."
   \l)
+
 (def ^:const prefix-palette-key
   "C-x p — after the C-x prefix, this key opens the Command Palette. A PLAIN `p`
    is the primary, reliable, no-config, Emacs-idiomatic palette trigger; a Ctrl'd
    second key (C-x C-p) is ALSO accepted for old muscle memory."
   \p)
+
 (def ^:const palette-meta-key
   "M-x palette alias: Alt/Option + this key also opens the palette (the canonical
    Emacs command launcher; needs \"Use Option as Meta\" on macOS).
@@ -190,4 +199,5 @@
 ;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash
 ;; with the editor, which never runs at the same time as a picker.
 (def ^:const picker-reorder-up "C-p — move the selected picker row up." \p)
+
 (def ^:const picker-reorder-down "C-n — move the selected picker row down." \n)

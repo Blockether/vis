@@ -13,8 +13,11 @@
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
 
 (def model-dir-env "VIS_PIPER_MODEL_DIR")
+
 (def voice-env "VIS_PIPER_VOICE")
+
 (def player-env "VIS_VOICE_PLAYER")
+
 (def parakeet-model-dir-env "VIS_PARAKEET_MODEL_DIR")
 
 (def default-piper-voice

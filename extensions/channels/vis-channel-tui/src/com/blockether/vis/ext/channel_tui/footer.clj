@@ -51,18 +51,23 @@
 
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level :balanced)
+
 (def ^:private default-codex-verbosity :low)
+
 (defn- chosen-model-info
   "Resolved model map for the configured root model, or nil."
   []
   (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
     (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
+
 (defn- reasoning-effort-configurable?
   [info]
   (and (boolean (:reasoning? info))
        (not= false (:reasoning-effort? info))
        (not= :zai-thinking (:reasoning-style info))))
+
 (def ^:private git-label "git")
+
 (defn- git-change-bits
   "Per-kind changed-file counts `~modified +created -deleted` (only nonzero
    segments shown), or nil when the working tree is clean."
@@ -92,6 +97,7 @@
        (conj (str "-" d)))]
 
     (when (seq parts) (str/join " " parts))))
+
 (defn- git-status-bits
   "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
    style: changed-file counts then `⇡ahead ⇣behind`; a branch with NO
@@ -131,6 +137,7 @@
        (conj "∅"))]
 
     (when (seq parts) (str/join " " parts))))
+
 (defn- git-repo-label
   "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
    the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)`."
@@ -142,6 +149,7 @@
        (when-let [bits (git-status-bits status)]
          (str " " bits))
        ")"))
+
 (defn- abbreviate-home
   "Shorten an absolute path by replacing the user's home dir with `~`."
   [^String path]
@@ -150,6 +158,7 @@
       (let [suffix (subs path (count home))]
         (if (str/blank? suffix) "~/" (str "~" suffix)))
       (str path))))
+
 (defn- git-footer-spans
   [{:strs [is_workspace is_draft draft_root] :as status}]
   ;; The chord rides ON the chip (like the `resources N (C-x s)` /
@@ -186,18 +195,22 @@
               :bold? true
               :region :right
               :priority 2}])))
+
 (def ^:private session-cost-keys
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
    "cache_write_cost" "output_cost" "total_cost"])
+
 (defn- add-cost-slot
   [acc cost k]
   (let [v (get cost k)]
     (if (number? v) (update acc k (fnil + 0.0) (double v)) acc)))
+
 (defn- add-message-cost
   [acc {:keys [cost]}]
   (cond (map? cost) (reduce #(add-cost-slot %1 cost %2) acc session-cost-keys)
         (number? cost) (update acc "total_cost" (fnil + 0.0) (double cost))
         :else acc))
+
 (defn- session-cost
   "Cumulative session cost across assistant turns. Preserves detailed
    input / cached-input / output / total slots so the footer can show the
@@ -205,17 +218,20 @@
   [messages]
   (let [totals (reduce add-message-cost {} messages)]
     (when (seq totals) totals)))
+
 (defn- first-token-number
   [tokens ks]
   (some (fn [k]
           (let [v (get tokens k)]
             (when (number? v) v)))
         ks))
+
 (defn- add-token-slot
   [acc tokens out-k aliases]
   (if-let [v (first-token-number tokens aliases)]
     (update acc out-k (fnil + 0) (long v))
     acc))
+
 (defn- add-message-tokens
   [acc {:keys [tokens]}]
   (if (map? tokens)
@@ -224,13 +240,16 @@
         (add-token-slot tokens "output" ["output"])
         (add-token-slot tokens "cached" ["cached"]))
     acc))
+
 (defn- session-tokens
   "Cumulative session token usage across assistant turns (canonical
    string-keyed map). Returns nil when no message carried usage."
   [messages]
   (let [totals (reduce add-message-tokens {} messages)]
     (when (seq totals) (merge {"input" 0 "output" 0 "cached" 0} totals))))
+
 (defonce ^:private usage-cache (atom {:messages nil :tokens nil :cost nil}))
+
 (defn- session-usage
   "Cumulative session `{:tokens :cost}`, MEMOIZED by the messages vector's
    IDENTITY. Summing tokens+cost across the whole transcript is O(messages);
@@ -246,9 +265,13 @@
       (let [n {:messages messages :tokens (session-tokens messages) :cost (session-cost messages)}]
         (reset! usage-cache n)
         n))))
+
 (def ^:private one-week-ms (* 7 24 60 60 1000))
+
 (def ^:private short-reset-formatter (DateTimeFormatter/ofPattern "EEE h:mm a" Locale/ROOT))
+
 (def ^:private long-reset-formatter (DateTimeFormatter/ofPattern "MMM d h:mm a" Locale/ROOT))
+
 (defn- format-relative-reset
   [now-ms reset-ms]
   (when reset-ms
@@ -269,6 +292,7 @@
             (pos? hours) (str hours "h" minutes "m")
             (pos? minutes) (str minutes "m")
             :else (str total-seconds "s")))))
+
 (defn- format-absolute-reset
   [now-ms reset-ms]
   (when reset-ms
@@ -283,6 +307,7 @@
          long-reset-formatter)]
 
       (.format ^DateTimeFormatter formatter zoned))))
+
 (defn- format-reset
   [now-ms reset-ms]
   (let
@@ -296,6 +321,7 @@
           relative (str "↺" relative)
           absolute (str "↺" absolute)
           :else "↺--")))
+
 (defn- report-for-current-provider
   "Report belonging to `provider`, or nil when the polled report is for
    a different provider (stale after a provider switch). Callers can
@@ -313,6 +339,7 @@
      (or (:provider-id provider-limits) (:provider-id report))]
 
     (when (and report (= provider report-provider)) report)))
+
 (defn- limits-status-text
   "Render an explicit placeholder when the report is missing or the
    provider's `:provider/limits-fn` reported a non-ok status. The host
@@ -422,6 +449,7 @@
                           rows
                           label-parts)))
       (str/join "  " (map #(format-generic-limit-row now-ms %) rows)))))
+
 (defn- generic-limit-sort-key
   [row]
   [(case (:id row)
@@ -444,6 +472,7 @@
      2
 
      3) (if (lfmt/generic-limit-has-signal? row) 0 1) (or (:label row) (name (:id row)))])
+
 (defn- generic-limits-footer-text
   "Footer-left text for the limits row. Returns either:
      - the formatted limit rows (`:status :ok` with at least one row), or
@@ -640,6 +669,7 @@
     ;; Git lives here. Provider usage moved to the second row so it sits
     ;; directly under the repository state instead of competing with it.
   ))
+
 (defn- build-usage-segments
   "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared."
   [{:keys [messages]}]
@@ -662,6 +692,7 @@
 
       cost-text
       (conj {:text cost-text :fg t/footer-fg-muted :bold? false :region :right :priority 3}))))
+
 (defn- build-limits-segments
   [db now-ms]
   ;; Limits/usage belong to the provider the SESSION actually routes through —
@@ -695,6 +726,7 @@
 (defn- hint-segment
   [text priority]
   {:text text :fg t/footer-fg-muted :bold? false :region :center :priority priority})
+
 (defn- which-key-segments
   "Emacs `which-key` strip. When the C-x prefix is ARMED (`:prefix` set on the
    input state), the echo area stops staying blank and instead lists
@@ -769,6 +801,7 @@
     t/footer-fg-strong
 
     t/footer-fg))
+
 (defn- ast->footer-text
   "Walk IR to a single PLAIN-text string for the footer packer.
 
@@ -797,6 +830,7 @@
            lines)]
 
     (str/join " " (remove str/blank? line-strs))))
+
 (defn- seg->packed
   "Convert one extension seg-map into the internal segment shape.
    Returns nil for invalid / out-of-row entries."
@@ -824,6 +858,7 @@
          :priority (long (or (:priority seg) 3))
          :join-left? (boolean (:join-left? seg))
          :kind (:kind seg)}))))
+
 (defn- extension-segments
   "Vector of segments contributed by extensions for `slot` / `row`.
 
@@ -850,6 +885,7 @@
             :when packed]
 
            packed))))
+
 (defn- extension-footer-segments
   [db now-ms ^long row]
   ;; `:tui.builtin.model/footer` is core identity (provider /
@@ -860,9 +896,13 @@
   (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer} db now-ms row))
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 (def ^:private sep "  /  ")
+
 (def ^:private sep-narrow " / ")
+
 (defn- region-spans [segments region] (filterv #(= region (:region %)) segments))
+
 (defn- separator-before [span separator] (if (:join-left? span) " " separator))
+
 (defn- spans-width
   [spans separator]
   (reduce (fn [w [i span]]
@@ -871,6 +911,7 @@
                (p/display-width (:text span))))
           0
           (map-indexed vector spans)))
+
 (defn- total-width
   "Width of all three regions plus mandatory inter-region gaps and edge
    padding. Used by `shrink-to-fit` to decide whether the current
@@ -907,6 +948,7 @@
        (long (spans-width l separator))
        (long (spans-width c separator))
        (long (spans-width r separator)))))
+
 (defn- min-priority
   "Smallest `:priority` NUMBER present (= the MOST important tier)."
   [segs]
@@ -1068,6 +1110,7 @@
     (when (seq l) (draw-spans! g l-col row l separator))
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
+
 (defn- echo-segments
   "Content for the Emacs echo-area row directly above the input box.
 
@@ -1084,6 +1127,7 @@
         loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
         (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
         :else []))
+
 (defn draw-echo-area!
   "Emacs echo area / minibuffer analogue: ONE flat row directly above the
    input box. Terminal background, NO box and NO side rails — the input box
@@ -1106,6 +1150,7 @@
   ;; Restore neutral state for whatever paints next.
   (p/clear-styles! g)
   (p/set-colors! g t/text-fg t/terminal-bg))
+
 (defn draw-footer!
   "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw -
    reads `db` once, computes segments, fits to width, writes cells.

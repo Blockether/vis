@@ -14,6 +14,7 @@
            (java.util Base64)))
 
 (defn- b64 [^String s] (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
+
 (defn- unb64 [^String s] (String. (.decode (Base64/getDecoder) s) "UTF-8"))
 
 (defn- clear-registry!

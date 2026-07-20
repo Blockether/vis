@@ -376,7 +376,9 @@
   (select-keys (ensure!) [:agents :skills]))
 
 (defn agents [] (:agents (ensure!)))
+
 (defn skills [] (:skills (ensure!)))
 
 (defn agent-by-name [nm] (first (filter #(= nm (:name %)) (agents))))
+
 (defn skill-by-name [nm] (first (filter #(= nm (:name %)) (skills))))

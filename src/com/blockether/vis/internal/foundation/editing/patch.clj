@@ -7,6 +7,7 @@
      render-hashline-block / -range-block   tuples -> `<hash>| text` gutter
      indices-matching-hash / resolve-anchor-edit-span  self-locating range replace"
   (:require [clojure.string :as str]))
+
 (defn split-content-lines
   "Split a file blob into a vec of lines. Trailing empty element (from a
    final newline) is dropped, matching the convention used by the
@@ -20,6 +21,7 @@
      (vec arr)]
 
     (if (and (pos? (count v)) (= "" (peek v))) (pop v) v)))
+
 (defn char-offset-at-line
   "Char offset in `content` where 0-based line `line-idx` starts.
    Returns `(count content)` if `line-idx` reaches past the last line.
@@ -64,12 +66,15 @@
    verifies within `hash-line-drift-tolerance`. Three hex chars keep anchors
    compact while the line coordinate disambiguates collisions."
   3)
+
 (def ^:private hash-mask
   "Low `hash-width` hex digits as a bit mask: (16^hash-width) - 1."
   (long (dec (bit-shift-left 1 (* 4 (long hash-width))))))
+
 (def ^:private hash-zero-pad
   "`hash-width` zero chars, for left-padding a short `Integer/toHexString`."
   (apply str (repeat (long hash-width) \0)))
+
 (defn line-hash
   "Stable `hash-width`-hex-char content hash of `line` (trimmed). Folds
    the spec'd `String/hashCode` algorithm over the whitespace-trimmed
@@ -93,10 +98,12 @@
      (.length hex)]
 
     (if (< c (long hash-width)) (str (subs hash-zero-pad c) hex) hex)))
+
 (def ^:const hashline-anchor-sep
   "Separator between the line number and the content hash inside an anchor
    (`<lineno>:<hash>`). A single char so the gutter stays narrow."
   ":")
+
 (defn line-anchor
   "The editable anchor for a line: `<line-number>:<content-hash>` (e.g.
    `325:0e3`). The line number LOCATES the line; the hash VERIFIES its
@@ -107,6 +114,7 @@
    reused hash can no longer silently land an edit on the wrong line."
   [ln text]
   (str ln hashline-anchor-sep (line-hash text)))
+
 (defn lines->anchors
   "`{line-number anchor}` map of every non-blank line in `tuples`, where each
    anchor is `<line-number>:<content-hash>` (`line-anchor`). The canonical
@@ -174,9 +182,11 @@
               [(anchor->line a) (anchor-value-text t)]))
        (sort-by first)
        vec))
+
 (def ^:const hashline-gutter
   "Separator between the anchor and the line text in rendered output."
   "│ ")
+
 (defn render-lineno-block
   "Render `[line-number text]` tuples as a HUMAN line-number gutter
    `<ln>│ <text>`, line numbers right-aligned to the widest number in
@@ -198,6 +208,7 @@
          (map (fn [[ln s]]
                 (str (format (str "%" width "s") (str ln)) hashline-gutter s)))
          (str/join "\n"))))
+
 (defn render-lineno-range-block
   "`render-lineno-block` analogue for `:ranges` windows — `-- range S-E --`
    headers followed by the human line-number gutter for each window."
@@ -209,6 +220,7 @@
                      "-" end
                      " --" (when (seq lines) (str "\n" (render-lineno-block lines)))))))
        (str/join "\n\n")))
+
 (defn tuples->ranges
   "Split flat `[[ln text]…]` tuples into contiguous `:ranges` windows\n   `[{:range [start end] :lines [[ln text]…]}…]`, breaking the run whenever\n   the line number jumps by more than 1. Produces exactly the shape\n   `render-lineno-range-block` / `render-hashline-range-block` consume, so a\n   flat tuple list (e.g. grouped grep hits) renders with the same\n   `-- range S-E --` gap headers as a native multi-range read."
   [tuples]
@@ -228,6 +240,7 @@
                [])
        (mapv (fn [g]
                {:range [(ffirst g) (first (peek g))] :lines g}))))
+
 (defn- line-span->char-span
   "Convert a 0-based [line-start line-end) span to a [char-start char-end]
    substring span in `content`, keeping a trailing `\n` OUTSIDE the
@@ -248,6 +261,7 @@
        char-end-raw)]
 
     [char-start char-end]))
+
 (defn indices-matching-hash
   "0-based indices of `lines` whose content `line-hash` equals the bare hash
    `h`. Pure content match — the line-number coordinate is applied separately
@@ -259,6 +273,7 @@
           (keep-indexed (fn [i l]
                           (when (= h (line-hash l)) i)))
           lines)))
+
 (def hash-line-drift-tolerance
   "How far (in lines) a content hash may sit from its stated line number
    before `resolve-one-anchor` calls the anchor MISPLACED and refuses. The
@@ -270,6 +285,7 @@
    scheme exists to stop) is refused so the model re-reads. Deliberately tight:
    a false refuse costs one re-read, a false accept corrupts the file."
   40)
+
 (defn- parse-anchor
   "Parse a `<line-number>:<hash>` anchor into `{:line L :hash H}` (L a 1-based
    long, H the hex content hash). The line number is REQUIRED: an anchor with no
@@ -289,6 +305,7 @@
      (when-not (neg? i) (parse-long (subs s 0 i)))]
 
     (if (and (not (neg? i)) line) {:line line :hash (subs s (inc i))} {:malformed true :raw s})))
+
 (defn- resolve-one-anchor
   "Resolve a single parsed `{:line :hash}` anchor to a 0-based index in
    `lines`, or `{:error {:reason KW ...}}`. The LINE locates; the hash VERIFIES
@@ -349,6 +366,7 @@
                           ;; 3. several nearby matches — hash can't disambiguate; the
                           ;;    explicit line wins (the user's `lineno:dup-hash` case)
                           :else {:index idx0}))))))))
+
 (defn resolve-anchor-range
   "Resolve `from_anchor` (and `to_anchor`, defaulting to `from_anchor` for a single
    line) against LIVE `current`. Each is a `<line-number>:<hash>` anchor: the
@@ -388,6 +406,7 @@
             (if (< ti fi)
               {:error {:reason :hashline-range-inverted :from-line (inc fi) :to-line (inc ti)}}
               {:from-line (inc fi) :to-line (inc ti)})))))))
+
 (defn resolve-anchor-range-read
   "READ-tolerant twin of `resolve-anchor-range` for the `cat :anchor` path. A read
    is NON-DESTRUCTIVE, so a stale/missing hash must not block the look the way it
@@ -444,6 +463,7 @@
             {:from-line (inc (min fi ti))
              :to-line (inc (max fi ti))
              :stale? (boolean (or (:stale? fr) (:stale? tr)))}))))))
+
 (defn resolve-anchor-edit-span
   "Resolve a content-addressed line-range edit to a CHAR SPAN against `current`,
    WITHOUT building new content: `{:start S :end E :replacement R :applied-line N}`

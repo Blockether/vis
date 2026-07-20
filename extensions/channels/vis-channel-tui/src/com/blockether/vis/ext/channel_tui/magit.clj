@@ -488,6 +488,7 @@
        (conj remote))]
 
     (action-result "Pushed" (git! root args {:timeout-secs network-timeout-secs}))))
+
 (defn current-branch
   "Short name of the current branch (`main`), or nil on a detached/unborn HEAD."
   [root]

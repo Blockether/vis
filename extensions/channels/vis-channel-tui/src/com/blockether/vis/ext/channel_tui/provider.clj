@@ -66,6 +66,7 @@
   (select-model! screen provider (vis/provider-default-model-names provider)))
 
 (def ^:private default-model-configs vis/provider-default-model-configs)
+
 (def ^:private provider-config-with-models vis/provider-config-with-models)
 
 ;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
@@ -82,7 +83,9 @@
   (get github-copilot-account-types provider-id :individual))
 
 (def ^:private copilot-oauth-wait-poll-ms 200)
+
 (def ^:private copilot-oauth-wait-timeout-ms (* 6 60 1000))
+
 (def ^:private copilot-oauth-cancelled ::copilot-oauth-cancelled)
 
 (defn- cancel-copilot-oauth-poll!
@@ -496,6 +499,7 @@
 (def ^:private url-host vis/provider-url-host)
 
 (def ^:private ^:const card-rows 3)   ;; lines per card
+
 (def ^:private ^:const card-gap 1)    ;; blank line between cards
 
 (defn- card-height
@@ -973,8 +977,11 @@
 ;; provider service (channel-neutral). Aliased privately so
 ;; the dialog code below reads unchanged.
 (def ^:private persisted-provider-config vis/provider-persisted-config)
+
 (def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)
+
 (def ^:private initial-provider-status vis/provider-initial-status)
+
 (def ^:private initial-provider-limits vis/provider-initial-limits)
 
 (defn- gateway-provider-status-safe
@@ -993,7 +1000,9 @@
           :error {:message (or (ex-message e) (str e))}})))
 
 (def ^:private safe-provider-status gateway-provider-status-safe)
+
 (def ^:private configured-provider-status gateway-provider-status-safe)
+
 (def ^:private safe-provider-limits gateway-provider-limits-safe)
 
 (defn- refresh-provider-diagnostics!

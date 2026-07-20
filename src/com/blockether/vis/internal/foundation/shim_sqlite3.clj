@@ -22,6 +22,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private db-registry (atom {}))
+
 (defonce ^:private db-counter (atom 0))
 
 (defn- reg-conn!

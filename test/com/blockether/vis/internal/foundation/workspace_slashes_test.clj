@@ -17,31 +17,37 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
+
 (defn- temp-dir
   [prefix]
   (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
                                 prefix
                                 (make-array java.nio.file.attribute.FileAttribute 0)))))
+
 (defn- delete-tree!
   [root]
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
+
 (defn- with-cwd
   "Run `f` with JVM user.dir pointed at `base` so `/draft` (which clones
    cwd) clones the tiny temp tree, not the whole repo. Restored after."
   [base f]
   (let [orig (System/getProperty "user.dir")]
     (try (System/setProperty "user.dir" base) (f) (finally (System/setProperty "user.dir" orig)))))
+
 (defn- with-store
   [f]
   (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
     (try (f store) (finally (ps/db-close! store)))))
+
 (defn- env-with
   [store]
   {:extensions (atom [(extension/extension {:ext/name "test.draft-slashes"
                                             :ext/description "Draft slash specs under test."
                                             :ext/slash-commands ws-slashes/specs})])
    :db-info store})
+
 (defn- seed-workspace!
   "Lightweight workspace row rooted at `base` (no clone) to pin the
    session before the real draft is minted."
@@ -55,6 +61,7 @@
                               :workspace-kind :trunk
                               :workspace-backend :live
                               :state :active})))
+
 (defn- pin-session!
   [store workspace-id]
   (let
@@ -75,6 +82,7 @@
                          "(id, session_soul_id, workspace_id, version, created_at) "
                          "VALUES (?,?,?,?,?)") st sid workspace-id 0 1])
     st))
+
 (defn- dispatch!
   [env store state-id line]
   (slash/dispatch env
@@ -152,6 +160,7 @@
      (workspace/create! store {:session-state-id state-id})]
 
     [env state-id draft]))
+
 (defdescribe
   dispatch-apply-test
   (it "/draft apply lands edits AND deletions made in the draft"
@@ -182,6 +191,7 @@
                                          (try (workspace/abandon! store {:workspace-id (:id draft)})
                                               (catch Throwable _ nil)))))))))))
              (finally (delete-tree! base))))))
+
 (defdescribe
   dispatch-abandon-test
   (it
@@ -219,6 +229,7 @@
                                   (try (workspace/abandon! store {:workspace-id (:id draft)})
                                        (catch Throwable _ nil)))))))))))
            (finally (delete-tree! base))))))
+
 (defdescribe
   dispatch-draft-fresh-test
   (it "/draft-fresh mints an EMPTY draft — trunk's files are NOT carried in"

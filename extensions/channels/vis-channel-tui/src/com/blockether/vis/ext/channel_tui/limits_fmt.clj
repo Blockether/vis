@@ -9,10 +9,17 @@
   (:require [com.blockether.vis.internal.limits-format :as limits-format]))
 
 (def format-limit-number limits-format/format-limit-number)
+
 (def generic-limit-label limits-format/generic-limit-label)
+
 (def percentage-limit-row? limits-format/percentage-limit-row?)
+
 (def account-plan-window-row? limits-format/account-plan-window-row?)
+
 (def format-limit-usage limits-format/format-limit-usage)
+
 (def generic-limit-has-signal? limits-format/generic-limit-has-signal?)
+
 (def label+usage limits-format/label+usage)
+
 (def dynamic-summary limits-format/dynamic-summary)

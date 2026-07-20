@@ -33,7 +33,9 @@
 ;; Helpers
 ;; =============================================================================
 (defn- ctx-session-state-id [ctx] (:session/state-id ctx))
+
 (defn- ctx-db [ctx] (or (:db-info ctx) (:db ctx)))
+
 (defn- session-workspace
   "The workspace (trunk or draft) the current session is in."
   [ctx]
@@ -42,7 +44,9 @@
           (workspace/for-session db state-id))
         (when-let [wid (:workspace/id ctx)]
           (workspace/get db wid)))))
+
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
+
 (defn- sync-confinement!
   "Push the freshly-mutated workspace `ws` into the live sandbox confinement
    pointer (`:workspace-atom`, deref'd by the gateway's `sandbox-roots-fn` on
@@ -54,6 +58,7 @@
     (some-> (:workspace-atom ctx)
             (reset! ws)))
   ws)
+
 (defn- change-line
   [{:keys [status path]}]
   (str (case status
@@ -167,6 +172,7 @@
                                     (map change-line)
                                     (str/join "\n"))
                    :slash/data {:landed landed :changed changed}}))))
+
 (defn- handle-abandon
   "`/draft abandon [reason]` — discard the draft and leave it."
   [ctx]
@@ -194,6 +200,7 @@
                    :slash/title (str "Abandoned draft '" label "' — back in your repo")
                    :slash/body (when reason (str "Reason: " reason))
                    :slash/data {:workspace-id (:id current) :reason reason}}))))
+
 (defn- handle-status
   "Bare `/draft` — are you on trunk or in a draft?"
   [ctx]
@@ -216,6 +223,7 @@
                  :slash/title "On trunk — your real repo"
                  :slash/body
                  "Editing your repo directly. /draft new <label> to start an isolated draft."})))
+
 (defn- expand-home
   "Expand a leading `~` in a typed path to the user's home dir, so
    `/root ~/code/proj` works the way a shell user expects. Everything else
@@ -524,6 +532,7 @@
       :slash/doc "Show the session's filesystem permissions."
       :slash/usage "/fs list"
       :slash/run-fn handle-fs-list}]))
+
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."
   (build-specs))

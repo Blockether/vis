@@ -18,6 +18,7 @@
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input MouseAction MouseActionType]))
+
 (def ^:const THUMB_H 1)
 ;;; ── Geometry ───────────────────────────────────────────────────────────────
 (defn geometry
@@ -96,6 +97,7 @@
       (cond (= a MouseActionType/SCROLL_UP) -1
             (= a MouseActionType/SCROLL_DOWN) 1
             :else nil))))
+
 (defn wheel-step
   "Wheel delta multiplied by the coalesced event count carried in
    `MouseAction#getButton`. Lanterna stuffs the coalesced count into
@@ -104,6 +106,7 @@
   [event]
   (when-let [d (wheel-delta event)]
     (* (long d) (max 1 (long (.getButton ^MouseAction event))))))
+
 (defn on-track?
   "True when (mx,my) falls inside the scrollbar column at any track row.
 
@@ -131,6 +134,7 @@
      (long x-band)]
 
     (and (>= mx (- col (dec x-band))) (<= mx col) (>= my top) (< my (+ top track-h)))))
+
 (defn on-thumb?
   "True when (mx,my) lands on the thumb. `bar` carries `:col :top
    [:x-band]`; `geom` is the result of `geometry`."
@@ -158,6 +162,7 @@
          (<= mx col)
          (>= my thumb-top)
          (< my (+ thumb-top (long thumb-h))))))
+
 (defn scroll-from-mouse-y
   "Convert a mouse Y on the track into a clamped scroll value.
 

@@ -218,6 +218,7 @@
                    (expect (= p/MARKER_TH_MD_TABLE_HEAD (second ms)))
                    (expect (= p/MARKER_TH_MD_TABLE_SEP (first ms)))
                    (expect (= p/MARKER_TH_MD_TABLE_ROW (nth ms 3))))))
+
 (defdescribe
   table-wrap-test
   (it

@@ -34,6 +34,7 @@
   #{:code :c :kbd})
 
 (defn- block? [x] (and (vector? x) (contains? block-tags (first x))))
+
 (defn- inline? [x] (and (vector? x) (contains? inline-tags (first x))))
 
 ;; =============================================================================
@@ -834,7 +835,9 @@
 ;; =============================================================================
 
 (defn- node-tag [node] (when (vector? node) (first node)))
+
 (defn- node-attrs [node] (if (has-attrs? node) (second node) {}))
+
 (defn- node-children [node] (if (has-attrs? node) (drop 2 node) (rest node)))
 
 (defn- raw-body

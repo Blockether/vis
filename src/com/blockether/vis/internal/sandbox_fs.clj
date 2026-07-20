@@ -30,6 +30,7 @@
            [java.nio.file Path Paths Files LinkOption StandardOpenOption]))
 
 (def ^:private ^"[Ljava.nio.file.LinkOption;" no-link-opts (make-array LinkOption 0))
+
 (def ^:private ^"[Ljava.nio.file.LinkOption;" nofollow
   (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 

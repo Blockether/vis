@@ -24,7 +24,9 @@
       (.delete f))))
 
 (def ^:private resolve-test-paths @#'core/resolve-test-paths)
+
 (def ^:private on-path? @#'interp/on-path?)
+
 (defn- has-python? [] (boolean (or (on-path? "python3") (on-path? "python"))))
 
 (defdescribe resolve-test-paths-test

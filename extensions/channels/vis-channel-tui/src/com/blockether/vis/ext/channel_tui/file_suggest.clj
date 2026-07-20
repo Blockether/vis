@@ -31,6 +31,7 @@
 (set! *unchecked-math* :warn-on-boxed)
 
 (def ^:private index-ttl-ms 30000)
+
 (def ^:private max-rows 20)
 
 ;; {:idx <Closeable fff> :built-at <ms> :building? <bool>}

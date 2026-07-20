@@ -39,6 +39,7 @@
 (def ^:private turn-eval-evidence (deref #'lp/turn-eval-evidence))
 
 (def ^:private ask-code-block-observation (deref #'lp/ask-code-block-observation))
+
 (def ^:private log-stage-level (deref #'lp/log-stage-level))
 
 (defdescribe
@@ -251,9 +252,13 @@
 (def ^:private max-tokens-exceeded-error? (deref #'lp/max-tokens-exceeded-error?))
 
 (def ^:private provider-unavailable-error? (deref #'lp/provider-unavailable-error?))
+
 (def ^:private provider-unavailable-retry? (deref #'lp/provider-unavailable-retry?))
+
 (def ^:private provider-unavailable-retry-delay-ms (deref #'lp/provider-unavailable-retry-delay-ms))
+
 (def ^:private next-retry-counters (deref #'lp/next-retry-counters))
+
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
 
 (def ^:private bumped-max-tokens-extra-body (deref #'lp/bumped-max-tokens-extra-body))
@@ -3351,10 +3356,15 @@
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))
+
 (def ^:private refresh-just-failed? (deref #'lp/refresh-just-failed?))
+
 (def ^:private note-provider-request-ok! (deref #'lp/note-provider-request-ok!))
+
 (def ^:private auth-refreshable-error? (deref #'lp/auth-refreshable-error?))
+
 (def ^:private auth-propagation-backoff-ms (deref #'lp/auth-propagation-backoff-ms))
+
 (def ^:private AUTH_PROPAGATION_WINDOW_MS (deref #'lp/AUTH_PROPAGATION_WINDOW_MS))
 
 (defn- auth-401
@@ -3415,8 +3425,11 @@
         (expect (= 5000 (auth-propagation-backoff-ms 10))))))
 
 (def ^:private env-cache (deref #'lp/cache))
+
 (def ^:private new-cache-entry (deref #'lp/new-cache-entry))
+
 (def ^:private touch-entry! (deref #'lp/touch-entry!))
+
 (def ^:private evict-if-idle! (deref #'lp/evict-if-idle!))
 
 (defn- backdate-entry!
@@ -3497,6 +3510,7 @@
                (finally (swap! env-cache dissoc k)))))))
 
 (def ^:private reap-idle-envs! (deref #'lp/reap-idle-envs!))
+
 (def ^:private heap-pressure? (deref #'lp/heap-pressure?))
 
 (defdescribe
@@ -3574,6 +3588,7 @@
                          (heap-pressure?)))))))
 
 (def ^:private bump-turns! (deref #'lp/bump-turns!))
+
 (def ^:private recycle-env! (deref #'lp/recycle-env!))
 
 (defdescribe env-recycle-test

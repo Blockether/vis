@@ -30,13 +30,21 @@
 ;; =============================================================================
 
 (def ^:private CLIENT_ID "app_EMoamEEZ73f0CkXaXp7hrann")
+
 (def ^:private AUTHORIZE_URL "https://auth.openai.com/oauth/authorize")
+
 (def ^:private TOKEN_URL "https://auth.openai.com/oauth/token")
+
 (def ^:private REDIRECT_URI "http://localhost:1455/auth/callback")
+
 (def ^:private SCOPE "openid profile email offline_access")
+
 (def ^:private JWT_CLAIM_PATH "https://api.openai.com/auth")
+
 (def ^:private CODEX_BASE_URL "https://chatgpt.com/backend-api")
+
 (def ^:private AUTH_FILE (str (System/getProperty "user.home") "/.vis/openai-codex-auth.json"))
+
 (def ^:private ^:const REFRESH_MARGIN_MS (* 5 60 1000))
 
 ;; =============================================================================
@@ -522,6 +530,7 @@
       (authenticated-limits-report!))))
 
 (require '[com.blockether.vis.core :as vis])
+
 (require '[com.blockether.svar.core :as svar])
 
 ;; ---------------------------------------------------------------------------

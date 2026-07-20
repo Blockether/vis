@@ -86,6 +86,7 @@
   {:active-extensions (atom [{:ext/language-tools langtools}])})
 
 (def ^:private py-pack [{:language "python" :repl-eval-fn identity :start-repl-fn identity}])
+
 (def ^:private clj-pack
   [{:language "clojure"
     :format-fn identity

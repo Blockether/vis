@@ -16,6 +16,7 @@
            (java.nio.file.attribute BasicFileAttributes)))
 
 (def ^:const default-max-files 10000)
+
 (def ^:const default-deadline-ms 1000)
 
 (def ^:private skip-directories

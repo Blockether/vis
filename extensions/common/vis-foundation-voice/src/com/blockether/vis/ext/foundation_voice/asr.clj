@@ -218,6 +218,7 @@
   (.delete f))
 
 (def ^:private bundled-resource-dir "voice-assets/parakeet")
+
 (def ^:private bundled-file-names
   ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"])
 

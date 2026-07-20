@@ -6,6 +6,7 @@
 
 ;; The interesting fns are private; reach them the way loop-test does.
 (def ^:private maybe-auto-title! (deref #'titling/maybe-auto-title!))
+
 (def ^:private provisional-title? (deref #'titling/provisional-title?))
 
 (defn- env*

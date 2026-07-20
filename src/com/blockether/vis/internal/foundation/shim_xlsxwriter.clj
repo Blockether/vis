@@ -17,9 +17,11 @@
 ;; Host-side registry: handle (long) -> {:wb XSSFWorkbook :styles (atom [style])}.
 
 (defonce ^:private wb-registry (atom {}))
+
 (defonce ^:private wb-counter (atom 0))
 
 (defn- b64enc [^bytes ba] (.encodeToString (Base64/getEncoder) ba))
+
 (defn- entry-of [h] (or (get @wb-registry (long h)) (throw (ex-info "Workbook is closed." {}))))
 
 (def ^:private color-names

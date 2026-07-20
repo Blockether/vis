@@ -13,14 +13,23 @@
 ;; failure modes so a single broken implementation surfaces clearly.
 
 (def ASCII "abc")          ;; 3 cells / 3 chars / 3 columns
+
 (def CJK "日本語")        ;; 3 cells / 3 chars / 6 columns (each glyph double-width)
+
 (def EMOJI_BMP_TEXT "\u2615")  ;; 1 cell / 1 char / TWO cols (☕ hot beverage - Emoji_Presentation=Yes)
+
 (def EMOJI_BMP_NARROW "\u2764")  ;; 1 cell / 1 char / 1  col   (❤ heavy heart - Emoji_Presentation=No, narrow without VS-16)
+
 (def EMOJI_BMP_WIDE "\u2705")  ;; 1 cell / 1 char / TWO cols (✅ white check mark button - the bug)
+
 (def EMOJI_BMP_STAR "\u2B50")  ;; 1 cell / 1 char / TWO cols (⭐ star)
+
 (def EMOJI_BMP_BOLT "\u26A1")  ;; 1 cell / 1 char / TWO cols (⚡ high voltage)
+
 (def EMOJI_SMP "\uD83D\uDCC1")  ;; 1 cell / 2 chars / 2 columns (📁 - supplementary plane)
+
 (def FLAG_PL "\uD83C\uDDF5\uD83C\uDDF1") ;; 1 cell / 4 chars / 2 columns (🇵🇱 - regional indicator pair)
+
 (def MIXED (str "x " EMOJI_SMP " y")) ;; "x 📁 y" - 5 cells / 6 chars / 6 columns
 
 (defmacro ^:private with-width-mode
@@ -194,7 +203,9 @@
                            (expect (identical? CJK (p/truncate-cols CJK 99))))))
 
 (def ^:private ESC (str \u001b))
+
 (defn- strip-ansi [s] (str/replace s (re-pattern (str ESC "\\[[0-9;]*m")) ""))
+
 (defn- sgr [code] (str ESC "[" code "m"))
 
 (defdescribe

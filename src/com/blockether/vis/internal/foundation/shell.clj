@@ -72,24 +72,30 @@
 ;; =============================================================================
 
 (def ^:private default-timeout-secs 120)
+
 (def ^:private max-timeout-secs 600)
+
 (def ^:private max-sync-head-chars
   "Prefix of a SYNC stream always kept: the command's OPENING context —
    compile errors, the first failing assertion, the banner that says WHAT ran."
   4000)
+
 (def ^:private max-sync-tail-chars
   "Suffix of a SYNC stream always kept: build / test failures and the final
    summary live at the END. Only the MIDDLE is dropped when a stream is huge —
    never the head, never the tail — so nothing important silently disappears."
   12000)
+
 (def ^:private max-bg-lines
   "Ring-buffer cap per background shell; older lines are dropped (counted)."
   2000)
+
 (def ^:private max-line-chars
   "Per-line char cap in the background pump. A newline-free stream (e.g.
    `cat big.bin`) would otherwise let a line builder grow one unbounded line
    in memory; we force a break at this width instead."
   16000)
+
 (def ^:private default-log-tail 200)
 
 (defn- now-ms ^long [] (System/currentTimeMillis))

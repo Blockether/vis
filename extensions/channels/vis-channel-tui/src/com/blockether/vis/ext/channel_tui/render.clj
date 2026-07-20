@@ -37,11 +37,14 @@
 ;; bubble while we re-format from scratch" cliff like the old
 ;; clear-the-whole-thing strategy.
 (def ^:private ^:const fmt-cache-cap 4096)
+
 (defn- make-fmt-cache
   ^LinkedHashMap []
   (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
     (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) fmt-cache-cap))))
+
 (defonce ^:private ^LinkedHashMap fmt-cache (make-fmt-cache))
+
 (defonce ^:private ^AtomicLong fmt-cache-gen (AtomicLong.))
 
 (defmacro with-cache
@@ -89,6 +92,7 @@
    reads under is what makes the guard race-free."
   [^LinkedHashMap m ^AtomicLong gen]
   (locking m (.clear m) (.incrementAndGet gen)))
+
 (defn- cached*
   [k compute-fn]
   ;; LinkedHashMap is not thread-safe - the render thread used to be
@@ -109,11 +113,13 @@
   ;; messages in order; by the time the render thread asks for the
   ;; same key it's almost always already a hit).
   (with-cache fmt-cache fmt-cache-gen k (compute-fn)))
+
 (defn invalidate-cache!
   "Drop every cached projection. Call on settings changes that the
    key tuple doesn't capture, or from tests."
   []
   (clear-cache! fmt-cache fmt-cache-gen))
+
 (defn cache-size
   "Current number of entries (handy for tests/diagnostics)."
   ^long []
@@ -159,6 +165,7 @@
                     (reset! live-body-throttle-cell {:key k :body b :at (long now-ms)})
                     b)))
     (cached* k compute-fn)))
+
 (defn repeat-str
   "Allocate a String of `n` copies of `ch`. Drop-in replacement for
    `(apply str (repeat n ch))` - bypasses lazy-seq + per-char
@@ -177,18 +184,22 @@
   (boolean (or (#{\u200B \u200C \u200D \uFEFF} ch)
                (<= (int \u2060) (int ch) (int \u206F))
                (<= (int \uE001) (int ch) (int \uE02D)))))
+
 (defn- split-structural-line-marker
   [^String line]
   (when (and (string? line) (pos? (count line)))
     (let [ch (.charAt line 0)]
       (when (structural-line-marker? ch) [(subs line 0 1) (subs line 1)]))))
+
 (def ^:private inline-style-order [:bold :italic :strike :code :link])
+
 (def ^:private inline-style->sentinels
   {:bold [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF]
    :italic [p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF]
    :strike [p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF]
    :code [p/INLINE_CODE_ON p/INLINE_CODE_OFF]
    :link [p/INLINE_LINK_ON p/INLINE_LINK_OFF]})
+
 (def ^:private inline-sentinel->transition
   {p/INLINE_BOLD_ON [:on :bold]
    p/INLINE_BOLD_OFF [:off :bold]
@@ -200,6 +211,7 @@
    p/INLINE_CODE_OFF [:off :code]
    p/INLINE_LINK_ON [:on :link]
    p/INLINE_LINK_OFF [:off :link]})
+
 (defn- inline-state-after
   [active ^String line]
   (loop
@@ -221,6 +233,7 @@
                    :off
                    (vec (remove #{style} active))))
           (recur (inc idx) active))))))
+
 (defn- active-inline-prefix
   [active]
   (let [active-set (set active)]
@@ -228,6 +241,7 @@
       (keep (fn [style]
               (when (active-set style) (first (inline-style->sentinels style))))
             inline-style-order))))
+
 (defn- active-inline-suffix
   [active]
   (let [active-set (set active)]
@@ -235,6 +249,7 @@
       (keep (fn [style]
               (when (active-set style) (second (inline-style->sentinels style))))
             (reverse inline-style-order)))))
+
 (defn- rebalance-inline-sentinel-wraps
   "When a markdown inline span crosses a visual wrap boundary, repeat its
    zero-width sentinels on each physical row. Otherwise a long inline code span
@@ -259,6 +274,7 @@
 
         (recur (next remaining) active' (conj out line')))
       out)))
+
 (defn- wrap-unmarked-line-chunks
   [^String line ^long max-width]
   (if (<= (p/display-width line) max-width)
@@ -305,10 +321,12 @@
                     :else
                     ;; No space found - hard break at column boundary
                     (recur (subs remaining cut) (conj acc chunk))))))))))
+
 (defn- wrap-unmarked-line
   [^String line ^long max-width]
   (let [lines (wrap-unmarked-line-chunks line max-width)]
     (if (> (count lines) 1) (rebalance-inline-sentinel-wraps lines) lines)))
+
 (defn- wrap-line-preserving-marker
   [line max-width]
   (if-let [[marker body] (split-structural-line-marker line)]
@@ -316,6 +334,7 @@
       [line]
       (mapv #(str marker %) (wrap-unmarked-line body max-width)))
     (wrap-unmarked-line line max-width)))
+
 (defn- truncate-ansi-cols
   "ANSI-SGR-aware column clip: preserves `\u001b[..m` escapes as zero-width and
    never lets a raw ESC (0x1b) reach Lanterna's grapheme splitter (which throws on
@@ -326,6 +345,7 @@
    single middle dot."
   ^String [s ^long max-cols]
   (p/ansi-truncate-cols s max-cols))
+
 (defn- clip-line-preserving-marker
   "Clip a formatted chat-bubble row to `max-width` display columns.
 
@@ -338,13 +358,16 @@
     (if-let [[marker body] (split-structural-line-marker line)]
       (str marker (truncate-ansi-cols body max-width))
       (truncate-ansi-cols (str line) max-width))))
+
 (defn- clip-lines-preserving-markers
   [lines max-width]
   (mapv #(clip-line-preserving-marker % max-width) lines))
+
 (defn- full-band-marker?
   [line]
   (let [marker (when (and (string? line) (pos? (count line))) (subs line 0 1))]
     (contains? #{p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD} marker)))
+
 (defn- clipped-lines
   "Memoized clipping for prewrapped painter lines. Large trace bubbles can
    carry hundreds of rows plus occasional huge raw tool-output rows; scrolling
@@ -364,6 +387,7 @@
                  (clip-line-preserving-marker line (if (full-band-marker? line) full-w content-w)))
                raw-lines)
          (clip-lines-preserving-markers raw-lines content-w)))))
+
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
    `wrap-text` itself."
@@ -372,17 +396,21 @@
     [""]
     (let [input-lines (str/split-lines text)]
       (into [] (mapcat #(wrap-line-preserving-marker % max-width)) input-lines))))
+
 (defn wrap-text
   "Memoized `wrap-text*`. Keyed by source-string identity so finalized
    message texts hit the cache across frames (their string instance is
    stable on the immutable message map)."
   [text max-width]
   (cached* [::wrap (System/identityHashCode text) (long max-width)] #(wrap-text* text max-width)))
+
 (defn wrap-messages
   "Wrap a vec of display lines to fit within max-width. Returns flat vec of wrapped lines."
   [messages max-width]
   (into [] (mapcat #(wrap-text % max-width)) messages))
+
 (def ^:private ^:const phi 1.618)
+
 (def ^:private dialog-chrome-w 4)
 ;; border(1) + pad(1) each side
 (def ^:private dialog-chrome-h 6)
@@ -460,6 +488,7 @@
   "Cols of empty space on each end of the input-box top/bottom rules.
    Total rule width = `cols - 2 * INPUT_BORDER_HORIZONTAL_PAD`."
   2)
+
 (defn- draw-box-border!
   "Draw a single-line box border. Optionally embeds a centered hint
    string on the top edge (typically the keybinding strip).
@@ -524,6 +553,7 @@
 
          (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint))
          (.putString g (int pad) (int box-bottom) padded-bar))))))
+
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
   [^TextGraphics g box-top box-bottom cols]
@@ -583,7 +613,9 @@
    The previous value (1) made an empty editor render four rows tall
    (rule + pad + line + pad + rule) when three is the right minimum."
   0)
+
 (def ^:private input-pad-x "Horizontal padding (cols left/right of text inside the input box)." 2)
+
 (defn input-text-w
   "Visible text width (in columns) inside the input box for a given
    terminal `cols`. Single source of truth so screen.clj can compute
@@ -595,6 +627,7 @@
    terminal width - `text-w` = `cols` (clamped to >=1)."
   ^long [^long cols]
   (max 1 (- cols (* 2 (long input-pad-x)))))
+
 (defn- wrap-input-line
   "Soft-wrap one logical input line into visual segments at `text-w`
    columns. Always returns a non-empty vec (empty input -> [\"\"])."
@@ -619,6 +652,7 @@
           (persistent! acc)
           (let [end (min n (+ start text-w))]
             (recur end (conj! acc (subs line start end)))))))))
+
 (defn visual-rows-for-line
   "How many visual rows logical line `line` occupies when soft-wrapped
    at `text-w` cols. Empty line still counts as 1 (a typable row)."
@@ -634,6 +668,7 @@
           :else (cond-> (quot n text-w)
                   (pos? (long (mod (long n) (long text-w))))
                   inc))))
+
 (defn input-visual-row-count
   "Total visual rows occupied by every logical line in the input
    editor when soft-wrapped at `text-w` cols."
@@ -642,6 +677,7 @@
             (+ acc (visual-rows-for-line line text-w)))
           0
           lines))
+
 (defn- soft-wrap-input
   "Translate the logical editor state `{:lines :crow :ccol}` into a
    visual layout suitable for rendering. Returns:
@@ -680,6 +716,7 @@
     {:visual-lines (into [] cat wrapped)
      :cursor-vrow (+ (long (nth offsets crow)) (long seg-idx))
      :cursor-vcol seg-off}))
+
 (defn- input-more-hint
   "Left-edge label for the input top border when the editor has more
    visual rows than the visible input body can show. The count is the
@@ -687,6 +724,7 @@
   [total-visual-rows text-rows]
   (let [hidden (max 0 (- (long total-visual-rows) (long text-rows)))]
     (when (pos? hidden) (str " " hidden " more "))))
+
 (defn- bang-prefix
   "The `!`/`!&` shell-sugar marker at the head of `line`. Returns \"!&\", \"!\",
    or nil, so the input tints the marker in the shell accent the INSTANT the
@@ -812,11 +850,13 @@
         (.putString g (+ input-pad-x lead) text-top bang-pfx)))
     ;; Cursor position (visual coords)
     [(+ input-pad-x (long cursor-vcol)) (+ text-top (- (long cursor-vrow) v-scroll))]))
+
 (def ^:private slash-desc-separator
   "Visual separator between the inline-code usage chip and the italic
    description. Mirrors the markdown convention `\\`/cmd\\` - description`
    so the row reads like one rendered list bullet."
   " - ")
+
 (defn- draw-slash-suggestion-row!
   "Paint one suggestion row inside the inset span [`left`, `left+inner-w`).
 
@@ -935,7 +975,9 @@
           (p/set-fg! g t/dialog-hint)
           (p/styled g [p/ITALIC] (p/put-str! g (+ (long chip-end) (long sep-w)) row desc))
           (p/set-fg! g row-fg))))))
+
 (def ^:private slash-title-label "Slash commands")
+
 (def ^:private slash-title-hints
   ;; Flex items rendered space-between in the title bar. Keys are
   ;; rendered BOLD to match the dialog `draw-hint-bar!` idiom; the
@@ -946,11 +988,14 @@
   ;; the input so the user can edit args before running. Keep this
   ;; in sync with screen.clj slash-suggestion key handling.
   [["↑↓/wheel" "select"] ["Enter/Tab" "complete"]])
+
 (def ^:private file-title-label "Files")
+
 (def ^:private file-title-hints
   ;; Same flex layout as the slash title, but the completion verb is
   ;; "attach" — the `@` picker inserts a file mention, it doesn't run a command.
   [["↑↓/wheel" "select"] ["Enter/Tab" "attach"]])
+
 (defn- draw-slash-title-bar!
   "Render the suggestion overlay title row — for slash commands OR the inline
    `@` file picker (same overlay, different `title-label`/`title-hints`).
@@ -1069,6 +1114,7 @@
                            (p/truncate-cols (str " " a)
                                             (max 0 (- (long text-x1) (+ (long col) (long k-w))))))))
            (recur (inc (long i)) (+ (long col) (long size) (long gap)))))))))
+
 (defn draw-slash-command-suggestions!
   "Overlay fuzzy slash-command suggestions immediately above the input box.
 
@@ -1324,15 +1370,25 @@
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 ;; Line markers live in primitives - aliases for local readability.
 (def ^:private thinking-marker p/MARKER_THINKING)
+
 (def ^:private code-marker p/MARKER_CODE)
+
 (def ^:private result-marker p/MARKER_RESULT)
+
 (def ^:private sep-marker p/MARKER_SEP)
+
 (def ^:private code-ok-marker p/MARKER_CODE_OK)
+
 (def ^:private code-err-marker p/MARKER_CODE_ERR)
+
 (def ^:private err-result-marker p/MARKER_ERR_RESULT)
+
 (def ^:private duration-marker p/MARKER_DURATION)
+
 (def ^:private iteration-hdr-marker p/MARKER_ITERATION_HDR)
+
 (def ^:private recap-marker p/MARKER_RECAP)
+
 (def ^:private recap-kinds
   "Known recap badge tokens. Drives both the per-row meta tag and
    the painter's color picker. Keep the keys EXACTLY equal to the
@@ -1344,57 +1400,100 @@
    reads it) lives in the same paint loop, hundreds of lines above
    the recap row builders."
   #{"TITLE" "TASK" "SPEC" "FACT" "RECAP" "CONSULT"})
+
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
+
 (def ^:private code-pad-marker p/MARKER_CODE_PAD)
+
 (def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
+
 (def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
+
 (def ^:private iteration-pad-marker p/MARKER_ITERATION_PAD)
+
 (def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
+
 (def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
+
 (def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
+
 (def ^:private hint-marker p/MARKER_HINT)
+
 (def ^:private queue-hdr-marker p/MARKER_QUEUE_HDR)
+
 (def ^:private queue-item-marker p/MARKER_QUEUE_ITEM)
+
 (def ^:private queue-border-marker p/MARKER_QUEUE_BORDER)
+
 (def ^:private md-h1-marker p/MARKER_MD_H1)
+
 (def ^:private md-h2-marker p/MARKER_MD_H2)
+
 (def ^:private md-h3-marker p/MARKER_MD_H3)
+
 (def ^:private md-bold-marker p/MARKER_MD_BOLD)
+
 (def ^:private md-code-marker p/MARKER_MD_CODE)
+
 (def ^:private md-bullet-marker p/MARKER_MD_BULLET)
+
 (def ^:private md-table-head-marker p/MARKER_MD_TABLE_HEAD)
+
 (def ^:private md-table-sep-marker p/MARKER_MD_TABLE_SEP)
+
 (def ^:private md-table-row-marker p/MARKER_MD_TABLE_ROW)
+
 (def ^:private md-quote-marker p/MARKER_MD_QUOTE)
+
 (def ^:private md-hr-marker p/MARKER_MD_HR)
+
 (def ^:private md-summary-marker p/MARKER_MD_SUMMARY)
+
 (def ^:private tool-output-indent "Visible left margin for result rows under a tool call." "  ")
+
 (def ^:private tool-output-indent-cols (p/display-width tool-output-indent))
+
 (def ^:private code-block-h-pad
   "Left padding (cols) for ANSWER markdown fenced-code rows so the code
    text doesn't hug the colored band's left edge. The band itself fills
    the full message column; the right gap comes from text using the
    narrower content width while the fill uses the wider bubble width."
   2)
+
 (def ^:private output-indentable-markers #{code-err-pad-marker})
+
 (def ^:private th-md-h1-marker p/MARKER_TH_MD_H1)
+
 (def ^:private th-md-h2-marker p/MARKER_TH_MD_H2)
+
 (def ^:private th-md-h3-marker p/MARKER_TH_MD_H3)
+
 (def ^:private th-md-bold-marker p/MARKER_TH_MD_BOLD)
+
 (def ^:private th-md-code-marker p/MARKER_TH_MD_CODE)
+
 (def ^:private th-md-bullet-marker p/MARKER_TH_MD_BULLET)
+
 (def ^:private th-md-table-head-marker p/MARKER_TH_MD_TABLE_HEAD)
+
 (def ^:private th-md-table-sep-marker p/MARKER_TH_MD_TABLE_SEP)
+
 (def ^:private th-md-table-row-marker p/MARKER_TH_MD_TABLE_ROW)
+
 (def ^:private th-md-quote-marker p/MARKER_TH_MD_QUOTE)
+
 (def ^:private th-md-hr-marker p/MARKER_TH_MD_HR)
+
 (def ^:private th-md-summary-marker p/MARKER_TH_MD_SUMMARY)
+
 (def ^:private turn-stamp-pattern #"\bt\d+/i\d+/(?:b|f)\d+\b")
+
 (def ^:private code-text-inset-markers
   #{code-marker code-ok-marker code-err-marker result-marker err-result-marker th-md-code-marker
     thinking-marker th-md-h1-marker th-md-h2-marker th-md-h3-marker th-md-bold-marker
     th-md-bullet-marker th-md-quote-marker th-md-hr-marker th-md-summary-marker
     th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker})
+
 (defn- ansi-code->fg
   [code current-fg base-fg]
   (case code
@@ -1438,12 +1537,14 @@
     t/code-success-fg
 
     current-fg))
+
 (defn- parse-ansi-codes
   [s]
   (into []
         (keep (fn [part]
                 (try (Long/parseLong part) (catch NumberFormatException _ nil))))
         (str/split (or s "") #";")))
+
 (defn- ansi-codes->fg
   [codes current-fg base-fg]
   ;; An empty SGR (`ESC[m`, canonically ESC[0m) is a full reset — git's own
@@ -1508,6 +1609,7 @@
                     fg* (ansi-codes->fg codes fg base-fg)]
 
                    (recur (inc (long m-idx)) col fg*)))))))))))
+
 (defn- paint-turn-stamp!
   "Overdraw canonical tN/iN/bN stamps in muted italic. Used by footer
    rows and collapsed tool badge rows so scope stays visible but dim."
@@ -1517,12 +1619,15 @@
       (let [col (p/display-width (subs (str raw) 0 ci))]
         (p/set-colors! g t/dialog-hint bg)
         (p/styled g [p/ITALIC] (p/put-str! g (+ (long x) (long col)) y stamp))))))
+
 (defn- paint-code-pad-payload!
   "Paint optional code-pad payloads. Blank pad rows only fill bg;
    payload rows can also show turn/block stamps in muted italic."
   [^TextGraphics g x y raw base-fg bg]
   (when (seq raw) (paint-ansi-line! g x y raw base-fg bg) (paint-turn-stamp! g x y raw bg)))
+
 (defn- warning-message? [text] (and (string? text) (str/starts-with? text "Warning:")))
+
 (defn- paint-table-data-line!
   "Two-pass paint for a table header or body row.
 
@@ -2962,6 +3067,7 @@
              (if footer? 1 0)
              (if note? 1 0)
              1))))))
+
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
    label(1) + optional top-pad(1, user only) + wrapped-lines
@@ -3021,6 +3127,7 @@
      (if footer? 1 0)]
 
     (+ top-sep-h 1 top-pad (count lines) bottom-pad footer-gap (if footer? 1 0) (if note? 1 0) 1)))
+
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by projected line identity when
    available; live progress keeps stable prewrapped body lines and only
@@ -3034,6 +3141,7 @@
             (boolean turn-separator?) iteration-count duration-ms tokens cost status llm-selected
             llm-actual llm-fallback? llm-routing-trace (long max-w)]
            #(bubble-height* message max-w)))
+
 (defn total-messages-height
   "Calculate total row height for a vec of structured messages."
   [messages max-w]
@@ -3044,6 +3152,7 @@
    e.g. (label-text \"iteration\" 1) => \"ITERATION 1\""
   ([s] (str/upper-case (str s)))
   ([s n] (str (str/upper-case (str s)) " " n)))
+
 (defn- error-trace-headline
   [error]
   (when-let [trace (:trace error)]
@@ -3053,6 +3162,7 @@
             first
             str/trim
             not-empty)))
+
 (defn- error-detail-text
   "A non-empty, INFORMATIVE one-line error string — NEVER a content-free
    \"unknown error\". Prefers `:message`, then the first `:trace` line, then
@@ -3071,7 +3181,9 @@
         (str "error: " (pr-str detail)))
       (when (and error (not (map? error))) (not-empty (str error)))
       "error: the engine produced no message (please report — this is a bug)"))
+
 (defn- form-error-headline [error] (error-detail-text error))
+
 (defn- inline-error-context-lines
   "Babashka-style code context for form eval errors. Kept inside the
    code band so failing source, caret, error message, and status occupy
@@ -3117,6 +3229,7 @@
                          (= idx0 arrow-idx0)
                          (conj arrow-line)))
                      (range total)))))))
+
 (defn- form-error-only-iteration?
   "True when an iteration carries no iter-level `:error` but its forms
    reduce to a single zero-code form that errored. Provider transport
@@ -3130,6 +3243,7 @@
          (= 1 (count forms))
          (let [f (first forms)]
            (and (str/blank? (str (:code f))) (map? (:error f)) (= :error (:result-kind f)))))))
+
 (defn- form-error-only-error
   "Pull the placeholder form's `:error` map out of a form-error-only
    iteration. Returns nil when the iteration is not in that shape."
@@ -3139,9 +3253,11 @@
         :forms
         first
         :error)))
+
 (defn- error-map-signature
   [err]
   (when (map? err) [(:type err) (:message err) (get-in err [:data :raw-data])]))
+
 (defn error-signature
   "Stable comparison key for two trace `:error` maps. Returns nil for
    non-error iterations (so they never collapse).
@@ -3157,15 +3273,18 @@
   [entry]
   (when-let [err (or (:error entry) (form-error-only-error entry))]
     (error-map-signature err)))
+
 (defn- inline-form-error-signatures
   [forms]
   (->> forms
        (keep (fn [{:keys [code error]}]
                (when (and (map? error) (not (str/blank? (str code)))) (error-map-signature error))))
        set))
+
 (defn- inline-rendered-form-error?
   [forms error]
   (contains? (inline-form-error-signatures forms) (error-map-signature error)))
+
 (def ^:private reasoning-auto-collapse-line-threshold
   "Reasoning PREVIEW height. Up to this many rows of reasoning are
    ALWAYS shown — short reasoning (≤ this many rows) renders inline with
@@ -3174,6 +3293,7 @@
    (same affordance as tool op rows). The opening of the reasoning
    (usually the plan) stays visible without the full wall of text."
   vis/reasoning-preview-line-limit)
+
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -3193,6 +3313,7 @@
        (.length s)]
 
       [n (subs s 0 (min 64 n)) (subs s (max 0 (- n 256)))])))
+
 (defn- visible-iteration-entry
   "Filter `:forms` down to visibly-running/completed entries. When
    `show-silent?` is true the entry passes through unchanged; otherwise
@@ -3204,6 +3325,7 @@
             :forms
             (fn [forms]
               (vec (remove :silent? (or forms [])))))))
+
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
@@ -3224,6 +3346,7 @@
            [(:vis/tool-name c) (:tool-color-role c) (text-fingerprint (:result-summary c))
             (text-fingerprint (:result-render c))])
          cards)])
+
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
    field `format-iteration-entry-entries` reads. No `identityHashCode`
@@ -3248,10 +3371,12 @@
    ;; it here the fingerprint is unchanged and the cache returns the stale,
    ;; prose-less render — the commentary block silently vanished.
    (text-fingerprint assistant-prose) (text-fingerprint content-stream)])
+
 (defn- short-id-fragment
   ^String [id]
   (let [s (str (or id ""))]
     (subs s 0 (min 8 (count s)))))
+
 (defn- detail-expanded?
   ([detail-expansions session-id node-id]
    (detail-expanded? detail-expansions session-id node-id true))
@@ -3275,6 +3400,7 @@
            false
 
            (boolean default-expanded?)))))))
+
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
   ;;   - Render positions (ints), never UUIDs.
@@ -3305,6 +3431,7 @@
     ;; No bare `[details]` decoration — the chevron already signals the toggle.
     ;; Only the informative `[turn 7 · iteration 3 · …]` form is kept, when present.
     (if (seq parts) (str "[" (str/join " · " parts) "]") "")))
+
 (defn- truncate-with-suffix
   "Truncate `s` so that `s` + `suffix` together fit within `max-w` display
    columns, then append `suffix`. The result NEVER exceeds `max-w`, so the
@@ -3326,12 +3453,14 @@
      (max 0 (- mw (p/display-width suffix)))]
 
     (str (truncate-ansi-cols (str/trimr (str s)) room) suffix)))
+
 (defn- ellipsize-cols
   ^{:tag String} [s max-w]
   (cond (<= (long max-w) 0) ""
         (<= (p/display-width s) (long max-w)) s
         (= max-w 1) "..."
         :else (truncate-with-suffix s "..." max-w)))
+
 (defn- close-dangling-code-span
   "After a raw-markdown summary is ellipsized to fit a collapsed badge, its
    trailing inline-code path chip (`` `…/file.clj` ``) can lose its CLOSING
@@ -3342,6 +3471,7 @@
    zero-width once rendered, so this doesn't push past the width budget)."
   ^String [^String s]
   (if (odd? (count (filterv #(= \` %) s))) (str s "`") s))
+
 (defn- format-detail-summary-line
   "Put the human-readable detail info on the right edge. The
    whole row is already painted as a bold disclosure band by
@@ -3369,6 +3499,7 @@
          (max (long gap-w) (- (long max-w) (long (p/display-width left)) (long suffix-w)))]
 
         (str left (repeat-str \space pad-w) suffix)))))
+
 (defn- detail-node-base-id
   ^String [{:keys [session-turn-id iteration-number block-number section kind]}]
   (str (or (some-> section
@@ -3378,10 +3509,12 @@
        (when iteration-number (str ":i" iteration-number))
        (when block-number (str ":b" block-number))
        (when kind (str ":" (name kind)))))
+
 (defn- detail-node-id
   ^String [{:keys [details-path] :as detail-ctx}]
   (str (detail-node-base-id detail-ctx)
        (when (seq details-path) (str ":d" (str/join "." details-path)))))
+
 (defn- relevant-detail-expansions-key
   "Stable cache key for only the disclosure nodes this Markdown projection
    can render. A click in one old answer must not bust cached projections for
@@ -3429,6 +3562,7 @@
 
       (:vis.channel-tui/expand-all-details? detail-expansions)
       (conj [:vis.channel-tui/expand-all-details? true]))))
+
 (defn- turn-detail-expansions-key
   "Stable cache key for any disclosure belonging to this rendered assistant
    turn. Used by the outer trace+answer projection, which may contain thinking,
@@ -3480,6 +3614,7 @@
 
       (:vis.channel-tui/expand-all-details? detail-expansions)
       (conj [:vis.channel-tui/expand-all-details? true]))))
+
 (defn message-detail-expansions-key
   "Per-message disclosure-expansion fingerprint for the height cache: the
    subset of `detail-expansions` whose disclosure node-ids belong to
@@ -3520,6 +3655,7 @@
             ;; Fold the bulk baseline in ONLY when a bulk op is active, so the no-bulk
             ;; key shape (and every already-warmed cache entry) is unchanged.
             (if baseline (into [baseline] per-turn) per-turn))))
+
 (defn- detail-summary-entries
   [{:keys [marker max-w summary collapsed? session-id node-id color-role] :as detail-ctx}]
   (let
@@ -3567,6 +3703,7 @@
       (mapv (fn [{:keys [meta] :as e}]
               (if meta e (assoc e :meta body-meta)))
             entries))))
+
 (defn- marker-prefix?
   "True when the first char of `line` is a block paint marker the
    renderer prepends (zero-width format codepoints or PUA marker band
@@ -3584,12 +3721,14 @@
 
          (or (= (int Character/FORMAT) (int (Character/getType c)))
              (and (>= i 0xE000) (<= i 0xE0FF))))))
+
 (def ^:private chrome-meta-kinds
   ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`).
   ;; Skipped when reconstructing the user-facing body text so nested
   ;; disclosure copy doesn't drag the visual summary glyph + details
   ;; suffix into the clipboard.
   #{:toggle-details})
+
 (defn- entries->body-text
   "Reconstruct the user-readable body text from a vec of `{:line :meta}`
    entries. Strips the leading paint marker (one zero-width / format
@@ -3619,6 +3758,7 @@
     (vec (concat [(line-entry "") (line-entry (str thinking-marker ""))]
                  content-entries
                  [(line-entry (str thinking-marker ""))]))))
+
 (defn- maybe-collapse-thinking-entries
   "Render reasoning INSIDE the bubble's dim thinking band, headed by a
    `THINKING` label that lives in the SAME band (not a detached op-row),
@@ -3772,6 +3912,7 @@
       (let [c (.charAt s i)]
         (when-not (<= 0xE110 (int c) 0xE2FF) (.append sb c))))
     (.toString sb)))
+
 (defn- entries->payload
   [entries]
   (let
@@ -3782,6 +3923,7 @@
      (mapv :meta entries)]
 
     {:lines lines :line-meta line-meta :text (str/join "\n" (map strip-paint-markers-line lines))}))
+
 (declare paste-aware-ast->entries)
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
@@ -4729,6 +4871,7 @@
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
         (into (or prose-body []))
         (into body))))
+
 (defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
@@ -4736,11 +4879,13 @@
 (def ^:private spinner-frames
   "Braille-dot spinner frames; one frame advances every ~100ms."
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
 (defn spinner-frame
   "Pick the spinner glyph for `now-ms`. Pure - same input always
    returns the same frame, which makes the render loop testable."
   ^String [^long now-ms]
   (nth spinner-frames (mod (quot now-ms 100) (count spinner-frames))))
+
 (defn- prettify-error-type
   "`:svar.core/http-error` -> \"http error\". Drops the namespace and
    replaces dashes with spaces so the spinner line reads naturally,
@@ -4755,6 +4900,7 @@
               (keyword? t)
               name)]
       (when (and (string? bare) (not (str/blank? bare))) (str/replace bare "-" " ")))))
+
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether Vis is calling
@@ -4821,6 +4967,7 @@
           thinking? (str "Vis is thinking (iter " n ")")
           executing? (str "Vis is running code (iter " n ")")
           :else (str "Vis is working (iter " n ")"))))
+
 (defn- coalesce-bubble-blanks
   "Collapse adjacent SAME-FAMILY blank rows down to ONE; preserve
    adjacent DIFFERENT-FAMILY blanks (each paints a distinct visual
@@ -4904,6 +5051,7 @@
                                (recur out prev-family (next xs))
                                (recur (conj! out e) f (next xs))))
                 :else (recur (conj! out e) nil (next xs))))))))
+
 (defn- mergeable-iteration-forms
   "Forms of an iteration when it is a PLAIN tool iteration — has forms, carries no
    iteration-level error / recap / provider-fallback, and no `:cards` block on any
@@ -5087,6 +5235,7 @@
                                                          :session-id session-id
                                                          :session-turn-id session-turn-id
                                                          :detail-expansions detail-expansions})))))
+
 (defn- queued-preview
   [text]
   (let
@@ -5094,6 +5243,7 @@
            (str/replace #"\s+" " ")
            str/trim)]
     (if (> (count s) 240) (str (subs s 0 240) "…") s)))
+
 (defn- queued-progress-entries
   [pending-sends content-w]
   (let [queued (vec (or pending-sends []))]
@@ -5136,6 +5286,7 @@
 
         (vec
           (concat [{:line "" :meta nil} {:line hdr-line :meta nil}] item-lines [border hint]))))))
+
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 
@@ -5294,6 +5445,7 @@
                       (-> (:prefix-text body)
                           (conj (strip-paint-markers-line spinner-line))
                           (into (:queued-text body))))})))
+
 (defn progress->text
   "Build the text body of the live progress placeholder bubble."
   ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
@@ -5312,6 +5464,7 @@
 (defn- markdown-non-empty? [markdown] (and (string? markdown) (not (str/blank? markdown))))
 
 (defn- ast-non-empty? [ast] (and (vector? ast) (= :ast (first ast)) (seq (nnext ast))))
+
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
@@ -5439,10 +5592,12 @@
      (vec (coalesce-bubble-blanks entries))]
 
     (entries->payload entries)))
+
 (defn format-answer-with-thinking*
   [answer trace bubble-w settings confidence cancelled?]
   (:text
     (format-answer-with-thinking-data* answer trace bubble-w settings confidence cancelled? nil)))
+
 (defn format-answer-with-thinking-data
   ([answer trace bubble-w]
    (format-answer-with-thinking-data answer trace bubble-w nil nil false nil))
@@ -5470,6 +5625,7 @@
                                                 confidence
                                                 cancelled?
                                                 opts))))
+
 (defn format-answer-with-thinking
   ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil false nil))
   ([answer trace bubble-w settings]
@@ -5481,6 +5637,7 @@
   ([answer trace bubble-w settings confidence cancelled? opts]
    (:text
      (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? opts))))
+
 (defn- user-prompt-margin-entry?
   [entry]
   ;; Reserved inline-image rows LOOK blank but must survive trimming — the
@@ -5497,6 +5654,7 @@
     false
     (let [visible (strip-paint-markers-line (:line entry))]
       (or (str/blank? visible) (boolean (re-matches #"^\s*│\s*$" visible))))))
+
 (defn- trim-user-prompt-margin-entries
   [entries]
   (let
@@ -5507,6 +5665,7 @@
      (vec (reverse (drop-while user-prompt-margin-entry? (reverse trimmed-leading))))]
 
     trimmed-trailing))
+
 (defn- paste-code-block?
   "True for a `vis-paste` code node — the collapsed-transcript shape
    `input/collapse-paste-placeholders` emits for a `[Pasted #N: ...]`
@@ -5745,9 +5904,11 @@
        (into [{:line "" :meta nil}] raw-entries))]
 
     (entries->payload entries)))
+
 (defn format-answer-markdown*
   [answer bubble-w]
   (:text (format-answer-markdown-data* answer bubble-w nil)))
+
 (defn format-answer-markdown-data
   ([answer bubble-w] (format-answer-markdown-data answer bubble-w nil))
   ([answer bubble-w opts]
@@ -5756,6 +5917,7 @@
              ;; see comment in format-answer-with-thinking-data
              (:tail-lines opts)]
             #(format-answer-markdown-data* answer bubble-w opts))))
+
 (defn format-answer-markdown
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))

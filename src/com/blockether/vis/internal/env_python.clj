@@ -1126,7 +1126,9 @@ def __vis_native_result_scan__(__vis_tree__):
     python-context))
 
 (def ^:dynamic *lru-atom* nil)
+
 (def ^:dynamic *current-turn-position* nil)
+
 (defn fresh-lru-atom [] (atom {}))
 
 ;; =============================================================================
@@ -1854,6 +1856,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
   [^Context ctx]
   (when-let [src posix-compat-shim-src]
     (try (.eval ctx "python" ^String src) (catch Throwable _ nil))))
+
 (defn- registered-sandbox-shims
   "The Python sandbox SHIMS contributed by the extension registry
    (`extension/sandbox-shims`), resolved lazily to avoid a compile-time cycle
@@ -2797,7 +2800,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
 ;; NOT a leak signal on its own. Cheap — JMX pool totals, no heap histogram.
 ;; Cadence via VIS_PY_BLOCK_LOG_EVERY (default 25; 0 disables).
 (defonce ^:private py-block-count (atom 0))
+
 (defonce ^:private py-block-prev-heap (atom 0))
+
 (defonce ^:private py-block-prev-n (atom 0))
 
 (defn- py-block-log-every

@@ -234,6 +234,7 @@
                 :else nil)))))
 
 (def paste-start-pattern (bracket-pattern "\u001B[200~" PASTE_START_CHAR))
+
 (def paste-end-pattern (bracket-pattern "\u001B[201~" PASTE_END_CHAR))
 
 (defn paste-marker?
@@ -246,6 +247,7 @@
        (= (long (int marker)) (long (int (.charValue ^Character (.getCharacter key)))))))
 
 (defn paste-start? [key] (paste-marker? key PASTE_START_CHAR))
+
 (defn paste-end? [key] (paste-marker? key PASTE_END_CHAR))
 
 (defn keystroke->paste-char
@@ -922,19 +924,33 @@
     :ccol (.getColumn b)))
 
 (defn insert-char [st ch] (buf-> st (.insertCharacter (->buf st) (char ch))))
+
 (defn insert-newline [st] (buf-> st (.newline (->buf st))))
+
 (defn delete-backward [st] (buf-> st (.deleteBackward (->buf st))))
+
 (defn delete-forward [st] (buf-> st (.deleteForward (->buf st))))
+
 (defn delete-word-backward [st] (buf-> st (.deleteWordBackward (->buf st))))
+
 (defn delete-line-backward [st] (buf-> st (.killToLineStart (->buf st))))
+
 (defn kill-line [st] (buf-> st (.killLine (->buf st))))
+
 (defn transpose-chars [st] (buf-> st (.transposeCharacters (->buf st))))
+
 (defn move-left [st] (buf-> st (.moveLeft (->buf st))))
+
 (defn move-right [st] (buf-> st (.moveRight (->buf st))))
+
 (defn move-word-left [st] (buf-> st (.moveWordLeft (->buf st))))
+
 (defn move-word-right [st] (buf-> st (.moveWordRight (->buf st))))
+
 (defn move-line-start [st] (buf-> st (.moveLineStart (->buf st))))
+
 (defn move-line-end [st] (buf-> st (.moveLineEnd (->buf st))))
+
 (defn- emacs-edit
   "Apply a lanterna Emacs editing chord (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d)
    to input state `st` via the SHARED `TextEditKeymap` — the SAME source of truth
@@ -959,6 +975,7 @@
                   (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
 
 (defn move-up [st] (buf-> st (.moveUp (->buf st))))
+
 (defn move-down [st] (buf-> st (.moveDown (->buf st))))
 
 ;; ── Paste placeholders  ─────────────────────────────────────────────────
@@ -1082,6 +1099,7 @@
                     (when id (get pastes-map id))]
 
                    (if entry (str (:content entry)) whole)))))
+
 (def ^:const PASTE_PREVIEW_HEAD_LINES
   "How many leading lines of a pasted payload the collapsed transcript
    preview shows."

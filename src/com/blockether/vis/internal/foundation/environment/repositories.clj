@@ -17,8 +17,11 @@
            (java.util LinkedHashSet)))
 
 (def ^:const default-max-files 20000)
+
 (def ^:const default-max-repos 12)
+
 (def ^:const default-deadline-ms 1000)
+
 (def ^:const default-status-timeout-ms 500)
 
 (def ^:private skip-directories

@@ -144,6 +144,7 @@
 ;; =============================================================================
 
 (s/def :provider/id keyword?)
+
 (s/def :provider/label non-blank-string?)
 
 ;; All four runtime fns are optional individually so a minimal provider
@@ -151,14 +152,23 @@
 ;; ship a no-op stub for every slot. Whoever calls them handles the
 ;; absent case (`(when-let [f (:provider/status-fn p)] (f))`).
 (s/def :provider/status-fn ifn?)  ;; () -> {:authenticated? bool ...}
+
 (s/def :provider/logout-fn ifn?)  ;; () -> nil  (clear creds)
+
 (s/def :provider/detect-fn ifn?)  ;; () -> token-or-nil  (non-interactive)
+
 (s/def :provider/auth-fn ifn?)  ;; (printer-fn) -> nil (interactive)
+
 (s/def :provider/get-token-fn ifn?)  ;; () -> token-string/map  (resolve usable token)
+
 (s/def :provider/refresh-token-fn ifn?)  ;; () -> token-string/map  (FORCE refresh ignoring local expiry; runtime 401 recovery)
+
 (s/def :provider/limits-fn ifn?)  ;; () -> normalized limits envelope/map
+
 (s/def :provider/enrich-models-fn ifn?) ;; (svar-provider router-opts) -> models-vec (resolve :context/:tool-call? at router-build, e.g. LM Studio native endpoint)
+
 (s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :hidden?
+
 (s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil
 
 (s/def ::provider
@@ -184,10 +194,15 @@
 ;; =============================================================================
 
 (s/def :cmd/name non-blank-string?)
+
 (s/def :cmd/doc non-blank-string?)
+
 (s/def :cmd/usage non-blank-string?)
+
 (s/def :cmd/run-fn ifn?)
+
 (s/def :cmd/owns-tty? boolean?)
+
 (s/def :cmd/internal? boolean?)  ;; host-owned canonical command, not an extension contribution
 
 ;; Where in the command tree this command mounts. Vector of parent
@@ -203,9 +218,13 @@
 ;; arg spec: {:name "model" :kind :flag|:positional :type :string|:int|:boolean
 ;;            :required true :doc "..."}
 (s/def :cmd.arg/name non-blank-string?)
+
 (s/def :cmd.arg/kind #{:flag :positional})
+
 (s/def :cmd.arg/type #{:string :int :boolean :file})
+
 (s/def :cmd.arg/required boolean?)
+
 (s/def :cmd.arg/doc string?)
 
 (s/def ::arg

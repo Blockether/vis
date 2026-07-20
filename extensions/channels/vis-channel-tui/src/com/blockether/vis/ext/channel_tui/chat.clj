@@ -906,6 +906,7 @@
                          "message" "Cancelled by user."}]
              "status" "cancelled"}
             {"error" (or (ex-message e) (str e))})))))
+
 (defn attach!
   "Attach to an already submitted gateway turn and return canonical content."
   ([session tid] (attach! session tid {}))

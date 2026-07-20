@@ -18,6 +18,7 @@
 ;; Iteration scope is `tN/iM`. The legacy per-form `/fK` tail is OPTIONAL (and no
 ;; longer emitted — one record = one tool call, keyed by `:svar/tool-call-id`).
 (def ^:private scope-form-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)(?:/f([1-9][0-9]*))?$")
+
 (defn parse-scope-form
   "Parse a `tN/iM` (or legacy `tN/iM/fK`) scope into `{:turn :iter :form}` or nil
    if malformed. `:form` is nil for an iteration-level scope. Pure value-or-nil."
@@ -25,10 +26,12 @@
   (when (string? s)
     (when-let [[_ t i f] (re-matches scope-form-re s)]
       {:turn (parse-long t) :iter (parse-long i) :form (when f (parse-long f))})))
+
 (defn malformed-scope?
   "True if `s` is a string but does not parse as `::cs/scope-form`."
   [s]
   (and (string? s) (nil? (parse-scope-form s))))
+
 (defn scope-compare
   "Total order on form-scope strings by (turn, iter, form). Returns int.
    Compares parsed segments; malformed scopes sort before all valid ones to
@@ -49,6 +52,7 @@
                     (let [c2 (compare (:iter pa) (:iter pb))]
                       (if (zero? c2) (compare (:form pa) (:form pb)) c2))
                     c1)))))
+
 (defn- model-error
   "Collapse a host failure envelope to what the MODEL can act on — ONE
    message, its type/reason, one actionable hint. The raw envelope
@@ -197,6 +201,7 @@
    callers stay valid."
   [ctx]
   ctx)
+
 (defn enter-turn
   "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
    resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
@@ -244,6 +249,7 @@
     "session_workspace" {}
     "session_symbols" {}
     "engine_warnings" []}))
+
 (defn strip-ephemeral
   "Remove every `\"engine_*\"` key from a ctx. Call before Nippy-snapshotting
    to persistence so transient mutator state (warnings, pending satisfy
@@ -267,11 +273,13 @@
            str/trim
            (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
+
 (defn finalize-turn
   "Finalize a turn: the loop ships `:answer` to the channel and the engine
    returns ctx unchanged so the turn can settle."
   [ctx _form-scope _args]
   {:ctx ctx :warnings []})
+
 (defn utilization
   "Pure: the `\"session_utilization\"` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out
@@ -718,6 +726,7 @@
    the identifier. A form that is not a `name(...)` call (a bare value, an
    assignment, a comment-only block) does not match."
   #"\A(?:[ \t]*(?:#[^\n]*)?\n)*[ \t]*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
 (defn form-head-name
   "Return the head call NAME (a string) of `src` — a Python source string —
    or nil when `src` is not a `name(...)` call form. Leading comments and
@@ -727,6 +736,7 @@
   [src]
   (some-> (re-find py-head-name-re (str src))
           second))
+
 (def ^:private core-mutation-heads
   "Engine-owned call NAMES (Python, snake_case) that classify a form as
    `:mutation`. Empty now: the task/fact mutator surface and
@@ -801,6 +811,7 @@
            (set? v) (into #{} (map #(realize-value % depth')) v)
            (sequential? v) (doall (map #(realize-value % depth') v))
            :else v))))
+
 (defn block->envelope
   "Project one loop-side block `{:code :result :error :stdout}` plus its
    1-based position and the engine cursor into the form envelope shape
@@ -898,6 +909,7 @@
        ;; model context (that stays `:stdout`).
        (seq (:cards block))
        (assoc :cards (:cards block))))))
+
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form

@@ -48,8 +48,11 @@
            [org.eclipse.jetty.server Server]))
 
 (def ^:private DEFAULT_PORT 7890)
+
 (def ^:private DEFAULT_HOST "127.0.0.1")
+
 (def ^:private HEARTBEAT_MS 15000)
+
 (def ^:private SSE_QUEUE_CAP
   "Per-SSE-connection bounded event queue. `state/fan-out!` (the TURN's
    thread) only ever ENQUEUES here — it never touches the socket — so a
@@ -57,7 +60,9 @@
    proxy) fills its own queue and is DROPPED on overflow instead of parking
    the appender, the heartbeat, sibling watchers, or the turn itself."
   1024)
+
 (def ^:private IDLE_REAP_MS 1000)
+
 (def ^:private STARTUP_IDLE_GRACE_MS 30000)
 
 (defonce ^:private server-state (atom nil))
@@ -66,6 +71,7 @@
 ;; EXITS instead of idling forever. In-process callers (tests, REPL) deliver
 ;; harmlessly — nothing is parked on the latch there.
 (defonce ^:private serve-exit (promise))
+
 (defonce ^:private idle-reaper (atom nil))
 
 (defn- live-client-ids
@@ -598,6 +604,7 @@
     [provider-id (some-> (get-in request [:path-params :provider-id])
                          keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
+
 (defn- toggle-wire-id [id] (str (namespace id) "/" (name id)))
 
 (defn- toggle-json
@@ -1191,6 +1198,7 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- path-iid [request] (get-in request [:path-params :iid]))
+
 (defn- path-idx
   [request]
   (some-> (get-in request [:path-params :idx])
@@ -1467,6 +1475,7 @@
 ;;    :on-not-found      (fn [request] ring-response) ; custom 404 for :prefix
 ;;    :form-params?      true}        ; urlencoded form parsing under :prefix
 (defonce ^:private route-contributions (atom {}))
+
 (defonce ^:private imperative-version (atom 0))
 
 (declare ^:private rebuild-app!)

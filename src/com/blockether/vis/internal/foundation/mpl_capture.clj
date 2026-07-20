@@ -39,6 +39,7 @@
    bound (an atom `#{}`) alongside `*attachment-sink*` so a file re-closed in the
    same block is not recorded twice. Nil outside a driven block."
   nil)
+
 (def ^:dynamic *attachment-reader*
   "Per-block READ-BACK accessor for artifacts already persisted in THIS session,
    bound by `run-python-code` around one block's eval (else nil). A map

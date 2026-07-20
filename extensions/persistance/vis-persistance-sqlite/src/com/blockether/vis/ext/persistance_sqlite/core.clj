@@ -46,12 +46,19 @@
 ;; =============================================================================
 
 (def ds vis/ds)
+
 (def now-ms vis/now-ms)
+
 (def ->id vis/->id)
+
 (def ->uuid vis/->uuid)
+
 (def ->ref vis/->ref)
+
 (def ->kw vis/->kw)
+
 (def ->kw-back vis/->kw-back)
+
 (def ->date vis/->date)
 
 (defn- new-uuid [] (->uuid (str (java.util.UUID/randomUUID))))
@@ -88,6 +95,7 @@
     (->kw (or status :done))))
 
 (defn- ->json [m] (when m (json/write-json-str m)))
+
 (defn- <-json
   "Parse a JSON TEXT column. STRINGS-ONLY: keys come back as VERBATIM STRINGS —
    no `:key-fn keyword` re-keywordizing. Whatever needs an internal keyword
@@ -95,6 +103,7 @@
    here."
   [s]
   (when s (json/read-json s)))
+
 (defn- <-json-lazy
   "Like `<-json` but DEFERRED: returns a `delay` that parses on first `force`.
    Used for `llm_assistant_message` — a per-iteration blob a session restore
@@ -1875,6 +1884,7 @@
                      :where [:and [:= :session_turn_soul_id soul-id-s]
                              [:= :session_turn_iteration_id nil]]
                      :order-by [[:position :asc]]})))))
+
 (defn db-list-turns-attachments
   "Batch variant of [[db-list-turn-attachments]]: INBOUND user images for MANY
    `session_turn_soul` ids in ONE query (the `user` rail only -
@@ -1901,6 +1911,7 @@
                        :where [:and [:in :session_turn_soul_id ids]
                                [:= :session_turn_iteration_id nil]]
                        :order-by [[:session_turn_soul_id :asc] [:position :asc]]})))))
+
 (defn db-list-iteration-attachments
   "Ordered OUTBOUND tool artifacts persisted for ONE `session_turn_iteration`
    (its id, not the soul - the `tool` rail only). Returns `[{:id :source
@@ -2304,6 +2315,7 @@
                                    payload)]})))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+
 (defn db-store-iteration!
   "Store one iteration row in a single SQLite transaction.
 

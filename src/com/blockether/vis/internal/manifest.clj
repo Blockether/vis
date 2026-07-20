@@ -47,6 +47,7 @@
   {:nses (vec (distinct (concat (:nses existing) (:nses entry))))})
 
 (defonce ^:private cached-manifests (atom nil))
+
 (defonce ^:private discovered? (atom false))
 
 (defn- truthy-value? [v] (contains? #{"1" "true" "yes" "on"} (str/lower-case (str v))))

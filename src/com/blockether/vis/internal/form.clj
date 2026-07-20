@@ -80,6 +80,7 @@
   (when (some? wire-name)
     (let [n (name wire-name)]
       (or (label-overrides n) (str/upper-case n)))))
+
 (defn result-card
   "Canonical tool-result CARD descriptor — the ONE place the op-card / collapse
    decision is made, so the TUI and web AGREE on `tool?`/label/colour/summary/

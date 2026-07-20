@@ -48,8 +48,11 @@
 ;; =============================================================================
 
 (def ^:private ^AddressLayout ADDR ValueLayout/ADDRESS)
+
 (def ^:private ^ValueLayout$OfInt I ValueLayout/JAVA_INT)
+
 (def ^:private ^ValueLayout$OfShort S ValueLayout/JAVA_SHORT)
+
 (def ^:private L ValueLayout/JAVA_LONG)
 
 (def ^:private mac? (str/includes? (str/lower-case (System/getProperty "os.name" "")) "mac"))
@@ -83,21 +86,33 @@
                    (make-array Linker$Option 0)))
 
 (def ^:private h-openpty (delay (dh "openpty" I [ADDR ADDR ADDR ADDR ADDR])))
+
 (def ^:private h-fa-init (delay (dh "posix_spawn_file_actions_init" I [ADDR])))
+
 (def ^:private h-fa-dup2 (delay (dh "posix_spawn_file_actions_adddup2" I [ADDR I I])))
+
 (def ^:private h-fa-close (delay (dh "posix_spawn_file_actions_addclose" I [ADDR I])))
+
 (def ^:private h-fa-destr (delay (dh "posix_spawn_file_actions_destroy" I [ADDR])))
+
 (def ^:private h-at-init (delay (dh "posix_spawnattr_init" I [ADDR])))
+
 (def ^:private h-at-flags (delay (dh "posix_spawnattr_setflags" I [ADDR S])))
+
 (def ^:private h-at-destr (delay (dh "posix_spawnattr_destroy" I [ADDR])))
 ;; posix_spawnP (not posix_spawn): searches $PATH for a bare program name like
 ;; "bash", exactly as execvp would — plain posix_spawn uses execv (no PATH search)
 ;; and ENOENTs on anything that isn't an absolute/relative path.
 (def ^:private h-spawn (delay (dh "posix_spawnp" I [ADDR ADDR ADDR ADDR ADDR ADDR])))
+
 (def ^:private h-read (delay (dh "read" L [I ADDR L])))
+
 (def ^:private h-write (delay (dh "write" L [I ADDR L])))
+
 (def ^:private h-close (delay (dh "close" I [I])))
+
 (def ^:private h-kill (delay (dh "kill" I [I I])))
+
 (def ^:private h-waitpid (delay (dh "waitpid" I [I ADDR I])))
 ;; addchdir_np: glibc >= 2.29 and macOS >= 10.15 (best-effort; ignored if absent).
 (def ^:private h-fa-chdir
@@ -110,7 +125,9 @@
 ;; POSIX_SPAWN_SETSID makes the child a session leader (detached from vis's own
 ;; controlling terminal) — the value differs by platform.
 (def ^:private POSIX_SPAWN_SETSID (short (if mac? 0x0400 0x80)))
+
 (def ^:private SIGTERM (int 15))
+
 (def ^:private SIGKILL (int 9))
 
 ;; =============================================================================

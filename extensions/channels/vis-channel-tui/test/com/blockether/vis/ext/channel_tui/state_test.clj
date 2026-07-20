@@ -937,6 +937,7 @@
           (expect (= ["Turn is no longer running; cleared local cancelling state."
                       [:level :info :ttl-ms 2500]]
                      @notified)))))))
+
 (defdescribe cancel-self-heal-test
              ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
              ;; waits for the daemon's terminal `turn.completed` (cancelled) event

@@ -73,6 +73,7 @@
                             (#'main/parse-run-args
                              ["--provider" "anthropic-coding-plan" "--model" "claude-sonnet-4-6"
                               "--session-id" "abc123" "what" "do" "I" "like?"])))))
+
 (defdescribe reasoning-effort-cli-parse-test
              (it "parses exact provider-native reasoning effort separately"
                  (expect (= {:provider "zai-coding-plan"

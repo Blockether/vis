@@ -70,6 +70,7 @@
          (min terminal-w))]
 
     (max 1 (- box-w (long t/dialog-chrome-w)))))
+
 (defn default-content-height
   "Shared content height every dialog uses, derived from `rows`.
    Clamped to a common modal footprint so dialogs keep equal height."
@@ -88,6 +89,7 @@
          (min terminal-h))]
 
     (max 1 (- box-h (long t/dialog-chrome-h)))))
+
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
    to cleanly replace the current dialog (wizard step pattern)."
@@ -108,16 +110,19 @@
     (p/set-bg! g t/terminal-bg)
     (p/fill-rect! g 0 0 cols rows)
     (.refresh screen Screen$RefreshType/DELTA)))
+
 (defn ellipsize
   "Right-truncate `s` to `max-w` columns with a trailing `…`.
    Thin delegate over the canonical `p/ellipsize` (lanterna-backed)."
   [s max-w]
   (p/ellipsize s max-w))
+
 (def ^:private min-adaptive-content-h
   "Content-height floor for adaptive dialogs — the box never shrinks below
    this many content rows (≈ this + chrome tall), so a tiny popup still reads
    as a comfortable card instead of a cramped sliver."
   3)
+
 (defn adaptive-content-height
   "Clamp a dialog's REQUESTED content height so the box sizes to its own
    content instead of the shared footprint.
@@ -140,6 +145,7 @@
        (min (long min-adaptive-content-h) max-h)]
 
       (p/clamp (long requested) floor max-h))))
+
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
    the available height, content is vertically centered within the frame.
@@ -184,6 +190,7 @@
       :content-bottom content-bot
       :content-h content-h
       :hint-row hint-row})))
+
 (defn visible-window-start
   ^long [^long idx ^long current-start ^long visible-count ^long total-count]
   (let
@@ -196,6 +203,7 @@
     (cond (< idx start) idx
           (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
           :else start)))
+
 (defn modal-wheel-delta
   "Return list-selection delta for a wheel mouse event, else nil.
    Negative moves up; positive moves down."
@@ -205,11 +213,13 @@
       (cond (= action MouseActionType/SCROLL_UP) -1
             (= action MouseActionType/SCROLL_DOWN) 1
             :else nil))))
+
 (defn modal-wheel-step
   "Return wheel delta multiplied by any coalesced event count."
   [key]
   (when-let [delta (modal-wheel-delta key)]
     (* (long delta) (max 1 (long (.getButton ^MouseAction key))))))
+
 (defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
 
 (defn- key-character [key] (when (instance? KeyStroke key) (.getCharacter ^KeyStroke key)))
@@ -223,6 +233,7 @@
   (boolean (and c (Character/isISOControl (.charValue c)))))
 
 (def ^:private modal-pending-key (ThreadLocal/withInitial #(atom nil)))
+
 (defn normalize-modal-key
   "Normalize raw terminal CR/LF/ESC character keystrokes to Lanterna
    Enter/Escape key types. Some terminals surface modal Enter/Escape as
@@ -238,15 +249,19 @@
 
       key)
     key))
+
 (defn modal-enter-key?
   [key]
   (let [key (normalize-modal-key key)]
     (and key (not (instance? MouseAction key)) (= KeyType/Enter (key-type key)))))
+
 (defn modal-escape-key?
   [key]
   (let [key (normalize-modal-key key)]
     (and key (not (instance? MouseAction key)) (= KeyType/Escape (key-type key)))))
+
 (def ^:private modal-close-bounds (ThreadLocal/withInitial #(atom nil)))
+
 (defn modal-close-click?
   "True when `key` is a mouse click on the dialog close (✕) button."
   [key]
@@ -309,6 +324,7 @@
                         (do (reset! pending-key next-key) {:scroll-delta acc}))
                       {:scroll-delta acc}))
                   {:key key}))))
+
 (defn read-modal-key!
   "Like `Screen/readInput`, but drains wheel floods into one synthetic wheel
    event. Existing modal loops can use it without bespoke scroll-delta code."
@@ -320,6 +336,7 @@
             (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
             1
             (TerminalPosition. 0 0))))))
+
 (defn drain-modal-paste!
   "After a bracketed-paste START keystroke is seen, drain `screen` until
    PASTE_END and return the pasted text (PUA markers stripped). Lets any
@@ -335,6 +352,7 @@
               :else (do (when-let [ch (input/keystroke->paste-char k)]
                           (.append sb ^String ch))
                         (recur)))))))
+
 (defn fit-hint-pairs
   "Longest prefix of `[key action]` hint pairs whose rendered width (with
    '  \u00b7  ' separators) fits in `text-w` columns. `put-str!` clips to the
@@ -455,6 +473,7 @@
 
                        (p/set-fg! g t/dialog-hint)
                        (p/styled g [p/ITALIC] (p/put-str! g start row joined))))))
+
 (defn hint-bar-width
   "Natural rendered width (chars) of a `draw-hint-bar!` hint — a plain string,
    a vec of strings, or a vec of `[key action]` pairs — using the SAME segment
@@ -485,6 +504,7 @@
    (-> (+ (long (hint-bar-width hint)) 2)
        (max min-content)
        (min (max 1 (- cols 8))))))
+
 (defn- draw-list-item!
   ;; Selection visual:
   ;;   col left   : │ (frame, painted by chrome)
@@ -526,6 +546,7 @@
        (p/set-colors! g t/dialog-hint t/dialog-bg)
        (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
        (p/set-colors! g t/dialog-fg t/dialog-bg)))))
+
 (defn- draw-checkbox-item!
   ;; `> [✓] label` when selected, `  [✓] label` otherwise. The cursor
   ;; glyph and the checkbox glyph carry independent meaning: the
@@ -549,6 +570,7 @@
     (if selected?
       (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
       (p/put-str! g (inc (long left)) row draw-text))))
+
 (defn- draw-text-input-field!
   ;; BORDERLESS query field (opencode-style dialog input): a single prompt line,
   ;; no box. A dim "›" leads it; `placeholder` fills it while the text is empty.
@@ -586,6 +608,7 @@
            (p/put-str! g text-left row (ellipsize (str placeholder) text-w)))
        (do (p/set-colors! g t/dialog-fg t/dialog-bg) (p/put-str! g text-left row visible)))
      (p/cursor-pos (+ (long text-left) (- (long cursor) (long h-off))) row))))
+
 (defn draw-dialog-close-button!
   "Paint a clickable X close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a
@@ -616,6 +639,7 @@
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)
     (reset! (.get ^ThreadLocal modal-close-bounds) {:x0 x0 :x1 x1 :y title-row})))
+
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
 
@@ -1031,6 +1055,7 @@
                    field), capped; nil uses the shared (tall) footprint."
   [^TerminalScreen screen title items opts]
   (run-modal! screen (select-modal-component title items opts)))
+
 (defn select-dialog!
   "Show a selection list dialog. Returns the selected item map or nil on Esc.
    `items` is a vec of `{:label str, …}` maps. Thin wrapper over `list-dialog!`."
@@ -1443,7 +1468,9 @@
                                            :level :info
                                            :ttl-ms 3000)))))))))))
   nil)
+
 (declare text-view-dialog!)
+
 (declare log-view-dialog!)
 
 (defn resources-dialog!
@@ -1908,6 +1935,7 @@
         (string? body) (str/split-lines body)
         (sequential? body) (mapv str body)
         :else [(str body)]))
+
 (defn text-input-dialog!
   "Show a text input dialog. Returns string or nil on Esc.
    Options: :mask char (e.g. \\* for passwords), :initial string,
@@ -2120,6 +2148,7 @@
       (p/set-colors! g t/dialog-fg t/dialog-bg))
     (p/put-str! g col row text)
     w))
+
 (defn confirm-dialog!
   "Show Y/N confirmation with side-by-side buttons. Returns true/false, nil on Esc."
   [^TerminalScreen screen title message]
@@ -3435,6 +3464,7 @@
          (catch Throwable t
            (tel/log! :warn ["dialogs: resolve-effective-model failed" (ex-message t)])
            nil))))
+
 (defn- current-provider-id [] (:provider (current-model-info)))
 
 (defn- theme-choice-order
@@ -3443,6 +3473,7 @@
        (catch Throwable t
          (tel/log! :warn ["dialogs: available-theme-ids failed" (ex-message t)])
          [(keyword shared-theme/default-theme-id)])))
+
 (defn- settings-ui-options
   "Terminal-UI-owned settings in the Terminal UI section: currently just the
    theme picker. Feature toggles (mouse-selection auto-copy, etc.) live in the
@@ -3454,6 +3485,7 @@
     :label "Theme"
     :description
     "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}])
+
 (declare titleize-label)
 
 (defn- registry-toggle-rows
@@ -3491,12 +3523,15 @@
                                              (when (and owner (not= owner :vis))
                                                (str "  [" (titleize-label (name owner)) "]")))})))
                     (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
+
 (def ^:private tui-contributor-slots #{:tui.slot/header-row :tui.slot/footer-segment})
+
 (def ^:private undisableable-tui-contributions
   "Contributions that paint core identity / cannot be hidden from the user.
    The Settings dialog hides their toggle rows; the rendering path in
    footer.clj also bypasses `:contributors-disabled` for them."
   #{:tui.builtin.model/footer})
+
 (defn- contributor-rows
   "Settings-dialog rows for registered TUI channel contributions.
    Each row is a `:set-toggle` against `:contributors-disabled`.
@@ -3528,18 +3563,23 @@
                                         "footer"
 
                                         "chrome"))}))))))
+
 (defn- settings-content-width [cols] (default-content-width cols))
+
 (defn- settings-content-height [rows] (default-content-height rows))
+
 (defn- titleize-token
   [s]
   (let [s (str s)]
     (if (str/blank? s) s (str (str/upper-case (subs s 0 1)) (str/lower-case (subs s 1))))))
+
 (defn- titleize-label
   [s]
   (->> (str/split (str s) #"[-_\s]+")
        (remove str/blank?)
        (map titleize-token)
        (str/join " ")))
+
 (def ^:private namespace-noise-segments
   ;; Trailing/marketing segments we drop when deriving a display label
   ;; from a namespace symbol. `core` / `bot` / `main` are the
@@ -3548,6 +3588,7 @@
   ;; family prefixes underneath) carry no information for the user, so
   ;; we strip them too.
   #{"com" "blockether" "vis" "ext" "core" "bot" "main"})
+
 (defn- meaningful-namespace-segment
   "Pick a human-friendly leaf from a fully-qualified namespace symbol.
 
@@ -3580,11 +3621,13 @@
      (or (last cleaned) (last (remove #{"com" "blockether"} segments)) (last segments))]
 
     (or leaf raw)))
+
 (defn- extension-kind
   [ext]
   (cond (seq (:ext/providers ext)) :provider
         (seq (:ext/channels ext)) :channel
         :else :extension))
+
 (defn- extension-display-label
   [ext]
   (let
@@ -3623,6 +3666,7 @@
         (not-empty alias-label)
         (not-empty ns-label)
         "Extension")))
+
 (defn- setting-key
   [v]
   (cond (keyword? v) v
@@ -3667,6 +3711,7 @@
                            (:ext/settings ext)))))
        (sort-by (juxt :extension-kind :extension-label :extension-order :key))
        vec))
+
 (defn- extension-setting-rows
   []
   (mapv (fn
@@ -3683,6 +3728,7 @@
            :provider-ids provider-ids
            :description (or description "Extension setting")})
         (extension-setting-declarations)))
+
 (defn- extension-env-declarations
   []
   (->> (vis/registered-extensions)
@@ -3715,6 +3761,7 @@
                  :extension-label ext-label)))))
        (sort-by (juxt :extension-kind :extension-label :name))
        vec))
+
 (defn- extension-env-rows
   []
   (mapv (fn
@@ -3731,19 +3778,24 @@
            :secret? (boolean secret?)
            :required? (boolean required?)})
         (extension-env-declarations)))
+
 (defn- extension-option-rows [] (vec (concat (extension-setting-rows) (extension-env-rows))))
+
 (defn- provider-row-active?
   [active-provider {:keys [extension-kind provider-ids]}]
   (or (not= :provider extension-kind)
       (nil? active-provider)
       (empty? provider-ids)
       (contains? provider-ids active-provider)))
+
 (defn- extension-rows-of-kind
   [extension-rows kind]
   (filterv #(= kind (:extension-kind %)) extension-rows))
+
 (defn- extension-group-key
   [{:keys [extension-label extension-id]}]
   [(or extension-label "Extension") (str extension-id)])
+
 (defn- settings-extension-groups
   [extension-rows]
   (when (seq extension-rows)
@@ -3751,6 +3803,7 @@
               (into [{:type :subsection :label label}]
                     (sort-by (juxt :type :label :name) group-rows)))
             (sort-by first (group-by extension-group-key extension-rows)))))
+
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
    settings modal): Terminal-UI chrome, then all feature toggles grouped by
@@ -3790,6 +3843,7 @@
                   (when (seq generic-rows)
                     (concat [{:type :section :label "Extension Settings"}]
                             (settings-extension-groups generic-rows))))))))
+
 (defn- extension-env-status-label
   [source]
   (case source
@@ -3803,6 +3857,7 @@
     "unset"
 
     "unset"))
+
 (defn- settings-option-label
   [{:keys [key label type choices toggle-id] env-name :name} values]
   (case type
@@ -3886,6 +3941,7 @@
       (if (get values key false) on off)
 
       [" " t/dialog-fg])))
+
 (defn- cycle-choice
   [choices current]
   (let
@@ -3896,6 +3952,7 @@
      (.indexOf ^java.util.List choices current)]
 
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
+
 (defn- apply-settings-option
   [values {:keys [key type choices set-key item-id toggle-id]}]
   (case type
@@ -3919,20 +3976,24 @@
         values)
 
     values))
+
 (defn- notify-settings-change!
   [callbacks values]
   (when-let [f (:on-change callbacks)]
     (f values))
   values)
+
 (defn- settings-selectable?
   [{:keys [type]}]
   (contains? #{:toggle :choice :action :env-var :set-toggle :registry-toggle} type))
+
 (defn- first-selectable-index
   [rows]
   (or (first (keep-indexed (fn [i row]
                              (when (settings-selectable? row) i))
                            rows))
       0))
+
 (defn- move-settings-selection
   [rows ^long selected ^long delta]
   (let [n (count rows)]
@@ -3942,6 +4003,7 @@
             (and (neg? delta) (zero? idx)) selected
             (and (pos? delta) (= idx (dec n))) selected
             :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
+
 (defn- edit-extension-env-var!
   [^TerminalScreen screen {:keys [name label description secret?]}]
   (let
@@ -3958,6 +4020,7 @@
                           "Blank input clears the Vis config override; OS env still applies."])]
 
     (when (some? raw) (vis/save-extension-env-var! name raw))))
+
 (defn- theme-display-label
   [theme-id]
   (let [theme-map (shared-theme/theme theme-id)]
@@ -3966,13 +4029,17 @@
                 name
                 titleize-label)
         (str theme-id))))
+
 (defn- theme-picker-items
   [choices]
   (mapv (fn [theme-id]
           {:theme-id theme-id :label (theme-display-label theme-id)})
         choices))
+
 (defn- theme-picker-content-width [cols] (settings-content-width cols))
+
 (defn- theme-picker-content-height [rows] (settings-content-height rows))
+
 (defn- theme-picker-dialog!
   "Small theme chooser. Moving selection previews the theme immediately;
    Enter commits the preview, Esc restores the original theme."
@@ -4078,6 +4145,7 @@
                 (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (:theme-id (nth items @selected))
                 (recur)))))))))
+
 (defn- activate-theme-row!
   [screen values callbacks {:keys [choices key]}]
   (let
@@ -4093,6 +4161,7 @@
     (if-let [selected (theme-picker-dialog! screen choices original preview!)]
       (preview! selected)
       (preview! original))))
+
 (defn- activate-settings-row!
   [screen values callbacks row]
   (case (:type row)
@@ -4107,6 +4176,7 @@
       (activate-theme-row! screen values callbacks row)
       (->> (swap! values apply-settings-option row)
            (notify-settings-change! callbacks)))))
+
 (defn- settings-section-text
   [label inner-w]
   (let
@@ -4120,10 +4190,13 @@
      (apply str (repeat (max 0 (- (long available) (count prefix))) \─))]
 
     (ellipsize (str prefix filler) available)))
+
 (defn- settings-option-indent [] t/settings-option-indent)
+
 (defn- settings-subsection-text
   [label inner-w]
   (ellipsize (str "◆ " label) (max 0 (- (long inner-w) 2))))
+
 (defn- settings-wrap-lines
   [s w]
   (let
@@ -4134,6 +4207,7 @@
      (str/trim (str (or s "")))]
 
     (if (str/blank? s) [] (vec (remove str/blank? (render/wrap-text s w))))))
+
 (defn- settings-render-entries
   "Flatten logical settings rows into paint rows. Descriptions wrap under
    their owning option instead of stealing a fixed inline column and
@@ -4175,11 +4249,14 @@
                                 desc-lines)))))
               (range)
               rows))))
+
 (defn- settings-header-row? [{:keys [type]}] (contains? #{:section :subsection} type))
+
 (defn- settings-row-search-text
   "Lowercased haystack for a row's search match: its label + description."
   [{:keys [label description]}]
   (str/lower-case (str label " " description)))
+
 (defn- filter-settings-rows
   "Live-filter settings `rows` by `query` (case-insensitive substring over
    label + description). Section / subsection headers survive only when a
@@ -4235,6 +4312,7 @@
         (vec (keep-indexed (fn [i row]
                              (when (contains? keep i) row))
                            rows))))))
+
 (defn- settings-toc
   "Table-of-contents entries for the VS Code-style left sidebar: one per
    top-level `:section`, each with the count of selectable rows beneath it
@@ -4732,14 +4810,18 @@
   [session]
   (let [id (str (get session "id"))]
     (subs id 0 (min 8 (count id)))))
+
 (def ^:private untitled-session-title "Untitled session")
+
 (defn- untitled-session-title?
   [title]
   (or (str/blank? (str title))
       (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))
+
 (defn- empty-untitled-session?
   [s]
   (and (not (pos? (long (or (get s "turn_count") 0)))) (untitled-session-title? (get s "title"))))
+
 (defn- session-title
   [session]
   (let
@@ -4755,13 +4837,16 @@
     (cond-> base-title
       (pos? fork-count)
       (str " [forks:" fork-count "]"))))
+
 (def ^:private session-dialog-content-w 96)
+
 (defn- date->millis
   [v]
   (cond (instance? java.util.Date v) (.getTime ^java.util.Date v)
         (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
         (number? v) (long v)
         :else nil))
+
 (defn- date-value
   [v]
   (when-let [ms (date->millis v)]
@@ -4769,7 +4854,9 @@
 
 (def ^:private session-table-headers
   ["" "ID" "Title" "Turns" "Created at" "Time" "Modified at" "Time"])
+
 (def ^:private session-table-aligns [:left :left :left :right :left :left :left :left])
+
 (defn- format-session-day
   [v]
   (if-let [date (date-value v)]
@@ -4777,6 +4864,7 @@
       (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
       (.format fmt date))
     "-"))
+
 (defn- format-session-time
   [v]
   (if-let [date (date-value v)]
@@ -4784,6 +4872,7 @@
       (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
       (.format fmt date))
     "-"))
+
 (defn- session-table-widths
   "Column widths for the boxed session table. Total rendered row width equals
    `table-w`, including side borders, inter-cell separators, and padding."
@@ -4845,14 +4934,17 @@
          (max 1 (- available active-w id-w turns-w created-w time-w modified-w time-w))]
 
         [active-w id-w title-w turns-w created-w time-w modified-w time-w]))))
+
 (defn- session-table-border-line
   [body-w kind]
   (table/boxed-border-line (session-table-widths body-w) kind))
+
 (defn- session-table-row-label
   "Format one fixed-width boxed session table row. Width math is terminal
    columns, not Java chars, so CJK/emoji titles cannot shift later rows."
   [cells body-w]
   (table/boxed-row-line (session-table-widths body-w) cells session-table-aligns))
+
 (defn session-dialog-label
   "Format one fixed-width session table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
@@ -4880,11 +4972,14 @@
                               (format-session-time created-at) (format-session-day modified-at)
                               (format-session-time modified-at)]
                              body-w)))
+
 (defn session-dialog-header [body-w] (session-table-row-label session-table-headers body-w))
+
 (defn- session-dialog-sort-key
   [session]
   [(- (long (or (date->millis (get session "modified_at")) 0)))
    (- (long (or (date->millis (get session "created_at")) 0)))])
+
 (defn session-dialog-items
   "Build table rows for existing sessions only. New/fork stay dialog
    options via the N/F shortcuts and command palette; they are not fake table
@@ -4896,6 +4991,7 @@
             :id (str (get session "id")) ; downstream (switch-session!) accepts full UUID strings
             :label (session-dialog-label session active-id body-w)})
          (sort-by session-dialog-sort-key sessions))))
+
 (defn- draw-session-row!
   [g left row inner-w selected? label]
   ;; Session picker is a TABLE — cells must NOT shift between selected
@@ -4916,6 +5012,7 @@
     (if selected?
       (p/styled g [p/BOLD] (p/put-str! g body-x row (ellipsize label body-w)))
       (p/put-str! g body-x row (ellipsize label body-w)))))
+
 (defn session-picker-dialog!
   "Show recent TUI sessions in a fixed-size table. Returns
    `{:action :new}`, `{:action :fork}`, `{:action :switch :id <session-id>}`,
@@ -5077,12 +5174,14 @@
   [{:id :title :label "Title" :flex 1} {:id :session :label "Session" :width 8}
    {:id :draft :label "Draft" :width 8} {:id :dir :label "Project" :width 22}
    {:id :status :label "Status" :width 10}])
+
 (defn- navigator-stamp
   "Compact `MM-dd HH:mm` timestamp (year dropped — these are recent
    sessions), or `-` when absent."
   [v]
   (let [day (format-session-day v)]
     (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
+
 (defn- navigator-session-row
   "One unified row per session — a session IS its workspace (locked 1:1),
    so there is no separate workspace row or `kind`. Columns mirror the
@@ -5120,6 +5219,7 @@
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (get session "modified_at"))
      :target {:action :switch :id id}}))
+
 (defn- group-rows-by-dir
   "Regroup navigator rows so sessions of the SAME project (`:dir`) sit
    adjacent. Rows arrive newest-first, so first-appearance group order =
@@ -5138,6 +5238,7 @@
     (vec (mapcat (fn [d]
                    (sort-by #(or (:position %) Long/MAX_VALUE) (by-dir d)))
                  order))))
+
 (defn- navigator-all-rows
   "Sessions arrive newest-modified-first from `tui-session-summaries`. The
    focused session pins to the top; the rest are grouped by PROJECT
@@ -5169,7 +5270,9 @@
     ;; Focused row pinned to the top; the rest regrouped by project, each
     ;; group ordered by its most recent session (see `group-rows-by-dir`).
     (vec (concat (filter :focused? rows) (group-rows-by-dir (remove :focused? rows))))))
+
 (defn- navigator-visible-rows [rows query] (vec (filter #(table/row-matches? % query) rows)))
+
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
    cell text can be overlaid on a border-colored frame."
@@ -5178,11 +5281,13 @@
                    [(conj acc [off (long w)]) (+ (long off) (long w) 3)])
                  [[] 2]
                  widths)))
+
 (defn- navigator-with-selection-gutter
   "Reserve the shared selection-prefix gutter at the head of the first cell.
    `p/draw-selection-marker!` paints into that gutter on selected rows."
   [cells]
   (update (vec cells) 0 #(str (p/selection-prefix false) %)))
+
 (defn- draw-navigator-row!
   "Draw one boxed row with frame + separators in the shared dialog border
    color and cell text in `text-fg` (bolded when `bold?`). Painting every
@@ -5200,6 +5305,7 @@
                           row
                           (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
     (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
+
 (defn- dir-canon
   ^java.io.File [^java.io.File f]
   (try (.getCanonicalFile f)
@@ -6193,6 +6299,7 @@
    {:id :settings :label "Settings"} {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
+
 (defn searchable-select!
   "Type-to-filter selection list — the searchable spine of the command palette.
    Thin wrapper over `list-dialog!` (filter on, content-sized, palette
@@ -6211,6 +6318,7 @@
                   :placeholder (or placeholder "Type a command…")
                   :enter-label (or enter-label "run")
                   :height :content})))
+
 (defn command-palette!
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
@@ -6226,6 +6334,7 @@
                          (assoc c :hint (keymap/label-for (:id c))))
                        palette-commands)]
      (searchable-select! screen "Command Palette" (vec (concat with-hints extra-commands))))))
+
 (defn model-picker!
   "Searchable per-session model picker — TUI parity with the web footer
    chooser. Lists every configured model as a row (`<provider> / <model>`,
@@ -6403,6 +6512,7 @@
           italic? (p/styled g [p/ITALIC] (p/put-str! g x row text))
           :else (p/put-str! g x row text))
     (+ (long x) (p/display-width text))))
+
 (defn markdown-viewer-dialog!
   "Scrollable read-only MARKDOWN viewer: `md` is lifted to canonical IR
    (`vis/markdown->ast`) and painted with styled headings, bold, and code
@@ -6521,6 +6631,7 @@
                 (recur)))))))))
 ;;; ── Copy dialog ─────────────────────────────────────────────────────────────
 (defn- role-label [role] (name (or role :assistant)))
+
 (defn- message-preview
   [{:keys [role text]}]
   (str (role-label role)
@@ -6528,6 +6639,7 @@
        (-> (or text "")
            (str/replace #"\r?\n+" " ")
            str/trim)))
+
 (defn- format-selected-messages
   [messages selected]
   (->> (range (count messages))
@@ -6536,6 +6648,7 @@
               (let [{:keys [role text]} (nth messages idx)]
                 (str (role-label role) ": " (or text "")))))
        (str/join "\n\n")))
+
 (defn copy-dialog!
   "Show copy dialog for chat messages.
    Space toggles, A toggles all, Enter copies selected, Esc cancels."

@@ -10,8 +10,13 @@
   (:require [com.blockether.vis.internal.agents :as internal]))
 
 (defn scan-in [root] (internal/scan-in root))
+
 (defn scan [] (internal/scan))
+
 (defn current [] (internal/current))
+
 (defn reload! [] (internal/reload!))
+
 (defn instructions [] (internal/instructions))
+
 (defn read-warnings [] (internal/read-warnings))

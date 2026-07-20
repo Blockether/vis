@@ -14,8 +14,11 @@
 ;; Host-side registries: handle (long) -> JSch Session / ChannelSftp.
 
 (defonce ^:private sess-registry (atom {}))
+
 (defonce ^:private sess-counter (atom 0))
+
 (defonce ^:private sftp-registry (atom {}))
+
 (defonce ^:private sftp-counter (atom 0))
 
 (defn- reg-sess!
@@ -39,6 +42,7 @@
   (or (get @sftp-registry (long h)) (throw (ex-info "SFTP channel is closed." {}))))
 
 (defn- b64enc [^bytes ba] (.encodeToString (Base64/getEncoder) ba))
+
 (defn- b64dec ^bytes [^String s] (.decode (Base64/getDecoder) s))
 
 (defn- non-empty? [x] (and x (seq (str x))))
@@ -210,6 +214,7 @@
     nil))
 
 (defn- op-sftp-rmdir [h ^String path] (.rmdir (sftp-of h) path) nil)
+
 (defn- op-sftp-remove [h ^String path] (.rm (sftp-of h) path) nil)
 
 (defn- op-sftp-rename
@@ -218,7 +223,9 @@
   nil)
 
 (defn- op-sftp-chmod [h ^String path mode] (.chmod (sftp-of h) (int mode) path) nil)
+
 (defn- op-sftp-symlink [h ^String src ^String dst] (.symlink (sftp-of h) src dst) nil)
+
 (defn- op-sftp-pwd [h] (.pwd (sftp-of h)))
 
 (defn- op-sftp-close

@@ -44,6 +44,7 @@
           (<= (p/display-width s) max-cols) s
           (<= max-cols ew) (p/truncate-cols vh/workspace-ellipsis max-cols)
           :else (str (p/truncate-cols s (- max-cols ew)) vh/workspace-ellipsis))))
+
 (defn center-padded
   "Centre `s` inside a `cell-w`-wide cell with `vh/tab-entry-padding`
    reserved on each side; ellipsises overflow."
@@ -72,7 +73,9 @@
 (def ^{:const true} close-button-width
   "Cells a `close-button!` occupies: a leading space + 1-col `✕` + a\n  trailing space. No divider — the bare ✕ reads as a button, not `|x`."
   3)
+
 (def ^{:private true} close-button-glyph " ✕ ")
+
 (defn close-button!
   "Draw a ` ✕ ` close affordance (space-padded ✕, no divider) at (col,row).
    At rest the ✕ sits on its OWN chip — the shared `button-fg`/`button-bg`
@@ -108,6 +111,7 @@
                      :text workspace-id
                      :enabled? true}))
     close-button-width))
+
 (defn button!
   "Generic clickable button: paint `label` (already space-padded, e.g. \" < \") as
    a filled accent cap at (col,row) — brighter on hover — AND register its click
@@ -315,6 +319,7 @@
   ;; reads gentler than a solid │ between tabs / cluster chips. Box-drawing
   ;; (EAW=A → one column in target terminals, same class as the borders).
   "┊")
+
 (defn tab-divider!
   "Paint a 1-col dotted `┊` divider (between tabs, or between header-cluster
    chips) at (col,row). Painted in the high-contrast accent (dark on a light
@@ -606,6 +611,7 @@
    (dotimes [c (long cols)]
      (p/set-char! g c row p/BOX_H))
    (p/clear-styles! g)))
+
 (defn- level->fg
   "Map a notification level to a foreground color; unknown levels fall back
    to the muted-footer color so something still renders."
@@ -624,6 +630,7 @@
     t/footer-spinner-fg
 
     t/footer-fg-muted))
+
 (defn notification-slot!
   "Paint the header's left-slot notification/status `text` at (col,row),
    colored by `level` (bold). No-op for blank text."
@@ -634,6 +641,7 @@
     (p/enable! g p/BOLD)
     (p/put-str! g col row text)
     (p/clear-styles! g)))
+
 (defn id-badge!
   "Paint the session-id COPY BUTTON `text` at (col,row) as a filled chip — via
    the shared `button!`, so it reads as the SAME control as the F1/F2 buttons
@@ -648,6 +656,7 @@
              text
              :copy-id
              {:extra {:text full-uuid} :register? (boolean (and register? full-uuid))})))
+
 (defn header-badge!
   "Paint a clickable header chip `glyph` at (col,row) and register a click
    region of `kind` (e.g. :toggle-tasks / :toggle-help). Brightens on hover.
@@ -675,6 +684,7 @@
 (defn- pad-right
   ^String [^String s ^long w]
   (str s (apply str (repeat (max 0 (- w (p/display-width s))) \space))))
+
 (defn dialog-close-button!
   "Draw a clickable `✕` close chip at a dialog's top-right title corner —
    the SAME button every modal dialog shows — and register its `kind`
@@ -951,6 +961,7 @@
     "⊘"
 
     "○"))
+
 (defn- task-status-color
   [status]
   (case status
@@ -970,7 +981,9 @@
     t/cancelled-fg
 
     t/footer-fg-muted))
+
 (def ^:private task-status-rank {:candidate 0 :doing 1 :todo 2 :done 3 :cancelled 4 :rejected 5})
+
 (defn- clip-str
   "Truncate `s` to `w` display columns with a trailing ellipsis.
    MUST clip by display width, not char index: `subs` indexes characters, so
@@ -980,12 +993,15 @@
    graphemes and never overruns the string."
   ^String [^String s ^long w]
   (if (<= (p/display-width s) w) s (str (p/truncate-cols s (max 0 (dec w))) "…")))
+
 (def ^:private overlay-blank-row
   "A single empty overlay row — the spacer between context-dialog entries."
   [["" t/dialog-hint false]])
+
 (def ^{:private true} overlay-card-indent
   "Leading columns inset each task/fact card from BOTH dialog rails (left via\n   indent-rows, right via the narrowed body width at the call sites)."
   3)
+
 (defn- indent-rows
   "Prefix every row with `indent` (default `overlay-card-indent`) leading\n   spaces so the whole card insets from the dialog left rail. Archived\n   tasks pass a larger indent so their cards nest under the indented\n   ARCHIVED TASKS header."
   ([rows] (indent-rows rows overlay-card-indent))
@@ -994,6 +1010,7 @@
      (mapv (fn [row]
              (with-meta (into [pad] row) (meta row)))
            rows))))
+
 (defn- wrap-cols
   "Greedy display-width word-wrap to a vec of lines, each fitting `w` columns.
    Delegates to the native, grapheme/EAW-aware `p/word-wrap` (one shared
@@ -1001,6 +1018,7 @@
    at grapheme boundaries, blank input yields `[\"\"]`."
   [s ^long w]
   (p/word-wrap s w))
+
 (defn- justify-line
   "Full-justify `s` to `w` display columns by spreading extra spaces between
    words. Returns `s` untouched when it has fewer than two words or already
@@ -1041,6 +1059,7 @@
                                            (repeat (+ 1 base (if (< i extra) 1 0)) \space)))
                                        (range gaps))
                                   [""])))))))))
+
 (defn- wrapped-rows
   "Rows for `text` wrapped to `w` columns: the FIRST row is prefixed by the\n   `head` segments (e.g. a colored glyph) and every continuation row is\n   indented by `indent` spaces so it aligns under the head. Non-final lines\n   are full-justified to `w`. Each row is a vec of `[text color bold?]`\n   segments. `indent` MUST equal the head's display width for clean alignment."
   [head indent text w body-color bold?]
@@ -1060,6 +1079,7 @@
                             (conj (vec head) [piece body-color bold?])
                             [[(str pad piece) body-color bold?]])))
                       pieces))))
+
 (defn- run->seg
   "Convert one styled IR run into a `[text color bold?]` overlay segment.
    `code` / link spans take the accent color; `bold` (or the caller's
@@ -1068,6 +1088,7 @@
   (let [accent? (or (contains? style :code) (contains? style :link))]
     [text (if accent? t/header-active-tab-accent base-color)
      (boolean (or base-bold? (contains? style :bold)))]))
+
 (defn- justify-segs
   "Full-justify a row of `[text color bold?]` segments to `w` display columns by
    widening every inter-word whitespace run across the segments. Returns the
@@ -1137,6 +1158,7 @@
                                                  (str m (apply str (repeat add \space)))))) color
                                 bold?]))
                            segs)))))))
+
 (defn- md-wrapped-rows
   "Wrap Markdown `text` to `w` `columns` through the renderer-local Markdown
   layout walker. Styled runs become `[text color bold?]` `segments`; the first
@@ -1206,6 +1228,7 @@
                 (into (vec head) segs)
                 (into [[pad base-color base-bold?]] segs))))
           lines)))))
+
 (defn- task-entry-rows
   "Progressive-disclosure rows for ONE task. SETTLED tasks
    (done/cancelled/rejected/deferred) collapse to a single dim line -
@@ -1325,6 +1348,7 @@
           (indent-rows indent)
           (conj overlay-blank-row)
           (conj overlay-blank-row))))))
+
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} task-overlay-lines
   "TASKS section body with progressive disclosure: a progress header
    (▰▰▱▱ bar + `N of M done`), then one `task-entry-rows`
@@ -1505,6 +1529,7 @@
         indent-rows
         (conj overlay-blank-row)
         (conj overlay-blank-row))))
+
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} fact-overlay-lines
   "FACTS section body - one `fact-entry-rows` card per fact, active facts
    first then superseded. `expanded` is the set of fact keys (as strings)

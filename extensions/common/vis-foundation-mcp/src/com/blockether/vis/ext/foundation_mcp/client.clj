@@ -32,6 +32,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- ->json ^String [m] (json/write-json-str m))
+
 (defn- json-> [^String s] (json/read-json s))
 
 (defn- clj-name [k] (if (keyword? k) (name k) (str k)))

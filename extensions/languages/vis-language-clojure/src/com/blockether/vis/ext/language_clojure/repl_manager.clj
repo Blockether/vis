@@ -72,7 +72,9 @@
 ;; appended by `record-failure!` (the one unexpected-death chokepoint), cleared
 ;; by `clear-failure!` (successful start / explicit stop = a deliberate reset).
 (def ^:private crash-window-ms 180000)
+
 (def ^:private max-crashes-in-window 5)
+
 (defonce ^:private crash-times (atom {}))
 
 (defn- note-crash!

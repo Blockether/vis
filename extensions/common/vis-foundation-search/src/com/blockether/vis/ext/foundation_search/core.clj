@@ -49,10 +49,15 @@
            (java.util UUID)))
 
 (def ^:private default-endpoint "https://mcp.exa.ai/mcp")
+
 (def ^:private default-timeout-ms 30000)
+
 (def ^:private default-protocol-version "2025-06-18")
+
 (def ^:private default-max-bytes 51200)
+
 (def ^:private default-max-lines 2000)
+
 (def ^:private default-tools ["web_search_exa" "get_code_context_exa"])
 
 (def ^:private client-info {:name "vis-search-extension" :version "1.0.0"})
@@ -984,7 +989,9 @@
 ;; =============================================================================
 
 (def ^:private ARXIV_API_BASE "https://export.arxiv.org/api/query")
+
 (def ^:private ARXIV_DEFAULT_MAX_RESULTS 10)
+
 (def ^:private ARXIV_DEFAULT_TIMEOUT_MS 20000)
 
 (defn- parse-arxiv-atom

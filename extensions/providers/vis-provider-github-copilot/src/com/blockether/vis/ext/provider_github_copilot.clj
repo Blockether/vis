@@ -34,8 +34,11 @@
   "Iv1.b507a08c87ecfe98")
 
 (def ^:private DEVICE_CODE_URL "https://github.com/login/device/code")
+
 (def ^:private ACCESS_TOKEN_URL "https://github.com/login/oauth/access_token")
+
 (def ^:private COPILOT_TOKEN_URL "https://api.github.com/copilot_internal/v2/token")
+
 (def ^:private COPILOT_API_FALLBACK_URL "https://api.individual.githubcopilot.com")
 
 (def ^:private COPILOT_ACCOUNT_BASE_URLS
@@ -336,6 +339,7 @@
   (or (get-in response [:endpoints :api]) (get-in response ["endpoints" "api"])))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
+
 (defn- proxy-endpoint
   [response]
   (or (response-field response :proxy-ep)
@@ -343,6 +347,7 @@
       (response-field response :proxyEndpoint)))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
+
 (defn- copilot-base-url-from-token
   [token]
   (when-let [[_ proxy-host] (re-find #"(?:^|;)proxy-ep=([^;]+)" (or token ""))]
@@ -780,6 +785,7 @@
 ;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis])
+
 (require '[com.blockether.svar.core :as svar])
 
 (defn- interactive-auth!

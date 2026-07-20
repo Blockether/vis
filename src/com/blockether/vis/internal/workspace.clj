@@ -536,6 +536,7 @@
 ;; `draft?` / `free-draft-name` are defined further down (Mutations); the
 ;; filesystem-root autoclone path needs them here.
 (declare draft? free-workspace-name)
+
 (declare abandon!)
 
 (defn filesystem-roots

@@ -917,9 +917,13 @@
 
 ;; Use bright-black, not ANSI dim (2): dim is unreadable on many themes.
 (defn- trace-dim [s] (ansi "90" s))
+
 (defn- trace-ok [s] (ansi "32" s))
+
 (defn- trace-warn [s] (ansi "33" s))
+
 (defn- trace-bad [s] (ansi "31" s))
+
 (defn- trace-code [s] (ansi "36" s))
 
 (defn- envelope-duration-ms
@@ -1848,6 +1852,7 @@
 ;;; ── `vis sessions` ─────────────────────────────────────────────────
 
 (def ^:private known-channels #{"tui" "cli" "api"})
+
 (def ^:private known-channel-filters (conj known-channels "all"))
 
 (defn- resolve-session-by-prefix

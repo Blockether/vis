@@ -279,8 +279,11 @@
 ;; ones with low-contrast palettes). Bright-black is the universal
 ;; "muted but visible" choice used by gh, kubectl, cargo, etc.
 (defn- dim [s] (ansi "90" s))
+
 (defn- cyan [s] (ansi "36" s))
+
 (defn- yellow [s] (ansi "33" s))
+
 (defn- magenta [s] (ansi "35" s))
 
 (defn- section [title] (bold (cyan title)))
@@ -288,6 +291,7 @@
 ;; ---- Width helpers ----------------------------------------------------------
 
 (def ^:private ANSI_RE #"\u001b\[[0-9;]*m")
+
 (defn- visible-len ^long [s] (count (str/replace (str s) ANSI_RE "")))
 
 (defn- pad-visible-right

@@ -38,15 +38,18 @@
 (def ^:private POLL_MS
   "Sleep between tail polls while a sibling process is actively streaming."
   100)
+
 (def ^:private IDLE_POLL_MS
   "Sleep once the tail has gone quiet — the steady state, since the cross-process
    tailer only has work when a SIBLING vis process shares a session. Every poll
    still stats every journal, so backing off to 2×/s here (vs 17×/s before) is
    what keeps an otherwise-idle daemon off the CPU."
   500)
+
 (def ^:private ^:const IDLE_AFTER
   "Consecutive quiet polls before backing off from `POLL_MS` to `IDLE_POLL_MS`."
   20)
+
 (def ^:private ^:const MAX_FILE_BYTES (* 16 1024 1024))
 
 (def ^:private ^:const RETAIN_MS
@@ -251,6 +254,7 @@
 
 ;; sid-str -> byte offset already consumed
 (defonce ^:private offsets (atom {}))
+
 (defonce ^:private tailer (atom nil))
 
 (def ^:private ^String self-marker

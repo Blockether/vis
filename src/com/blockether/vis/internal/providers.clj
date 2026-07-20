@@ -524,7 +524,9 @@
   ;; {:at <epoch-ms> :val <fleet vec>} — last-known `configured-providers`
   ;; snapshot; nil until the first read or right after an invalidation.
   (atom nil))
+
 (defonce ^:private fleet-refreshing (atom false))
+
 (def ^:private fleet-cache-ttl-ms
   ;; Cross-process safety net ONLY: same-process fleet mutations invalidate
   ;; explicitly (`save-providers!` / `remove-provider!`), so the TTL just

@@ -42,6 +42,7 @@
 ;; other path forces non-headless AWT, the process stays a background UI element
 ;; (no Dock icon, no menu bar).
 (System/setProperty "java.awt.headless" "true")
+
 (System/setProperty "apple.awt.UIElement" "true")
 
 ;; ----------------------------------------------------------------------------
@@ -110,6 +111,7 @@
   (if (== v (Math/rint v)) (str (long v)) (String/format Locale/ROOT "%.2f" (object-array [v]))))
 
 (defn- series-xs [s] (mapv as-double (get s "x")))
+
 (defn- series-ys [s] (mapv as-double (get s "y")))
 
 (defn- dash-stroke

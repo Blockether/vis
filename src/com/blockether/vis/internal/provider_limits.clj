@@ -33,23 +33,39 @@
 (def ^:private limit-sources #{:provider-api :derived :static :local})
 
 (s/def ::provider-id keyword?)
+
 (s/def ::status limit-statuses)
+
 (s/def ::fetched-at-ms integer?)
+
 (s/def ::rpm nat-int?)
+
 (s/def ::tpm nat-int?)
+
 (s/def ::static (s/keys :opt-un [::rpm ::tpm]))
 
 (s/def ::id keyword?)
+
 (s/def ::label (s/and string? #(not (str/blank? %))))
+
 (s/def ::scope limit-scopes)
+
 (s/def ::subject map?)
+
 (s/def ::kind limit-kinds)
+
 (s/def ::precision limit-precisions)
+
 (s/def ::source limit-sources)
+
 (s/def ::used number?)
+
 (s/def ::limit number?)
+
 (s/def ::remaining number?)
+
 (s/def ::unlimited? boolean?)
+
 (s/def ::note string?)
 
 (s/def ::window
@@ -64,11 +80,15 @@
           :opt-un [::subject ::window ::used ::limit ::remaining ::note]))
 
 (s/def ::limits (s/coll-of ::limit-row :kind vector?))
+
 (s/def ::dynamic (s/keys :req-un [::limits] :opt-un [::note]))
 
 (s/def ::type keyword?)
+
 (s/def ::message (s/and string? #(not (str/blank? %))))
+
 (s/def ::data map?)
+
 (s/def ::error (s/keys :req-un [::type ::message] :opt-un [::data]))
 
 (s/def ::report

@@ -19,7 +19,9 @@
 (set! *unchecked-math* :warn-on-boxed)
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
+
 (defonce ^:private event-registry (atom {}))
+
 (defonce ^:private fx-registry (atom {}))
 ;;; Render thread coordination.
 ;;
@@ -39,11 +41,13 @@
     "Monitor object the render thread .waits on. Notify-all on every
           dispatch that changes display state."}
   (Object.))
+
 (def ^:private no-render-bump-events
   "Events that update app-db without requesting a redraw. Right now this
    is just `:set-layout`, which is the render thread itself pushing back
    computed sizes for the input thread to read."
   #{:set-layout})
+
 (def ^:private always-bump-events
   "Events that MUST wake the painter even though they change nothing in the
    active view's app-db slice. `:bump-render-version` is the universal escape
@@ -51,6 +55,7 @@
    and the F2 reopen seed all ride it to force exactly one repaint — so it has
    to bypass the `active-view-changed?` gate below."
   #{:bump-render-version})
+
 (defn- active-view-slice
   "The portion of app-db the ACTIVE view paints. Excludes background tab state
    (`:tab-locals`), the dirty counter (`:render-version`), and the render
@@ -61,29 +66,37 @@
    per streamed token and starves the focused tab (it can't even echo typing)."
   [db]
   (dissoc db :tab-locals :render-version :layout))
+
 (defn- active-view-changed?
   [old-db new-db]
   (not= (active-view-slice old-db) (active-view-slice new-db)))
+
 (defn- notify-render! [] (locking render-monitor (.notifyAll render-monitor)))
+
 (defn reg-event-db
   "Register a pure event handler: (fn [db event-vec] new-db)"
   [id handler-fn]
   (swap! event-registry assoc id {:type :db :fn handler-fn}))
+
 (defn reg-event-fx
   "Register an effect-producing event handler:
    (fn [db event-vec] {:db new-db :fx [[:effect-id args...]]})"
   [id handler-fn]
   (swap! event-registry assoc id {:type :fx :fn handler-fn}))
+
 (defn reg-fx
   "Register a side-effect handler: (fn [args] ...)"
   [id handler-fn]
   (swap! fx-registry assoc id handler-fn))
+
 (defn- bump-version [db] (update db :render-version (fnil inc 0)))
+
 (def ^:private tab-state-keys
   [:session :workspace :workspace/root :title :messages :utilization :scroll :input :input-history
    :input-history-index :input-history-draft :slash-command-index :slash-command-hidden?
    :submitted-input :pending-sends :pastes :paste-counter :loading? :cancel-token :cancelling?
    :progress :turn-start-ms :detail-expansions :mouse-selection :session-model-pref])
+
 (defn- empty-tab-state
   []
   {:session nil
@@ -110,14 +123,18 @@
    :detail-expansions {}
    :mouse-selection nil
    :session-model-pref nil})
+
 (defn- tab-snapshot [db] (merge (empty-tab-state) (select-keys db tab-state-keys)))
+
 (defn- current-tab-id
   [db]
   (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))) (:id (first (:tabs db)))))
+
 (defn- active-tab-entry
   [db]
   (let [active-id (current-tab-id db)]
     (some #(when (= (:id %) active-id) %) (:tabs db))))
+
 (defn- active-workspace
   [db]
   (or (:workspace db)
@@ -128,11 +145,13 @@
                   (some-> (active-tab-entry db)
                           :workspace/root))]
         {:workspace/root root})))
+
 (defn- sync-active-tab
   [db]
   (if-let [id (current-tab-id db)]
     (assoc-in db [:tab-locals id] (tab-snapshot db))
     db))
+
 (defn tab-session-snapshot
   "Ordered open-tab sessions + the active one, for per-place persistence.
    Returns {:active <session-id-str|nil>
@@ -171,11 +190,13 @@
                                 {:id s :root root}
                                 {:id s})))
                           entries))}))
+
 (defn- finalize-db
   [db]
   (cond-> db
     (map? db)
     sync-active-tab))
+
 (defn dispatch
   "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"]).
    Wakes the render thread when the event changes the ACTIVE view. An event
@@ -255,7 +276,9 @@
 ;;  :dialog-open? false}         ;; dialog singleton guard
 ;;
 (def ^:private settings-notification-ttl-ms 1500)
+
 (def ^:private cancel-notification-ttl-ms 2500)
+
 (def ^:private cancel-self-heal-timeout-ms
   "Client-side safety net for a STUCK cancel. `:cancel-turn` flips `:cancelling?`
    and waits for the daemon's terminal `turn.completed` (status cancelled) event
@@ -268,6 +291,7 @@
    terminal event always wins the race; short enough that a dropped one never
    freezes the user."
   8000)
+
 (def ^:private live-progress-render-interval-ms
   "Maximum wall-clock interval between live reasoning redraws.
 
@@ -277,12 +301,15 @@
    appear without delay. Virtual layout then projects and paints only visible
    bubbles."
   80)
+
 (def ^:private pending-assistant-content
   [{"id" "pending"
     "type" "notice"
     "code" "turn_pending"
     "message" "Sending request to provider..."}])
+
 (defn- pending-assistant-message? [m] (and (= :assistant (:role m)) (true? (:pending? m))))
+
 (defn- replace-pending-assistant
   "Replace the pending assistant slot for a completed turn. Prefer the
    stable client turn id; fall back to the oldest pending placeholder for
@@ -313,6 +340,7 @@
     (cond idx (assoc messages idx response)
           (and (seq messages) (= :assistant (:role (peek messages)))) (conj (pop messages) response)
           :else (conj messages response))))
+
 (def ^:private throttled-streaming-phases
   "Per-token streaming phases that share the live-progress redraw budget.
    `:reasoning` chunks fire on every reasoning SSE delta; `:content`
@@ -321,12 +349,14 @@
    `:provider-fallback`, …) bypass the throttle entirely so block
    boundaries appear without delay."
   #{:reasoning :content})
+
 (defonce ^:private ^ScheduledExecutorService progress-trailing-flush-scheduler
   (Executors/newSingleThreadScheduledExecutor
     (reify
       java.util.concurrent.ThreadFactory
         (newThread [_ r]
           (doto (Thread. ^Runnable r "vis-tui-progress-trailing-flush") (.setDaemon true))))))
+
 (def ^:private reasoning-live-tail-reveal-chars
   "Escape hatch for the live reasoning sentence-buffer. A boundary-less run
    this long past the last sentence break is revealed anyway, so a long
@@ -514,6 +544,7 @@
              ;; Throttled, inside the window, flush already queued → @latest was
              ;; updated above; nothing else to do.
              :else nil)))))))
+
 (defn- normalize-theme-name
   [v]
   (let
@@ -521,6 +552,7 @@
              (string? v) (str/trim v)
              :else nil)]
     (keyword (if (str/blank? s) shared-theme/default-theme-id s))))
+
 (defn- normalize-settings
   "Coerce the two settings keys this layer still OWNS:
      `:theme-name`           — enum, picked from registered themes
@@ -543,6 +575,7 @@
                 (cond (nil? v) #{}
                       (set? v) v
                       :else (set v))))))
+
 (defn- migrated-toggle-projection
   "Pull the migrated boolean + enum toggles back into a flat
    `:settings`-shaped map so existing consumers
@@ -562,6 +595,7 @@
    :voice/respond (vis/toggle-enabled? :voice/respond)
    :reasoning-level (vis/toggle-value :vis/reasoning-level)
    :openai-codex-verbosity (vis/toggle-value :openai-codex/verbosity)})
+
 (def default-settings
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
    `:tui-settings`.
@@ -603,6 +637,7 @@
    ;; (every registered contributor shows). See
    ;; `com.blockether.vis.ext.channel-tui.contributors`.
    :contributors-disabled #{}})
+
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` for the keys this
    layer still owns (`:theme-name`, `:contributors-disabled`). The
@@ -618,6 +653,7 @@
 
     (normalize-settings (merge default-settings
                                (when (map? saved) (select-keys saved (keys default-settings)))))))
+
 (defn- persist-settings!
   "Write `settings` back into `~/.vis/config.edn` under
    `:tui-settings`, preserving every other key in the file. Failures
@@ -627,6 +663,7 @@
   (try (let [raw (or (vis/load-config-raw) {})]
          (vis/save-config! (assoc raw :tui-settings settings)))
        (catch Throwable _ nil)))
+
 (defn- apply-settings-update!
   "Merge `new-settings` over the local-owned slice (theme +
    contributors-disabled), persist that slice into
@@ -656,6 +693,7 @@
            (catch Throwable _ nil)))
     (persist-settings! local-merged)
     (assoc db :settings projected)))
+
 (defn- model-entry
   [provider model]
   (when-let [model-name (and model (vis/model-name model))]
@@ -717,12 +755,16 @@
   (let [entries (model-cycle-entries-cached)]
     (when-let [idx (entry-index entries provider model)]
       [(inc (long idx)) (count entries)])))
+
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
     (try (vis/resolve-effective-model router) (catch Throwable _ nil))))
+
 (defn- current-provider-id [] (:provider (current-model-info)))
+
 (def ^:private ^:const max-tabs 8)
+
 (def untitled-session-label
   "Default workspace label for a session without a title yet.
 
@@ -731,13 +773,16 @@
    here for callers (and tests) that already reach in via the state
    namespace."
   vh/untitled-session-label)
+
 (def ^:private starting-session-label
   "Placeholder tab label shown while an optimistically-opened new session's
    environment is still building on a background worker (see
    `:open-building-tab`)."
   "Starting…")
+
 (def ^:private transcript-dump-markers
   ["▾ REASONING [" "▾ RESULT [" "▾ ERROR [" "RESULT [iteration" "REASONING [iteration"])
+
 (defn transcript-dump-input?
   "True when text looks like a copied Vis assistant trace/transcript, not a
    fresh user prompt. These strings can enter `user_request` after accidental
@@ -749,6 +794,7 @@
                       (boolean (re-find #"(?m)^\s*The user (wants|is|asked|reports|says|needs)\b"
                                         s))
                       (boolean (re-find #"(?m)^\s*\(def\s+" s)))))))
+
 (defn- history-user-texts
   [history]
   (->> (or history [])
@@ -756,6 +802,7 @@
                (when (= :user (:role message)) (:text message))))
        (remove transcript-dump-input?)
        vec))
+
 (defn- tab-number
   [entry]
   (when-let
@@ -764,7 +811,9 @@
                     name
                     (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
+
 (defn- next-tab-number [entries] (inc (long (reduce max 0 (keep tab-number entries)))))
+
 (defn- insert-tab-grouped
   "Insert a freshly minted tab entry ADJACENT to its project group: right
    after the LAST existing tab sharing its `vh/tab-group-root`. No root, or
@@ -791,15 +840,18 @@
                    [entry]
                    (subvec entries (inc (long last-idx)))))
       (conj entries entry))))
+
 (defn- base-tab-entry
   [db]
   {:id (or (:active-tab-id db) :main)
    :label (let [title (:title db)]
             (if (and (string? title) (not (str/blank? title))) title untitled-session-label))})
+
 (defn- tabs-or-base
   [db]
   (let [entries (vec (:tabs db))]
     (if (seq entries) entries [(base-tab-entry db)])))
+
 (defn- label-from-title
   [title fallback]
   (if (and (string? title) (not (str/blank? title))) title (or fallback untitled-session-label)))
@@ -820,6 +872,7 @@
                       (assoc :active? true)))
                   entries)
       :active-tab-id active-id)))
+
 (defn- restore-tab
   "Pull the per-tab locals for `workspace-id` back into the active db.\n\n   Also clears two DERIVED/display fields that belong to the tab we are\n   LEAVING, not the one we are entering:\n\n   - `:layout` is a single top-level value the render thread computes for the\n     CURRENT tab's messages (`:total-h`, `:offsets`). It is not per-tab, so on a\n     switch it still describes the old tab. The first post-switch frame would\n     clamp the new tab's scroll against that stale document height (and feed the\n     old `:offsets` as `:prev-offsets`) → the viewport lurches, then the next\n     frame recomputes correctly. Dropping it forces a clean recompute for THIS\n     tab before any clamp.\n   - `:pos` on `:scroll` is the eased on-screen row, anchored to the old layout.\n     Stripping it makes a restored FOLLOW tab re-snap to its own bottom instead\n     of inheriting the previous tab's pinned bottom row, and lets a parked tab\n     re-resolve its `:offset` against the fresh layout."
   [db workspace-id]
@@ -845,6 +898,7 @@
 
       (and (nil? (:workspace db')) (:workspace entry))
       (assoc :workspace (:workspace entry)))))
+
 (defn- activate-tab
   [db workspace-id]
   (-> db
@@ -859,6 +913,7 @@
                               (dissoc :unread?))))
                       entries)))
       (restore-tab workspace-id)))
+
 (defn- update-tab
   [db workspace-id f]
   (let [workspace-id (or workspace-id (current-tab-id db))]
@@ -868,6 +923,7 @@
                  (fn [snapshot]
                    (tab-snapshot (f (merge db (or snapshot (empty-tab-state)))))))
       (f db))))
+
 (defn- tab-session-id
   [db workspace-id]
   (or (some-> (get-in db [:tab-locals workspace-id :session :id])
@@ -878,6 +934,7 @@
                (some-> (:session-id %)
                        str))
             (:tabs db))))
+
 (defn- reasoning-effort-configurable?
   []
   (let [info (current-model-info)]
@@ -885,6 +942,7 @@
         (and (boolean (:reasoning? info))
              (not= false (:reasoning-effort? info))
              (not= :zai-thinking (:reasoning-style info))))))
+
 (defn init!
   "Initialize app-db with default state. The persisted layer now
    has two halves: `~/.vis/config.edn :tui-settings` holds the
@@ -961,12 +1019,15 @@
                   (let [r (vis/rebuild-router! config)]
                     (vis/refresh-cached-routers! r)))
                 (assoc db :config config)))
+
 (reg-event-db :set-dialog-open
               (fn [db [_ open?]]
                 (assoc db :dialog-open? (boolean open?))))
+
 (reg-event-db :update-settings
               (fn [db [_ new-settings]]
                 (apply-settings-update! db new-settings)))
+
 (reg-event-db :resync-toggle-settings
               ;; Triggered by the toggles-registry listener whenever a flip
               ;; happens (settings dialog row, programmatic vis/toggle-set-value!,
@@ -1007,6 +1068,7 @@
                                       :detail-expansions (:detail-expansions db)
                                       :on-warm #(dispatch [:bump-render-version])}))
                   (assoc db :settings settings))))
+
 (reg-event-fx :cycle-reasoning-level
               (fn [db _]
                 (if-not (reasoning-effort-configurable?)
@@ -1020,6 +1082,7 @@
                     {:db (apply-settings-update! db {})
                      :fx [[:notify (str "Reasoning: " (name next)) :info
                            settings-notification-ttl-ms]]}))))
+
 (reg-event-fx :cycle-codex-verbosity
               (fn [db _]
                 (if-not (= :openai-codex (current-provider-id))
@@ -1030,6 +1093,7 @@
                     {:db (apply-settings-update! db {})
                      :fx [[:notify (str "Codex verbosity: " (name next)) :info
                            settings-notification-ttl-ms]]}))))
+
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
               ;; persisted per-session choice the web picker sets and the engine routes
@@ -1085,6 +1149,7 @@
                            :fx [[:set-session-model sid pid (:model next-e)]
                                 [:notify (str "Model: " pid "/" (:model next-e)) :info
                                  settings-notification-ttl-ms]]})))))
+
 (reg-event-fx
   :set-model
   ;; Per-session model PICKER (C-x o / palette "Choose Model…"):
@@ -1104,11 +1169,13 @@
             :else {:db (dissoc db :session-model-pref)
                    :fx [[:set-session-model sid nil nil]
                         [:notify "Model: router default" :info settings-notification-ttl-ms]]}))))
+
 (reg-event-db :set-layout
               (fn [db [_ layout]]
                 ;; Pushed in by the render thread; intentionally does NOT bump
                 ;; render-version (see no-render-bump-events).
                 (assoc db :layout layout)))
+
 (defn- park-scroll-for-toggle
   "Pin the viewport before a disclosure toggle mutates message heights.
 
@@ -1125,6 +1192,7 @@
     (if (and (not (scroll/scrolled-up? (:scroll db))) (some? eff))
       (assoc db :scroll (scroll/parked (long eff)))
       db)))
+
 (reg-event-db :toggle-detail
               (fn [db [_ session-id node-id explicit-expand?]]
                 (let
@@ -1148,6 +1216,7 @@
                             (fn [m]
                               (let [expanded? (true? (get m k false))]
                                 (if expanded? (dissoc m k) (assoc (or m {}) k true)))))))))
+
 (reg-event-db :collapse-all-details
               ;; C-x [ — collapse EVERY disclosure. Wipe per-node overrides and set the
               ;; bulk baseline; `render/detail-expanded?` reads `:baseline` when a node has
@@ -1155,11 +1224,13 @@
               (fn [db _]
                 (-> (park-scroll-for-toggle db)
                     (assoc :detail-expansions {:vis.channel-tui/baseline :collapse}))))
+
 (reg-event-db :expand-all-details
               ;; C-x ] — expand EVERY disclosure (per-node overrides wiped, baseline set).
               (fn [db _]
                 (-> (park-scroll-for-toggle db)
                     (assoc :detail-expansions {:vis.channel-tui/baseline :expand}))))
+
 (reg-event-db :toggle-all-details
               ;; C-x TAB / C-x S-TAB — Emacs global fold cycle (org/magit `<backtab>`): if the
               ;; bulk baseline is currently expanded, collapse EVERY disclosure; otherwise
@@ -1171,6 +1242,7 @@
                   (-> (park-scroll-for-toggle db)
                       (assoc :detail-expansions {:vis.channel-tui/baseline
                                                  (if expanded? :collapse :expand)})))))
+
 (reg-event-db :set-detail-labels
               ;; C-x t — vim-style jump labels. `on?` true turns the overlay ON
               ;; (the renderer stamps a letter badge on every disclosure that was
@@ -1185,9 +1257,11 @@
                 (assoc db
                   :detail-labels-active? (boolean on?)
                   :detail-labels (when on? (vec labels)))))
+
 (reg-event-db :select-preview-mode
               (fn [db [_ session-id node-id mode]]
                 (assoc-in db [:detail-expansions [(str session-id) (str node-id)]] mode)))
+
 (reg-event-db :bump-render-version
               (fn [db _]
                 ;; No-op state mutator. The dispatcher itself bumps `:render-version` and
@@ -1196,6 +1270,7 @@
                 ;; wake the painter. Used by the mouse handler when a hover-state change needs
                 ;; the chrome row repainted with its hover background.
                 db))
+
 (reg-event-db
   :create-tab
   (fn [db [_ opts]]
@@ -1251,6 +1326,7 @@
 
           root
           (assoc :workspace/root root))))))
+
 (reg-event-db :select-tab-index
               (fn [db [_ idx]]
                 (let
@@ -1283,6 +1359,7 @@
                   (if-let [entry (and (integer? idx) (nth entries idx nil))]
                     (activate-tab db (:id entry))
                     db))))
+
 (reg-event-db :select-tab-by-session
               (fn [db [_ session-id]]
                 (let
@@ -1303,6 +1380,7 @@
                      (some #(when (= target-id (tab-session-id db (:id %))) %) entries))]
 
                   (if entry (activate-tab db (:id entry)) db))))
+
 (reg-event-fx
   :close-tab
   ;; Close one tab (default: the active tab). Removes it from `:tabs`,
@@ -1417,12 +1495,15 @@
                  (and closing-sid closing-idle? (not open-elsewhere?))
                  (into [[:release-session-listener closing-sid]
                         [:release-session-runtime closing-sid]]))})))))
+
 (reg-event-db :set-mouse-selection
               (fn [db [_ selection]]
                 (assoc db :mouse-selection selection)))
+
 (reg-event-db :clear-mouse-selection
               (fn [db _]
                 (dissoc db :mouse-selection)))
+
 (reg-event-db :set-provider-limits
               (fn [db [_ provider-id report]]
                 (assoc db
@@ -1430,6 +1511,7 @@
                                     :report report
                                     :updated-at-ms (System/currentTimeMillis)}
                   :provider-limits-force? false)))
+
 (reg-event-db :clear-provider-limits
               (fn [db _]
                 (assoc db
@@ -1441,9 +1523,11 @@
 (reg-event-db :force-provider-limits-refresh
               (fn [db _]
                 (assoc db :provider-limits-force? true)))
+
 (reg-event-db :shutdown
               (fn [db _]
                 (assoc db :shutdown? true)))
+
 (reg-event-db :set-workspace
               ;; Replace the session's current workspace record (trunk or draft) after a
               ;; turn that may have switched it (`/root`, `/draft new | apply | abandon`).
@@ -1469,6 +1553,7 @@
                                 (assoc d
                                   :workspace ws
                                   :workspace/root (get ws "root")))))))
+
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
    :gateway-turn-id])
@@ -1519,6 +1604,7 @@
                              :paste-counter 0
                              :detail-expansions {})
                       (reconcile-in-flight-state db session)))))
+
 (reg-event-fx
   :open-session-tab
   ;; Open `session` (with its `history` + pinned `workspace` record) in a TAB
@@ -1653,6 +1739,7 @@
                                 :input-history (history-user-texts history)))]
 
                     {:db (seed-ctx db')})))))
+
 (reg-event-db :open-building-tab
               ;; Optimistic new tab for a session whose cold env/runtime is still being
               ;; built on a background worker (chat/make-session-async's `:building`
@@ -1689,6 +1776,7 @@
                              :loading? true
                              :progress {:iterations []}
                              :turn-start-ms (System/currentTimeMillis))))))
+
 (reg-event-fx :bind-built-session
               ;; The background build for an optimistic `:open-building-tab` finished. Find
               ;; the tab tagged with `build-id`, bind the freshly built `session` (+ its
@@ -1771,6 +1859,7 @@
                        :fx (cond-> []
                              pending?
                              (conj [:dispatch [:drain-pending tab-id]]))})))))
+
 (reg-event-db :preallocate-project-tabs
               ;; Pre-allocate NAME-ONLY tabs for `specs` — [{:session-id .. :label ..
               ;; :root ..} …], the launch project's member sessions in tab order —
@@ -1811,6 +1900,7 @@
                                 (assoc-in [:tab-locals id] (empty-tab-state)))))))
                     db
                     specs))))
+
 (reg-event-db :mark-tab-loading
               ;; Flip a tab's `:loading?` while its PENDING transcript hydrates on a
               ;; worker (screen.clj's hydrate-pending-tab!): the spinner shows and any
@@ -1828,6 +1918,7 @@
                                   :progress (or (:progress w) {:iterations []})
                                   :turn-start-ms (or (:turn-start-ms w) (System/currentTimeMillis)))
                                 (clear-active-turn-state w))))))
+
 (reg-event-db :tab-hydration-failed
               ;; The lazy transcript load for a PENDING tab failed (session deleted
               ;; elsewhere / gateway hiccup). Drop the pending marker + session binding
@@ -1840,12 +1931,14 @@
                               (mapv #(if (= (:id %) tab-id) (dissoc % :pending? :session-id) %)
                                     es)))
                     (update-tab tab-id clear-active-turn-state))))
+
 (reg-event-db :title-loading
               ;; Host auto-title generation started (true) or ended (false). Drives the
               ;; header spinner on the active tab's title. `:set-title` also clears it so
               ;; the spinner stops the instant a real title lands.
               (fn [db [_ loading?]]
                 (assoc db :title-loading? (boolean loading?))))
+
 (reg-event-db :toggle-help
               ;; Flip the Ctrl+H / F1 keyboard-shortcut overlay. Pure render flag —
               ;; `components/help-overlay!` paints it when `:help-open?` is set.
@@ -1854,12 +1947,14 @@
                     (update :help-open? not)
                     (assoc :tasks-open? false
                            :help-scroll 0))))
+
 (reg-event-db :toggle-tasks
               ;; F2 context panel REMOVED — this is an inert no-op kept only so the
               ;; (now-unreachable) input-dispatch sites in screen.clj don't throw on an
               ;; unregistered event. `:tasks-open?` is never set, so nothing paints.
               (fn [db _]
                 db))
+
 (reg-event-db :close-overlays
               ;; Force every render-flag overlay shut. Dispatched before opening a
               ;; modal dialog (e.g. F4 resources) so only ONE dialog is ever on
@@ -1870,6 +1965,7 @@
                   :help-open? false
                   :tasks-open? false
                   :help-scroll 0)))
+
 (reg-event-db :ctx-scroll-by
               ;; Scroll the F2 context panel by `delta` rows, clamped to [0, the last
               ;; paint's :ctx-scroll-max]. Callers bump :render-version separately so the
@@ -1883,6 +1979,7 @@
                    (long (or (:ctx-scroll db) 0))]
 
                   (assoc db :ctx-scroll (max 0 (min maxs (+ cur (long delta))))))))
+
 (reg-event-db :toggle-fact-files
               ;; Fold/unfold the file list under a fact's `⛁ N files` meta row in
               ;; the F2 context panel. `:expanded-facts` is a set of fact keys
@@ -1897,11 +1994,13 @@
                    (set (:expanded-facts db))]
 
                   (assoc db :expanded-facts (if (contains? cur k) (disj cur k) (conj cur k))))))
+
 (reg-event-db :set-ctx-scroll-max
               ;; Record the F2 panel's max scroll offset (computed during paint) so the
               ;; scroll event can clamp. Pure assoc — does NOT bump render-version.
               (fn [db [_ maxs]]
                 (assoc db :ctx-scroll-max (long (or maxs 0)))))
+
 (reg-event-db :help-scroll-by
               ;; Scroll the F1 help overlay by `delta` rows, clamped to [0, the last
               ;; paint's :help-scroll-max]. Mirrors :ctx-scroll-by; callers bump
@@ -1915,16 +2014,19 @@
                    (long (or (:help-scroll db) 0))]
 
                   (assoc db :help-scroll (max 0 (min maxs (+ cur (long delta))))))))
+
 (reg-event-db :set-help-scroll-max
               ;; Record the F1 help overlay's max scroll offset (computed during paint)
               ;; so the scroll event can clamp. Pure assoc — does NOT bump render-version.
               (fn [db [_ maxs]]
                 (assoc db :help-scroll-max (long (or maxs 0)))))
+
 (reg-event-db :set-ctx-panel
               ;; F2 context panel REMOVED — inert no-op (kept so the turn-runner's
               ;; dispatch sites don't throw on an unregistered event). No cache.
               (fn [db _]
                 db))
+
 (defn tab-id-for-session
   "Resolve a session-id string to its tab id. The active tab's session lives
    at the db root; background tabs' sessions live in `:tab-locals`."
@@ -1940,6 +2042,7 @@
                            str))
             active-id)
           (some #(when (= sid (tab-session-id db (:id %))) (:id %)) (:tabs db))))))
+
 (reg-event-db :set-title
               ;; `title` lands on a specific tab. With no `arg` we target the active tab
               ;; (legacy callers). With a session-id `arg` — what the title listener now
@@ -1971,19 +2074,23 @@
                                         (= (:id entry) target-id)
                                         (assoc :label (label-from-title title (:label entry)))))
                                     entries)))))))
+
 (reg-event-db :update-input
               (fn [db [_ new-input]]
                 (let [text (input/input->text new-input)]
                   (cond-> (assoc db :input new-input)
                     (not (str/starts-with? (str/triml text) "/"))
                     (assoc :slash-command-hidden? false)))))
+
 (reg-event-db :hide-slash-command-suggestions
               (fn [db _]
                 (assoc db :slash-command-hidden? true)))
+
 (reg-event-db :move-slash-command-selection
               (fn [db [_ delta total]]
                 (assoc db
                   :slash-command-index (slash/move-index (:slash-command-index db) delta total))))
+
 (defn- text->input-state
   [text]
   (let
@@ -1997,6 +2104,7 @@
      (count (nth lines crow))]
 
     {:lines lines :crow crow :ccol ccol}))
+
 (defn- append-input-text
   [current text]
   (let
@@ -2009,6 +2117,7 @@
     (cond (str/blank? current-text) next-text
           (str/blank? next-text) current-text
           :else (str current-text "\n" next-text))))
+
 (defn- apply-external-input
   [workspace op text]
   (let
@@ -2034,21 +2143,26 @@
       :input-history-draft nil
       :slash-command-index 0
       :slash-command-hidden? false)))
+
 (reg-event-db :external-input
               (fn [db [_ op text workspace-id]]
                 (update-tab db workspace-id #(apply-external-input % op text))))
+
 (reg-event-db
   :channel-status-set
   (fn [db [_ id status]]
     (assoc-in db [:channel-status id] (assoc status :updated-at-ms (System/currentTimeMillis)))))
+
 (reg-event-db :channel-status-clear
               (fn [db [_ id]]
                 (update db :channel-status dissoc id)))
+
 (reg-event-db :channel-status-clear-if-until
               (fn [db [_ id until]]
                 (if (= until (get-in db [:channel-status id :until]))
                   (update db :channel-status dissoc id)
                   db)))
+
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by
    `:send-message`. Used only when a submitted prompt is cancelled and
@@ -2066,6 +2180,7 @@
                (= :user (:role (nth messages (- n 2)))))
           (subvec messages 0 (- n 2))
           :else messages)))
+
 (defn- restore-submitted-input
   "Drop the pending turn pair AND repopulate the editor. Used when
    a turn was cancelled before any iteration produced visible work
@@ -2089,6 +2204,7 @@
                   (let [xs (vec (or xs []))]
                     (if (= visible-text (peek xs)) (pop xs) xs))))
         (dissoc :turn-start-ms :submitted-input))))
+
 (defn- restore-editor-only
   "Repopulate the editor without touching `:messages`. Used when
    a turn was cancelled AFTER iterations produced visible work -
@@ -2112,6 +2228,7 @@
              :pastes (or pastes {})
              :paste-counter (or paste-counter 0))
       (dissoc :submitted-input)))
+
 (reg-event-fx
   :history-up
   (fn [db _]
@@ -2171,6 +2288,7 @@
                        :input-history-index new-idx
                        :input-history-draft draft
                        :input (text->input-state (nth history new-idx)))})))))
+
 (reg-event-db :history-down
               (fn [db _]
                 (let
@@ -2193,6 +2311,7 @@
                                 :input-history-index nil
                                 :input-history-draft nil
                                 :input (text->input-state (or draft "")))))))
+
 (reg-event-db :reset-input
               (fn [db _]
                 (assoc db
@@ -2207,6 +2326,7 @@
                   ;; reset drops orphans.
                   :pastes {}
                   :paste-counter 0)))
+
 (reg-event-db :add-paste
               ;; Stashes a clipboard payload in the registry, returns the new
               ;; id (Integer) via a side-channel atom that the screen loop reads
@@ -2219,6 +2339,7 @@
                                 (cond-> {:id next-id :content content}
                                   image
                                   (assoc :image image)))))))
+
 (reg-event-db :remove-paste
               ;; Drop a single paste entry by id. Used when the user backspaces
               ;; over the closing `]` of a placeholder - the screen loop deletes
@@ -2242,7 +2363,9 @@
 ;; slack band re-arms FOLLOW and snaps back to bottom, then the next ease
 ;; pushes down again. Grep the log for `scroll-transition` / `rearm? true`.
 (defn- scroll-snapshot [sc] {:mode (str (:mode sc)) :offset (long (or (:offset sc) 0))})
+
 (defn- scroll-pre! [db] (scroll-snapshot (:scroll db)))
+
 (defn- log-scroll!
   [label pre post extra]
   (let [rearmed? (and (= "at" (:mode pre)) (= "follow" (:mode post)))]
@@ -2274,6 +2397,7 @@
 
                   (log-scroll! :set-scroll pre (scroll-snapshot sc) {:offset offset})
                   (assoc db :scroll sc))))
+
 (reg-event-db :scroll-to-bottom
               ;; Emacs C-l recenter: drop back to FOLLOW (stick to the newest
               ;; content). The repaint is the caller's `:bump-render-version`.
@@ -2287,6 +2411,7 @@
 
                   (log-scroll! :scroll-to-bottom pre (scroll-snapshot sc) {})
                   (assoc db :scroll sc))))
+
 (reg-event-db :scroll-to-top
               ;; Emacs M-< (beginning-of-buffer): park at the very top. The layout
               ;; clamps the offset, so row 0 is the first message.
@@ -2300,6 +2425,7 @@
 
                   (log-scroll! :scroll-to-top pre (scroll-snapshot sc) {})
                   (assoc db :scroll sc))))
+
 (reg-event-db :reanchor-scroll
               ;; Scroll-anchoring write-back from the render thread. `anchored` is the
               ;; corrected absolute on-screen row; `delta` is how far content ABOVE the
@@ -2309,6 +2435,7 @@
               (fn [db [_ anchored delta]]
                 (assoc db
                   :scroll (scroll/reanchor (:scroll db) (long anchored) (long (or delta 0))))))
+
 (reg-event-db :ease-scroll
               ;; Render-loop pulse: advance the on-screen position one ease-out step
               ;; toward where the current intent WANTS it (bottom in FOLLOW, the parked
@@ -2482,6 +2609,7 @@
               (fn [db _]
                 (assoc db
                   :search {:active? false :query "" :hits [] :index 0 :case? false :total 0})))
+
 (reg-event-db :scroll-to-message
               ;; In-session search lands here after the user picks a hit. The painter doesn't
               ;; get told an exact :messages-scroll Y value
@@ -2495,11 +2623,13 @@
                   ;; the hit. Parking IS the scroll-up intent now, so streaming follow
                   ;; hands off automatically until the user scrolls back to the bottom.
                   (assoc :scroll-to-message-pending msg-idx))))
+
 (reg-event-db :scroll-to-message-resolved
               ;; Painter calls this after consuming `:scroll-to-message-pending`
               ;; so the same hit doesn't re-scroll on every redraw.
               (fn [db _]
                 (dissoc db :scroll-to-message-pending)))
+
 (reg-event-db :scroll-up
               ;; Wheel / arrow / PageUp: park `amount` rows above the current row and
               ;; ease there. Scrolling up is always a deliberate read-history intent
@@ -2517,6 +2647,7 @@
 
                   (log-scroll! :scroll-up pre (scroll-snapshot sc) {:amount amount :max-s max-s})
                   (assoc db :scroll sc))))
+
 (reg-event-db :scroll-down
               ;; Wheel / arrow / PageDown: ease `amount` rows down; landing within the
               ;; slack band of the bottom re-arms FOLLOW.
@@ -2533,6 +2664,7 @@
 
                   (log-scroll! :scroll-down pre (scroll-snapshot sc) {:amount amount :max-s max-s})
                   (assoc db :scroll sc))))
+
 (reg-event-db :scroll-to-y
               ;; Scrollbar drag / track click: map the cursor row to an offset and SNAP
               ;; (1:1, no ease - animation would lag the thumb). The very bottom
@@ -2556,15 +2688,18 @@
                      (long (Math/round (* fraction (double max-s))))]
 
                     (assoc db :scroll (scroll/to-y offset max-s))))))
+
 (defn- turn-extra-body
   [{:keys [settings]}]
   (when (= :openai-codex (current-provider-id))
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
+
 (defn- db-for-tab
   [db workspace-id]
   (if (= workspace-id (current-tab-id db))
     db
     (merge db (or (get-in db [:tab-locals workspace-id]) (empty-tab-state)))))
+
 (defn- enqueue-message-result
   [db workspace-id text]
   (let
@@ -2658,6 +2793,7 @@
          :fx (cond-> [[:notify "Queued — will send after current turn" :info 1500]]
                gw-fx
                (conj gw-fx))}))))
+
 (reg-event-fx
   :send-message
   ;; `text` is the input-buffer string - it may carry two shorthand surfaces:
@@ -2761,12 +2897,14 @@
            ;; directive in the user bubble.
            :fx [[:session-turn workspace-id (:session source-db) agent-text token reasoning-level
                  extra-body turn-features workspace client-turn-id preview-text]]})))))
+
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.
               ;; Queue lives on that workspace/session and drains after the
               ;; in-flight turn commits. No provider call happens from this handler.
               (fn [db [_ text workspace-id]]
                 (enqueue-message-result db workspace-id text)))
+
 (reg-event-fx :set-queued-turn-id
               ;; Late-bind the gateway's queued turn id onto the local preview entry
               ;; (matched by the client-id stamped at enqueue). ArrowUp-edit and clear
@@ -2809,6 +2947,7 @@
                                                            e))
                                                        (vec (or q [])))))))}
                     {:db db :fx (when (and sid tid) [[:gateway-delete-queued sid tid]])}))))
+
 (reg-event-fx :sync-turn-clock
               ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
               ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares —
@@ -2853,6 +2992,7 @@
                       (cond-> {:db db'}
                         (and awaiting-cancel? sid)
                         (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
+
 (reg-event-db
   :sync-queued-turn
   ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
@@ -2920,6 +3060,7 @@
                           (vec (remove #(= turn-id (:turn-id %)) q))
 
                           q))))))))))
+
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
               ;; longer wanted. Cancelling the in-flight turn must NOT auto-drop
@@ -2943,6 +3084,7 @@
                    :fx (mapv (fn [tid]
                                [:gateway-delete-queued sid tid])
                              tids)})))
+
 (reg-event-fx :drain-pending
               ;; Pop one queued submission for `workspace-id`. When it carries a
               ;; gateway turn id the gateway already (auto-)started it, so ATTACH and
@@ -3017,6 +3159,7 @@
                                                    :pastes (or (:pastes head) {})
                                                    :paste-counter (or (:paste-counter head) 0))))
                                :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
+
 (reg-event-fx
   :attach-running-turn
   ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
@@ -3142,6 +3285,7 @@
                         :input-history-index nil
                         :input-history-draft nil))))
            :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
+
 (reg-event-fx
   :sibling-turn-started
   ;; A turn STARTED on this session from a SIBLING channel (another TUI, the
@@ -3173,6 +3317,7 @@
                   :current-turn-id turn-id
                   :running-request request
                   :running-started-at started-at-ms)]]]}))))
+
 (reg-event-fx :restore-pending-to-input
               ;; A user cancel with a queued backlog must NOT auto-send the next message.
               ;; Pull every queued (not-yet-started) submission back into the editor —
@@ -3241,6 +3386,7 @@
                                  (mapv (fn [tid]
                                          [:gateway-delete-queued sid tid])
                                        tids))})))))
+
 (defn- gateway-cancel-turn-or-current!
   "Best-effort gateway cancel for Esc. With a known `tid` fire the id-addressed
    cancel; WITHOUT one fall back to the tid-less `cancel-current` (kills whatever
@@ -3339,6 +3485,7 @@
                            (assoc :cancel-awaiting-turn-id? true))
                      :fx [[:notify "Cancelling current turn..." :info
                            cancel-notification-ttl-ms]]})))))
+
 (reg-event-fx :cancel-tab-turn
               ;; Best-effort SERVER-side cancel for the turn running in `tab-id`'s session —
               ;; fired by the close-busy-tab prompt's "Cancel the turn and close" choice
@@ -3371,6 +3518,7 @@
 
                   (when sid (gateway-cancel-turn-or-current! sid tid))
                   {:db db})))
+
 (defn- cancel-self-heal-due?
   "True when a user cancel has been pending (`:cancelling?`) at least
    `cancel-self-heal-timeout-ms` without the daemon's terminal event arriving to
@@ -3380,6 +3528,7 @@
                 (:cancelling-at-ms db)
                 (>= (- (long now-ms) (long (:cancelling-at-ms db)))
                     (long cancel-self-heal-timeout-ms)))))
+
 (reg-event-fx :cancel-self-heal-tick
               ;; Render-loop heartbeat safety net for a STUCK cancel (see
               ;; `cancel-self-heal-timeout-ms`). Once the pending `:cancelling?` has outlived
@@ -3408,6 +3557,7 @@
                                :warn cancel-notification-ttl-ms]]
                              (some :client-id (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
+
 (defn background-loading-tokens
   "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
    tab held at the db root) whose turn is in flight. Ctrl+C quit consults these so
@@ -3419,10 +3569,12 @@
          (keep (fn [[tab-id snap]]
                  (when (and (not= tab-id active) (:loading? snap)) (:cancel-token snap))))
          vec)))
+
 (defn any-background-loading?
   "True when a non-active tab has a turn in flight."
   [db]
   (boolean (seq (background-loading-tokens db))))
+
 (reg-event-fx :cancel-all-turns
               ;; Cancel EVERY in-flight turn — the active tab (root :cancel-token) plus every
               ;; background tab in :tab-locals. Used by the Ctrl+C quit-confirm path so
@@ -3433,6 +3585,7 @@
                   (try (vis/cancel! tok) (catch Throwable _ nil)))
                 (when (:loading? db) (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil)))
                 {:db (assoc db :cancelling? true)}))
+
 (reg-event-db :set-progress-iterations
               (fn [db [_ a b]]
                 (let [[workspace-id iterations] (if (keyword? a) [a b] [(current-tab-id db) a])]
@@ -3443,6 +3596,7 @@
                       (if-not (:loading? workspace)
                         workspace
                         (assoc-in workspace [:progress :iterations] (vec (or iterations [])))))))))
+
 (reg-event-fx
   :message-received
   (fn [db [_ a b c]]
@@ -3625,9 +3779,11 @@
          (vis/notify! (str "Voice response failed: " (or (ex-message t) t))
                       :level :error
                       :ttl-ms 5000))))
+
 (reg-fx :dispatch
         (fn [event]
           (dispatch event)))
+
 (reg-fx :notify
         (fn [text level ttl-ms]
           (vis/notify! text :level level :ttl-ms ttl-ms)))
@@ -3641,6 +3797,7 @@
           ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a
           ;; per-session model switch reflects in the footer's usage row promptly.
           (dispatch [:force-provider-limits-refresh])))
+
 (reg-fx :bell
         ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
         ;; interleaving it with Lanterna's output is safe; the terminal turns it
@@ -3650,6 +3807,7 @@
                  (.write out 7)
                  (.flush out))
                (catch Throwable _ nil))))
+
 (reg-fx :apply-config
         (fn [config]
           (let
@@ -3668,6 +3826,7 @@
                (vis/rebuild-router! resolved)]
 
               (vis/refresh-cached-routers! router)))))
+
 (reg-fx
   :session-turn
   (fn
@@ -3808,6 +3967,7 @@
                               (vis/cancellation? t)
                               (assoc :status :cancelled))]))))))]
       (vis/cancellation-set-future! token fut))))
+
 (reg-fx
   :session-attach
   (fn [workspace-id session tid token client-turn-id]
@@ -3903,6 +4063,7 @@
                               (vis/cancellation? t)
                               (assoc :status :cancelled))]))))))]
       (vis/cancellation-set-future! token fut))))
+
 (reg-fx
   :gateway-enqueue
   ;; Register a busy-time submission as a REAL gateway queued turn (server-side
@@ -3932,10 +4093,12 @@
                              :level :warn
                              :ttl-ms 3000)
                 (catch Throwable _ nil))))))
+
 (reg-fx :gateway-delete-queued
         (fn [sid tid]
           (when (and sid tid)
             (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))
+
 (reg-fx :submit-orphan-sends
         ;; A closing tab still held AUTHORED submissions that never reached the
         ;; gateway (no :turn-id). Submit each to the gateway — the server-side queue
@@ -3970,9 +4133,11 @@
         ;; Best-effort; a stopped daemon or lost race simply leaves it queued.
         (fn [sid]
           (when sid (try (vis/gateway-drain-idle! sid) (catch Throwable _ nil)))))
+
 (reg-fx :gateway-close-session
         (fn [sid]
           (when sid (try (vis/gateway-close-session! sid) (catch Throwable _ nil)))))
+
 (reg-fx :release-session-runtime
         ;; Stop a session's live daemon runtime + background children (shell_bg,
         ;; managed REPLs) WITHOUT dropping the process client lease — fired by
@@ -3980,6 +4145,7 @@
         ;; transcript resumable; best-effort, never daemon-spawning.
         (fn [sid]
           (when sid (try (vis/gateway-release-session-runtime! sid) (catch Throwable _ nil)))))
+
 (reg-fx :unassign-session-project
         ;; Tabs ARE the launch project's member sessions, so an explicit tab
         ;; close drops that session from the project (SET NULL — the session is

@@ -31,6 +31,7 @@
 ;; sid-string -> {:db-info <handle> :provider <id-or-nil> :model <name-or-nil>}.
 ;; Authoritative for reads until its debounced flush lands, then removed.
 (defonce ^:private pending (atom {}))
+
 (defonce ^:private flush-futures (atom {})) ; sid-string -> ScheduledFuture
 
 (defonce ^:private scheduler
@@ -43,6 +44,7 @@
 ;; Short-TTL cache for per-frame DISPLAY readers (the TUI footer renders every
 ;; frame; the codebase avoids per-paint DB reads). Pending always wins over it.
 (defonce ^:private display-cache (atom {})) ; sid-string -> {:v val :at ms}
+
 (def ^:private display-ttl-ms 1500)
 
 (defn- db-read [db-info sid] (persistance/db-get-session-model-pref db-info sid)) ; {:provider :model} or nil

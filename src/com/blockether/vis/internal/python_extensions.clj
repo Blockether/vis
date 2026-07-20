@@ -323,6 +323,7 @@ def __vis_registration__():
 ;; lookup maps string -> the INTERNAL telemere/notification level keyword.
 ;; No `(keyword …)` minting of Python-supplied data.
 (def ^:private log-levels {"trace" :trace "debug" :debug "info" :info "warn" :warn "error" :error})
+
 (def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
 
 (defn ^:no-doc bind-host!

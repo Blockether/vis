@@ -59,6 +59,7 @@
           duration of one paint, and by `with-dialog-lock` for the
           duration of a modal dialog session."}
   (ReentrantLock.))
+
 (def ^:private ^:dynamic *skip-frame-refresh?*
   "When true, `render-frame!` paints into the back-buffer but does NOT push
    the delta to the terminal. Bound by `repaint-chat-frame!` so a modal
@@ -87,29 +88,37 @@
 ;; multi-paragraph prompt, short enough that the input never eats
 ;; more than ~25% of a 1080p terminal's chat area.
 (def ^:private input-min-lines 1)
+
 (def ^:private input-max-lines 4)
+
 (def ^:private mouse-double-click-ms
   "Maximum time between two selection clicks on the same row for line-select."
   500)
+
 (def ^:private prewarm-sync-tail-count
   "How many newest bubbles to warm synchronously before launching
    the background pre-warm worker. Covers the region users hit on
    the first wheel-up after opening/switching sessions."
   16)
+
 (def ^:private prewarm-sync-budget-ms
   "Wall-clock budget for synchronous tail warm-up. Keeps startup and
    workspace-switch responsive while eliminating first-scroll cold stalls."
   120)
+
 (def ^:private slow-live-frame-threshold-ms
   "Log live/streaming TUI frames at or above this wall-clock duration.
 
    The normal live path runs at most every ~80ms; logging only slow frames keeps
    the default log quiet while surfacing stutter candidates in Lanterna/layout."
   35)
+
 (def ^:private slow-refresh-threshold-ms
   "Log frames whose Lanterna DELTA refresh alone crosses this duration."
   20)
+
 (defn- nanos->ms [start-ns end-ns] (/ (double (- (long end-ns) (long start-ns))) 1000000.0))
+
 (defn- paint-phase-detail
   "Render the sub-paint phase split as a compact ` [messages n.n, chrome n.n,
    capture n.n, post n.n]` suffix, or \"\" when the frame carried no phase
@@ -126,6 +135,7 @@
 
               (format "%s %.1f" label (double v)))]
     (if (seq phases) (str " [" (str/join ", " phases) "]") "")))
+
 (defn- log-slow-frame!
   "Warn-log a TUI frame whose wall-clock total OR Lanterna DELTA refresh crosses
    the stutter thresholds. `:path` (\"live\" / \"full\" / \"scroll\") tags WHICH
@@ -234,15 +244,18 @@
                                     (map (fn [[k v]]
                                            (format "%s=%d" k v))
                                          (:by-path w)))))))))
+
 (defn- input-empty?
   "True when the input editor has no text. The empty editor is `{:lines [\"\"]
    :crow 0 :ccol 0}` - a one-element vec with the empty string - so we
    can't just `(empty? lines)`."
   [{:keys [lines]}]
   (or (empty? lines) (every? str/blank? lines)))
+
 (def ^:private drag-autoscroll-max-coalesce-factor
   "Upper bound for per-loop drag auto-scroll amplification."
   8)
+
 (defn- mouse-wheel-delta
   "Return wheel direction as -1 / +1 for a MouseAction, else nil."
   [key]
@@ -251,9 +264,11 @@
       (cond (= atype MouseActionType/SCROLL_UP) -1
             (= atype MouseActionType/SCROLL_DOWN) 1
             :else nil))))
+
 (defn- drag-action?
   [key]
   (and (instance? MouseAction key) (= MouseActionType/DRAG (.getActionType ^MouseAction key))))
+
 (defn- coalesce-wheel-input
   "Collapse one run of consecutive wheel events into a single delta.
 
@@ -274,6 +289,7 @@
           {:key key :wheel-delta (when-not (zero? acc) acc) :next-key next-key})
         {:key key :wheel-delta (when-not (zero? acc) acc)}))
     {:key key}))
+
 (defn- coalesce-drag-input
   "Collapse consecutive DRAG events into one terminal event.
 
@@ -295,6 +311,7 @@
           {:key last-key :drag-events n :next-key next-key})
         {:key last-key :drag-events n}))
     {:key key :drag-events 1}))
+
 (defn- coalesced-drag-scroll-amount
   [amount drag-events]
   (let
@@ -308,6 +325,7 @@
      (long (max 1 (min (long drag-autoscroll-max-coalesce-factor) drag-events)))]
 
     (long (* amount factor))))
+
 (defn- pop-pending!
   "Pop the oldest stashed keystroke from the pending vector stash, or nil."
   [pending-keys]
@@ -364,6 +382,7 @@
             (let [{:keys [swallowed? replay]} (input/drain-sgr-leak! poll-next)]
               (vreset! pending-keys (into (vec replay) @pending-keys))
               (if swallowed? (recur) (coalesce-chat-input first-key poll-next pending-keys)))))))))
+
 (defn- throwable-log-data
   [^Throwable t]
   (let [sw (StringWriter.)]
@@ -372,6 +391,7 @@
      :message (or (ex-message t) (str t))
      :ex-data (ex-data t)
      :stack (.toString sw)}))
+
 (defn- submit-input!
   "Submit the current editor buffer, then clear it.
 
@@ -402,12 +422,15 @@
             :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
+
 (def ^:private status-error-ttl-ms 5000)
+
 (defn- copy-session-id!
   [text]
   (vis/worker-future "vis-tui-copy-session-id"
                      #(try (input/clipboard-copy! text) (catch Throwable _ nil)))
   (vis/notify! "✓ Copied session ID" :level :success :ttl-ms copy-success-ttl-ms))
+
 (defn- copy-selection!
   ([text] (copy-selection! text :transcript))
   ([text source]
@@ -416,12 +439,14 @@
    (vis/notify! (if (= source :input) "✓ Copied input selection" "✓ Copied selection")
                 :level :success
                 :ttl-ms copy-success-ttl-ms)))
+
 (defn- copy-bubble!
   [text]
   (let [text (selection/clean-copied-text text)]
     (vis/worker-future "vis-tui-copy-bubble"
                        #(try (input/clipboard-copy! text) (catch Throwable _ nil)))
     (vis/notify! "✓ Copied bubble" :level :success :ttl-ms copy-success-ttl-ms)))
+
 (defn- copy-bubble-hit!
   "Copy a whole-bubble copy-region hit. The region's `:text` is a DELAY
    (see `bubble-copy-regions`) so the expensive clipboard formatting of a
@@ -431,6 +456,7 @@
   [hit]
   (let [text (force (:text hit))]
     (when-not (str/blank? text) (copy-bubble! text))))
+
 (defn- handle-channel-event!
   [{:keys [op id text level ttl-ms] :as event}]
   (case op
@@ -467,6 +493,7 @@
     (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
 
     nil))
+
 (defn- slash-spec->menu-command
   "Adapt a declarative slash spec into the legacy menu-command shape
    `command_suggest.clj` consumes. Both top-level and nested slashes
@@ -497,6 +524,7 @@
      :slash/path path
      :slash/text (str "/" path-s)
      :slash/usage (or (:slash/usage spec) (str "/" path-s))}))
+
 (defn- slash-available-in-tui?
   "True when a slash spec is safe to expose in TUI slash UX.
    `registered-slashes` is env-less and includes non-TUI specs,
@@ -507,6 +535,7 @@
        (if-let [available? (:slash/availability-fn spec)]
          (try (boolean (available? {:channel/id :tui})) (catch Throwable _ false))
          true)))
+
 (def ^:private registry-slash-commands-cache
   "Memo cell for the harvested registry slash commands. The engine slash
    registry is stable within a session, so harvest ONCE and reuse — the first
@@ -552,6 +581,7 @@
                 (catch Throwable _t []))]
         (when (seq v) (reset! registry-slash-commands-cache v))
         v)))
+
 (defn- template-slash-commands
   "Prompt templates as typed-`/` palette entries: `.vis/prompts/*.md`,
    `~/.vis/prompts/*.md`, and provider-contributed dynamic templates
@@ -583,6 +613,7 @@
    Ctrl+K unless we add an explicit opt-in later."
   []
   [])
+
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
 
@@ -601,9 +632,11 @@
      (into #{} (keep :slash/text) base)]
 
     (into base (remove #(contains? taken (:slash/text %)) (template-slash-commands)))))
+
 (defn- slash-command-for-input
   [screen input-state]
   (slash/exact-command (input/input->text input-state) (menu-commands screen)))
+
 (defn- navigator-slash-for-input
   "When the typed text names — by EXACT full slash path — a slash spec that
    declares `{:slash/ui {:kind :navigator}}`, return that spec. The channel
@@ -625,6 +658,7 @@
                   (vis/registered-slashes))]
 
       (when (#{:navigator :dir-picker :clear-session} (get-in spec [:slash/ui :kind])) spec))))
+
 (defn- prompt-arg-slash-for-input
   "When the typed text is EXACTLY a registered slash that declares
    `:slash/prompt-arg` and carries NO argument, return {:slash-text :prompt}
@@ -638,6 +672,7 @@
               (let [full (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)])))]
                 (when (= text full) {:slash-text full :prompt prompt}))))
           (vis/registered-slashes))))
+
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
@@ -660,13 +695,16 @@
      ;; When no slash command matches, the same overlay + key handling drive
      ;; the inline `@` file picker (shared with the web; see file-suggest).
      (if (seq slash) slash (file-suggest/suggestions input-state selected-index)))))
+
 (defn- input-state-from-text [text] (input/paste-text (input/empty-input) (or text "")))
+
 (defn- activate-tab-entry-hit!
   "Switch to the workspace represented by a header click region."
   [refresh-active-tab! hit]
   (let [before (:active-tab-id @state/app-db)]
     (state/dispatch [:select-tab-index (:index hit)])
     (when-not (= before (:active-tab-id @state/app-db)) (refresh-active-tab! false))))
+
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
 
@@ -679,6 +717,7 @@
                   (or (some-> tc
                               .getCharacterString)
                       " ")))))))
+
 (defn- paint-selection!
   "Overlay reverse-video on the selected back-buffer cells."
   [^TerminalScreen screen selection cols rows selectable-ranges viewport]
@@ -802,23 +841,30 @@
                                  (.withBackgroundColor t/header-active-tab-accent)
                                  (.withForegroundColor t/dialog-bg))
                              (.withModifier tc SGR/REVERSE)))))))))
+
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
   2)
+
 (def ^:private assistant-code-text-inset-markers
   #{p/MARKER_CODE p/MARKER_CODE_OK p/MARKER_CODE_ERR p/MARKER_RESULT p/MARKER_ERR_RESULT
     p/MARKER_MD_CODE p/MARKER_TH_MD_CODE})
+
 (def ^:private selection-output-indent "  ")
+
 (def ^:private selection-output-indent-markers #{})
+
 (defn- assistant-code-text-row?
   [line]
   (let [line (or line "")]
     (some #(str/starts-with? line %) assistant-code-text-inset-markers)))
+
 (defn- output-indented-row?
   [line]
   (let [line (or line "")]
     (some #(str/starts-with? line (str % selection-output-indent))
           selection-output-indent-markers)))
+
 (defn- bubble-line-text-col
   [role bubble-left line]
   (cond (= :user role) (+ (long bubble-left) (long bubble-content-h-pad))
@@ -827,6 +873,7 @@
            1
            (if (output-indented-row? line) (p/display-width selection-output-indent) 0))
         :else bubble-left))
+
 (def ^:private transcript-copy-skip-markers
   "Line markers that paint TUI chrome rather than message content.
 
@@ -836,14 +883,17 @@
   #{p/MARKER_ITERATION_HDR p/MARKER_DURATION p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR
     p/MARKER_ANSWER_PAD p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD
     p/MARKER_ITERATION_PAD p/MARKER_QUEUE_HDR})
+
 (defn- copyable-transcript-line?
   [line]
   (let [line (or line "")]
     (not-any? #(str/starts-with? line %) transcript-copy-skip-markers)))
+
 (defn- projected-content-lines
   "Lines for clipboard / selection layout from the message text projection."
   [message content-w]
   (or (:prewrapped-lines message) (render/wrap-text (or (:text message) "") content-w)))
+
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
 
@@ -897,6 +947,7 @@
           {:row row
            :col (bubble-line-text-col (:role message) bubble-left line)
            :width content-w})))))
+
 (defn- transcript-document-copy-lines
   "Return selectable transcript rows in document coordinates.
 
@@ -986,6 +1037,7 @@
              :col (bubble-line-text-col (:role message) bubble-left line)
              :width content-w
              :text visible}))))))
+
 (defn- selection-touches-pending-bubble?
   "True when the selection range overlaps a bubble whose message map
    is `:pending? true`. Live progress (thinking + iteration trace)
@@ -1025,6 +1077,7 @@
 
                          (and (<= top end-row) (>= (dec bottom) start-row)))))
                    (map-indexed vector messages)))))
+
 (defn- selected-transcript-text
   "Extract selected transcript text from virtual document rows, not only
    current screen cells. Used when mouse selection auto-scroll moves earlier
@@ -1063,6 +1116,7 @@
 
                                                     (if (< from to) (subs text from to) "")))
                                                 ranges)))))
+
 (defn- release-selection-focus
   "Return document-space focus for a mouse-selection release.
 
@@ -1074,6 +1128,7 @@
   (if line-selection?
     (or stored-focus anchor)
     (selection/screen->document-point screen-point viewport)))
+
 (defn- copyable-bubble-text
   "Whole-bubble copy hands the user complete text, not the collapsed viewport.
 
@@ -1096,6 +1151,7 @@
                                                       (= :cancelled (:status message))
                                                       opts)))
     (or (:text message) "")))
+
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.
 
@@ -1177,6 +1233,7 @@
            :when (and (pos? clipped-height) has-copyable-content?)]
 
           {:row row :col bubble-left :width bubble-w :height clipped-height :text text})))))
+
 (defn- disclosure-copy-regions
   "Per-disclosure copy targets. Each visible row of an EXPANDED disclosure
    body carries `:meta {:kind :copy-block-body :node-id ... :text ...}`
@@ -1235,6 +1292,7 @@
            :height 1
            :text (:text m)
            :node-id (:node-id m)})))))
+
 (defn- fitting-image-placements
   "Keep only inline-image placements whose full `:rows` box fits inside the
    transcript viewport `[messages-top, messages-bottom)`. The graphics layer
@@ -1335,6 +1393,7 @@
                        (< col (+ (long c) (long w))))
               region))
           regions)))
+
 (defn- input-selectable-ranges
   "Return absolute screen-cell ranges for the visible input editor text rows.
 
@@ -1362,9 +1421,11 @@
       []
       (vec (for [row (range text-top (+ text-top n))]
              {:row row :col left :width text-w})))))
+
 (defn- selectable-ranges-for-source
   [source transcript-ranges input-ranges]
   (if (= source :input) input-ranges transcript-ranges))
+
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
    whole session. Holding the lock blocks the render thread cleanly
@@ -1387,6 +1448,7 @@
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock draw-lock))))
+
 (defn- close-tab-with-prompt!
   "Close tab `tab-id` (nil = the active tab), deciding EXPLICITLY what happens
    to a running turn instead of silently detaching. An idle tab closes
@@ -1444,6 +1506,7 @@
         (when (not= before-n (count (:tabs @state/app-db)))
           (when (not= before-active (:active-tab-id @state/app-db)) (refresh-active-tab! false))
           (persist-tabs!))))))
+
 (defn- paint-search-bar!
   "Call-site adapter for `components/find-bar!` — the reusable find bar and its
    `button!` widgets (paint + hover + click region, together) live in
@@ -1453,6 +1516,7 @@
    move the terminal cursor into the query field while the bar owns typing."
   [g cols text-top db]
   (components/find-bar! g cols text-top (:search db)))
+
 (defn- paint-jump-bottom!
   "Floating \"jump to latest\" affordance — the TUI twin of the web's
    `#jump-bottom` button. Painted ONLY while the user has scrolled UP off the
@@ -1486,6 +1550,7 @@
        (max 0 (dec (long messages-bottom)))]
 
       (components/button! g col row label :jump-bottom))))
+
 (defn- open-click-target!
   ([{:keys [kind url]}]
    (vis/worker-future "vis-tui-open-click-target"
@@ -1503,6 +1568,7 @@
                               (opener/open! url))
                             (catch Throwable _ nil))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
+
 (defn- screen-size
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
    held (or before the render thread is started) because
@@ -1540,6 +1606,7 @@
      (render/input-visual-row-count lines text-w)]
 
     (min (long input-max-lines) (max (long input-min-lines) (long n)))))
+
 (defn- overlay-locked?
   "True when an F1 help / F2 context modal card owns the whole screen.
    While locked, the cheap render fast-paths are disabled and the cursor
@@ -1963,6 +2030,7 @@
        :transcript-disclosure-copy-regions transcript-disclosure-copy-regions
        :input-selectable-ranges input-selectable-ranges
        :overlay-selectable-ranges overlay-selectable-ranges})))
+
 (defn- repaint-chat-frame!
   "Repaint the full chat frame (background, transcript, working-area outline,
    input, footer) into the screen back-buffer using the CURRENT theme, WITHOUT
@@ -1981,6 +2049,7 @@
 
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
+
 (def ^:private view-churn-keys
   "app-db keys the render thread mutates as bookkeeping only — never part of the
    ACTIVE view, so every fast-path predicate ignores them. Mirrors
@@ -2005,6 +2074,7 @@
                       (if (or (contains? ignore k) (identical? v (get b k))) true (reduced false)))
                     true
                     a))))
+
 (defn- live-progress-only-change?
   "True when the next frame only changed live progress bookkeeping.
    Those frames should keep the 80ms heartbeat but not repaint the header,
@@ -2020,6 +2090,7 @@
        ;; repaints the header, so the background tab's spinner keeps animating.
        ;; Mirrors `active-view-unchanged?` / `scroll-only-change?`.
        (differ-only-in? previous-db db (conj view-churn-keys :progress))))
+
 (defn- partial-live-frame?
   "True when the render loop may use the live-bubble-only repaint path."
   [previous-db db same-size? last-layout]
@@ -2034,6 +2105,7 @@
        ;; doesn't work in the live stream" bug). Mirrors `scroll-only-change?`.
        (not (:detail-labels-active? db))
        (live-progress-only-change? previous-db db)))
+
 (defn- scroll-only-change?
   "True when the ONLY thing that changed vs the last painted frame is the
    scroll position, AND the view is parked ABOVE the live bottom. In that
@@ -2143,9 +2215,12 @@
    `state/active-view-slice` — keep the excluded keys in sync."
   [a b]
   (differ-only-in? a b view-churn-keys))
+
 (def ^:private header-hover-kinds
   #{:copy-id :workspace-entry :header-help :header-tasks :header-search :header-new-session})
+
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
+
 (defn- header-hover-only-change?
   "True when a render bump only exists to repaint header hover chrome.
 
@@ -2159,10 +2234,12 @@
        (differ-only-in? previous-db db [:render-version :layout])
        (or (header-hover-region? current-hover)
            (and (nil? current-hover) (header-hover-region? previous-hover)))))
+
 (defn- live-loading-idx
   [messages loading?]
   (when (and loading? (seq messages) (= :assistant (:role (peek messages))))
     (long (dec (count messages)))))
+
 (defn- render-header-hover-frame!
   "Cheap repaint for header-only hover changes.
 
@@ -2175,6 +2252,7 @@
     (binding [header/*register-click-regions?* false]
       (header/draw-header! g db 0 cols))
     (.refresh screen Screen$RefreshType/DELTA)))
+
 (defn- render-scrollbar!
   [g cols bar-top inner-h track-h total-h eff-scroll]
   (scrollbar/draw! g
@@ -2188,6 +2266,7 @@
                     :track-bg t/terminal-bg
                     :thumb-fg t/dialog-hint-key
                     :thumb-bg t/terminal-bg}))
+
 (defn- render-live-bubble-frame!
   "Fast path for 80ms live ticks. Recompute virtual layout, but only
    repaint the live assistant bubble + the chrome bands that the user
@@ -2521,6 +2600,7 @@
             :heights (:heights layout)
             :offsets (:offsets layout)
             :visible (:visible layout)})))
+
 (defn- render-scroll-frame!
   "Fast path for a pure history scroll (see `scroll-only-change?`): the user is
    parked/easing ABOVE the live bottom and NOTHING but the scroll offset
@@ -2729,6 +2809,7 @@
    thread still repaints on the live heartbeat. Keep this at 80ms: higher
    values make streamed reasoning feel frozen, lower values waste work."
   80)
+
 (def ^:private scroll-anim-tick-ms
   "Frame budget for smooth-scroll interpolation: while an ease is in
    flight the render loop wakes every N ms to dispatch `:ease-scroll`
@@ -2737,6 +2818,7 @@
    continuous motion on the terminal cell grid. Bigger ticks feel
    chunky; smaller ticks burn CPU for no perceptual gain."
   16)
+
 (defn- scroll-anim-active?
   "True when the `:scroll` ease hasn't reached its desired row yet, using
    the previously published layout's max-scroll. Drives the fast tick
@@ -2756,6 +2838,7 @@
      (max 0 (- total-h inner-h))]
 
     (scroll/animating? (:scroll db) max-s)))
+
 (def ^:private force-full-frame?
   "When set (env `VIS_FORCE_FULL_FRAME`) every render takes the FULL frame
    path — all incremental fast paths (scroll, header-hover, partial-live,
@@ -3087,6 +3170,7 @@
                  rendered-hover
                  (boolean new-was-blocked?)
                  (long new-ease-ms)))))))
+
 (defn- start-render-thread!
   "Spawn the render thread. Daemon so the JVM can still exit even if a
    bug ever traps it in the loop."
@@ -3099,7 +3183,9 @@
     (.setDaemon t true)
     (.start t)
     t))
+
 (def ^:private provider-limits-refresh-ms 60000)
+
 (defn- active-provider-id
   []
   (or
@@ -3115,6 +3201,7 @@
     (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
       (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
               :provider))))
+
 (defn- start-provider-limits-thread!
   "Refresh provider limit metadata outside the render thread.
 
@@ -3248,12 +3335,14 @@
                 (str/join "\n" (map line available))
                 "\n\nUse the 8-char prefix or full UUID with --session-id.")
            "\n\nNo sessions exist yet - run `vis channels tui` without --session-id first."))))
+
 (defn- current-session-id
   []
   (some-> @state/app-db
           :session
           :id
           str))
+
 (defn- workspace-sessions
   []
   (let [db @state/app-db]
@@ -3264,6 +3353,7 @@
                      (if (contains? seen id) acc {:seen (conj seen id) :out (conj out session)})))
                  {:seen #{} :out []})
          :out)))
+
 (defn- register-shutdown-hook!
   "Thin wrapper over `Runtime/addShutdownHook` so call-sites read as
    plain Clojure instead of a `(Thread. ^Runnable (fn [] ...))` casting
@@ -3278,6 +3368,7 @@
                      (try (f) (catch Throwable _ nil))))]
     (.addShutdownHook (Runtime/getRuntime) hook)
     hook))
+
 (defn- terminal-interrupt-action
   "Action for terminal-level interrupts (SIGINT from Ctrl+C, SIGTSTP from
    Ctrl+Z) that never reach Lanterna as KeyStrokes on some terminals.
@@ -3285,6 +3376,7 @@
    next interrupt on an empty editor exits the TUI."
   [db]
   (if (input-empty? (:input db)) :quit :clear-input))
+
 (defn- handle-terminal-interrupt!
   []
   (case (terminal-interrupt-action @state/app-db)
@@ -3293,6 +3385,7 @@
 
     :quit
     (state/dispatch [:shutdown])))
+
 (defn- register-terminal-signal-handler!
   [signal-name f]
   (try (let
@@ -3309,6 +3402,7 @@
            (try (Signal/handle signal previous) (catch Throwable _ nil))))
        (catch IllegalArgumentException _ nil)
        (catch Throwable _ nil)))
+
 (defn- register-terminal-interrupt-handlers!
   []
   (let
@@ -3317,6 +3411,7 @@
     (fn []
       (doseq [cleanup cleanups]
         (cleanup)))))
+
 (defn- subscribe-title-listener!
   "Per-OPEN-session listener bundle. Returns a zero-arg cleanup fn.
 
@@ -3388,18 +3483,21 @@
 
     (register-shutdown-hook! cleanup)
     cleanup))
+
 (defn- date->millis
   [v]
   (cond (instance? java.util.Date v) (.getTime ^java.util.Date v)
         (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
         (number? v) (long v)
         :else nil))
+
 (defn- latest-turn-created-at
   [turns]
   (->> turns
        (keep #(get % "created_at"))
        (sort-by #(or (date->millis %) 0))
        last))
+
 (defn- session-summary
   "Summary row for the session picker. The gateway now folds `turn_count` +
    `modified_at` into every `list-sessions` soul server-side (ONE grouped SQL
@@ -3420,12 +3518,14 @@
       (assoc session
         "turn_count" (count turns)
         "modified_at" modified-at))))
+
 (defn- empty-untitled-session?
   [s]
   (let [title (get s "title")]
     (and (not (pos? (long (or (get s "turn_count") 0))))
          (or (str/blank? (str title))
              (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))))
+
 (defn- session-sort-key
   "Default session picker ordering.
 
@@ -3445,12 +3545,14 @@
 
     [(if (pos? (long (or turn-count 0))) 1 0)
      (or (date->millis modified-at) (date->millis created-at) 0) (long (or turn-count 0))]))
+
 (defn- latest-modified-first
   [sessions]
   (sort-by session-sort-key
            (fn [a b]
              (compare b a))
            sessions))
+
 (defn- tui-session-summaries
   []
   (try (->> (vis/gateway-list-sessions :all)
@@ -3458,11 +3560,13 @@
             latest-modified-first
             vec)
        (catch Throwable _ [])))
+
 (defn- session-db-title
   [session-id]
   (when-let [session (try (vis/gateway-soul session-id) (catch Throwable _ nil))]
     (let [title (get session "title")]
       (when-not (str/blank? (str title)) (str title)))))
+
 (defn- session-workspace
   "The rift draft pinned to `session-id` — a workspace record whose
    `:root` is the clone path. Lets the TUI display layer (footer / badge)
@@ -3687,6 +3791,7 @@
   ;; showing frozen history until it lands in the DB.
   (state/dispatch [:attach-running-turn nil session-result])
   (subscribe-title-listener! id))
+
 (defn- terminal-ctrl-c-behaviour
   "Lanterna's 3-arg UnixTerminal constructor defaults to
    CTRL_C_KILLS_APPLICATION. In raw mode Ctrl+C is decoded as a
@@ -3695,15 +3800,18 @@
    KeyStroke so `input/handle-key` owns the first-Ctrl+C contract."
   []
   UnixLikeTerminal$CtrlCBehaviour/TRAP)
+
 (defn- create-terminal!
   [_opts]
   (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset) (terminal-ctrl-c-behaviour)))
+
 (defn- configure-terminal-input!
   [terminal _opts]
   (when (instance? UnixTerminal terminal)
     (input/register-custom-patterns! terminal)
     (try (.setMouseCaptureMode ^UnixTerminal terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
          (catch Throwable _ nil))))
+
 (defn- probe-terminal-cell-size!
   "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into
    `timg/set-cell-dimensions!`, so an inline-image box reserves the EXACT rows ×
@@ -3769,6 +3877,7 @@
   ;; default (often white) instead of the theme background.
   (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
     (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))
+
 (defn- disable-terminal-escape-modes!
   [_opts]
   (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
@@ -3790,6 +3899,7 @@
    (no cleanup thunk to run)."
   [^TerminalScreen _screen]
   nil)
+
 (defn- pre-resolve-session-id!
   "Resolve an optional session id through the gateway before Lanterna starts.
    Reconcile orphaned :running turns FIRST (via the gateway) so the rebuilt
@@ -3799,6 +3909,7 @@
     (vis/gateway-reconcile-running-turns!)
     (or (chat/resume-session cid)
         (throw (ex-info (format-session-not-found cid) {:vis/user-error true :id cid})))))
+
 (defn- svar-no-providers-cause?
   "True when `e` — or any exception in its cause chain — is svar's
    `make-router requires at least one provider` (`:type :svar/no-providers`).
@@ -6427,13 +6538,16 @@
              (.stopScreen screen))))))))
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage "vis channels tui [--session-id ID | --resume | --continue]")
+
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
+
 (defn- flag-value
   [flag more]
   (let [v (first more)]
     (when (missing-value? v)
       (throw (ex-info (str flag " requires a value" "\nUsage: " tui-usage) {:vis/user-error true})))
     v))
+
 (defn- parse-args
   "Parse `vis channels tui` flags.
      --session-id ID   Resume a session (full UUID or short prefix)
@@ -6473,6 +6587,7 @@
 
           (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
                           {:vis/user-error true})))))))
+
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
    library prints, JVM warnings) MUST be redirected to ~/.vis/vis.log
@@ -6501,6 +6616,7 @@
     (System/setErr log-ps)
     (alter-var-root #'*out* (constantly log-w))
     (alter-var-root #'*err* (constantly log-w))))
+
 (defn- print-session-id-on-exit!
   "After the fullscreen TUI releases the terminal, print the session id
    back to the shell so users can resume/copy it from scrollback. During the
@@ -6518,6 +6634,7 @@
       (.print out "\rResume with:\n")
       (.print out (str "vis channels tui --session-id " id "\n"))
       (.flush out))))
+
 (defn channel-main
   "Channel entry point: full TUI bootstrap. Performs the stdout/stderr
    redirect, runs `vis/init!`, then hands off to `run-chat!`. Errors

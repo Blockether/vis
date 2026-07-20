@@ -33,6 +33,7 @@
 ;;; ── Color ──────────────────────────────────────────────────────────────────
 
 (defn set-fg! [^TextGraphics g color] (.setForegroundColor g color) g)
+
 (defn set-bg! [^TextGraphics g color] (.setBackgroundColor g color) g)
 
 (defn set-colors!
@@ -45,11 +46,17 @@
 ;;; ── Text styles (SGR modifiers) ─────────────────────────────────────────────
 
 (def BOLD SGR/BOLD)
+
 (def ITALIC SGR/ITALIC)
+
 (def UNDERLINE SGR/UNDERLINE)
+
 (def REVERSE SGR/REVERSE)
+
 (def CROSSED-OUT SGR/CROSSED_OUT)
+
 (def BLINK SGR/BLINK)
+
 (def BORDERED SGR/BORDERED)
 
 (defn enable!
@@ -243,15 +250,25 @@
 ;;; ── Box drawing characters ────────────────────────────────────────────────
 
 (def ^:const BOX_TL Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+
 (def ^:const BOX_TR Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+
 (def ^:const BOX_BL Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+
 (def ^:const BOX_BR Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+
 (def ^:const BOX_H Symbols/SINGLE_LINE_HORIZONTAL)
+
 (def ^:const BOX_V Symbols/SINGLE_LINE_VERTICAL)
+
 (def ^:const BOX_T_R Symbols/SINGLE_LINE_T_RIGHT)
+
 (def ^:const BOX_T_L Symbols/SINGLE_LINE_T_LEFT)
+
 (def ^:const BOX_T_DOWN Symbols/SINGLE_LINE_T_DOWN)
+
 (def ^:const BOX_T_UP Symbols/SINGLE_LINE_T_UP)
+
 (def ^:const BOX_CROSS Symbols/SINGLE_LINE_CROSS)
 
 (defn- int-widths ^ints [widths] (int-array (map #(int (long %)) widths)))
@@ -319,14 +336,18 @@
 ;; VS-16 emoji) so `glyph + space` fills a 2-col gutter and the cell grid stays
 ;; aligned — same rule as SELECTION_GLYPH above.
 (def ^:const STATUS_ON "●") ;; filled  — enabled / live / healthy
+
 (def ^:const STATUS_OFF "○") ;; hollow  — disabled / idle
+
 (def ^:const MARK_VALUE "◆") ;; a value you can cycle (enum / choice)
+
 (def ^:const MARK_ACTION "▸") ;; an action you can run
 
 ;; Footer chip icons — replace the literal words "resources"/"dir" in the
 ;; status footer. Bare BMP glyphs (display-width 1, NOT VS-16 emoji) so
 ;; `(count text)` matches the rendered cell count — same grid rule as above.
 (def ^:const GLYPH_RESOURCES "⚙") ;; managed resources (nREPLs, daemons…)
+
 (def ^:const GLYPH_DIR "⌂") ;; filesystem-root directories
 
 (def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
@@ -440,17 +461,27 @@
 ;; declare; the canonical name lives with the marker constants block.
 
 (def INLINE_BOLD_ON "\uE110")
+
 (def INLINE_BOLD_OFF "\uE111")
+
 (def INLINE_ITALIC_ON "\uE112")
+
 (def INLINE_ITALIC_OFF "\uE113")
+
 (def INLINE_STRIKE_ON "\uE114")
+
 (def INLINE_STRIKE_OFF "\uE115")
+
 (def INLINE_CODE_ON "\uE116")
+
 (def INLINE_CODE_OFF "\uE117")
+
 (def INLINE_LINK_ON "\uE118")
+
 (def INLINE_LINK_OFF "\uE119")
 
 (def ^:private ^:const INLINE_SENTINEL_LO 0xE110)
+
 (def ^:private ^:const INLINE_SENTINEL_HI 0xE119)
 
 (defn inline-sentinel?
@@ -612,6 +643,7 @@
    ESC-free input takes the plain fold fast path. nil/empty returns `[\"\"]`."
   [s ^long max-cols]
   (vec (TerminalTextUtils/ansiFoldColumns max-cols (str (or s "")))))
+
 (defn ansi-slice-cols
   "Return the display-column WINDOW `[start, start+width)` of `s` as a string —
    the horizontal `less -S` clip the code pager paints each row with (CHOP, not
@@ -1102,56 +1134,100 @@
 ;; without visible noise.
 
 (def MARKER_THINKING "\u200B")  ;; zero-width space       -> italic, dim (reasoning)
+
 (def MARKER_CODE "\u200C")  ;; zero-width non-joiner  -> code style
+
 (def MARKER_RESULT "\u200D")  ;; zero-width joiner      -> result/return value (success)
+
 (def MARKER_SEP "\u2060")  ;; word-joiner            -> separator line
+
 (def MARKER_CODE_OK "\u2061")  ;; function application   -> code with success status
+
 (def MARKER_CODE_ERR "\u2062")  ;; invisible times        -> code with error status
+
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
+
 (def MARKER_DURATION "\u2064")  ;; invisible plus         -> duration annotation
+
 (def MARKER_ITERATION_HDR "\u2066")  ;; LRI                    -> iteration header with bg
+
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    -> answer separator (trace->answer break)
+
 (def MARKER_CODE_PAD "\u206A")  ;; ISS                    -> running/neutral code block padding line
+
 (def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   -> error code block padding line
+
 (def MARKER_CODE_OK_PAD "\uE000") ;; PUA                    -> successful code block padding line
+
 (def MARKER_RECAP "\uE00E") ;; PUA                    -> iteration recap line (header-bg, bold+italic)
+
 (def MARKER_ITERATION_PAD "\u206C")  ;; IAFS                   -> iteration zone padding (margin between blocks)
+
 (def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   -> final answer header
+
 (def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   -> answer text line (with answer bg)
+
 (def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   -> answer padding line
 ;; Markdown markers (PUA \uE000+) - guaranteed unique, never collide
 ;; with the iteration/answer markers above. Two parallel sets:
 ;;   - MARKER_MD_*    -> answer-zone markdown (answer-bg)
 ;;   - MARKER_TH_MD_* -> thinking-zone markdown (iteration-header-bg, italic)
 (def MARKER_MD_H1 "\uE001") ;; markdown heading 1 (answer)
+
 (def MARKER_MD_H2 "\uE002") ;; markdown heading 2 (answer)
+
 (def MARKER_MD_H3 "\uE003") ;; markdown heading 3 (answer)
+
 (def MARKER_MD_BOLD "\uE004") ;; markdown bold line (answer)
+
 (def MARKER_MD_CODE "\uE005") ;; markdown fenced code (answer)
+
 (def MARKER_MD_BULLET "\uE006") ;; markdown bullet list item (answer)
+
 (def MARKER_MD_TABLE_HEAD "\uE007") ;; markdown table header row (answer)
+
 (def MARKER_MD_TABLE_SEP "\uE008") ;; markdown table border / separator (answer)
+
 (def MARKER_MD_TABLE_ROW "\uE009") ;; markdown table data row (answer)
+
 (def MARKER_MD_QUOTE "\uE00A") ;; markdown blockquote (answer)
+
 (def MARKER_MD_HR "\uE00B") ;; markdown horizontal rule (answer)
+
 (def MARKER_MD_SUMMARY "\uE00C") ;; markdown <summary> disclosure label (answer)
+
 (def MARKER_OP_ROW "\uE00F") ;; BLOCK op row -> black-on-white badge (answer-fg/bg), \u25B6/\u25BC disclosure
+
 (def MARKER_HINT "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
+
 (def MARKER_QUEUE_HDR "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
+
 (def MARKER_QUEUE_ITEM "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
+
 (def MARKER_QUEUE_BORDER "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
 
 (def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)
+
 (def MARKER_TH_MD_H2 "\uE022") ;; markdown heading 2 (thinking)
+
 (def MARKER_TH_MD_H3 "\uE023") ;; markdown heading 3 (thinking)
+
 (def MARKER_TH_MD_BOLD "\uE024") ;; markdown bold line (thinking)
+
 (def MARKER_TH_MD_CODE "\uE025") ;; markdown fenced code (thinking)
+
 (def MARKER_TH_MD_BULLET "\uE026") ;; markdown bullet list item (thinking)
+
 (def MARKER_TH_MD_TABLE_HEAD "\uE027") ;; markdown table header row (thinking)
+
 (def MARKER_TH_MD_TABLE_SEP "\uE028") ;; markdown table border (thinking)
+
 (def MARKER_TH_MD_TABLE_ROW "\uE029") ;; markdown table data row (thinking)
+
 (def MARKER_TH_MD_QUOTE "\uE02A") ;; markdown blockquote (thinking)
+
 (def MARKER_TH_MD_HR "\uE02B") ;; markdown horizontal rule (thinking)
+
 (def MARKER_TH_MD_SUMMARY "\uE02C") ;; markdown <summary> disclosure label (thinking)
 
 ;; Inline span sentinels (\uE110...\uE117) live in their own section

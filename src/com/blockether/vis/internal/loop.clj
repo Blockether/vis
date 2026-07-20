@@ -369,6 +369,7 @@
              (str/includes? cause-lower "header parser")
              (str/includes? cause-lower "no bytes")
              (str/includes? cause-lower "handshake")))))
+
 (defn- provider-retry-event
   [{:keys [provider model attempt delay-ms error]}]
   (cond->
@@ -576,6 +577,7 @@
     (when (vector? v) (some #(when (= "error" (get % "type")) %) v))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
+
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
 (defn- bare-string-code-block? [expr] (boolean (re-matches BARE_STRING_RE (str expr))))
@@ -1625,6 +1627,7 @@
 ;; `supersede-summaries`) lives in `ctx-engine` so the wire (`apply-summaries`)
 ;; and the render-time ledger (`ctx-engine/folds-view`) share ONE resolver.
 (declare iter-of-scope)
+
 (declare form-wire-chars)
 
 (defn- prior-turn-scope-index
@@ -1960,20 +1963,34 @@
 (defn- block-duration-ms [block] (or (envelope-duration-ms (:envelope block)) 0))
 
 (s/def ::id nat-int?)
+
 (s/def ::code string?)
+
 (s/def ::error (s/nilable map?))                       ; structured :error map
+
 (s/def ::timeout? (s/nilable boolean?))
+
 (s/def ::repaired? (s/nilable boolean?))
+
 (s/def ::comment string?)
+
 (s/def ::op #{:python/eval :vis/guard :vis/system :vis/answer})
+
 (s/def ::status #{:done :error :timeout})
+
 (s/def ::iteration pos-int?)
+
 (s/def ::form-position pos-int?)
+
 (s/def ::form-count pos-int?)
+
 (s/def ::started-at-ms nat-int?)
+
 (s/def ::finished-at-ms nat-int?)
+
 (s/def ::ref
   (s/and string? #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" %)))
+
 (s/def ::block-envelope
   (s/and (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count ::started-at-ms
                           ::finished-at-ms ::ref]
@@ -1982,7 +1999,9 @@
          envelope-form-position-valid?
          envelope-ref-consistent?
          envelope-has-no-derived-duration?))
+
 (s/def ::envelope ::block-envelope)
+
 (s/def ::iteration-block
   (s/keys :req-un [::id ::code ::error ::envelope]
           :opt-un [::result ::timeout? ::repaired? ::comment]))
@@ -7194,6 +7213,7 @@
        :status :success
        :slash slash-result
        :prior-outcome :complete})))
+
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
    the end-of-turn CTX snapshot, update the turn row with answer +

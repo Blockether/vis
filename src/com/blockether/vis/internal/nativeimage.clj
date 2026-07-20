@@ -45,8 +45,11 @@
 ;; does work; the rest are no-ops.
 
 (defn -getURL [_] "https://github.com/blockether/vis")
+
 (defn -getDescription [_] "vis: require app + extension namespaces with *warn-on-reflection* bound")
+
 (defn -isInConfiguration [_ _] true)
+
 (defn -getRequiredFeatures [_] [])
 
 (defn -beforeAnalysis
@@ -76,16 +79,29 @@
 ;; onRegistration(OnRegistrationAccess) arrived in GraalVM 25.1 — without the
 ;; no-op the whole build aborts with "onRegistration ... not defined?".
 (defn -onRegistration [_ _])
+
 (defn -afterRegistration [_ _])
+
 (defn -duringSetup [_ _])
+
 (defn -duringAnalysis [_ _])
+
 (defn -afterAnalysis [_ _])
+
 (defn -onAnalysisExit [_ _])
+
 (defn -beforeUniverseBuilding [_ _])
+
 (defn -beforeCompilation [_ _])
+
 (defn -afterCompilation [_ _])
+
 (defn -beforeHeapLayout [_ _])
+
 (defn -afterHeapLayout [_ _])
+
 (defn -beforeImageWrite [_ _])
+
 (defn -afterImageWrite [_ _])
+
 (defn -cleanup [_])

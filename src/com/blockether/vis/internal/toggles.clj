@@ -39,18 +39,29 @@
 ;; =============================================================================
 
 (s/def :toggle/id qualified-keyword?)
+
 (s/def :toggle/label (s/and string? #(not (str/blank? %))))
+
 (s/def :toggle/description string?)
+
 (s/def :toggle/default any?)            ;; cross-validated against :type below
+
 (s/def :toggle/owner
   (s/or :internal #{:vis}
         :extension string?))
+
 (s/def :toggle/since string?)
+
 (s/def :toggle/persist? boolean?)
+
 (s/def :toggle/group keyword?)
+
 (s/def :toggle/type #{:boolean :enum})
+
 (s/def :toggle/choices (s/and (s/coll-of any?) seq))
+
 (s/def :toggle/channels (s/and (s/coll-of keyword?) seq))
+
 (s/def :toggle/visible-fn ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
 
 (s/def :toggle/spec

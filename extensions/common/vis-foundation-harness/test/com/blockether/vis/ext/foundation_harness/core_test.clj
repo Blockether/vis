@@ -8,6 +8,7 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private skill-result @#'core/skill-result)
+
 (def ^:private skill-template-text @#'core/skill-template-text)
 
 

@@ -91,7 +91,9 @@
 ;; they test with NO live terminal at all (contrast every other dialog test
 ;; above, which must spin up a DefaultVirtualTerminal).
 (defn- ks [t] (KeyStroke. ^KeyType t))
+
 (defn- char-key [c] (KeyStroke. (Character/valueOf c) false false false))
+
 (def ^:private done-key :com.blockether.vis.ext.channel-tui.dialogs/done)
 
 (defdescribe

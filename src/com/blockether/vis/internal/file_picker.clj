@@ -21,6 +21,7 @@
            [java.util Locale]))
 
 (def ^:const max-results 200)
+
 (def ^:private sort-order [:recent :relevance])
 
 (defn cwd-path

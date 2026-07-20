@@ -32,13 +32,16 @@
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (def config-dir (str (System/getProperty "user.home") "/.vis"))
+
 (def config-path (str config-dir "/config.edn"))
+
 (defn project-config-path
   "Project-local config override path. `bin/vis` preserves the invocation cwd
    as JVM `user.dir`, so this resolves to `<project>/.vis/config.edn` for the
    user project, not the Vis install checkout."
   []
   (str (System/getProperty "user.dir") "/.vis/config.edn"))
+
 (defn project-root-config-path
   "Project-local `vis.edn` at the invocation cwd root. Same `user.dir`
    basis as `project-config-path`, so this resolves to `<project>/vis.edn`
@@ -46,7 +49,9 @@
    `.vis/config.edn`."
   []
   (str (System/getProperty "user.dir") "/vis.edn"))
+
 (def db-path (str config-dir "/vis.mdb"))
+
 (def default-db-spec {:backend :sqlite :path db-path})
 
 (def ^:private ^String log-path (str config-dir "/vis.log"))
@@ -59,6 +64,7 @@
   ;; Terminals without 2026 support ignore both marks (unknown private
   ;; modes are no-ops), so emitting them unconditionally is safe.
   (.getBytes "\u001b[?2026h" "UTF-8"))
+
 (def ^:private ^"[B" sync-update-end (.getBytes "\u001b[?2026l" "UTF-8"))
 
 (defn- cursor-report-query?
@@ -717,6 +723,7 @@
 
     (when-not (= (.getCanonicalPath global-file) (.getCanonicalPath project-file))
       (read-tier-config-map (.getPath project-file) (project-config-yaml-paths)))))
+
 (defn load-project-root-config-raw
   "Load only the visible project-root tier: `<invocation-cwd>/vis.edn`, or its
    YAML twin `vis.yml` / `vis.yaml` when no EDN file exists (EDN wins when both

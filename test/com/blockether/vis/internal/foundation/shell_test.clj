@@ -10,12 +10,19 @@
 ;; The impls are private (named for clarity inside the ns); reach them by var
 ;; so tests drive the real gate/render contract without the Python wrapper.
 (def ^:private shell-run* @#'shell/shell-run-impl)
+
 (def ^:private shell-bg* @#'shell/shell-bg-impl)
+
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
+
 (def ^:private shell-send* @#'shell/shell-send-impl)
+
 (def ^:private render-shell-run-result @#'shell/render-shell-run-result)
+
 (def ^:private render-shell-bg-result @#'shell/render-shell-bg-result)
+
 (def ^:private render-shell-logs-result @#'shell/render-shell-logs-result)
+
 (def ^:private format-shell-command @#'shell/format-shell-command)
 
 (defn- with-shell-on

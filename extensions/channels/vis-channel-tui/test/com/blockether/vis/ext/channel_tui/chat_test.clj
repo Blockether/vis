@@ -602,6 +602,7 @@
         (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234}
                    (g->c
                      {"type" "turn.started" "turn_id" "t1" "request" "hi" "started_at" 1234}))))))
+
 (defdescribe
   title-sync-event-chunk-test
   ;; `session.title_updated` (auto-title or rename — possibly produced in a

@@ -289,64 +289,106 @@
 
 ;; --- Workspace ---
 (defdelegate db-workspace-insert! [db-info opts])
+
 (defdelegate db-workspace-update-state! [db-info workspace-id new-state])
 ;; Label override + focus stamp + per-repo focus pointer.
 (defdelegate db-workspace-update-label! [db-info workspace-id label])
+
 (defdelegate db-workspace-set-filesystem-roots! [db-info workspace-id roots])
+
 (defdelegate db-workspace-touch-focus! [db-info workspace-id])
+
 (defdelegate db-repo-focus-get [db-info repo-id])
+
 (defdelegate db-repo-focus-set! [db-info repo-id workspace-id])
+
 (defdelegate db-workspace-get [db-info workspace-id])
+
 (defn db-workspace-list-by-repo
   ([db-info repo-id] ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id))
   ([db-info repo-id state-set]
    ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id state-set)))
+
 (defdelegate db-workspace-for-session [db-info session-state-id])
+
 (defdelegate db-session-state-list-for-workspace [db-info workspace-id])
+
 (defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
 
 ;; --- Session lifecycle ---
 (defdelegate db-store-session! [db-info opts])
+
 (defdelegate db-get-session [db-info ref])
+
 (defdelegate db-resolve-session-id [db-info sel])
+
 (defdelegate db-list-sessions [db-info channel])
+
 (defdelegate db-find-session-by-external [db-info channel ext-id])
+
 (defdelegate db-update-session-title! [db-info ref title])
+
 (defdelegate db-claim-session! [db-info ref])
+
 (defdelegate db-delete-session-tree! [db-info id])
+
 (defdelegate db-fork-session! [db-info session-id opts])
+
 (defdelegate db-list-session-states [db-info session-id])
+
 (defdelegate db-latest-session-state-id [db-info session-id])
 ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every
 ;; channel; read by the engine at turn start (see session-model + loop.clj).
 (defdelegate db-get-session-model-pref [db-info session-id])
+
 (defdelegate db-set-session-model-pref! [db-info session-id provider model])
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 (defdelegate db-get-project [db-info project-id])
+
 (defdelegate db-list-projects [db-info opts])
+
 (defdelegate db-get-project-by-root [db-info owner-id root])
+
 (defdelegate db-create-project! [db-info opts])
+
 (defdelegate db-update-project! [db-info project-id opts])
+
 (defdelegate db-delete-project! [db-info project-id])
+
 (defdelegate db-set-session-project! [db-info session-id project-id])
+
 (defdelegate db-reorder-project-sessions! [db-info project-id session-ids])
 
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])
+
 (defdelegate db-update-session-turn! [db-info session-turn-id opts])
+
 (defdelegate db-list-session-turns-by-status [db-info status])
+
 (defdelegate db-list-session-turns [db-info session-ref])
+
 (defdelegate db-session-turn-stats [db-info])
+
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
+
 (defdelegate db-list-session-turn-states [db-info session-turn-id])
+
 (defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
+
 (defdelegate db-list-turns-attachments [db-info session-turn-soul-ids])
+
 (defdelegate db-list-turn-all-attachments [db-info session-turn-soul-id])
+
 (defdelegate db-list-session-attachments [db-info session-id])
+
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
+
 (defdelegate db-list-iteration-attachments [db-info iteration-id])
+
 (defdelegate db-list-iterations-attachments [db-info iteration-ids])
+
 (defdelegate db-read-attachment [db-info attachment-id])
 
 ;; --- Full-text search ---
@@ -416,6 +458,7 @@
 
 ;; --- CTX snapshots (per-turn string-keyed session_* state, Nippy in session_turn_state.ctx) ---
 (defdelegate db-load-latest-ctx [db-info session-id])
+
 (defdelegate db-load-ctx-history [db-info session-id])
 
 ;; --- Native tool result retrieval (`ntr[tool_id]`) ---
@@ -430,10 +473,15 @@
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])
+
 (defdelegate db-put-extension-aggregate! [db-info opts])
+
 (defdelegate db-get-extension-aggregate [db-info opts])
+
 (defdelegate db-list-extension-aggregates [db-info opts])
+
 (defdelegate db-delete-extension-aggregates! [db-info opts])
+
 (defdelegate db-swap-extension-aggregate! [db-info opts f args])
 
 ;; =============================================================================

@@ -23,21 +23,29 @@
 ;;   :shapes (atom {shape-id {:shape XSLFTextShape :paras (atom [{:p .. :runs (atom [..])}])}})}.
 
 (defonce ^:private pres-registry (atom {}))
+
 (defonce ^:private pres-counter (atom 0))
+
 (defonce ^:private shape-counter (atom 0))
 
 (def ^:private ^:const emu-per-pt 12700.0)
 
 (defn- emu->pt ^double [emu] (/ (double emu) emu-per-pt))
+
 (defn- b64enc [^bytes ba] (.encodeToString (Base64/getEncoder) ba))
+
 (defn- b64dec ^bytes [^String s] (.decode (Base64/getDecoder) s))
+
 (defn- entry-of
   [h]
   (or (get @pres-registry (long h)) (throw (ex-info "Presentation is closed." {}))))
+
 (defn- shape-of
   [h sid]
   (or (get @(:shapes (entry-of h)) (long sid)) (throw (ex-info "No such shape." {}))))
+
 (defn- para-of [h sid pidx] (nth @(:paras (shape-of h sid)) (long pidx)))
+
 (defn- run-of [h sid pidx ridx] (nth @(:runs (para-of h sid pidx)) (long ridx)))
 
 (def ^:private color-names

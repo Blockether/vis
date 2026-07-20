@@ -21,6 +21,7 @@
       (.delete f))))
 
 (def ^:private on-path? @#'interp/on-path?)
+
 (defn- has-python? [] (boolean (or (on-path? "python3") (on-path? "python"))))
 
 ;; ── interpreter detection (no subprocess) ────────────────────────────────────

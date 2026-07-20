@@ -33,14 +33,23 @@
       (and (map? x) (every? theme-key? (keys x)) (every? theme-setting-value? (vals x)))))
 
 (s/def ::rgb rgb?)
+
 (s/def ::name non-blank-string?)
+
 (s/def ::display-name non-blank-string?)
+
 (s/def ::mode #{:light :dark})
+
 (s/def ::palette (s/and (s/map-of keyword? ::rgb) seq))
+
 (s/def ::fonts map?)
+
 (s/def ::widths map?)
+
 (s/def ::spacing map?)
+
 (s/def ::settings (s/map-of string? theme-setting-value?))
+
 (s/def ::theme
   (s/keys :req-un [::name ::display-name ::mode ::palette ::fonts ::widths ::spacing ::settings]))
 

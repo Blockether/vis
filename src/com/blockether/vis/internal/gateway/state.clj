@@ -36,7 +36,9 @@
   10000)
 
 (def ^:private RESULT_PR_LIMIT 4000)
+
 (def ^:private ERROR_PR_LIMIT 2000)
+
 (def ^:private STREAM_CUMULATIVE_LIMIT
   "Bound for the cumulative text a live reasoning/content/prose frame carries
    alongside its increment (`:cumulative`) — plenty for any live band; the
@@ -1801,6 +1803,7 @@
              (handle-event! event))
            (terminal-event->result (deref terminal) turn-id))
          (finally (unsubscribe! sid sub-id)))))
+
 (defn attach-turn-sync!
   "Attach to an ALREADY-submitted turn `tid` on `sid` and block until it reaches a
    terminal event, returning the same engine-shaped result as `submit-turn-sync!`.

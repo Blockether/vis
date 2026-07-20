@@ -683,6 +683,7 @@
   [^String s]
   (let [lines (str/split-lines (strip-ansi (or s "")))]
     (str/join "\n" (take-last 40 lines))))
+
 (defn- lazytest-selector-args
   "Translate normalized selectors into lazytest.main CLI flags.
    When :only is specified, uses --var for precise targeting: an entry already
@@ -720,6 +721,7 @@
 
              (boolean (some (fn* [p1__44725#] (= "lazytest.main" p1__44725#)) main-opts)))))
        (catch Throwable _ false)))
+
 (defn- cli-command-for
   "Pick the CLI test command for `root` by build file, so the fallback is not
    hardcoded to `clojure -M:test`. Returns {:tool kw :cmd [strings] :selectors? bool}

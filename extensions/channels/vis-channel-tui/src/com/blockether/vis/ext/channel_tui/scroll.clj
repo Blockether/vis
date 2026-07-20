@@ -105,6 +105,7 @@
    empty session is still 'at the bottom', so the chip must stay hidden."
   [sc ^long max-s]
   (and (pos? max-s) (< (displayed sc max-s) max-s)))
+
 (defn jump-chip-visible?
   "True when the \"↓ latest\" jump-to-bottom chip should paint: the user is
    PARKED above the live bottom (`:at` intent) AND the bottom actually sits

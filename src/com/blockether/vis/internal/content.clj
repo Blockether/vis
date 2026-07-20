@@ -9,9 +9,13 @@
             [com.blockether.vis.internal.gateway.wire :as wire]))
 
 (def roles #{"user" "assistant" "system" "developer" "tool"})
+
 (def message-statuses #{"streaming" "completed" "failed" "cancelled" "suspended"})
+
 (def tool-statuses #{"pending" "running" "completed" "failed" "cancelled"})
+
 (def reasoning-visibilities #{"private" "visible"})
+
 (def block-types #{"prose" "code" "tool" "reasoning" "error" "attachment" "notice"})
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
@@ -23,6 +27,7 @@
         :else (or (nil? x) (string? x) (number? x) (boolean? x))))
 
 (defn- string-keyed-map? [x] (and (map? x) (json-ready? x)))
+
 (defn- timestamp? [x] (and (integer? x) (not (neg? x))))
 
 (defmulti block-valid? #(get % "type"))
@@ -120,8 +125,11 @@
          false)))
 
 (s/def ::block block-valid?)
+
 (s/def ::content (s/coll-of ::block :kind vector?))
+
 (s/def ::message message-valid?)
+
 (s/def ::event event-valid?)
 
 (defn assert-block!

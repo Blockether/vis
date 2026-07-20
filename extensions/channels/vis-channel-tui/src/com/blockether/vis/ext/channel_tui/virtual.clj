@@ -251,6 +251,7 @@
     (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 512))))
 
 (defonce ^:private ^AtomicLong estimate-cache-gen (AtomicLong.))
+
 (defonce ^:private ^AtomicLong projection-cache-gen (AtomicLong.))
 
 ;; Sticky TAIL-PROJECTION cache. The bottom-locked last bubble (auto-scroll or
@@ -266,6 +267,7 @@
 (defonce ^:private ^LinkedHashMap tail-projection-cache
   (proxy [LinkedHashMap] [16 0.75 true]
     (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 32))))
+
 (defonce ^:private ^AtomicLong tail-projection-cache-gen (AtomicLong.))
 
 (defn invalidate-heights!

@@ -34,6 +34,7 @@
                                                           ['xxxxxxxxxxxxxxx 'yyyyyyyyy]))))
              (it "returns nil when message is not unresolved-symbol shape"
                  (expect (nil? (pd/unresolved-symbol-hint "Divide by zero" ['hits])))))
+
 (defdescribe diagnose-bracket-balance-test
              (it "returns nil when balanced"
                  (expect (nil? (pd/diagnose-bracket-balance "print(foo(bar))"))))

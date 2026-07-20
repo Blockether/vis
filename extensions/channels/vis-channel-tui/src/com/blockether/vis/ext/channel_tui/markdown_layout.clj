@@ -42,8 +42,11 @@
 ;; =============================================================================
 
 (defn- node-tag [n] (when (vector? n) (first n)))
+
 (defn- node-attrs [n] (if (and (vector? n) (map? (nth n 1 nil))) (nth n 1) {}))
+
 (defn- node-children [n] (if (and (vector? n) (map? (nth n 1 nil))) (drop 2 n) (rest n)))
+
 (defn- raw-body [n] (or (some #(when (string? %) %) (node-children n)) ""))
 
 (defn- empty-line [] {:runs []})
@@ -756,6 +759,7 @@
    and the caller's `fit` clips the overflow."
   [s width]
   (p/word-wrap (str (or s "")) (max 1 (long width))))
+
 (defn- table->lines
   "Render canonical `:table` IR as TUI table rows. Unlike the old plain
    projection fallback, this emits semantic header/separator/body line

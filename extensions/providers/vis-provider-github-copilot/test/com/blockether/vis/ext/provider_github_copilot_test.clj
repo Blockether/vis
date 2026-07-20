@@ -70,6 +70,7 @@
         (expect (= "https://api.individual.githubcopilot.com/v1" (:api-url token)))
         (expect (= "GitHubCopilotChat/0.26.7" (get-in token [:llm-headers "User-Agent"])))
         (expect (= "vscode-chat" (get-in token [:llm-headers "Copilot-Integration-Id"]))))))
+
 (it "honors refresh_in: a token past its proactive-refresh deadline is NOT re-served (issue #16)"
     ;; refresh_in expired but hard expires_at far in the future. The old code
     ;; trusted expires_at and re-served the proxy-rejected token forever (401

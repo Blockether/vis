@@ -303,6 +303,7 @@
 ;; =============================================================================
 
 (def ^:private native-class-dir "target/native-classes")
+
 (def ^:private native-uber "target/vis.jar")
 
 (def ^:private uber-exclusions
@@ -317,6 +318,7 @@
    ;; oh-my-claudecode agent session state — recreated whenever an agent
    ;; runs with its cwd inside a source tree; must never ship
    ".*\\.omc/.*"])
+
 (def ^:private native-bin
   (str "target/vis"
        (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
@@ -876,7 +878,9 @@
 ;; --with-assets build vendors it INTO the image for a fully-offline binary.
 (def ^:private voice-model-url
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2")
+
 (def ^:private voice-asset-resource-dir "voice-assets/parakeet")
+
 (def ^:private voice-model-cache
   (str (System/getProperty "user.home") "/.vis/build-cache/parakeet.tar.bz2"))
 

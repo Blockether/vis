@@ -26,6 +26,7 @@
 
 ;; Java2D must run headless in a server JVM (no display, no Dock icon on macOS).
 (System/setProperty "java.awt.headless" "true")
+
 (System/setProperty "apple.awt.UIElement" "true")
 
 ;; ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private registry (atom {}))
+
 (defonce ^:private counter (atom 0))
 
 (defn- put-img!
@@ -44,6 +46,7 @@
     h))
 
 (defn- entry [h] (get @registry (long h)))
+
 (defn- free-img! [h] (swap! registry dissoc (long h)) nil)
 
 ;; ---------------------------------------------------------------------------
@@ -59,6 +62,7 @@
           (bit-shift-left (bit-and (long r) 0xff) 16)
           (bit-shift-left (bit-and (long g) 0xff) 8)
           (bit-and (long b) 0xff)))
+
 (defn- clamp255 ^long [^double v] (long (min 255 (max 0 (Math/round v)))))
 
 (defn- gray-argb ^long [v] (argb 255 v v v))

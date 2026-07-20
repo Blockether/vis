@@ -38,12 +38,15 @@
            (java.net URL)
            (java.security MessageDigest)
            (java.util.jar JarEntry JarFile)))
+
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 ;; =============================================================================
 ;; Tool-result contract
 ;; =============================================================================
 (def ^:private max-trace-frames 12)
+
 (defn- now-ms [] (System/currentTimeMillis))
+
 (declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol
@@ -55,21 +58,31 @@
 (s/def ::result any?)
 ; the actual Python eval value; shape varies per tool
 (s/def ::success? boolean?)
+
 (s/def ::metadata (s/map-of keyword? any?))
 ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
 ;; ---- structured op/error sub-specs ----
 (s/def :op.error/message (s/and string? #(not (str/blank? %))))
+
 (s/def :op.error/trace (s/nilable string?))
+
 (s/def :op.error/hint (s/nilable (s/and string? #(not (str/blank? %)))))
+
 (s/def :op.error.block/source string?)
+
 (s/def :op.error.block/row pos-int?)
+
 (s/def :op.error.block/col pos-int?)
+
 (s/def :op.error.block/opened-loc
   (s/nilable (s/keys :req-un [:op.error.block/row :op.error.block/col])))
+
 (s/def :op.error.block/phase #{:preflight})
+
 (s/def :op.error/block
   (s/nilable (s/keys :req-un [:op.error.block/source :op.error.block/phase]
                      :opt-un [:op.error.block/row :op.error.block/col :op.error.block/opened-loc])))
+
 (s/def ::error
   (s/nilable (s/keys :req-un [:op.error/message]
                      :opt-un [:op.error/trace :op.error/hint :op.error/block])))
@@ -85,12 +98,15 @@
          #(contains? % :success?)
          (fn [{:keys [success? error]}]
            (if success? (nil? error) (or (nil? success?) (some? error))))))
+
 (def ^:dynamic *tool-event-sink*
   "Optional per-eval sink for observable tool lifecycle events. Bound by
    tests and UI/progress adapters that need to know a tool started before
    its fn returns. The sink receives plain event maps."
   nil)
+
 (defn- record-tool-event! [event] (when *tool-event-sink* (*tool-event-sink* event)) event)
+
 (def ^:dynamic *current-form-idx*
   "Zero-based index of the top-level form currently evaluating, bound
    per-form by `run-python-code` so the render sink writer can stamp
@@ -106,6 +122,7 @@
    name kept for caller compatibility."
   [x]
   (s/valid? ::envelope x))
+
 (defn assert-tool-result!
   [x]
   (when-not (tool-result? x)
@@ -113,6 +130,7 @@
              "Invalid tool result"
              {:type :vis/invalid-tool-result :value x :explain (s/explain-data ::envelope x)})))
   x)
+
 (defn normalize-metadata
   "Fill timing keys on the `:metadata` map when absent. Returns a
    metadata map (NOT an envelope). The envelope wraps the result of
@@ -145,6 +163,7 @@
       :started-at-ms started
       :finished-at-ms finished
       :duration-ms duration)))
+
 (defn merge-into-metadata
   "Merge `extra` into the `:metadata` slot of an already-valid
    envelope, re-check the contract, and preserve metadata. Used by the
@@ -161,6 +180,7 @@
          assert-tool-result!)]
 
     (with-meta merged meta*)))
+
 (defn- noisy-frame?
   [^StackTraceElement frame]
   (let [class-name (.getClassName frame)]
@@ -170,6 +190,7 @@
         (str/starts-with? class-name "clojure.lang.Var")
         (str/starts-with? class-name "java.lang.reflect.")
         (str/starts-with? class-name "jdk.internal.reflect."))))
+
 (defn normalize-trace
   "Convert a Throwable's stack into the preformatted, babashka-style
    single-string `::op.error/trace`. First line is
@@ -199,6 +220,7 @@
                       (when (pos? (.getLineNumber f)) (str ":" (.getLineNumber f)))))))]
 
     (str/join "\n" (cons header frames))))
+
 (defn normalize-error
   "Build a structured `:error` map from a Throwable.
    Required `:message`; optional `:trace` (preformatted string
@@ -210,6 +232,7 @@
     (cond-> {:message (or (not-empty (ex-message t)) (.getName (class t)))}
       (not (str/blank? trace))
       (assoc :trace trace))))
+
 (defn- envelope-of
   "Internal builder used by both `success` and `failure`. Accepts
    only the canonical shape:
@@ -230,12 +253,14 @@
 
     :always
     assert-tool-result!))
+
 (defn success
   "Construct a successful tool-result envelope. See `envelope-of` for
    the call shape. Returns a `:envelope` map (flat, all metadata
    under `op/*`)."
   [args]
   (envelope-of args true nil))
+
 (defn failure
   "Construct a failing tool-result envelope. `:throwable` auto-builds
    an `:error` map via `normalize-error`. Explicit `:error`
@@ -243,6 +268,7 @@
   [{:keys [error throwable] :as args}]
   (let [err (or error (when throwable (normalize-error throwable)))]
     (envelope-of args false err)))
+
 (defn envelope-success?
   "True when `envelope` is an `:envelope` and `:success?` is
    true. Use this instead of raw `(:success? e)` in renderers and
@@ -250,12 +276,14 @@
    envelopes (defensive against shape drift)."
   [envelope]
   (and (tool-result? envelope) (true? (:success? envelope))))
+
 (defn envelope-failure?
   "True when `envelope` is an `:envelope` and `:success?` is
    false (i.e. failure path with a structured `:error`). Returns
    false for non-envelopes."
   [envelope]
   (and (tool-result? envelope) (false? (:success? envelope))))
+
 (defn ex->op-error
   "Convert an arbitrary `Throwable` to a structured `:error` map.
 
@@ -460,6 +488,7 @@
                                   retry-on)))
                  (or (nil? retry-overrides)
                      (and (map? retry-overrides) (every? string? (keys retry-overrides))))))))
+
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
           :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
@@ -468,8 +497,10 @@
                 :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
                 :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/render
                 :ext.symbol/color-role :ext.symbol/replay]))
+
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
+
 (s/def ::symbol-entry
   (s/or :fn ::fn-symbol-entry
         :val ::val-symbol-entry))
@@ -501,11 +532,16 @@
 ;; that extension*. Global enforcement across extensions is handled by
 ;; the editing core with most-restrictive-wins semantics.
 (s/def :ext.protected-path/glob string?)
+
 (s/def :ext.protected-path/access #{:read-only :read-write :none})
+
 (s/def :ext.protected-path/hint string?)
+
 (s/def ::protected-path
   (s/keys :req-un [:ext.protected-path/glob :ext.protected-path/access :ext.protected-path/hint]))
+
 (s/def ::protected-paths-result (s/coll-of ::protected-path :kind vector?))
+
 (s/def :ext/protected-paths fn?)
 ;; Optional structured data merged into engine `ctx` before every model call.
 ;; Return a map such as `{:project {...}}`; engine-owned keys still win on
@@ -517,9 +553,13 @@
 ;; (:before|:around|:after, default :after), `:fn` (the hook fn — see
 ;; `register-op-hook!`). `:owner` is set automatically.
 (s/def :ext.op-hook/op keyword?)
+
 (s/def :ext.op-hook/phase #{:before :around :after})
+
 (s/def :ext.op-hook/fn ifn?)
+
 (s/def :ext/op-hook (s/keys :req-un [:ext.op-hook/op :ext.op-hook/fn] :opt-un [:ext.op-hook/phase]))
+
 (s/def :ext/op-hooks (s/coll-of :ext/op-hook))
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
@@ -550,10 +590,12 @@
 (def canonical-hook-phases
   "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."
   #{:turn.iteration/start :turn.answer/validate})
+
 (defn hook-phase?
   "True when `phase` is a canonical namespaced hook phase."
   [phase]
   (contains? canonical-hook-phases phase))
+
 (def canonical-hook-lifetimes
   "Hook-task lifetime policies. Controls how long an emitted hook-task
    lingers in `:session/tasks` after the hint stops firing.
@@ -586,26 +628,41 @@
                  condition still holds the task re-materialises
                  immediately."
   #{:iteration :turn :session})
+
 (defn hook-lifetime?
   "True when `lifetime` is one of the canonical hook-task lifetimes."
   [lifetime]
   (contains? canonical-hook-lifetimes lifetime))
+
 (s/def :ext.hook/id keyword?)
+
 (s/def :ext.hook/doc non-blank-string?)
+
 (s/def :ext.hook/phase (s/and keyword? hook-phase?))
+
 (s/def :ext.hook/fn fn?)
+
 (s/def :ext.hook/lifetime (s/and keyword? hook-lifetime?))
+
 (s/def ::hook
   (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]
           :opt-un [:ext.hook/lifetime]))
+
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
+
 (s/def :ext.hook.return/text non-blank-string?)
+
 (s/def :ext.hook.return/importance keyword?)
+
 (s/def ::iteration-start-hint
   (s/keys :req-un [:ext.hook.return/text] :opt-un [:ext.hook.return/importance]))
+
 (s/def :ext.hook.return/hint non-blank-string?)
+
 (s/def :ext.hook.return/reject true?)
+
 (s/def :ext.hook.return/message non-blank-string?)
+
 (s/def ::answer-validation-reject
   (s/keys :req-un [:ext.hook.return/reject]
           :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
@@ -620,6 +677,7 @@
   (and (keyword? x)
        (when-let [ns (namespace x)]
          (str/ends-with? ns ".slot"))))
+
 (defn- channel-slot->channel-id
   [slot]
   (let [ns (namespace slot)]
@@ -627,10 +685,14 @@
       (throw (ex-info "Channel contribution slot must be a qualified keyword ending in .slot"
                       {:type :extension/invalid-channel-contribution-slot :slot slot})))
     (keyword (subs ns 0 (- (count ns) (count ".slot"))))))
+
 (s/def :ext.channel-contribution/id keyword?)
+
 (s/def :ext.channel-contribution/fn ifn?)
+
 (s/def ::channel-contribution
   (s/keys :req-un [:ext.channel-contribution/id :ext.channel-contribution/fn]))
+
 (s/def :ext/channel-contributions
   (s/map-of channel-slot? (s/coll-of ::channel-contribution :kind vector?)))
 ;; ----------------------------------------------------------------------------
@@ -649,17 +711,26 @@
 ;; extensions declaring the same `[parent name]`.
 ;; ----------------------------------------------------------------------------
 (s/def :slash/name non-blank-string?)
+
 (s/def :slash/parent (s/coll-of non-blank-string? :kind vector?))
+
 (s/def :slash/doc non-blank-string?)
+
 (s/def :slash/usage non-blank-string?)
+
 (s/def :slash/run-fn ifn?)
+
 (s/def :slash/requires (s/coll-of #{:session :workspace :channel} :kind set?))
+
 (s/def :slash/availability-fn ifn?)
+
 (s/def :slash/subcommands (s/coll-of non-blank-string? :kind vector?))
+
 (s/def ::slash
   (s/keys :req [:slash/name]
           :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn :slash/requires
                 :slash/availability-fn :slash/subcommands]))
+
 (s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
 
 ;; Declarative startable resources — the Resources UI in EVERY channel renders
@@ -674,21 +745,32 @@
 ;;                                             ; start-fn's env under :startable/dir
 ;;    :start-fn      (fn [env selected])}       ; selected is opts vec or field map
 (s/def :startable/kind keyword?)
+
 (s/def :startable/name keyword?)
+
 (s/def :startable/label string?)
+
 (s/def :startable/placeholder string?)
+
 (s/def :startable/required boolean?)
+
 (s/def :startable/start-fn fn?)
+
 (s/def :startable/field
   (s/keys :req-un [:startable/name :startable/label]
           :opt-un [:startable/placeholder :startable/required]))
+
 (s/def :startable/visible-fn ifn?) ;; () -> bool; hide a startable from Resources UIs (e.g. behind a toggle)
+
 (s/def :startable/dir? boolean?) ;; offer a working-directory input; chosen dir arrives in start-fn's env as :startable/dir
+
 (s/def ::startable
   (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
           :opt-un [:startable/options-fn :startable/options-label :startable/fields
                    :startable/visible-fn :startable/dir?]))
+
 (s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))
+
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
    lookup key in `internal/slash.clj`."
@@ -699,13 +781,19 @@
 ;; Vis config/TUI under `:environment`. The host never mutates the
 ;; process env; extension code resolves them through config helpers.
 (s/def :ext.env/name non-blank-string?)
+
 (s/def :ext.env/label non-blank-string?)
+
 (s/def :ext.env/description string?)
+
 (s/def :ext.env/secret? boolean?)
+
 (s/def :ext.env/required? boolean?)
+
 (s/def ::env-entry
   (s/keys :req-un [:ext.env/name]
           :opt-un [:ext.env/label :ext.env/description :ext.env/secret? :ext.env/required?]))
+
 (s/def :ext/env (s/coll-of ::env-entry :kind vector?))
 ;; Optional extension-owned TUI setting declarations. The TUI stores the
 ;; values, but the extension owns the row metadata so extension-specific
@@ -714,13 +802,19 @@
 (s/def :ext.setting/key
   (s/or :keyword keyword?
         :string non-blank-string?))
+
 (s/def :ext.setting/type #{:toggle :choice :action})
+
 (s/def :ext.setting/label non-blank-string?)
+
 (s/def :ext.setting/description string?)
+
 (s/def :ext.setting/choices (s/and (s/coll-of keyword? :kind vector?) seq))
+
 (s/def ::setting-entry
   (s/keys :req-un [:ext.setting/key :ext.setting/type :ext.setting/label]
           :opt-un [:ext.setting/description :ext.setting/choices]))
+
 (s/def :ext/settings (s/coll-of ::setting-entry :kind vector?))
 ;; Optional extension-owned theme declarations. Plain EDN shape:
 ;;   {:ext/theme {"THEME_NAME" {"PADDING" "0px"}}}
@@ -772,14 +866,18 @@
            (or-nil-or-fn :provider/limits-fn)
            (or-nil-or-fn :provider/enrich-models-fn)
            (or-nil-or-fn :provider/on-selected-fn))))
+
 (s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
 ;; Persistence backends exported by this extension.
 (s/def :persistance/id keyword?)
+
 (s/def :persistance/ns
   (s/and symbol?
          #(nil? (namespace %))
          #(re-find #"\." (name %))))
+
 (s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
+
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
 ;; Workspace isolation/checkpoint backends exported by this extension.
 (s/def :ext/workspace-backends (s/coll-of map? :kind vector?))
@@ -832,15 +930,20 @@
 ;;                     the context to publish the module into `sys.modules` and
 ;;                     (for autoload) staple it onto builtins.
 (s/def :shim/name non-blank-string?)
+
 (s/def :shim/description non-blank-string?)
+
 (s/def :shim/bindings
   (s/or :map (s/map-of string? ifn?)
         :fn ifn?))
+
 (s/def :shim/preamble
   (s/or :str string?
         :fn ifn?))
+
 (s/def ::sandbox-shim
   (s/keys :req [:shim/name :shim/preamble] :opt [:shim/description :shim/bindings]))
+
 (s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
 ;; Python sandbox contribution.
 (s/def :ext.engine/symbols (s/coll-of ::symbol-entry :kind vector?))
@@ -856,10 +959,12 @@
          #(every? symbol? (vals %))))
 ;; Optional Python namespace alias for this extension's symbols.
 (s/def :ext.engine/ns (s/and symbol? #(nil? (namespace %))))
+
 (s/def :ext.engine/alias (s/and symbol? #(nil? (namespace %))))
 ;; Built-in extensions ship in the main jar and bind their symbols BARE into the
 ;; sandbox ns (no alias), like the engine verbs. Mutually exclusive with :alias.
 (s/def :ext.engine/builtin? boolean?)
+
 (s/def :ext/engine
   (s/keys :opt [:ext.engine/ns :ext.engine/alias :ext.engine/builtin? :ext.engine/symbols
                 :ext.engine/classes :ext.engine/imports]))
@@ -867,23 +972,38 @@
 ;; sidecar atom. Also surfaced in ctx :extensions / extension summaries
 ;; and stamped onto tool-result info.
 (s/def ::alias symbol?)
+
 (s/def ::name non-blank-string?)
+
 (s/def ::description non-blank-string?)
+
 (s/def ::kind non-blank-string?)
+
 (s/def ::version non-blank-string?)
+
 (s/def ::author non-blank-string?)
+
 (s/def ::owner non-blank-string?)
+
 (s/def ::license non-blank-string?)
+
 (s/def ::source-paths (s/coll-of string? :kind vector?))
+
 (s/def ::source-mtime-max integer?)
+
 (s/def ::source-hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
+
 (s/def ::registry-id symbol?)
+
 (s/def ::extension-info
   (s/keys :req-un [::name ::source-paths ::source-mtime-max ::source-hash-sha256]
           :opt-un [::alias ::description ::kind ::version ::author ::owner ::license
                    ::registry-id]))
+
 (defn ext-engine [ext] (or (:ext/engine ext) {}))
+
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
+
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
 
 (declare symbol-active?)
@@ -1029,32 +1149,42 @@
     true))
 
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
+
 (defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
+
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
+
 (defn ext-builtin?
   "True when this extension is a BUILT-IN: its symbols bind BARE into the
    sandbox ns (no alias), alongside the engine verbs. See
    `builtin-sandbox-bindings`."
   [ext]
   (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
+
 (defn ext-engine-ns
   [ext]
   (or (get-in ext [:ext/engine :ext.engine/ns])
       (when-let [alias (ext-alias-symbol ext)]
         (clojure.core/symbol (str "vis.ext." (name alias))))))
+
 (defn ext-alias
   [ext]
   (when-let [alias (ext-alias-symbol ext)]
     {:ns (ext-engine-ns ext) :alias alias}))
+
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))
+
 (defn ext-display-name [ext] (:ext/name ext))
+
 (defn- ns-alias-required-when-symbols?
   "Symbols need a home: an `:ext.engine/alias` (third-party → aliased ns) OR
    `:ext.engine/builtin? true` (core → bare in the sandbox ns). One is required
    when the extension contributes symbols."
   [ext]
   (or (empty? (ext-symbols ext)) (some? (ext-alias-symbol ext)) (ext-builtin? ext)))
+
 (defn- kind-required-when-symbols? [ext] (or (empty? (ext-symbols ext)) (some? (:ext/kind ext))))
+
 (s/def ::extension
   (s/and (s/keys :req [:ext/name :ext/description]
                  :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt-fn
@@ -1079,6 +1209,7 @@
                      :symbol (:ext.symbol/symbol entry)
                      :explain (s/explain-data ::symbol-entry entry)})))
   entry)
+
 (defn- var-source
   "Best-effort source form for a host Var. Stored on extension symbol entries
    so the Python sandbox's `source(...)` can show source for aliased
@@ -1097,6 +1228,7 @@
     (when (and ns nm)
       (try (repl/source-fn (clojure.core/symbol (str (ns-name ns)) (str nm)))
            (catch Throwable _ nil)))))
+
 (defn- var-meta
   "Read `:doc` / `:arglists` / `:name` / source from a var's metadata. Throws when the
    var lacks a non-blank docstring or non-empty arglists - extension symbols
@@ -1147,6 +1279,7 @@
        (cond-> {:symbol nm :doc doc :arglists (when (seq al) (vec al))}
          source
          (assoc :source source))))))
+
 (defn- build-symbol-entry
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Observed tools keep their symbol-specific
@@ -1258,6 +1391,7 @@
                                "implementation docstrings never substitute for it.")
                           {:type :extension/native-tool-missing-description :symbol sym}))
     (validate-symbol-entry! entry)))
+
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
 
@@ -1318,6 +1452,7 @@
          (str "Var " v " does not hold a function; use vis/value for plain values.")
          {:type :extension/symbol-not-a-fn :var v}))
      (build-symbol-entry {:symbol sym :fn f :doc doc :arglists arglists :source source} opts))))
+
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.
 
@@ -1347,6 +1482,7 @@
                                  (assoc :ext.symbol/source source))))
      (anomaly/incorrect! "vis/helper expects a Clojure var (e.g. #'my-helper)."
                          {:type :extension/helper-not-a-var :given v}))))
+
 (defn value
   "Build a value symbol entry FROM A CLOJURE VAR - a plain constant/data binding.
 
@@ -1393,6 +1529,7 @@
        (anomaly/incorrect! (str "3-arg value '" sym-name "' missing :doc in opts.")
                            {:type :extension/missing-doc :symbol sym-name}))
      (validate-symbol-entry! #:ext.symbol{:symbol sym-name :val val :doc doc}))))
+
 (defn- arglist->call-form
   [alias-sym sym-name arglist]
   (let
@@ -1406,6 +1543,7 @@
      (if alias-sym (str alias-sym "/" sym-name) (str sym-name))]
 
     (str "(" target (when (seq args) (str " " args)) ")")))
+
 (defn- render-symbol-line
   [alias-sym entry]
   (let
@@ -1419,7 +1557,9 @@
       (str "- " (str/join " or " (map #(arglist->call-form alias-sym sym-name %) arglists))
            " - " doc)
       (str "- " (if alias-sym (str alias-sym "/" sym-name) (str sym-name)) " - " doc))))
+
 (defn- prompt-line-indent [line] (count (or (re-find #"^[ \t]*" line) "")))
+
 (defn- trim-prompt-edge
   [lines]
   (->> lines
@@ -1428,6 +1568,7 @@
        (drop-while str/blank?)
        reverse
        vec))
+
 (defn normalize-prompt-text
   "Normalize model-facing prompt text.
 
@@ -1466,6 +1607,7 @@
                deindented)]
 
       (str/join "\n" collapsed))))
+
 (defn render-prompt
   "Render canonical `:ext/prompt-fn` text for Python-only symbols.
 
@@ -1524,9 +1666,11 @@
         (string? prompt) (constantly (normalize-prompt-text prompt))
         :else (throw (ex-info ":ext/prompt-fn must be a string or (fn [env] string)"
                               {:got (type prompt)}))))
+
 (defn- extension-symbol-op-keyword
   [ext sym-entry]
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
+
 (defn- validate-symbol-op-tags!
   "Fail closed: every observed extension tool MUST carry an inline
    `:tag :observation | :mutation` on its `vis/symbol` opts map.
@@ -1557,6 +1701,7 @@
                              :op op
                              :allowed op-tags}))))
   ext)
+
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
    Normalizes `:ext/prompt-fn` (string -> fn) before checking the spec
@@ -1588,6 +1733,7 @@
                     {:type (keyword "extension" (str hook-name "-error"))
                      :symbol sym
                      :returned returned}))))
+
 (defn- call-hook
   [hook-name sym hook-fn hook-args]
   (try (apply hook-fn hook-args)
@@ -1599,7 +1745,9 @@
          (throw (ex-info (str hook-name " for '" sym "' threw: " (ex-message e))
                          {:type (keyword "extension" (str hook-name "-error")) :symbol sym}
                          e)))))
+
 (defn- elapsed-ms [^long t0] (/ (double (- (System/nanoTime) t0)) 1e6))
+
 (defn- log-hook!
   [level id ext-ns sym phase ms extra-msg]
   (tel/log! {:level level
@@ -1612,6 +1760,7 @@
                        (when phase (str " " phase))
                        (when ms (str " " (format "%.1fms" (double ms))))
                        (when extra-msg (str " " extra-msg)))}))
+
 (defn- run-before
   [ext-ns sym-entry env f args]
   (if-let [before (:ext.symbol/before-fn sym-entry)]
@@ -1629,6 +1778,7 @@
         (do (log-hook! :debug ::before-fn-done ext-ns sym :before-fn ms nil)
             {:env (get ret :env env) :fn (get ret :fn f) :args (vec (get ret :args args))})))
     {:env env :fn f :args args}))
+
 (defn- run-after
   [ext-ns sym-entry env f args result]
   (if-let [after (:ext.symbol/after-fn sym-entry)]
@@ -1646,6 +1796,7 @@
        :args (vec (get ret :args args))
        :result (get ret :result result)})
     {:env env :fn f :args args :result result}))
+
 (defn- run-on-error
   [ext-ns sym-entry err env f args]
   (if-let [on-error (:ext.symbol/on-error-fn sym-entry)]
@@ -1676,6 +1827,7 @@
         (do (log-hook! :debug ::on-error-fn-done ext-ns sym :on-error-fn ms "surfacing error") ret)
         :else (do (log-hook! :info ::on-error-fn-done ext-ns sym :on-error-fn ms "retrying") ret)))
     (throw err)))
+
 (defn- assert-symbol-envelope!
   [sym result]
   (when-not (tool-result? result)
@@ -1686,11 +1838,13 @@
                      :value result
                      :explain (s/explain-data ::envelope result)})))
   result)
+
 (defn- tool-call-name
   [ext sym]
   (if-let [alias (ext-alias-symbol ext)]
     (str alias "/" sym)
     (str sym)))
+
 (defn- tool-start-event
   [ext sym-entry started-at-ms]
   (let [sym (:ext.symbol/symbol sym-entry)]
@@ -1700,9 +1854,11 @@
      :extension (:ext/name ext)
      :symbol sym
      :started-at-ms (long started-at-ms)}))
+
 (defn- default-tool-op-keyword
   [ext sym-entry]
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
+
 (defn- ensure-tool-result-op
   "Observed extension tools must carry canonical op metadata. The wrapper
    derives it deterministically from active alias + symbol (`cat`,
@@ -1723,6 +1879,7 @@
         :symbol op
         :tag tag))
     result))
+
 (defn- public-op-keyword
   "User-facing op keyword for payload EDN. Tool symbols use `!` for mutation
    (`git/fetch!`), but result maps read like porcelain (`:git/fetch`)."
@@ -1739,6 +1896,7 @@
        (str/replace n #"!$" "")]
 
       (if ns-part (keyword ns-part n) (keyword n)))))
+
 (defn- op-kw->str
   "The STRING a tool op-keyword takes on the Python boundary: namespace folded
    with `_`, kebab→snake, trailing `?`/`!` stripped (`cat`→\"cat\",
@@ -1808,19 +1966,24 @@
                                   (ext-alias-symbol ext)
                                   (assoc :alias (ext-alias-symbol ext)))})
     result))
+
 (def ^:dynamic *current-extension*
   "Extension map currently executing on an extension callback thread.
    Bound by symbol wrappers so extension-owned helper APIs can fill the
    caller's stable extension identity without accepting user-supplied ids."
   nil)
+
 (def ^:dynamic *current-symbol*
   "Sandbox symbol currently executing, when a symbol callback is active."
   nil)
+
 (defn current-extension [] *current-extension*)
+
 (defn current-extension-id
   []
   (some-> *current-extension*
           :ext/name))
+
 (defn- call-extension-env-fn
   [ext f environment]
   (binding
@@ -1837,6 +2000,7 @@
      (workspace/env-filesystem-roots environment)]
 
     (f environment)))
+
 (defn- active-extension?
   [environment ext]
   (try (boolean
@@ -1847,6 +2011,7 @@
                     :data {:ext (:ext/name ext) :error (ex-message t)}}
                    (str "Extension '" (:ext/name ext) "' activation-fn threw"))
          false)))
+
 (defn- active-extension-rows
   [environment]
   (let [active-value (:active-extensions environment)]
@@ -1856,6 +2021,7 @@
                   (vec (or (some-> (:extensions environment)
                                    deref)
                            []))))))
+
 (defn active-protected-globs
   "Aggregate protected path rules from active extensions in extension order.
 
@@ -1878,10 +2044,12 @@
                                          :explain (s/explain-data ::protected-paths-result rows)})))
                       (mapv #(assoc % :extension/name (:ext/name ext)) rows))))
                 (active-extension-rows environment))))
+
 (defn- deep-merge
   [& maps]
   (letfn [(merge-entry [a b] (if (and (map? a) (map? b)) (merge-with merge-entry a b) b))]
     (apply merge-with merge-entry maps)))
+
 (defn ctx-contributions
   "Return merged structured `ctx` contributions for active extensions.
 
@@ -1922,6 +2090,7 @@
               acc))
           {}
           (or active-extensions [])))
+
 (defn- tool-result->public-value
   [result]
   (if (:success? result)
@@ -2171,10 +2340,12 @@
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (tool-result->public-value result))))))
+
 (def ^:private ^:dynamic *log-writer*
   "Writer that sends output to the log file instead of stdout/stderr.
    Bound during extension invocations so tool fns never bleed into the TUI."
   nil)
+
 (defn- get-log-writer
   []
   (or *log-writer*
@@ -2183,7 +2354,9 @@
                         (fn [cur]
                           (or cur (io/writer log-path :append true))))
         *log-writer*)))
+
 (declare wrap-extension-thunked)
+
 (defn wrap-extension
   "Wrap all function symbols in an extension into invocation fns.
 
@@ -2199,6 +2372,7 @@
    Returns every extension symbol."
   [ext env]
   (wrap-extension-thunked ext (constantly env)))
+
 (defn wrap-extension-thunked
   "Like `wrap-extension` but resolves the environment LAZILY via `env-thunk`
    (a 0-arg fn) at CALL time instead of closing over a concrete `env`. Interns
@@ -2260,6 +2434,7 @@
         (seq (:ext/persistance spec)) "persistance"
         (seq (:ext/workspace-backends spec)) "workspace"
         :else nil))
+
 (defn extension
   "Build and validate an extension. The canonical constructor.
 
@@ -2343,6 +2518,7 @@
 ;; Hash + mtime primitives.
 ;; ---------------------------------------------------------------------------
 (defn- sha256-digest ^MessageDigest [] (MessageDigest/getInstance "SHA-256"))
+
 (defn- bytes->hex
   ^String [^bytes b]
   (let [sb (StringBuilder. (* 2 (alength b)))]
@@ -2351,12 +2527,14 @@
         (when (< v 16) (.append sb \0))
         (.append sb (Integer/toString v 16))))
     (.toString sb)))
+
 (defn sha256-hex
   "Hex SHA-256 of a string (UTF-8). The ONE string-digest helper —
    loop's replay-dedup key and the source-marker hashing share it
    instead of re-rolling MessageDigest + hex folds."
   ^String [s]
   (bytes->hex (.digest (sha256-digest) (.getBytes (str s) "UTF-8"))))
+
 (defn- read-stream-bytes
   ^bytes [^InputStream in]
   (with-open [out (ByteArrayOutputStream.)]
@@ -2378,6 +2556,7 @@
               (str/replace \- \_)
               (str/replace \. \/))]
     [(str base ".clj") (str base ".cljc")]))
+
 (defn- find-source-resource
   ^URL [^ClassLoader cl ns-sym]
   ;; Locate a resource URL for the namespace, trying .clj before .cljc.
@@ -2386,7 +2565,9 @@
     (some (fn [p]
             (.getResource cl ^String p))
           paths)))
+
 (defrecord ^:private SourceEntry [^String locator ^long mtime ^bytes content])
+
 (defn- file-entry
   "Build a SourceEntry for a `file:` URL. Reads the file content for
    hashing; mtime from `.lastModified`."
@@ -2409,11 +2590,13 @@
             (byte-array 0)))]
 
     (->SourceEntry path mtime content)))
+
 (defn- jar-entry-locator
   "Build a stable locator string for a jar entry: `jar-path!entry-path`.
    Same convention as the JDK's `jar:` URL form, more readable."
   [^String jar-path ^String entry-name]
   (str jar-path "!" entry-name))
+
 (defn- jar-entry
   "Build a SourceEntry for a `jar:file:` URL. Opens the jar, reads
    the named entry, hashes its content. mtime is the entry's
@@ -2458,6 +2641,7 @@
                             (byte-array 0)))]
 
             (->SourceEntry (jar-entry-locator jar-path entry-nm) mtime content)))))))
+
 (defn- url->entry
   "Dispatch on URL protocol to the right reader. Returns SourceEntry
    or nil on unrecognized protocol."
@@ -2535,6 +2719,7 @@
          (bytes->hex hash-bytes)]
 
         {:source-paths paths :source-mtime-max mtime-max :source-hash-sha256 hash-hex}))))
+
 (defn resolve-markers-for-extension
   "Resolve source markers from manifest `:nses` or extension `:ext/source-nses`."
   [ext-or-manifest]
@@ -2553,11 +2738,13 @@
   ;; Process-level atom holding all globally registered extensions.
   ;; Keyed by :ext/name to prevent duplicates.
   (atom {}))
+
 (defonce ^:private extension-order
   ;; Namespace insertion order for `registered-extensions`. A plain
   ;; hash-map does not preserve order, and adding/removing unrelated
   ;; extensions can reshuffle doctor/lifecycle output.
   (atom []))
+
 (defonce ^:private extension-source-markers
   ;; Sidecar atom holding source-file markers per registered extension.
   ;; Keyed by :ext/name. Populated at register-time, dropped at
@@ -2566,23 +2753,29 @@
   ;; OUT of the extension map itself so `extension/validate!` doesn't have
   ;; to know about runtime-derived fields. Plan §5.5.
   (atom {}))
+
 (defn- dispatch-providers!
   [providers]
   (doseq [provider-entry providers]
     (registry/register-provider! provider-entry)))
+
 (defn- dispatch-persistance!
   [entries]
   (doseq [{:persistance/keys [id ns]} entries]
     (persistance/register-backend! id ns)))
+
 (defn- dispatch-workspace-backends!
   [entries]
   (doseq [entry entries]
     (workspace/register-backend! entry)))
+
 (defn- dispatch-attachment-storage!
   [entries]
   (doseq [entry entries]
     (attachment-storage/register-backend! entry)))
+
 (def ^:private EXT_PARENT ["ext"])
+
 (defn- mount-under-ext
   "Auto-place an `:ext/cli` entry under the `vis ext` parent.
 
@@ -2599,6 +2792,7 @@
                                    (pr-str parent)
                                    " -- extension-owned CLI mounts only under [\"ext\" ...].")
                               {:type :ext/cli-bad-parent :entry entry}))))
+
 (defn register-extension!
   "Register an extension in the global process-level registry.
 
@@ -2732,6 +2926,7 @@
 ;; can reverse-lookup an extension id from a namespace without a forward
 ;; declare.
 (defonce ^:private extension-manifest-registry (atom {}))
+
 (defn extension-id-of-ns
   "Reverse lookup: given a namespace symbol, return the extension id
    that registered it under `:nses`, or `nil`."
@@ -2739,7 +2934,9 @@
   (some (fn [[id {nses :nses}]]
           (when (some #(= ns-sym %) nses) id))
         @extension-manifest-registry))
+
 (def ^:private empty-source-markers {:source-paths [] :source-mtime-max -1 :source-hash-sha256 nil})
+
 (defn extension-source-markers-of
   "Lookup the source markers stored for `ns-sym`. Returns the marker
    map (`{:source-paths :source-mtime-max :source-hash-sha256}`) or
@@ -2747,6 +2944,7 @@
    computation failed at register time)."
   [ns-sym]
   (get @extension-source-markers ns-sym))
+
 (defn- source-markers-for-extension
   [ext]
   (or (extension-source-markers-of (:ext/name ext))
@@ -2757,6 +2955,7 @@
                         :data {:ext (:ext/name ext) :error (ex-message t)}})
              empty-source-markers))
       empty-source-markers))
+
 (defn extension-info
   "Canonical extension info map.
 
@@ -2820,6 +3019,7 @@
                        :value prov
                        :explain (s/explain-data ::extension-info prov)})))
     prov))
+
 (defn deregister-extension!
   "Drop an extension from the global registry AND reverse every side
    effect `register-extension!` dispatched: deregister each CLI
@@ -2880,6 +3080,7 @@
                            (vec (remove #{ns-sym} order))))
   (swap! extension-source-markers dissoc ns-sym)
   nil)
+
 (defn registered-extensions
   []
   (let [registry @extension-registry]
@@ -2934,11 +3135,13 @@
    channel's Resources UI (web modal + TUI dialog) hides them uniformly."
   []
   (vec (filter startable-visible? (mapcat :ext/startable-resources (registered-extensions)))))
+
 (defn- normalized-channel-contribution
   [slot contribution]
   (assoc contribution
     :channel-id (channel-slot->channel-id slot)
     :slot slot))
+
 (defn channel-contributions-for
   "Return registered extension channel contributions for `channel-id` in
    extension registration order. With `slot`, return only contributions for
@@ -2956,6 +3159,7 @@
      (vec (cond->> rows
             slot
             (filter #(= slot (:slot %))))))))
+
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.
    Throws on missing dependencies or cycles."
@@ -2994,6 +3198,7 @@
       (doseq [ns-sym (keys by-ns)]
         (visit ns-sym)))
     @result))
+
 (defn register-extensions!
   "Install all globally registered extensions into an environment.
 
@@ -3012,9 +3217,11 @@
     (doseq [ext sorted]
       (register-fn! environment ext))
     environment))
+
 (defn- registered-extensions-for-source-ns
   [ns-sym]
   (vec (filter #(contains? (set (ext-source-nses %)) ns-sym) (registered-extensions))))
+
 (defn load-extension!
   "Dynamically load extension namespace and return extensions it registered."
   [ns-sym]
@@ -3038,17 +3245,20 @@
   "Sorted vector of every extension id known to the manifest registry."
   []
   (vec (sort (keys @extension-manifest-registry))))
+
 (defn extension-namespaces
   "Vector of namespaces declared under `:nses` for an id. Empty when
    the id is unknown."
   [id]
   (vec (get-in @extension-manifest-registry [id :nses] [])))
+
 (defn- merge-manifest-entry!
   [id entry]
   (swap! extension-manifest-registry update
     id
     (fn [existing]
       {:nses (vec (distinct (concat (:nses existing) (:nses entry))))})))
+
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values
    map to the observation/mutation half of the OODA loop. The prior
@@ -3064,6 +3274,7 @@
    Channels that want to color tools by tag look it up themselves;
    the engine never carries presentation in the tool envelope."
   #{:observation :mutation})
+
 (defonce ^:private op-keyword->tag
   ;; Inverse index from canonical op-keyword to its `:observation` /
   ;; `:mutation` tag. Populated as a side-effect of `register-extension!`
@@ -3082,6 +3293,7 @@
   ;; `extension-manifest-registry`), all `defonce` for the same reason.
   ;; (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
+
 (defn op-tag
   "Return the `:observation | :mutation` tag for `op-keyword`. Unknown
    ops fail closed; every symbol must declare `:tag` inline on its
@@ -3093,6 +3305,7 @@
                              (pr-str op-keyword)
                              " has no mandatory observation/mutation tag")
                         {:type :extension/unregistered-op :op op-keyword :allowed op-tags})))
+
 (defn op-tag-index
   "Read-only snapshot of the canonical op-keyword -> tag map. Lets
    call-sites that only hold a Python-snake call HEAD (the
@@ -3102,6 +3315,7 @@
    Never throws; an unknown head simply misses the folded view."
   []
   @op-keyword->tag)
+
 (defonce ^:private op-keyword->batch-hint
   ;; Inverse index from canonical op-keyword to its per-tool high-fan-out
   ;; batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a
@@ -3112,12 +3326,14 @@
   ;; reload-surviving side effect, so a plain `def` would wipe it on every
   ;; `:reload`. (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
+
 (defn op-batch-hint-threshold
   "The per-tool high-fan-out batch-hint threshold for `op-keyword`, or nil
    when the tool declared no override (callers fall back to the default).
    Never throws on unknown ops — the hint is advisory, not load-bearing."
   [op-keyword]
   (get @op-keyword->batch-hint op-keyword))
+
 (defn op-presentation
   "Engine-owned presentation metadata for a tool's `:op` keyword:
    `{:tag ...}`. Tool wrappers merge this into their `:info`/`:metadata`
@@ -3127,6 +3343,7 @@
    Color / glyph / layout remain pure channel concerns."
   [op]
   {:tag (op-tag op)})
+
 (defn registered-extensions-summary
   "Pure data view of the manifest registry: returns `{<id> {:nses [...]}}`
    for every loaded extension."
@@ -3135,6 +3352,7 @@
         (map (fn [[id entry]]
                [id {:nses (:nses entry)}]))
         @extension-manifest-registry))
+
 (def ^:private builtin-extension-nses
   "Core modules that register through the extension API but ship IN the main
    jar (NOT classpath plug-ins discovered via `META-INF/vis-extension/vis.edn`).
@@ -3175,12 +3393,14 @@
     com.blockether.vis.internal.foundation.shim-xlsxwriter
     com.blockether.vis.internal.foundation.shim-pptx
     com.blockether.vis.internal.foundation.shim-attach])
+
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`
    side-effect runs. Idempotent (require won't reload; register is idempotent)."
   []
   (doseq [ns-sym builtin-extension-nses]
     (require ns-sym)))
+
 (defn discover-extensions!
   "Public entry point for vis's extension wiring.
 
@@ -3199,6 +3419,7 @@
     (doseq [[id entry] manifests]
       (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
+
 (defn- json-schema-type-str
   "Compact type string for one JSON-schema node, including `oneOf`/`anyOf`
    unions such as `string|array<string>`."

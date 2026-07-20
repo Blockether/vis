@@ -156,6 +156,7 @@
                "\"})."
                (when (seq candidates) (str " Workspace dirs: " (str/join ", " candidates) "."))
                " To force a root REPL anyway: repl_start(\"typescript\", {\"dir\": \".\"})."))))))
+
 (defn ts-start-repl-fn
   "repl_start handler for TypeScript/Bun. Positional `op` (default \"start\") +
    opts `{dir, id}`. Lifecycle: start / restart / stop / status. `op` arrives as

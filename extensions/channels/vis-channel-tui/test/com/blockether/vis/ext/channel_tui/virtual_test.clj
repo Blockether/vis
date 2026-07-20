@@ -20,7 +20,9 @@
             [clojure.string :as str]))
 
 (def ^:private estimated-height @#'virtual/estimated-height)
+
 (def ^:private project-message @#'virtual/project-message)
+
 (def ^:private turn-identity @#'virtual/turn-identity)
 
 ;; ─── Fixtures ───────────────────────────────────────────────────────────────

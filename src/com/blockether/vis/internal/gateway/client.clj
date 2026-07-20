@@ -16,6 +16,7 @@
            (java.nio.charset StandardCharsets)))
 
 (def ^:private DEFAULT_PORT 7890)
+
 (def ^:private DEFAULT_HOST "127.0.0.1")
 
 (defonce ^:private http-client
@@ -39,9 +40,13 @@
 ;; charred (reflection-free); interop was the churn. We keep the belt-and-suspenders probe but only re-run it once per
 ;; `entry-probe-ttl-ms`; within the window a cheap pid-liveness check suffices.
 (def ^:private entry-probe-ttl-ms 4000)
+
 (defonce ^:private entry-fresh-until-ns (atom 0))
+
 (defonce ^:private client-id (atom nil))
+
 (defonce ^:private release-hook-installed? (atom false))
+
 (defonce ^:private subscriptions (atom {}))
 
 (defn- db-target [] (config/resolve-db-spec))
@@ -421,7 +426,9 @@
   (pref<-wire (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model")) "model")))
 
 (defonce ^:private session-model-cache (atom {}))
+
 (defonce ^:private session-model-refreshing (atom #{}))
+
 (def ^:private session-model-cache-ttl-ms 750)
 
 (defn- refresh-session-model!
@@ -474,7 +481,9 @@
   (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources")) "resources")))
 
 (defonce ^:private resources-cache (atom {}))
+
 (defonce ^:private resources-refreshing (atom #{}))
+
 (def ^:private resources-cache-ttl-ms 750)
 
 (defn- refresh-resources!
@@ -545,6 +554,7 @@
   (send-json! "POST"
               (str "/v1/sessions/" (enc sid) "/resources/start")
               {:kind kind :dir dir :selected selected}))
+
 (defn iteration-attachment-bytes
   "Raw bytes (a byte-array) of ONE outbound artifact — iteration `iid`, its 0-based
    `idx` in the iteration's ordered attachment list — fetched from the daemon's
@@ -701,6 +711,7 @@
         (reset! client-id nil)
         res)
       {:status "stopped" :stopping false})))
+
 (defn- port-free?
   "True when nothing is accepting TCP connections on host:port — i.e. a previous
    daemon has fully released it, so a respawn on the same port won't bind-race."
@@ -1060,6 +1071,7 @@
              (finally (reset! alive?* false)
                       (some-> ^Thread watchdog
                               .interrupt)))))))
+
 (defn subscribe!
   "Remote equivalent of gateway.state/subscribe!: start a background SSE reader
    that replays `cursor` then calls `sink` for every live event. Returns an empty
