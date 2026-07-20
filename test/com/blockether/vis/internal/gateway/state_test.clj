@@ -528,22 +528,22 @@
   ;; Model text phases stream LIVE but coalesced to SENTENCE granularity: a frame
   ;; is skipped only while still mid-sentence AND within the time cap. A closed
   ;; sentence, the cap, a `:done?` frame, and the first frame of a phase all pass.
-  ;; `last-emit` is phase -> {:ms emit-epoch :len emitted-text-length}.
+  ;; `last-emit` is [phase iteration] -> {:ms emit-epoch :len emitted-text-length}.
   (let [coalesce? @#'state/coalesce-delta?]
     (it "skips a mid-sentence reasoning delta inside the time cap"
-        (expect (true? (coalesce? {:reasoning {:ms 1000 :len 0}}
+        (expect (true? (coalesce? {[:reasoning 0] {:ms 1000 :len 0}}
                                   {:phase :reasoning :thinking "still going"}
                                   1500))))
     (it "passes once a sentence closes, even inside the time cap"
-        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+        (expect (false? (coalesce? {[:reasoning 0] {:ms 1000 :len 0}}
                                    {:phase :reasoning :thinking "done here. "}
                                    1500))))
     (it "passes once the time cap elapses, even mid-sentence"
-        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+        (expect (false? (coalesce? {[:reasoning 0] {:ms 1000 :len 0}}
                                    {:phase :reasoning :thinking "still going"}
                                    3001))))
     (it "a :done? frame always passes"
-        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+        (expect (false? (coalesce? {[:reasoning 0] {:ms 1000 :len 0}}
                                    {:phase :reasoning :thinking "x" :done? true}
                                    1500))))
     (it "the FIRST frame of a phase always passes (no prior emit)"
@@ -551,18 +551,19 @@
     (it "only a sentence in the NEW suffix (past :len) flushes"
         ;; the '.' sits BEFORE :len — already emitted — so the fresh tail is
         ;; mid-sentence and coalesces inside the cap.
-        (expect (true? (coalesce? {:reasoning {:ms 1000 :len 5}}
+        (expect (true? (coalesce? {[:reasoning 0] {:ms 1000 :len 5}}
                                   {:phase :reasoning :thinking "done. more"}
                                   1500)))
-        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 5}}
+        (expect (false? (coalesce? {[:reasoning 0] {:ms 1000 :len 5}}
                                    {:phase :reasoning :thinking "done. more!"}
                                    1500))))
     (it "phases track independent clocks"
-        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+        (expect (false? (coalesce? {[:reasoning 0] {:ms 1000 :len 0}}
                                    {:phase :content :content "fresh"}
                                    1050))))
     (it "tool phases always pass"
-        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}} {:phase :form-result} 1050))))))
+        (expect (false?
+                  (coalesce? {[:reasoning 0] {:ms 1000 :len 0}} {:phase :form-result} 1050))))))
 
 (defdescribe volatile-queue-reconciliation-test
              (it "marks orphaned running turns interrupted without reconstructing messages"

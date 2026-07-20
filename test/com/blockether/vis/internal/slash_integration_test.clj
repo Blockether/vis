@@ -9,6 +9,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
@@ -118,7 +119,7 @@
                  (with-store
                    (fn [store]
                      (let [ast
-                           [:ast {} [:p {} [:span {} "Hello "] [:strong {} "world"]]]
+                           [(content/prose "Hello **world**")]
 
                            env
                            (slash-env store
@@ -155,4 +156,4 @@
 
                                  (expect (= :success (:status result)))
                                  (expect (= :unknown (get-in result [:slash :reason])))
-                                 (expect (str/includes? (:answer result) "unknown")))))))
+                                 (expect (str/includes? (:answer result) "Unknown")))))))

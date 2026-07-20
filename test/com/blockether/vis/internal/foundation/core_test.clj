@@ -40,8 +40,9 @@
           ;; editing prompt gained the FULL structural-editing vocabulary — the
           ;; struct_patch by-name/by-path ops, the sexpr clojure.zip zipper moves
           ;; (down/up/left/right/next/prev/find/find_kind), append/prepend_child,
-          ;; and the STRATEGY decision tree. Headroom kept; drift still guarded.)
-          (expect (< (count prompt) 10000)))))
+          ;; and the STRATEGY decision tree, and reaches ~10k once the FULL
+          ;; extension surface is registered. Headroom kept; drift still guarded.)
+          (expect (< (count prompt) 12000)))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
       ;; `internal.env-digest` — it's core functionality, not extension-

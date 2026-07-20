@@ -1174,7 +1174,7 @@
             out
             (grep {"all" ["needle"] "paths" [(temp-dir-path "rg")]})]
 
-        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact?}
+        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact? :missing}
                    (set (keys out))))
         ;; both files match — breadth == displayed file count, fully counted.
         (expect (= 2 (:total-file-count out)))
@@ -1377,7 +1377,7 @@
             out
             (grep {"all" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true})]
 
-        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact?}
+        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
                    (set (keys out))))
         (expect (= 2 (:total-file-count out)))
         (expect (true? (:total-file-count-exact? out)))
@@ -1394,7 +1394,7 @@
             (grep
               {"any" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true "context" 2})]
 
-        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact?}
+        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
                    (set (keys out))))
         (expect (every? string? (:files out)))))
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
