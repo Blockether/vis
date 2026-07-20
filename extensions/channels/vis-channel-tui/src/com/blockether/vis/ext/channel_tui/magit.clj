@@ -51,12 +51,12 @@
 ;;   U            unstage EVERYTHING back to the working tree
 ;;
 ;; ── Discarding / committing ─────────────────────────────────────────────────
-;;   x  (or k)    discard the change at point (throw it away — asks first)
+;;   k            discard the change at point (throw it away — asks first)
 ;;   c            commit flow (message prompt; supports amend)
 ;;
 ;; ── History / inspection ────────────────────────────────────────────────────
 ;;   l            log — the graph log viewer
-;;   y            copy the sha / path / ref at point to the clipboard
+;;   C-w          copy the sha / path / ref at point (magit-copy-section-value)
 ;;
 ;; ── Remote / sync ───────────────────────────────────────────────────────────
 ;;   P            push flow (upstream, force, remote, dry-run, no-verify; Gerrit-aware)
@@ -68,23 +68,21 @@
 ;;   z            stash flow (push / pop / apply / drop)
 ;;
 ;; ── Buffer ──────────────────────────────────────────────────────────────────
-;;   g  (or r)    refresh the status buffer from disk
+;;   g            refresh the status buffer from disk
 ;;
-;; ── Where this DIVERGES from vanilla Emacs magit (know before muscle memory) ──
-;;   x            here = discard. In magit `x` is RESET (magit-reset-quickly);
-;;                magit's discard is `k` (we bind BOTH x and k to discard).
-;;   r            here = refresh (alias of g). In magit `r` opens the REBASE
-;;                transient — a destructive collision; avoid relying on `r`.
-;;   y            here = copy. In magit `y` shows the refs buffer (magit-show-refs).
-;;   n / p        here = section motion. In magit those are line-motion / search;
-;;                magit moves sections with M-n / M-p.
-;;   PageUp/Down  magit scrolls the diff with SPC / DEL.
+;; ── FAITHFUL to vanilla Emacs magit — no divergence ──────────────────────────
+;; Every key above is bound to the SAME verb Emacs magit binds it to:
+;;   k discard · g refresh · C-w copy-section-value · n/p section motion ·
+;;   s/u/S/U stage · c commit · l log · P/F/f remote · b branch · z stash ·
+;;   TAB toggle · RET visit · q bury.  Case-sensitive, exactly like magit.
 ;;
-;; NOT (yet) implemented vs vanilla magit: diff/ediff transients (d/D/e/E),
-;; rebase (r), merge (m), revert (V), reset transient (X), cherry-pick (A),
-;; apply/reverse (a/v), tag (t), remote (M), run-git (!), gitignore (i/I),
-;; jump (j), diff-context (+/-/0), refresh-all (G), section sibling/parent
-;; motion (M-n/M-p, ^), and visibility cycling (C-TAB/S-TAB).
+;; Magit keys we do NOT implement yet are deliberately left UNBOUND — never
+;; remapped to a wrong verb — so magit muscle memory is never betrayed:
+;;   x reset (magit-reset-quickly) · r rebase · y show-refs · d/D + e/E diff/ediff
+;;   · m merge · M remote · V revert · X reset transient · A cherry-pick ·
+;;   a/v apply/reverse · t tag · w/W am/patch · !/: run-git · i/I gitignore ·
+;;   j jump · +/-/0 diff-context · G refresh-all · SPC/DEL scroll ·
+;;   M-n/M-p sibling motion · ^ parent · C-TAB/S-TAB visibility cycling.
 ;; ============================================================================
 
 (set! *unchecked-math* :warn-on-boxed)

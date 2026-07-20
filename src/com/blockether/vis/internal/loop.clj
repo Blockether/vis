@@ -9120,11 +9120,11 @@
    exceeds this the reaper force-evicts the least-recently-active idle entries
    (still lock-guarded) until back under the cap — a second guard for burst
    churn (e.g. prewarm). Override with `VIS_ENV_CACHE_MAX`; <= 0 disables it.
-   Default 32."
+   Default 16 — trims idle GraalPy Contexts without burst churn."
   (or (some-> (System/getenv "VIS_ENV_CACHE_MAX")
               str/trim
               parse-long)
-      32))
+      16))
 
 (def ^:private env-reaper-interval-ms
   "How often the idle-env reaper wakes to sweep. Override with

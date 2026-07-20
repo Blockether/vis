@@ -2179,21 +2179,20 @@
    Navigation  ↑/↓ move a row · n/p next/prev SECTION · PageUp/Down page
                Home/End top/bottom · TAB fold diff · RET visit · q/Esc close
    Staging     s/u stage/unstage at point · S/U stage/unstage ALL
-   Discard     x (or k) discard at point (asks first)
+   Discard     k discard at point (asks first)
    Commit      c commit flow (prompt; amend)
-   History     l log graph · y copy sha/path/ref
+   History     l log graph · C-w copy sha/path/ref
    Remote      P push · F pull · f fetch
    Branch      b branch flow      Stash  z stash flow
-   Buffer      g (or r) refresh
+   Buffer      g refresh
 
-   DIVERGES from vanilla Emacs magit (do not trust muscle memory):
-     x   here discard; in magit x = RESET (magit-reset-quickly), discard = k.
-     r   here refresh (alias of g); in magit r opens the REBASE transient.
-     y   here copy; in magit y shows refs (magit-show-refs).
-     n/p here SECTION motion; in magit those are line-motion/search (M-n/M-p
-         move sections). PageUp/Down: magit scrolls the diff with SPC/DEL."
+   FAITHFUL to vanilla Emacs magit — every key above matches magit's own
+   binding: k discard, g refresh, C-w copy-section-value, n/p section motion.
+   Magit keys we do not implement stay FREE (never bound to a wrong verb):
+   x reset · r rebase · y show-refs · d/D diff · m merge · V revert ·
+   A cherry-pick · t tag · G refresh-all · SPC/DEL scroll · M-n/M-p sibling."
   [["↑/↓" "move"] ["n/p" "section"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"]
-   ["x" "discard"] ["c" "commit"] ["l" "log"] ["y" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"]
+   ["k" "discard"] ["c" "commit"] ["l" "log"] ["C-w" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"]
    ["b" "branch"] ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
 
 (defn- magit-row-style
@@ -2879,7 +2878,7 @@
     \U
     (magit/unstage-all! root)
 
-    (\x \k)
+    \k
     (magit-discard-flow! mini root row)
 
     \c
@@ -2887,9 +2886,6 @@
 
     \l
     (magit-log-flow! screen mini root)
-
-    \y
-    (magit-copy-action! root row)
 
     \P
     (magit-push-flow! busy! mini root)
@@ -2906,7 +2902,7 @@
     \z
     (magit-stash-flow! mini root (when (= :stash (:kind row)) (:ref row)) model)
 
-    (\g \r)
+    \g
     {:ok? true :msg "Refreshed"}
 
     nil))
@@ -2927,11 +2923,11 @@
    its row; RET visits it FULLSCREEN (a file's syntax-highlighted body, a
    commit's or stash's full patch). Verbs mirror magit and route to the repo
    UNDER THE CURSOR:
-   `s`/`u` stage/unstage the file or the whole section, `S`/`U` all, `x` (or
-   `k`) discard with a confirm, `c` commit/amend (message prompt), `P` push
+   `s`/`u` stage/unstage the file or the whole section, `S`/`U` all, `k`
+   discard with a confirm, `c` commit/amend (message prompt), `P` push
    (plain / -u / --force-with-lease), `F` pull, `f` fetch, `b` branch
    (checkout / create / delete), `z` stash (push / pop / apply / drop), `g`
-   refresh, `y` copy the sha/path/ref under point, `q`/Esc close. Every verb
+   refresh, `C-w` copy the sha/path/ref under point, `q`/Esc close. Every verb
    shells to the real `git` binary via
    `internal.git`, and the buffer re-reads every repo after each action, so
    what you see is always `git status` truth. Returns nil."
@@ -3313,6 +3309,11 @@
                                   (reset! sel i)
                                   (reset! scroll (visible-window-start i @scroll visible total))
                                   (recur))
+                                ;; C-w copies the sha/path/ref at point (magit-copy-section-value)
+                                (and (.isCtrlDown ^KeyStroke key) (= c \w))
+                                (do (reset! echo nil)
+                                    (run-action! (magit-copy-action! row-root row))
+                                    (recur))
                                 :else (do (reset! echo nil)
                                           (run-action! (magit-char-action! screen
                                                                            busy!
