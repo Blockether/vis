@@ -3551,12 +3551,16 @@
    ctx-atom closure is reused — no separate Clojure handler."
   []
   {:name "session_fold"
-   :description (str "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
-                     "`N < session[\"turn\"]`. Never call for current/future turns, even after "
-                     "verification. At the next turn's start, understand its intent, then retry "
-                     "before new work. Fold only completed prior-turn wire steps, preserving a "
-                     "durable takeaway when useful. "
-                     "The operation is reversible and leaves native results in `ntr[...]`.")
+   :description (str
+                  "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
+                  "`N < session[\"turn\"]`. Never call for current/future turns, even after "
+                  "verification. At the next turn's start, understand its intent, then retry "
+                  "before new work. Fold only completed prior-turn wire steps, preserving a "
+                  "durable takeaway when useful. Folding changes rendering, not storage: recover "
+                  "raw current-session blocks via `await session_state()` → "
+                  "`transcript/turns/iterations/blocks`; `ntr[...]` gets one native result. "
+                  "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep "
+                  "the newer gist, while partial overlaps remain.")
    :schema
    {:type "object"
     :properties

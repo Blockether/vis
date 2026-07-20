@@ -1532,7 +1532,19 @@ def __vis_native_result_scan__(__vis_tree__):
     (set-python-binding-doc!
       ctx
       'doc
-      "doc(name) -> str. Show one live Python sandbox tool's callable contract, arguments, result shape, and mechanics.")))
+      "doc(name) -> str. Show one live Python sandbox tool's callable contract, arguments, result shape, and mechanics.")
+    (set-python-binding-doc!
+      ctx
+      'gather
+      "gather(*awaitables) -> list. Concurrently run independent deferred tool calls or awaitables on host virtual threads; results preserve input order. Also accepts one list/tuple. Use `await gather(call1(...), call2(...))`; keep dependent calls sequential. All slots settle before an aggregated failure reports every failing slot index.")
+    (set-python-binding-doc!
+      ctx
+      'session-fold
+      (str
+        "session_fold(target, gist=None) -> str. Collapse completed prior-turn wire steps into a breadcrumb; every target turn N must be less than session['turn'].\n"
+        "Targets may be step/turn ids or through/from/to/since selectors. Folding changes rendering, not stored history; there is no destructive unfold command. Recover raw current-session content with `s = await session_state()`; select `s['transcript']['turns']` by numeric `position`, then filter `['iterations'][...]['blocks']`. For another conversation, use `await sessions()` then `await session_state(id)`. `ntr[tool_id]` directly retrieves one prior native result.\n"
+        "Fold of fold: a broader newer fold supersedes fully covered narrower breadcrumbs; equal scopes keep the newer gist. Partial overlaps remain separate."))))
+
 
 (def ^:private posix-compat-shim-src
   "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`

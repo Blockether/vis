@@ -9,8 +9,9 @@
    `env-python/build-agent-context` installs into every sandbox Context (main +
    every `sub_loop` fork).
 
-   It is NOT real pytest: there is no pluggy/plugin system, no CLI, and no
-   import-time assertion rewrite. It DOES do `conftest.py` fixture discovery
+   It is NOT real pytest: there is no pluggy/plugin system, no ini/plugin CLI
+   (only `-k` / `-x` / `--maxfail` / `-v`), and no import-time assertion
+   rewrite. It DOES do `conftest.py` fixture discovery
    (walked from the test file's dir up to the fs root, outer→inner) in disk
    mode. Instead it
    implements the subset that matters in an inline sandbox where the model
@@ -26,13 +27,15 @@
      - `pytest.raises` / `warns` / `approx` / `fail` / `skip` / `xfail` /
        `importorskip`, `@pytest.fixture` (function/module/session scope,
        yield-teardown, autouse, recursive injection, parametrized fixtures via
-       `params`/`ids` with `request.param`), `@pytest.mark.parametrize`
-       / `skip` / `skipif` / `xfail` / `usefixtures` (+ arbitrary marks), `pytest.param`,
+       `params`/`ids` with `request.param`, `request.getfixturevalue` chains),
+       `@pytest.mark.parametrize` (incl. `indirect=`) / `skip` / `skipif` / `xfail`
+       / `usefixtures` (+ arbitrary marks), `pytest.param`,
        builtin fixtures `request` / `monkeypatch` / `capsys` / `capfd` /
        `tmp_path` / `tmp_path_factory` / `tmpdir` / `tmpdir_factory` /
        `caplog` / `recwarn` / `pytester` / `testdir`, `conftest.py` fixture discovery,
-       and a `pytest.main()` runner that prints progress + failure
-       reports + a summary line and returns an exit code.
+       and a `pytest.main()` runner (with `-k` keyword selection, `-x` /
+       `--maxfail` fail-fast, and `-v`) that prints progress + failure reports
+       + a summary line (incl. deselected counts) and returns an exit code.
 
    Unlike `shim-yaml`/`shim-matplotlib` there are NO `:shim/bindings`: the shim
    is a self-contained Python preamble with zero host callables. It publishes a
@@ -64,8 +67,9 @@
 # pytest-compatible module implemented entirely on the stdlib (ast/inspect/
 # linecache/traceback), so a model writing a full Python extension can write
 # `def test_*` + `pytest.main()` inline and get real pass/fail reporting with
-# assert introspection. No pluggy, no CLI, no import rewrite (conftest.py
-# fixtures ARE discovered in disk mode). Published into sys.modules so `import pytest` works, and stapled onto
+# assert introspection. No pluggy, no import rewrite, and only a minimal CLI
+# (`-k` / `-x` / `--maxfail` / `-v`; conftest.py fixtures ARE discovered in disk
+# mode). Published into sys.modules so `import pytest` works, and stapled onto
 # builtins so pytest.raises(...) needs no import (mirrors json/os/requests).
 
 def __vis_install_pytest_compat__():
@@ -786,6 +790,7 @@ def __vis_install_pytest_compat__():
         def runpytest(self, *args):
             import io as _io, sys as _sys
             callargs = []
+            has_path = False
             _args = [str(a) for a in args]
             _j = 0
             while _j < len(_args):
@@ -804,8 +809,9 @@ def __vis_install_pytest_compat__():
                     cand = self.path / base
                     if cand.exists():
                         callargs.append(str(cand))
+                        has_path = True
                 _j += 1
-            if not any(not c.startswith('-') for c in callargs):
+            if not has_path:
                 callargs.append(str(self.path))
             buf = _io.StringIO()
             old_out = _sys.stdout
@@ -1614,7 +1620,7 @@ def __vis_install_pytest_compat__():
 
     # ---- publish module -----------------------------------------------------
     mod = types.ModuleType('pytest')
-    mod.__doc__ = 'vis pytest-compatible shim (pure Python stdlib, no plugins/CLI/conftest).'
+    mod.__doc__ = 'vis pytest-compatible shim (pure Python stdlib; no plugins/import-rewrite, minimal -k/-x/--maxfail CLI, conftest.py in disk mode).'
     mod.__version__ = '8.0-vis'
     mod.raises = raises
     mod.warns = warns

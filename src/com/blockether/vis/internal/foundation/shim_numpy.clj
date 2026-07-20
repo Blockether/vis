@@ -342,24 +342,32 @@ def __vis_install_numpy__():
             axis = axis + ndim
         return axis
 
-    def _reduce(a, axis, fn, initial):
+    def _reduce(a, axis, fn, initial, keepdims=False):
         A = _asarray(a)
         if axis is None:
             acc = initial
             for v in A._d:
                 acc = fn(acc, v)
+            if keepdims:
+                return [acc], tuple(1 for _ in A._shape)
             return acc
-        axis = _normalize_axis(axis, A.ndim)
-        oshape = tuple(s for i, s in enumerate(A._shape) if i != axis)
+        if isinstance(axis, (tuple, list)):
+            axes = tuple(sorted(_normalize_axis(x, A.ndim) for x in axis))
+        else:
+            axes = (_normalize_axis(axis, A.ndim),)
+        keep = [i for i in range(A.ndim) if i not in axes]
+        oshape = tuple(A._shape[i] for i in keep)
         ost = _strides(oshape)
-        ast = _strides(A._shape)
         out = [None] * (_prod(oshape) if oshape else 1)
         for off in range(len(A._d)):
             full = list(_unravel(off, A._shape))
-            red = full[:axis] + full[axis + 1:]
+            red = [full[i] for i in keep]
             oi = _ravel(red, ost) if oshape else 0
             cur = out[oi]
             out[oi] = fn(cur, A._d[off]) if cur is not None else fn(initial, A._d[off])
+        if keepdims:
+            kshape = tuple(1 if i in axes else A._shape[i] for i in range(A.ndim))
+            return out, kshape
         return out, oshape
 
     class ndarray:
@@ -464,24 +472,24 @@ def __vis_install_numpy__():
         def fill(self, value):
             self._d = [_cast(value, self._dtype) for _ in self._d]
 
-        def sum(self, axis=None):
-            return sum(self, axis)
-        def prod(self, axis=None):
-            return prod(self, axis)
-        def mean(self, axis=None):
-            return mean(self, axis)
-        def min(self, axis=None):
-            return amin(self, axis)
-        def max(self, axis=None):
-            return amax(self, axis)
+        def sum(self, axis=None, keepdims=False):
+            return sum(self, axis, keepdims=keepdims)
+        def prod(self, axis=None, keepdims=False):
+            return prod(self, axis, keepdims=keepdims)
+        def mean(self, axis=None, keepdims=False):
+            return mean(self, axis, keepdims=keepdims)
+        def min(self, axis=None, keepdims=False):
+            return amin(self, axis, keepdims=keepdims)
+        def max(self, axis=None, keepdims=False):
+            return amax(self, axis, keepdims=keepdims)
         def argmin(self, axis=None):
             return argmin(self, axis)
         def argmax(self, axis=None):
             return argmax(self, axis)
-        def std(self, axis=None, ddof=0):
-            return std(self, axis, ddof)
-        def var(self, axis=None, ddof=0):
-            return var(self, axis, ddof)
+        def std(self, axis=None, ddof=0, keepdims=False):
+            return std(self, axis, ddof, keepdims)
+        def var(self, axis=None, ddof=0, keepdims=False):
+            return var(self, axis, ddof, keepdims)
         def cumsum(self, axis=None):
             return cumsum(self, axis)
         def clip(self, a_min, a_max):
@@ -559,6 +567,22 @@ def __vis_install_numpy__():
             return _elementwise(self, o, lambda x, y: x ** y)
         def __rpow__(self, o):
             return _elementwise(o, self, lambda x, y: x ** y)
+        def __iadd__(self, o):
+            return self.__add__(o)
+        def __isub__(self, o):
+            return self.__sub__(o)
+        def __imul__(self, o):
+            return self.__mul__(o)
+        def __itruediv__(self, o):
+            return self.__truediv__(o)
+        def __ifloordiv__(self, o):
+            return self.__floordiv__(o)
+        def __imod__(self, o):
+            return self.__mod__(o)
+        def __ipow__(self, o):
+            return self.__pow__(o)
+        def __imatmul__(self, o):
+            return matmul(self, o)
         def __matmul__(self, o):
             return matmul(self, o)
         def __neg__(self):
@@ -836,62 +860,60 @@ def __vis_install_numpy__():
         return _mk(out, (len(out),), A._dtype)
 
     # ---- reductions ------------------------------------------------------------
-    def sum(a, axis=None):
-        r = _reduce(a, axis, lambda acc, v: acc + v, 0)
-        if axis is None:
+    def sum(a, axis=None, keepdims=False):
+        r = _reduce(a, axis, lambda acc, v: acc + v, 0, keepdims)
+        if axis is None and not keepdims:
             return r
         out, oshape = r
         A = _asarray(a)
         return _mk(out, oshape, A._dtype)
 
-    def prod(a, axis=None):
-        r = _reduce(a, axis, lambda acc, v: acc * v, 1)
-        if axis is None:
+    def prod(a, axis=None, keepdims=False):
+        r = _reduce(a, axis, lambda acc, v: acc * v, 1, keepdims)
+        if axis is None and not keepdims:
             return r
         out, oshape = r
         return _mk(out, oshape, _asarray(a)._dtype)
 
-    def amin(a, axis=None):
+    def amin(a, axis=None, keepdims=False):
         A = _asarray(a)
-        if axis is None:
+        if axis is None and not keepdims:
             return min(A._d)
-        r = _reduce(a, axis, lambda acc, v: v if acc is None else min(acc, v), None)
-        out, oshape = r
+        out, oshape = _reduce(a, axis, lambda acc, v: v if acc is None else min(acc, v), None, keepdims)
         return _mk(out, oshape, A._dtype)
 
-    def amax(a, axis=None):
+    def amax(a, axis=None, keepdims=False):
         A = _asarray(a)
-        if axis is None:
+        if axis is None and not keepdims:
             return max(A._d)
-        r = _reduce(a, axis, lambda acc, v: v if acc is None else max(acc, v), None)
-        out, oshape = r
+        out, oshape = _reduce(a, axis, lambda acc, v: v if acc is None else max(acc, v), None, keepdims)
         return _mk(out, oshape, A._dtype)
 
 
-    def mean(a, axis=None):
+    def mean(a, axis=None, keepdims=False):
         A = _asarray(a)
-        if axis is None:
+        if axis is None and not keepdims:
             return _bi.sum(A._d) / len(A._d) if A._d else float('nan')
-        s = sum(a, axis)
-        n = A._shape[_normalize_axis(axis, A.ndim)]
+        s = sum(a, axis, keepdims=keepdims)
+        n = A.size / s.size
         return _elementwise(s, n, lambda x, y: x / y)
 
     def _count_along(A, axis):
         return A._shape[_normalize_axis(axis, A.ndim)]
 
-    def var(a, axis=None, ddof=0):
+    def var(a, axis=None, ddof=0, keepdims=False):
         A = _asarray(a)
-        if axis is None:
+        if axis is None and not keepdims:
             m = mean(a)
             return _bi.sum((v - m) ** 2 for v in A._d) / (len(A._d) - ddof)
-        m = mean(a, axis)
-        diff2 = _elementwise(a, _expand_dims_like(m, A, axis), lambda x, y: (x - y) ** 2)
-        s = sum(diff2, axis)
-        n = _count_along(A, axis) - ddof
+        m = mean(a, axis, keepdims=True)
+        diff2 = _elementwise(a, m, lambda x, y: (x - y) ** 2)
+        s = sum(diff2, axis, keepdims=keepdims)
+        n = A.size / s.size - ddof
         return _elementwise(s, n, lambda x, y: x / y)
 
-    def std(a, axis=None, ddof=0):
-        v = var(a, axis, ddof)
+    def std(a, axis=None, ddof=0, keepdims=False):
+        v = var(a, axis, ddof, keepdims)
         if isinstance(v, ndarray):
             return _unary(v, lambda x: math.sqrt(x))
         return math.sqrt(v)
@@ -1262,7 +1284,15 @@ def __vis_install_numpy__():
             for v in A._d:
                 out.extend([v] * repeats)
             return _mk(out, (len(out),), A._dtype)
-        raise NotImplementedError('repeat along an axis is not supported in the vis shim')
+        axis = _normalize_axis(axis, A.ndim)
+        if isinstance(repeats, (list, tuple)):
+            reps = list(repeats)
+        else:
+            reps = [repeats] * A._shape[axis]
+        idx = []
+        for i, r in enumerate(reps):
+            idx.extend([i] * r)
+        return take(A, idx, axis)
 
     def tile(a, reps):
         A = _asarray(a)
@@ -1482,6 +1512,86 @@ def __vis_install_numpy__():
             n = _prod(shp) if shp else 1
             return _mk([gen() for _ in range(n)], shp, dt)
 
+    def take(a, indices, axis=None):
+        A = _asarray(a)
+        idx = list(indices._d) if isinstance(indices, ndarray) else list(indices)
+        if axis is None:
+            n = len(A._d)
+            return _mk([A._d[i if i >= 0 else i + n] for i in idx], (len(idx),), A._dtype)
+        axis = _normalize_axis(axis, A.ndim)
+        oshape = tuple(len(idx) if i == axis else s for i, s in enumerate(A._shape))
+        ast = _strides(A._shape)
+        total = _prod(oshape) if oshape else 1
+        out = [None] * total
+        for off in range(total):
+            multi = list(_unravel(off, oshape))
+            j = multi[axis]
+            src = list(multi)
+            src[axis] = idx[j] if idx[j] >= 0 else idx[j] + A._shape[axis]
+            out[off] = A._d[_ravel(src, ast)]
+        return _mk(out, oshape, A._dtype)
+
+    def _split_bounds(n, sections, allow_uneven):
+        if isinstance(sections, int):
+            if not allow_uneven:
+                if n % sections != 0:
+                    raise ValueError('array split does not result in an equal division')
+                step = n // sections
+                return [(i * step, (i + 1) * step) for i in range(sections)]
+            sizes = [n // sections + (1 if i < n % sections else 0) for i in range(sections)]
+            bounds = []
+            pos = 0
+            for s in sizes:
+                bounds.append((pos, pos + s))
+                pos = pos + s
+            return bounds
+        cuts = [0] + list(sections) + [n]
+        return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
+
+    def split(a, indices_or_sections, axis=0):
+        A = _asarray(a)
+        ax = _normalize_axis(axis, A.ndim) if A.ndim else 0
+        n = A._shape[ax] if A._shape else len(A._d)
+        return [take(A, list(range(lo, hi)), ax)
+                for lo, hi in _split_bounds(n, indices_or_sections, False)]
+
+    def array_split(a, indices_or_sections, axis=0):
+        A = _asarray(a)
+        ax = _normalize_axis(axis, A.ndim) if A.ndim else 0
+        n = A._shape[ax] if A._shape else len(A._d)
+        return [take(A, list(range(lo, hi)), ax)
+                for lo, hi in _split_bounds(n, indices_or_sections, True)]
+
+    def histogram(a, bins=10, range=None):
+        A = _asarray(a)
+        data = list(A._d)
+        if range is None:
+            lo = _bi.min(data) if data else 0.0
+            hi = _bi.max(data) if data else 1.0
+        else:
+            lo, hi = range
+        if isinstance(bins, int):
+            if hi == lo:
+                lo, hi = lo - 0.5, hi + 0.5
+            width = (hi - lo) / bins
+            edges = [lo + i * width for i in _bi.range(bins + 1)]
+            nb = bins
+        else:
+            edges = list(bins._d) if isinstance(bins, ndarray) else list(bins)
+            nb = len(edges) - 1
+        counts = [0] * nb
+        for v in data:
+            if v < edges[0] or v > edges[-1]:
+                continue
+            if v == edges[-1]:
+                counts[nb - 1] += 1
+                continue
+            for i in _bi.range(nb):
+                if edges[i] <= v < edges[i + 1]:
+                    counts[i] += 1
+                    break
+        return _mk(counts, (nb,), _INT), _mk(edges, (len(edges),), _FLOAT)
+
     # ---- module assembly -------------------------------------------------------
     mod = types.ModuleType('numpy')
     mod.__version__ = '1.26-vis-pure'
@@ -1549,6 +1659,7 @@ def __vis_install_numpy__():
         'array_equal': array_equal, 'isclose': isclose, 'meshgrid': meshgrid,
         'diff': diff, 'roll': roll, 'nansum': nansum, 'nanmean': nanmean,
         'nanmax': nanmax, 'nanmin': nanmin, 'nanstd': nanstd, 'pad': pad,
+        'take': take, 'split': split, 'array_split': array_split, 'histogram': histogram,
     }
     for _k, _v in _exports.items():
         setattr(mod, _k, _v)
@@ -1703,7 +1814,7 @@ del __vis_install_numpy__
      :ext/sandbox-shims
      [{:shim/name "numpy"
        :shim/description
-       "numpy-compatible `numpy` in pure Python (ndarray, broadcasting, linalg, random). Not supported: C-speed; a few ops limited to <=2-D — median/cumsum/sort/flip/repeat along an axis, `tile` with tuple reps, `pad` beyond 1-D, `dstack` raise `NotImplementedError`."
+       "numpy-compatible `numpy` in pure Python (ndarray, broadcasting, reductions with keepdims + tuple axis, linalg norm/det/inv/solve, random, split/take/repeat/histogram). Not supported: C-speed; slice views don't share memory; no linalg eig/svd/qr; a few ops limited to <=2-D — median/cumsum/sort/flip along an axis, `tile` with tuple reps, `pad` beyond 1-D, `dstack` raise `NotImplementedError`."
        :shim/preamble numpy-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

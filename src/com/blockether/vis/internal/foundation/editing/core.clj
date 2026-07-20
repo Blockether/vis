@@ -1121,9 +1121,9 @@
    `:eof? true` iff the window reached end-of-file (unambiguous; distinct
    from `:truncated?` which only fires when the window byte cap chopped
    the window short mid-file).
-   `:mtime` and `:size` mirror `File.lastModified` / `File.length`; pass
-   them as `:expected_mtime` / `:expected_size` on a subsequent
-   `patch` / `write` to fail closed if the file changed since the read.
+   `:mtime` and `:size` mirror `File.lastModified` / `File.length`. Pass
+   `:mtime` as `write`'s `:expected_mtime` guard before a whole-file overwrite;
+   anchored `patch` edits verify their target content instead.
    Each call's `:lines` payload is bounded by `max-cat-window-bytes`; that
    is also the persistence-blob ceiling (one Nippy row per call).
    Streaming: never slurps the whole file. Lines outside the window are
@@ -2448,14 +2448,10 @@
 
 (def ^:private patch-optional-keys
   "Optional keys recognised on an anchor edit map.
-   - to_anchor        end of a hashline range; defaults to from_anchor (single line)
-   - expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
-   - expected_size    bytes;    fail if file size differs (staleness guard)
-   - atomic           multi-file escape flag (read by `mutation-atomic?` from
-                      the RAW args before this validation; allowed here so a
-                      documented `\"atomic\": True` edit isn't refused as an
-                      unknown key)."
-  #{"to_anchor" "expected_mtime" "expected_size" "atomic"})
+   - to_anchor  end of a hashline range; defaults to from_anchor (single line)
+   - atomic     multi-file escape flag (read by `mutation-atomic?` from the raw
+                args before this validation)."
+  #{"to_anchor" "atomic"})
 
 (def ^:private patch-allowed-keys (set/union patch-required-keys patch-optional-keys))
 
@@ -2534,48 +2530,11 @@
          " fresh anchors or the correct structural operation.")))
 
 ;; -----------------------------------------------------------------------------
-;; Staleness check: :expected_mtime / :expected_size
-;; -----------------------------------------------------------------------------
-
-(defn- staleness-check
-  "Return nil when the file's on-disk mtime/size matches the edit's
-   expectations (or no expectations were given), else a structured
-   `:stale` failure carrying the actual vs. expected values."
-  [^java.io.File file {:strs [expected_mtime expected_size]}]
-  (let
-    [actual-mtime
-     (.lastModified file)
-
-     actual-size
-     (.length file)]
-
-    (cond (and (some? expected_mtime)
-               (pos? (long expected_mtime))
-               (not= (long expected_mtime) actual-mtime))
-          {:reason :stale-mtime
-           :expected_mtime expected_mtime
-           :actual-mtime actual-mtime
-           :actual-size actual-size}
-          (and (some? expected_size) (not= (long expected_size) actual-size))
-          {:reason :stale-size
-           :expected_size expected_size
-           :actual-size actual-size
-           :actual-mtime actual-mtime})))
-
-;; -----------------------------------------------------------------------------
-;; patch-analysis (rewritten)
+;; Anchor-based patch analysis
 ;;
-;; Per-edit pipeline:
-;;   1. Coerce/validate edit map (`:from_anchor` required, mtime/size types).
-;;   2. Read current file content (always the ORIGINAL snapshot, not a prior
-;;      edit's output, so anchors in one batch can't drift each other).
-;;   3. mtime/size guard → :stale failure if mismatched.
-;;   4. Resolve the `lineno:hash` anchor(s) to a char span (patch/resolve-anchor-
-;;      edit-span): line locates, hash verifies.
-;;   5. Apply replacement(s) end-to-start, update post-state.
-;;
-;; All failures populate `:failures` with `:reason` + the original anchors so
-;; the surfaced ex-message stays actionable.
+;; Each edit resolves against one live per-file snapshot. The content hash in
+;; every anchor is the concurrency guard: unrelated changes survive, while a
+;; changed target fails. Valid spans are applied end-to-start in one atomic plan.
 ;; -----------------------------------------------------------------------------
 
 (defn- resolve-edit-target
@@ -2610,40 +2569,25 @@
 ;; it — no bespoke hash math in this channel/IO namespace.
 
 (defn- patch-analysis
-  "Resolve every edit to a char SPAN against the ORIGINAL per-file snapshot (the
-   file as the model last read it), collect spans per path, then splice them all
-   together bottom-up. Resolving against the original — never cumulatively — keeps
-   hashline / ordinal anchors and line numbers valid across a multi-edit batch:
-   an earlier edit can no longer drift a later edit's anchor. Overlapping spans
-   in one file are a hard error (split into separate patches). Atomic: any failure
-   means `patch-safe` writes nothing."
+  "Resolve every edit to a char span against the original per-file snapshot,
+   then splice all spans bottom-up. Hashline anchors are the concurrency guard:
+   unrelated file changes are preserved when the target anchors still resolve;
+   changed targets fail. Overlapping spans are rejected, and any failure means
+   `patch-safe` writes nothing."
   [edits]
   (let
     [edits
      (coerce-patch-edits edits)
 
-     ;; PHASE 1 — resolve each edit to span(s) against the file's ORIGINAL text.
      {:keys [origs spans checks failures]}
      (loop
-       [idx
-        0
-
-        remaining
-        edits
-
-        origs
-        {}
-
-        spans
-        {}
-
-        checks
-        []
-
-        failures
-        []]
-
-       (if-let [{:strs [path replace from_anchor to_anchor] :as edit} (first remaining)]
+       [idx 0
+        remaining edits
+        origs {}
+        spans {}
+        checks []
+        failures []]
+       (if-let [{:strs [path replace from_anchor to_anchor]} (first remaining)]
          (let [resolved (resolve-edit-target path)]
            (if-let [path-error (:error resolved)]
              (let
@@ -2658,59 +2602,41 @@
              (let
                [file (:file resolved)
                 rel (:rel resolved)
-                seen? (contains? origs path)
-                ;; ALWAYS the original snapshot — never the cumulative result.
                 current (or (get origs path) (slurp file))
                 origs (assoc origs path current)
                 replace (str replace)
-                stale (when-not seen? (staleness-check file edit))
                 base-check {:edit-index idx
                             :path rel
                             :from_anchor from_anchor
-                            :to_anchor (or to_anchor from_anchor)}]
-
-               (if stale
+                            :to_anchor (or to_anchor from_anchor)}
+                res (patch/resolve-anchor-edit-span current from_anchor to_anchor replace)]
+               (if-let [err (:error res)]
                  (let
                    [check (assoc base-check
-                            :reason :stale
-                            :stale stale)]
+                                :reason (:reason err)
+                                :hash-error err)]
                    (recur (inc idx)
                           (next remaining)
                           origs
                           spans
                           (conj checks check)
                           (conj failures check)))
-                 (let [res (patch/resolve-anchor-edit-span current from_anchor to_anchor replace)]
-                   (if-let [err (:error res)]
-                     (let
-                       [check (assoc base-check
-                                :reason (:reason err)
-                                :hash-error err)]
-                       (recur (inc idx)
-                              (next remaining)
-                              origs
-                              spans
-                              (conj checks check)
-                              (conj failures check)))
-                     (let
-                       [span {:start (:start res)
-                              :end (:end res)
-                              :replacement (:replacement res)
-                              :file file
-                              :path rel
-                              :edit-index idx}
-                        check (assoc base-check :applied-positions [(:applied-line res)])]
-
-                       (recur (inc idx)
-                              (next remaining)
-                              origs
-                              (update spans path (fnil conj []) span)
-                              (conj checks check)
-                              failures))))))))
+                 (let
+                   [span {:start (:start res)
+                          :end (:end res)
+                          :replacement (:replacement res)
+                          :file file
+                          :path rel
+                          :edit-index idx}
+                    check (assoc base-check :applied-positions [(:applied-line res)])]
+                   (recur (inc idx)
+                          (next remaining)
+                          origs
+                          (update spans path (fnil conj []) span)
+                          (conj checks check)
+                          failures))))))
          {:origs origs :spans spans :checks checks :failures failures}))
 
-     ;; PHASE 2 — splice each file's spans into its ORIGINAL, bottom-up so
-     ;; earlier offsets stay valid. Overlapping spans are a conflict.
      results
      (for [[path file-spans] spans]
        (let
@@ -2719,7 +2645,6 @@
           bad (first (filter (fn [[a b]]
                                (> (long (:end a)) (long (:start b))))
                              (partition 2 1 sorted)))]
-
          (if bad
            {:failure {:edit-index (:edit-index (second bad))
                       :path path
@@ -2728,8 +2653,10 @@
            {:plan {:file (:file (first file-spans))
                    :path (:path (first file-spans))
                    :before before
-                   :after (reduce (fn [c {:keys [start end replacement]}]
-                                    (str (subs c 0 start) replacement (subs c end)))
+                   :after (reduce (fn [content {:keys [start end replacement]}]
+                                    (str (subs content 0 start)
+                                         replacement
+                                         (subs content end)))
                                   before
                                   (reverse sorted))}})))
 
@@ -2745,13 +2672,7 @@
     {:plans plans :checks checks :failures all-failures :valid? (empty? all-failures)}))
 
 (defn- explain-failure
-  [{:keys [edit-index path reason stale hash-error message path-error]}]
-  ;; A failure that arrives with a precomputed :message (the syntax-error re-parse
-  ;; guard) or a nested :path-error message (file-not-found / path-escape / dir)
-  ;; already carries its full, actionable explanation — surface it verbatim rather
-  ;; than dropping it into the generic default branch below, which only knows the
-  ;; anchor-resolution `reason`s and would otherwise flatten it to "edit N in P
-  ;; failed." (the exact wrong report this guards against).
+  [{:keys [edit-index path reason hash-error message path-error]}]
   (or
     message
     (:message path-error)
@@ -2799,29 +2720,14 @@
              (:from-line hash-error)
              ".")
 
-        :stale
-        (str head
-             ": file changed since expected "
-             (name (:reason stale))
-             " (expected "
-             (or (:expected_mtime stale) (:expected_size stale))
-             ", actual "
-             (or (:actual-mtime stale) (:actual-size stale))
-             "); re-read before retrying.")
-
         (str head " failed.")))))
 
 (defn- failure-family
-  "Collapse related failure `:reason`s into ONE root-cause family so a batch that
-   failed for a single underlying cause reports as ONE grouped error. The common
-   case: the file changed under the anchors (a concurrent write, or an earlier
-   edit this turn), so every edit resolves to a different anchor reason
-   (`:stale`, `:hashline-not-found`, `:hashline-misplaced`, …) that is really the
-   SAME story — stale anchors."
+  "Group anchor-resolution failures that share one stale-target cause."
   [{:keys [reason]}]
   (case reason
-    (:stale :hashline-not-found :hashline-misplaced
-            :hashline-line-out-of-range :hashline-range-inverted)
+    (:hashline-not-found :hashline-misplaced
+                         :hashline-line-out-of-range :hashline-range-inverted)
     :stale-anchors
 
     reason))
@@ -3827,18 +3733,9 @@
       (dissoc "diff"))))
 
 (defn- patch-tool
-  "Edit files by ANCHOR (no text search/replace).
-     await patch([{\"path\": P, \"from_anchor\": \"12:a3f2\", \"replace\": R}])
-     await patch([{\"path\": P, \"from_anchor\": \"40:9c1d\", \"to_anchor\": \"44:7b02\", \"replace\": R}])
+  Edit files by anchor (no text search/replace).
 
-   Each anchor is a \"lineno:hash\" key from a fresh cat \"anchors\" map. The window
-   is from_anchor..to_anchor inclusive; omit to_anchor for one line; \"replace\": \"\"
-   deletes. Anchors re-resolve against live content, so they survive line drift
-   within the batch. Optional per-edit \"expected_mtime\"/\"expected_size\" guards.
-
-   Returns [{\"path\": P, \"op\": \"update\"|\"add\", \"changed\": bool, \"diff\": str}].
-   Gotcha: a stale hash that sits FAR from its stated line aborts the WHOLE batch
-   (nothing written) — re-cat for fresh anchors. For whole-file writes use write."
+Each `lineno:hash` comes from a fresh `cat`, `rg`, or `struct_index` read. Anchors re-resolve against live content: unrelated changes are preserved when the targets still match; changed targets abort the entire atomic batch. Omit `to_anchor` for one line, use an inclusive range otherwise, and use an empty replacement to delete. Re-read after every successful write.
   [edits]
   (let [result (patch-safe edits)]
     (if (:success? result)
@@ -5014,11 +4911,7 @@
           "from_anchor" {:type "string" :minLength 1 :description "lineno:hash from a fresh read."}
           "to_anchor"
           {:type "string" :minLength 1 :description "Optional inclusive end anchor for a span."}
-          "replace" {:type "string" :description "Replacement text; empty deletes."}
-          "expected_mtime"
-          {:type "integer" :minimum 0 :description "Optional file-mtime staleness guard."}
-          "expected_size"
-          {:type "integer" :minimum 0 :description "Optional file-size staleness guard."}}
+          "replace" {:type "string" :description "Replacement text; empty deletes."}}
          :required ["path" "from_anchor" "replace"]
          :additionalProperties false}}}
       :required ["edits"]

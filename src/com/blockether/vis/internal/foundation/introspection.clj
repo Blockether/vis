@@ -857,13 +857,15 @@
 ;; `vis/symbol` can read both straight off the var.
 (def
   ^{:doc
-    "await session_state(session_id)  # investigate ANOTHER conversation
+    "await session_state(session_id=None)  # current session by default; pass an id for another conversation
 Returns {\"session\" (identity + per-turn rollup), \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"transcript\", ...}. The rich one is `transcript`: `[\"totals\"]` (turns/iterations/tokens/cost) and `[\"turns\"]` = [{id, user_request, answer, status, iteration_count, tokens, cost_usd, iterations:[{position, status, blocks:[code/result]}]}] — iterate it in python_execution to gather answers, grep code, or diff cost; slice, don't dump.
 Pick keys; the whole dict stays bound. No-arg defaults to the current session, but for
 THIS conversation the live `session` bag already has turn, scope, utilization,
-workspace, and tool state. It is also the recovery path for a folded current-session
-turn: select `['transcript']['turns']` by numeric `position`. For OTHER sessions,
-use sessions() for the index, then pass that session id."
+workspace, and tool state. It is also the recovery path for raw folded current-session
+content: select `['transcript']['turns']` by numeric `position`, then filter
+`['iterations'][...]['blocks']`. Recovery does not undo fold intents or restore them
+to the model wire. For OTHER sessions, use sessions() for the index, then pass that
+session id."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)

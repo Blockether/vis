@@ -75,10 +75,11 @@
                                                (is (wait-until #(= 1 @stops))))))))))
 
 (deftest killed-client-lease-does-not-pin-managed-daemon
-  (testing "dead recorded client pids are ignored, so SIGKILLed TUIs still let the daemon die"
+  (testing "dead recorded client pids are reaped, so SIGKILLed TUIs still let the daemon die"
     (let [stops (atom 0)]
       (with-stop-stub! stops
-                       {#'discovery/pid-alive? (constantly false)}
+                       {#'discovery/pid-alive-cached? (constantly false)
+                        (rv 'log-client-lease-warning!) (fn [& _])}
                        (fn []
                          (with-server-state! {:managed? true
                                               :saw-client? true
@@ -86,8 +87,52 @@
                                               :clients {"c1" {:pid 12345 :kind "clojure-client"}}
                                               :sse-clients #{}}
                                              (fn []
+                                               ((rv 'reap-client-leases!))
                                                ((rv 'maybe-stop-when-idle!))
                                                (is (wait-until #(= 1 @stops))))))))))
+
+(deftest client-count-is-constant-time-and-does-not-probe-pids
+  (testing "status reads the already-reaped lease map without OS liveness work"
+    (with-server-state! {:clients {"c1" {:pid 10} "c2" {:pid 11}}
+                         :sse-clients #{"s1"}}
+                        (fn []
+                          (with-redefs [discovery/pid-alive-cached?
+                                        (fn [_] (throw (ex-info "must not probe" {})))]
+                            (is (= 3 ((rv 'client-count)))))))))
+
+(deftest compact-client-leases-removes-dead-and-duplicate-pids
+  (testing "one sweep probes each pid once, keeps nil-pid leases, and preserves identity when clean"
+    (let [checks (atom [])
+          clients {"live-old" {:pid 10}
+                   "live-duplicate" {:pid 10}
+                   "dead" {:pid 20}
+                   "browser" {:pid nil}}
+          compact (rv 'compact-client-leases)]
+      (with-redefs [discovery/pid-alive-cached?
+                    (fn [pid] (swap! checks conj pid) (= 10 pid))]
+        (let [{after :clients :keys [dead duplicates]} (compact clients)]
+          (is (= 1 dead))
+          (is (= 1 duplicates))
+          (is (= #{"browser"} (set (filter #(nil? (get-in after [% :pid])) (keys after)))))
+          (is (= 2 (count after)))
+          (is (= #{10 20} (set @checks))))
+        (let [clean {"live" {:pid 10} "browser" {:pid nil}}
+              {after :clients :keys [dead duplicates]} (compact clean)]
+          (is (identical? clean after))
+          (is (zero? dead))
+          (is (zero? duplicates)))))))
+
+(deftest registering-a-pid-upserts-its-single-process-lease
+  (testing "re-registration replaces the old opaque id but preserves other processes and browsers"
+    (let [register (rv 'register-client-lease)
+          before {"old" {:pid 10}
+                  "other" {:pid 20}
+                  "browser" {:pid nil}}
+          {after :clients :keys [replaced]}
+          (register before "new" {:pid 10 :kind "clojure-client"})]
+      (is (= 1 replaced))
+      (is (= #{"new" "other" "browser"} (set (keys after))))
+      (is (= 10 (get-in after ["new" :pid]))))))
 
 (deftest managed-daemon-gets-startup-grace-before-first-client
   (testing "the daemon does not exit in the gap between self-registration and first client lease"

@@ -71,7 +71,7 @@ Use anchored `patch` for prose or unsupported code. Use `write` only to create a
 
 ## Keep intermediate data in Python
 
-Use a native call for one operation. Use `python_execution` for batches, filters, or transforms: raw results stay in Python vars and only explicit `print()` output reaches the context window.
+Use a native call for one operation. Use `python_execution` for batches, filters, or transforms: raw results stay in Python vars and only explicit `print()` output reaches context. Run independent calls concurrently with `await gather(...)`; keep dependent chains sequential.
 
 ```python
 rows = await gather(*(cat(path) for path in paths))
@@ -96,17 +96,17 @@ The runtime enforces `target turn < session["turn"]`; current and future turns a
 
 A useful gist records the durable finding, rationale or consequence, and a workspace-relative `path:line`, symbol, or test. Omit the gist when the folded steps contain no reusable information. Refresh any preserved hash anchor before editing because writes make anchors stale.
 
-Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since` ranges. Broader folds supersede covered narrower folds instead of stacking duplicate breadcrumbs.
+Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since` ranges. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
 
 ### Recovery is lossless
 
-Folding changes rendering, not storage:
+Folding changes rendering, not storage. There is no destructive `unfold` command:
 
-- `ntr[tool_id]` retrieves a folded native result.
-- `session_state()` exposes this session's transcript, iterations, blocks, errors, and answers.
-- `sessions()` finds another conversation; pass its id to `session_state(id)`.
+- Current conversation: `s = await session_state()`, select `s["transcript"]["turns"]` by numeric `position`, then filter `['iterations'][...]['blocks']` for the raw code/results.
+- One folded native result: `ntr[tool_id]`.
+- Another conversation: `await sessions()` to find its id, then `await session_state(id)` and filter the same path.
 
-Filter recovered data in `python_execution`; do not dump a full transcript back into context.
+This recovers evidence without restoring it to the model wire. Filter in `python_execution`; never dump a full transcript back into context.
 
 ### The budget stays visible
 

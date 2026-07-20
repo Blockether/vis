@@ -166,3 +166,82 @@
                                 "g = np.random.default_rng(7)\n" "a == b "
                                 "and np.random.default_rng(7).integers(0,10,size=4).shape == (4,) "
                                 "and g.standard_normal(3).size == 3")))))))
+
+(defdescribe
+  numpy-keepdims-axis-and-manip-test
+  "Reductions gain keepdims + tuple axis; take / split / repeat-along-axis /
+   histogram and in-place operators round-trip like real numpy."
+  (it "keepdims preserves reduced dims (incl. the softmax idiom)"
+      (with-python-context
+        (expect
+          (true? (ev python-context
+                     (str
+                       "import numpy as np\n"
+                       "a = np.array([[1,2],[3,4]])\n" "x = np.array([[1.0,2.0,3.0]])\n"
+                       "e = np.exp(x - x.max(axis=1, keepdims=True))\n"
+                       "a.sum(axis=1, keepdims=True).tolist() == [[3],[7]] "
+                       "and a.sum(keepdims=True).shape == (1,1) "
+                       "and abs(float((e / e.sum(axis=1, keepdims=True)).sum()) - 1.0) < 1e-9"))))))
+  (it "tuple axis reduces over several axes"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str
+                        "import numpy as np\n"
+                        "np.ones((2,3,4)).sum(axis=(0,1)).tolist() == [6,6,6,6] "
+                        "and np.ones((2,3,4)).sum(axis=(0,2), keepdims=True).shape == (1,3,1)"))))))
+  (it "mean / std / var honor axis + keepdims"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n"
+                                "a = np.array([[1,2],[3,4]])\n"
+                                "a.mean(axis=1, keepdims=True).tolist() == [[1.5],[3.5]] "
+                                "and abs(a.std(axis=0)[0] - 1.0) < 1e-9 "
+                                "and a.var(axis=1, keepdims=True).shape == (2,1)"))))))
+  (it "take selects along a flat index or an axis"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n"
+                                "m = np.arange(6).reshape(2,3)\n"
+                                "np.take(np.array([10,20,30]), [0,2]).tolist() == [10,30] "
+                                "and np.take(m, [1,0], axis=0).tolist() == [[3,4,5],[0,1,2]] "
+                                "and np.take(m, [2,0], axis=1).tolist() == [[2,0],[5,3]]"))))))
+  (it
+    "split / array_split partition along an axis"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "import numpy as np\n"
+              "[x.tolist() for x in np.split(np.array([1,2,3,4]), 2)] == [[1,2],[3,4]] "
+              "and [x.tolist() for x in np.split(np.array([1,2,3,4,5]), [2,4])] == [[1,2],[3,4],[5]] "
+              "and [x.size for x in np.array_split(np.array([1,2,3,4,5]), 3)] == [2,2,1] "
+              "and [x.tolist() for x in np.split(np.arange(6).reshape(2,3), 3, axis=1)]"
+              " == [[[0],[3]],[[1],[4]],[[2],[5]]]"))))))
+  (it
+    "repeat works along an axis"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "import numpy as np\n"
+              "np.repeat(np.array([[1,2]]), 2, axis=0).tolist() == [[1,2],[1,2]] "
+              "and np.repeat(np.array([[1,2],[3,4]]), 2, axis=1).tolist() == [[1,1,2,2],[3,3,4,4]]"))))))
+  (it "histogram bins counts and edges"
+      (with-python-context
+        (expect
+          (true? (ev python-context
+                     (str "import numpy as np\n"
+                          "c, edg = np.histogram(np.array([1,2,1,3,3,3]), bins=3)\n"
+                          "c2, _ = np.histogram(np.array([0.5,1.5,2.5]), bins=3, range=(0,3))\n"
+                          "c.tolist() == [2,1,3] and len(edg) == 4 and c2.tolist() == [1,1,1]"))))))
+  (it "in-place operators rebind element-wise"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n" "a = np.array([1,2,3]); a += 10\n"
+                                "b = np.array([1,2,3]); b *= np.array([2,2,2])\n"
+                                "a.tolist() == [11,12,13] and b.tolist() == [2,4,6]")))))))

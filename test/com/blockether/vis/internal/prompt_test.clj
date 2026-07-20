@@ -62,25 +62,29 @@
         (expect (not (str/includes? text "Session titles are host-generated")))))
   (it "keeps the core compact while preserving its cross-tool contract"
       (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-        (expect (< (count text) 2200))
+        (expect (< (count text) 2300))
         (doseq [heading ["## Contract" "## Work" "## Output"]]
           (expect (str/includes? text heading)))
-        (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`" "`repl_eval`"]]
+        (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`"]]
           (expect (not (str/includes? text tool))))
         (doseq
           [required
-           ["Hybrid:" "`python_execution`" "batch/filter/transform chains"
-            "direct native tools for single operations" "host project" "`await vis_docs()`"
-            "runtime > source > docs > assumptions" "Introspect before guessing" "`apropos`/`doc`"
-            "`struct_index` before code bodies" "prefer `struct_patch` for supported code"
-            "reproduce before editing" "rerun the same check"
-            "inspect dependencies before adding them" "compare identical workloads"
-            "smallest relevant check" "Never expose or log secrets" "Do not commit, push, publish"
-            "use `session_fold` on completed prior-turn wire steps" "keep a useful gist"
-            "`ntr`, `session_state`, or `sessions`" "never call it lost"
-            "Lead with the answer or next action" "short plain sentences" "≤120 words" "≤3 bullets"
-            "numbered bounded actions" "Show wins" "Step N/M complete. Next: ..."
-            "location → cause → fix" "end with one action under 2 minutes" "never a menu"]]
+           ["Hybrid:" "`python_execution`" "batches/chains" "`await gather(...)` independent calls"
+            "filter/print" "direct native tools for single operations" "host project"
+            "`await vis_docs()`" "runtime > source > docs > assumptions" "Use `apropos` to discover"
+            "`doc` for exact contracts" "`struct_index`/`struct_patch`" "Batch edits atomically"
+            "after writes, refresh anchors via `cat`/`struct_index`" "prefer project `repl_eval`"
+            "inspect REPL resources before lifecycle changes" "Reproduce before editing"
+            "rerun the same check" "inspect dependencies before adding them"
+            "benchmark/profile identical workloads" "smallest relevant check"
+            "Never expose or log secrets" "Do not commit, push, publish"
+            "`session_fold` completed prior-turn wire steps with a gist"
+            "Raw folds remain in `await session_state()` → `transcript/turns/iterations/blocks`"
+            "`ntr[tool_id]` gets one native result" "Find other sessions via `await sessions()`"
+            "Broader/newer folds replace covered breadcrumbs" "Lead with the answer or next action"
+            "short plain sentences" "≤120 words" "≤3 bullets" "numbered bounded actions" "Show wins"
+            "Step N/M complete. Next: ..." "location → cause → fix"
+            "end with one action under 2 minutes" "never a menu"]]
           (expect (str/includes? text required)))
         (expect (not (str/includes? text "Complete tasks autonomously")))
         (expect (not (str/includes? text "canonical decision table")))))

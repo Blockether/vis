@@ -281,18 +281,23 @@
   "Register this JVM as a daemon client exactly once. This is the refcount lease
    that keeps a detached gateway alive while a TUI/client process is alive; the
    shutdown hook releases it gracefully, and the daemon ignores the lease if this
-   pid is killed."
+   pid is killed. Gateway JSON is canonical STRING-keyed data, so the returned
+   `client_id` must be read as a string key; accepting nil here causes one new
+   registration before every request."
   [entry]
   (when-not @client-id
     (locking client-id
       (when-not @client-id
-        (let
-          [{:keys [client_id]} (send-json-with-entry! entry
-                                                      "POST"
-                                                      "/v1/clients"
-                                                      {:pid (discovery/current-pid)
-                                                       :kind "clojure-client"})]
-          (reset! client-id client_id)
+        (let [response (send-json-with-entry! entry
+                                              "POST"
+                                              "/v1/clients"
+                                              {:pid (discovery/current-pid)
+                                               :kind "clojure-client"})
+              registered-id (get response "client_id")]
+          (when-not (seq registered-id)
+            (throw (ex-info "gateway client registration returned no client_id"
+                            {:type :gateway/invalid-client-registration})))
+          (reset! client-id registered-id)
           (ensure-release-hook!)))))
   @client-id)
 

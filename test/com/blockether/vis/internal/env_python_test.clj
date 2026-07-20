@@ -256,7 +256,26 @@
         (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
           (expect (str/includes? out "apropos(query='')"))
           (expect (str/includes? out "doc(name)"))
-          (expect (str/includes? out "result shape"))))))
+          (expect (str/includes? out "result shape"))))
+    (it "gather exposes its concurrency contract through apropos and doc"
+        (let [out (run (str "print(apropos('gather')['gather'])\n" "print(doc('gather'))"))]
+          (expect (str/includes? out "gather(*awaitables) -> list"))
+          (expect (str/includes? out "independent deferred tool calls"))
+          (expect (str/includes? out "results preserve input order"))
+          (expect (str/includes? out "keep dependent calls sequential"))
+          (expect (str/includes? out "every failing slot index"))))
+    (it "session_fold documents raw recovery and fold-of-fold semantics"
+        (ep/set-python-binding! ctx 'session-fold identity)
+        (let
+          [out (run (str "print(apropos('session_fold')['session_fold'])\n"
+                         "print(doc('session_fold'))"))]
+          (expect (str/includes? out "session_fold(target, gist=None) -> str"))
+          (expect (str/includes? out "there is no destructive unfold command"))
+          (expect (str/includes? out "s = await session_state()"))
+          (expect (str/includes? out "['iterations'][...]['blocks']"))
+          (expect (str/includes? out "broader newer fold supersedes fully covered"))
+          (expect (str/includes? out "Partial overlaps remain separate"))))))
+
 
 (defdescribe
   native-container-preservation-test

@@ -29,13 +29,26 @@
         (expect (contains? symbols 'session-state))
         (expect (contains? symbols 'session-report-html))
         (expect (contains? symbols 'sessions))
-        (expect (re-find #"recovery path for a folded current-session"
-                         (:doc (meta #'introspection/session-state))))
+        (let [session-state-doc (:doc (meta #'introspection/session-state))]
+          (expect (str/starts-with?
+                    session-state-doc
+                    "await session_state(session_id=None)  # current session by default"))
+          (expect (re-find #"recovery path for raw folded current-session" session-state-doc))
+          (expect (re-find #"does not undo fold intents or restore them" session-state-doc)))
         ;; engine-symbol-* tools were retired in favour of the bare
         ;; `doc` / `apropos` engine system calls.
         (expect (not (contains? symbols 'engine-symbol-documentation)))
         (expect (not (contains? symbols 'engine-symbol-apropos)))
-        (expect (= 3 (count symbols))))))
+        (expect (= 3 (count symbols)))))
+  (it "defaults session_state to the current session when no id is passed"
+      (let
+        [inspect-data
+         @#'introspection/foundation-inspect-data
+
+         data
+         (inspect-data {:session-id "current-session" :db-info nil} nil)]
+
+        (expect (= "current-session" (:session-id data))))))
 
 (defdescribe session-state-envelope-test
              (it "returns a canonical envelope so observed symbol wrapping can unwrap it"

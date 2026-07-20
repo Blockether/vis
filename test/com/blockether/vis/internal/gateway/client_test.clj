@@ -24,6 +24,27 @@
         (is (= ["POST" "/v1/projects/actions/ensure" {:root "/workspace" :name "Vis"}]
                @request))))))
 
+(deftest ensure-client-registers-once-from-canonical-string-keyed-response
+  (let [client-id-atom @(rv 'client-id)
+        previous @client-id-atom
+        calls (atom 0)
+        ensure-client (rv 'ensure-client!)]
+    (try
+      (reset! client-id-atom nil)
+      (with-redefs-fn {(rv 'send-json-with-entry!)
+                       (fn [_entry method path body]
+                         (swap! calls inc)
+                         (is (= "POST" method))
+                         (is (= "/v1/clients" path))
+                         (is (integer? (:pid body)))
+                         {"client_id" "lease-1"})
+                       (rv 'ensure-release-hook!) (fn [])}
+        (fn []
+          (is (= "lease-1" (ensure-client fake-entry)))
+          (is (= "lease-1" (ensure-client fake-entry)))
+          (is (= 1 @calls))))
+      (finally (reset! client-id-atom previous)))))
+
 (deftest provider-limits-restores-engine-shape-from-gateway-wire
   (let [request (atom nil)]
     (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]

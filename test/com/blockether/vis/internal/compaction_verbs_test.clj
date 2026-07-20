@@ -419,6 +419,12 @@
         (expect (str/starts-with? (:description t) "HARD PRECONDITION"))
         (expect (str/includes? (:description t) "N < session[\"turn\"]"))
         (expect (str/includes? (:description t) "even after verification"))
+        (expect (str/includes? (:description t) "Folding changes rendering, not storage"))
+        (expect (str/includes? (:description t) "`await session_state()`"))
+        (expect (str/includes? (:description t) "`transcript/turns/iterations/blocks`"))
+        (expect (str/includes? (:description t)
+                               "Broader/newer folds supersede fully covered breadcrumbs"))
+        (expect (str/includes? (:description t) "partial overlaps remain"))
         (expect (contains? (:properties (:schema t)) "target"))
         (expect (= ["target"] (:required (:schema t))))))
   (it "native dispatch synthesizes a POSITIONAL call for a list target + gist"
