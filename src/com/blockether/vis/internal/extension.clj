@@ -125,21 +125,20 @@
    tool-specific :paths / :hit-count / :command); this helper only
    normalizes the shared timing surface."
   [metadata]
-  (let
-    [metadata
-     (or metadata {})
+  (let [metadata
+        (or metadata {})
 
-     t
-     (now-ms)
+        t
+        (now-ms)
 
-     started
-     (long (or (:started-at-ms metadata) t))
+        started
+        (long (or (:started-at-ms metadata) t))
 
-     finished
-     (long (or (:finished-at-ms metadata) t))
+        finished
+        (long (or (:finished-at-ms metadata) t))
 
-     duration
-     (long (or (:duration-ms metadata) (max 0 (- finished started))))]
+        duration
+        (long (or (:duration-ms metadata) (max 0 (- finished started))))]
 
     (assoc metadata
       :started-at-ms started
@@ -151,14 +150,13 @@
    extension wrapper to stamp extension/source info onto tool-like
    returns."
   [envelope extra]
-  (let
-    [meta*
-     (meta envelope)
+  (let [meta*
+        (meta envelope)
 
-     merged
-     (-> envelope
-         (update :metadata #(merge (or % {}) extra))
-         assert-tool-result!)]
+        merged
+        (-> envelope
+            (update :metadata #(merge (or % {}) extra))
+            assert-tool-result!)]
 
     (with-meta merged meta*)))
 (defn- noisy-frame?
@@ -182,21 +180,20 @@
    trace LLM-friendly. Capped at `max-trace-frames` lines after the
    header."
   [^Throwable t]
-  (let
-    [header
-     (str (.getName (class t)) ": " (or (ex-message t) ""))
+  (let [header
+        (str (.getName (class t)) ": " (or (ex-message t) ""))
 
-     frames
-     (->> (.getStackTrace t)
-          (remove noisy-frame?)
-          (take max-trace-frames)
-          (map (fn [^StackTraceElement f]
-                 (str (.getClassName f)
-                      "/"
-                      (.getMethodName f)
-                      " - "
-                      (or (.getFileName f) "unknown")
-                      (when (pos? (.getLineNumber f)) (str ":" (.getLineNumber f)))))))]
+        frames
+        (->> (.getStackTrace t)
+             (remove noisy-frame?)
+             (take max-trace-frames)
+             (map (fn [^StackTraceElement f]
+                    (str (.getClassName f)
+                         "/"
+                         (.getMethodName f)
+                         " - "
+                         (or (.getFileName f) "unknown")
+                         (when (pos? (.getLineNumber f)) (str ":" (.getLineNumber f)))))))]
 
     (str/join "\n" (cons header frames))))
 (defn normalize-error
@@ -275,53 +272,52 @@
                     own input echoed back.
      :hint          override / pre-supply a recovery hint string."
   [^Throwable t & [{:keys [form-source hint]}]]
-  (let
-    [d
-     (ex-data t)
+  (let [d
+        (ex-data t)
 
-     cause
-     (some-> t
-             .getCause)
+        cause
+        (some-> t
+                .getCause)
 
-     message
-     (or (not-empty (ex-message t)) (.getName (class t)))
+        message
+        (or (not-empty (ex-message t)) (.getName (class t)))
 
-     trace
-     (try (normalize-trace t) (catch Throwable _ nil))
+        trace
+        (try (normalize-trace t) (catch Throwable _ nil))
 
-     block
-     (when form-source {:source form-source :phase :preflight})
+        block
+        (when form-source {:source form-source :phase :preflight})
 
-     cause-data
-     (when cause (ex-data cause))
+        cause-data
+        (when cause (ex-data cause))
 
-     ;; A tool that returned `{:success? false :error <map>}` is
-     ;; un-structured back into a thrown ExceptionInfo by
-     ;; `tool-result->public-value`. The structured `:error` map
-     ;; carries the model-actionable info (`:reason`, `:failures`,
-     ;; `:loop-hint`, `:checks` …). Lift it into `:data` so the
-     ;; iteration trailer (`error-lines` in `ctx.clj`) renders it as
-     ;; `;; ! data {…}`. Without this lift the model only sees
-     ;; `:message` + `:trace` and has to decode `:reason` from prose.
-     tool-error-data
-     (when (= :vis/tool-failure (:type d))
-       (let [e (:error d)]
-         (when (map? e)
-           (not-empty (cond-> {}
-                        (some? (:reason e))
-                        (assoc :reason (:reason e))
+        ;; A tool that returned `{:success? false :error <map>}` is
+        ;; un-structured back into a thrown ExceptionInfo by
+        ;; `tool-result->public-value`. The structured `:error` map
+        ;; carries the model-actionable info (`:reason`, `:failures`,
+        ;; `:loop-hint`, `:checks` …). Lift it into `:data` so the
+        ;; iteration trailer (`error-lines` in `ctx.clj`) renders it as
+        ;; `;; ! data {…}`. Without this lift the model only sees
+        ;; `:message` + `:trace` and has to decode `:reason` from prose.
+        tool-error-data
+        (when (= :vis/tool-failure (:type d))
+          (let [e (:error d)]
+            (when (map? e)
+              (not-empty (cond-> {}
+                           (some? (:reason e))
+                           (assoc :reason (:reason e))
 
-                        (seq (:failures e))
-                        (assoc :failures (:failures e))
+                           (seq (:failures e))
+                           (assoc :failures (:failures e))
 
-                        (seq (:checks e))
-                        (assoc :checks (:checks e))
+                           (seq (:checks e))
+                           (assoc :checks (:checks e))
 
-                        (some? (:loop-hint e))
-                        (assoc :loop-hint (:loop-hint e))
+                           (some? (:loop-hint e))
+                           (assoc :loop-hint (:loop-hint e))
 
-                        (some? (:mode e))
-                        (assoc :mode (:mode e)))))))]
+                           (some? (:mode e))
+                           (assoc :mode (:mode e)))))))]
 
     (cond-> {:message message}
       (not (str/blank? trace))
@@ -719,11 +715,10 @@
 ;; LLM providers exported by this extension. Each entry mirrors the
 ;; canonical provider shape; we accept any IFn (or absence) for the
 ;; optional runtime fns so a minimal provider doesn't ship no-op stubs.
-(let
-  [or-nil-or-fn (fn [k]
-                  #(let [v (get % k ::absent)]
+(let [or-nil-or-fn (fn [k]
+                     #(let [v (get % k ::absent)]
 
-                     (or (= v ::absent) (ifn? v))))]
+                        (or (= v ::absent) (ifn? v))))]
   (s/def ::provider-entry
     (s/and map?
            #(not (contains? % :provider/prompt-fn))
@@ -1039,15 +1034,14 @@
    so the Python sandbox's `source(...)` can show source for aliased
    extension vars whose sandbox namespace (`v.`, ...) is synthetic."
   [v]
-  (let
-    [m
-     (meta v)
+  (let [m
+        (meta v)
 
-     ns
-     (:ns m)
+        ns
+        (:ns m)
 
-     nm
-     (:name m)]
+        nm
+        (:name m)]
 
     (when (and ns nm)
       (try (repl/source-fn (clojure.core/symbol (str (ns-name ns)) (str nm)))
@@ -1067,21 +1061,20 @@
    (when-not (var? v)
      (anomaly/incorrect! "vis/symbol and vis/value require a Clojure var (e.g. #'my-tool)"
                          {:type :extension/symbol-not-a-var :given v}))
-   (let
-     [m
-      (meta v)
+   (let [m
+         (meta v)
 
-      nm
-      (:name m)
+         nm
+         (:name m)
 
-      doc-fn
-      (:doc-fn opts)
+         doc-fn
+         (:doc-fn opts)
 
-      doc
-      (or (:doc opts) (:doc m) (when doc-fn (doc-fn (or (:symbol opts) nm) v)))
+         doc
+         (or (:doc opts) (:doc m) (when doc-fn (doc-fn (or (:symbol opts) nm) v)))
 
-      al
-      (or (:arglists opts) (:arglists m) (when (:raw? opts) '([& args])))]
+         al
+         (or (:arglists opts) (:arglists m) (when (:raw? opts) '([& args])))]
 
      (when-not (non-blank-string? doc)
        (anomaly/incorrect! (str "Var " v
@@ -1113,82 +1106,81 @@
    global op-keyword -> tag index so call-sites don't need an
    out-of-band registration step per symbol."
   [{sym :symbol :keys [fn doc arglists source]} opts]
-  (let
-    [raw?
-     (true? (:raw? opts))
+  (let [raw?
+        (true? (:raw? opts))
 
-     entry
-     (cond-> #:ext.symbol{:symbol sym :fn fn :doc doc :arglists arglists}
-       raw?
-       (assoc :ext.symbol/raw? true)
+        entry
+        (cond-> #:ext.symbol{:symbol sym :fn fn :doc doc :arglists arglists}
+          raw?
+          (assoc :ext.symbol/raw? true)
 
-       (:hidden? opts)
-       (assoc :ext.symbol/hidden? true)
+          (:hidden? opts)
+          (assoc :ext.symbol/hidden? true)
 
-       source
-       (assoc :ext.symbol/source source)
+          source
+          (assoc :ext.symbol/source source)
 
-       (:tag opts)
-       (assoc :ext.symbol/tag (:tag opts))
+          (:tag opts)
+          (assoc :ext.symbol/tag (:tag opts))
 
-       ;; STRONG flat native-tool spec — the SINGLE source of truth. `:native-tool?`
-       ;; marks the symbol as a native tool (advertised in `:tools`; REQUIRES
-       ;; `:schema`). name/handler/description live flat; wire name defaults to the
-       ;; symbol name. Keep `:description` compact and semantic; its JSON Schema owns
-       ;; input details and `doc(name)` renders both without copied parameter prose.
-       (contains? opts :native-tool?)
-       (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
+          ;; STRONG flat native-tool spec — the SINGLE source of truth. `:native-tool?`
+          ;; marks the symbol as a native tool (advertised in `:tools`; REQUIRES
+          ;; `:schema`). name/handler/description live flat; wire name defaults to the
+          ;; symbol name. Keep `:description` compact and semantic; its JSON Schema owns
+          ;; input details and `doc(name)` renders both without copied parameter prose.
+          (contains? opts :native-tool?)
+          (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
 
-       (:schema opts)
-       (assoc :ext.symbol/schema (:schema opts))
+          (:schema opts)
+          (assoc :ext.symbol/schema (:schema opts))
 
-       ;; :call — how the structured tool input is synthesized into its Python call
-       ;; (positional-args contract). Co-located with the tool; absent ⇒ generic
-       ;; `name({input})`. See `:ext.symbol/call` spec above.
-       (:call opts)
-       (assoc :ext.symbol/call (:call opts))
+          ;; :call — how the structured tool input is synthesized into its Python call
+          ;; (positional-args contract). Co-located with the tool; absent ⇒ generic
+          ;; `name({input})`. See `:ext.symbol/call` spec above.
+          (:call opts)
+          (assoc :ext.symbol/call (:call opts))
 
-       (:name opts)
-       (assoc :ext.symbol/name (:name opts))
+          (:name opts)
+          (assoc :ext.symbol/name (:name opts))
 
-       (:handler opts)
-       (assoc :ext.symbol/handler (:handler opts))
+          (:handler opts)
+          (assoc :ext.symbol/handler (:handler opts))
 
-       (:description opts)
-       (assoc :ext.symbol/description (:description opts))
+          (:description opts)
+          (assoc :ext.symbol/description (:description opts))
 
-       ;; :render / :color-role — the op-card renderer the symbol owns, shared by the
-       ;; native tool_result card AND a Python-path surfaced value.
-       (:render opts)
-       (assoc :ext.symbol/render (:render opts))
+          ;; :render / :color-role — the op-card renderer the symbol owns, shared by the
+          ;; native tool_result card AND a Python-path surfaced value.
+          (:render opts)
+          (assoc :ext.symbol/render (:render opts))
 
-       (:color-role opts)
-       (assoc :ext.symbol/color-role (:color-role opts))
+          (:color-role opts)
+          (assoc :ext.symbol/color-role (:color-role opts))
 
-       ;; :engine-bound? false → NOT bound into the GraalPy env (native-tool-only).
-       ;; Stored only when explicitly set; absent means default-true (bound).
-       (contains? opts :engine-bound?)
-       (assoc :ext.symbol/engine-bound? (boolean (:engine-bound? opts)))
+          ;; :engine-bound? false → NOT bound into the GraalPy env (native-tool-only).
+          ;; Stored only when explicitly set; absent means default-true (bound).
+          (contains? opts :engine-bound?)
+          (assoc :ext.symbol/engine-bound? (boolean (:engine-bound? opts)))
 
-       ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
-       (:active-fn opts)
-       (assoc :ext.symbol/active-fn (:active-fn opts))
+          ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
+          (:active-fn opts)
+          (assoc :ext.symbol/active-fn (:active-fn opts))
 
-       ;; :inject-env? true — prepend the live env as the call's first arg.
-       (contains? opts :inject-env?)
-       (assoc :ext.symbol/inject-env? (boolean (:inject-env? opts)))
+          ;; :inject-env? true — prepend the live env as the call's first arg.
+          (contains? opts :inject-env?)
+          (assoc :ext.symbol/inject-env? (boolean (:inject-env? opts)))
 
-       (:batch-hint opts)
-       (assoc :ext.symbol/batch-hint (:batch-hint opts))
+          (:batch-hint opts)
+          (assoc :ext.symbol/batch-hint (:batch-hint opts))
 
-       (:before-fn opts)
-       (assoc :ext.symbol/before-fn (:before-fn opts))
+          (:before-fn opts)
+          (assoc :ext.symbol/before-fn (:before-fn opts))
 
-       (:after-fn opts)
-       (assoc :ext.symbol/after-fn (:after-fn opts))
+          (:after-fn opts)
+          (assoc :ext.symbol/after-fn (:after-fn opts))
 
-       (:on-error-fn opts)
-       (assoc :ext.symbol/on-error-fn (:on-error-fn opts)))]
+          (:on-error-fn opts)
+          (assoc :ext.symbol/on-error-fn (:on-error-fn opts)))]
 
     (when (and (:ext.symbol/native-tool? entry) (not (:ext.symbol/schema entry)))
       (anomaly/incorrect! (str "Native tool " sym
@@ -1241,15 +1233,14 @@
      (anomaly/incorrect!
        "vis/symbol expects a Clojure var (e.g. #'my-tool); inline fns must be `defn`'d first and passed by var."
        {:type :extension/symbol-not-a-var :given v}))
-   (let
-     [{default-symbol :symbol :keys [doc arglists source]}
-      (var-meta v true opts)
+   (let [{default-symbol :symbol :keys [doc arglists source]}
+         (var-meta v true opts)
 
-      sym
-      (or (:symbol opts) default-symbol)
+         sym
+         (or (:symbol opts) default-symbol)
 
-      f
-      @v]
+         f
+         @v]
 
      (when-not (fn? f)
        (anomaly/incorrect!
@@ -1265,24 +1256,23 @@
   ([v] (helper v nil))
   ([v opts]
    (if (var? v)
-     (let
-       [{default-symbol :symbol :keys [doc arglists source]}
-        (var-meta v true (assoc opts :raw? true))
+     (let [{default-symbol :symbol :keys [doc arglists source]}
+           (var-meta v true (assoc opts :raw? true))
 
-        sym
-        (or (:symbol opts) default-symbol)
+           sym
+           (or (:symbol opts) default-symbol)
 
-        val
-        @v]
+           val
+           @v]
 
        (when-not (fn? val)
          (anomaly/incorrect!
            (str "Var " v " does not hold a function; use vis/value for plain values.")
            {:type :extension/helper-not-a-fn :var v}))
-       (validate-symbol-entry! (cond->
-                                 #:ext.symbol{:symbol sym :val val :doc doc :arglists arglists}
-                                 source
-                                 (assoc :ext.symbol/source source))))
+       (validate-symbol-entry!
+         (cond-> #:ext.symbol{:symbol sym :val val :doc doc :arglists arglists}
+           source
+           (assoc :ext.symbol/source source))))
      (anomaly/incorrect! "vis/helper expects a Clojure var (e.g. #'my-helper)."
                          {:type :extension/helper-not-a-var :given v}))))
 (defn value
@@ -1302,23 +1292,22 @@
   ([v] (value v nil))
   ([v opts-or-val]
    (if (var? v)
-     (let
-       [opts
-        opts-or-val
+     (let [opts
+           opts-or-val
 
-        {default-symbol :symbol :keys [doc source]}
-        (var-meta v false opts)
+           {default-symbol :symbol :keys [doc source]}
+           (var-meta v false opts)
 
-        sym
-        (or (:symbol opts) default-symbol)
+           sym
+           (or (:symbol opts) default-symbol)
 
-        val
-        (if (contains? opts :val) (:val opts) @v)
+           val
+           (if (contains? opts :val) (:val opts) @v)
 
-        entry
-        (cond-> #:ext.symbol{:symbol sym :val val :doc doc}
-          source
-          (assoc :ext.symbol/source source))]
+           entry
+           (cond-> #:ext.symbol{:symbol sym :val val :doc doc}
+             source
+             (assoc :ext.symbol/source source))]
 
        (validate-symbol-entry! entry))
      (anomaly/incorrect!
@@ -1333,25 +1322,23 @@
      (validate-symbol-entry! #:ext.symbol{:symbol sym-name :val val :doc doc}))))
 (defn- arglist->call-form
   [alias-sym sym-name arglist]
-  (let
-    [args
-     (->> arglist
-          (remove #{'&})
-          (map str)
-          (str/join " "))
+  (let [args
+        (->> arglist
+             (remove #{'&})
+             (map str)
+             (str/join " "))
 
-     target
-     (if alias-sym (str alias-sym "/" sym-name) (str sym-name))]
+        target
+        (if alias-sym (str alias-sym "/" sym-name) (str sym-name))]
 
     (str "(" target (when (seq args) (str " " args)) ")")))
 (defn- render-symbol-line
   [alias-sym entry]
-  (let
-    [{sym-name :ext.symbol/symbol doc :ext.symbol/doc arglists :ext.symbol/arglists}
-     entry
+  (let [{sym-name :ext.symbol/symbol doc :ext.symbol/doc arglists :ext.symbol/arglists}
+        entry
 
-     callable?
-     (or (:ext.symbol/fn entry) (and (fn? (:ext.symbol/val entry)) (seq arglists)))]
+        callable?
+        (or (:ext.symbol/fn entry) (and (fn? (:ext.symbol/val entry)) (seq arglists)))]
 
     (if callable?
       (str "- " (str/join " or " (map #(arglist->call-form alias-sym sym-name %) arglists))
@@ -1374,34 +1361,32 @@
    blank lines to a single blank line."
   [text]
   (when (string? text)
-    (let
-      [lines
-       (->> (str/split-lines (str/replace (str/replace text "\r\n" "\n") "\r" "\n"))
-            (mapv #(str/replace % #"[ \t]+$" ""))
-            trim-prompt-edge)
+    (let [lines
+          (->> (str/split-lines (str/replace (str/replace text "\r\n" "\n") "\r" "\n"))
+               (mapv #(str/replace % #"[ \t]+$" ""))
+               trim-prompt-edge)
 
-       indent
-       (if-let [xs (seq (remove str/blank? lines))]
-         (apply min (map prompt-line-indent xs))
-         0)
+          indent
+          (if-let [xs (seq (remove str/blank? lines))]
+            (apply min (map prompt-line-indent xs))
+            0)
 
-       deindented
-       (mapv (fn [line]
-               (let
-                 [indent
-                  (long indent)
+          deindented
+          (mapv (fn [line]
+                  (let [indent
+                        (long indent)
 
-                  c
-                  (long (count line))]
+                        c
+                        (long (count line))]
 
-                 (if (str/blank? line) "" (subs line (min indent c)))))
-             lines)
+                    (if (str/blank? line) "" (subs line (min indent c)))))
+                lines)
 
-       collapsed
-       (reduce (fn [acc line]
-                 (if (str/blank? line) (if (= "" (peek acc)) acc (conj acc "")) (conj acc line)))
-               []
-               deindented)]
+          collapsed
+          (reduce (fn [acc line]
+                    (if (str/blank? line) (if (= "" (peek acc)) acc (conj acc "")) (conj acc line)))
+                  []
+                  deindented)]
 
       (str/join "\n" collapsed))))
 (defn render-prompt
@@ -1416,29 +1401,28 @@
 
    Returns a prompt string suitable for :ext/prompt-fn."
   [{:keys [heading usage-note notes] :as opts}]
-  (let
-    [alias-sym
-     (ext-alias-symbol opts)
+  (let [alias-sym
+        (ext-alias-symbol opts)
 
-     symbols
-     (or (:symbols opts) (ext-symbols opts))
+        symbols
+        (or (:symbols opts) (ext-symbols opts))
 
-     heading
-     (or heading (:ext/description opts) "Extension tools")
+        heading
+        (or heading (:ext/description opts) "Extension tools")
 
-     header-notes
-     (vec (remove nil?
-            [(when alias-sym (str "use " alias-sym "/ prefix"))
-             (when (non-blank-string? usage-note) usage-note)]))
+        header-notes
+        (vec (remove nil?
+               [(when alias-sym (str "use " alias-sym "/ prefix"))
+                (when (non-blank-string? usage-note) usage-note)]))
 
-     extra-lines
-     (cond (nil? notes) []
-           (string? notes) [notes]
-           (sequential? notes) (vec notes)
-           :else [(str notes)])
+        extra-lines
+        (cond (nil? notes) []
+              (string? notes) [notes]
+              (sequential? notes) (vec notes)
+              :else [(str notes)])
 
-     body-lines
-     (mapv #(render-symbol-line alias-sym %) symbols)]
+        body-lines
+        (mapv #(render-symbol-line alias-sym %) symbols)]
 
     (normalize-prompt-text (str/join "\n"
                                      (concat [(str heading
@@ -1468,11 +1452,10 @@
    walks the symbol vec at registration time and populates the
    global op-keyword -> tag index automatically."
   [ext]
-  (doseq
-    [sym-entry
-     (ext-symbols ext)
+  (doseq [sym-entry
+          (ext-symbols ext)
 
-     :when (and (:ext.symbol/fn sym-entry) (not (:ext.symbol/raw? sym-entry)))]
+          :when (and (:ext.symbol/fn sym-entry) (not (:ext.symbol/raw? sym-entry)))]
 
     (let [op (extension-symbol-op-keyword ext sym-entry)]
       (when-not (:ext.symbol/tag sym-entry)
@@ -1501,10 +1484,9 @@
       (ex-info
         ":ext/environment-prompt-fn was removed; put model-facing environment text in :ext/prompt-fn"
         {:type :extension/retired-environment-prompt-fn :name (:ext/name ext)})))
-  (let
-    [ext (cond-> ext
-           (contains? ext :ext/prompt-fn)
-           (update :ext/prompt-fn normalize-prompt))]
+  (let [ext (cond-> ext
+              (contains? ext :ext/prompt-fn)
+              (update :ext/prompt-fn normalize-prompt))]
     (when-not (s/valid? ::extension ext)
       (throw (ex-info (str "Invalid extension '" (:ext/name ext)
                            "':\n" (with-out-str (s/explain ::extension ext)))
@@ -1549,13 +1531,12 @@
 (defn- run-before
   [ext-ns sym-entry env f args]
   (if-let [before (:ext.symbol/before-fn sym-entry)]
-    (let
-      [sym (:ext.symbol/symbol sym-entry)
-       t0 (System/nanoTime)
-       _ (log-hook! :debug ::before-fn ext-ns sym :before-fn nil nil)
-       ret (call-hook ":before-fn" sym before [env f args])
-       _ (validate-hook-return! ":before-fn" sym ret)
-       ms (elapsed-ms t0)]
+    (let [sym (:ext.symbol/symbol sym-entry)
+          t0 (System/nanoTime)
+          _ (log-hook! :debug ::before-fn ext-ns sym :before-fn nil nil)
+          ret (call-hook ":before-fn" sym before [env f args])
+          _ (validate-hook-return! ":before-fn" sym ret)
+          ms (elapsed-ms t0)]
 
       (if (contains? ret :result)
         (do (log-hook! :debug ::before-fn-done ext-ns sym :before-fn ms "short-circuited")
@@ -1566,13 +1547,12 @@
 (defn- run-after
   [ext-ns sym-entry env f args result]
   (if-let [after (:ext.symbol/after-fn sym-entry)]
-    (let
-      [sym (:ext.symbol/symbol sym-entry)
-       t0 (System/nanoTime)
-       _ (log-hook! :debug ::after-fn ext-ns sym :after-fn nil nil)
-       ret (call-hook ":after-fn" sym after [env f args result])
-       _ (validate-hook-return! ":after-fn" sym ret)
-       ms (elapsed-ms t0)]
+    (let [sym (:ext.symbol/symbol sym-entry)
+          t0 (System/nanoTime)
+          _ (log-hook! :debug ::after-fn ext-ns sym :after-fn nil nil)
+          ret (call-hook ":after-fn" sym after [env f args result])
+          _ (validate-hook-return! ":after-fn" sym ret)
+          ms (elapsed-ms t0)]
 
       (log-hook! :debug ::after-fn-done ext-ns sym :after-fn ms nil)
       {:env (get ret :env env)
@@ -1583,25 +1563,24 @@
 (defn- run-on-error
   [ext-ns sym-entry err env f args]
   (if-let [on-error (:ext.symbol/on-error-fn sym-entry)]
-    (let
-      [sym (:ext.symbol/symbol sym-entry)
-       t0 (System/nanoTime)
-       _ (log-hook! :warn
-                    ::on-error-fn
-                    ext-ns
-                    sym
-                    :on-error-fn
-                    nil
-                    (str "handling: " (ex-message err)))
-       ret (try (call-hook ":on-error-fn" sym on-error [err env f args])
-                (catch Throwable e
-                  (if (identical? e err)
-                    (throw e)
-                    (throw (ex-info (str ":on-error-fn for '" sym "' threw: " (ex-message e))
-                                    {:type :extension/on-error-fn-error :symbol sym}
-                                    e)))))
-       _ (validate-hook-return! ":on-error-fn" sym ret)
-       ms (elapsed-ms t0)]
+    (let [sym (:ext.symbol/symbol sym-entry)
+          t0 (System/nanoTime)
+          _ (log-hook! :warn
+                       ::on-error-fn
+                       ext-ns
+                       sym
+                       :on-error-fn
+                       nil
+                       (str "handling: " (ex-message err)))
+          ret (try (call-hook ":on-error-fn" sym on-error [err env f args])
+                   (catch Throwable e
+                     (if (identical? e err)
+                       (throw e)
+                       (throw (ex-info (str ":on-error-fn for '" sym "' threw: " (ex-message e))
+                                       {:type :extension/on-error-fn-error :symbol sym}
+                                       e)))))
+          _ (validate-hook-return! ":on-error-fn" sym ret)
+          ms (elapsed-ms t0)]
 
       (cond
         (contains? ret :result)
@@ -1646,12 +1625,11 @@
    via `op-tag` so unregistered ops still fail closed."
   [ext sym-entry result]
   (if (and (tool-result? result) (nil? (:symbol result)))
-    (let
-      [op
-       (default-tool-op-keyword ext sym-entry)
+    (let [op
+          (default-tool-op-keyword ext sym-entry)
 
-       tag
-       (or (:ext.symbol/tag sym-entry) (op-tag op))]
+          tag
+          (or (:ext.symbol/tag sym-entry) (op-tag op))]
 
       (assoc result
         :symbol op
@@ -1662,15 +1640,14 @@
    (`git/fetch!`), but result maps read like porcelain (`:git/fetch`)."
   [op]
   (when op
-    (let
-      [ns-part
-       (namespace op)
+    (let [ns-part
+          (namespace op)
 
-       n
-       (name op)
+          n
+          (name op)
 
-       n
-       (str/replace n #"!$" "")]
+          n
+          (str/replace n #"!$" "")]
 
       (if ns-part (keyword ns-part n) (keyword n)))))
 (defn- op-kw->str
@@ -1704,21 +1681,20 @@
    even if its toggle flipped)."
   [active-extensions]
   (into {}
-        (for
-          [ext
-           (or active-extensions [])
+        (for [ext
+              (or active-extensions [])
 
-           e
-           (ext-symbols ext)
+              e
+              (ext-symbols ext)
 
-           :when (:ext.symbol/render e)
-           ;; Alias-qualify via `default-tool-op-keyword` so an aliased verb's key
-           ;; matches the op its RESULT actually carries (`git/status` → "git_status"),
-           ;; not the bare symbol ("status"). No `:native-tool?` gate: a printed result
-           ;; renders off its `:op` whether the verb is a tool_use native tool (cat) or
-           ;; an engine-bound Python verb (git_status).
-           :let [op-kw
-                 (public-op-keyword (default-tool-op-keyword ext e))]]
+              :when (:ext.symbol/render e)
+              ;; Alias-qualify via `default-tool-op-keyword` so an aliased verb's key
+              ;; matches the op its RESULT actually carries (`git/status` → "git_status"),
+              ;; not the bare symbol ("status"). No `:native-tool?` gate: a printed result
+              ;; renders off its `:op` whether the verb is a tool_use native tool (cat) or
+              ;; an engine-bound Python verb (git_status).
+              :let [op-kw
+                    (public-op-keyword (default-tool-op-keyword ext e))]]
 
           [(op-kw->str op-kw)
            {:render (:ext.symbol/render e) :color-role (:ext.symbol/color-role e)}])))
@@ -1735,10 +1711,9 @@
   [ext sym-entry result]
   (if (tool-result? result)
     (merge-into-metadata (stamp-public-result-op (ensure-tool-result-op ext sym-entry result))
-                         {:tool (cond->
-                                  {:symbol (:ext.symbol/symbol sym-entry)
-                                   :call (tool-call-name ext (:ext.symbol/symbol sym-entry))
-                                   :ext (:ext/name ext)}
+                         {:tool (cond-> {:symbol (:ext.symbol/symbol sym-entry)
+                                         :call (tool-call-name ext (:ext.symbol/symbol sym-entry))
+                                         :ext (:ext/name ext)}
                                   (ext-alias-symbol ext)
                                   (assoc :alias (ext-alias-symbol ext)))})
     result))
@@ -1757,18 +1732,17 @@
           :ext/name))
 (defn- call-extension-env-fn
   [ext f environment]
-  (binding
-    [*current-extension*
-     ext
+  (binding [*current-extension*
+            ext
 
-     *current-symbol*
-     nil
+            *current-symbol*
+            nil
 
-     workspace/*workspace-root*
-     (workspace/workspace-root environment)
+            workspace/*workspace-root*
+            (workspace/workspace-root environment)
 
-     workspace/*filesystem-roots*
-     (workspace/env-filesystem-roots environment)]
+            workspace/*filesystem-roots*
+            (workspace/env-filesystem-roots environment)]
 
     (f environment)))
 (defn- active-extension?
@@ -1830,21 +1804,20 @@
   [environment active-extensions]
   (reduce (fn [acc ext]
             (if-let [f (:ext/ctx-fn ext)]
-              (let
-                [contribution
-                 (try (binding
-                        [*current-extension* ext
-                         *current-symbol* nil
-                         workspace/*workspace-root* (workspace/workspace-root environment)
-                         workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
+              (let [contribution
+                    (try (binding [*current-extension* ext
+                                   *current-symbol* nil
+                                   workspace/*workspace-root* (workspace/workspace-root environment)
+                                   workspace/*filesystem-roots* (workspace/env-filesystem-roots
+                                                                  environment)]
 
-                        (f environment))
-                      (catch Throwable t
-                        (tel/log! {:level :warn
-                                   :id ::ctx-contribution-error
-                                   :data {:ext (:ext/name ext) :error (ex-message t)}}
-                                  "Extension :ext/ctx-fn fn threw")
-                        nil))]
+                           (f environment))
+                         (catch Throwable t
+                           (tel/log! {:level :warn
+                                      :id ::ctx-contribution-error
+                                      :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                     "Extension :ext/ctx-fn fn threw")
+                           nil))]
                 (if (map? contribution)
                   (deep-merge acc contribution)
                   (do (when (some? contribution)
@@ -1976,13 +1949,12 @@
    (e.g. the Clojure pack paren-repairs + retries a struct_patch). Hooks compose;
    with none registered this is just `(apply f args)`."
   [op-kw env f args]
-  (let
-    [arounds
-     (filter #(= :around (:phase %)) (get @op-hooks op-kw))
+  (let [arounds
+        (filter #(= :around (:phase %)) (get @op-hooks op-kw))
 
-     base
-     (fn [as]
-       (apply f as))]
+        base
+        (fn [as]
+          (apply f as))]
 
     (if (empty? arounds)
       (base args)
@@ -2008,100 +1980,94 @@
 
    Raw helper symbols (`:ext.symbol/raw? true`) bypass this function entirely."
   [ext sym-entry args env]
-  (binding
-    [*current-extension*
-     ext
+  (binding [*current-extension*
+            ext
 
-     *current-symbol*
-     (:ext.symbol/symbol sym-entry)]
+            *current-symbol*
+            (:ext.symbol/symbol sym-entry)]
 
-    (let
-      [sym
-       (:ext.symbol/symbol sym-entry)
+    (let [sym
+          (:ext.symbol/symbol sym-entry)
 
-       ext-ns
-       (:ext/name ext)
+          ext-ns
+          (:ext/name ext)
 
-       op-kw
-       (keyword (tool-call-name ext sym))
+          op-kw
+          (keyword (tool-call-name ext sym))
 
-       _original-args
-       args
+          _original-args
+          args
 
-       t0
-       (System/nanoTime)
+          t0
+          (System/nanoTime)
 
-       _
-       (log-hook! :debug ::invoke ext-ns sym nil nil nil)
+          _
+          (log-hook! :debug ::invoke ext-ns sym nil nil nil)
 
-       before-out
-       (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
+          before-out
+          (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
 
       (if (contains? before-out :result)
-        (let
-          [ms
-           (elapsed-ms t0)
+        (let [ms
+              (elapsed-ms t0)
 
-           result
-           (->> (:result before-out)
-                (enrich-tool-result-info ext sym-entry)
-                (assert-symbol-envelope! sym))]
+              result
+              (->> (:result before-out)
+                   (enrich-tool-result-info ext sym-entry)
+                   (assert-symbol-envelope! sym))]
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           (tool-result->public-value result))
-        (let
-          [{call-env :env f :fn call-args :args}
-           before-out
+        (let [{call-env :env f :fn call-args :args}
+              before-out
 
-           ;; :inject-env? prepends the live env as the first arg — decoupled
-           ;; from before-fn, which is now a pure hook (not a gate / injector).
-           call-args
-           (if (:ext.symbol/inject-env? sym-entry) (into [call-env] call-args) call-args)
+              ;; :inject-env? prepends the live env as the first arg — decoupled
+              ;; from before-fn, which is now a pure hook (not a gate / injector).
+              call-args
+              (if (:ext.symbol/inject-env? sym-entry) (into [call-env] call-args) call-args)
 
-           call-args
-           (run-op-before-hooks op-kw call-env call-args)
+              call-args
+              (run-op-before-hooks op-kw call-env call-args)
 
-           call-result
-           (let
-             [ct0
-              (System/nanoTime)
+              call-result
+              (let [ct0
+                    (System/nanoTime)
 
-              call-started-at-ms
-              (now-ms)]
+                    call-started-at-ms
+                    (now-ms)]
 
-             (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
-             (try (let
-                    [r
-                     (run-op-around op-kw call-env f call-args)
+                (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
+                (try (let [r
+                           (run-op-around op-kw call-env f call-args)
 
-                     ms
-                     (elapsed-ms ct0)]
+                           ms
+                           (elapsed-ms ct0)]
 
-                    (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
-                    {:result r})
-                  (catch Throwable e
-                    (let [ms (elapsed-ms ct0)]
-                      (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
-                      (try (let [recovery (run-on-error ext-ns sym-entry e call-env f call-args)]
-                             (cond (contains? recovery :result) recovery
-                                   (contains? recovery :error) (throw (:error recovery))
-                                   :else {:result (apply (get recovery :fn f)
-                                                    (vec (get recovery :args call-args)))}))
-                           (catch Throwable e2 (throw e2)))))))
+                       (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
+                       {:result r})
+                     (catch Throwable e
+                       (let [ms (elapsed-ms ct0)]
+                         (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
+                         (try (let [recovery (run-on-error ext-ns sym-entry e call-env f call-args)]
+                                (cond (contains? recovery :result) recovery
+                                      (contains? recovery :error) (throw (:error recovery))
+                                      :else {:result (apply (get recovery :fn f)
+                                                       (vec (get recovery :args call-args)))}))
+                              (catch Throwable e2 (throw e2)))))))
 
-           {:keys [result]}
-           (run-after ext-ns sym-entry call-env f call-args (:result call-result))
+              {:keys [result]}
+              (run-after ext-ns sym-entry call-env f call-args (:result call-result))
 
-           result
-           (run-op-after-hooks op-kw call-env call-args result)
+              result
+              (run-op-after-hooks op-kw call-env call-args result)
 
-           result
-           (->> result
-                (enrich-tool-result-info ext sym-entry)
-                (assert-symbol-envelope! sym))
+              result
+              (->> result
+                   (enrich-tool-result-info ext sym-entry)
+                   (assert-symbol-envelope! sym))
 
-           ms
-           (elapsed-ms t0)]
+              ms
+              (elapsed-ms t0)]
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (tool-result->public-value result))))))
@@ -2144,34 +2110,32 @@
   ;; the sandbox — they have no Python name, never reach apropos/protected-names,
   ;; and execute via their `:handler` instead.
   (let [entries (filter symbol-bound? (ext-symbols ext))]
-    (into {}
-          (map
-            (fn [sym-entry]
-              (let [sym (:ext.symbol/symbol sym-entry)]
-                (if (contains? sym-entry :ext.symbol/fn)
-                  [sym
-                   (if (:ext.symbol/raw? sym-entry)
-                     (fn [& args]
-                       (let [env (env-thunk)]
-                         (binding
-                           [workspace/*workspace-root* (workspace/workspace-root env)
-                            workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
+    (into
+      {}
+      (map
+        (fn [sym-entry]
+          (let [sym (:ext.symbol/symbol sym-entry)]
+            (if (contains? sym-entry :ext.symbol/fn)
+              [sym
+               (if (:ext.symbol/raw? sym-entry)
+                 (fn [& args]
+                   (let [env (env-thunk)]
+                     (binding [workspace/*workspace-root* (workspace/workspace-root env)
+                               workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
 
-                           (apply (:ext.symbol/fn sym-entry) args))))
-                     (fn [& args]
-                       (let
-                         [env (env-thunk)
-                          w (get-log-writer)]
+                       (apply (:ext.symbol/fn sym-entry) args))))
+                 (fn [& args]
+                   (let [env (env-thunk)
+                         w (get-log-writer)]
 
-                         (binding
-                           [*out* w
-                            *err* w
-                            workspace/*workspace-root* (workspace/workspace-root env)
-                            workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
+                     (binding [*out* w
+                               *err* w
+                               workspace/*workspace-root* (workspace/workspace-root env)
+                               workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
 
-                           (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
-                  [sym (:ext.symbol/val sym-entry)]))))
-          entries)))
+                       (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
+              [sym (:ext.symbol/val sym-entry)]))))
+      entries)))
 ;; =============================================================================
 ;; Public API - extension builder
 ;; =============================================================================
@@ -2307,10 +2271,9 @@
   "Convert `clojure.core` to `clojure/core.clj`. Tries .clj first;
    .cljc / .cljs fallback if the .clj resolves to nothing."
   [ns-sym]
-  (let
-    [base (-> (str ns-sym)
-              (str/replace \- \_)
-              (str/replace \. \/))]
+  (let [base (-> (str ns-sym)
+                 (str/replace \- \_)
+                 (str/replace \. \/))]
     [(str base ".clj") (str base ".cljc")]))
 (defn- find-source-resource
   ^URL [^ClassLoader cl ns-sym]
@@ -2325,22 +2288,21 @@
   "Build a SourceEntry for a `file:` URL. Reads the file content for
    hashing; mtime from `.lastModified`."
   ^SourceEntry [^URL url]
-  (let
-    [f
-     (java.io.File. (.toURI url))
+  (let [f
+        (java.io.File. (.toURI url))
 
-     path
-     (.getAbsolutePath f)
+        path
+        (.getAbsolutePath f)
 
-     mtime
-     (.lastModified f)
+        mtime
+        (.lastModified f)
 
-     content
-     (try (read-stream-bytes (java.io.FileInputStream. f))
-          (catch Throwable t
-            (tel/log!
-              {:level :warn :id ::file-read-failed :data {:path path :error (ex-message t)}})
-            (byte-array 0)))]
+        content
+        (try (read-stream-bytes (java.io.FileInputStream. f))
+             (catch Throwable t
+               (tel/log!
+                 {:level :warn :id ::file-read-failed :data {:path path :error (ex-message t)}})
+               (byte-array 0)))]
 
     (->SourceEntry path mtime content)))
 (defn- jar-entry-locator
@@ -2354,26 +2316,25 @@
    `getTime` (= jar build time for entries that weren't individually
    timestamped). Closes the jar on exit."
   ^SourceEntry [^URL url]
-  (let
-    [conn
-     (.openConnection url)
+  (let [conn
+        (.openConnection url)
 
-     ;; The cast is paranoid - `.getJarFileURL` lives on `JarURLConnection`,
-     ;; we know URL was a jar: URL when we got here.
-     jconn
-     ^java.net.JarURLConnection conn
+        ;; The cast is paranoid - `.getJarFileURL` lives on `JarURLConnection`,
+        ;; we know URL was a jar: URL when we got here.
+        jconn
+        ^java.net.JarURLConnection conn
 
-     jar-url
-     (.getJarFileURL jconn)
+        jar-url
+        (.getJarFileURL jconn)
 
-     jar-file
-     (java.io.File. (.toURI jar-url))
+        jar-file
+        (java.io.File. (.toURI jar-url))
 
-     jar-path
-     (.getAbsolutePath jar-file)
+        jar-path
+        (.getAbsolutePath jar-file)
 
-     entry-nm
-     (.getEntryName jconn)]
+        entry-nm
+        (.getEntryName jconn)]
 
     (with-open [jar (JarFile. jar-file)]
       (let [^JarEntry e (.getJarEntry jar entry-nm)]
@@ -2381,25 +2342,24 @@
           (do (tel/log!
                 {:level :warn :id ::jar-entry-missing :data {:jar jar-path :entry entry-nm}})
               nil)
-          (let
-            [mtime (.getTime e)
-             content (try (with-open [in (.getInputStream jar e)]
-                            (read-stream-bytes in))
-                          (catch Throwable t
-                            (tel/log! {:level :warn
-                                       :id ::jar-entry-read-failed
-                                       :data {:jar jar-path :entry entry-nm :error (ex-message t)}})
-                            (byte-array 0)))]
+          (let [mtime (.getTime e)
+                content (try (with-open [in (.getInputStream jar e)]
+                               (read-stream-bytes in))
+                             (catch Throwable t
+                               (tel/log! {:level :warn
+                                          :id ::jar-entry-read-failed
+                                          :data
+                                          {:jar jar-path :entry entry-nm :error (ex-message t)}})
+                               (byte-array 0)))]
 
             (->SourceEntry (jar-entry-locator jar-path entry-nm) mtime content)))))))
 (defn- url->entry
   "Dispatch on URL protocol to the right reader. Returns SourceEntry
    or nil on unrecognized protocol."
   [^URL url]
-  (try (case
-         (some-> url
-                 .getProtocol
-                 str/lower-case)
+  (try (case (some-> url
+                     .getProtocol
+                     str/lower-case)
          "file"
          (file-entry url)
 
@@ -2429,56 +2389,53 @@
    logged at :warn and skipped; an extension whose nses partially
    resolve still gets markers from the parts that did."
   [ns-syms]
-  (let
-    [cl
-     (.getContextClassLoader (Thread/currentThread))
+  (let [cl
+        (.getContextClassLoader (Thread/currentThread))
 
-     urls
-     (->> ns-syms
-          (map #(find-source-resource cl %))
-          (remove nil?))
+        urls
+        (->> ns-syms
+             (map #(find-source-resource cl %))
+             (remove nil?))
 
-     entries
-     (->> urls
-          (map url->entry)
-          (remove nil?)
-          (sort-by :locator)
-          vec)]
+        entries
+        (->> urls
+             (map url->entry)
+             (remove nil?)
+             (sort-by :locator)
+             vec)]
 
     (if (empty? entries)
       {:source-paths [] :source-mtime-max -1 :source-hash-sha256 nil}
-      (let
-        [paths
-         (mapv :locator entries)
+      (let [paths
+            (mapv :locator entries)
 
-         mtime-max
-         (long (reduce max 0 (map :mtime entries)))
+            mtime-max
+            (long (reduce max 0 (map :mtime entries)))
 
-         digest
-         (sha256-digest)
+            digest
+            (sha256-digest)
 
-         _
-         (doseq [^SourceEntry e entries]
-           (let [^bytes c (:content e)]
-             (.update digest c 0 (alength c))))
+            _
+            (doseq [^SourceEntry e entries]
+              (let [^bytes c (:content e)]
+                (.update digest c 0 (alength c))))
 
-         hash-bytes
-         (.digest digest)
+            hash-bytes
+            (.digest digest)
 
-         hash-hex
-         (bytes->hex hash-bytes)]
+            hash-hex
+            (bytes->hex hash-bytes)]
 
         {:source-paths paths :source-mtime-max mtime-max :source-hash-sha256 hash-hex}))))
 (defn resolve-markers-for-extension
   "Resolve source markers from manifest `:nses` or extension `:ext/source-nses`."
   [ext-or-manifest]
-  (let
-    [ns-syms (or (some-> (:nses ext-or-manifest)
-                         seq
-                         vec)
-                 (some-> (:ext/source-nses ext-or-manifest)
-                         seq
-                         vec))]
+  (let [ns-syms (or (some-> (:nses ext-or-manifest)
+                            seq
+                            vec)
+                    (some-> (:ext/source-nses ext-or-manifest)
+                            seq
+                            vec))]
     (resolve-markers (or ns-syms []))))
 ;; =============================================================================
 ;; Global Extension Registry
@@ -2549,12 +2506,11 @@
 
    Idempotent on `:ext/name`. Returns the validated extension."
   [ext]
-  (let
-    [ext
-     (extension ext)
+  (let [ext
+        (extension ext)
 
-     ns-sym
-     (:ext/name ext)]
+        ns-sym
+        (:ext/name ext)]
 
     ;; Slash paths must be unique across the union of `:ext/slash-commands` from every active
     ;; extension. Reject registration when this extension declares a `[parent name]`
@@ -2563,37 +2519,34 @@
     ;; channel set. Two specs with the same path but DISJOINT
     ;; channel availability (e.g. TUI `/voice` vs another channel's `/voice`)
     ;; do not collide — the dispatcher resolves them via per-channel availability at runtime.
-    (let
-      [known-channels
-       [:tui :discord :cli :repl :slack]
+    (let [known-channels
+          [:tui :discord :cli :repl :slack]
 
-       slash-channels
-       (fn [spec]
-         (if-let [f (:slash/availability-fn spec)]
-           (set (filter (fn [ch]
-                          (try (boolean (f {:channel/id ch})) (catch Throwable _ false)))
-                        known-channels))
-           (set known-channels)))
+          slash-channels
+          (fn [spec]
+            (if-let [f (:slash/availability-fn spec)]
+              (set (filter (fn [ch]
+                             (try (boolean (f {:channel/id ch})) (catch Throwable _ false)))
+                           known-channels))
+              (set known-channels)))
 
-       new-by-path
-       (reduce (fn [m spec]
-                 (assoc m (slash-path spec) spec))
-               {}
-               (:ext/slash-commands ext))]
+          new-by-path
+          (reduce (fn [m spec]
+                    (assoc m (slash-path spec) spec))
+                  {}
+                  (:ext/slash-commands ext))]
 
       (when (seq new-by-path)
-        (let
-          [collisions (for
-                        [[other-ns other-ext] @extension-registry
-                         :when (not= other-ns ns-sym)
-                         other-slash (:ext/slash-commands other-ext)
-                         :let [p (slash-path other-slash)
-                               new-spec (get new-by-path p)]
-                         :when (and new-spec
-                                    (seq (set/intersection (slash-channels new-spec)
-                                                           (slash-channels other-slash))))]
+        (let [collisions (for [[other-ns other-ext] @extension-registry
+                               :when (not= other-ns ns-sym)
+                               other-slash (:ext/slash-commands other-ext)
+                               :let [p (slash-path other-slash)
+                                     new-spec (get new-by-path p)]
+                               :when (and new-spec
+                                          (seq (set/intersection (slash-channels new-spec)
+                                                                 (slash-channels other-slash))))]
 
-                        {:path p :other-ext other-ns})]
+                           {:path p :other-ext other-ns})]
           (when (seq collisions)
             (throw (ex-info (str "Slash path collision while registering '" ns-sym
                                  "': " (str/join
@@ -2630,25 +2583,23 @@
     ;; global op-keyword -> tag map. The sym-entry remains the source
     ;; of truth; this index is a cheap lookup for sites (e.g.
     ;; `envelope-of`) that have an op keyword but no sym-entry handle.
-    (doseq
-      [sym-entry
-       (ext-symbols ext)
+    (doseq [sym-entry
+            (ext-symbols ext)
 
-       :let [tag
-             (:ext.symbol/tag sym-entry)]
-       :when tag]
+            :let [tag
+                  (:ext.symbol/tag sym-entry)]
+            :when tag]
 
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
         (swap! op-keyword->tag assoc op-kw tag)))
     ;; Index every symbol's optional inline `:ext.symbol/batch-hint`
     ;; high-fan-out threshold the same way (Phase 4). Advisory only.
-    (doseq
-      [sym-entry
-       (ext-symbols ext)
+    (doseq [sym-entry
+            (ext-symbols ext)
 
-       :let [hint
-             (:ext.symbol/batch-hint sym-entry)]
-       :when hint]
+            :let [hint
+                  (:ext.symbol/batch-hint sym-entry)]
+            :when hint]
 
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
         (swap! op-keyword->batch-hint assoc op-kw hint)))
@@ -2701,51 +2652,49 @@
 
    This is the single info shape used by ctx :extensions and tool-result enrichment."
   [ext]
-  (let
-    [name
-     (:ext/name ext)
+  (let [name
+        (:ext/name ext)
 
-     alias
-     (ext-alias-symbol ext)
+        alias
+        (ext-alias-symbol ext)
 
-     registry-id
-     (or (some (fn [ns-sym]
-                 (try (extension-id-of-ns ns-sym) (catch Throwable _ nil)))
-               (ext-source-nses ext))
-         alias)
+        registry-id
+        (or (some (fn [ns-sym]
+                    (try (extension-id-of-ns ns-sym) (catch Throwable _ nil)))
+                  (ext-source-nses ext))
+            alias)
 
-     markers
-     (source-markers-for-extension ext)
+        markers
+        (source-markers-for-extension ext)
 
-     prov
-     (cond->
-       {:name name
-        :source-paths (:source-paths markers)
-        :source-mtime-max (:source-mtime-max markers)
-        :source-hash-sha256 (:source-hash-sha256 markers)}
-       alias
-       (assoc :alias alias)
+        prov
+        (cond-> {:name name
+                 :source-paths (:source-paths markers)
+                 :source-mtime-max (:source-mtime-max markers)
+                 :source-hash-sha256 (:source-hash-sha256 markers)}
+          alias
+          (assoc :alias alias)
 
-       (:ext/description ext)
-       (assoc :description (:ext/description ext))
+          (:ext/description ext)
+          (assoc :description (:ext/description ext))
 
-       (:ext/kind ext)
-       (assoc :kind (:ext/kind ext))
+          (:ext/kind ext)
+          (assoc :kind (:ext/kind ext))
 
-       (:ext/version ext)
-       (assoc :version (:ext/version ext))
+          (:ext/version ext)
+          (assoc :version (:ext/version ext))
 
-       (:ext/author ext)
-       (assoc :author (:ext/author ext))
+          (:ext/author ext)
+          (assoc :author (:ext/author ext))
 
-       (:ext/owner ext)
-       (assoc :owner (:ext/owner ext))
+          (:ext/owner ext)
+          (assoc :owner (:ext/owner ext))
 
-       (:ext/license ext)
-       (assoc :license (:ext/license ext))
+          (:ext/license ext)
+          (assoc :license (:ext/license ext))
 
-       registry-id
-       (assoc :registry-id registry-id))]
+          registry-id
+          (assoc :registry-id registry-id))]
 
     (when-not (s/valid? ::extension-info prov)
       (throw (ex-info "Invalid extension info"
@@ -2880,13 +2829,13 @@
    slot's fn arity + return contract."
   ([channel-id] (channel-contributions-for channel-id nil))
   ([channel-id slot]
-   (let
-     [rows (->> (registered-extensions)
-                (mapcat (fn [ext]
-                          (mapcat (fn [[slot contributions]]
-                                    (map #(normalized-channel-contribution slot %) contributions))
-                                  (:ext/channel-contributions ext))))
-                (filter #(= channel-id (:channel-id %))))]
+   (let [rows (->> (registered-extensions)
+                   (mapcat (fn [ext]
+                             (mapcat (fn [[slot contributions]]
+                                       (map #(normalized-channel-contribution slot %)
+                                            contributions))
+                                     (:ext/channel-contributions ext))))
+                   (filter #(= channel-id (:channel-id %))))]
      (vec (cond->> rows
             slot
             (filter #(= slot (:slot %))))))))
@@ -2894,18 +2843,17 @@
   "Topologically sort extensions by :ext/requires.
    Throws on missing dependencies or cycles."
   [extensions]
-  (let
-    [by-ns
-     (into {} (map (juxt :ext/name identity)) extensions)
+  (let [by-ns
+        (into {} (map (juxt :ext/name identity)) extensions)
 
-     visited
-     (volatile! #{})
+        visited
+        (volatile! #{})
 
-     path
-     (volatile! #{})
+        path
+        (volatile! #{})
 
-     result
-     (volatile! [])]
+        result
+        (volatile! [])]
 
     (letfn
       [(visit [ns-sym]
@@ -2936,12 +2884,11 @@
 
    Called by `create-environment` automatically. Returns environment."
   [environment register-fn!]
-  (let
-    [exts
-     (registered-extensions)
+  (let [exts
+        (registered-extensions)
 
-     sorted
-     (when (seq exts) (topo-sort-extensions exts))]
+        sorted
+        (when (seq exts) (topo-sort-extensions exts))]
 
     (doseq [ext sorted]
       (register-fn! environment ext))
@@ -3138,12 +3085,16 @@
    unions such as `string|array<string>`."
   [prop]
   (letfn [(render [node]
-            (let [t (:type node)
-                  alternatives (or (:oneOf node) (:anyOf node))]
+            (let [t
+                  (:type node)
+
+                  alternatives
+                  (or (:oneOf node) (:anyOf node))]
+
               (cond (seq alternatives) (->> alternatives
-                                             (map render)
-                                             distinct
-                                             (str/join "|"))
+                                            (map render)
+                                            distinct
+                                            (str/join "|"))
                     (= t "array") (str "array<" (render (or (:items node) {})) ">")
                     (some? t) (str t)
                     :else "any")))]
@@ -3157,20 +3108,18 @@
    Returns nil when there is no usable schema, so callers can append conditionally."
   [schema]
   (when-let [props (:properties schema)]
-    (let
-      [required (set (:required schema))
-       ordered (sort-by (fn [[k _]]
-                          [(if (contains? required k) 0 1) (str k)])
-                        props)
-       lines
-       (for
-         [[k prop] ordered
-          :let [typ (json-schema-type-str prop)
-                req (when (contains? required k) ", required")
-                d (:description prop)
-                d1 (when (and (string? d) (not (str/blank? d))) (first (str/split-lines d)))]]
+    (let [required (set (:required schema))
+          ordered (sort-by (fn [[k _]]
+                             [(if (contains? required k) 0 1) (str k)])
+                           props)
+          lines (for [[k prop] ordered
+                      :let [typ (json-schema-type-str prop)
+                            req (when (contains? required k) ", required")
+                            d (:description prop)
+                            d1 (when (and (string? d) (not (str/blank? d)))
+                                 (first (str/split-lines d)))]]
 
-         (str "- `" k "` (" typ req ")" (when d1 (str " — " d1))))]
+                  (str "- `" k "` (" typ req ")" (when d1 (str " — " d1))))]
 
       (when (seq lines) (str "**params:**\n" (str/join "\n" lines))))))
 
@@ -3185,17 +3134,16 @@
    `doc(name)` / `apropos(pat)` read the same text no matter which path bound
    the symbol."
   [entry]
-  (let
-    [prose
-     (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
+  (let [prose
+        (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
 
-     params
-     (schema->param-doc (:ext.symbol/schema entry))
+        params
+        (schema->param-doc (:ext.symbol/schema entry))
 
-     text
-     (cond-> prose
-       (and (string? prose) params)
-       (str "\n\n" params))]
+        text
+        (cond-> prose
+          (and (string? prose) params)
+          (str "\n\n" params))]
 
     (when (and (string? text) (not (str/blank? text))) text)))
 
@@ -3216,20 +3164,19 @@
   []
   (load-builtin-extensions!)
   (into {}
-        (for
-          [ext
-           (registered-extensions)
+        (for [ext
+              (registered-extensions)
 
-           entry
-           (ext-symbols ext)
+              entry
+              (ext-symbols ext)
 
-           :when (symbol-bound? entry)
-           :let [sym
-                 (:ext.symbol/symbol entry)
+              :when (symbol-bound? entry)
+              :let [sym
+                    (:ext.symbol/symbol entry)
 
-                 text
-                 (symbol-doc-text entry)]
-           :when (and sym text)]
+                    text
+                    (symbol-doc-text entry)]
+              :when (and sym text)]
 
           [sym text])))
 

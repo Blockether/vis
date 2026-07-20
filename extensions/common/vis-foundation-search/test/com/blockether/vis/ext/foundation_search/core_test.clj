@@ -384,6 +384,13 @@ const total = add(1, 2);")
                              (expect (not (true? (:ext.symbol/raw? sym-entry))))))))
 
 (defdescribe
+  native-contract-test
+  (it "keeps research routing compact and every input schema closed"
+      (doseq [s search/search-symbols]
+        (expect (< (count (:ext.symbol/description s)) 500))
+        (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
+
+(defdescribe
   extension-shape-test
   (describe "engine binds builtin (bare); ext name is foundation-search"
             (it "builtin?"
