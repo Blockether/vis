@@ -67,23 +67,26 @@
   yields I instead of I,. If a token is all punctuation it is returned unchanged
   so we never emit an empty token."
   [token]
-  (let [stripped (-> token
-                     (str/replace #"^[\p{Punct}\p{S}]+" "")
-                     (str/replace #"[\p{Punct}\p{S}]+$" ""))]
+  (let
+    [stripped (-> token
+                  (str/replace #"^[\p{Punct}\p{S}]+" "")
+                  (str/replace #"[\p{Punct}\p{S}]+$" ""))]
     (if (str/blank? stripped) token stripped)))
 
 (defn- collapse-repeated-runs
   [tokens]
-  (loop [tokens
-         (vec tokens)
+  (loop
+    [tokens
+     (vec tokens)
 
-         i
-         0]
+     i
+     0]
 
     (if (>= i (count tokens))
       tokens
-      (if-let [n (some #(when (repeated-run? tokens i %) %)
-                       (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
+      (if-let
+        [n (some #(when (repeated-run? tokens i %) %)
+                 (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
         (recur (vec (concat (map strip-outer-punct (subvec tokens 0 (+ i (long n))))
                             (subvec tokens (+ i (long n) (long n)))))
                i)
@@ -98,12 +101,13 @@
   remove standalone hesitation sounds and collapse adjacent repeated words/short
   phrases from Parakeet stutter output."
   [text]
-  (let [tokens (-> (str text)
-                   (str/replace #"(?i)\b(?:you know|i mean)\b" " ")
-                   (str/split #"\s+")
-                   (->> (remove str/blank?)
-                        (remove filler-token?)
-                        vec))]
+  (let
+    [tokens (-> (str text)
+                (str/replace #"(?i)\b(?:you know|i mean)\b" " ")
+                (str/split #"\s+")
+                (->> (remove str/blank?)
+                     (remove filler-token?)
+                     vec))]
     (->> tokens
          collapse-repeated-runs
          (str/join " ")
@@ -122,11 +126,12 @@
           {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
         (:recorder @state) (publish!
                              {:op :notify :text "Voice recording is already running" :level :warn})
-        :else (let [workspace-id
-                    (ctx-workspace-id ctx)
+        :else (let
+                [workspace-id
+                 (ctx-workspace-id ctx)
 
-                    rec
-                    (recorder/start!)]
+                 rec
+                 (recorder/start!)]
 
                 (reset! state
                   {:recorder rec :ticker nil :transcribing? false :workspace-id workspace-id})
@@ -138,11 +143,12 @@
   [audio-file workspace-id]
   (future
     (try (voice-status! "● Transcribing..." :info)
-         (let [text
-               (clean-transcript (asr/transcribe-file! audio-file))
+         (let
+           [text
+            (clean-transcript (asr/transcribe-file! audio-file))
 
-               blank?
-               (or (nil? text) (str/blank? text))]
+            blank?
+            (or (nil? text) (str/blank? text))]
 
            (idle-status!)
            (if blank?
@@ -166,17 +172,18 @@
         (publish!
           {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
         (:recorder @state)
-        (let [recording-state
-              @state
+        (let
+          [recording-state
+           @state
 
-              rec
-              (:recorder recording-state)
+           rec
+           (:recorder recording-state)
 
-              workspace-id
-              (:workspace-id recording-state)
+           workspace-id
+           (:workspace-id recording-state)
 
-              audio-file
-              (recorder/stop! rec)]
+           audio-file
+           (recorder/stop! rec)]
 
           (reset! state {:recorder nil :ticker nil :transcribing? true :workspace-id workspace-id})
           (transcribe-and-insert! audio-file workspace-id))

@@ -7,14 +7,15 @@
 (defdescribe provider-registration-test
              (it "registers both Z.ai plans as separate provider extension entries"
                  (require 'com.blockether.vis.ext.provider-zai :reload)
-                 (let [coding
-                       (vis/provider-by-id :zai-coding-plan)
+                 (let
+                   [coding
+                    (vis/provider-by-id :zai-coding-plan)
 
-                       pass
-                       (vis/provider-by-id :zai)
+                    pass
+                    (vis/provider-by-id :zai)
 
-                       ext-nses
-                       (set (map :ext/name (vis/registered-extensions)))]
+                    ext-nses
+                    (set (map :ext/name (vis/registered-extensions)))]
 
                    (expect (= :zai-coding-plan (:provider/id coding)))
                    (expect (= :zai (:provider/id pass)))

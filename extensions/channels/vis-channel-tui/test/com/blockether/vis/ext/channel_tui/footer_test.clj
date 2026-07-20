@@ -69,33 +69,35 @@
         (expect (= ["Copied"]
                    (mapv :text (echo-segments {:input (input/empty-input) :echo "Copied"})))))
     (it "never leaks voice recording status into the echo row"
-        (let [text (mapv :text
-                         (echo-segments {:input (input/empty-input)
-                                         :channel-status {:voice/input {:text "● Recording 00:01"
-                                                                        :level :warn}}}))]
+        (let
+          [text (mapv :text
+                      (echo-segments {:input (input/empty-input)
+                                      :channel-status {:voice/input {:text "● Recording 00:01"
+                                                                     :level :warn}}}))]
           (expect (= [] text))))
-    (it
-      "paints a flat row with no box chrome"
-      (let [puts (atom [])
-            g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                (clearModifiers [] this)
-                (enableModifiers [_] this)
-                (disableModifiers [_] this)
-                (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-                (setForegroundColor [_] this)
-                (setBackgroundColor [_] this)
-                (fillRectangle [_ _ _] this)
-                (setCharacter [_ _ _] this)
-                (putString [col row text] (swap! puts conj {:col col :row row :text text}) this))]
+    (it "paints a flat row with no box chrome"
+        (let
+          [puts (atom [])
+           g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+               (clearModifiers [] this)
+               (enableModifiers [_] this)
+               (disableModifiers [_] this)
+               (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+               (setForegroundColor [_] this)
+               (setBackgroundColor [_] this)
+               (fillRectangle [_ _ _] this)
+               (setCharacter [_ _ _] this)
+               (putString [col row text] (swap! puts conj {:col col :row row :text text}) this))]
 
-        (footer/draw-echo-area! g {:loading? true :input (input/empty-input)} 4 90 0)
-        (let [painted (str/join "" (map :text @puts))
-              rows (set (map :row @puts))]
+          (footer/draw-echo-area! g {:loading? true :input (input/empty-input)} 4 90 0)
+          (let
+            [painted (str/join "" (map :text @puts))
+             rows (set (map :row @puts))]
 
-          (expect (= #{4} rows))
-          (expect (not (str/includes? painted "┌")))
-          (expect (not (str/includes? painted "└")))
-          (expect (str/includes? painted (str (keymap/abort-hint) " cancel"))))))))
+            (expect (= #{4} rows))
+            (expect (not (str/includes? painted "┌")))
+            (expect (not (str/includes? painted "└")))
+            (expect (str/includes? painted (str (keymap/abort-hint) " cancel"))))))))
 
 (defdescribe
   build-segments-test
@@ -106,11 +108,11 @@
                          #'vis/list-resources (fn [_]
                                                 [{:id :nrepl}])}
           (fn []
-            (let [resource-text (->> (build-segments {:messages [] :settings {} :session {:id "s1"}}
-                                                     0)
-                                     (filter #(= :footer-resources (:kind %)))
-                                     first
-                                     :text)]
+            (let
+              [resource-text (->> (build-segments {:messages [] :settings {} :session {:id "s1"}} 0)
+                                  (filter #(= :footer-resources (:kind %)))
+                                  first
+                                  :text)]
               (expect (str/includes? resource-text "(C-x s)"))
               (expect (not (str/includes? resource-text keymap/palette-chord))))))))
   (it "leaves voice recording status out of the footer because header owns channel statuses"
@@ -118,14 +120,14 @@
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-5" :provider :openai})}
           (fn []
-            (let [voice (->> (build-segments {:messages []
-                                              :settings {}
-                                              :channel-status {:voice/input {:text
-                                                                             "● Recording 00:01"
-                                                                             :level :warn}}}
-                                             0)
-                             (filter #(= "● Recording 00:01" (:text %)))
-                             first)]
+            (let
+              [voice (->> (build-segments {:messages []
+                                           :settings {}
+                                           :channel-status {:voice/input {:text "● Recording 00:01"
+                                                                          :level :warn}}}
+                                          0)
+                          (filter #(= "● Recording 00:01" (:text %)))
+                          first)]
               (expect (nil? voice))
               (expect (nil? voice))
               (expect (nil? voice)))))))
@@ -138,34 +140,35 @@
                               (build-segments {:messages [] :settings {} :cancelling? true} 0)))))))
   (it
     "shows Codex dynamic quota windows on the second footer line"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
+    (let
+      [build-limits-segments
+       @#'footer/build-limits-segments
 
-          now-ms
-          1000000000000
+       now-ms
+       1000000000000
 
-          report
-          {:dynamic {:limits [{:id :codex-5h
-                               :label "Codex 5h quota (%)"
-                               :remaining 76.0
-                               :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
-                              {:id :codex-7d
-                               :label "Codex 7d quota (%)"
-                               :remaining 85.0
-                               :window {:resets-at-ms (+ now-ms
-                                                         (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+       report
+       {:dynamic {:limits [{:id :codex-5h
+                            :label "Codex 5h quota (%)"
+                            :remaining 76.0
+                            :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
+                           {:id :codex-7d
+                            :label "Codex 7d quota (%)"
+                            :remaining 85.0
+                            :window {:resets-at-ms (+ now-ms (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "gpt-5.5" :provider :openai-codex})}
         (fn []
-          (let [text (->> (build-limits-segments {:messages []
-                                                  :settings {}
-                                                  :provider-limits {:provider-id :openai-codex
-                                                                    :report report}}
-                                                 now-ms)
-                          (filter #(= :left (:region %)))
-                          first
-                          :text)]
+          (let
+            [text (->> (build-limits-segments {:messages []
+                                               :settings {}
+                                               :provider-limits {:provider-id :openai-codex
+                                                                 :report report}}
+                                              now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
             (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85% ↺3d18h@" text))
             (expect (not (str/includes? text "Codex 7d")))
             (expect (str/includes? text " AM"))
@@ -173,154 +176,161 @@
             (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
   (it
     "keeps a visible Codex 5h window even when the provider omits its data"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
+    (let
+      [build-limits-segments
+       @#'footer/build-limits-segments
 
-          now-ms
-          1000000000000
+       now-ms
+       1000000000000
 
-          ;; Codex omitted the 5h window: a placeholder row with no usage
-          ;; signal (no :remaining / :resets-at-ms). It must still render
-          ;; beside the data-bearing 7d row, not be filtered away.
-          report
-          {:dynamic {:limits [{:id :codex-5h
-                               :label "Codex 5h quota (%)"
-                               :precision :unknown
-                               :window {:kind :rolling :unit :hour :size 5}}
-                              {:id :codex-7d
-                               :label "Codex 7d quota (%)"
-                               :remaining 81.0
-                               :limit 100.0
-                               :window {:resets-at-ms (+ now-ms
-                                                         (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+       ;; Codex omitted the 5h window: a placeholder row with no usage
+       ;; signal (no :remaining / :resets-at-ms). It must still render
+       ;; beside the data-bearing 7d row, not be filtered away.
+       report
+       {:dynamic {:limits [{:id :codex-5h
+                            :label "Codex 5h quota (%)"
+                            :precision :unknown
+                            :window {:kind :rolling :unit :hour :size 5}}
+                           {:id :codex-7d
+                            :label "Codex 7d quota (%)"
+                            :remaining 81.0
+                            :limit 100.0
+                            :window {:resets-at-ms (+ now-ms (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "gpt-5.5" :provider :openai-codex})}
         (fn []
-          (let [text (->> (build-limits-segments {:messages []
-                                                  :settings {}
-                                                  :provider-limits {:provider-id :openai-codex
-                                                                    :report report}}
-                                                 now-ms)
-                          (filter #(= :left (:region %)))
-                          first
-                          :text)]
+          (let
+            [text (->> (build-limits-segments {:messages []
+                                               :settings {}
+                                               :provider-limits {:provider-id :openai-codex
+                                                                 :report report}}
+                                              now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
             (expect (re-find #"Codex 5h / 7d 81%" text)))))))
   (it
     "shares the Claude provider label across 5h and 7d windows"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
+    (let
+      [build-limits-segments
+       @#'footer/build-limits-segments
 
-          now-ms
-          1000000000000
+       now-ms
+       1000000000000
 
-          report
-          {:provider-id :anthropic-coding-plan
-           :dynamic {:limits [{:id :claude-5h
-                               :label "Claude 5h"
-                               :kind :rate
-                               :limit 100.0
-                               :remaining 0.0
-                               :window {:resets-at-ms (+ now-ms (* 5 60 60 1000))}}
-                              {:id :claude-7d
-                               :label "Claude 7d"
-                               :kind :rate
-                               :limit 100.0
-                               :remaining 75.0
-                               :window {:resets-at-ms (+ now-ms (* 6 24 60 60 1000))}}]}}]
+       report
+       {:provider-id :anthropic-coding-plan
+        :dynamic {:limits [{:id :claude-5h
+                            :label "Claude 5h"
+                            :kind :rate
+                            :limit 100.0
+                            :remaining 0.0
+                            :window {:resets-at-ms (+ now-ms (* 5 60 60 1000))}}
+                           {:id :claude-7d
+                            :label "Claude 7d"
+                            :kind :rate
+                            :limit 100.0
+                            :remaining 75.0
+                            :window {:resets-at-ms (+ now-ms (* 6 24 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "claude-opus-4-6"
                                                      :provider :anthropic-coding-plan})}
         (fn []
-          (let [text (->> (build-limits-segments
-                            {:messages []
-                             :settings {}
-                             :provider-limits {:provider-id :anthropic-coding-plan :report report}}
-                            now-ms)
-                          (filter #(= :left (:region %)))
-                          first
-                          :text)]
+          (let
+            [text (->> (build-limits-segments {:messages []
+                                               :settings {}
+                                               :provider-limits {:provider-id :anthropic-coding-plan
+                                                                 :report report}}
+                                              now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
             (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75% ↺6d0h@" text))
             (expect (not (str/includes? text "Claude 7d"))))))))
   (it
     "shows Z.ai coding plan quota windows as percentages on the second footer line"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
+    (let
+      [build-limits-segments
+       @#'footer/build-limits-segments
 
-          now-ms
-          1000000000000
+       now-ms
+       1000000000000
 
-          report
-          {:provider-id :zai-coding-plan
-           :dynamic {:limits [{:id :zai-coding-plan-5h
-                               :label "Z.ai coding plan 5h token quota"
-                               :kind :tokens
-                               :used 25.0
-                               :limit 100.0
-                               :remaining 75.0
-                               :unlimited? false
-                               :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
-                              {:id :zai-coding-plan-7d
-                               :label "Z.ai coding plan 7d token quota"
-                               :kind :tokens
-                               :used 50.0
-                               :limit 100.0
-                               :remaining 50.0
-                               :unlimited? false
-                               :window {:resets-at-ms (+ now-ms (* 3 24 60 60 1000))}}]}}]
+       report
+       {:provider-id :zai-coding-plan
+        :dynamic {:limits [{:id :zai-coding-plan-5h
+                            :label "Z.ai coding plan 5h token quota"
+                            :kind :tokens
+                            :used 25.0
+                            :limit 100.0
+                            :remaining 75.0
+                            :unlimited? false
+                            :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
+                           {:id :zai-coding-plan-7d
+                            :label "Z.ai coding plan 7d token quota"
+                            :kind :tokens
+                            :used 50.0
+                            :limit 100.0
+                            :remaining 50.0
+                            :unlimited? false
+                            :window {:resets-at-ms (+ now-ms (* 3 24 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "glm-5.1" :provider :zai-coding-plan})}
         (fn []
-          (let [text (->> (build-limits-segments {:messages []
-                                                  :settings {}
-                                                  :provider-limits {:provider-id :zai-coding-plan
-                                                                    :report report}}
-                                                 now-ms)
-                          (filter #(= :left (:region %)))
-                          first
-                          :text)]
+          (let
+            [text (->> (build-limits-segments {:messages []
+                                               :settings {}
+                                               :provider-limits {:provider-id :zai-coding-plan
+                                                                 :report report}}
+                                              now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
             (expect (re-find #"Z\.ai 5h 75% ↺1h30m.* / 7d 50% ↺3d0h" text))
             (expect (not (str/includes? text "Z.ai 7d"))))))))
   (it
     "shows GitHub Copilot premium interaction utilization on the second footer line"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
+    (let
+      [build-limits-segments
+       @#'footer/build-limits-segments
 
-          now-ms
-          1000000000000
+       now-ms
+       1000000000000
 
-          report
-          {:provider-id :github-copilot
-           :dynamic
-           {:limits [{:id :chat :label "Chat" :used 0.0 :limit 0.0 :remaining 0.0 :unlimited? false}
-                     {:id :completions
-                      :label "Completions"
-                      :used 0.0
-                      :limit 0.0
-                      :remaining 0.0
-                      :unlimited? false}
-                     {:id :premium_interactions
-                      :label "Premium interactions"
-                      :used 60.0
-                      :limit 300.0
-                      :remaining 240.0
-                      :unlimited? false
-                      :window {:resets-at-ms (+ now-ms (* 2 24 60 60 1000))}}]}}]
+       report
+       {:provider-id :github-copilot
+        :dynamic {:limits
+                  [{:id :chat :label "Chat" :used 0.0 :limit 0.0 :remaining 0.0 :unlimited? false}
+                   {:id :completions
+                    :label "Completions"
+                    :used 0.0
+                    :limit 0.0
+                    :remaining 0.0
+                    :unlimited? false}
+                   {:id :premium_interactions
+                    :label "Premium interactions"
+                    :used 60.0
+                    :limit 300.0
+                    :remaining 240.0
+                    :unlimited? false
+                    :window {:resets-at-ms (+ now-ms (* 2 24 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "claude-opus-4-6"
                                                      :provider :github-copilot})}
         (fn []
-          (let [text (->> (build-limits-segments {:messages []
-                                                  :settings {}
-                                                  :provider-limits {:provider-id :github-copilot
-                                                                    :report report}}
-                                                 now-ms)
-                          (filter #(= :left (:region %)))
-                          first
-                          :text)]
+          (let
+            [text (->> (build-limits-segments {:messages []
+                                               :settings {}
+                                               :provider-limits {:provider-id :github-copilot
+                                                                 :report report}}
+                                              now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
             (expect (re-find #"Premium 60/300 \(240\) ↺2d0h" text)))))))
   (it "renders the gateway :git fact for the active workspace"
       ;; Git status is a GATEWAY SESSION FACT — resolved server-side by
@@ -332,19 +342,20 @@
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
-            (let [db {:messages []
-                      :settings {}
-                      :workspace/root "/tmp/vis"
-                      :workspace {"root" "/tmp/vis"
-                                  "git" {"is_workspace" true
-                                         "repo" "vis"
-                                         "branch" "main"
-                                         "modified" 2
-                                         "created" 3
-                                         "deleted" 1
-                                         "is_upstream" true
-                                         "ahead" 4
-                                         "behind" 0}}}]
+            (let
+              [db {:messages []
+                   :settings {}
+                   :workspace/root "/tmp/vis"
+                   :workspace {"root" "/tmp/vis"
+                               "git" {"is_workspace" true
+                                      "repo" "vis"
+                                      "branch" "main"
+                                      "modified" 2
+                                      "created" 3
+                                      "deleted" 1
+                                      "is_upstream" true
+                                      "ahead" 4
+                                      "behind" 0}}}]
               (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) (C-x g) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
@@ -358,17 +369,18 @@
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
-            (let [db {:messages []
-                      :settings {}
-                      :workspace {"git" {"is_workspace" true
-                                         "repo" "spel"
-                                         "branch" "main"
-                                         "modified" 0
-                                         "created" 0
-                                         "deleted" 0
-                                         "is_upstream" true
-                                         "ahead" 0
-                                         "behind" 0}}}]
+            (let
+              [db {:messages []
+                   :settings {}
+                   :workspace {"git" {"is_workspace" true
+                                      "repo" "spel"
+                                      "branch" "main"
+                                      "modified" 0
+                                      "created" 0
+                                      "deleted" 0
+                                      "is_upstream" true
+                                      "ahead" 0
+                                      "behind" 0}}}]
               (expect (= [" git ~/spel (main) (C-x g) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
@@ -381,11 +393,12 @@
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
-            (let [spans (->> (build-segments
-                               {:messages [] :settings {} :workspace {"git" {"is_workspace" false}}}
-                               0)
-                             (filter #(= :right (:region %)))
-                             (remove fixture-seg?))]
+            (let
+              [spans (->> (build-segments
+                            {:messages [] :settings {} :workspace {"git" {"is_workspace" false}}}
+                            0)
+                          (filter #(= :right (:region %)))
+                          (remove fixture-seg?))]
               (expect (= ["No git"] (mapv :text spans)))
               (expect (= t/footer-error-fg (:fg (first spans))))
               (expect (true? (:bold? (first spans)))))))))
@@ -466,23 +479,24 @@
 
 (defdescribe
   shrink-to-fit-test
-  (let [shrink
-        @#'footer/shrink-to-fit
+  (let
+    [shrink
+     @#'footer/shrink-to-fit
 
-        total
-        @#'footer/total-width
+     total
+     @#'footer/total-width
 
-        fits?
-        (fn [[segs sepa] cols]
-          (<= (total segs sepa) cols))
+     fits?
+     (fn [[segs sepa] cols]
+       (<= (total segs sepa) cols))
 
-        row
-        [{:text "openai-codex/gpt-5.5 (C-x o) (cycle 1/3 C-x m)" :region :left :priority 2}
-         {:text "reasoning: deep" :region :left :priority 3}
-         {:text " resources 0 (C-x s) " :region :right :priority 2}]
+     row
+     [{:text "openai-codex/gpt-5.5 (C-x o) (cycle 1/3 C-x m)" :region :left :priority 2}
+      {:text "reasoning: deep" :region :left :priority 3}
+      {:text " resources 0 (C-x s) " :region :right :priority 2}]
 
-        limits
-        [{:text "limits: 5h 1200/2000  7d 40000/50000 resets in 3h" :region :left :priority 1}]]
+     limits
+     [{:text "limits: 5h 1200/2000  7d 40000/50000 resets in 3h" :region :left :priority 1}]]
 
     (it "keeps every segment untouched when the row already fits"
         (expect (= [row "  /  "] (shrink row 200))))

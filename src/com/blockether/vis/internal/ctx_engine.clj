@@ -34,11 +34,12 @@
    Compares parsed segments; malformed scopes sort before all valid ones to
    make their presence obvious in render."
   [a b]
-  (let [pa
-        (parse-scope-form a)
+  (let
+    [pa
+     (parse-scope-form a)
 
-        pb
-        (parse-scope-form b)]
+     pb
+     (parse-scope-form b)]
 
     (cond (and (nil? pa) (nil? pb)) (compare (str a) (str b))
           (nil? pa) -1
@@ -59,42 +60,43 @@
   [error]
   (if-not (map? error)
     error
-    (let [data
-          (if (map? (:data error)) (:data error) {})
+    (let
+      [data
+       (if (map? (:data error)) (:data error) {})
 
-          inner
-          (if (map? (:error data)) (:error data) {})
+       inner
+       (if (map? (:error data)) (:error data) {})
 
-          pick3
-          (fn [k]
-            (or (k inner) (k data) (k error)))
+       pick3
+       (fn [k]
+         (or (k inner) (k data) (k error)))
 
-          message
-          (or (:message error) (:message inner))
+       message
+       (or (:message error) (:message inner))
 
-          etype
-          (or (:type inner) (:type data) (:type error))
+       etype
+       (or (:type inner) (:type data) (:type error))
 
-          reason
-          (pick3 :reason)
+       reason
+       (pick3 :reason)
 
-          ;; ONE hint survives: `:loop-hint` is the model-facing
-          ;; recovery advice (the error normalizer lifts it into the
-          ;; trailer); `:hint` is the human/channel field. Extensions
-          ;; legitimately set both — the prompt needs at most one.
-          hint
-          (or (pick3 :loop-hint) (pick3 :hint))
+       ;; ONE hint survives: `:loop-hint` is the model-facing
+       ;; recovery advice (the error normalizer lifts it into the
+       ;; trailer); `:hint` is the human/channel field. Extensions
+       ;; legitimately set both — the prompt needs at most one.
+       hint
+       (or (pick3 :loop-hint) (pick3 :hint))
 
-          ;; validation-tool forensics the lift contract declares
-          ;; model-actionable (`:failures`, `:checks`, `:mode`)
-          failures
-          (pick3 :failures)
+       ;; validation-tool forensics the lift contract declares
+       ;; model-actionable (`:failures`, `:checks`, `:mode`)
+       failures
+       (pick3 :failures)
 
-          checks
-          (pick3 :checks)
+       checks
+       (pick3 :checks)
 
-          mode
-          (pick3 :mode)]
+       mode
+       (pick3 :mode)]
 
       (cond-> {}
         message
@@ -156,17 +158,18 @@
    of an error/result doesn't already say — the `:src` stays, the dead
    field goes."
   [r]
-  (let [empty-payload?
-        (fn [v]
-          (or (nil? v) (and (coll? v) (empty? v))))
+  (let
+    [empty-payload?
+     (fn [v]
+       (or (nil? v) (and (coll? v) (empty? v))))
 
-        r*
-        (cond-> (dissoc r :channel :tag)
-          (:error r)
-          (update :error model-error)
+     r*
+     (cond-> (dissoc r :channel :tag)
+       (:error r)
+       (update :error model-error)
 
-          (contains? r :result)
-          (update :result model-tool-result))]
+       (contains? r :result)
+       (update :result model-tool-result))]
 
     (cond-> r*
       (and (contains? r* :result) (empty-payload? (:result r*)))
@@ -258,10 +261,11 @@
   "One-line, length-capped form source for the `you ran:` scope index
    rendered in the cross-turn `<conversation-so-far>` resume block."
   [src]
-  (let [s (-> (or src "")
-              str
-              str/trim
-              (str/replace #"\s+" " "))]
+  (let
+    [s (-> (or src "")
+           str
+           str/trim
+           (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
 (defn finalize-turn
   "Finalize a turn: the loop ships `:answer` to the channel and the engine
@@ -285,16 +289,18 @@
    Returns nil until a request has actually been measured (req <= 0), so
    the first iter of a turn shows nothing rather than a bogus 0%."
   [request-tokens window-tokens turn-tokens fold-cap]
-  (let [req
-        (long (or request-tokens 0))
+  (let
+    [req
+     (long (or request-tokens 0))
 
-        win
-        (long (or window-tokens 0))]
+     win
+     (long (or window-tokens 0))]
 
     (when (pos? req)
-      (cond-> {"last_request_tokens" req
-               "turn_total_tokens" (long (or turn-tokens 0))
-               "auto_compress_above" (long (or fold-cap 0))}
+      (cond->
+        {"last_request_tokens" req
+         "turn_total_tokens" (long (or turn-tokens 0))
+         "auto_compress_above" (long (or fold-cap 0))}
         (pos? win)
         (assoc "model_input_limit"
           win "saturation"
@@ -346,74 +352,76 @@
    Intents with none of these keys pass through untouched. Pure — same inputs →
    same output."
   [summaries universe]
-  (let [ukeys
-        (into []
-              (keep (fn [u]
-                      (when-let [k (scope-key u)]
-                        [u k]))
-                    universe))
+  (let
+    [ukeys
+     (into []
+           (keep (fn [u]
+                   (when-let [k (scope-key u)]
+                     [u k]))
+                 universe))
 
-        pick
-        (fn [pred]
-          (into #{}
-                (comp (filter (fn [[_ k]]
-                                (pred k)))
-                      (map first))
-                ukeys))
+     pick
+     (fn [pred]
+       (into #{}
+             (comp (filter (fn [[_ k]]
+                             (pred k)))
+                   (map first))
+             ukeys))
 
-        turn-scopes
-        (fn [tn]
-          (into #{}
-                (comp (filter (fn [[_ k]]
-                                (= tn (first k))))
-                      (map first))
-                ukeys))
+     turn-scopes
+     (fn [tn]
+       (into #{}
+             (comp (filter (fn [[_ k]]
+                             (= tn (first k))))
+                   (map first))
+             ukeys))
 
-        selector?
-        #{"scopes" "through" "from" "to" "since"}]
+     selector?
+     #{"scopes" "through" "from" "to" "since"}]
 
     (mapv
       (fn [s]
         (if-not (some #(contains? s %) selector?)
           s
-          (let [thr
-                (some-> (get s "through")
-                        scope-key)
+          (let
+            [thr
+             (some-> (get s "through")
+                     scope-key)
 
-                frm
-                (some-> (get s "from")
-                        scope-key)
+             frm
+             (some-> (get s "from")
+                     scope-key)
 
-                to
-                (some-> (get s "to")
-                        scope-key)
+             to
+             (some-> (get s "to")
+                     scope-key)
 
-                snc
-                (some-> (get s "since")
-                        scope-key)
+             snc
+             (some-> (get s "since")
+                     scope-key)
 
-                expl
-                (into #{}
-                      (mapcat (fn [sc]
-                                (cond (scope-key sc) [sc]
-                                      (turn-key sc) (turn-scopes (turn-key sc))
-                                      :else [sc])))
-                      (get s "scopes"))
+             expl
+             (into #{}
+                   (mapcat (fn [sc]
+                             (cond (scope-key sc) [sc]
+                                   (turn-key sc) (turn-scopes (turn-key sc))
+                                   :else [sc])))
+                   (get s "scopes"))
 
-                scopes
-                (cond-> expl
-                  thr
-                  (into (pick (fn [k]
-                                (<= (compare k thr) 0))))
+             scopes
+             (cond-> expl
+               thr
+               (into (pick (fn [k]
+                             (<= (compare k thr) 0))))
 
-                  (or frm to)
-                  (into (pick (fn [k]
-                                (and (or (nil? frm) (>= (compare k frm) 0))
-                                     (or (nil? to) (<= (compare k to) 0))))))
+               (or frm to)
+               (into (pick (fn [k]
+                             (and (or (nil? frm) (>= (compare k frm) 0))
+                                  (or (nil? to) (<= (compare k to) 0))))))
 
-                  snc
-                  (into (pick (fn [k]
-                                (>= (compare k snc) 0)))))]
+               snc
+               (into (pick (fn [k]
+                             (>= (compare k snc) 0)))))]
 
             (-> s
                 (dissoc "through" "from" "to" "since")
@@ -429,23 +437,24 @@
    for equal sets the later/newer wins). Order-stable. Expects scopes already
    resolved (run AFTER expand-through). Pure."
   [summaries]
-  (let [v
-        (vec summaries)
+  (let
+    [v
+     (vec summaries)
 
-        n
-        (count v)
+     n
+     (count v)
 
-        covered?
-        (fn [i]
-          (let [si (set (get (nth v i) "scopes"))]
-            (and (seq si)
-                 (boolean (some (fn [j]
-                                  (when (not= i j)
-                                    (let [sj (set (get (nth v j) "scopes"))]
-                                      (and (every? sj si)           ; si ⊆ sj
-                                           (or (not (every? si sj)) ; proper subset → superset wins
-                                               (< (long i) (long j))))))) ; equal → later wins
-                                (range n))))))]
+     covered?
+     (fn [i]
+       (let [si (set (get (nth v i) "scopes"))]
+         (and (seq si)
+              (boolean (some (fn [j]
+                               (when (not= i j)
+                                 (let [sj (set (get (nth v j) "scopes"))]
+                                   (and (every? sj si)           ; si ⊆ sj
+                                        (or (not (every? si sj)) ; proper subset → superset wins
+                                            (< (long i) (long j))))))) ; equal → later wins
+                             (range n))))))]
 
     (vec (keep-indexed (fn [i s]
                          (when-not (covered? i) s))
@@ -476,52 +485,54 @@
    Tokens are ordered by (turn, iter). Scopes/universe entries that don't parse
    are ignored. Pure — same inputs → same output."
   [scopes universe]
-  (let [by-turn
-        (fn [ss]
-          (reduce (fn [m sc]
-                    (if-let [[t i] (scope-key sc)]
-                      (update m t (fnil conj (sorted-set)) i)
-                      m))
-                  {}
-                  ss))
+  (let
+    [by-turn
+     (fn [ss]
+       (reduce (fn [m sc]
+                 (if-let [[t i] (scope-key sc)]
+                   (update m t (fnil conj (sorted-set)) i)
+                   m))
+               {}
+               ss))
 
-        uni
-        (by-turn universe)
+     uni
+     (by-turn universe)
 
-        sel
-        (by-turn scopes)
+     sel
+     (by-turn scopes)
 
-        full?
-        (fn [t]
-          (let [u (get uni t)]
-            (and (seq u) (every? (get sel t #{}) u))))
+     full?
+     (fn [t]
+       (let [u (get uni t)]
+         (and (seq u) (every? (get sel t #{}) u))))
 
-        sel-turns
-        (sort (keys sel))
+     sel-turns
+     (sort (keys sel))
 
-        full-turns
-        (filterv full? sel-turns)
+     full-turns
+     (filterv full? sel-turns)
 
-        all-full?
-        (and (seq sel-turns) (= (set full-turns) (set (keys uni))) (every? full? sel-turns))]
+     all-full?
+     (and (seq sel-turns) (= (set full-turns) (set (keys uni))) (every? full? sel-turns))]
 
     (if all-full?
       ["t*"]
-      (let [full-set
-            (set full-turns)
+      (let
+        [full-set
+         (set full-turns)
 
-            full-tokens
-            (map (fn [[a b]]
-                   [[a -1] (if (= a b) (str "t" a "/*") (str "t" a "-t" b "/*"))])
-                 (int-runs full-turns))
+         full-tokens
+         (map (fn [[a b]]
+                [[a -1] (if (= a b) (str "t" a "/*") (str "t" a "-t" b "/*"))])
+              (int-runs full-turns))
 
-            partial-tokens
-            (mapcat (fn [t]
-                      (when-not (full-set t)
-                        (map (fn [[a b]]
-                               [[t a] (if (= a b) (str "t" t "/i" a) (str "t" t "/i" a "-i" b))])
-                             (int-runs (get sel t)))))
-                    sel-turns)]
+         partial-tokens
+         (mapcat (fn [t]
+                   (when-not (full-set t)
+                     (map (fn [[a b]]
+                            [[t a] (if (= a b) (str "t" t "/i" a) (str "t" t "/i" a "-i" b))])
+                          (int-runs (get sel t)))))
+                 sel-turns)]
 
         (mapv second (sort-by first (concat full-tokens partial-tokens)))))))
 
@@ -535,11 +546,12 @@
   (when (seq tokens)
     (->> tokens
          (reduce (fn [acc tok]
-                   (let [m
-                         (re-matches #"(t\d+)/(i[\d,i-]*)" tok)
+                   (let
+                     [m
+                      (re-matches #"(t\d+)/(i[\d,i-]*)" tok)
 
-                         prev
-                         (peek acc)]
+                      prev
+                      (peek acc)]
 
                      (if (and m prev (= (:turn prev) (nth m 1)))
                        (conj (pop acc) (update prev :iters conj (nth m 2)))
@@ -601,58 +613,59 @@
    simply omits `~<toks> tok`, leaving the scope counts — never breaks the line.
    Pure."
   [summaries universe weights util]
-  (let [universe
-        (into [] (comp (filter string?) (distinct)) universe)
+  (let
+    [universe
+     (into [] (comp (filter string?) (distinct)) universe)
 
-        has-uni?
-        (boolean (seq universe))
+     has-uni?
+     (boolean (seq universe))
 
-        resolved
-        (when has-uni? (supersede-summaries (expand-through summaries universe)))
+     resolved
+     (when has-uni? (supersede-summaries (expand-through summaries universe)))
 
-        uni-set
-        (set universe)
+     uni-set
+     (set universe)
 
-        collapsed-set
-        (into #{} (mapcat #(get % "scopes")) resolved)
+     collapsed-set
+     (into #{} (mapcat #(get % "scopes")) resolved)
 
-        live
-        (into [] (remove collapsed-set) universe)
+     live
+     (into [] (remove collapsed-set) universe)
 
-        collapsed-live
-        (filter uni-set collapsed-set)
+     collapsed-live
+     (filter uni-set collapsed-set)
 
-        c
-        (count collapsed-live)
+     c
+     (count collapsed-live)
 
-        total
-        (+ c (count live))
+     total
+     (+ c (count live))
 
-        saved-toks
-        (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live)))
+     saved-toks
+     (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live)))
 
-        sat
-        (get util "saturation")
+     sat
+     (get util "saturation")
 
-        live-str
-        (join-scopes (compress-scopes live universe))
+     live-str
+     (join-scopes (compress-scopes live universe))
 
-        now
-        (when has-uni?
-          (str/join " · "
-                    (keep identity
-                          [(when sat (str "context " sat "%"))
-                           (when (pos? total)
-                             (str "saved "
-                                  c
-                                  "/"
-                                  total
-                                  " ("
-                                  (Math/round (* 100.0 (/ (double c) total)))
-                                  "%"
-                                  (when (and saved-toks (pos? (long saved-toks)))
-                                    (str ", ~" (fmt-toks saved-toks) " tok"))
-                                  ")")) (when (seq live-str) (str "live " live-str))])))]
+     now
+     (when has-uni?
+       (str/join " · "
+                 (keep identity
+                       [(when sat (str "context " sat "%"))
+                        (when (pos? total)
+                          (str "saved "
+                               c
+                               "/"
+                               total
+                               " ("
+                               (Math/round (* 100.0 (/ (double c) total)))
+                               "%"
+                               (when (and saved-toks (pos? (long saved-toks)))
+                                 (str ", ~" (fmt-toks saved-toks) " tok"))
+                               ")")) (when (seq live-str) (str "live " live-str))])))]
 
     (cond-> {}
       (seq now)
@@ -680,17 +693,18 @@
    ;; breadcrumb where the step collapsed (with its file:line anchors), so nothing
    ;; is echoed. Before any request is measured (no universe) `folds-view` yields
    ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
-   (let [budget
-         (when (seq (get ctx "session_summaries"))
-           (folds-view (get ctx "session_summaries")
-                       (get ctx "engine_iter_universe")
-                       (get ctx "engine_iter_weights")
-                       (get ctx "engine_utilization")))
+   (let
+     [budget
+      (when (seq (get ctx "session_summaries"))
+        (folds-view (get ctx "session_summaries")
+                    (get ctx "engine_iter_universe")
+                    (get ctx "engine_iter_weights")
+                    (get ctx "engine_utilization")))
 
-         util
-         (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
-           (seq budget)
-           (merge budget))]
+      util
+      (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
+        (seq budget)
+        (merge budget))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)
@@ -765,11 +779,12 @@
    depth-bounded so a self-referential structure cannot loop."
   ([v] (realize-value v 8))
   ([v ^long depth]
-   (let [depth
-         (long depth)
+   (let
+     [depth
+      (long depth)
 
-         depth'
-         (dec depth)]
+      depth'
+      (dec depth)]
 
      (cond (or (nil? v) (zero? depth)) v
            (instance? clojure.lang.IDeref v) (try (realize-value (deref v) depth')
@@ -807,28 +822,29 @@
    unrealized seqs."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block _position cursor head-tag-resolver]
-   (let [src
-         (or (:code block) (:src block) "")
+   (let
+     [src
+      (or (:code block) (:src block) "")
 
-         ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
-         ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
-         scope
-         (str "t" (:turn cursor) "/i" (:iter cursor))
+      ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
+      ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
+      scope
+      (str "t" (:turn cursor) "/i" (:iter cursor))
 
-         raw-result
-         (:result block)
+      raw-result
+      (:result block)
 
-         ;; `realize-value` derefs any `IDeref` it encounters, so every
-         ;; block's result — Var, atom, lazy seq, plain data — lands as
-         ;; fully realised data in the envelope, ready for prompt
-         ;; rendering and introspection.
-         result
-         (realize-value raw-result)
+      ;; `realize-value` derefs any `IDeref` it encounters, so every
+      ;; block's result — Var, atom, lazy seq, plain data — lands as
+      ;; fully realised data in the envelope, ready for prompt
+      ;; rendering and introspection.
+      result
+      (realize-value raw-result)
 
-         duration-ms
-         (when-let [envelope (:envelope block)]
-           (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
-             (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
+      duration-ms
+      (when-let [envelope (:envelope block)]
+        (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
+          (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
 
      (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}
        (some? duration-ms)

@@ -113,25 +113,25 @@
                              :exclude (:exclude norm)}))))))
 
 (defdescribe selected?-test
-             (describe "selected? - lazytest precedence over one test"
-                       (it "runs everything when no selectors are given"
-                           (let [sel (contract/normalize-selectors {})]
-                             (expect (contract/selected? sel "adds" #{}))))
-                       (it "only narrows by test name (keeps a match)"
-                           (let [sel (contract/normalize-selectors {:only ["adds"]})]
-                             (expect (contract/selected? sel "adds" #{}))))
-                       (it "only narrows by test name (drops a non-match)"
-                           (let [sel (contract/normalize-selectors {:only ["adds"]})]
-                             (expect (not (contract/selected? sel "subtracts" #{})))))
-                       (it "include gates by metadata tag"
-                           (let [sel (contract/normalize-selectors {:include ["slow"]})]
-                             (expect (contract/selected? sel "x" #{"slow"}))
-                             (expect (not (contract/selected? sel "x" #{})))))
-                       (it "exclude drops a tagged test"
-                           (let [sel (contract/normalize-selectors {:exclude ["slow"]})]
-                             (expect (not (contract/selected? sel "x" #{"slow"})))
-                             (expect (contract/selected? sel "x" #{}))))
-                       (it "exclude OVERRIDES include when a test carries both"
-                           (let [sel (contract/normalize-selectors {:include ["slow"]
-                                                                    :exclude ["slow"]})]
-                             (expect (not (contract/selected? sel "x" #{"slow"})))))))
+             (describe
+               "selected? - lazytest precedence over one test"
+               (it "runs everything when no selectors are given"
+                   (let [sel (contract/normalize-selectors {})]
+                     (expect (contract/selected? sel "adds" #{}))))
+               (it "only narrows by test name (keeps a match)"
+                   (let [sel (contract/normalize-selectors {:only ["adds"]})]
+                     (expect (contract/selected? sel "adds" #{}))))
+               (it "only narrows by test name (drops a non-match)"
+                   (let [sel (contract/normalize-selectors {:only ["adds"]})]
+                     (expect (not (contract/selected? sel "subtracts" #{})))))
+               (it "include gates by metadata tag"
+                   (let [sel (contract/normalize-selectors {:include ["slow"]})]
+                     (expect (contract/selected? sel "x" #{"slow"}))
+                     (expect (not (contract/selected? sel "x" #{})))))
+               (it "exclude drops a tagged test"
+                   (let [sel (contract/normalize-selectors {:exclude ["slow"]})]
+                     (expect (not (contract/selected? sel "x" #{"slow"})))
+                     (expect (contract/selected? sel "x" #{}))))
+               (it "exclude OVERRIDES include when a test carries both"
+                   (let [sel (contract/normalize-selectors {:include ["slow"] :exclude ["slow"]})]
+                     (expect (not (contract/selected? sel "x" #{"slow"})))))))

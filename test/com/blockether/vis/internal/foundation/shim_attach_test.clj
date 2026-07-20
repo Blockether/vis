@@ -36,14 +36,15 @@
 (defdescribe
   vis-attach-bytes-capture-test
   (it "records an in-memory artifact into the block's :attachments with sniffed type"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx "r = vis_attach_bytes('a,b\\n1,2\\n', 'data.csv')\nprint(r['size'])")
+         out
+         (block pctx "r = vis_attach_bytes('a,b\\n1,2\\n', 'data.csv')\nprint(r['size'])")
 
-            [att]
-            (:attachments out)]
+         [att]
+         (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
@@ -55,16 +56,17 @@
         (expect (= "a,b\n1,2\n"
                    (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 att)))))))
   (it "detects an image by magic bytes -> kind image, image/png"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx
-                   (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) + b'body'\n"
-                        "vis_attach_bytes(png, 'fig.dat')\n"))
+         out
+         (block pctx
+                (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) + b'body'\n"
+                     "vis_attach_bytes(png, 'fig.dat')\n"))
 
-            [att]
-            (:attachments out)]
+         [att]
+         (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "image/png" (:media-type att)))
@@ -96,84 +98,89 @@
       ;; and the bytes are still captured for the vision-replay path
       (expect (= "image/png" (:media-type (first (:attachments out)))))))
   (it "records a non-decodable image (svg) with NO display fence"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx "vis_attach_bytes('<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
+         out
+         (block pctx "vis_attach_bytes('<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
 
         (expect (nil? (:error out)))
         (expect (not (re-find #"vis-image" (str (:stdout out)))))
         (expect (= "image/svg+xml" (:media-type (first (:attachments out)))))))
   (it "falls back to text/plain for undecorated utf-8 bytes"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx "vis_attach_bytes('just words', 'note')\n")
+         out
+         (block pctx "vis_attach_bytes('just words', 'note')\n")
 
-            [att]
-            (:attachments out)]
+         [att]
+         (:attachments out)]
 
         (expect (= "text/plain" (:media-type att)))
         (expect (= "file" (:kind att)))))
   (it "honours explicit kind / media_type overrides"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx
-                   "vis_attach_bytes('x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
+         out
+         (block pctx
+                "vis_attach_bytes('x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
 
-            [att]
-            (:attachments out)]
+         [att]
+         (:attachments out)]
 
         (expect (= "image/svg+xml" (:media-type att)))
         (expect (= "image" (:kind att)))))
   (it "collects MANY artifacts from one block, in order"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx
-                   (str "vis_attach_bytes('1', 'a.txt')\n" "vis_attach_bytes('2', 'b.json')\n"))]
+         out
+         (block pctx (str "vis_attach_bytes('1', 'a.txt')\n" "vis_attach_bytes('2', 'b.json')\n"))]
 
         (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out)))))))
 
 (defdescribe vis-attach-path-test
              (it "reads a confined file from disk and captures it"
-                 (let [root
-                       (temp-root)
+                 (let
+                   [root
+                    (temp-root)
 
-                       pctx
-                       (ctx-with-root root)
+                    pctx
+                    (ctx-with-root root)
 
-                       out
-                       (block pctx
-                              (str "with open('"
-                                   root
-                                   "/report.json','w') as f:\n"
-                                   "    f.write('{}')\n"
-                                   "vis_attach('"
-                                   root
-                                   "/report.json')\n"))
+                    out
+                    (block pctx
+                           (str "with open('"
+                                root
+                                "/report.json','w') as f:\n"
+                                "    f.write('{}')\n"
+                                "vis_attach('"
+                                root
+                                "/report.json')\n"))
 
-                       [att]
-                       (:attachments out)]
+                    [att]
+                    (:attachments out)]
 
                    (expect (nil? (:error out)))
                    (expect (= "report.json" (:filename att)))
                    (expect (= "application/json" (:media-type att)))))
              (it "refuses a path outside the filesystem roots"
-                 (let [pctx
-                       (ctx-with-root (temp-root))
+                 (let
+                   [pctx
+                    (ctx-with-root (temp-root))
 
-                       out
-                       (block pctx
-                              (str "try:\n"
-                                   "    vis_attach('/etc/hosts')\n" "    print('NO-RAISE')\n"
-                                   "except Exception as e:\n"
-                                   "    print('RAISED', type(e).__name__)\n"))]
+                    out
+                    (block pctx
+                           (str "try:\n"
+                                "    vis_attach('/etc/hosts')\n" "    print('NO-RAISE')\n"
+                                "except Exception as e:\n"
+                                "    print('RAISED', type(e).__name__)\n"))]
 
                    (expect (nil? (:error out)))
                    (expect (re-find #"RAISED" (str (:stdout out))))
@@ -197,17 +204,18 @@
 (defdescribe
   vis-outbox-capture-test
   (it "captures a file WRITTEN into $VIS_OUTBOX as an attachment (no vis_attach call)"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx
-                   (str "import os\n"
-                        "with open(os.path.join(os.environ['VIS_OUTBOX'], 'm.csv'), 'w') as f:\n"
-                        "    f.write('a,b\\n1,2\\n')\n" "print('ok')\n"))
+         out
+         (block pctx
+                (str "import os\n"
+                     "with open(os.path.join(os.environ['VIS_OUTBOX'], 'm.csv'), 'w') as f:\n"
+                     "    f.write('a,b\\n1,2\\n')\n" "print('ok')\n"))
 
-            [att]
-            (:attachments out)]
+         [att]
+         (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
@@ -215,19 +223,20 @@
         (expect (= "text/csv" (:media-type att)))
         (expect (= "file" (:kind att)))))
   (it "captures a confined write under a system temp root too (scratch tap, not just $VIS_OUTBOX)"
-      (let [root
-            (temp-root)
+      (let
+        [root
+         (temp-root)
 
-            pctx
-            (ctx-with-root root)
+         pctx
+         (ctx-with-root root)
 
-            out
-            (block pctx
-                   (str "with open('"
-                        root
-                        "/plain.txt', 'w') as f:\n"
-                        "    f.write('hi')\n"
-                        "print('ok')\n"))]
+         out
+         (block pctx
+                (str "with open('"
+                     root
+                     "/plain.txt', 'w') as f:\n"
+                     "    f.write('hi')\n"
+                     "print('ok')\n"))]
 
         (expect (nil? (:error out)))
         ;; The outbox tap is widened to any system temp root (/tmp, $TMPDIR):
@@ -244,24 +253,25 @@
    thread yet must still reach the block's `:attachments`."
   [^java.util.concurrent.ExecutorService executor]
   (fn [& thunks]
-    (let [thunks
-          (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-            (vec (first thunks))
-            (vec thunks))
+    (let
+      [thunks
+       (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+         (vec (first thunks))
+         (vec thunks))
 
-          call
-          (fn [t]
-            (cond (instance? Value t) (.execute ^Value t (object-array 0))
-                  (ifn? t) (t)
-                  :else t))
+       call
+       (fn [t]
+         (cond (instance? Value t) (.execute ^Value t (object-array 0))
+               (ifn? t) (t)
+               :else t))
 
-          futs
-          (mapv (fn [t]
-                  (.submit executor
-                           ^Callable
-                           (bound-fn* (fn []
-                                        (call t)))))
-                thunks)]
+       futs
+       (mapv (fn [t]
+               (.submit executor
+                        ^Callable
+                        (bound-fn* (fn []
+                                     (call t)))))
+             thunks)]
 
       (mapv (fn [^Future f]
               (.get f))
@@ -284,22 +294,22 @@
    that thread so `vis_attach_bytes` still lands in the block's `:attachments`
    — no silent drop, no nil sink."
   (it "captures every gather-produced artifact into the block's :attachments"
-      (let [ex
-            (Executors/newVirtualThreadPerTaskExecutor)
+      (let
+        [ex
+         (Executors/newVirtualThreadPerTaskExecutor)
 
-            pctx
-            (ctx-with-gather (temp-root) ex)
+         pctx
+         (ctx-with-gather (temp-root) ex)
 
-            out
-            (try (block pctx
-                        (str "async def mk(name):\n"
-                             "    return vis_attach_bytes('payload', name)\n"
-                             "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
-                             "print(len(r))\n"))
-                 (finally (.shutdownNow ex)))
+         out
+         (try (block pctx
+                     (str "async def mk(name):\n" "    return vis_attach_bytes('payload', name)\n"
+                          "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
+                          "print(len(r))\n"))
+              (finally (.shutdownNow ex)))
 
-            atts
-            (:attachments out)]
+         atts
+         (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (re-find #"^3" (str (:stdout out))))
@@ -358,29 +368,31 @@
         (expect (re-find #"a1 image/png call-1 it1" so))
         (expect (re-find #"PNGDATA image/png chart.png 7" so))))
   (it "raises on an unknown id"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (binding [mpl-capture/*attachment-reader* (fake-reader)]
-              (block pctx
-                     (str "try:\n"
-                          "    vis_read_attachment('zzz')\n" "    print('NO-RAISE')\n"
-                          "except Exception as e:\n"
-                          "    print('RAISED', 'no attachment' in str(e))\n")))]
+         out
+         (binding [mpl-capture/*attachment-reader* (fake-reader)]
+           (block pctx
+                  (str "try:\n"
+                       "    vis_read_attachment('zzz')\n" "    print('NO-RAISE')\n"
+                       "except Exception as e:\n"
+                       "    print('RAISED', 'no attachment' in str(e))\n")))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out))))))
   (it "raises when no attachment reader is bound (outside a driven read)"
-      (let [pctx
-            (ctx-with-root (temp-root))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-            out
-            (block pctx
-                   (str "try:\n"
-                        "    vis_attachments()\n" "    print('NO-RAISE')\n"
-                        "except Exception as e:\n"
-                        "    print('RAISED', 'no active attachment reader' in str(e))\n"))]
+         out
+         (block pctx
+                (str "try:\n"
+                     "    vis_attachments()\n" "    print('NO-RAISE')\n"
+                     "except Exception as e:\n"
+                     "    print('RAISED', 'no active attachment reader' in str(e))\n"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out)))))))

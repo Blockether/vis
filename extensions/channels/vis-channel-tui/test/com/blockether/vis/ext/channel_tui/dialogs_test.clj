@@ -39,11 +39,12 @@
   ;; throws "Unexpected interrupt" when Thread.interrupted() is set, which
   ;; made the wheel-coalescing reads flaky depending on test order.
   (Thread/interrupted)
-  (let [terminal
-        (DefaultVirtualTerminal. (TerminalSize. 80 30))
+  (let
+    [terminal
+     (DefaultVirtualTerminal. (TerminalSize. 80 30))
 
-        screen
-        (TerminalScreen. terminal)]
+     screen
+     (TerminalScreen. terminal)]
 
     (.startScreen screen)
     {:terminal terminal :screen screen}))
@@ -52,11 +53,12 @@
 
 (defdescribe modal-wheel-input-test
              (it "modal input coalesces wheel floods and preserves the next non-wheel key"
-                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                       (virtual-screen)
+                 (let
+                   [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (virtual-screen)
 
-                       read-modal-input!
-                       (var-get #'dlg/read-modal-input!)]
+                    read-modal-input!
+                    (var-get #'dlg/read-modal-input!)]
 
                    (try (dotimes [_ 300]
                           (.addInput terminal (wheel-down)))
@@ -69,11 +71,12 @@
 
 (defdescribe select-dialog-wheel-test
              (it "selection menu applies a wheel burst as one scroll movement"
-                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                       (virtual-screen)
+                 (let
+                   [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (virtual-screen)
 
-                       items
-                       (mapv #(hash-map :label (str "Item " %) :id %) (range 20))]
+                    items
+                    (mapv #(hash-map :label (str "Item " %) :id %) (range 20))]
 
                    (try (dotimes [_ 5]
                           (.addInput terminal (wheel-down)))
@@ -91,116 +94,123 @@
 (defn- char-key [c] (KeyStroke. (Character/valueOf c) false false false))
 (def ^:private done-key :com.blockether.vis.ext.channel-tui.dialogs/done)
 
-(defdescribe select-modal-component-pure-test
-             (it "arrow nav + Enter selects the right item with no screen"
-                 (let [items
-                       (mapv #(hash-map :label (str "Item " %) :id %) (range 20))
+(defdescribe
+  select-modal-component-pure-test
+  (it "arrow nav + Enter selects the right item with no screen"
+      (let
+        [items
+         (mapv #(hash-map :label (str "Item " %) :id %) (range 20))
 
-                       {:keys [init measure reconcile on-key]}
-                       (dlg/select-modal-component "Items" items {:height :content})
+         {:keys [init measure reconcile on-key]}
+         (dlg/select-modal-component "Items" items {:height :content})
 
-                       geom
-                       (measure init 80 30)
+         geom
+         (measure init 80 30)
 
-                       s0
-                       (reconcile init geom)
+         s0
+         (reconcile init geom)
 
-                       down
-                       (ks KeyType/ArrowDown)
+         down
+         (ks KeyType/ArrowDown)
 
-                       s3
-                       (nth (iterate #(on-key % down geom) s0) 3)
+         s3
+         (nth (iterate #(on-key % down geom) s0) 3)
 
-                       done
-                       (on-key s3 (ks KeyType/Enter) geom)]
+         done
+         (on-key s3 (ks KeyType/Enter) geom)]
 
-                   (expect (= 20 (:total geom)))
-                   (expect (= 0 (:selected s0)))
-                   (expect (= 3 (:selected s3)))
-                   (expect (= {:label "Item 3" :id 3} (done-key done)))))
-             (it "Escape closes with nil"
-                 (let [{:keys [init measure on-key]}
-                       (dlg/select-modal-component "X" [{:label "a"}] {})
+        (expect (= 20 (:total geom)))
+        (expect (= 0 (:selected s0)))
+        (expect (= 3 (:selected s3)))
+        (expect (= {:label "Item 3" :id 3} (done-key done)))))
+  (it "Escape closes with nil"
+      (let
+        [{:keys [init measure on-key]}
+         (dlg/select-modal-component "X" [{:label "a"}] {})
 
-                       geom
-                       (measure init 80 30)]
+         geom
+         (measure init 80 30)]
 
-                   (expect (contains? (on-key init (ks KeyType/Escape) geom) done-key))
-                   (expect (nil? (done-key (on-key init (ks KeyType/Escape) geom))))))
-             (it "type-to-filter narrows :filtered and backspace widens it again"
-                 (let [items
-                       (mapv #(hash-map :label %) ["apple" "apricot" "banana" "cherry"])
+        (expect (contains? (on-key init (ks KeyType/Escape) geom) done-key))
+        (expect (nil? (done-key (on-key init (ks KeyType/Escape) geom))))))
+  (it "type-to-filter narrows :filtered and backspace widens it again"
+      (let
+        [items
+         (mapv #(hash-map :label %) ["apple" "apricot" "banana" "cherry"])
 
-                       {:keys [init measure reconcile on-key]}
-                       (dlg/select-modal-component "F" items {:filter? true :height :content})
+         {:keys [init measure reconcile on-key]}
+         (dlg/select-modal-component "F" items {:filter? true :height :content})
 
-                       step
-                       (fn [s k]
-                         (on-key s k (measure s 80 30)))
+         step
+         (fn [s k]
+           (on-key s k (measure s 80 30)))
 
-                       s1
-                       (-> (reconcile init (measure init 80 30))
-                           (step (char-key \a))
-                           (step (char-key \p)))
+         s1
+         (-> (reconcile init (measure init 80 30))
+             (step (char-key \a))
+             (step (char-key \p)))
 
-                       s2
-                       (step s1 (ks KeyType/Backspace))]
+         s2
+         (step s1 (ks KeyType/Backspace))]
 
-                   (expect (= "ap" (:query s1)))
-                   (expect (= ["apple" "apricot"] (mapv :label (:filtered (measure s1 80 30)))))
-                   (expect (= "a" (:query s2)))
-                   (expect (= ["apple" "apricot" "banana"]
-                              (mapv :label (:filtered (measure s2 80 30)))))))
-             (it "a wheel burst moves selection by the coalesced step"
-                 (let [items
-                       (mapv #(hash-map :label (str %) :id %) (range 20))
+        (expect (= "ap" (:query s1)))
+        (expect (= ["apple" "apricot"] (mapv :label (:filtered (measure s1 80 30)))))
+        (expect (= "a" (:query s2)))
+        (expect (= ["apple" "apricot" "banana"] (mapv :label (:filtered (measure s2 80 30)))))))
+  (it "a wheel burst moves selection by the coalesced step"
+      (let
+        [items
+         (mapv #(hash-map :label (str %) :id %) (range 20))
 
-                       {:keys [init measure reconcile on-key]}
-                       (dlg/select-modal-component "W" items {:height :content})
+         {:keys [init measure reconcile on-key]}
+         (dlg/select-modal-component "W" items {:height :content})
 
-                       geom
-                       (measure init 80 30)
+         geom
+         (measure init 80 30)
 
-                       s0
-                       (reconcile init geom)
+         s0
+         (reconcile init geom)
 
-                       burst
-                       (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10))]
+         burst
+         (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10))]
 
-                   (expect (= 5 (:selected (on-key s0 burst geom)))))))
+        (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
 (defdescribe
   magit-transient-toggle-test
-  (let [spec
-        {:groups [{:title "Arguments"
-                   :items [{:key "f" :type :switch :id :force :label "Force"}
-                           {:key "u" :type :switch :id :set-upstream :label "Upstream"}
-                           {:key "t" :type :option :id :topic :label "Topic"}]}
-                  {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}
+  (let
+    [spec
+     {:groups [{:title "Arguments"
+                :items [{:key "f" :type :switch :id :force :label "Force"}
+                        {:key "u" :type :switch :id :set-upstream :label "Upstream"}
+                        {:key "t" :type :option :id :topic :label "Topic"}]}
+               {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}
 
-        init
-        {:switches #{} :options {}}]
+     init
+     {:switches #{} :options {}}]
 
     (it "binds a key to its item across every group"
         (expect (= :force (:id (dlg/transient-item-by-key spec \f))))
         (expect (= :push (:id (dlg/transient-item-by-key spec \p))))
         (expect (nil? (dlg/transient-item-by-key spec \z))))
     (it "a switch flips on then off; an unbound key is a no-op"
-        (let [on
-              (dlg/transient-toggle spec init \f)
+        (let
+          [on
+           (dlg/transient-toggle spec init \f)
 
-              off
-              (dlg/transient-toggle spec (:state on) \f)]
+           off
+           (dlg/transient-toggle spec (:state on) \f)]
 
           (expect (= :continue (:kind on)))
           (expect (= #{:force} (:switches (:state on))))
           (expect (= #{} (:switches (:state off))))
           (expect (= init (:state (dlg/transient-toggle spec init \z))))))
     (it "two switches accumulate independently"
-        (let [s (-> (dlg/transient-toggle spec init \f)
-                    :state
-                    (->> (#(dlg/transient-toggle spec % \u)))
-                    :state)]
+        (let
+          [s (-> (dlg/transient-toggle spec init \f)
+                 :state
+                 (->> (#(dlg/transient-toggle spec % \u)))
+                 :state)]
           (expect (= #{:force :set-upstream} (:switches s)))))
     (it "an option key asks the caller to read a value"
         (let [r (dlg/transient-toggle spec init \t)]
@@ -214,13 +224,14 @@
 
 (defdescribe session-dialog-wheel-test
              (it "session picker coalesces wheel floods and moves selection"
-                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                       (virtual-screen)
+                 (let
+                   [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (virtual-screen)
 
-                       sessions
-                       (mapv (fn [idx]
-                               {"id" idx "title" (str "Session " idx) "turn_count" idx})
-                             (range 20))]
+                    sessions
+                    (mapv (fn [idx]
+                            {"id" idx "title" (str "Session " idx) "turn_count" idx})
+                          (range 20))]
 
                    (try (dotimes [_ 5]
                           (.addInput terminal (wheel-down)))
@@ -230,39 +241,41 @@
                         (finally (.stopScreen screen))))))
 
 (defdescribe startable-fields-form-test
-             (it "the inline multi-field form collects every field at once (type, Tab, Enter)"
-                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                       (virtual-screen)
+             (it
+               "the inline multi-field form collects every field at once (type, Tab, Enter)"
+               (let
+                 [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                  (virtual-screen)
 
-                       startable-fields-form!
-                       (var-get #'dlg/startable-fields-form!)
+                  startable-fields-form!
+                  (var-get #'dlg/startable-fields-form!)
 
-                       sr
-                       {:label "remote HTTP MCP server"
-                        :fields [{:name :name :label "Name" :required true :placeholder "remote"}
-                                 {:name :url :label "URL" :required true :placeholder "https://…"}]}
+                  sr
+                  {:label "remote HTTP MCP server"
+                   :fields [{:name :name :label "Name" :required true :placeholder "remote"}
+                            {:name :url :label "URL" :required true :placeholder "https://…"}]}
 
-                       type!
-                       (fn [^String s]
-                         (doseq [c s]
-                           (.addInput terminal
-                                      (KeyStroke. (Character/valueOf c) false false false))))]
+                  type!
+                  (fn [^String s]
+                    (doseq [c s]
+                      (.addInput terminal (KeyStroke. (Character/valueOf c) false false false))))]
 
-                   (try (type! "fs") ;; into field 0 (focus starts at 0)
-                        (.addInput terminal (KeyStroke. KeyType/Tab)) ;; → field 1
-                        (type! "http://x") ;; into field 1
-                        (.addInput terminal (KeyStroke. KeyType/Enter)) ;; submit (both required filled)
-                        (expect (= {:name "fs" :url "http://x"} (startable-fields-form! screen sr)))
-                        (finally (.stopScreen screen)))))
+                 (try (type! "fs") ;; into field 0 (focus starts at 0)
+                      (.addInput terminal (KeyStroke. KeyType/Tab)) ;; → field 1
+                      (type! "http://x") ;; into field 1
+                      (.addInput terminal (KeyStroke. KeyType/Enter)) ;; submit (both required filled)
+                      (expect (= {:name "fs" :url "http://x"} (startable-fields-form! screen sr)))
+                      (finally (.stopScreen screen)))))
              (it "Esc cancels the whole form (no per-field modals)"
-                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                       (virtual-screen)
+                 (let
+                   [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (virtual-screen)
 
-                       startable-fields-form!
-                       (var-get #'dlg/startable-fields-form!)
+                    startable-fields-form!
+                    (var-get #'dlg/startable-fields-form!)
 
-                       sr
-                       {:label "x" :fields [{:name :name :label "Name" :required true}]}]
+                    sr
+                    {:label "x" :fields [{:name :name :label "Name" :required true}]}]
 
                    (try (.addInput terminal (KeyStroke. KeyType/Escape))
                         ;; ::dlg/cancel resolves to the same namespaced keyword the form returns.
@@ -291,15 +304,16 @@
 
 (defdescribe reusable-table-test
              (it "table rows keep fixed width and expose shared filtering"
-                 (let [columns
-                       [{:id :kind :label "Kind" :width 8} {:id :label :label "Name" :flex 1}
-                        {:id :status :label "Status" :width 8}]
+                 (let
+                   [columns
+                    [{:id :kind :label "Kind" :width 8} {:id :label :label "Name" :flex 1}
+                     {:id :status :label "Status" :width 8}]
 
-                       row
-                       {:kind "session" :label "Untitled session" :status "active"}
+                    row
+                    {:kind "session" :label "Untitled session" :status "active"}
 
-                       line
-                       (table/row-line columns row 48 nil)]
+                    line
+                    (table/row-line columns row 48 nil)]
 
                    (expect (= 48 (p/display-width line)))
                    (expect (str/includes? line "session"))
@@ -316,22 +330,23 @@
 
 (defdescribe session-dialog-table-model-test
              (it "session rows sort by modified-at desc and split date/time columns"
-                 (let [items
-                       (dlg/session-dialog-items [{"id" "old"
-                                                   "title" "Old"
-                                                   "turn_count" 1
-                                                   "created_at" #inst "2024-01-01T09:30:00.000Z"
-                                                   "modified_at" #inst "2024-01-01T10:45:00.000Z"}
-                                                  {"id" "new"
-                                                   "title" "New"
-                                                   "turn_count" 2
-                                                   "created_at" #inst "2024-01-02T08:15:00.000Z"
-                                                   "modified_at" #inst "2024-01-02T11:05:00.000Z"}]
-                                                 "new"
-                                                 96)
+                 (let
+                   [items
+                    (dlg/session-dialog-items [{"id" "old"
+                                                "title" "Old"
+                                                "turn_count" 1
+                                                "created_at" #inst "2024-01-01T09:30:00.000Z"
+                                                "modified_at" #inst "2024-01-01T10:45:00.000Z"}
+                                               {"id" "new"
+                                                "title" "New"
+                                                "turn_count" 2
+                                                "created_at" #inst "2024-01-02T08:15:00.000Z"
+                                                "modified_at" #inst "2024-01-02T11:05:00.000Z"}]
+                                              "new"
+                                              96)
 
-                       header
-                       (dlg/session-dialog-header 96)]
+                    header
+                    (dlg/session-dialog-header 96)]
 
                    (expect (= ["new" "old"] (mapv :id items)))
                    (expect (str/includes? header "Created at"))
@@ -339,17 +354,18 @@
                    (expect (str/includes? (:label (first items)) "2024-01-02"))
                    (expect (str/includes? (:label (first items)) "11:05"))))
              (it "session table uses boxed dialog-style borders with fixed width"
-                 (let [items
-                       (dlg/session-dialog-items [{:id "new"
-                                                   :title "New"
-                                                   :turn-count 2
-                                                   :created-at #inst "2024-01-02T08:15:00.000Z"
-                                                   :modified-at #inst "2024-01-02T11:05:00.000Z"}]
-                                                 "new"
-                                                 96)
+                 (let
+                   [items
+                    (dlg/session-dialog-items [{:id "new"
+                                                :title "New"
+                                                :turn-count 2
+                                                :created-at #inst "2024-01-02T08:15:00.000Z"
+                                                :modified-at #inst "2024-01-02T11:05:00.000Z"}]
+                                              "new"
+                                              96)
 
-                       border-line
-                       (var-get #'dlg/session-table-border-line)]
+                    border-line
+                    (var-get #'dlg/session-table-border-line)]
 
                    (expect (= \┌ (first (border-line 96 :top))))
                    (expect (= 96 (p/display-width (border-line 96 :top))))
@@ -361,52 +377,59 @@
 ;; to the top, marked "● focused".
 (defdescribe
   navigator-row-model-test
-  (let [sessions [{"id" "empty" "title" nil "turn_count" 0 "created_at" 0 "modified_at" 7200000}
-                  {"id" "s1" "title" nil "turn_count" 2 "created_at" 0 "modified_at" 3600000}
-                  {"id" "s2" "title" "Second" "turn_count" 5 "created_at" 0 "modified_at" 0}]]
+  (let
+    [sessions [{"id" "empty" "title" nil "turn_count" 0 "created_at" 0 "modified_at" 7200000}
+               {"id" "s1" "title" nil "turn_count" 2 "created_at" 0 "modified_at" 3600000}
+               {"id" "s2" "title" "Second" "turn_count" 5 "created_at" 0 "modified_at" 0}]]
     (it "one unified row per session, no :kind / :switch-workspace"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})]
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
           (expect (= 2 (count rows)))
           (expect (every? #(not (contains? % :kind)) rows))
           (expect (= [{:action :switch :id "s1"} {:action :switch :id "s2"}] (mapv :target rows)))))
     (it "empty untitled shells hidden by default; focused session pinned to top"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})
-              all-visible
-              (all-rows {:active-session-id "s1" :sessions sessions :show-empty-untitled? true})]
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           all-visible (all-rows
+                         {:active-session-id "s1" :sessions sessions :show-empty-untitled? true})]
 
           (expect (= ["s1" "s2"] (mapv (comp str :id :target) rows)))
           ;; Focused (s1) pinned first; the rest keep recency order below,
           ;; so all-visible is [s1 empty s2], not [empty s1 s2].
           (expect (= ["s1" "empty" "s2"] (mapv (comp str :id :target) all-visible)))))
     (it "focused session is flagged + pinned, marked '● focused'"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})
-              r1 (first rows)]
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           r1 (first rows)]
 
           (expect (= "Untitled session" (:title r1)))
           (expect (= "s1" (:session r1)))
           (expect (:focused? r1))
           (expect (= "● focused" (:status r1)))))
     (it "non-active session is not focused and shows its turn count"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})]
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
           (expect (not (:focused? (second rows))))
           (expect (= "5 turns" (:status (second rows))))))
     (it "compact MM-dd HH:mm timestamps (UTC)"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})
-              r1 (first rows)]
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           r1 (first rows)]
 
           (expect (= "01-01 00:00" (:created r1)))
           (expect (= "01-01 01:00" (:modified r1)))))
     (it "visible-rows filters by query only"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              visible-rows (var-get #'dlg/navigator-visible-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})]
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           visible-rows (var-get #'dlg/navigator-visible-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
           (expect (= 1 (count (visible-rows rows "second"))))
           (expect (= 2 (count (visible-rows rows ""))))))))
@@ -416,11 +439,12 @@
                  ;; Canonical primitive: 20 items in a 10-row viewport, scroll=5
                  ;; ⇒ 1-cell thumb halfway down the 10-row track. Overflow gone
                  ;; when total ≤ inner (3 items in a 10-row view).
-                 (let [scrollbar-geom
-                       (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
+                 (let
+                   [scrollbar-geom
+                    (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
 
-                       g
-                       (scrollbar-geom 20 10 5)]
+                    g
+                    (scrollbar-geom 20 10 5)]
 
                    (expect (= 1 (:thumb-h g)))
                    (expect (= 10 (:track-h g)))
@@ -430,17 +454,18 @@
 
 (defdescribe settings-dialog-footprint-and-indent-test
              (it "shared dialogs use the same footprint as settings"
-                 (let [settings-content-width
-                       (var-get #'dlg/settings-content-width)
+                 (let
+                   [settings-content-width
+                    (var-get #'dlg/settings-content-width)
 
-                       settings-content-height
-                       (var-get #'dlg/settings-content-height)
+                    settings-content-height
+                    (var-get #'dlg/settings-content-height)
 
-                       theme-picker-content-width
-                       (var-get #'dlg/theme-picker-content-width)
+                    theme-picker-content-width
+                    (var-get #'dlg/theme-picker-content-width)
 
-                       theme-picker-content-height
-                       (var-get #'dlg/theme-picker-content-height)]
+                    theme-picker-content-height
+                    (var-get #'dlg/theme-picker-content-height)]
 
                    (expect (= (dlg/default-content-width 160) (settings-content-width 160)))
                    (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
@@ -463,21 +488,23 @@
       ;; Use a throwaway test toggle so we don't disturb the canonical
       ;; host toggles. Settings map stays UNTOUCHED: registry rows are
       ;; side-effecting and the apply path returns `values` unchanged.
-      (let [apply-settings-option
-            (var-get #'dlg/apply-settings-option)
+      (let
+        [apply-settings-option
+         (var-get #'dlg/apply-settings-option)
 
-            settings-row-mark
-            (var-get #'dlg/settings-row-mark)
+         settings-row-mark
+         (var-get #'dlg/settings-row-mark)
 
-            id
-            :dialogs-test/registry-row
+         id
+         :dialogs-test/registry-row
 
-            _
-            (vis/register-toggle! {:id id :label "Test" :default false})]
+         _
+         (vis/register-toggle! {:id id :label "Test" :default false})]
 
         (try (expect (false? (vis/toggle-enabled? id)))
-             (let [out (apply-settings-option {:something "else"}
-                                              {:type :registry-toggle :toggle-id id})]
+             (let
+               [out (apply-settings-option {:something "else"}
+                                           {:type :registry-toggle :toggle-id id})]
                (expect (= {:something "else"} out))
                (expect (true? (vis/toggle-enabled? id))))
              ;; Boolean state is now carried by the leading status glyph (●/○), not
@@ -493,14 +520,15 @@
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
   ;; id-derived fallback-label path no longer exists.
   (it "registry enum rows cycle through the toggles registry"
-      (let [apply-settings-option
-            (var-get #'dlg/apply-settings-option)
+      (let
+        [apply-settings-option
+         (var-get #'dlg/apply-settings-option)
 
-            settings-option-label
-            (var-get #'dlg/settings-option-label)
+         settings-option-label
+         (var-get #'dlg/settings-option-label)
 
-            id
-            :dialogs-test/registry-enum]
+         id
+         :dialogs-test/registry-enum]
 
         (vis/register-toggle!
           {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
@@ -508,8 +536,9 @@
                         (settings-option-label
                           {:type :registry-toggle :toggle-id id :label "Enum Test"}
                           {})))
-             (let [out (apply-settings-option {:something "else"}
-                                              {:type :registry-toggle :toggle-id id})]
+             (let
+               [out (apply-settings-option {:something "else"}
+                                           {:type :registry-toggle :toggle-id id})]
                (expect (= {:something "else"} out))
                (expect (= :medium (vis/toggle-value id)))
                (expect (= "Enum Test: medium"
@@ -555,17 +584,18 @@
                                            :name nil}
                                           {})))))
   (it "settings row activation notifies on-change without redrawing behind the modal"
-      (let [activate-settings-row!
-            (var-get #'dlg/activate-settings-row!)
+      (let
+        [activate-settings-row!
+         (var-get #'dlg/activate-settings-row!)
 
-            values
-            (atom {:show-timestamps false})
+         values
+         (atom {:show-timestamps false})
 
-            changed
-            (atom nil)
+         changed
+         (atom nil)
 
-            calls
-            (atom [])]
+         calls
+         (atom [])]
 
         (activate-settings-row! nil
                                 values
@@ -603,13 +633,15 @@
   (it
     "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
     (let [settings-rows (var-get #'dlg/settings-rows)]
-      (with-redefs [vis/registered-extensions (constantly [])
-                    vis/get-router (constantly nil)]
+      (with-redefs
+        [vis/registered-extensions (constantly [])
+         vis/get-router (constantly nil)]
 
-        (let [rows (settings-rows)
-              sections (->> rows
-                            (filter #(= :section (:type %)))
-                            (mapv :label))]
+        (let
+          [rows (settings-rows)
+           sections (->> rows
+                         (filter #(= :section (:type %)))
+                         (mapv :label))]
 
           ;; flat list, web-shaped: Terminal UI chrome always present. The
           ;; Models section was retired (it only carried reasoning-effort,
@@ -638,11 +670,12 @@
           (expect (not-any? #{"Feature Toggles"} sections))
           (expect (not-any? #{"Extension Settings"} sections))))))
   (it "registered extension themes appear in the channel Theme setting"
-      (let [settings-rows
-            (var-get #'dlg/settings-rows)
+      (let
+        [settings-rows
+         (var-get #'dlg/settings-rows)
 
-            settings-option-label
-            (var-get #'dlg/settings-option-label)]
+         settings-option-label
+         (var-get #'dlg/settings-option-label)]
 
         (try (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
              (with-redefs [vis/get-router (constantly nil)]
@@ -655,33 +688,36 @@
              (finally (vis/reset-themes!)))))
   (it
     "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
-    (let [settings-rows
-          (var-get #'dlg/settings-rows)
+    (let
+      [settings-rows
+       (var-get #'dlg/settings-rows)
 
-          settings-option-label
-          (var-get #'dlg/settings-option-label)]
+       settings-option-label
+       (var-get #'dlg/settings-option-label)]
 
-      (with-redefs [vis/get-router
-                    (constantly nil)
+      (with-redefs
+        [vis/get-router
+         (constantly nil)
 
-                    vis/registered-extensions
-                    (fn []
-                      [{:ext/name "test.ext"
-                        :ext/engine {:ext.engine/alias 'exa}
-                        :ext/env [{:name "EXA_API_KEY"
-                                   :label "Exa API key"
-                                   :description "Optional key."
-                                   :secret? true}]}])
+         vis/registered-extensions
+         (fn []
+           [{:ext/name "test.ext"
+             :ext/engine {:ext.engine/alias 'exa}
+             :ext/env [{:name "EXA_API_KEY"
+                        :label "Exa API key"
+                        :description "Optional key."
+                        :secret? true}]}])
 
-                    vis/extension-env-status
-                    (fn [name]
-                      {:name name :source :config :value "secret"})]
+         vis/extension-env-status
+         (fn [name]
+           {:name name :source :config :value "secret"})]
 
-        (let [rows
-              (settings-rows)
+        (let
+          [rows
+           (settings-rows)
 
-              row
-              (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
+           row
+           (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
 
           ;; "Extension Settings" is the LAST section in the flat list; the
           ;; env-var rows live under it.
@@ -700,31 +736,32 @@
   (it
     "retired extension setting declarations are dropped, registry owns the rows"
     (let [settings-rows (var-get #'dlg/settings-rows)]
-      (with-redefs [vis/get-router (constantly nil)
-                    ;; hermetic: the Codex knob's :visible-fn consults the
-                    ;; CONFIGURED providers — pin "none" so the assertion
-                    ;; below can't flip on a dev machine that has Codex.
-                    vis/has-provider? (constantly false)
-                    vis/registered-extensions
-                    (fn []
-                      [{:ext/name "voice"
-                        :ext/settings
-                        [{:key :voice/respond? :type :toggle :label "Voice responses"}
-                         {:key :voice/tui-auto-read? :type :toggle :label "TUI auto-read"}]}
-                       {:ext/name "provider-openai-codex"
-                        :ext/providers [{:provider/id :openai-codex :provider/label "OpenAI Codex"}]
-                        :ext/settings [{:key :openai-codex-verbosity
-                                        :type :choice
-                                        :choices [:low :medium :high]
-                                        :label "Codex verbosity"}
-                                       {:key :openai-codex/verbosity
-                                        :type :choice
-                                        :choices [:low :medium :high]
-                                        :label "Codex verbosity"}]}])]
+      (with-redefs
+        [vis/get-router (constantly nil)
+         ;; hermetic: the Codex knob's :visible-fn consults the
+         ;; CONFIGURED providers — pin "none" so the assertion
+         ;; below can't flip on a dev machine that has Codex.
+         vis/has-provider? (constantly false)
+         vis/registered-extensions
+         (fn []
+           [{:ext/name "voice"
+             :ext/settings [{:key :voice/respond? :type :toggle :label "Voice responses"}
+                            {:key :voice/tui-auto-read? :type :toggle :label "TUI auto-read"}]}
+            {:ext/name "provider-openai-codex"
+             :ext/providers [{:provider/id :openai-codex :provider/label "OpenAI Codex"}]
+             :ext/settings [{:key :openai-codex-verbosity
+                             :type :choice
+                             :choices [:low :medium :high]
+                             :label "Codex verbosity"}
+                            {:key :openai-codex/verbosity
+                             :type :choice
+                             :choices [:low :medium :high]
+                             :label "Codex verbosity"}]}])]
 
-        (let [rows (settings-rows)
-              ids (set (map :id rows))
-              toggles (set (keep :toggle-id rows))]
+        (let
+          [rows (settings-rows)
+           ids (set (map :id rows))
+           toggles (set (keep :toggle-id rows))]
 
           (expect (contains? toggles :voice/respond))
           ;; Reasoning-effort has its OWN control (Ctrl+R) — `:settings? false`
@@ -745,17 +782,18 @@
                                    :openai-codex/verbosity])))))))
   (it "provider-declared legacy settings are ignored"
       (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly nil)
-                      vis/registered-extensions
-                      (fn []
-                        [{:ext/name "provider-openai-codex"
-                          :ext/providers [{:provider/id :openai-codex
-                                           :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
-                          :ext/settings [{:key :openai-codex-verbosity
-                                          :type :choice
-                                          :choices [:low :medium :high]
-                                          :label "Codex verbosity"
-                                          :description "Output detail."}]}])]
+        (with-redefs
+          [vis/get-router (constantly nil)
+           vis/registered-extensions (fn []
+                                       [{:ext/name "provider-openai-codex"
+                                         :ext/providers [{:provider/id :openai-codex
+                                                          :provider/label
+                                                          "OpenAI Codex (ChatGPT OAuth)"}]
+                                         :ext/settings [{:key :openai-codex-verbosity
+                                                         :type :choice
+                                                         :choices [:low :medium :high]
+                                                         :label "Codex verbosity"
+                                                         :description "Output detail."}]}])]
 
           (let [rows (settings-rows)]
             (expect (not-any? #(= [:extension-setting "provider-openai-codex"
@@ -764,23 +802,24 @@
                               rows))))))
   (it "active Z.ai hides reasoning effort and Codex-only provider settings"
       (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-effective-model (fn [_]
-                                                    {:provider :zai
-                                                     :name "glm-4.7"
-                                                     :reasoning? true
-                                                     :reasoning-style :zai-thinking
-                                                     :reasoning-effort? false})
-                      vis/registered-extensions
-                      (fn []
-                        [{:ext/name "provider-openai-codex"
-                          :ext/providers [{:provider/id :openai-codex
-                                           :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
-                          :ext/settings [{:key :openai-codex-verbosity
-                                          :type :choice
-                                          :choices [:low :medium :high]
-                                          :label "Codex verbosity"
-                                          :description "Output detail."}]}])]
+        (with-redefs
+          [vis/get-router (constantly :router)
+           vis/resolve-effective-model (fn [_]
+                                         {:provider :zai
+                                          :name "glm-4.7"
+                                          :reasoning? true
+                                          :reasoning-style :zai-thinking
+                                          :reasoning-effort? false})
+           vis/registered-extensions (fn []
+                                       [{:ext/name "provider-openai-codex"
+                                         :ext/providers [{:provider/id :openai-codex
+                                                          :provider/label
+                                                          "OpenAI Codex (ChatGPT OAuth)"}]
+                                         :ext/settings [{:key :openai-codex-verbosity
+                                                         :type :choice
+                                                         :choices [:low :medium :high]
+                                                         :label "Codex verbosity"
+                                                         :description "Output detail."}]}])]
 
           (let [rows (settings-rows)]
             ;; Reasoning-effort + verbosity are OUT of Settings entirely now
@@ -790,19 +829,21 @@
             (expect (not-any? #(= :openai-codex-verbosity (:key %)) rows))))))
   (it "channel-declared settings render under Channel Settings, once, in the flat list"
       (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly nil)
-                      vis/registered-extensions
-                      (fn []
-                        [{:ext/name "channel-example"
-                          :ext/channels [{:channel/id :example :channel/cmd "example"}]
-                          :ext/settings [{:key :example-notify
-                                          :type :toggle
-                                          :label "Example notifications"
-                                          :description "Send channel notifications."}]}])]
+        (with-redefs
+          [vis/get-router (constantly nil)
+           vis/registered-extensions
+           (fn []
+             [{:ext/name "channel-example"
+               :ext/channels [{:channel/id :example :channel/cmd "example"}]
+               :ext/settings [{:key :example-notify
+                               :type :toggle
+                               :label "Example notifications"
+                               :description "Send channel notifications."}]}])]
 
-          (let [rows (settings-rows)
-                row-id [:extension-setting "channel-example" :example-notify]
-                row (first (filter #(= row-id (:id %)) rows))]
+          (let
+            [rows (settings-rows)
+             row-id [:extension-setting "channel-example" :example-notify]
+             row (first (filter #(= row-id (:id %)) rows))]
 
             (expect (contains? (set (->> rows
                                          (filter #(= :section (:type %)))
@@ -817,45 +858,46 @@
             (expect (= 1 (count (filter #(= row-id (:id %)) rows))))))))
   (it
     "session picker keeps new/fork out of the table and renders justified cells"
-    (let [session-items
-          dlg/session-dialog-items
+    (let
+      [session-items
+       dlg/session-dialog-items
 
-          body-w
-          96
+       body-w
+       96
 
-          header
-          (dlg/session-dialog-header body-w)
+       header
+       (dlg/session-dialog-header body-w)
 
-          rows
-          (session-items [{"id" "123e4567-e89b-12d3-a456-426614174000"
-                           "title" (str "Title " (apply str (repeat 80 "汉")))
-                           "turn_count" 2
-                           "fork_count" 3
-                           "modified_at" #inst "2024-01-03T04:05:00.000-00:00"
-                           "created_at" #inst "2024-01-01T01:02:00.000-00:00"}
-                          {"id" "abcdef00-e89b-12d3-a456-426614174000"
-                           "title" ""
-                           "turn_count" 0
-                           "modified_at" nil
-                           "created_at" #inst "2024-01-02T01:02:00.000-00:00"}]
-                         "123e4567-e89b-12d3-a456-426614174000"
-                         body-w)
+       rows
+       (session-items [{"id" "123e4567-e89b-12d3-a456-426614174000"
+                        "title" (str "Title " (apply str (repeat 80 "汉")))
+                        "turn_count" 2
+                        "fork_count" 3
+                        "modified_at" #inst "2024-01-03T04:05:00.000-00:00"
+                        "created_at" #inst "2024-01-01T01:02:00.000-00:00"}
+                       {"id" "abcdef00-e89b-12d3-a456-426614174000"
+                        "title" ""
+                        "turn_count" 0
+                        "modified_at" nil
+                        "created_at" #inst "2024-01-02T01:02:00.000-00:00"}]
+                      "123e4567-e89b-12d3-a456-426614174000"
+                      body-w)
 
-          active-label
-          (:label (nth rows 0))
+       active-label
+       (:label (nth rows 0))
 
-          inactive-label
-          (:label (nth rows 1))
+       inactive-label
+       (:label (nth rows 1))
 
-          fork-label
-          (dlg/session-dialog-label {"id" "fedcba00-e89b-12d3-a456-426614174000"
-                                     "title" "Forkable"
-                                     "turn_count" 4
-                                     "fork_count" 3
-                                     "modified_at" #inst "2024-01-04T04:05:00.000-00:00"
-                                     "created_at" #inst "2024-01-01T01:02:00.000-00:00"}
-                                    nil
-                                    body-w)]
+       fork-label
+       (dlg/session-dialog-label {"id" "fedcba00-e89b-12d3-a456-426614174000"
+                                  "title" "Forkable"
+                                  "turn_count" 4
+                                  "fork_count" 3
+                                  "modified_at" #inst "2024-01-04T04:05:00.000-00:00"
+                                  "created_at" #inst "2024-01-01T01:02:00.000-00:00"}
+                                 nil
+                                 body-w)]
 
       (expect (= [:switch :switch] (mapv :action rows)))
       (expect (not-any? #{:new :fork} (map :action rows)))
@@ -884,14 +926,15 @@
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
   (it "command palette exposes the frequent app verbs, providers distinct from settings"
-      (let [palette-commands
-            (var-get #'dlg/palette-commands)
+      (let
+        [palette-commands
+         (var-get #'dlg/palette-commands)
 
-            labels
-            (mapv :label palette-commands)
+         labels
+         (mapv :label palette-commands)
 
-            ids
-            (set (mapv :id palette-commands))]
+         ids
+         (set (mapv :id palette-commands))]
 
         ;; Configure Providers and Settings stay distinct entries.
         (expect (some #{"Configure Providers"} labels))
@@ -904,14 +947,15 @@
   (it "command palette filters by a typed query (searchable)"
       ;; The palette is searchable: the filter is a case-insensitive substring
       ;; match on :label, the spine `searchable-select!` applies.
-      (let [labels
-            (mapv :label (var-get #'dlg/palette-commands))
+      (let
+        [labels
+         (mapv :label (var-get #'dlg/palette-commands))
 
-            match
-            (fn [q]
-              (filterv #(clojure.string/includes? (clojure.string/lower-case %)
-                                                  (clojure.string/lower-case q))
-                labels))]
+         match
+         (fn [q]
+           (filterv #(clojure.string/includes? (clojure.string/lower-case %)
+                                               (clojure.string/lower-case q))
+             labels))]
 
         (expect (some #{"Cycle Model"} (match "model")))
         (expect (= [] (match "zzz-no-such-command"))))))
@@ -923,52 +967,54 @@
   navigator-project-grouping-test
   (it
     "groups non-focused rows by project dir, groups ordered by recency"
-    (let [all-rows
-          (var-get #'dlg/navigator-all-rows)
+    (let
+      [all-rows
+       (var-get #'dlg/navigator-all-rows)
 
-          sessions
-          [{"id" "s1"
-            "title" "A1"
-            "turn_count" 1
-            "created_at" 0
-            "modified_at" 4000
-            :work-dir "~/proj-a"}
-           {"id" "s2"
-            "title" "B1"
-            "turn_count" 1
-            "created_at" 0
-            "modified_at" 3000
-            :work-dir "~/proj-b"}
-           {"id" "s3"
-            "title" "A2"
-            "turn_count" 1
-            "created_at" 0
-            "modified_at" 2000
-            :work-dir "~/proj-a"}
-           {"id" "s4"
-            "title" "B2"
-            "turn_count" 1
-            "created_at" 0
-            "modified_at" 1000
-            :work-dir "~/proj-b"}]
+       sessions
+       [{"id" "s1"
+         "title" "A1"
+         "turn_count" 1
+         "created_at" 0
+         "modified_at" 4000
+         :work-dir "~/proj-a"}
+        {"id" "s2"
+         "title" "B1"
+         "turn_count" 1
+         "created_at" 0
+         "modified_at" 3000
+         :work-dir "~/proj-b"}
+        {"id" "s3"
+         "title" "A2"
+         "turn_count" 1
+         "created_at" 0
+         "modified_at" 2000
+         :work-dir "~/proj-a"}
+        {"id" "s4"
+         "title" "B2"
+         "turn_count" 1
+         "created_at" 0
+         "modified_at" 1000
+         :work-dir "~/proj-b"}]
 
-          rows
-          (all-rows {:active-session-id "s1" :sessions sessions})]
+       rows
+       (all-rows {:active-session-id "s1" :sessions sessions})]
 
       ;; s1 pinned (focused); remaining [s2 s3 s4] regroup to
       ;; proj-b [s2 s4] (newest group first) then proj-a [s3].
       (expect (= ["s1" "s2" "s4" "s3"] (mapv (comp str :id :target) rows)))))
   (it "sessions without a work-dir share one group and keep recency order"
-      (let [all-rows
-            (var-get #'dlg/navigator-all-rows)
+      (let
+        [all-rows
+         (var-get #'dlg/navigator-all-rows)
 
-            sessions
-            [{"id" "s1" "title" "A" "turn_count" 1 "created_at" 0 "modified_at" 3000}
-             {"id" "s2" "title" "B" "turn_count" 1 "created_at" 0 "modified_at" 2000}
-             {"id" "s3" "title" "C" "turn_count" 1 "created_at" 0 "modified_at" 1000}]
+         sessions
+         [{"id" "s1" "title" "A" "turn_count" 1 "created_at" 0 "modified_at" 3000}
+          {"id" "s2" "title" "B" "turn_count" 1 "created_at" 0 "modified_at" 2000}
+          {"id" "s3" "title" "C" "turn_count" 1 "created_at" 0 "modified_at" 1000}]
 
-            rows
-            (all-rows {:active-session-id "s1" :sessions sessions})]
+         rows
+         (all-rows {:active-session-id "s1" :sessions sessions})]
 
         (expect (= ["s1" "s2" "s3"] (mapv (comp str :id :target) rows))))))
 
@@ -978,19 +1024,21 @@
    trailing chords — `put-str!` clips to the screen, not the box, so an
    unfitted footer (e.g. magit's 162-col one) would paint across the border."
   (it "returns all pairs when they fit exactly"
-      (let [hints
-            (var-get #'dlg/magit-hints)
+      (let
+        [hints
+         (var-get #'dlg/magit-hints)
 
-            w
-            (dlg/hint-bar-width hints)]
+         w
+         (dlg/hint-bar-width hints)]
 
         (expect (= hints (dlg/fit-hint-pairs hints w)))))
   (it "drops whole trailing pairs when the bar is too wide"
-      (let [hints
-            (var-get #'dlg/magit-hints)
+      (let
+        [hints
+         (var-get #'dlg/magit-hints)
 
-            fitted
-            (dlg/fit-hint-pairs hints 112)]
+         fitted
+         (dlg/fit-hint-pairs hints 112)]
 
         (expect (< (count fitted) (count hints)))
         (expect (= fitted (subvec (vec hints) 0 (count fitted))))

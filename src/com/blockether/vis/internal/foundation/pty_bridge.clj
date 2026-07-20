@@ -44,8 +44,9 @@
   "Directory the per-shell attach sockets live in: `$VIS_BRIDGE_DIR` or
    `~/.vis/bridge`. Created on demand by `serve!`."
   ^Path []
-  (let [base (or (not-empty (System/getenv "VIS_BRIDGE_DIR"))
-                 (str (System/getProperty "user.home") "/.vis/bridge"))]
+  (let
+    [base (or (not-empty (System/getenv "VIS_BRIDGE_DIR"))
+              (str (System/getProperty "user.home") "/.vis/bridge"))]
     (Paths/get base (make-array String 0))))
 
 (defn socket-path
@@ -53,21 +54,22 @@
    `<bridge-dir>/<session>__<id>.sock`. The `__<id>.sock` suffix lets the
    separate attach client find a shell by id alone (it scans the dir)."
   ^Path [session id]
-  (let [dir
-        (bridge-dir)
+  (let
+    [dir
+     (bridge-dir)
 
-        iid
-        (sanitize id)
+     iid
+     (sanitize id)
 
-        name
-        (str (sanitize session) "__" iid ".sock")
+     name
+     (str (sanitize session) "__" iid ".sock")
 
-        ;; sun_path is ~104 bytes; `<dir>/<name>` must fit or bind() fails
-        ;; silently. When a long home + long session/id would overflow, collapse
-        ;; the SESSION half to a short stable hash — the readable `__<id>.sock`
-        ;; suffix that find-socket matches on is always preserved.
-        room
-        (- 100 (count (str dir)) 1)]
+     ;; sun_path is ~104 bytes; `<dir>/<name>` must fit or bind() fails
+     ;; silently. When a long home + long session/id would overflow, collapse
+     ;; the SESSION half to a short stable hash — the readable `__<id>.sock`
+     ;; suffix that find-socket matches on is always preserved.
+     room
+     (- 100 (count (str dir)) 1)]
 
     (.resolve dir
               (if (<= (count name) room)
@@ -84,11 +86,12 @@
   ^Path [{:keys [socket id]}]
   (cond (not (str/blank? socket)) (Paths/get ^String socket (make-array String 0))
         (not (str/blank? id))
-        (let [dir
-              (bridge-dir)
+        (let
+          [dir
+           (bridge-dir)
 
-              suffix
-              (str "__" (sanitize id) ".sock")]
+           suffix
+           (str "__" (sanitize id) ".sock")]
 
           (when (Files/isDirectory dir (make-array LinkOption 0))
             (with-open [s (Files/list dir)]
@@ -114,10 +117,10 @@
            (with-open [s (Files/list dir)]
              (doseq [^Path p (.collect s (Collectors/toList))]
                (when (str/ends-with? (str (.getFileName p)) ".sock")
-                 (let [live? (try (with-open [ch (SocketChannel/open (UnixDomainSocketAddress/of
-                                                                       p))]
-                                    (some? ch))
-                                  (catch Throwable _ false))]
+                 (let
+                   [live? (try (with-open [ch (SocketChannel/open (UnixDomainSocketAddress/of p))]
+                                 (some? ch))
+                               (catch Throwable _ false))]
                    (when-not live? (try (Files/deleteIfExists p) (catch Throwable _ nil)))))))))
        (catch Throwable _ nil)))
 
@@ -142,78 +145,80 @@
    `{:path <str> :stop (fn [])}`; `:stop` closes the server + all clients and
    unlinks the socket file. Never blocks the caller."
   [{:keys [pty path replay-fn]}]
-  (let [^Path p
-        (if (instance? Path path) path (Paths/get ^String (str path) (make-array String 0)))
+  (let
+    [^Path p
+     (if (instance? Path path) path (Paths/get ^String (str path) (make-array String 0)))
 
-        parent
-        (.getParent p)
+     parent
+     (.getParent p)
 
-        _
-        (when parent (Files/createDirectories parent (make-array FileAttribute 0)))
+     _
+     (when parent (Files/createDirectories parent (make-array FileAttribute 0)))
 
-        _
-        (Files/deleteIfExists p)
+     _
+     (Files/deleteIfExists p)
 
-        add-listener
-        (:add-listener pty)
+     add-listener
+     (:add-listener pty)
 
-        send
-        (:send pty)
+     send
+     (:send pty)
 
-        server
-        (doto (ServerSocketChannel/open StandardProtocolFamily/UNIX)
-          (.bind (UnixDomainSocketAddress/of p)))
+     server
+     (doto (ServerSocketChannel/open StandardProtocolFamily/UNIX)
+       (.bind (UnixDomainSocketAddress/of p)))
 
-        clients
-        (atom #{})
+     clients
+     (atom #{})
 
-        running
-        (atom true)
+     running
+     (atom true)
 
-        drop!
-        (fn [^SocketChannel ch unsub]
-          (when unsub (try (unsub) (catch Throwable _ nil)))
-          (swap! clients disj ch)
-          (try (.close ch) (catch Throwable _ nil)))
+     drop!
+     (fn [^SocketChannel ch unsub]
+       (when unsub (try (unsub) (catch Throwable _ nil)))
+       (swap! clients disj ch)
+       (try (.close ch) (catch Throwable _ nil)))
 
-        on-client
-        (fn [^SocketChannel ch]
-          (swap! clients conj ch)
-          (when replay-fn
-            (try (let [ba (replay-fn)]
-                   (when (and ba (pos? (alength ^bytes ba))) (write-all! ch ba)))
-                 (catch Throwable _ nil)))
-          (let [unsub (add-listener (fn [^bytes ba]
-                                      (try (write-all! ch ba) (catch Throwable _ (drop! ch nil)))))]
-            (doto (Thread. ^Runnable
-                           (fn []
-                             (try (let [buf (ByteBuffer/allocate 4096)]
-                                    (loop []
+     on-client
+     (fn [^SocketChannel ch]
+       (swap! clients conj ch)
+       (when replay-fn
+         (try (let [ba (replay-fn)]
+                (when (and ba (pos? (alength ^bytes ba))) (write-all! ch ba)))
+              (catch Throwable _ nil)))
+       (let
+         [unsub (add-listener (fn [^bytes ba]
+                                (try (write-all! ch ba) (catch Throwable _ (drop! ch nil)))))]
+         (doto (Thread. ^Runnable
+                        (fn []
+                          (try (let [buf (ByteBuffer/allocate 4096)]
+                                 (loop []
 
-                                      (.clear buf)
-                                      (let [n (.read ch buf)]
-                                        (when (>= n 0)
-                                          (when (pos? n)
-                                            (.flip buf)
-                                            (let [ba (byte-array n)]
-                                              (.get buf ba)
-                                              (send ba)))
-                                          (recur)))))
-                                  (catch Throwable _ nil)
-                                  (finally (drop! ch unsub))))
-                           "vis-pty-bridge-client")
-              (.setDaemon true)
-              (.start))))
+                                   (.clear buf)
+                                   (let [n (.read ch buf)]
+                                     (when (>= n 0)
+                                       (when (pos? n)
+                                         (.flip buf)
+                                         (let [ba (byte-array n)]
+                                           (.get buf ba)
+                                           (send ba)))
+                                       (recur)))))
+                               (catch Throwable _ nil)
+                               (finally (drop! ch unsub))))
+                        "vis-pty-bridge-client")
+           (.setDaemon true)
+           (.start))))
 
-        accept
-        (fn []
-          (try (loop []
+     accept
+     (fn []
+       (try (loop []
 
-                 (when @running
-                   (when-let [ch (.accept server)]
-                     (on-client ch))
-                   (recur)))
-               (catch Throwable _ nil)))]
+              (when @running
+                (when-let [ch (.accept server)]
+                  (on-client ch))
+                (recur)))
+            (catch Throwable _ nil)))]
 
     (doto (Thread. ^Runnable accept "vis-pty-bridge-accept") (.setDaemon true) (.start))
     {:path (str p)
@@ -237,16 +242,17 @@
   "Run `stty` against the controlling terminal (INHERITs our stdin, which is the
    human's tty), returning trimmed stdout. Best-effort: nil on any failure."
   [& args]
-  (try (let [pb
-             (doto (ProcessBuilder. ^java.util.List (into-array String (cons "stty" args)))
-               (.redirectInput java.lang.ProcessBuilder$Redirect/INHERIT)
-               (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT))
+  (try (let
+         [pb
+          (doto (ProcessBuilder. ^java.util.List (into-array String (cons "stty" args)))
+            (.redirectInput java.lang.ProcessBuilder$Redirect/INHERIT)
+            (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT))
 
-             proc
-             (.start pb)
+          proc
+          (.start pb)
 
-             out
-             (slurp (.getInputStream proc))]
+          out
+          (slurp (.getInputStream proc))]
 
          (.waitFor proc)
          (str/trim out))
@@ -265,35 +271,37 @@
                           (or (:socket opts) (:id opts) "?")
                           " — is it running? (see `resources` / shell_bg output)")))
           2)
-      (let [ch (SocketChannel/open (UnixDomainSocketAddress/of p))
-            saved (stty "-g")
-            restore (fn []
-                      (when saved (stty saved)))]
+      (let
+        [ch (SocketChannel/open (UnixDomainSocketAddress/of p))
+         saved (stty "-g")
+         restore (fn []
+                   (when saved (stty saved)))]
 
         (println (str "vis: attached to " p " — press Ctrl-] to detach (child keeps running)."))
         (flush)
         (try (stty "raw" "-echo")
-             (let [^OutputStream out System/out
-                   _pump (doto (Thread. ^Runnable
-                                        (fn []
-                                          (try (let [buf (ByteBuffer/allocate 4096)]
-                                                 (loop []
+             (let
+               [^OutputStream out System/out
+                _pump (doto (Thread. ^Runnable
+                                     (fn []
+                                       (try (let [buf (ByteBuffer/allocate 4096)]
+                                              (loop []
 
-                                                   (.clear buf)
-                                                   (let [n (.read ch buf)]
-                                                     (when (>= n 0)
-                                                       (when (pos? n)
-                                                         (.flip buf)
-                                                         (let [ba (byte-array n)]
-                                                           (.get buf ba)
-                                                           (.write out ba)
-                                                           (.flush out)))
-                                                       (recur)))))
-                                               (catch Throwable _ nil)))
-                                        "vis-pty-attach-out")
-                           (.setDaemon true)
-                           (.start))
-                   ^InputStream in System/in]
+                                                (.clear buf)
+                                                (let [n (.read ch buf)]
+                                                  (when (>= n 0)
+                                                    (when (pos? n)
+                                                      (.flip buf)
+                                                      (let [ba (byte-array n)]
+                                                        (.get buf ba)
+                                                        (.write out ba)
+                                                        (.flush out)))
+                                                    (recur)))))
+                                            (catch Throwable _ nil)))
+                                     "vis-pty-attach-out")
+                        (.setDaemon true)
+                        (.start))
+                ^InputStream in System/in]
 
                (loop []
 

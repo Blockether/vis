@@ -37,11 +37,12 @@
         (expect (= 'com.blockether.vis.ext.persistance-sqlite.core
                    (get-in backends [:sqlite :ns])))))
   (it "captures registrar source namespace for reload/source tracking"
-      (let [exts
-            (vis/registered-extensions)
+      (let
+        [exts
+         (vis/registered-extensions)
 
-            ext
-            (some #(when (= "persistance-sqlite" (:ext/name %)) %) exts)]
+         ext
+         (some #(when (= "persistance-sqlite" (:ext/name %)) %) exts)]
 
         (expect (some? ext))
         (expect (= ['com.blockether.vis.ext.persistance-sqlite.registrar] (:ext/source-nses ext)))

@@ -47,11 +47,12 @@
   Tailscale addresses come first because they keep working off-LAN; then LAN;
   then the server's bind host when concrete."
   [bind-host]
-  (let [ips
-        (iface-addresses)
+  (let
+    [ips
+     (iface-addresses)
 
-        concrete
-        (when-not (#{"0.0.0.0" "::" "127.0.0.1" "localhost"} (str bind-host)) (str bind-host))]
+     concrete
+     (when-not (#{"0.0.0.0" "::" "127.0.0.1" "localhost"} (str bind-host)) (str bind-host))]
 
     (->> (concat (filter tailscale-ip? ips)
                  (filter site-local-ip? ips)
@@ -63,11 +64,12 @@
 
 (defn pairing-url
   [{:keys [host port token]}]
-  (let [host
-        (or (first (candidate-hosts host)) host)
+  (let
+    [host
+     (or (first (candidate-hosts host)) host)
 
-        url
-        (str "http://" host ":" port)]
+     url
+     (str "http://" host ":" port)]
 
     (str "vis://gateway?url="
          (url-encode url)
@@ -75,41 +77,43 @@
 
 (defn pairing-json
   [{:keys [host port token require-token?] :as opts}]
-  (let [host
-        (or (first (candidate-hosts host)) host)
+  (let
+    [host
+     (or (first (candidate-hosts host)) host)
 
-        url
-        (str "http://" host ":" port)]
+     url
+     (str "http://" host ":" port)]
 
-    (wire/json-str (cond-> {:type "vis-gateway-pairing"
-                            :version 1
-                            :url url
-                            :hosts (candidate-hosts (:host opts))}
-                     require-token?
-                     (assoc :token token)))))
+    (wire/json-str
+      (cond->
+        {:type "vis-gateway-pairing" :version 1 :url url :hosts (candidate-hosts (:host opts))}
+        require-token?
+        (assoc :token token)))))
 
 (defn terminal-qr
   "Render `text` as a terminal QR code using Unicode half-blocks. Returns a string
   so tests and CLI callers can decide where to print it."
   [text]
-  (let [hints
-        (doto (EnumMap. EncodeHintType) (.put EncodeHintType/MARGIN 1))
+  (let
+    [hints
+     (doto (EnumMap. EncodeHintType) (.put EncodeHintType/MARGIN 1))
 
-        matrix
-        (.encode (QRCodeWriter.) text BarcodeFormat/QR_CODE 0 0 hints)
+     matrix
+     (.encode (QRCodeWriter.) text BarcodeFormat/QR_CODE 0 0 hints)
 
-        w
-        (.getWidth matrix)
+     w
+     (.getWidth matrix)
 
-        h
-        (.getHeight matrix)]
+     h
+     (.getHeight matrix)]
 
     (str/join "\n"
               (for [y (range 0 h 2)]
                 (apply str
                   (for [x (range w)]
-                    (let [top? (.get matrix x y)
-                          bot? (and (< (inc (long y)) h) (.get matrix x (inc (long y))))]
+                    (let
+                      [top? (.get matrix x y)
+                       bot? (and (< (inc (long y)) h) (.get matrix x (inc (long y))))]
 
                       (cond (and top? bot?) "█"
                             top? "▀"
@@ -118,13 +122,14 @@
 
 (defn print-pairing!
   [{:keys [require-token?] :as opts}]
-  (let [payload
-        (pairing-url (cond-> opts
-                       (not require-token?)
-                       (dissoc :token)))
+  (let
+    [payload
+     (pairing-url (cond-> opts
+                    (not require-token?)
+                    (dissoc :token)))
 
-        hosts
-        (candidate-hosts (:host opts))]
+     hosts
+     (candidate-hosts (:host opts))]
 
     (println)
     (println "VIS companion pairing")

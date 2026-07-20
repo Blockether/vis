@@ -86,11 +86,12 @@
         (number? c) (let [v (int c)]
                       (Color. v v v))
         (sequential? c)
-        (let [v
-              (mapv int c)
+        (let
+          [v
+           (mapv int c)
 
-              [r g b a]
-              v]
+           [r g b a]
+           v]
 
           (case (count v)
             1
@@ -112,11 +113,12 @@
 
 (defn- flatten-rgb
   ^BufferedImage [^BufferedImage src]
-  (let [out
-        (BufferedImage. (.getWidth src) (.getHeight src) BufferedImage/TYPE_INT_RGB)
+  (let
+    [out
+     (BufferedImage. (.getWidth src) (.getHeight src) BufferedImage/TYPE_INT_RGB)
 
-        g
-        (.createGraphics out)]
+     g
+     (.createGraphics out)]
 
     (.setColor g Color/WHITE)
     (.fillRect g 0 0 (.getWidth src) (.getHeight src))
@@ -131,11 +133,12 @@
 
 (defn- op-new
   [mode w h fill]
-  (let [img
-        (new-buffered mode w h)
+  (let
+    [img
+     (new-buffered mode w h)
 
-        g
-        (.createGraphics img)]
+     g
+     (.createGraphics img)]
 
     (when (some? fill)
       (.setComposite g AlphaComposite/Src)
@@ -147,74 +150,78 @@
 
 (defn- op-open
   [b64]
-  (let [bytes
-        (.decode (Base64/getDecoder) ^String b64)
+  (let
+    [bytes
+     (.decode (Base64/getDecoder) ^String b64)
 
-        img
-        (ImageIO/read (ByteArrayInputStream. bytes))]
+     img
+     (ImageIO/read (ByteArrayInputStream. bytes))]
 
     (when (nil? img) (throw (ex-info "cannot identify image file" {})))
-    (let [mode
-          (img->mode img)
+    (let
+      [mode
+       (img->mode img)
 
-          h
-          (put-img! img mode)]
+       h
+       (put-img! img mode)]
 
       (meta-of h))))
 
 (defn- op-save
   [h fmt]
-  (let [{:keys [^BufferedImage img]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img]}
+     (entry h)
 
-        fmt
-        (str/lower-case (or fmt "png"))
+     fmt
+     (str/lower-case (or fmt "png"))
 
-        fmt
-        (case fmt
-          "jpg"
-          "jpeg"
+     fmt
+     (case fmt
+       "jpg"
+       "jpeg"
 
-          fmt)
+       fmt)
 
-        img
-        (if (and (#{"jpeg" "bmp"} fmt) (.. img getColorModel hasAlpha)) (flatten-rgb img) img)
+     img
+     (if (and (#{"jpeg" "bmp"} fmt) (.. img getColorModel hasAlpha)) (flatten-rgb img) img)
 
-        baos
-        (ByteArrayOutputStream.)
+     baos
+     (ByteArrayOutputStream.)
 
-        ok
-        (ImageIO/write img fmt baos)]
+     ok
+     (ImageIO/write img fmt baos)]
 
     (when-not ok (throw (ex-info (str "no image writer for format " fmt) {})))
     (.encodeToString (Base64/getEncoder) (.toByteArray baos))))
 
 (defn- op-save-temp
   [h fmt]
-  (let [{:keys [^BufferedImage img]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img]}
+     (entry h)
 
-        fmt
-        (str/lower-case (or fmt "png"))
+     fmt
+     (str/lower-case (or fmt "png"))
 
-        norm
-        (case fmt
-          "jpg"
-          "jpeg"
+     norm
+     (case fmt
+       "jpg"
+       "jpeg"
 
-          fmt)
+       fmt)
 
-        b64
-        (op-save h fmt)
+     b64
+     (op-save h fmt)
 
-        bytes
-        (.decode (Base64/getDecoder) ^String b64)
+     bytes
+     (.decode (Base64/getDecoder) ^String b64)
 
-        dir
-        (doto (File. (System/getProperty "java.io.tmpdir") "vis-pil") (.mkdirs))
+     dir
+     (doto (File. (System/getProperty "java.io.tmpdir") "vis-pil") (.mkdirs))
 
-        f
-        (File/createTempFile "img-" (str "." fmt) dir)]
+     f
+     (File/createTempFile "img-" (str "." fmt) dir)]
 
     (with-open [o (FileOutputStream. f)]
       (.write o ^bytes bytes))
@@ -228,14 +235,15 @@
 
 (defn- op-copy
   [h]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        out
-        (new-buffered mode (.getWidth img) (.getHeight img))
+     out
+     (new-buffered mode (.getWidth img) (.getHeight img))
 
-        g
-        (.createGraphics out)]
+     g
+     (.createGraphics out)]
 
     (.setComposite g AlphaComposite/Src)
     (.drawImage g img 0 0 nil)
@@ -255,14 +263,15 @@
 
 (defn- op-resize
   [h w h2 resample]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        out
-        (new-buffered mode w h2)
+     out
+     (new-buffered mode w h2)
 
-        g
-        (.createGraphics out)]
+     g
+     (.createGraphics out)]
 
     (.setComposite g AlphaComposite/Src)
     (.setRenderingHint g RenderingHints/KEY_INTERPOLATION (resample->hint resample))
@@ -272,20 +281,21 @@
 
 (defn- op-crop
   [h l t r b]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (max 1 (- (int r) (int l)))
+     w
+     (max 1 (- (int r) (int l)))
 
-        hh
-        (max 1 (- (int b) (int t)))
+     hh
+     (max 1 (- (int b) (int t)))
 
-        out
-        (new-buffered mode w hh)
+     out
+     (new-buffered mode w hh)
 
-        g
-        (.createGraphics out)]
+     g
+     (.createGraphics out)]
 
     (.setComposite g AlphaComposite/Src)
     (.drawImage g img (- (int l)) (- (int t)) nil)
@@ -294,35 +304,36 @@
 
 (defn- op-rotate
   [h angle expand fillc]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        rad
-        (Math/toRadians (double angle))
+     rad
+     (Math/toRadians (double angle))
 
-        cos
-        (Math/abs (Math/cos rad))
+     cos
+     (Math/abs (Math/cos rad))
 
-        sin
-        (Math/abs (Math/sin rad))
+     sin
+     (Math/abs (Math/sin rad))
 
-        nw
-        (if expand (long (Math/round (+ (* w cos) (* hh sin)))) w)
+     nw
+     (if expand (long (Math/round (+ (* w cos) (* hh sin)))) w)
 
-        nh
-        (if expand (long (Math/round (+ (* w sin) (* hh cos)))) hh)
+     nh
+     (if expand (long (Math/round (+ (* w sin) (* hh cos)))) hh)
 
-        out
-        (new-buffered mode nw nh)
+     out
+     (new-buffered mode nw nh)
 
-        g
-        (.createGraphics out)]
+     g
+     (.createGraphics out)]
 
     (when (some? fillc) (.setColor g (->color fillc mode)) (.fillRect g 0 0 (int nw) (int nh)))
     (.setRenderingHint g
@@ -337,54 +348,56 @@
 
 (defn- op-transpose
   [h method]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        m
-        (int method)
+     m
+     (int method)
 
-        [nw nh]
-        (case m
-          (2 4 5 6)
-          [hh w]
+     [nw nh]
+     (case m
+       (2 4 5 6)
+       [hh w]
 
-          [w hh])
+       [w hh])
 
-        out
-        (new-buffered mode nw nh)]
+     out
+     (new-buffered mode nw nh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [p (.getRGB img x y)
-              [nx ny] (case m
-                        0
-                        [(- w 1 x) y]
+        (let
+          [p (.getRGB img x y)
+           [nx ny] (case m
+                     0
+                     [(- w 1 x) y]
 
-                        1
-                        [x (- hh 1 y)]
+                     1
+                     [x (- hh 1 y)]
 
-                        3
-                        [(- w 1 x) (- hh 1 y)]
+                     3
+                     [(- w 1 x) (- hh 1 y)]
 
-                        2
-                        [y (- w 1 x)]
+                     2
+                     [y (- w 1 x)]
 
-                        4
-                        [(- hh 1 y) x]
+                     4
+                     [(- hh 1 y) x]
 
-                        5
-                        [y x]
+                     5
+                     [y x]
 
-                        6
-                        [(- hh 1 y) (- w 1 x)]
+                     6
+                     [(- hh 1 y) (- w 1 x)]
 
-                        [x y])]
+                     [x y])]
 
           (.setRGB out (int nx) (int ny) p))))
     (meta-of (put-img! out mode))))
@@ -396,9 +409,10 @@
   (let [{:keys [^BufferedImage img mode]} (entry h)]
     (if (= mode (str target))
       (op-copy h)
-      (let [w (.getWidth img)
-            hh (.getHeight img)
-            target (str target)]
+      (let
+        [w (.getWidth img)
+         hh (.getHeight img)
+         target (str target)]
 
         (case target
           ;; sRGB-space luminance (Pillow's ITU-R 601-2), computed per pixel —
@@ -422,15 +436,17 @@
           (let [out (new-buffered "LA" w hh)]
             (dotimes [y hh]
               (dotimes [x w]
-                (let [p (.getRGB img x y)
-                      v (lum p)]
+                (let
+                  [p (.getRGB img x y)
+                   v (lum p)]
 
                   (.setRGB out x y (unchecked-int (argb (ch p 24) v v v))))))
             (meta-of (put-img! out "LA")))
 
           ;; RGB / RGBA: a straight channel copy (drawImage preserves sRGB).
-          (let [out (new-buffered target w hh)
-                g (.createGraphics out)]
+          (let
+            [out (new-buffered target w hh)
+             g (.createGraphics out)]
 
             (.setComposite g AlphaComposite/Src)
             (.drawImage g img 0 0 nil)
@@ -439,11 +455,12 @@
 
 (defn- op-getpixel
   [h x y]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        p
-        (.getRGB img (int x) (int y))]
+     p
+     (.getRGB img (int x) (int y))]
 
     (case (str mode)
       ("L" "1" "I" "F" "P")
@@ -457,11 +474,12 @@
 (defn- color->argb
   ^long [c _mode]
   (cond (number? c) (gray-argb (int c))
-        (sequential? c) (let [v
-                              (mapv int c)
+        (sequential? c) (let
+                          [v
+                           (mapv int c)
 
-                              [r g b a]
-                              v]
+                           [r g b a]
+                           v]
 
                           (case (count v)
                             1
@@ -484,49 +502,52 @@
 
 (defn- blend-argb
   ^long [pd ps ^double t]
-  (let [mix (fn [sh]
-              (clamp255 (+ (* (- 1.0 t) (ch pd sh)) (* t (ch ps sh)))))]
+  (let
+    [mix (fn [sh]
+           (clamp255 (+ (* (- 1.0 t) (ch pd sh)) (* t (ch ps sh)))))]
     (argb (mix 24) (mix 16) (mix 8) (mix 0))))
 
 (defn- op-paste
   [dst src x y mask]
-  (let [{d :img}
-        (entry dst)
+  (let
+    [{d :img}
+     (entry dst)
 
-        {s :img}
-        (entry src)
+     {s :img}
+     (entry src)
 
-        ^BufferedImage d
-        d
+     ^BufferedImage d
+     d
 
-        ^BufferedImage s
-        s
+     ^BufferedImage s
+     s
 
-        x
-        (int x)
+     x
+     (int x)
 
-        y
-        (int y)
+     y
+     (int y)
 
-        sw
-        (.getWidth s)
+     sw
+     (.getWidth s)
 
-        sh
-        (.getHeight s)
+     sh
+     (.getHeight s)
 
-        dw
-        (.getWidth d)
+     dw
+     (.getWidth d)
 
-        dh
-        (.getHeight d)
+     dh
+     (.getHeight d)
 
-        mimg
-        (when (and mask (>= (long mask) 0)) (:img (entry mask)))]
+     mimg
+     (when (and mask (>= (long mask) 0)) (:img (entry mask)))]
 
     (dotimes [j sh]
       (dotimes [i sw]
-        (let [dx (+ x i)
-              dy (+ y j)]
+        (let
+          [dx (+ x i)
+           dy (+ y j)]
 
           (when (and (>= dx 0) (< dx dw) (>= dy 0) (< dy dh))
             (if mimg
@@ -543,36 +564,38 @@
 
 (defn- op-getbbox
   [h]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        alpha?
-        (contains? #{"RGBA" "LA"} (str mode))
+     alpha?
+     (contains? #{"RGBA" "LA"} (str mode))
 
-        minx
-        (long-array 1 w)
+     minx
+     (long-array 1 w)
 
-        miny
-        (long-array 1 hh)
+     miny
+     (long-array 1 hh)
 
-        maxx
-        (long-array 1 -1)
+     maxx
+     (long-array 1 -1)
 
-        maxy
-        (long-array 1 -1)]
+     maxy
+     (long-array 1 -1)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [p (.getRGB img x y)
-              nz (if alpha?
-                   (not (zero? (bit-and p (unchecked-int 0xffffffff))))
-                   (not (zero? (bit-and p 0xffffff))))]
+        (let
+          [p (.getRGB img x y)
+           nz (if alpha?
+                (not (zero? (bit-and p (unchecked-int 0xffffffff))))
+                (not (zero? (bit-and p 0xffffff))))]
 
           (when nz
             (when (< x (aget minx 0)) (aset minx 0 (long x)))
@@ -585,69 +608,73 @@
 
 (defn- op-histogram
   [h]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        chans
-        (case (str mode)
-          ("L" "1" "I" "F" "P")
-          [16]
+     chans
+     (case (str mode)
+       ("L" "1" "I" "F" "P")
+       [16]
 
-          ("RGBA" "LA")
-          [16 8 0 24]
+       ("RGBA" "LA")
+       [16 8 0 24]
 
-          [16 8 0])
+       [16 8 0])
 
-        nch
-        (count chans)
+     nch
+     (count chans)
 
-        bins
-        (int-array (* 256 nch))]
+     bins
+     (int-array (* 256 nch))]
 
     (dotimes [y hh]
       (dotimes [x w]
         (let [p (.getRGB img x y)]
           (dotimes [c nch]
-            (let [v (ch p (nth chans c))
-                  idx (+ (* c 256) v)]
+            (let
+              [v (ch p (nth chans c))
+               idx (+ (* c 256) v)]
 
               (aset bins idx (inc (aget bins idx))))))))
     (vec bins)))
 
 (defn- op-tobytes
   [h]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        bpp
-        (case (str mode)
-          ("L" "1" "I" "F" "P")
-          1
+     bpp
+     (case (str mode)
+       ("L" "1" "I" "F" "P")
+       1
 
-          ("RGBA" "LA")
-          4
+       ("RGBA" "LA")
+       4
 
-          3)
+       3)
 
-        buf
-        (byte-array (* w hh bpp))]
+     buf
+     (byte-array (* w hh bpp))]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [p (.getRGB img x y)
-              i (* (+ (* y w) x) bpp)]
+        (let
+          [p (.getRGB img x y)
+           i (* (+ (* y w) x) bpp)]
 
           (case bpp
             1
@@ -666,30 +693,32 @@
 
 (defn- op-frombytes
   [mode w h b64]
-  (let [data
-        (.decode (Base64/getDecoder) ^String b64)
+  (let
+    [data
+     (.decode (Base64/getDecoder) ^String b64)
 
-        mode
-        (str mode)
+     mode
+     (str mode)
 
-        bpp
-        (case mode
-          ("L" "1" "I" "F" "P")
-          1
+     bpp
+     (case mode
+       ("L" "1" "I" "F" "P")
+       1
 
-          ("RGBA" "LA")
-          4
+       ("RGBA" "LA")
+       4
 
-          3)
+       3)
 
-        out
-        (new-buffered mode w h)]
+     out
+     (new-buffered mode w h)]
 
     (dotimes [y h]
       (dotimes [x w]
-        (let [i (* (+ (* y (long w)) x) (long bpp))
-              u (fn [^long k]
-                  (bit-and (aget data (+ i k)) 0xff))]
+        (let
+          [i (* (+ (* y (long w)) x) (long bpp))
+           u (fn [^long k]
+               (bit-and (aget data (+ i k)) 0xff))]
 
           (.setRGB out
                    x
@@ -706,20 +735,21 @@
 
 (defn- op-point
   [h lut]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        L
-        (int-array (map int lut))
+     L
+     (int-array (map int lut))
 
-        out
-        (new-buffered mode w hh)]
+     out
+     (new-buffered mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -733,43 +763,45 @@
 
 (defn- op-conv
   [h size kernel scale offset]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        k
-        (int size)
+     k
+     (int size)
 
-        half
-        (quot k 2)
+     half
+     (quot k 2)
 
-        ker
-        (double-array (map double kernel))
+     ker
+     (double-array (map double kernel))
 
-        sc
-        (let [s (double scale)]
-          (if (zero? s) 1.0 s))
+     sc
+     (let [s (double scale)]
+       (if (zero? s) 1.0 s))
 
-        off
-        (double offset)
+     off
+     (double offset)
 
-        out
-        (new-buffered mode w hh)]
+     out
+     (new-buffered mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
         (let [acc (double-array 3)]
           (dotimes [ky k]
             (dotimes [kx k]
-              (let [sx (min (- w 1) (max 0 (+ x (- kx half))))
-                    sy (min (- hh 1) (max 0 (+ y (- ky half))))
-                    p (.getRGB img sx sy)
-                    wgt (aget ker (+ (* ky k) kx))]
+              (let
+                [sx (min (- w 1) (max 0 (+ x (- kx half))))
+                 sy (min (- hh 1) (max 0 (+ y (- ky half))))
+                 p (.getRGB img sx sy)
+                 wgt (aget ker (+ (* ky k) kx))]
 
                 (aset acc 0 (+ (aget acc 0) (* wgt (ch p 16))))
                 (aset acc 1 (+ (aget acc 1) (* wgt (ch p 8))))
@@ -785,44 +817,47 @@
 
 (defn- op-rank
   [h size rank]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        k
-        (int size)
+     k
+     (int size)
 
-        half
-        (quot k 2)
+     half
+     (quot k 2)
 
-        n
-        (* k k)
+     n
+     (* k k)
 
-        rank
-        (int (min (dec n) (max 0 (long rank))))
+     rank
+     (int (min (dec n) (max 0 (long rank))))
 
-        out
-        (new-buffered mode w hh)]
+     out
+     (new-buffered mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [rs (int-array n)
-              gs (int-array n)
-              bs (int-array n)
-              as (int-array n)
-              c (int-array 1)]
+        (let
+          [rs (int-array n)
+           gs (int-array n)
+           bs (int-array n)
+           as (int-array n)
+           c (int-array 1)]
 
           (dotimes [ky k]
             (dotimes [kx k]
-              (let [sx (min (- w 1) (max 0 (+ x (- kx half))))
-                    sy (min (- hh 1) (max 0 (+ y (- ky half))))
-                    p (.getRGB img sx sy)
-                    i (aget c 0)]
+              (let
+                [sx (min (- w 1) (max 0 (+ x (- kx half))))
+                 sy (min (- hh 1) (max 0 (+ y (- ky half))))
+                 p (.getRGB img sx sy)
+                 i (aget c 0)]
 
                 (aset rs i (int (ch p 16)))
                 (aset gs i (int (ch p 8)))
@@ -842,29 +877,30 @@
 
 (defn- op-blend
   [ha hb t]
-  (let [{a :img ma :mode}
-        (entry ha)
+  (let
+    [{a :img ma :mode}
+     (entry ha)
 
-        {b :img}
-        (entry hb)
+     {b :img}
+     (entry hb)
 
-        ^BufferedImage a
-        a
+     ^BufferedImage a
+     a
 
-        ^BufferedImage b
-        b
+     ^BufferedImage b
+     b
 
-        t
-        (double t)
+     t
+     (double t)
 
-        w
-        (.getWidth a)
+     w
+     (.getWidth a)
 
-        hh
-        (.getHeight a)
+     hh
+     (.getHeight a)
 
-        out
-        (new-buffered ma w hh)]
+     out
+     (new-buffered ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -873,32 +909,33 @@
 
 (defn- op-composite
   [ha hb hmask]
-  (let [{a :img ma :mode}
-        (entry ha)
+  (let
+    [{a :img ma :mode}
+     (entry ha)
 
-        {b :img}
-        (entry hb)
+     {b :img}
+     (entry hb)
 
-        {m :img}
-        (entry hmask)
+     {m :img}
+     (entry hmask)
 
-        ^BufferedImage a
-        a
+     ^BufferedImage a
+     a
 
-        ^BufferedImage b
-        b
+     ^BufferedImage b
+     b
 
-        ^BufferedImage m
-        m
+     ^BufferedImage m
+     m
 
-        w
-        (.getWidth a)
+     w
+     (.getWidth a)
 
-        hh
-        (.getHeight a)
+     hh
+     (.getHeight a)
 
-        out
-        (new-buffered ma w hh)]
+     out
+     (new-buffered ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -968,17 +1005,18 @@
 
     "soft_light"
     (fn [^long a ^long b]
-      (let [a'
-            (/ (double a) 255.0)
+      (let
+        [a'
+         (/ (double a) 255.0)
 
-            b'
-            (/ (double b) 255.0)
+         b'
+         (/ (double b) 255.0)
 
-            res
-            (if (<= b' 0.5)
-              (- a' (* (- 1.0 (* 2.0 b')) a' (- 1.0 a')))
-              (let [d (if (<= a' 0.25) (* (+ (* (- (* 16.0 a') 12.0) a') 4.0) a') (Math/sqrt a'))]
-                (+ a' (* (- (* 2.0 b') 1.0) (- d a')))))]
+         res
+         (if (<= b' 0.5)
+           (- a' (* (- 1.0 (* 2.0 b')) a' (- 1.0 a')))
+           (let [d (if (<= a' 0.25) (* (+ (* (- (* 16.0 a') 12.0) a') 4.0) a') (Math/sqrt a'))]
+             (+ a' (* (- (* 2.0 b') 1.0) (- d a')))))]
 
         (clamp255 (* res 255.0))))
 
@@ -987,34 +1025,36 @@
 
 (defn- op-chop
   [op ha hb]
-  (let [f
-        (chop-fn op)
+  (let
+    [f
+     (chop-fn op)
 
-        {a :img ma :mode}
-        (entry ha)
+     {a :img ma :mode}
+     (entry ha)
 
-        {b :img}
-        (entry hb)
+     {b :img}
+     (entry hb)
 
-        ^BufferedImage a
-        a
+     ^BufferedImage a
+     a
 
-        ^BufferedImage b
-        b
+     ^BufferedImage b
+     b
 
-        w
-        (.getWidth a)
+     w
+     (.getWidth a)
 
-        hh
-        (.getHeight a)
+     hh
+     (.getHeight a)
 
-        out
-        (new-buffered ma w hh)]
+     out
+     (new-buffered ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [pa (.getRGB a x y)
-              pb (.getRGB b x y)]
+        (let
+          [pa (.getRGB a x y)
+           pb (.getRGB b x y)]
 
           (.setRGB out
                    x
@@ -1027,24 +1067,25 @@
 
 (defn- op-split
   [h]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        shifts
-        (case (str mode)
-          ("L" "1" "I" "F" "P")
-          [16]
+     shifts
+     (case (str mode)
+       ("L" "1" "I" "F" "P")
+       [16]
 
-          ("RGBA" "LA")
-          [16 8 0 24]
+       ("RGBA" "LA")
+       [16 8 0 24]
 
-          [16 8 0])]
+       [16 8 0])]
 
     (mapv (fn [sh]
             (let [out (new-buffered "L" w hh)]
@@ -1056,28 +1097,30 @@
 
 (defn- op-merge
   [mode handles]
-  (let [mode
-        (str mode)
+  (let
+    [mode
+     (str mode)
 
-        imgs
-        (mapv #(:img (entry %)) handles)
+     imgs
+     (mapv #(:img (entry %)) handles)
 
-        ^BufferedImage f
-        (first imgs)
+     ^BufferedImage f
+     (first imgs)
 
-        w
-        (.getWidth f)
+     w
+     (.getWidth f)
 
-        hh
-        (.getHeight f)
+     hh
+     (.getHeight f)
 
-        out
-        (new-buffered mode w hh)]
+     out
+     (new-buffered mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [vals (mapv #(ch (.getRGB ^BufferedImage % x y) 0) imgs)
-              [r g b a] vals]
+        (let
+          [vals (mapv #(ch (.getRGB ^BufferedImage % x y) 0) imgs)
+           [r g b a] vals]
 
           (.setRGB out
                    x
@@ -1095,23 +1138,24 @@
 (defn- op-offset
   "Roll `img` by (dx, dy) with wraparound (ImageChops.offset)."
   [h dx dy]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        w
-        (.getWidth img)
+     w
+     (.getWidth img)
 
-        hh
-        (.getHeight img)
+     hh
+     (.getHeight img)
 
-        dx
-        (long dx)
+     dx
+     (long dx)
 
-        dy
-        (long dy)
+     dy
+     (long dy)
 
-        out
-        (new-buffered mode w hh)]
+     out
+     (new-buffered mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1121,58 +1165,62 @@
 (defn- op-alpha-composite
   "Porter-Duff `src` OVER `dst` at offset (dx, dy); returns a new RGBA image."
   [hdst hsrc dx dy]
-  (let [{d :img}
-        (entry hdst)
+  (let
+    [{d :img}
+     (entry hdst)
 
-        {s :img}
-        (entry hsrc)
+     {s :img}
+     (entry hsrc)
 
-        ^BufferedImage d
-        d
+     ^BufferedImage d
+     d
 
-        ^BufferedImage s
-        s
+     ^BufferedImage s
+     s
 
-        dx
-        (long dx)
+     dx
+     (long dx)
 
-        dy
-        (long dy)
+     dy
+     (long dy)
 
-        w
-        (.getWidth d)
+     w
+     (.getWidth d)
 
-        hh
-        (.getHeight d)
+     hh
+     (.getHeight d)
 
-        sw
-        (.getWidth s)
+     sw
+     (.getWidth s)
 
-        sh
-        (.getHeight s)
+     sh
+     (.getHeight s)
 
-        out
-        (new-buffered "RGBA" w hh)]
+     out
+     (new-buffered "RGBA" w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
         (.setRGB out x y (.getRGB d x y))))
     (dotimes [y sh]
       (dotimes [x sw]
-        (let [ox (+ x dx)
-              oy (+ y dy)]
+        (let
+          [ox (+ x dx)
+           oy (+ y dy)]
 
           (when (and (>= ox 0) (< ox w) (>= oy 0) (< oy hh))
-            (let [ps (.getRGB s x y)
-                  pd (.getRGB out ox oy)
-                  sa (/ (double (ch ps 24)) 255.0)
-                  da (/ (double (ch pd 24)) 255.0)
-                  oa (+ sa (* da (- 1.0 sa)))]
+            (let
+              [ps (.getRGB s x y)
+               pd (.getRGB out ox oy)
+               sa (/ (double (ch ps 24)) 255.0)
+               da (/ (double (ch pd 24)) 255.0)
+               oa (+ sa (* da (- 1.0 sa)))]
 
               (if (<= oa 0.0)
                 (.setRGB out ox oy (unchecked-int (argb 0 0 0 0)))
-                (let [f (fn [^long cs ^long cd]
-                          (clamp255 (/ (+ (* cs sa) (* cd da (- 1.0 sa))) oa)))]
+                (let
+                  [f (fn [^long cs ^long cd]
+                       (clamp255 (/ (+ (* cs sa) (* cd da (- 1.0 sa))) oa)))]
                   (.setRGB out
                            ox
                            oy
@@ -1187,45 +1235,45 @@
    coeffs applied. method AFFINE -> (a b c d e f); PERSPECTIVE -> (a b c d e f g h).
    Out-of-bounds samples take `fillc`. Nearest-neighbour (PIL's AFFINE default)."
   [h ow oh method coeffs fillc]
-  (let [{:keys [^BufferedImage img mode]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img mode]}
+     (entry h)
 
-        ow
-        (long ow)
+     ow
+     (long ow)
 
-        oh
-        (long oh)
+     oh
+     (long oh)
 
-        sw
-        (.getWidth img)
+     sw
+     (.getWidth img)
 
-        sh
-        (.getHeight img)
+     sh
+     (.getHeight img)
 
-        cf
-        (mapv double coeffs)
+     cf
+     (mapv double coeffs)
 
-        persp?
-        (= (str method) "PERSPECTIVE")
+     persp?
+     (= (str method) "PERSPECTIVE")
 
-        out
-        (new-buffered mode ow oh)
+     out
+     (new-buffered mode ow oh)
 
-        ^Color fc
-        (->color fillc mode)
+     ^Color fc
+     (->color fillc mode)
 
-        fill-argb
-        (.getRGB fc)]
+     fill-argb
+     (.getRGB fc)]
 
     (dotimes [y oh]
       (dotimes [x ow]
-        (let [xd (double x)
-              yd (double y)
-              den (if persp? (+ (* (double (nth cf 6)) xd) (* (double (nth cf 7)) yd) 1.0) 1.0)
-              sx (/ (+ (* (double (nth cf 0)) xd) (* (double (nth cf 1)) yd) (double (nth cf 2)))
-                    den)
-              sy (/ (+ (* (double (nth cf 3)) xd) (* (double (nth cf 4)) yd) (double (nth cf 5)))
-                    den)]
+        (let
+          [xd (double x)
+           yd (double y)
+           den (if persp? (+ (* (double (nth cf 6)) xd) (* (double (nth cf 7)) yd) 1.0) 1.0)
+           sx (/ (+ (* (double (nth cf 0)) xd) (* (double (nth cf 1)) yd) (double (nth cf 2))) den)
+           sy (/ (+ (* (double (nth cf 3)) xd) (* (double (nth cf 4)) yd) (double (nth cf 5))) den)]
 
           (if (and (>= sx 0.0) (< sx sw) (>= sy 0.0) (< sy sh))
             (.setRGB out x y (.getRGB img (int sx) (int sy)))
@@ -1240,23 +1288,24 @@
 
 (defn- op-draw
   [h op xy opts]
-  (let [{:keys [^BufferedImage img]}
-        (entry h)
+  (let
+    [{:keys [^BufferedImage img]}
+     (entry h)
 
-        g
-        (.createGraphics img)
+     g
+     (.createGraphics img)
 
-        pts
-        (mapv double xy)
+     pts
+     (mapv double xy)
 
-        fill
-        (get opts "fill")
+     fill
+     (get opts "fill")
 
-        outline
-        (get opts "outline")
+     outline
+     (get opts "outline")
 
-        width
-        (int (or (get opts "width") 1))]
+     width
+     (int (or (get opts "width") 1))]
 
     (.setRenderingHint g RenderingHints/KEY_ANTIALIASING RenderingHints/VALUE_ANTIALIAS_ON)
     (.setStroke g (BasicStroke. (float (max 1 width))))
@@ -1274,33 +1323,35 @@
           (.drawLine g (int x1) (int y1) (int x2) (int y2))))
 
       "rectangle"
-      (let [[x0 y0 x1 y1]
-            pts
+      (let
+        [[x0 y0 x1 y1]
+         pts
 
-            rx
-            (int (min (double x0) (double x1)))
+         rx
+         (int (min (double x0) (double x1)))
 
-            ry
-            (int (min (double y0) (double y1)))
+         ry
+         (int (min (double y0) (double y1)))
 
-            rw
-            (int (Math/abs (- (double x1) (double x0))))
+         rw
+         (int (Math/abs (- (double x1) (double x0))))
 
-            rh
-            (int (Math/abs (- (double y1) (double y0))))]
+         rh
+         (int (Math/abs (- (double y1) (double y0))))]
 
         (when (some? fill) (.setColor g (->color fill "RGB")) (.fillRect g rx ry (inc rw) (inc rh)))
         (when (some? outline) (.setColor g (->color outline "RGB")) (.drawRect g rx ry rw rh)))
 
       "ellipse"
-      (let [[x0 y0 x1 y1]
-            pts
+      (let
+        [[x0 y0 x1 y1]
+         pts
 
-            w
-            (int (- (double x1) (double x0)))
+         w
+         (int (- (double x1) (double x0)))
 
-            hh
-            (int (- (double y1) (double y0)))]
+         hh
+         (int (- (double y1) (double y0)))]
 
         (when (some? fill)
           (.setColor g (->color fill "RGB"))
@@ -1310,46 +1361,48 @@
           (.drawOval g (int x0) (int y0) w hh)))
 
       "polygon"
-      (let [n
-            (int (/ (count pts) 2))
+      (let
+        [n
+         (int (/ (count pts) 2))
 
-            xs
-            (int-array (map int (take-nth 2 pts)))
+         xs
+         (int-array (map int (take-nth 2 pts)))
 
-            ys
-            (int-array (map int (take-nth 2 (rest pts))))]
+         ys
+         (int-array (map int (take-nth 2 (rest pts))))]
 
         (when (some? fill) (.setColor g (->color fill "RGB")) (.fillPolygon g xs ys n))
         (when (some? outline) (.setColor g (->color outline "RGB")) (.drawPolygon g xs ys n)))
 
       ("arc" "chord" "pieslice")
-      (let [[x0 y0 x1 y1]
-            pts
+      (let
+        [[x0 y0 x1 y1]
+         pts
 
-            start
-            (double (or (get opts "start") 0))
+         start
+         (double (or (get opts "start") 0))
 
-            end
-            (double (or (get opts "end") 0))
+         end
+         (double (or (get opts "end") 0))
 
-            kind
-            (case (str op)
-              "arc"
-              java.awt.geom.Arc2D/OPEN
+         kind
+         (case (str op)
+           "arc"
+           java.awt.geom.Arc2D/OPEN
 
-              "chord"
-              java.awt.geom.Arc2D/CHORD
+           "chord"
+           java.awt.geom.Arc2D/CHORD
 
-              java.awt.geom.Arc2D/PIE)
+           java.awt.geom.Arc2D/PIE)
 
-            arc
-            (java.awt.geom.Arc2D$Double. (double x0)
-                                         (double y0)
-                                         (- (double x1) (double x0))
-                                         (- (double y1) (double y0))
-                                         (- start)
-                                         (- (- end start))
-                                         kind)]
+         arc
+         (java.awt.geom.Arc2D$Double. (double x0)
+                                      (double y0)
+                                      (- (double x1) (double x0))
+                                      (- (double y1) (double y0))
+                                      (- start)
+                                      (- (- end start))
+                                      kind)]
 
         (when (and (some? fill) (not= (str op) "arc"))
           (.setColor g (->color fill "RGB"))
@@ -1358,14 +1411,15 @@
           (when (some? oc) (.setColor g (->color oc "RGB")) (.draw g arc))))
 
       "text"
-      (let [[x y]
-            pts
+      (let
+        [[x y]
+         pts
 
-            s
-            (str (get opts "text"))
+         s
+         (str (get opts "text"))
 
-            size
-            (int (or (get opts "font_size") 12))]
+         size
+         (int (or (get opts "font_size") 12))]
 
         (.setFont g (Font. "SansSerif" Font/PLAIN size))
         (.setColor g (->color (or fill [0 0 0]) "RGB"))
@@ -1378,21 +1432,23 @@
 
 (defn- op-textbbox
   [text size]
-  (let [img
-        (BufferedImage. 1 1 BufferedImage/TYPE_INT_RGB)
+  (let
+    [img
+     (BufferedImage. 1 1 BufferedImage/TYPE_INT_RGB)
 
-        g
-        (.createGraphics img)]
+     g
+     (.createGraphics img)]
 
     (.setFont g (Font. "SansSerif" Font/PLAIN (int size)))
-    (let [fm
-          (.getFontMetrics g)
+    (let
+      [fm
+       (.getFontMetrics g)
 
-          w
-          (.stringWidth fm (str text))
+       w
+       (.stringWidth fm (str text))
 
-          hh
-          (.getHeight fm)]
+       hh
+       (.getHeight fm)]
 
       (.dispose g)
       [0 0 w hh])))

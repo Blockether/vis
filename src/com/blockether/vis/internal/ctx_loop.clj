@@ -125,23 +125,25 @@
 
    Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer user-request turn-summary]}]
-  (let [cursor
-        (cursor-snapshot env)
+  (let
+    [cursor
+     (cursor-snapshot env)
 
-        scope
-        (synthesize-scope env)]
+     scope
+     (synthesize-scope env)]
 
     (when ctx-atom
       (swap! ctx-atom (fn [c]
-                        (let [c+cur
-                              (assoc c "session_scope" cursor)
+                        (let
+                          [c+cur
+                           (assoc c "session_scope" cursor)
 
-                              {ctx' :ctx}
-                              (eng/finalize-turn c+cur
-                                                 scope
-                                                 {:answer answer
-                                                  :user-request user-request
-                                                  :turn-summary turn-summary})]
+                           {ctx' :ctx}
+                           (eng/finalize-turn c+cur
+                                              scope
+                                              {:answer answer
+                                               :user-request user-request
+                                               :turn-summary turn-summary})]
 
                           (dissoc ctx' "session_scope"))))
       (tel/log! {:level :info
@@ -187,32 +189,32 @@
    Recomputed each call so transient extension/env/resource/routing state stays
    fresh without pushing it back into `ctx-atom`."
   [env ctx]
-  (let [active-exts
-        (try (prompt/active-extensions env) (catch Throwable _ nil))
+  (let
+    [active-exts
+     (try (prompt/active-extensions env) (catch Throwable _ nil))
 
-        ext-ctx
-        (try (extension/ctx-contributions env active-exts)
-             (catch Throwable t
-               (tel/log!
-                 {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
-               {}))
+     ext-ctx
+     (try (extension/ctx-contributions env active-exts)
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
+            {}))
 
-        env-block
-        (try (env-digest/deep-merge (env-digest/base-digest env) (get ext-ctx "session_env"))
-             (catch Throwable t
-               (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
-               nil))
+     env-block
+     (try (env-digest/deep-merge (env-digest/base-digest env) (get ext-ctx "session_env"))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
+            nil))
 
-        ;; Session-scoped live resources — same registry the footer reads, so
-        ;; `session["resources"]` and the footer can never disagree.
-        rsrc
-        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
+     ;; Session-scoped live resources — same registry the footer reads, so
+     ;; `session["resources"]` and the footer can never disagree.
+     rsrc
+     (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
 
-        rsrc-view
-        (resources/model-view rsrc
-                              {:root (or (:workspace/root env)
-                                         (get-in ext-ctx ["session_workspace" "root"]))
-                               :languages (keys (get ext-ctx "session_language_tools"))})]
+     rsrc-view
+     (resources/model-view rsrc
+                           {:root (or (:workspace/root env)
+                                      (get-in ext-ctx ["session_workspace" "root"]))
+                            :languages (keys (get ext-ctx "session_language_tools"))})]
 
     (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
       (seq env-block)

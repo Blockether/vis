@@ -201,11 +201,12 @@
 (defn message
   [{:keys [id role status content created-at completed-at model provider author]
     :or {status "streaming" content [] created-at (System/currentTimeMillis)}}]
-  (assert-message! (cond-> {"id" (str id)
-                            "role" (name role)
-                            "status" (name status)
-                            "content" (vec content)
-                            "created_at" created-at}
+  (assert-message! (cond->
+                     {"id" (str id)
+                      "role" (name role)
+                      "status" (name status)
+                      "content" (vec content)
+                      "created_at" created-at}
                      completed-at
                      (assoc "completed_at" completed-at)
 

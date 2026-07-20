@@ -35,8 +35,9 @@
   ^String [^java.io.File root & args]
   (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
     (.directory pb root)
-    (let [p (.start pb)
-          out (slurp (.getInputStream p))]
+    (let
+      [p (.start pb)
+       out (slurp (.getInputStream p))]
 
       (.waitFor p)
       (.trim ^String out))))
@@ -64,8 +65,9 @@
              (finally (cleanup root)))))
   (it "reports root, branch, and clean status for a fresh repo"
       (let [root (make-tmp-dir)]
-        (try (let [_branch (init-repo! root)
-                   snap (git/snapshot root)]
+        (try (let
+               [_branch (init-repo! root)
+                snap (git/snapshot root)]
 
                (expect (some? snap))
                (expect (string? (:root snap)))

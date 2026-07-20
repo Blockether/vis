@@ -33,21 +33,22 @@
    (e.g. repl_eval's 30s default) still gets to produce its STRUCTURED timeout
    result before the wall fires. Capped at `MAX_EVAL_TIMEOUT_MS`."
   [input]
-  (let [requested
-        (when (map? input)
-          (or (get input "timeout_ms") (get input :timeout_ms) (get input :timeout-ms)))
+  (let
+    [requested
+     (when (map? input)
+       (or (get input "timeout_ms") (get input :timeout_ms) (get input :timeout-ms)))
 
-        requested
-        (when (and (number? requested) (pos? (long requested))) (long requested))
+     requested
+     (when (and (number? requested) (pos? (long requested))) (long requested))
 
-        base
-        ;; ALWAYS add the grace: the wall is a BACKSTOP, never a co-deadline. If it
-        ;; equalled the tool's own timeout the two would race and the wall's raw
-        ;; :vis/native-tool-timeout error would clobber the tool's nice structured
-        ;; timeout result (repl_eval's `⧖ timed out after Nms` card degraded to a
-        ;; bare message string exactly because default == default here).
-        (+ (long (if requested (long requested) NATIVE_TOOL_TIMEOUT_MS))
-           (long native-tool-timeout-grace-ms))]
+     base
+     ;; ALWAYS add the grace: the wall is a BACKSTOP, never a co-deadline. If it
+     ;; equalled the tool's own timeout the two would race and the wall's raw
+     ;; :vis/native-tool-timeout error would clobber the tool's nice structured
+     ;; timeout result (repl_eval's `⧖ timed out after Nms` card degraded to a
+     ;; bare message string exactly because default == default here).
+     (+ (long (if requested (long requested) NATIVE_TOOL_TIMEOUT_MS))
+        (long native-tool-timeout-grace-ms))]
 
     (long (min (long MAX_EVAL_TIMEOUT_MS) base))))
 
@@ -118,10 +119,11 @@
    the outer eval watchdog (default 120s) from preempting a longer requested
    shell timeout."
   [code]
-  (let [nums (for [[_ n] (re-seq
-                           #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)"
+  (let
+    [nums (for
+            [[_ n] (re-seq #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)"
                            (str code))]
-               (long (Math/round (Double/parseDouble n))))]
+            (long (Math/round (Double/parseDouble n))))]
     (when (seq nums) (apply max nums))))
 
 (defn eval-timeout-ms-for-code

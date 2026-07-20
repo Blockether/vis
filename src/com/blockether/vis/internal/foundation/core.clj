@@ -40,17 +40,18 @@
    render the current root as a real workspace; VCS detection inside
    `workspace-ctx/render-block` decides `\"vcs_kind\"` (`\"git\"`, `\"none\"`, ...)."
   [env]
-  (let [db
-        (:db-info env)
+  (let
+    [db
+     (:db-info env)
 
-        ws-id
-        (or (:workspace/id env)
-            (some-> env
-                    :workspace
-                    :id))
+     ws-id
+     (or (:workspace/id env)
+         (some-> env
+                 :workspace
+                 :id))
 
-        pair
-        (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
+     pair
+     (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
 
     (workspace-ctx/render-block (or pair {:workspace (fallback-workspace env)}))))
 
@@ -65,13 +66,14 @@
    The old redundant `(:project ctx)` contribution is gone; slim digest
    covers it."
   [env]
-  (let [ws-block
-        (session-workspace-block env)
+  (let
+    [ws-block
+     (session-workspace-block env)
 
-        ;; Recomputed EVERY turn from active-extensions, so the model sees a
-        ;; language pack's verbs (repl_eval/test/format) the turn it activates.
-        lang-tools
-        (language-surface/capability-data env)]
+     ;; Recomputed EVERY turn from active-extensions, so the model sees a
+     ;; language pack's verbs (repl_eval/test/format) the turn it activates.
+     lang-tools
+     (language-surface/capability-data env)]
 
     (cond-> {}
       ws-block

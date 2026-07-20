@@ -122,9 +122,10 @@
    non-blank strings. Selector values arrive as strings (strings-only
    boundary), so `str` is total - no keyword branch."
   [x]
-  (let [xs (cond (nil? x) []
-                 (sequential? x) x
-                 :else [x])]
+  (let
+    [xs (cond (nil? x) []
+              (sequential? x) x
+              :else [x])]
     (->> xs
          (map str)
          (map str/trim)
@@ -148,17 +149,18 @@
    strings on it. Returns true when the test should RUN. exclude wins over
    include/only; only narrows by name; include gates by tag when present."
   [{:keys [only include exclude]} test-name tags]
-  (let [tags
-        (set tags)
+  (let
+    [tags
+     (set tags)
 
-        only
-        (set only)
+     only
+     (set only)
 
-        inc*
-        (set include)
+     inc*
+     (set include)
 
-        exc*
-        (set exclude)]
+     exc*
+     (set exclude)]
 
     (cond (some exc* tags) false
           (and (seq only) (not (only test-name))) false

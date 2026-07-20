@@ -25,11 +25,12 @@
    this — hashes are the edit address, so a formatting/masking drift
    would silently break every anchor."
   [s]
-  (let [w
-        (long patch/hash-width)
+  (let
+    [w
+     (long patch/hash-width)
 
-        mask
-        (long (dec (bit-shift-left 1 (* 4 w))))]
+     mask
+     (long (dec (bit-shift-left 1 (* 4 w))))]
 
     (format (str "%0" w "x") (bit-and (.hashCode (str/trim (str s))) mask))))
 
@@ -63,17 +64,18 @@
   ([] (run-bench! "src/com/blockether/vis/internal/foundation/editing/core.clj"))
   ([path]
    (require 'criterium.core)
-   (let [quick-bench
-         (resolve 'criterium.core/quick-benchmark)
+   (let
+     [quick-bench
+      (resolve 'criterium.core/quick-benchmark)
 
-         report
-         (resolve 'criterium.core/report-result)
+      report
+      (resolve 'criterium.core/report-result)
 
-         tuples
-         (file->tuples path)
+      tuples
+      (file->tuples path)
 
-         line
-         "  (defn foo [x] (bar (baz x)))  "]
+      line
+      "  (defn foo [x] (bar (baz x)))  "]
 
      (println "── hashline bench —" path "(" (count tuples) "lines) ──")
      (println "\nline-hash (single line):")
@@ -85,8 +87,9 @@
 (defdescribe hashline-bench-guard-test
              ;; The ONLY auto-run case here: cheap correctness + a soft perf floor.
              (it "optimized line-hash stays byte-identical to the format reference"
-                 (doseq [s ["" "   " "\t tab \t" "(defn f [])" "éé unicode ✓"
-                            (apply str (repeat 400 \z)) "  leading+trailing  "]]
+                 (doseq
+                   [s ["" "   " "\t tab \t" "(defn f [])" "éé unicode ✓" (apply str (repeat 400 \z))
+                       "  leading+trailing  "]]
                    (expect (= (reference-line-hash s) (patch/line-hash s)))))
              (it "line-hash does not regress to a catastrophically slower path (load-robust)"
                  ;; A timing RATIO can't reliably prove a fixed speedup on a shared CI runner:
@@ -97,13 +100,14 @@
                  ;; Formatter reference. The normal ratio is ~0.65 and a real blow-up is many
                  ;; ×, so the generous 1.5× bound never flakes on timing yet still trips on a
                  ;; genuine regression. MIN of 10 batches keeps the measurement steady.
-                 (let [line
-                       "  (defn foo [x] (bar x))  "
+                 (let
+                   [line
+                    "  (defn foo [x] (bar x))  "
 
-                       opt
-                       (min-ns-per-call #(patch/line-hash line) 50000 10)
+                    opt
+                    (min-ns-per-call #(patch/line-hash line) 50000 10)
 
-                       ref
-                       (min-ns-per-call #(reference-line-hash line) 50000 10)]
+                    ref
+                    (min-ns-per-call #(reference-line-hash line) 50000 10)]
 
                    (expect (< opt (* 1.5 ref))))))

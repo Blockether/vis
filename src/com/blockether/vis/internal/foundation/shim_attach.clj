@@ -48,32 +48,33 @@
    Never throws: a temp-file/decoding hiccup must not break `vis_attach`."
   [^String media-type ^String b64]
   (try (when (str/starts-with? (str media-type) "image/")
-         (let [bytes
-               (.decode (java.util.Base64/getDecoder) b64)
+         (let
+           [bytes
+            (.decode (java.util.Base64/getDecoder) b64)
 
-               img
-               (javax.imageio.ImageIO/read (java.io.ByteArrayInputStream. bytes))]
+            img
+            (javax.imageio.ImageIO/read (java.io.ByteArrayInputStream. bytes))]
 
            (when img
-             (let [w
-                   (.getWidth img)
+             (let
+               [w
+                (.getWidth img)
 
-                   h
-                   (.getHeight img)
+                h
+                (.getHeight img)
 
-                   dir
-                   (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-attach")
-                     (.mkdirs))
+                dir
+                (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-attach") (.mkdirs))
 
-                   ext
-                   (or (some-> media-type
-                               (str/split #"/")
-                               second
-                               (str/replace #"[^a-z0-9]" ""))
-                       "img")
+                ext
+                (or (some-> media-type
+                            (str/split #"/")
+                            second
+                            (str/replace #"[^a-z0-9]" ""))
+                    "img")
 
-                   f
-                   (java.io.File/createTempFile "att-" (str "." ext) dir)]
+                f
+                (java.io.File/createTempFile "att-" (str "." ext) dir)]
 
                (with-open [o (java.io.FileOutputStream. f)]
                  (.write o ^bytes bytes))
@@ -107,11 +108,11 @@
                                    "python_execution block so the produced artifact can be "
                                    "attached to that iteration")
                               {}))
-              :else (do (mpl-capture/record-attachment! (cond-> {:kind (or (not-empty (str kind))
-                                                                           "file")
-                                                                 :media-type (str media-type)
-                                                                 :base64 (str b64)
-                                                                 :size (long (or size 0))}
+              :else (do (mpl-capture/record-attachment! (cond->
+                                                          {:kind (or (not-empty (str kind)) "file")
+                                                           :media-type (str media-type)
+                                                           :base64 (str b64)
+                                                           :size (long (or size 0))}
                                                           (not (str/blank? (str filename)))
                                                           (assoc :filename (str filename))))
                         (image-display-info (str media-type) (str b64))))))
@@ -124,18 +125,17 @@
                           {})))))
    "__vis_read_attachment__"
    (fn [id]
-     (attach-envelope #(if-let [r mpl-capture/*attachment-reader*]
-                         (if-let [a ((:read r) (str id))]
-                           [(:base64 a) (:media-type a) (:filename a) (:kind a)
-                            (long (or (:size a) 0)) (str (:id a)) (:storage-uri a)]
-                           (throw (ex-info (str "vis_read_attachment: no attachment with id "
-                                                id
-                                                " in this session")
-                                           {})))
-                         (throw (ex-info
-                                  (str "vis_read_attachment: no active attachment reader — call it "
-                                       "inside a python_execution block")
-                                  {})))))})
+     (attach-envelope
+       #(if-let [r mpl-capture/*attachment-reader*]
+          (if-let [a ((:read r) (str id))]
+            [(:base64 a) (:media-type a) (:filename a) (:kind a) (long (or (:size a) 0))
+             (str (:id a)) (:storage-uri a)]
+            (throw (ex-info
+                     (str "vis_read_attachment: no attachment with id " id " in this session")
+                     {})))
+          (throw (ex-info (str "vis_read_attachment: no active attachment reader — call it "
+                               "inside a python_execution block")
+                          {})))))})
 
 (def ^:private attach-shim-src
   "Pure-Python preamble defining `vis_attach(path)` and

@@ -61,11 +61,12 @@
     (is (= -1 (scrollbar/wheel-step (mouse MouseActionType/SCROLL_UP 0 0))))))
 
 (deftest on-track-and-on-thumb-honour-bar-column
-  (let [bar
-        {:col 50 :top 10 :track-h 8}
+  (let
+    [bar
+     {:col 50 :top 10 :track-h 8}
 
-        geom
-        (scrollbar/geometry 100 8 nil)]
+     geom
+     (scrollbar/geometry 100 8 nil)]
 
     (testing "On-track requires same column and Y inside track range"
       (is (scrollbar/on-track? 50 10 bar))

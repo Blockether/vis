@@ -791,16 +791,18 @@
 
 (defn- settings->theme
   [id settings]
-  (let [mode (case (some-> (get settings "MODE")
-                           str
-                           str/lower-case)
-               "dark"
-               :dark
+  (let
+    [mode (case
+            (some-> (get settings "MODE")
+                    str
+                    str/lower-case)
+            "dark"
+            :dark
 
-               "light"
-               :light
+            "light"
+            :light
 
-               (:mode default-theme))]
+            (:mode default-theme))]
     (-> (if (= :dark mode) vis-dark vis-light)
         (assoc :name id
                :display-name id
@@ -909,14 +911,15 @@
    all other ids follow, sorted alphabetically."
   ([] (available-theme-ids nil))
   ([extensions]
-   (let [rank
-         (into {}
-               (map-indexed (fn [i n]
-                              [n i])
-                            theme-id-priority))
+   (let
+     [rank
+      (into {}
+            (map-indexed (fn [i n]
+                           [n i])
+                         theme-id-priority))
 
-         floor
-         (count theme-id-priority)]
+      floor
+      (count theme-id-priority)]
 
      (->> (merge @themes
                  (into {}
@@ -933,11 +936,12 @@
   "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."
   [a b ^double t]
   (mapv (fn [x y]
-          (let [x
-                (double x)
+          (let
+            [x
+             (double x)
 
-                y
-                (double y)]
+             y
+             (double y)]
 
             (int (Math/round (+ x (* t (- y x)))))))
         a
@@ -960,11 +964,12 @@
    palette's border color sits to its ground — fixing washed-out, near-white
    borders on low-contrast palettes (e.g. Solarized Light)."
   [bg target ^double delta]
-  (let [dl
-        (Math/abs (- (rel-luminance target) (rel-luminance bg)))
+  (let
+    [dl
+     (Math/abs (- (rel-luminance target) (rel-luminance bg)))
 
-        t
-        (if (> dl 1.0) (min 1.0 (/ delta dl)) 1.0)]
+     t
+     (if (> dl 1.0) (min 1.0 (/ delta dl)) 1.0)]
 
     (mix-rgb bg target t)))
 
@@ -1028,14 +1033,15 @@
    the palette-named tokens, the derived bg/fg mixes, and the
    luminance-delta-normalized border hairlines."
   [{:keys [palette]}]
-  (let [bg
-        (:terminal-bg palette)
+  (let
+    [bg
+     (:terminal-bg palette)
 
-        fg
-        (:text-fg palette)
+     fg
+     (:text-fg palette)
 
-        border
-        (:border-fg palette)]
+     border
+     (:border-fg palette)]
 
     (merge (into (sorted-map)
                  (map (fn [[css-var palette-key]]

@@ -101,9 +101,10 @@
 ;; eval/test that targets it; a single daemon thread stops any REPL untouched for
 ;; `idle-reap-ms`. Set VIS_CLJ_REPL_IDLE_MS=0 to disable (or to a custom ms budget).
 (def ^:private idle-reap-ms
-  (let [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
-                    str/trim
-                    not-empty)]
+  (let
+    [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
+                 str/trim
+                 not-empty)]
     (or (when env (try (Long/parseLong env) (catch Exception _ nil))) (* 20 60 1000))))
 
 (def ^:private reaper-tick-ms 60000)
@@ -232,8 +233,9 @@
    honouring `aliases` (deps.edn aliases / lein profiles). Returns
    `{:tool kw :cmd [strings]}` or nil when no known Clojure build file is present."
   [dir aliases port]
-  (let [present? (fn [n]
-                   (.isFile (io/file dir n)))]
+  (let
+    [present? (fn [n]
+                (.isFile (io/file dir n)))]
     (cond (present? "deps.edn")
           ;; Inject nREPL + the `nrepl.cmdline` main via a synthetic alias we append
           ;; LAST. tools.deps resolves `:main-opts` last-alias-wins (while
@@ -270,13 +272,14 @@
    tree, never the OS temp dir), namespaced by the target dir so each managed
    REPL gets its own log. The logs dir is created on demand."
   ^java.io.File [dir]
-  (let [safe
-        (-> (str dir)
-            (str/replace #"[^A-Za-z0-9]+" "_")
-            (str/replace #"(^_+|_+$)" ""))
+  (let
+    [safe
+     (-> (str dir)
+         (str/replace #"[^A-Za-z0-9]+" "_")
+         (str/replace #"(^_+|_+$)" ""))
 
-        logs-dir
-        (io/file (System/getProperty "user.home") ".vis" "logs")]
+     logs-dir
+     (io/file (System/getProperty "user.home") ".vis" "logs")]
 
     (.mkdirs logs-dir)
     (io/file logs-dir (str "vis-nrepl-" safe ".log"))))
@@ -295,27 +298,30 @@
    empty but still log-capable resource."
   ([log-path] (tail-log log-path default-log-line-limit))
   ([log-path n]
-   (let [f
-         (when (seq (str log-path)) (io/file (str log-path)))
+   (let
+     [f
+      (when (seq (str log-path)) (io/file (str log-path)))
 
-         n
-         (max 1 (long (or n default-log-line-limit)))]
+      n
+      (max 1 (long (or n default-log-line-limit)))]
 
      (if (and f (.isFile f))
        (try (with-open [raf (RandomAccessFile. f "r")]
-              (let [len (.length raf)
-                    start (max 0 (- len (long tail-read-bytes)))
-                    size (int (- len start))]
+              (let
+                [len (.length raf)
+                 start (max 0 (- len (long tail-read-bytes)))
+                 size (int (- len start))]
 
                 (if (zero? size)
                   []
                   (let [buf (byte-array size)]
                     (.seek raf start)
                     (.readFully raf buf)
-                    (let [lines (vec (str/split-lines (String. buf StandardCharsets/UTF_8)))
-                          ;; a mid-file start means the first line is partial — drop it
-                          lines (if (and (pos? start) (seq lines)) (subvec lines 1) lines)
-                          c (count lines)]
+                    (let
+                      [lines (vec (str/split-lines (String. buf StandardCharsets/UTF_8)))
+                       ;; a mid-file start means the first line is partial — drop it
+                       lines (if (and (pos? start) (seq lines)) (subvec lines 1) lines)
+                       c (count lines)]
 
                       (if (> c n) (subvec lines (- c n)) lines))))))
             (catch Throwable _ []))
@@ -326,11 +332,12 @@
    `health` keeps answering :failed and `last-failure` can explain WHY after
    the process is gone."
   [session-id dir ^Process proc log-path]
-  (let [exit
-        (try (.exitValue proc) (catch Throwable _ nil))
+  (let
+    [exit
+     (try (.exitValue proc) (catch Throwable _ nil))
 
-        tail
-        (tail-log log-path 80)]
+     tail
+     (tail-log log-path 80)]
 
     (note-crash! [session-id dir])
     (swap! last-failures assoc
@@ -398,16 +405,15 @@
   "Live view of THIS session's managed REPL for `dir`. Always safe. Model-facing:
    STRING keys + STRING enum values (crosses as a tool `:result`)."
   [session-id dir]
-  (let [{:keys [id port tool aliases pid] :as info}
-        (get @processes [session-id dir])
+  (let
+    [{:keys [id port tool aliases pid] :as info}
+     (get @processes [session-id dir])
 
-        running?
-        (proc-alive? info)]
+     running?
+     (proc-alive? info)]
 
-    (cond-> {"result" "status"
-             "id" (or id (id-of dir))
-             "dir" dir
-             "status" (if running? "up" "down")}
+    (cond->
+      {"result" "status" "id" (or id (id-of dir)) "dir" dir "status" (if running? "up" "down")}
       running?
       (assoc "running" true)
 
@@ -476,11 +482,12 @@
    Model-facing: STRING keys + STRING enum values (crosses as a tool `:result`)."
   ([session-id dir] (start! session-id dir nil))
   ([session-id dir {:keys [aliases]}]
-   (let [k
-         [session-id dir]
+   (let
+     [k
+      [session-id dir]
 
-         aliases
-         (as-keywords (if (seq aliases) aliases default-aliases))]
+      aliases
+      (as-keywords (if (seq aliases) aliases default-aliases))]
 
      ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
      ;; racing second start! (e.g. the repl_start tool + an eval-autostart)
@@ -495,24 +502,25 @@
          (let [port (free-port!)]
            (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
              (try
-               (let [log (log-file dir)
-                     pb (doto (ProcessBuilder. ^java.util.List cmd)
-                          (.directory (io/file dir))
-                          (.redirectErrorStream true)
-                          (.redirectOutput log))
-                     proc (.start pb)
-                     pid (try (.pid proc) (catch Throwable _ nil))
-                     info {:id (id-of dir)
-                           :process proc
-                           :port port
-                           :cmd cmd
-                           :tool tool
-                           :aliases (vec aliases)
-                           :pid pid
-                           :dir dir
-                           :log (.getAbsolutePath log)
-                           :started-at (System/currentTimeMillis)
-                           :last-touch (System/currentTimeMillis)}]
+               (let
+                 [log (log-file dir)
+                  pb (doto (ProcessBuilder. ^java.util.List cmd)
+                       (.directory (io/file dir))
+                       (.redirectErrorStream true)
+                       (.redirectOutput log))
+                  proc (.start pb)
+                  pid (try (.pid proc) (catch Throwable _ nil))
+                  info {:id (id-of dir)
+                        :process proc
+                        :port port
+                        :cmd cmd
+                        :tool tool
+                        :aliases (vec aliases)
+                        :pid pid
+                        :dir dir
+                        :log (.getAbsolutePath log)
+                        :started-at (System/currentTimeMillis)
+                        :last-touch (System/currentTimeMillis)}]
 
                  (swap! processes assoc k info)
                  (ensure-reaper!)
@@ -532,18 +540,19 @@
                      ;; the exit code before deciding whether this is "still starting"
                      ;; or a real startup failure.
                      (try (.waitFor proc 100 TimeUnit/MILLISECONDS) (catch Throwable _ nil)))
-                   (let [alive? (alive? proc)
-                         exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
-                         log-path (.getAbsolutePath log)
-                         tail (tail-log log-path 80)
-                         base {"id" (id-of dir)
-                               "dir" dir
-                               "port" port
-                               "tool" (name tool)
-                               "aliases" (mapv name aliases)
-                               "pid" pid
-                               "cmd" cmd
-                               "log" log-path}]
+                   (let
+                     [alive? (alive? proc)
+                      exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
+                      log-path (.getAbsolutePath log)
+                      tail (tail-log log-path 80)
+                      base {"id" (id-of dir)
+                            "dir" dir
+                            "port" port
+                            "tool" (name tool)
+                            "aliases" (mapv name aliases)
+                            "pid" pid
+                            "cmd" cmd
+                            "log" log-path}]
 
                      (cond
                        (= :up st) (do (clear-failure! session-id dir)
@@ -553,14 +562,14 @@
                        (not alive?)
                        (do (swap! processes dissoc k)
                            (record-failure! session-id dir proc log-path)
-                           (cond-> (assoc base
-                                     "result" "failed"
-                                     "status" "failed"
-                                     "message"
-                                     (str "nREPL launcher exited before accepting connections"
-                                          (when exit (str " (exit " exit ")"))
-                                          ". See log for details.")
-                                     "exit" exit)
+                           (cond->
+                             (assoc base
+                               "result" "failed"
+                               "status" "failed"
+                               "message" (str "nREPL launcher exited before accepting connections"
+                                              (when exit (str " (exit " exit ")"))
+                                              ". See log for details.")
+                               "exit" exit)
                              (seq tail)
                              (assoc "log_tail" tail)))
                        :else
@@ -597,11 +606,12 @@
    failure; any remembered failure/crash history for `dir` is cleared too.
    No-op-safe. Model-facing STRING-keyed result."
   [session-id dir]
-  (let [k
-        [session-id dir]
+  (let
+    [k
+     [session-id dir]
 
-        {:keys [^Process process external? host port]}
-        (get @processes k)]
+     {:keys [^Process process external? host port]}
+     (get @processes k)]
 
     (clear-failure! session-id dir)
     (cond external? (do (swap! processes dissoc k)
@@ -636,17 +646,18 @@
    - `stop!` on the attachment DETACHES only.
    Model-facing: STRING keys + STRING enum values."
   [session-id dir {:keys [host port]}]
-  (let [host
-        (or (some-> host
-                    str/trim
-                    not-empty)
-            "localhost")
+  (let
+    [host
+     (or (some-> host
+                 str/trim
+                 not-empty)
+         "localhost")
 
-        port
-        (long port)
+     port
+     (long port)
 
-        k
-        [session-id dir]]
+     k
+     [session-id dir]]
 
     #_{:clj-kondo/ignore [:locking-suspicious-lock]}
     (locking (start-lock k)
@@ -690,21 +701,23 @@
    self-prunes once `stop!` drops the process (its `:alive-fn` flips to false)."
   []
   (when (pos? (long idle-reap-ms))
-    (let [now
-          (System/currentTimeMillis)
+    (let
+      [now
+       (System/currentTimeMillis)
 
-          stale
-          (for [[[sid dir] info]
-                @processes
+       stale
+       (for
+         [[[sid dir] info]
+          @processes
 
-                ;; An EXTERNAL attachment holds no JVM of ours — never reap it;
-                ;; the user owns that process and chose to connect it.
-                :when (not (:external? info))
-                :let [t
-                      (long (or (:last-touch info) (:started-at info) 0))]
-                :when (> (- now t) (long idle-reap-ms))]
+          ;; An EXTERNAL attachment holds no JVM of ours — never reap it;
+          ;; the user owns that process and chose to connect it.
+          :when (not (:external? info))
+          :let [t
+                (long (or (:last-touch info) (:started-at info) 0))]
+          :when (> (- now t) (long idle-reap-ms))]
 
-            [sid dir])]
+         [sid dir])]
 
       (doseq [[sid dir] stale]
         (try (stop! sid dir) (catch Throwable _ nil))))))
@@ -715,16 +728,17 @@
    daemon so it never keeps the JVM alive on shutdown."
   []
   (when (and (pos? (long idle-reap-ms)) (compare-and-set! reaper nil ::starting))
-    (let [t (Thread. ^Runnable
-                     (fn []
-                       (loop []
+    (let
+      [t (Thread. ^Runnable
+                  (fn []
+                    (loop []
 
-                         (try (Thread/sleep (long reaper-tick-ms))
-                              (reap-idle!)
-                              (catch InterruptedException _ nil)
-                              (catch Throwable _ nil))
-                         (recur)))
-                     "vis-clj-repl-idle-reaper")]
+                      (try (Thread/sleep (long reaper-tick-ms))
+                           (reap-idle!)
+                           (catch InterruptedException _ nil)
+                           (catch Throwable _ nil))
+                      (recur)))
+                  "vis-clj-repl-idle-reaper")]
       (.setDaemon t true)
       (.start t)
       (reset! reaper t))))
@@ -732,10 +746,12 @@
 (defn- prune-dead!
   "Drop this session's dead entries from the process atom, best-effort."
   [session-id]
-  (let [dead (for [[[sid _dir :as k] info] @processes
-                   :when (and (= sid session-id) (not (proc-alive? info)))]
+  (let
+    [dead (for
+            [[[sid _dir :as k] info] @processes
+             :when (and (= sid session-id) (not (proc-alive? info)))]
 
-               k)]
+            k)]
     (when (seq dead) (apply swap! processes dissoc dead))))
 
 (defn session-repls
@@ -749,12 +765,13 @@
   (->> @processes
        (keep (fn [[[sid _dir] info]]
                (when (and (= sid session-id) (proc-alive? info))
-                 (cond-> {:id (:id info)
-                          :dir (:dir info)
-                          :port (:port info)
-                          :tool (:tool info)
-                          :aliases (:aliases info)
-                          :pid (:pid info)}
+                 (cond->
+                   {:id (:id info)
+                    :dir (:dir info)
+                    :port (:port info)
+                    :tool (:tool info)
+                    :aliases (:aliases info)
+                    :pid (:pid info)}
                    (:external? info)
                    (assoc :external?
                      true :host
@@ -787,11 +804,12 @@
        autostart is suspended instead of burning a JVM boot per eval; an
        explicit stop/restart resets the guard."
   [session-id dir]
-  (let [k
-        [session-id dir]
+  (let
+    [k
+     [session-id dir]
 
-        info
-        (get @processes k)]
+     info
+     (get @processes k)]
 
     (cond (:external? info)
           (if (= :up
@@ -817,16 +835,17 @@
           (do (touch! session-id dir) info)
           (crash-looping? session-id dir)
           (let [f (last-failure session-id dir)]
-            (cond-> {"result" "crash-looping"
-                     "status" "failed"
-                     "dir" dir
-                     "message" (str "nREPL for this dir crashed "
-                                    max-crashes-in-window
-                                    "+ times in "
-                                    (quot crash-window-ms 60000)
-                                    " min — autostart is SUSPENDED. Fix the boot failure"
-                                    " (see log_tail), then repl_start(\"clojure\", \"restart\")"
-                                    " to reset.")}
+            (cond->
+              {"result" "crash-looping"
+               "status" "failed"
+               "dir" dir
+               "message" (str "nREPL for this dir crashed "
+                              max-crashes-in-window
+                              "+ times in "
+                              (quot crash-window-ms 60000)
+                              " min — autostart is SUSPENDED. Fix the boot failure"
+                              " (see log_tail), then repl_start(\"clojure\", \"restart\")"
+                              " to reset.")}
               (get f "exit")
               (assoc "exit" (get f "exit"))
 
@@ -856,20 +875,21 @@
                        result reports which REPL ran it, so the model can pass an
                        explicit `id` to override."
   [session-id id default-dir]
-  (let [id
-        (some-> id
-                str
-                str/trim
-                not-empty)
+  (let
+    [id
+     (some-> id
+             str
+             str/trim
+             not-empty)
 
-        ;; "default" is a sentinel, not a real resource id — treat it as "no
-        ;; explicit id" so it falls through to the implicit-default resolution
-        ;; (the single owned REPL, else the default REPL among several).
-        id
-        (when-not (some-> id
-                          str/lower-case
-                          (= "default"))
-          id)]
+     ;; "default" is a sentinel, not a real resource id — treat it as "no
+     ;; explicit id" so it falls through to the implicit-default resolution
+     ;; (the single owned REPL, else the default REPL among several).
+     id
+     (when-not (some-> id
+                       str/lower-case
+                       (= "default"))
+       id)]
 
     (if id
       (if-let [r (repl-by-id session-id id)]

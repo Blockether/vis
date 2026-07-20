@@ -111,15 +111,16 @@
   "Write one already-shaped (canonical string-keyed) event to the shared\n   journal. Never throws."
   [sid event {:keys [store? truncate?]}]
   (try (ensure-dir!)
-       (let [f
-             (session-file sid)
+       (let
+         [f
+          (session-file sid)
 
-             line
-             (str (wire/json-str (assoc event
-                                   "_producer" producer-id
-                                   "_pid" producer-pid
-                                   "_store" (boolean store?)))
-                  "\n")]
+          line
+          (str (wire/json-str (assoc event
+                                "_producer" producer-id
+                                "_pid" producer-pid
+                                "_store" (boolean store?)))
+               "\n")]
 
          (locking f
            (with-open [raf (RandomAccessFile. f "rw")]
@@ -137,16 +138,17 @@
    ordering is preserved by this one FIFO writer thread."
   []
   (when (compare-and-set! writer nil ::starting)
-    (let [t (Thread. ^Runnable
-                     (fn []
-                       (while (not (Thread/interrupted))
-                         (try (let [{:keys [sid event opts done]} (.take writer-queue)]
-                                (write-event! sid event opts)
-                                (when done (deliver done true)))
-                              (catch InterruptedException _ (.interrupt (Thread/currentThread)))
-                              (catch Throwable t
-                                (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
-                     "gateway-bus-writer")]
+    (let
+      [t (Thread. ^Runnable
+                  (fn []
+                    (while (not (Thread/interrupted))
+                      (try (let [{:keys [sid event opts done]} (.take writer-queue)]
+                             (write-event! sid event opts)
+                             (when done (deliver done true)))
+                           (catch InterruptedException _ (.interrupt (Thread/currentThread)))
+                           (catch Throwable t
+                             (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
+                  "gateway-bus-writer")]
       (.setDaemon t true)
       (.start t)
       (reset! writer t)))
@@ -275,8 +277,9 @@
     (when-let [event (wire/parse-json line)]
       (when-not (= (get event "_producer") producer-id)
         (when-let [f @deliver-fn]
-          (let [store? (boolean (get event "_store"))
-                clean (dissoc event "_producer" "_pid" "_store")]
+          (let
+            [store? (boolean (get event "_store"))
+             clean (dissoc event "_producer" "_pid" "_store")]
 
             (try (f sid store? clean)
                  (catch Throwable t
@@ -284,47 +287,50 @@
 
 (defn- drain-file!
   [^File f]
-  (let [name
-        (.getName f)
+  (let
+    [name
+     (.getName f)
 
-        sid
-        (subs name 0 (- (count name) (count ".ndjson")))
+     sid
+     (subs name 0 (- (count name) (count ".ndjson")))
 
-        len
-        (.length f)
+     len
+     (.length f)
 
-        off0
-        (long (get @offsets sid 0))
+     off0
+     (long (get @offsets sid 0))
 
-        ;; truncation/rotation: file shrank under our cursor -> rewind
-        off
-        (if (> off0 len) 0 off0)]
+     ;; truncation/rotation: file shrank under our cursor -> rewind
+     off
+     (if (> off0 len) 0 off0)]
 
     (when (> len off)
       (with-open [raf (RandomAccessFile. f "r")]
         (.seek raf (long off))
-        (let [remaining (int (- len off))
-              ;; Reuse one growable buffer across polls (single tailer thread) so
-              ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
-              ^bytes buf
-              (let [^bytes b @drain-buf]
-                (if (>= (alength b) remaining) b (reset! drain-buf (byte-array remaining))))
-              _ (.readFully raf buf 0 remaining)]
+        (let
+          [remaining (int (- len off))
+           ;; Reuse one growable buffer across polls (single tailer thread) so
+           ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
+           ^bytes buf (let [^bytes b @drain-buf]
+                        (if (>= (alength b) remaining) b (reset! drain-buf (byte-array remaining))))
+           _ (.readFully raf buf 0 remaining)]
 
           ;; ONE forward pass over the tail: decode each COMPLETE line in
           ;; isolation and deliver it inline — no whole-tail String, no regex
           ;; `split-lines`, no backward pre-scan, no re-encode to count bytes.
           ;; `last-nl` tracks the last newline seen; the cursor advances exactly
           ;; past it, leaving any trailing partial line for the next drain.
-          (loop [start 0
-                 i 0
-                 last-nl -1]
+          (loop
+            [start 0
+             i 0
+             last-nl -1]
 
             (if (< i remaining)
               (if (== (aget buf i) 10)
-                (let [end (if (and (> i start) (== (aget buf (dec i)) 13))
-                            (dec i) ; strip a CR from a CRLF line ending
-                            i)]
+                (let
+                  [end (if (and (> i start) (== (aget buf (dec i)) 13))
+                         (dec i) ; strip a CR from a CRLF line ending
+                         i)]
                   (when (> end start)
                     (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
                       (when-not (str/blank? line) (deliver-line! sid line))))
@@ -380,14 +386,15 @@
   (try
     (when-let [f (session-file sid)]
       (when (.exists f)
-        (let [len (.length f)
-              events (->> (str/split-lines (slurp f))
-                          (remove str/blank?)
-                          (keep wire/parse-json))
-              foreign (remove #(= (get % "_producer") producer-id) events)
-              ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
-              ;; THIS process) means the turn is done — don't re-stream it.
-              terminal? (some #(contains? #{"turn.completed" "turn.failed"} (get % "type")) events)]
+        (let
+          [len (.length f)
+           events (->> (str/split-lines (slurp f))
+                       (remove str/blank?)
+                       (keep wire/parse-json))
+           foreign (remove #(= (get % "_producer") producer-id) events)
+           ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
+           ;; THIS process) means the turn is done — don't re-stream it.
+           terminal? (some #(contains? #{"turn.completed" "turn.failed"} (get % "type")) events)]
 
           (when (and (seq foreign) (not terminal?))
             ;; claim everything up to EOF so poll-once! won't re-deliver it
@@ -403,12 +410,13 @@
                         (tel/log! :debug ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
                 ;; Orphan: producer process is gone. Reap it terminally.
                 (when-let [tid (get started "turn_id")]
-                  (let [term {"schema" 1
-                              "type" "turn.failed"
-                              "session_id" (str sid)
-                              "turn_id" tid
-                              "status" "interrupted"
-                              "error" "gateway producer exited before the turn finished"}]
+                  (let
+                    [term {"schema" 1
+                           "type" "turn.failed"
+                           "session_id" (str sid)
+                           "turn_id" tid
+                           "status" "interrupted"
+                           "error" "gateway producer exited before the turn finished"}]
                     ;; Durable + cross-process: appended (no truncate), so any
                     ;; process hydrating later sees `terminal?` and skips.
                     (publish! sid term {:store? true})
@@ -428,11 +436,12 @@
    turn, so a stale mtime proves the producer is gone. Drops the swept file's
    tail offset too. Never throws."
   []
-  (try (let [dir
-             (.toFile (events-dir))
+  (try (let
+         [dir
+          (.toFile (events-dir))
 
-             cutoff
-             (- (System/currentTimeMillis) RETAIN_MS)]
+          cutoff
+          (- (System/currentTimeMillis) RETAIN_MS)]
 
          (when (.isDirectory dir)
            (doseq [^File f (.listFiles dir)]
@@ -487,39 +496,41 @@
   "Start the background tailer once. Idempotent."
   []
   (when (compare-and-set! tailer nil ::starting)
-    (let [t (Thread. ^Runnable
-                     (fn []
-                       ;; On boot, skip whatever already sits in each journal so a
-                       ;; late-starting process doesn't replay a finished turn's
-                       ;; deltas; we only want the live tail from now on.
-                       (try (let [dir (.toFile (events-dir))]
-                              (when (.isDirectory dir)
-                                (doseq [^File f (.listFiles dir)]
-                                  (when (str/ends-with? (.getName f) ".ndjson")
-                                    (let [n (.getName f)]
-                                      (swap! offsets assoc
-                                        (subs n 0 (- (count n) (count ".ndjson")))
-                                        (.length f)))))))
-                            (catch Throwable _ nil))
-                       ;; Poll fast while a sibling is streaming, then back off to
-                       ;; IDLE_POLL_MS once quiet so an idle daemon stays off the CPU.
-                       ;; Sweep orphaned journals ~once a minute (wall-clock) so the
-                       ;; poll set — and the disk — never grow without bound.
-                       (loop [quiet 0
-                              last-sweep 0]
+    (let
+      [t (Thread.
+           ^Runnable
+           (fn []
+             ;; On boot, skip whatever already sits in each journal so a
+             ;; late-starting process doesn't replay a finished turn's
+             ;; deltas; we only want the live tail from now on.
+             (try (let [dir (.toFile (events-dir))]
+                    (when (.isDirectory dir)
+                      (doseq [^File f (.listFiles dir)]
+                        (when (str/ends-with? (.getName f) ".ndjson")
+                          (let [n (.getName f)]
+                            (swap! offsets assoc
+                              (subs n 0 (- (count n) (count ".ndjson")))
+                              (.length f)))))))
+                  (catch Throwable _ nil))
+             ;; Poll fast while a sibling is streaming, then back off to
+             ;; IDLE_POLL_MS once quiet so an idle daemon stays off the CPU.
+             ;; Sweep orphaned journals ~once a minute (wall-clock) so the
+             ;; poll set — and the disk — never grow without bound.
+             (loop
+               [quiet 0
+                last-sweep 0]
 
-                         (when-not (Thread/interrupted)
-                           (let [busy? (poll-once!)
-                                 now (System/currentTimeMillis)
-                                 last-sweep
-                                 (if (>= (- now last-sweep) SWEEP_MS) (do (sweep!) now) last-sweep)
-                                 quiet (if busy? 0 (inc quiet))]
+               (when-not (Thread/interrupted)
+                 (let
+                   [busy? (poll-once!)
+                    now (System/currentTimeMillis)
+                    last-sweep (if (>= (- now last-sweep) SWEEP_MS) (do (sweep!) now) last-sweep)
+                    quiet (if busy? 0 (inc quiet))]
 
-                             (try
-                               (Thread/sleep (long (if (>= quiet IDLE_AFTER) IDLE_POLL_MS POLL_MS)))
-                               (catch InterruptedException _ (.interrupt (Thread/currentThread))))
-                             (recur quiet last-sweep)))))
-                     "gateway-bus-tailer")]
+                   (try (Thread/sleep (long (if (>= quiet IDLE_AFTER) IDLE_POLL_MS POLL_MS)))
+                        (catch InterruptedException _ (.interrupt (Thread/currentThread))))
+                   (recur quiet last-sweep)))))
+           "gateway-bus-tailer")]
       (.setDaemon t true)
       (.start t)
       (reset! tailer t)))

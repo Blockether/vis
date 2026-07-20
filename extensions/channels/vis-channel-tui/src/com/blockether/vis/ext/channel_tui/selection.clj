@@ -15,11 +15,12 @@
 
    Input shape: `{:anchor {:col c :row r} :focus {:col c :row r}}`."
   [{:keys [anchor focus]}]
-  (let [a
-        {:col (long (:col anchor 0)) :row (long (:row anchor 0))}
+  (let
+    [a
+     {:col (long (:col anchor 0)) :row (long (:row anchor 0))}
 
-        f
-        {:col (long (:col focus 0)) :row (long (:row focus 0))}]
+     f
+     {:col (long (:col focus 0)) :row (long (:row focus 0))}]
 
     (if (or (< (long (:row a)) (long (:row f)))
             (and (= (:row a) (:row f)) (<= (long (:col a)) (long (:col f)))))
@@ -28,43 +29,46 @@
 
 (defn- base-selected-ranges
   [selection cols rows]
-  (let [cols
-        (long (max 0 (long cols)))
+  (let
+    [cols
+     (long (max 0 (long cols)))
 
-        rows
-        (long (max 0 (long rows)))]
+     rows
+     (long (max 0 (long rows)))]
 
     (when (and (pos? cols) (pos? rows) (:anchor selection) (:focus selection))
-      (let [{:keys [start end]}
-            (normalize selection)
+      (let
+        [{:keys [start end]}
+         (normalize selection)
 
-            start-row
-            (long (:row start))
+         start-row
+         (long (:row start))
 
-            end-row
-            (long (:row end))
+         end-row
+         (long (:row end))
 
-            sr
-            (max 0 (min (dec rows) start-row))
+         sr
+         (max 0 (min (dec rows) start-row))
 
-            er
-            (max 0 (min (dec rows) end-row))
+         er
+         (max 0 (min (dec rows) end-row))
 
-            sc
-            (max 0 (min (dec cols) (long (:col start))))
+         sc
+         (max 0 (min (dec cols) (long (:col start))))
 
-            ec
-            (max 0 (min (dec cols) (long (:col end))))]
+         ec
+         (max 0 (min (dec cols) (long (:col end))))]
 
         (vec (keep (fn [row]
-                     (let [from
-                           (if (= row start-row) sc 0)
+                     (let
+                       [from
+                        (if (= row start-row) sc 0)
 
-                           to
-                           (if (= row end-row) ec (dec cols))
+                        to
+                        (if (= row end-row) ec (dec cols))
 
-                           w
-                           (inc (- to from))]
+                        w
+                        (inc (- to from))]
 
                        (when (pos? w) {:row row :col from :width w})))
                    (range sr (inc er))))))))
@@ -72,12 +76,13 @@
 (defn- intersect-row-ranges
   [ranges selectable-ranges]
   (let [selectable-by-row (group-by :row selectable-ranges)]
-    (vec (for [{:keys [row col width]} ranges
-               selectable (get selectable-by-row row)
-               :let [from (max (long col) (long (:col selectable)))
-                     to (min (+ (long col) (long width))
-                             (+ (long (:col selectable)) (long (:width selectable))))]
-               :when (< from to)]
+    (vec (for
+           [{:keys [row col width]} ranges
+            selectable (get selectable-by-row row)
+            :let [from (max (long col) (long (:col selectable)))
+                  to (min (+ (long col) (long width))
+                          (+ (long (:col selectable)) (long (:width selectable))))]
+            :when (< from to)]
 
            {:row row :col from :width (- to from)}))))
 
@@ -105,14 +110,15 @@
    above and below bubbles while preserving bubble-only copy semantics."
   ([point ranges] (point-in-ranges? point ranges nil))
   ([{:keys [col row]} ranges {:keys [row-padding]}]
-   (let [col
-         (long col)
+   (let
+     [col
+      (long col)
 
-         row
-         (long row)
+      row
+      (long row)
 
-         row-pad
-         (long (max 0 (long (or row-padding 0))))]
+      row-pad
+      (long (max 0 (long (or row-padding 0))))]
 
      (boolean (some (fn [{r :row c :col w :width}]
                       (and (>= row (- (long r) row-pad))
@@ -165,19 +171,21 @@
    the point is only in padding/chrome. The end point is inclusive to match
    `selected-ranges` semantics."
   [{:keys [col row]} selectable-ranges viewport]
-  (let [col
-        (long col)
+  (let
+    [col
+     (long col)
 
-        row
-        (long row)]
+     row
+     (long row)]
 
-    (when-let [{range-col :col range-row :row width :width}
-               (some (fn [{range-col :col range-row :row width :width :as r}]
-                       (when (and (= row (long range-row))
-                                  (>= col (long range-col))
-                                  (< col (+ (long range-col) (long width))))
-                         r))
-                     selectable-ranges)]
+    (when-let
+      [{range-col :col range-row :row width :width}
+       (some (fn [{range-col :col range-row :row width :width :as r}]
+               (when (and (= row (long range-row))
+                          (>= col (long range-col))
+                          (< col (+ (long range-col) (long width))))
+                 r))
+             selectable-ranges)]
       {:anchor (screen->document-point (point range-col range-row) viewport)
        :focus (screen->document-point (point (dec (+ (long range-col) (long width))) range-row)
                                       viewport)})))
@@ -185,15 +193,16 @@
 (defn document->screen-selection
   "Project a document-space selection into the current screen viewport."
   [{:keys [anchor focus]} {:keys [viewport-top eff-scroll]}]
-  (let [viewport-top
-        (long (or viewport-top 0))
+  (let
+    [viewport-top
+     (long (or viewport-top 0))
 
-        eff-scroll
-        (long (or eff-scroll 0))
+     eff-scroll
+     (long (or eff-scroll 0))
 
-        ->screen
-        (fn [{:keys [col row]}]
-          (point col (+ viewport-top (- (long row) eff-scroll))))]
+     ->screen
+     (fn [{:keys [col row]}]
+       (point col (+ viewport-top (- (long row) eff-scroll))))]
 
     {:anchor (->screen anchor) :focus (->screen focus)}))
 
@@ -205,20 +214,21 @@
    bottom of the messages viewport scrolls faster than hovering near the middle
    of the edge zone."
   [{:keys [row]} {:keys [top bottom edge-size max-step]}]
-  (let [row
-        (long row)
+  (let
+    [row
+     (long row)
 
-        top
-        (long top)
+     top
+     (long top)
 
-        bot
-        (long bottom)
+     bot
+     (long bottom)
 
-        edge
-        (long (max 0 (long (or edge-size 1))))
+     edge
+     (long (max 0 (long (or edge-size 1))))
 
-        max-step
-        (long (max 1 (long (or max-step edge 1))))]
+     max-step
+     (long (max 1 (long (or max-step edge 1))))]
 
     (when (and (< top bot) (pos? edge))
       (cond (< row (+ top edge)) (let [distance (max 0 (- row top))]
@@ -276,25 +286,25 @@
 
 (defn- clean-copied-line
   [s]
-  (let [out (-> (or s "")
-                ;; Drop terminal styling/control sequences. Whole-bubble copy
-                ;; can carry actual ESC bytes; pasting those through Lanterna
-                ;; may turn them into the visible control-picture glyph `␛`,
-                ;; so strip both forms.
-                (str/replace
-                  #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)"
-                  "")
-                (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
-                ;; Defensive: if an external paste path dropped ESC but left a
-                ;; bare SGR tail, do not put color fragments back into prompts.
-                (str/replace #"\[[0-9;:]*m" "")
-                (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
-                (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
-                ;; Translate :table box-drawing chrome to ASCII so a copied
-                ;; cell range pastes back as `| col | col |` rather than a
-                ;; soup of stray U+25xx bytes.
-                (translate-box-chars)
-                (str/replace #" +$" ""))]
+  (let
+    [out (-> (or s "")
+             ;; Drop terminal styling/control sequences. Whole-bubble copy
+             ;; can carry actual ESC bytes; pasting those through Lanterna
+             ;; may turn them into the visible control-picture glyph `␛`,
+             ;; so strip both forms.
+             (str/replace #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)"
+                          "")
+             (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
+             ;; Defensive: if an external paste path dropped ESC but left a
+             ;; bare SGR tail, do not put color fragments back into prompts.
+             (str/replace #"\[[0-9;:]*m" "")
+             (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
+             (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
+             ;; Translate :table box-drawing chrome to ASCII so a copied
+             ;; cell range pastes back as `| col | col |` rather than a
+             ;; soup of stray U+25xx bytes.
+             (translate-box-chars)
+             (str/replace #" +$" ""))]
     ;; Drop pure-border rows entirely. A whole-bubble copy of a 3-row
     ;; table produces 7 rendered lines (top + th + sep + td + ... + bot);
     ;; collapsing the 3 border-only ones leaves the content rows aligned
@@ -322,32 +332,34 @@
    Optional `selectable-ranges` restricts extraction to bubble cells only."
   ([screen-cells selection] (selected-text screen-cells selection nil))
   ([screen-cells selection selectable-ranges]
-   (let [rows
-         (vec (or screen-cells []))
+   (let
+     [rows
+      (vec (or screen-cells []))
 
-         row-count
-         (count rows)
+      row-count
+      (count rows)
 
-         cols
-         (long (or (some-> rows
-                           first
-                           row-cells
-                           count)
-                   0))
+      cols
+      (long (or (some-> rows
+                        first
+                        row-cells
+                        count)
+                0))
 
-         ranges
-         (selected-ranges selection cols row-count selectable-ranges)]
+      ranges
+      (selected-ranges selection cols row-count selectable-ranges)]
 
      (->> ranges
           (map (fn [{:keys [row col width]}]
-                 (let [cells
-                       (row-cells (nth rows row []))
+                 (let
+                   [cells
+                    (row-cells (nth rows row []))
 
-                       from
-                       (min (count cells) (long col))
+                    from
+                    (min (count cells) (long col))
 
-                       to
-                       (min (count cells) (+ from (long width)))]
+                    to
+                    (min (count cells) (+ from (long width)))]
 
                    (clean-copied-text (apply str (subvec cells from to))))))
           (str/join "\n")))))

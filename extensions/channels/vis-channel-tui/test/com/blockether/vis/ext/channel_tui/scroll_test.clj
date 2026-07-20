@@ -58,14 +58,15 @@
   "Feed `raws` through `merge-wheel-delta` from rest momentum, returning the
    sequence of non-nil effective deltas (what actually dispatches)."
   [raws]
-  (loop [rs
-         raws
+  (loop
+    [rs
+     raws
 
-         m
-         0
+     m
+     0
 
-         out
-         []]
+     out
+     []]
 
     (if (empty? rs)
       out
@@ -102,11 +103,13 @@
 (deftest merge-wheel-delta-caps-runaway-momentum
   (testing "a very long continuous drag can't accumulate unbounded stickiness"
     ;; twenty +1 ticks: dispatches all pass through, but momentum is capped
-    (let [final-mom
-          (loop [rs (repeat 20 1)
-                 m 0]
+    (let
+      [final-mom
+       (loop
+         [rs (repeat 20 1)
+          m 0]
 
-            (if (empty? rs) m (recur (rest rs) (first (scroll/merge-wheel-delta m (first rs))))))]
+         (if (empty? rs) m (recur (rest rs) (first (scroll/merge-wheel-delta m (first rs))))))]
       (is (<= final-mom scroll/momentum-cap)))))
 
 (deftest decay-wheel-momentum-is-time-based
@@ -135,22 +138,24 @@
    the input loop does: momentum decays by the wall-clock gap since the
    previous event BEFORE each merge. Returns the dispatched effective deltas."
   [events]
-  (loop [es
-         events
+  (loop
+    [es
+     events
 
-         m
-         0
+     m
+     0
 
-         out
-         []]
+     out
+     []]
 
     (if (empty? es)
       out
-      (let [[raw gap]
-            (first es)
+      (let
+        [[raw gap]
+         (first es)
 
-            [nm eff]
-            (scroll/merge-wheel-delta (scroll/decay-wheel-momentum m gap) raw)]
+         [nm eff]
+         (scroll/merge-wheel-delta (scroll/decay-wheel-momentum m gap) raw)]
 
         (recur (rest es) nm (if eff (conj out eff) out))))))
 

@@ -42,25 +42,27 @@
                        (it "returns nil for a nil sink" (expect (nil? (cap/drain nil)))))
              (describe "record-file! size/extension filter"
                        (it "captures normal writes but skips empty + noisy-extension files"
-                           (let [dir
-                                 (java.nio.file.Files/createTempDirectory
-                                   "vis-filter-test"
-                                   (make-array java.nio.file.attribute.FileAttribute 0))
+                           (let
+                             [dir
+                              (java.nio.file.Files/createTempDirectory
+                                "vis-filter-test"
+                                (make-array java.nio.file.attribute.FileAttribute 0))
 
-                                 wf
-                                 (fn [name ^String s]
-                                   (let [p (.resolve dir ^String name)]
-                                     (spit (.toFile p) s)
-                                     p))
+                              wf
+                              (fn [name ^String s]
+                                (let [p (.resolve dir ^String name)]
+                                  (spit (.toFile p) s)
+                                  p))
 
-                                 sink
-                                 (atom [])]
+                              sink
+                              (atom [])]
 
-                             (binding [cap/*attachment-sink*
-                                       sink
+                             (binding
+                               [cap/*attachment-sink*
+                                sink
 
-                                       cap/*outbox-seen*
-                                       (atom #{})]
+                                cap/*outbox-seen*
+                                (atom #{})]
 
                                (cap/record-file! (wf "keep.txt" "hello"))
                                (cap/record-file! (wf "junk.pyc" "bytes"))

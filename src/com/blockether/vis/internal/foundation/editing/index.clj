@@ -42,11 +42,12 @@
   "Lower-cased extension of `path`'s final segment (no leading dot), or nil when
    the file name has none."
   [^String path]
-  (let [name
-        (str/replace path #"^.*[/\\]" "")
+  (let
+    [name
+     (str/replace path #"^.*[/\\]" "")
 
-        dot
-        (.lastIndexOf name ".")]
+     dot
+     (.lastIndexOf name ".")]
 
     (when (pos? dot) (str/lower-case (subs name (inc dot))))))
 
@@ -106,12 +107,13 @@
    message attached — the actionable detail — while keeping the language
    and original chain for callers."
   ^ProcessResult [^String source ^String language]
-  (let [cfg (-> (ProcessConfig/builder)
-                (.withLanguage language)
-                (.withStructure true)
-                (.withImports true)
-                (.withDocstrings true)
-                (.build))]
+  (let
+    [cfg (-> (ProcessConfig/builder)
+             (.withLanguage language)
+             (.withStructure true)
+             (.withImports true)
+             (.withDocstrings true)
+             (.build))]
     (try (TreeSitterLanguagePack/process source cfg)
          (catch Throwable t
            (let [cause (root-cause t)]
@@ -139,10 +141,11 @@
   "Normalise a raw kind to the terse canonical form the DATA carries
    (`function` → `fn`), lower-cased; nil/blank → nil."
   [kind]
-  (when-some [k (some-> kind
-                        str
-                        str/lower-case
-                        not-empty)]
+  (when-some
+    [k (some-> kind
+               str
+               str/lower-case
+               not-empty)]
     (get kind-aliases k k)))
 
 (defn pack-kind
@@ -150,10 +153,11 @@
    StructureKind name (`function`) so struct_patch's `kind` disambiguator matches
    the pack. Unknown/other kinds pass through unchanged; nil/blank → nil."
   [kind]
-  (when-some [k (some-> kind
-                        str
-                        str/lower-case
-                        not-empty)]
+  (when-some
+    [k (some-> kind
+               str
+               str/lower-case
+               not-empty)]
     (get kind-aliases-inverse k k)))
 
 (defn node-span
@@ -198,10 +202,11 @@
    containment and de-delimited. nil when nothing matches."
   [^StructureItem it]
   (when-let [ds *docstrings*]
-    (let [^Span isp (.span it)
-          is (.startLine isp)
-          ie (.endLine isp)
-          nm (.name it)]
+    (let
+      [^Span isp (.span it)
+       is (.startLine isp)
+       ie (.endLine isp)
+       nm (.name it)]
 
       (some
         (fn [^DocstringInfo d]
@@ -217,61 +222,63 @@
    `//` / JSDoc block written directly above a JS/TS/TSX def."
   [^StructureItem it]
   (when-let [d (or (.docComment it) (docstring-for it))]
-    (when-let [line (->> (str/split-lines d)
-                         (map str/trim)
-                         (remove str/blank?)
-                         first)]
+    (when-let
+      [line (->> (str/split-lines d)
+                 (map str/trim)
+                 (remove str/blank?)
+                 first)]
       (if (> (count line) 72) (str (subs line 0 71) "…") line))))
 
 (defn- fmt-item
   [lines ^StructureItem it depth]
-  (let [^Span span
-        (.span it)
+  (let
+    [^Span span
+     (.span it)
 
-        ;; tree-sitter rows are 0-based; report 1-based inclusive line ranges.
-        start
-        (inc (.startLine span))
+     ;; tree-sitter rows are 0-based; report 1-based inclusive line ranges.
+     start
+     (inc (.startLine span))
 
-        end
-        (inc (.endLine span))
+     end
+     (inc (.endLine span))
 
-        kind
-        (some-> (.kind it)
+     kind
+     (some-> (.kind it)
+             str
+             str/lower-case)
+
+     ;; The pack reports the clean name + a structured `visibility`; the
+     ;; skeleton surfaces only the noteworthy `private` marker — public is
+     ;; the default, so it stays implicit and out of the way.
+     private?
+     (= "private"
+        (some-> (.visibility it)
                 str
-                str/lower-case)
+                str/lower-case))
 
-        ;; The pack reports the clean name + a structured `visibility`; the
-        ;; skeleton surfaces only the noteworthy `private` marker — public is
-        ;; the default, so it stays implicit and out of the way.
-        private?
-        (= "private"
-           (some-> (.visibility it)
-                   str
-                   str/lower-case))
+     nm
+     (.name it)
 
-        nm
-        (.name it)
+     sig
+     (some-> (.signature it)
+             str/trim
+             not-empty)
 
-        sig
-        (some-> (.signature it)
-                str/trim
-                not-empty)
+     indent
+     (apply str (repeat depth "  "))
 
-        indent
-        (apply str (repeat depth "  "))
+     label
+     (str/trim
+       (str kind (when private? " private") (when nm (str " " nm)) (when sig (str "  " sig))))
 
-        label
-        (str/trim
-          (str kind (when private? " private") (when nm (str " " nm)) (when sig (str "  " sig))))
+     from
+     (patch/line-anchor start (line-text lines start))
 
-        from
-        (patch/line-anchor start (line-text lines start))
+     to
+     (patch/line-anchor end (line-text lines end))
 
-        to
-        (patch/line-anchor end (line-text lines end))
-
-        doc
-        (doc-snippet it)]
+     doc
+     (doc-snippet it)]
 
     ;; The anchors already carry the line numbers, so no separate [start-end].
     ;; A doc string, when present, rides on an indented continuation line.
@@ -285,16 +292,17 @@
 
 (defn- item->def
   [lines ^StructureItem it depth]
-  (let [^Span span
-        (.span it)
+  (let
+    [^Span span
+     (.span it)
 
-        ;; tree-sitter rows are 0-based; anchors carry 1-based line numbers (like
-        ;; the skeleton + `cat`).
-        start
-        (inc (.startLine span))
+     ;; tree-sitter rows are 0-based; anchors carry 1-based line numbers (like
+     ;; the skeleton + `cat`).
+     start
+     (inc (.startLine span))
 
-        end
-        (inc (.endLine span))]
+     end
+     (inc (.endLine span))]
 
     {:name (.name it)
      :kind (canonical-kind (.kind it))
@@ -339,14 +347,15 @@
    the language is unsupported or nothing structural was found."
   ([source language] (definitions source language nil))
   ([source language name]
-   (let [res
-         (process-source source language)
+   (let
+     [res
+      (process-source source language)
 
-         items
-         (or (.structure res) [])
+      items
+      (or (.structure res) [])
 
-         lines
-         (str/split-lines source)]
+      lines
+      (str/split-lines source)]
 
      (binding [*docstrings* (.docstrings res)]
        (cond->> (defs-tree lines items)
@@ -360,8 +369,9 @@
   ([path] (file-skeleton path (slurp path)))
   ([path source]
    (when-let [language (detect-language path)]
-     (let [res (process-source source language)
-           items (or (.structure res) [])]
+     (let
+       [res (process-source source language)
+        items (or (.structure res) [])]
 
        (when (seq items)
          (binding [*docstrings* (.docstrings res)]
@@ -389,21 +399,23 @@
    `:items`/`:alias`/`:wildcard` are the pack's parsed detail when a grammar fills
    them (some only populate `:source` with the raw statement text)."
   [lines ^ImportInfo imp]
-  (let [start
-        (inc (.startLine (.span imp)))
+  (let
+    [start
+     (inc (.startLine (.span imp)))
 
-        items
-        (vec (or (.items imp) []))
+     items
+     (vec (or (.items imp) []))
 
-        alias
-        (some-> (.alias imp)
-                str/trim
-                not-empty)]
+     alias
+     (some-> (.alias imp)
+             str/trim
+             not-empty)]
 
-    (cond-> {:source (some-> (.source imp)
-                             str/trim
-                             not-empty)
-             :anchor (patch/line-anchor start (line-text lines start))}
+    (cond->
+      {:source (some-> (.source imp)
+                       str/trim
+                       not-empty)
+       :anchor (patch/line-anchor start (line-text lines start))}
       (seq items)
       (assoc :items items)
 
@@ -456,43 +468,44 @@
    the enclosing section header): `<indent>[private ]<name>[  <sig>]  @from..to`,
    with a `pr-str`'d doc gist on an indented continuation line when present."
   [lines ^StructureItem it ^long depth]
-  (let [^Span span
-        (.span it)
+  (let
+    [^Span span
+     (.span it)
 
-        start
-        (inc (.startLine span))
+     start
+     (inc (.startLine span))
 
-        end
-        (inc (.endLine span))
+     end
+     (inc (.endLine span))
 
-        private?
-        (= "private"
-           (some-> (.visibility it)
-                   str
-                   str/lower-case))
+     private?
+     (= "private"
+        (some-> (.visibility it)
+                str
+                str/lower-case))
 
-        nm
-        (.name it)
+     nm
+     (.name it)
 
-        sig
-        (some-> (.signature it)
-                str/trim
-                not-empty)
+     sig
+     (some-> (.signature it)
+             str/trim
+             not-empty)
 
-        indent
-        (apply str (repeat depth "  "))
+     indent
+     (apply str (repeat depth "  "))
 
-        label
-        (str/trim (str (when private? "private ") nm (when sig (str "  " sig))))
+     label
+     (str/trim (str (when private? "private ") nm (when sig (str "  " sig))))
 
-        from
-        (patch/line-anchor start (line-text lines start))
+     from
+     (patch/line-anchor start (line-text lines start))
 
-        to
-        (patch/line-anchor end (line-text lines end))
+     to
+     (patch/line-anchor end (line-text lines end))
 
-        doc
-        (doc-snippet it)]
+     doc
+     (doc-snippet it)]
 
     (str indent label "  @" from ".." to (when doc (str "\n" indent "    " (pr-str doc))))))
 
@@ -510,18 +523,19 @@
    `item-line`; a def's own children recurse one level deeper, themselves
    grouped. Returns a seq of skeleton lines — no kind word repeated per row."
   [lines items ^long depth]
-  (let [indent
-        (apply str (repeat depth "  "))
+  (let
+    [indent
+     (apply str (repeat depth "  "))
 
-        kind-of
-        (fn [^StructureItem it]
-          (or (some-> (.kind it)
-                      str
-                      str/lower-case)
-              "other"))
+     kind-of
+     (fn [^StructureItem it]
+       (or (some-> (.kind it)
+                   str
+                   str/lower-case)
+           "other"))
 
-        by-kind
-        (group-by kind-of items)]
+     by-kind
+     (group-by kind-of items)]
 
     (mapcat (fn [k]
               (cons (str indent (section-label k) ":")
@@ -540,21 +554,21 @@
    row) and structure-nested — every line still carrying its `lineno:hash`
    anchors."
   [path language line-count lines items import-rows]
-  (let [header
-        (str (basename path) " · " language " · " line-count (if (= 1 line-count) " line" " lines"))
+  (let
+    [header
+     (str (basename path) " · " language " · " line-count (if (= 1 line-count) " line" " lines"))
 
-        imports-sec
-        (when (seq import-rows)
-          (str "imports (" (count import-rows)
-               "):\n" (str/join "\n" (map import-line import-rows))))
+     imports-sec
+     (when (seq import-rows)
+       (str "imports (" (count import-rows) "):\n" (str/join "\n" (map import-line import-rows))))
 
-        defs-lines
-        (grouped-items lines items 0)
+     defs-lines
+     (grouped-items lines items 0)
 
-        defs-sec
-        (when (seq defs-lines)
-          (str "definitions (" (count-items items)
-               "):\n" (indent-block "  " (str/join "\n" defs-lines))))]
+     defs-sec
+     (when (seq defs-lines)
+       (str "definitions (" (count-items items)
+            "):\n" (indent-block "  " (str/join "\n" defs-lines))))]
 
     (str/join "\n\n" (remove nil? [header imports-sec defs-sec]))))
 
@@ -571,10 +585,11 @@
   ([path] (file-index path (slurp path)))
   ([path source]
    (when-let [language (detect-language path)]
-     (let [res (process-source source language)
-           items (or (.structure res) [])
-           imps (or (.imports res) [])
-           lines (str/split-lines source)]
+     (let
+       [res (process-source source language)
+        items (or (.structure res) [])
+        imps (or (.imports res) [])
+        lines (str/split-lines source)]
 
        (when (or (seq items) (seq imps))
          (binding [*docstrings* (.docstrings res)]

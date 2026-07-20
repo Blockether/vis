@@ -94,14 +94,15 @@
         (expect (= "x\ny\nX\n"
                    (:content (resolve-span-output content (patch/line-anchor 3 "x") nil "X"))))))
   (it "exact line coordinate wins for repeated blank/brace hashes"
-      (let [content
-            "{\n\n}\n\n}\n\n}\n"
+      (let
+        [content
+         "{\n\n}\n\n}\n\n}\n"
 
-            blank-anchor
-            (patch/line-anchor 4 "")
+         blank-anchor
+         (patch/line-anchor 4 "")
 
-            brace-anchor
-            (patch/line-anchor 5 "}")]
+         brace-anchor
+         (patch/line-anchor 5 "}")]
 
         (expect (= "{\n\n}\nBLANK\n}\n\n}\n"
                    (:content (resolve-span-output content blank-anchor nil "BLANK"))))
@@ -111,12 +112,13 @@
       ;; The model named line 5 but gave a hash (blank) shared by several nearby
       ;; lines and NOT matching line 5's own content. The line locates; a dup hash
       ;; does not make an explicit `lineno:hash` anchor ambiguous.
-      (let [content
-            "a\n\nb\n\nTARGET\n\nc\n\nd\n"
+      (let
+        [content
+         "a\n\nb\n\nTARGET\n\nc\n\nd\n"
 
-            ; TARGET at line 5; blanks at 2,4,6,8
-            anchor
-            (str 5 ":" (patch/line-hash ""))]
+         ; TARGET at line 5; blanks at 2,4,6,8
+         anchor
+         (str 5 ":" (patch/line-hash ""))]
 
         ; WRONG, dup hash for line 5
         (expect (= "a\n\nb\n\nREPL\n\nc\n\nd\n"
@@ -124,14 +126,15 @@
         (expect (= 5 (:applied-line (resolve-span-output content anchor nil "REPL"))))))
   (it "WRONG-LINE GUARD: a valid hash whose content sits far from the stated line is REFUSED"
       ;; A real hash paired with a far-away line number must not relocate the edit.
-      (let [base
-            (mapv #(str "line" %) (range 1 121))
+      (let
+        [base
+         (mapv #(str "line" %) (range 1 121))
 
-            content
-            (str (clojure.string/join "\n" (assoc base 0 "target")) "\n")
+         content
+         (str (clojure.string/join "\n" (assoc base 0 "target")) "\n")
 
-            res
-            (resolve-span-output content (str 100 ":" (patch/line-hash "target")) nil "X")]
+         res
+         (resolve-span-output content (str 100 ":" (patch/line-hash "target")) nil "X")]
 
         (expect (= :hashline-misplaced
                    (-> res
@@ -147,11 +150,12 @@
                        :found-lines)))
         (expect (nil? (:content res)))))
   (it "small drift within tolerance still resolves"
-      (let [base
-            (mapv #(str "line" %) (range 1 121))
+      (let
+        [base
+         (mapv #(str "line" %) (range 1 121))
 
-            content
-            (str (clojure.string/join "\n" (assoc base 49 "target")) "\n")]
+         content
+         (str (clojure.string/join "\n" (assoc base 49 "target")) "\n")]
 
         ; target at line 50
         ;; stated line 55, real line 50 — gap 5 <= tolerance -> applies at 50
@@ -179,11 +183,12 @@
                        :error
                        :reason)))))
   (it "resolve-anchor-edit-span refuses an inverted range"
-      (let [content
-            "a\nb\nc\n"
+      (let
+        [content
+         "a\nb\nc\n"
 
-            res
-            (resolve-span-output content (patch/line-anchor 3 "c") (patch/line-anchor 1 "a") "X")]
+         res
+         (resolve-span-output content (patch/line-anchor 3 "c") (patch/line-anchor 1 "a") "X")]
 
         (expect (= :hashline-range-inverted
                    (-> res

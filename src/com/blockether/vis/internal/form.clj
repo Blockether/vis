@@ -102,17 +102,18 @@
    `:summary` already produced; no first-line-of-body heuristic."
   [{:keys [tool-color-role result-summary result-render] tool-name :vis/tool-name}]
   (when (some? tool-name)
-    (let [summary
-          (some-> result-summary
-                  str
-                  str/trim
-                  not-empty)
+    (let
+      [summary
+       (some-> result-summary
+               str
+               str/trim
+               not-empty)
 
-          body
-          (some-> result-render
-                  str
-                  str/trimr
-                  not-empty)]
+       body
+       (some-> result-render
+               str
+               str/trimr
+               not-empty)]
 
       {:tool? true
        :label (tool-label tool-name)
@@ -213,39 +214,40 @@
    `` `a.clj` · L1-10 · L40-50 `` and two edits stay `` update `a.clj` `` instead
    of two look-alike cards."
   [summaries]
-  (let [parts
-        (map split-summary-parts summaries)
+  (let
+    [parts
+     (map split-summary-parts summaries)
 
-        chip
-        (ffirst parts)
+     chip
+     (ffirst parts)
 
-        tails
-        (mapcat rest parts)
+     tails
+     (mapcat rest parts)
 
-        count-re
-        #"^(\d+) lines?$"
+     count-re
+     #"^(\d+) lines?$"
 
-        counts
-        (keep #(some-> (re-matches count-re %)
-                       second
-                       parse-long)
-              tails)
+     counts
+     (keep #(some-> (re-matches count-re %)
+                    second
+                    parse-long)
+           tails)
 
-        spans
-        (remove #(re-matches count-re %) tails)
+     spans
+     (remove #(re-matches count-re %) tails)
 
-        total
-        (reduce + 0 counts)
+     total
+     (reduce + 0 counts)
 
-        span-str
-        (str/join " · " (distinct spans))
+     span-str
+     (str/join " · " (distinct spans))
 
-        count-str
-        (when (and (seq counts) (= (count counts) (count summaries)))
-          (str total " line" (when (not= 1 total) "s")))
+     count-str
+     (when (and (seq counts) (= (count counts) (count summaries)))
+       (str total " line" (when (not= 1 total) "s")))
 
-        tail
-        (str/join " · " (remove str/blank? [span-str count-str]))]
+     tail
+     (str/join " · " (remove str/blank? [span-str count-str]))]
 
     (if (str/blank? tail) chip (str chip " · " tail))))
 
@@ -265,19 +267,20 @@
    `format_code {\"paths\": [...]}` call: one headline plus a collapsible per-file
    body."
   [forms]
-  (let [entries
-        (map format-summary-entry forms)
+  (let
+    [entries
+     (map format-summary-entry forms)
 
-        n
-        (count entries)
+     n
+     (count entries)
 
-        changed
-        (count (filter #(str/includes? (str (:status %)) "(changed") entries))
+     changed
+     (count (filter #(str/includes? (str (:status %)) "(changed") entries))
 
-        body
-        (str/join "\n"
-                  (for [{:keys [path status]} entries]
-                    (str path (when (seq status) (str " " status)))))]
+     body
+     (str/join "\n"
+               (for [{:keys [path status]} entries]
+                 (str path (when (seq status) (str " " status)))))]
 
     {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
      :body (when (seq body) (str "```\n" body "\n```"))}))
@@ -288,27 +291,29 @@
    body slice; for per-file format acks, one format roll-up body. Channels render
    the synthesized form as ONE card/bubble."
   [forms]
-  (let [f0
-        (first forms)
+  (let
+    [f0
+     (first forms)
 
-        tool
-        (tool-name-s f0)
+     tool
+     (tool-name-s f0)
 
-        merged
-        (if (= "format_code" tool)
-          (merge-format-forms forms)
-          {:summary (merge-same-path-summaries (map :result-summary forms))
-           :body (str/join "\n" (keep (comp not-empty str :result-render) forms))})
+     merged
+     (if (= "format_code" tool)
+       (merge-format-forms forms)
+       {:summary (merge-same-path-summaries (map :result-summary forms))
+        :body (str/join "\n" (keep (comp not-empty str :result-render) forms))})
 
-        anchors
-        (reduce merge {} (map #(result-field % :anchors) forms))
+     anchors
+     (reduce merge {} (map #(result-field % :anchors) forms))
 
-        r0
-        (:result f0)]
+     r0
+     (:result f0)]
 
-    (cond-> (assoc f0
-              :result-summary (:summary merged)
-              :result-render (:body merged))
+    (cond->
+      (assoc f0
+        :result-summary (:summary merged)
+        :result-render (:body merged))
       ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
       ;; `:result` comes back as the rendered string (anchors flattened) and the
       ;; path/spans already live in the merged summary, so a non-map result
@@ -332,8 +337,9 @@
    rendering an iteration's forms, so repeated tool acks never render as a stack
    of look-alike sibling bubbles. Always returns a vector."
   [forms]
-  (let [key-fn (fn [f]
-                 (or (coalesce-key f) [::solo (gensym)]))]
+  (let
+    [key-fn (fn [f]
+              (or (coalesce-key f) [::solo (gensym)]))]
     (into []
           (map (fn [grp]
                  (if (next grp) (merge-run grp) (first grp))))

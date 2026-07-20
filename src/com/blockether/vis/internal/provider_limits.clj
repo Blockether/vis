@@ -107,10 +107,11 @@
 
 (defn- merge-report
   [base raw]
-  (cond-> (-> base
-              (merge (dissoc raw :static :dynamic :error))
-              (update :static merge (:static raw))
-              (update :dynamic merge (:dynamic raw)))
+  (cond->
+    (-> base
+        (merge (dissoc raw :static :dynamic :error))
+        (update :static merge (:static raw))
+        (update :dynamic merge (:dynamic raw)))
     (:error raw)
     (assoc :error (:error raw))))
 
@@ -133,14 +134,15 @@
    usable `:ok` report so callers can surface RPM / TPM without needing a
    registered runtime extension."
   [provider-id]
-  (let [provider
-        (registry/provider-by-id provider-id)
+  (let
+    [provider
+     (registry/provider-by-id provider-id)
 
-        static-report
-        (base-report provider-id :ok)
+     static-report
+     (base-report provider-id :ok)
 
-        has-static?
-        (seq (:static static-report))]
+     has-static?
+     (seq (:static static-report))]
 
     (cond (and provider (:provider/limits-fn provider))
           (try (let [report (merge-report static-report (or ((:provider/limits-fn provider)) {}))]

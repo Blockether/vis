@@ -24,15 +24,16 @@
 (defmacro with-fs-context
   "A sandbox Context whose Python filesystem is confined to `dir`."
   [dir & body]
-  `(let [~(with-meta 'python-context {:tag `Context})
-         (:python-context (ep/create-python-context {} (constantly [~dir])))]
+  `(let
+     [~(with-meta 'python-context {:tag `Context})
+      (:python-context (ep/create-python-context {} (constantly [~dir])))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defmacro with-context
   "A plain IO-NONE sandbox Context (inline mode only)."
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
-                                                                         {}))]
+  `(let
+     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (def ^:private report-code
@@ -66,11 +67,12 @@
                                         (str "import pytest\nrc = pytest.main(['" d
                                              "'])\n" report-code)))))))
   (it "accepts a single file path directly"
-      (let [d
-            (tmp-dir)
+      (let
+        [d
+         (tmp-dir)
 
-            f
-            (str d "/test_one.py")]
+         f
+         (str d "/test_one.py")]
 
         (spit f "def test_one():\n    assert True\n")
         (with-fs-context d
@@ -96,12 +98,13 @@
       (let [d (tmp-dir)]
         (spit (str d "/test_boom.py") "def test_boom():\n    x = 41\n    assert x == 42\n")
         (with-fs-context d
-                         (let [lr (ev python-context
-                                      (str "import pytest\nrc = pytest.main(['"
-                                           d
-                                           "'])\n"
-                                           "rep = pytest.__dict__['_vis_last_report']\n"
-                                           "[l for (n,o,l) in rep if o == 'failed'][0]"))]
+                         (let
+                           [lr (ev python-context
+                                   (str "import pytest\nrc = pytest.main(['"
+                                        d
+                                        "'])\n"
+                                        "rep = pytest.__dict__['_vis_last_report']\n"
+                                        "[l for (n,o,l) in rep if o == 'failed'][0]"))]
                            (expect (str/includes? lr "test_boom"))
                            (expect (str/includes? lr "41")))))))
 

@@ -40,24 +40,26 @@
   ;;     PREFIX whenever state moves → invalidates the cached prefix.
   (it
     "a state change makes render-ctx-static emit a DIFFERENT system block (this diff lands in the cached prefix → bust)"
-    (let [block-0
-          (cr/render-ctx-static {:ctx base-ctx})
+    (let
+      [block-0
+       (cr/render-ctx-static {:ctx base-ctx})
 
-          block-1
-          (cr/render-ctx-static {:ctx changed-ctx})]
+       block-1
+       (cr/render-ctx-static {:ctx changed-ctx})]
 
       (expect (string? block-0))
       (expect (not= block-0 block-1))))
   ;; --- THE FIX MECHANISM: the same change is a tiny, append-only, cache-safe delta.
   (it "the change is expressible as a MINIMAL `session[...] = …` delta, not a whole-block re-render"
-      (let [m0
-            (cr/ctx-static-map {:ctx base-ctx})
+      (let
+        [m0
+         (cr/ctx-static-map {:ctx base-ctx})
 
-            m1
-            (cr/ctx-static-map {:ctx changed-ctx})
+         m1
+         (cr/ctx-static-map {:ctx changed-ctx})
 
-            delta
-            (cr/render-ctx-delta m0 m1)]
+         delta
+         (cr/render-ctx-delta m0 m1)]
 
         (expect (some? delta))
         (expect (str/includes? delta "filesystem_roots")) ; only what moved
@@ -81,24 +83,26 @@
   ;; A turn-2 ctx that BOTH gained a filesystem root AND measured utilization.
   ;; `"engine_utilization"` is the engine-stamped key `session-view` derives
   ;; `"session_utilization"` from (ctx_engine/session-view) — same as the live loop.
-  (let [util-ctx (assoc changed-ctx
-                   "engine_utilization" {"last_request_tokens" 1200 "saturation" 1})]
+  (let
+    [util-ctx (assoc changed-ctx "engine_utilization" {"last_request_tokens" 1200 "saturation" 1})]
     (it "the standing block is byte-identical across turns even after state changed (cache holds)"
         (let [standing (atom nil)]
           ;; TURN 1 seeds the frozen block + baseline (as iteration-loop does once)
           (reset! standing {:block (cr/render-ctx-static {:ctx base-ctx})
                             :baseline (cr/ctx-static-map {:ctx base-ctx})})
-          (let [block-t1 (:block @standing)
-                ;; TURN 2: state changed, but the loop REUSES the frozen block
-                block-t2 (:block @standing)]
+          (let
+            [block-t1 (:block @standing)
+             ;; TURN 2: state changed, but the loop REUSES the frozen block
+             block-t2 (:block @standing)]
 
             (expect (= block-t1 block-t2))
             ;; and the frozen block never carried utilization (cache-stability)
             (expect (not (str/includes? block-t1 "utilization"))))))
     (it "a cross-turn change + utilization both ride as one appended delta, not a re-render"
-        (let [baseline (cr/ctx-static-map {:ctx base-ctx})
-              cur (cr/ctx-delta-map {:ctx util-ctx})
-              delta (cr/render-ctx-delta baseline cur)]
+        (let
+          [baseline (cr/ctx-static-map {:ctx base-ctx})
+           cur (cr/ctx-delta-map {:ctx util-ctx})
+           delta (cr/render-ctx-delta baseline cur)]
 
           (expect (some? delta))
           (expect (str/includes? delta "filesystem_roots")) ; the state change
@@ -115,10 +119,10 @@
    caches the append-only transcript). pi/maki two-breakpoint pattern."
   (let [apply-bp @#'lp/apply-cache-breakpoints]
     (it "tags ONLY the last system message and the last message (not the middle)"
-        (let [out (apply-bp [{:role "system" :content "core"}
-                             {:role "system" :content "session = {…}"} ; frozen block (last system)
-                             {:role "user" :content [{:type "text" :text "prior"}]}
-                             {:role "user" :content [{:type "text" :text "current"}]}])] ; last
+        (let
+          [out (apply-bp [{:role "system" :content "core"} {:role "system" :content "session = {…}"} ; frozen block (last system)
+                          {:role "user" :content [{:type "text" :text "prior"}]}
+                          {:role "user" :content [{:type "text" :text "current"}]}])] ; last
           (expect (not (some :svar/cache
                              (let [c (:content (nth out 0))]
                                (if (string? c) nil c)))))
@@ -126,8 +130,9 @@
           (expect (not (some :svar/cache (:content (nth out 2))))) ; middle untouched
           (expect (some :svar/cache (:content (nth out 3)))))) ; moving recency
     (it "coerces a bare-string last message into a cached text block"
-        (let [out (apply-bp [{:role "system" :content "s"} {:role "user" :content "hello"}])
-              last-blk (first (:content (last out)))]
+        (let
+          [out (apply-bp [{:role "system" :content "s"} {:role "user" :content "hello"}])
+           last-blk (first (:content (last out)))]
 
           (expect (= "hello" (:text last-blk)))
           (expect (true? (:svar/cache last-blk)))))

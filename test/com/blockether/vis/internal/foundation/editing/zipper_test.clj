@@ -25,8 +25,9 @@
                  (let [root (zip/inspect "clojure" clj-src [])]
                    (expect (:ok? root))
                    (expect (>= (:named-child-count root) 2))
-                   (let [i (child-idx-containing root "defn")
-                         node (zip/inspect "clojure" clj-src [i])]
+                   (let
+                     [i (child-idx-containing root "defn")
+                      node (zip/inspect "clojure" clj-src [i])]
 
                      (expect (some? i))
                      (expect (str/includes? (:text node) "defn bar"))
@@ -41,21 +42,23 @@
              (it "works language-neutrally on a Python tree"
                  (let [root (zip/inspect "python" py-src [])]
                    (expect (:ok? root))
-                   (let [i (child-idx-containing root "def foo")
-                         node (zip/inspect "python" py-src [i])]
+                   (let
+                     [i (child-idx-containing root "def foo")
+                      node (zip/inspect "python" py-src [i])]
 
                      (expect (some? i))
                      (expect (str/includes? (:text node) "def foo"))
-                     (let [r
-                           (zip/edit "python" py-src [i] :replace "def foo(x):\n    return x * 2")]
+                     (let
+                       [r (zip/edit "python" py-src [i] :replace "def foo(x):\n    return x * 2")]
                        (expect (:ok? r))
                        (expect (str/includes? (:new-source r) "x * 2"))))))
              (it "descends a deeper named-child path (the cursor going down)"
-                 (let [i
-                       (child-idx-containing (zip/inspect "clojure" clj-src []) "defn")
+                 (let
+                   [i
+                    (child-idx-containing (zip/inspect "clojure" clj-src []) "defn")
 
-                       deeper
-                       (zip/inspect "clojure" clj-src [i 0])]
+                    deeper
+                    (zip/inspect "clojure" clj-src [i 0])]
 
                    (expect (:ok? deeper))
                    (expect (string? (:kind deeper)))))
@@ -73,22 +76,24 @@
 (defdescribe
   sexpr-verbs-test
   (it "sexpr navigates + struct_patch splices the SAME path (unified surface)"
-      (let [sexpr
-            @#'editing/sexpr-tool
+      (let
+        [sexpr
+         @#'editing/sexpr-tool
 
-            struct-patch
-            @#'editing/struct-patch-tool
+         struct-patch
+         @#'editing/struct-patch-tool
 
-            path
-            (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
+         path
+         (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
 
-            root
-            (:result (sexpr path))]
+         root
+         (:result (sexpr path))]
 
         (expect (>= (get root "named_child_count") 2))
-        (let [i (some (fn [c]
-                        (when (str/includes? (str (get c "head")) "defn") (get c "idx")))
-                      (get root "children"))]
+        (let
+          [i (some (fn [c]
+                     (when (str/includes? (str (get c "head")) "defn") (get c "idx")))
+                   (get root "children"))]
           (expect (some? i))
           (expect (str/includes? (get (:result (sexpr path {"at" [i]})) "text") "defn g"))
           ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
@@ -107,8 +112,9 @@
                  ;; struct_patch / project_references were long broken: their tools emitted a
                  ;; DASH op (:struct-patch) while the registry key derived from the underscore
                  ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
-                 (doseq [op [:struct_node :struct_patch :struct_occurrences :create-dirs :delete-if-exists :patch
-                             :write]]
+                 (doseq
+                   [op [:struct_node :struct_patch :struct_occurrences :create-dirs
+                        :delete-if-exists :patch :write]]
                    (expect (#{:observation :mutation} (ext/op-tag op))))))
 
 (defdescribe error-localization-test
@@ -134,11 +140,12 @@
                  ;; nil when the source parses clean
                  (expect (nil? (zip/describe-syntax-errors "clojure" "(defn f [x] (+ x 1))"))))
              (it "a refused edit carries the located diagnostic in its message"
-                 (let [i
-                       (child-idx-containing (zip/inspect "clojure" clj-src []) "defn")
+                 (let
+                   [i
+                    (child-idx-containing (zip/inspect "clojure" clj-src []) "defn")
 
-                       r
-                       (zip/edit "clojure" clj-src [i] :replace "(defn bar [x)\n  (+ x 1))")]
+                    r
+                    (zip/edit "clojure" clj-src [i] :replace "(defn bar [x)\n  (+ x 1))")]
 
                    (expect (= :syntax-broken (get-in r [:error :reason])))
                    ;; the message now includes a real line/col + the expected delimiter,

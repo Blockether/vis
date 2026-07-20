@@ -22,14 +22,15 @@
    them could corrupt user data that legitimately contains hyphens."
   [k]
   (if (or (keyword? k) (symbol? k))
-    (let [n
-          (name k)
+    (let
+      [n
+       (name k)
 
-          n
-          (if (str/ends-with? n "?")
-            (let [base (subs n 0 (dec (count n)))]
-              (if (str/starts-with? base "is-") base (str "is-" base)))
-            n)]
+       n
+       (if (str/ends-with? n "?")
+         (let [base (subs n 0 (dec (count n)))]
+           (if (str/starts-with? base "is-") base (str "is-" base)))
+         n)]
 
       (str/replace n "-" "_"))
     k))

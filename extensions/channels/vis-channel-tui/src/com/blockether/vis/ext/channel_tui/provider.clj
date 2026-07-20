@@ -37,13 +37,14 @@
    Appends the 'Show all models...' toggle when dated variants were
    hidden."
   [provider default-models show-all?]
-  (let [{:keys [models hidden-count]}
-        (vis/provider-model-options provider default-models show-all?)
+  (let
+    [{:keys [models hidden-count]}
+     (vis/provider-model-options provider default-models show-all?)
 
-        items
-        (mapv (fn [id]
-                {:label id :id id})
-              models)]
+     items
+     (mapv (fn [id]
+             {:label id :id id})
+           models)]
 
     (if (and (not show-all?) (pos? (long hidden-count)))
       (conj items {:label "Show all models..." :id :show-all})
@@ -91,55 +92,55 @@
 
 (defn- draw-copilot-waiting!
   [^TerminalScreen screen ^long started-at-ms]
-  (let [size
-        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+  (let
+    [size
+     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-        cols
-        (.getColumns size)
+     cols
+     (.getColumns size)
 
-        rows
-        (.getRows size)
+     rows
+     (.getRows size)
 
-        g
-        (.newTextGraphics screen)
+     g
+     (.newTextGraphics screen)
 
-        bounds
-        (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Waiting" 8)
+     bounds
+     (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Waiting" 8)
 
-        {:keys [left inner-w]}
-        bounds
+     {:keys [left inner-w]}
+     bounds
 
-        left
-        (long left)
+     left
+     (long left)
 
-        inner-w
-        (long inner-w)
+     inner-w
+     (long inner-w)
 
-        {:keys [content-top content-h hint-row]}
-        (dlg/dialog-layout bounds)
+     {:keys [content-top content-h hint-row]}
+     (dlg/dialog-layout bounds)
 
-        content-top
-        (long content-top)
+     content-top
+     (long content-top)
 
-        content-h
-        (long content-h)
+     content-h
+     (long content-h)
 
-        hint-row
-        (long hint-row)
+     hint-row
+     (long hint-row)
 
-        text-x
-        (+ left 2)
+     text-x
+     (+ left 2)
 
-        text-w
-        (max 1 (- inner-w 2))
+     text-w
+     (max 1 (- inner-w 2))
 
-        elapsed-s
-        (quot (max 0 (- (System/currentTimeMillis) started-at-ms)) 1000)
+     elapsed-s
+     (quot (max 0 (- (System/currentTimeMillis) started-at-ms)) 1000)
 
-        lines
-        ["Waiting for GitHub authorization..." "" "Finish login in the browser."
-         "This dialog closes when GitHub confirms authorization." ""
-         (str "Elapsed: " elapsed-s "s")]]
+     lines
+     ["Waiting for GitHub authorization..." "" "Finish login in the browser."
+      "This dialog closes when GitHub confirms authorization." "" (str "Elapsed: " elapsed-s "s")]]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) content-top inner-w content-h)
@@ -154,11 +155,12 @@
 
 (defn- wait-for-copilot-oauth!
   [^TerminalScreen screen result]
-  (let [started-at-ms
-        (System/currentTimeMillis)
+  (let
+    [started-at-ms
+     (System/currentTimeMillis)
 
-        deadline-ms
-        (+ started-at-ms (long copilot-oauth-wait-timeout-ms))]
+     deadline-ms
+     (+ started-at-ms (long copilot-oauth-wait-timeout-ms))]
 
     (loop []
 
@@ -181,35 +183,37 @@
 (defn- copilot-auth-instructions!
   [^TerminalScreen screen verification-uri user-code]
   (loop [status nil]
-    (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-          cols (.getColumns size)
-          rows (.getRows size)
-          g (.newTextGraphics screen)
-          bounds (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Authenticate" 10)
-          {:keys [left inner-w]} bounds
-          {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)
-          left (long left)
-          inner-w (long inner-w)
-          content-top (long content-top)
-          content-h (long content-h)
-          hint-row (long hint-row)
-          text-x (+ left 2)
-          text-w (max 1 (- inner-w 2))
-          url-label "Open this URL in your browser:"
-          code-label "Enter this code in the browser:"
-          help-lines ["After authorizing, press Enter here to continue."
-                      "Click the URL to open it. Click the code to copy it."]
-          url-row (min (+ content-top 1) (+ content-top content-h -1))
-          code-row (min (+ content-top 4) (+ content-top content-h -1))
-          status-row (min (+ content-top 8) (+ content-top content-h -1))
-          url-col text-x
-          code-col text-x]
+    (let
+      [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+       cols (.getColumns size)
+       rows (.getRows size)
+       g (.newTextGraphics screen)
+       bounds (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Authenticate" 10)
+       {:keys [left inner-w]} bounds
+       {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)
+       left (long left)
+       inner-w (long inner-w)
+       content-top (long content-top)
+       content-h (long content-h)
+       hint-row (long hint-row)
+       text-x (+ left 2)
+       text-w (max 1 (- inner-w 2))
+       url-label "Open this URL in your browser:"
+       code-label "Enter this code in the browser:"
+       help-lines ["After authorizing, press Enter here to continue."
+                   "Click the URL to open it. Click the code to copy it."]
+       url-row (min (+ content-top 1) (+ content-top content-h -1))
+       code-row (min (+ content-top 4) (+ content-top content-h -1))
+       status-row (min (+ content-top 8) (+ content-top content-h -1))
+       url-col text-x
+       code-col text-x]
 
       (p/set-colors! g t/dialog-fg t/dialog-bg)
       (p/fill-rect! g (inc left) content-top inner-w content-h)
-      (doseq [[idx line] (map-indexed vector
-                                      [url-label verification-uri "" code-label user-code ""
-                                       (first help-lines) (second help-lines)])]
+      (doseq
+        [[idx line] (map-indexed vector
+                                 [url-label verification-uri "" code-label user-code ""
+                                  (first help-lines) (second help-lines)])]
         (let [row (+ content-top (long idx))]
           (when (< row (+ content-top content-h))
             (p/fill-rect! g (inc left) row inner-w 1)
@@ -239,19 +243,20 @@
       (let [key (dlg/read-modal-key! screen)]
         (when key
           (cond (instance? MouseAction key)
-                (let [^MouseAction ma key
-                      atype (.getActionType ma)
-                      pos (.getPosition ma)
-                      mx (.getColumn pos)
-                      my (.getRow pos)
-                      on-url? (and (= atype MouseActionType/CLICK_DOWN)
-                                   (= my url-row)
-                                   (>= mx url-col)
-                                   (< mx (+ url-col (count verification-uri))))
-                      on-code? (and (= atype MouseActionType/CLICK_DOWN)
-                                    (= my code-row)
-                                    (>= mx code-col)
-                                    (< mx (+ code-col (count user-code))))]
+                (let
+                  [^MouseAction ma key
+                   atype (.getActionType ma)
+                   pos (.getPosition ma)
+                   mx (.getColumn pos)
+                   my (.getRow pos)
+                   on-url? (and (= atype MouseActionType/CLICK_DOWN)
+                                (= my url-row)
+                                (>= mx url-col)
+                                (< mx (+ url-col (count verification-uri))))
+                   on-code? (and (= atype MouseActionType/CLICK_DOWN)
+                                 (= my code-row)
+                                 (>= mx code-col)
+                                 (< mx (+ code-col (count user-code))))]
 
                   (cond on-url? (do (opener/open! verification-uri) (recur "Opened browser URL."))
                         on-code? (do (input/clipboard-copy! user-code)
@@ -280,20 +285,21 @@
   ([^TerminalScreen screen] (copilot-oauth-flow! screen :individual false))
   ([^TerminalScreen screen account-type] (copilot-oauth-flow! screen account-type false))
   ([^TerminalScreen screen account-type force?]
-   (let [start-fn
-         copilot/start-device-flow!
+   (let
+     [start-fn
+      copilot/start-device-flow!
 
-         poll-fn
-         copilot/poll-for-token!
+      poll-fn
+      copilot/poll-for-token!
 
-         exchange-fn
-         copilot/get-copilot-token!
+      exchange-fn
+      copilot/get-copilot-token!
 
-         detect-fn
-         copilot/detect-oauth-token
+      detect-fn
+      copilot/detect-oauth-token
 
-         opts
-         {:account-type account-type}]
+      opts
+      {:account-type account-type}]
 
      ;; Already authenticated?
      (if (and (not force?) (detect-fn))
@@ -304,20 +310,22 @@
            (dlg/text-view-dialog! screen "Copilot" ["Existing token is invalid. Re-authenticate."])
            nil))
        ;; Device flow
-       (try (let [start-result
-                  (vis/worker-future "vis-tui-copilot-oauth-start" #(start-fn opts))
+       (try (let
+              [start-result
+               (vis/worker-future "vis-tui-copilot-oauth-start" #(start-fn opts))
 
-                  flow
-                  (wait-for-copilot-oauth! screen start-result)]
+               flow
+               (wait-for-copilot-oauth! screen start-result)]
 
               (when-not (= copilot-oauth-cancelled flow)
                 (let [{:keys [user-code verification-uri device-code interval expires-in]} flow]
                   (when (copilot-auth-instructions! screen verification-uri user-code)
                     (when force? (copilot/logout!))
                     ;; Poll in background, show waiting message
-                    (let [result (vis/worker-future "vis-tui-copilot-oauth-poll"
-                                                    #(poll-fn device-code interval expires-in opts))
-                          poll-result (wait-for-copilot-oauth! screen result)]
+                    (let
+                      [result (vis/worker-future "vis-tui-copilot-oauth-poll"
+                                                 #(poll-fn device-code interval expires-in opts))
+                       poll-result (wait-for-copilot-oauth! screen result)]
 
                       (when-not (= copilot-oauth-cancelled poll-result)
                         (let [{:keys [token]} (exchange-fn opts)]
@@ -339,11 +347,12 @@
    credentials already exist."
   ([^TerminalScreen screen] (codex-oauth-ready! screen false))
   ([^TerminalScreen screen force?]
-   (let [provider
-         (vis/provider-by-id :openai-codex)
+   (let
+     [provider
+      (vis/provider-by-id :openai-codex)
 
-         detect-fn
-         (:provider/detect-fn provider)]
+      detect-fn
+      (:provider/detect-fn provider)]
 
      (if (and (not force?) detect-fn (detect-fn))
        true
@@ -353,16 +362,17 @@
                                    "After browser login, copy the final redirect URL from the"
                                    "address bar and paste it into the next dialog." ""
                                    "Fallback if needed:" "  vis providers auth openai-codex"])
-         (try (let [_result (codex/login!
-                              (constantly nil)
-                              {:originator "vis-tui"
-                               :force? force?
-                               :manual-code-fn
-                               (fn [_]
-                                 (dlg/text-input-dialog!
-                                   screen
-                                   "OpenAI Codex"
-                                   "Paste the final browser URL or authorization code:"))})]
+         (try (let
+                [_result (codex/login!
+                           (constantly nil)
+                           {:originator "vis-tui"
+                            :force? force?
+                            :manual-code-fn
+                            (fn [_]
+                              (dlg/text-input-dialog!
+                                screen
+                                "OpenAI Codex"
+                                "Paste the final browser URL or authorization code:"))})]
                 ;; Success is silent: parity with anthropic + copilot flows.
                 true)
               (catch Exception e
@@ -377,11 +387,12 @@
   "Run Anthropic Claude subscription browser OAuth from the TUI when needed."
   ([^TerminalScreen screen] (anthropic-oauth-ready! screen false))
   ([^TerminalScreen screen force?]
-   (let [provider
-         (vis/provider-by-id :anthropic-coding-plan)
+   (let
+     [provider
+      (vis/provider-by-id :anthropic-coding-plan)
 
-         detect-fn
-         (:provider/detect-fn provider)]
+      detect-fn
+      (:provider/detect-fn provider)]
 
      (if (and (not force?) detect-fn (detect-fn))
        true
@@ -392,15 +403,16 @@
                                    "address bar and paste it into the next dialog." ""
                                    "Fallback if needed:"
                                    "  vis providers auth anthropic-coding-plan"])
-         (try (let [_result (anthropic/login!
-                              (constantly nil)
-                              {:force? force?
-                               :manual-code-fn
-                               (fn [_]
-                                 (dlg/text-input-dialog!
-                                   screen
-                                   "Anthropic"
-                                   "Paste the final browser URL or authorization code:"))})]
+         (try (let
+                [_result (anthropic/login!
+                           (constantly nil)
+                           {:force? force?
+                            :manual-code-fn
+                            (fn [_]
+                              (dlg/text-input-dialog!
+                                screen
+                                "Anthropic"
+                                "Paste the final browser URL or authorization code:"))})]
                 true)
               (catch Exception e
                 (dlg/text-view-dialog! screen
@@ -417,59 +429,60 @@
     (if (empty? available)
       (do (dlg/text-view-dialog! screen "Add Provider" ["All providers already configured."]) nil)
       (when-let [preset (dlg/select-dialog! screen "Add Provider" available)]
-        (let [pid (:id preset)
-              local? (contains? #{:ollama :lmstudio} pid)
-              ;; Local providers (LM Studio / Ollama) run wherever the user
-              ;; hosts them, so let them override the default host:port.
-              ;; Blank input or Esc keeps the preset default.
-              base-url (if local?
-                         (or (some-> (dlg/text-input-dialog! screen
-                                                             (str (:label preset) " Setup")
-                                                             "Base URL:"
-                                                             :initial
-                                                             (or (:base-url preset) ""))
-                                     str/trim
-                                     (str/replace #"/+$" "")
-                                     not-empty)
-                             (:base-url preset))
-                         (:base-url preset))
-              preset (assoc preset :base-url base-url)
-              has-key? (some? (:api-key preset))
-              ;; OAuth providers store credentials outside config.
-              oauth? (or (github-copilot-provider? pid)
-                         (= :openai-codex pid)
-                         (= :anthropic-coding-plan pid))
-              ;; Local providers need no key
-              needs-key? (not (or has-key? oauth? local?))
-              api-key (cond has-key? (:api-key preset)
-                            (github-copilot-provider? pid)
-                            (copilot-oauth-flow! screen (github-copilot-account-type pid))
-                            (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
-                            (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen)
-                                                             :oauth-ready)
-                            needs-key? (let [raw (dlg/text-input-dialog! screen
-                                                                         (str (:label preset)
-                                                                              " Setup")
-                                                                         "API Key:"
-                                                                         :mask
-                                                                         \*)]
-                                         (when-not (str/blank? raw) raw))
-                            :else nil)
-              auth-ok? (cond has-key? true
-                             oauth? (some? api-key)
-                             needs-key? (some? api-key)
-                             :else true)]
+        (let
+          [pid (:id preset)
+           local? (contains? #{:ollama :lmstudio} pid)
+           ;; Local providers (LM Studio / Ollama) run wherever the user
+           ;; hosts them, so let them override the default host:port.
+           ;; Blank input or Esc keeps the preset default.
+           base-url (if local?
+                      (or (some-> (dlg/text-input-dialog! screen
+                                                          (str (:label preset) " Setup")
+                                                          "Base URL:"
+                                                          :initial
+                                                          (or (:base-url preset) ""))
+                                  str/trim
+                                  (str/replace #"/+$" "")
+                                  not-empty)
+                          (:base-url preset))
+                      (:base-url preset))
+           preset (assoc preset :base-url base-url)
+           has-key? (some? (:api-key preset))
+           ;; OAuth providers store credentials outside config.
+           oauth?
+           (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
+           ;; Local providers need no key
+           needs-key? (not (or has-key? oauth? local?))
+           api-key (cond has-key? (:api-key preset)
+                         (github-copilot-provider? pid)
+                         (copilot-oauth-flow! screen (github-copilot-account-type pid))
+                         (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
+                         (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen)
+                                                          :oauth-ready)
+                         needs-key? (let
+                                      [raw (dlg/text-input-dialog! screen
+                                                                   (str (:label preset) " Setup")
+                                                                   "API Key:"
+                                                                   :mask
+                                                                   \*)]
+                                      (when-not (str/blank? raw) raw))
+                         :else nil)
+           auth-ok? (cond has-key? true
+                          oauth? (some? api-key)
+                          needs-key? (some? api-key)
+                          :else true)]
 
           (when auth-ok?
             (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
               (provider-config-with-models preset oauth-models)
-              (when-let [model (select-provider-model! screen
-                                                       (cond-> {:id (:id preset)
-                                                                :base-url base-url
-                                                                :default-models (:default-models
-                                                                                  preset)}
-                                                         api-key
-                                                         (assoc :api-key api-key)))]
+              (when-let
+                [model (select-provider-model! screen
+                                               (cond->
+                                                 {:id (:id preset)
+                                                  :base-url base-url
+                                                  :default-models (:default-models preset)}
+                                                 api-key
+                                                 (assoc :api-key api-key)))]
                 (cond-> (provider-config-with-models preset [{:name model}])
                   (and api-key (not oauth?))
                   (assoc :api-key api-key))))))))))
@@ -515,82 +528,83 @@
   ;; col). Card body text shifts right by the gutter so the marker
   ;; sits inside the dialog's inner edge with breathing room before
   ;; the priority label.
-  (let [left
-        (long left)
+  (let
+    [left
+     (long left)
 
-        row
-        (long row)
+     row
+     (long row)
 
-        inner-w
-        (long inner-w)
+     inner-w
+     (long inner-w)
 
-        idx
-        (long idx)
+     idx
+     (long idx)
 
-        text-w
-        (max 0 (- inner-w 2 p/SELECTION_WIDTH))
+     text-w
+     (max 0 (- inner-w 2 p/SELECTION_WIDTH))
 
-        text-x
-        (+ left 2 p/SELECTION_WIDTH)
+     text-x
+     (+ left 2 p/SELECTION_WIDTH)
 
-        pri
-        (priority-label idx)
+     pri
+     (priority-label idx)
 
-        host
-        (url-host (or (vis/provider-base-url provider) ""))
+     host
+     (url-host (or (vis/provider-base-url provider) ""))
 
-        loading-status?
-        (:loading? status)
+     loading-status?
+     (:loading? status)
 
-        loading-limits?
-        (= :loading (:status limits))
+     loading-limits?
+     (= :loading (:status limits))
 
-        ok?
-        (boolean (:authenticated? status))
+     ok?
+     (boolean (:authenticated? status))
 
-        label
-        (vis/display-label (:id provider))
+     label
+     (vis/display-label (:id provider))
 
-        models
-        (or (:models provider) [])
+     models
+     (or (:models provider) [])
 
-        model-count
-        (count (or models []))
+     model-count
+     (count (or models []))
 
-        root-name
-        (or (:name (first models)) "--")
+     root-name
+     (or (:name (first models)) "--")
 
-        suffix
-        (if (<= model-count 1) "(1 model)" (str "(+" (dec model-count) " models)"))
+     suffix
+     (if (<= model-count 1) "(1 model)" (str "(+" (dec model-count) " models)"))
 
-        ;; Dynamic per-account rows (e.g. `:zai-coding-plan-5h`, `:codex-7d`)
-        ;; come from `[:dynamic :limits]`; they're what the footer shows
-        ;; and what the user actually cares about. Static `:rpm`/`:tpm`
-        ;; are svar catalog defaults (`{:rpm 500 :tpm 2000000}`), the
-        ;; same for every provider - useful as a fallback only when no
-        ;; dynamic rows are reported. Sharing `lfmt/dynamic-summary`
-        ;; with footer.clj keeps both surfaces in sync.
-        dynamic-text
-        (when-not loading-limits? (lfmt/dynamic-summary limits))
+     ;; Dynamic per-account rows (e.g. `:zai-coding-plan-5h`, `:codex-7d`)
+     ;; come from `[:dynamic :limits]`; they're what the footer shows
+     ;; and what the user actually cares about. Static `:rpm`/`:tpm`
+     ;; are svar catalog defaults (`{:rpm 500 :tpm 2000000}`), the
+     ;; same for every provider - useful as a fallback only when no
+     ;; dynamic rows are reported. Sharing `lfmt/dynamic-summary`
+     ;; with footer.clj keeps both surfaces in sync.
+     dynamic-text
+     (when-not loading-limits? (lfmt/dynamic-summary limits))
 
-        limit-summary
-        (->> [(when loading-status? "checking auth") (when loading-limits? "checking limits")
-              dynamic-text
-              (when-not dynamic-text
-                (when-let [rpm (get-in limits [:static :rpm])]
-                  (str "catalog RPM " rpm)))
-              (when-not dynamic-text
-                (when-let [tpm (get-in limits [:static :tpm])]
-                  (str "catalog TPM " tpm)))]
-             (remove nil?)
-             (str/join " / "))
+     limit-summary
+     (->> [(when loading-status? "checking auth") (when loading-limits? "checking limits")
+           dynamic-text
+           (when-not dynamic-text
+             (when-let [rpm (get-in limits [:static :rpm])]
+               (str "catalog RPM " rpm)))
+           (when-not dynamic-text
+             (when-let [tpm (get-in limits [:static :tpm])]
+               (str "catalog TPM " tpm)))]
+          (remove nil?)
+          (str/join " / "))
 
-        ;; Layout line 1:  "① Label" ... "host  ●"
-        left-part
-        (str pri " " (or label "?"))
+     ;; Layout line 1:  "① Label" ... "host  ●"
+     left-part
+     (str pri " " (or label "?"))
 
-        right-part
-        (str host "  ●")]
+     right-part
+     (str host "  ●")]
 
     ;; Selection visual: the cursor is a `> ` glyph painted in the
     ;; dialog padding column (between the dialog frame and the card
@@ -610,11 +624,12 @@
               [p/BOLD]
               (p/put-str! g text-x row (dlg/ellipsize left-part (- text-w (count right-part) 1))))
     ;; Line 1 right - host (italic dimmed) + status dot
-    (let [dot-col
-          (+ text-x text-w -1)
+    (let
+      [dot-col
+       (+ text-x text-w -1)
 
-          host-col
-          (- dot-col 2 (count host))]
+       host-col
+       (- dot-col 2 (count host))]
 
       ;; Host
       (p/set-fg! g t/dialog-hint)
@@ -629,8 +644,9 @@
     ;; model + static limits summary. Surfacing `:error` here is what makes a
     ;; dead local provider (Ollama / LM Studio not running) actually SAY so
     ;; instead of just a silent red dot.
-    (let [error-text (when-not (or loading-status? loading-limits?)
-                       (or (:error status) (get-in limits [:error :message])))]
+    (let
+      [error-text (when-not (or loading-status? loading-limits?)
+                    (or (:error status) (get-in limits [:error :message])))]
       (if (seq error-text)
         (do (p/set-fg! g t/status-bad)
             (p/put-str! g text-x (inc row) (dlg/ellipsize (str "   ⚠ " error-text) text-w)))
@@ -658,43 +674,44 @@
    after this one in the chain (nil at the ends)."
   [g left row inner-w idx selected? is-root? _provider-id model previous-name next-name]
   ;; Same selection-gutter convention as `draw-provider-card!`.
-  (let [left
-        (long left)
+  (let
+    [left
+     (long left)
 
-        row
-        (long row)
+     row
+     (long row)
 
-        inner-w
-        (long inner-w)
+     inner-w
+     (long inner-w)
 
-        idx
-        (long idx)
+     idx
+     (long idx)
 
-        model-name
-        (or (:name model) (str "model-" (inc idx)))
+     model-name
+     (or (:name model) (str "model-" (inc idx)))
 
-        text-w
-        (max 0 (- inner-w 2 p/SELECTION_WIDTH))
+     text-w
+     (max 0 (- inner-w 2 p/SELECTION_WIDTH))
 
-        text-x
-        (+ left 2 p/SELECTION_WIDTH)
+     text-x
+     (+ left 2 p/SELECTION_WIDTH)
 
-        pri
-        (priority-label idx)
+     pri
+     (priority-label idx)
 
-        left-part
-        (str pri " " model-name)
+     left-part
+     (str pri " " model-name)
 
-        tag
-        (when is-root? "★ Primary")
+     tag
+     (when is-root? "★ Primary")
 
-        ;; Build the chain breadcrumb. Use Unicode arrows so the flow
-        ;; reads left-to-right at a glance: "after X -> then Y".
-        subtitle
-        (cond (and (nil? previous-name) (nil? next-name)) "   only model -- no fallback configured"
-              (nil? previous-name) (str "   -> then " next-name)
-              (nil? next-name) (str "   after " previous-name " -- last fallback")
-              :else (str "   after " previous-name " -> then " next-name))]
+     ;; Build the chain breadcrumb. Use Unicode arrows so the flow
+     ;; reads left-to-right at a glance: "after X -> then Y".
+     subtitle
+     (cond (and (nil? previous-name) (nil? next-name)) "   only model -- no fallback configured"
+           (nil? previous-name) (str "   -> then " next-name)
+           (nil? next-name) (str "   after " previous-name " -- last fallback")
+           :else (str "   after " previous-name " -> then " next-name))]
 
     ;; See `draw-provider-card!` for the rationale: keep the body in
     ;; the normal palette and paint a `> ` cursor glyph in the dialog
@@ -737,80 +754,82 @@
 
 (defn- show-model-manager!
   [^TerminalScreen screen provider]
-  (let [models
-        (atom (->> (:models provider)
-                   (keep vis/->svar-model)
-                   vec))
+  (let
+    [models
+     (atom (->> (:models provider)
+                (keep vis/->svar-model)
+                vec))
 
-        selected
-        (atom 0)
+     selected
+     (atom 0)
 
-        scroll
-        (atom 0)]
+     scroll
+     (atom 0)]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            total
-            (long (count @models))
+         total
+         (long (count @models))
 
-            ;; Do NOT clear the whole terminal here - the chat
-            ;; behind the dialog should stay visible (other modals
-            ;; in `dialogs.clj` already behave this way). The dialog
-            ;; chrome paints its own background + drop shadow over
-            ;; whatever was underneath, which is the desired "floating
-            ;; popup" look. Wiping `0 0 cols rows` to terminal-bg every
-            ;; frame is what made the chat disappear behind the
-            ;; provider dialogs.
-            title
-            (str (vis/display-label (:id provider)) " Models")
+         ;; Do NOT clear the whole terminal here - the chat
+         ;; behind the dialog should stay visible (other modals
+         ;; in `dialogs.clj` already behave this way). The dialog
+         ;; chrome paints its own background + drop shadow over
+         ;; whatever was underneath, which is the desired "floating
+         ;; popup" look. Wiping `0 0 cols rows` to terminal-bg every
+         ;; frame is what made the chat disappear behind the
+         ;; provider dialogs.
+         title
+         (str (vis/display-label (:id provider)) " Models")
 
-            bounds
-            (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
+         bounds
+         (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            {:keys [content-top content-h hint-row]}
-            (dlg/dialog-layout bounds (card-height (max 1 total)))
+         {:keys [content-top content-h hint-row]}
+         (dlg/dialog-layout bounds (card-height (max 1 total)))
 
-            left
-            (long left)
+         left
+         (long left)
 
-            inner-w
-            (long inner-w)
+         inner-w
+         (long inner-w)
 
-            content-top
-            (long content-top)
+         content-top
+         (long content-top)
 
-            content-h
-            (long content-h)
+         content-h
+         (long content-h)
 
-            visible-count
-            (card-visible-count content-h)
+         visible-count
+         (card-visible-count content-h)
 
-            scrollable?
-            (> total visible-count)
+         scrollable?
+         (> total visible-count)
 
-            card-inner-w
-            (if scrollable? (max 1 (dec inner-w)) inner-w)
+         card-inner-w
+         (if scrollable? (max 1 (dec inner-w)) inner-w)
 
-            _
-            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+         _
+         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-            _
-            (swap! scroll #(card-window-start @selected % content-h total))]
+         _
+         (swap! scroll #(card-window-start @selected % content-h total))]
 
         (p/set-bg! g t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
@@ -822,11 +841,12 @@
                                 inner-w
                                 "No models. Press A to add."))
           (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
-            (let [idx (long idx)
-                  card-y (+ content-top (card-start-row (- idx (long @scroll))))
-                  model (nth @models idx)
-                  previous-name (when (pos? idx) (:name (nth @models (dec idx))))
-                  next-name (when (< idx (dec total)) (:name (nth @models (inc idx))))]
+            (let
+              [idx (long idx)
+               card-y (+ content-top (card-start-row (- idx (long @scroll))))
+               model (nth @models idx)
+               previous-name (when (pos? idx) (:name (nth @models (dec idx))))
+               next-name (when (< idx (dec total)) (:name (nth @models (inc idx))))]
 
               (draw-model-card! g
                                 left
@@ -858,16 +878,17 @@
           (when key
             (cond
               (instance? MouseAction key)
-              (let [^MouseAction ma key
-                    action (.getActionType ma)
-                    pos (.getPosition ma)
-                    mx (.getColumn pos)
-                    my (.getRow pos)
-                    hit-idx (when (and (>= mx (inc left))
-                                       (< mx (+ left inner-w))
-                                       (>= my content-top)
-                                       (< my (+ content-top content-h)))
-                              (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
+              (let
+                [^MouseAction ma key
+                 action (.getActionType ma)
+                 pos (.getPosition ma)
+                 mx (.getColumn pos)
+                 my (.getRow pos)
+                 hit-idx (when (and (>= mx (inc left))
+                                    (< mx (+ left inner-w))
+                                    (>= my content-top)
+                                    (< my (+ content-top content-h)))
+                           (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
 
                 (cond (= action MouseActionType/SCROLL_UP)
                       (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
@@ -878,72 +899,75 @@
                       :else (recur)))
               :else
               (let [ktype (.getKeyType key)]
-                (cond
-                  (= ktype KeyType/Escape) {:models (vec @models)}
-                  (= ktype KeyType/ArrowUp)
-                  (if (input/reorder-modifier? key)
-                    (do (when (pos? (long @selected))
-                          (swap! models swap-items @selected (dec (long @selected)))
-                          (swap! selected dec))
-                        (recur))
-                    (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
-                  (= ktype KeyType/ArrowDown)
-                  (if (input/reorder-modifier? key)
-                    (do (when (< (long @selected) (dec total))
-                          (swap! models swap-items @selected (inc (long @selected)))
-                          (swap! selected inc))
-                        (recur))
-                    (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
-                  (= ktype KeyType/Character)
-                  (let [c (Character/toLowerCase (.getCharacter key))
-                        ctrl (.isCtrlDown key)]
+                (cond (= ktype KeyType/Escape) {:models (vec @models)}
+                      (= ktype KeyType/ArrowUp)
+                      (if (input/reorder-modifier? key)
+                        (do (when (pos? (long @selected))
+                              (swap! models swap-items @selected (dec (long @selected)))
+                              (swap! selected dec))
+                            (recur))
+                        (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
+                            (recur)))
+                      (= ktype KeyType/ArrowDown)
+                      (if (input/reorder-modifier? key)
+                        (do (when (< (long @selected) (dec total))
+                              (swap! models swap-items @selected (inc (long @selected)))
+                              (swap! selected inc))
+                            (recur))
+                        (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total))))
+                            (recur)))
+                      (= ktype KeyType/Character)
+                      (let
+                        [c (Character/toLowerCase (.getCharacter key))
+                         ctrl (.isCtrlDown key)]
 
-                    (cond
-                      ;; Ctrl+P / Ctrl+N - reorder the selected model up / down,
-                      ;; the SAME Emacs prev/next-line keys used in every input
-                      ;; (modified arrows are unreliable on stock macOS terminals;
-                      ;; this replaces the old vim-style K/J).
-                      (and ctrl (= c keymap/picker-reorder-up))
-                      (do (when (pos? (long @selected))
-                            (swap! models swap-items @selected (dec (long @selected)))
-                            (swap! selected dec))
-                          (recur))
-                      (and ctrl (= c keymap/picker-reorder-down))
-                      (do (when (< (long @selected) (dec total))
-                            (swap! models swap-items @selected (inc (long @selected)))
-                            (swap! selected inc))
-                          (recur))
-                      (= c \a) (do (when-let [model-name (select-model!
-                                                           screen
-                                                           provider
-                                                           (->> (concat (map vis/model-name @models)
-                                                                        (:default-models
-                                                                          (vis/provider-template
-                                                                            (:id provider)))
-                                                                        (:default-models provider))
-                                                                (remove nil?)
-                                                                distinct
-                                                                vec))]
-                                     (when-not (some #(= model-name (vis/model-name %)) @models)
-                                       (swap! models conj {:name model-name})
-                                       (reset! selected (dec (count @models)))))
-                                   (recur))
-                      (= c \d)
-                      (do (when (and (pos? total)
-                                     (dlg/confirm-dialog!
-                                       screen
-                                       "Remove Model"
-                                       [(str "Remove " (:name (nth @models @selected)) "?")]))
-                            (swap! models #(vec (concat (subvec % 0 @selected)
-                                                        (subvec % (inc (long @selected))))))
-                            (swap! selected #(p/clamp % 0 (max 0 (dec (count @models))))))
-                          (recur))
-                      (= c \r) (do (when (pos? total)
-                                     (swap! models move-model-to-front @selected)
-                                     (reset! selected 0))
-                                   (recur))
-                      :else (recur)))
-                  :else (recur))))))))))
+                        (cond
+                          ;; Ctrl+P / Ctrl+N - reorder the selected model up / down,
+                          ;; the SAME Emacs prev/next-line keys used in every input
+                          ;; (modified arrows are unreliable on stock macOS terminals;
+                          ;; this replaces the old vim-style K/J).
+                          (and ctrl (= c keymap/picker-reorder-up))
+                          (do (when (pos? (long @selected))
+                                (swap! models swap-items @selected (dec (long @selected)))
+                                (swap! selected dec))
+                              (recur))
+                          (and ctrl (= c keymap/picker-reorder-down))
+                          (do (when (< (long @selected) (dec total))
+                                (swap! models swap-items @selected (inc (long @selected)))
+                                (swap! selected inc))
+                              (recur))
+                          (= c \a) (do (when-let
+                                         [model-name (select-model!
+                                                       screen
+                                                       provider
+                                                       (->> (concat (map vis/model-name @models)
+                                                                    (:default-models
+                                                                      (vis/provider-template
+                                                                        (:id provider)))
+                                                                    (:default-models provider))
+                                                            (remove nil?)
+                                                            distinct
+                                                            vec))]
+                                         (when-not (some #(= model-name (vis/model-name %)) @models)
+                                           (swap! models conj {:name model-name})
+                                           (reset! selected (dec (count @models)))))
+                                       (recur))
+                          (= c \d)
+                          (do (when (and (pos? total)
+                                         (dlg/confirm-dialog!
+                                           screen
+                                           "Remove Model"
+                                           [(str "Remove " (:name (nth @models @selected)) "?")]))
+                                (swap! models #(vec (concat (subvec % 0 @selected)
+                                                            (subvec % (inc (long @selected))))))
+                                (swap! selected #(p/clamp % 0 (max 0 (dec (count @models))))))
+                              (recur))
+                          (= c \r) (do (when (pos? total)
+                                         (swap! models move-model-to-front @selected)
+                                         (reset! selected 0))
+                                       (recur))
+                          :else (recur)))
+                      :else (recur))))))))))
 
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
@@ -1018,14 +1042,15 @@
 (defn provider-action-items
   ([provider] (provider-action-items provider (configured-provider-status provider)))
   ([provider status]
-   (let [registered
-         (vis/provider-by-id (:id provider))
+   (let
+     [registered
+      (vis/provider-by-id (:id provider))
 
-         authenticated?
-         (provider-authenticated? provider status)
+      authenticated?
+      (provider-authenticated? provider status)
 
-         auth-label
-         (if authenticated? "Re-authenticate" "Authenticate")]
+      auth-label
+      (if authenticated? "Re-authenticate" "Authenticate")]
 
      (cond-> [{:id :models :label "Configure Models"}]
        (provider-supports-auth? provider)
@@ -1065,13 +1090,14 @@
 
 (defn- prompt-for-api-key!
   [^TerminalScreen screen provider]
-  (let [raw (dlg/text-input-dialog! screen
-                                    (str (vis/display-label (:id provider)) " Authentication")
-                                    "API Key:"
-                                    :mask \*
-                                    :flat? true
-                                    :logo dlg/vis-logo-lines
-                                    :body (provider-auth-prompt-body provider))]
+  (let
+    [raw (dlg/text-input-dialog! screen
+                                 (str (vis/display-label (:id provider)) " Authentication")
+                                 "API Key:"
+                                 :mask \*
+                                 :flat? true
+                                 :logo dlg/vis-logo-lines
+                                 :body (provider-auth-prompt-body provider))]
     (cond (nil? raw) api-key-prompt-cancelled
           (str/blank? raw) nil
           :else (assoc provider :api-key raw))))
@@ -1087,8 +1113,9 @@
   [^TerminalScreen screen provider]
   (let [registered (vis/provider-by-id (:id provider))]
     (if-let [auth-fn (:provider/auth-fn registered)]
-      (let [lines (atom [])
-            print! #(swap! lines conj %)]
+      (let
+        [lines (atom [])
+         print! #(swap! lines conj %)]
 
         (try
           (let [result (auth-fn print!)]
@@ -1137,11 +1164,12 @@
 
 (defn logout-provider!
   [^TerminalScreen screen provider]
-  (let [provider-id
-        (:id provider)
+  (let
+    [provider-id
+     (:id provider)
 
-        registered
-        (vis/provider-by-id provider-id)]
+     registered
+     (vis/provider-by-id provider-id)]
 
     (when (dlg/confirm-dialog! screen
                                (str (vis/display-label provider-id) " Authentication")
@@ -1180,8 +1208,9 @@
             (= :anthropic-coding-plan (:provider/id provider))
             (boolean (anthropic-oauth-ready! screen false))
             :else (if-let [auth-fn (:provider/auth-fn provider)]
-                    (let [lines (atom [])
-                          print! #(swap! lines conj %)]
+                    (let
+                      [lines (atom [])
+                       print! #(swap! lines conj %)]
 
                       (try (let [result (auth-fn print!)]
                              ;; Same silent-success rule as run-generic-provider-auth!.
@@ -1234,46 +1263,48 @@
   [^TerminalScreen screen]
   (loop []
 
-    (let [size
-          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+    (let
+      [size
+       (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-          cols
-          (.getColumns size)
+       cols
+       (.getColumns size)
 
-          rows
-          (.getRows size)
+       rows
+       (.getRows size)
 
-          g
-          (.newTextGraphics screen)
+       g
+       (.newTextGraphics screen)
 
-          bounds
-          (dlg/draw-dialog-chrome! g cols rows "Welcome to vis" nil)
+       bounds
+       (dlg/draw-dialog-chrome! g cols rows "Welcome to vis" nil)
 
-          {:keys [left inner-w]}
-          bounds
+       {:keys [left inner-w]}
+       bounds
 
-          {:keys [content-top content-h hint-row]}
-          (dlg/dialog-layout bounds)
+       {:keys [content-top content-h hint-row]}
+       (dlg/dialog-layout bounds)
 
-          left
-          (long left)
+       left
+       (long left)
 
-          inner-w
-          (long inner-w)
+       inner-w
+       (long inner-w)
 
-          content-top
-          (long content-top)
+       content-top
+       (long content-top)
 
-          content-h
-          (long content-h)]
+       content-h
+       (long content-h)]
 
       (p/set-bg! g t/dialog-bg)
       (p/fill-rect! g (inc left) content-top inner-w content-h)
-      (let [n
-            (long (count welcome-lines))
+      (let
+        [n
+         (long (count welcome-lines))
 
-            start
-            (+ content-top (long (max 0 (quot (- content-h n) 2))))]
+         start
+         (+ content-top (long (max 0 (quot (- content-h n) 2))))]
 
         (doseq [[i line] (map-indexed vector welcome-lines)]
           (p/set-colors!
@@ -1305,8 +1336,9 @@
                             ;; first-run connect vanish on exit, so the next
                             ;; launch saw an empty config and re-showed the
                             ;; welcome screen. Preserve any other global keys.
-                            (let [persisted (assoc (or (vis/load-config-raw) {})
-                                              :providers [(persisted-provider-config cfg)])]
+                            (let
+                              [persisted (assoc (or (vis/load-config-raw) {})
+                                           :providers [(persisted-provider-config cfg)])]
                               (vis/save-config! persisted)
                               persisted)
                             (recur))
@@ -1323,107 +1355,109 @@
    Optional `current-config` seeds the dialog with current state."
   ([^TerminalScreen screen] (show-provider-dialog! screen nil))
   ([^TerminalScreen screen current-config]
-   (let [seed
-         (or current-config (vis/load-config) {:providers []})
+   (let
+     [seed
+      (or current-config (vis/load-config) {:providers []})
 
-         items
-         (atom (vec (or (:providers seed) [])))
+      items
+      (atom (vec (or (:providers seed) [])))
 
-         statuses
-         (atom (into {}
-                     (map (fn [provider]
-                            [(:id provider) (initial-provider-status provider)]))
-                     @items))
+      statuses
+      (atom (into {}
+                  (map (fn [provider]
+                         [(:id provider) (initial-provider-status provider)]))
+                  @items))
 
-         limits
-         (atom (into {}
-                     (map (fn [provider]
-                            [(:id provider) (initial-provider-limits provider)]))
-                     @items))
+      limits
+      (atom (into {}
+                  (map (fn [provider]
+                         [(:id provider) (initial-provider-limits provider)]))
+                  @items))
 
-         selected
-         (atom 0)
+      selected
+      (atom 0)
 
-         scroll
-         (atom 0)]
+      scroll
+      (atom 0)]
 
      (refresh-providers-diagnostics! @items statuses limits)
      (loop []
 
-       (let [size
-             (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+       (let
+         [size
+          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-             cols
-             (.getColumns size)
+          cols
+          (.getColumns size)
 
-             rows
-             (.getRows size)
+          rows
+          (.getRows size)
 
-             g
-             (.newTextGraphics screen)
+          g
+          (.newTextGraphics screen)
 
-             ;; Do NOT clear the whole terminal here - keep the chat
-             ;; visible behind the dialog (see model-manager note).
-             ;; Sub-dialog artifact concern is moot: every sub-modal
-             ;; (`add-provider!`, `confirm-dialog!`, `select-dialog!`,
-             ;; `show-model-manager!`) repaints its own chrome on every
-             ;; frame and on return the parent loop’s next iteration
-             ;; redraws the parent chrome on top of any leftovers.
-             total
-             (long (count @items))
+          ;; Do NOT clear the whole terminal here - keep the chat
+          ;; visible behind the dialog (see model-manager note).
+          ;; Sub-dialog artifact concern is moot: every sub-modal
+          ;; (`add-provider!`, `confirm-dialog!`, `select-dialog!`,
+          ;; `show-model-manager!`) repaints its own chrome on every
+          ;; frame and on return the parent loop’s next iteration
+          ;; redraws the parent chrome on top of any leftovers.
+          total
+          (long (count @items))
 
-             ;; Size the box to the cards via the explicit-height chrome arity.
-             ;; The default arity substitutes a tall proportional footprint and
-             ;; vertically centers the cards inside it, leaving dead empty rows
-             ;; after the last provider. `golden-dialog-size` floors height to
-             ;; `content + chrome`, so passing the real card height fits the box
-             ;; (and clamps to the terminal when there are many providers).
-             ;; Floor the Router at the full default footprint so it reads as a
-             ;; substantial panel (more height), not a tiny box hugging 2 cards;
-             ;; a long provider list still grows past it and scrolls.
-             content-rows
-             (max (card-height (max 1 total)) (dlg/default-content-height rows))
+          ;; Size the box to the cards via the explicit-height chrome arity.
+          ;; The default arity substitutes a tall proportional footprint and
+          ;; vertically centers the cards inside it, leaving dead empty rows
+          ;; after the last provider. `golden-dialog-size` floors height to
+          ;; `content + chrome`, so passing the real card height fits the box
+          ;; (and clamps to the terminal when there are many providers).
+          ;; Floor the Router at the full default footprint so it reads as a
+          ;; substantial panel (more height), not a tiny box hugging 2 cards;
+          ;; a long provider list still grows past it and scrolls.
+          content-rows
+          (max (card-height (max 1 total)) (dlg/default-content-height rows))
 
-             bounds
-             (dlg/draw-dialog-chrome! g
-                                      cols
-                                      rows
-                                      "Router"
-                                      (dlg/default-content-width cols)
-                                      content-rows)
+          bounds
+          (dlg/draw-dialog-chrome! g
+                                   cols
+                                   rows
+                                   "Router"
+                                   (dlg/default-content-width cols)
+                                   content-rows)
 
-             {:keys [left inner-w]}
-             bounds
+          {:keys [left inner-w]}
+          bounds
 
-             {:keys [content-top content-h hint-row]}
-             (dlg/dialog-layout bounds content-rows)
+          {:keys [content-top content-h hint-row]}
+          (dlg/dialog-layout bounds content-rows)
 
-             left
-             (long left)
+          left
+          (long left)
 
-             inner-w
-             (long inner-w)
+          inner-w
+          (long inner-w)
 
-             content-top
-             (long content-top)
+          content-top
+          (long content-top)
 
-             content-h
-             (long content-h)
+          content-h
+          (long content-h)
 
-             visible-count
-             (card-visible-count content-h)
+          visible-count
+          (card-visible-count content-h)
 
-             scrollable?
-             (> total visible-count)
+          scrollable?
+          (> total visible-count)
 
-             card-inner-w
-             (if scrollable? (max 1 (dec inner-w)) inner-w)
+          card-inner-w
+          (if scrollable? (max 1 (dec inner-w)) inner-w)
 
-             _
-             (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+          _
+          (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-             _
-             (swap! scroll #(card-window-start @selected % content-h total))]
+          _
+          (swap! scroll #(card-window-start @selected % content-h total))]
 
          ;; Clear content area
          (p/set-bg! g t/dialog-bg)
@@ -1437,8 +1471,9 @@
                                  "No providers. Press A to add."))
            ;; Draw visible cards
            (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
-             (let [idx (long idx)
-                   card-y (+ content-top (card-start-row (- idx (long @scroll))))]
+             (let
+               [idx (long idx)
+                card-y (+ content-top (card-start-row (- idx (long @scroll))))]
 
                (draw-provider-card! g
                                     left
@@ -1464,24 +1499,26 @@
                               ["Enter" "actions"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
-         (let [key (if (provider-diagnostics-loading? @statuses @limits)
-                     (some-> (.pollInput screen)
-                             dlg/normalize-modal-key)
-                     (dlg/read-modal-key! screen))]
+         (let
+           [key (if (provider-diagnostics-loading? @statuses @limits)
+                  (some-> (.pollInput screen)
+                          dlg/normalize-modal-key)
+                  (dlg/read-modal-key! screen))]
            (if (nil? key)
              (do (Thread/sleep 100) (recur))
              (cond
                (instance? MouseAction key)
-               (let [^MouseAction ma key
-                     action (.getActionType ma)
-                     pos (.getPosition ma)
-                     mx (.getColumn pos)
-                     my (.getRow pos)
-                     hit-idx (when (and (>= mx (inc left))
-                                        (< mx (+ left inner-w))
-                                        (>= my content-top)
-                                        (< my (+ content-top content-h)))
-                               (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
+               (let
+                 [^MouseAction ma key
+                  action (.getActionType ma)
+                  pos (.getPosition ma)
+                  mx (.getColumn pos)
+                  my (.getRow pos)
+                  hit-idx (when (and (>= mx (inc left))
+                                     (< mx (+ left inner-w))
+                                     (>= my content-top)
+                                     (< my (+ content-top content-h)))
+                            (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
 
                  (cond (= action MouseActionType/SCROLL_UP)
                        (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
@@ -1493,11 +1530,11 @@
                :else
                (let [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)]
                  (cond
-                   (= ktype KeyType/Escape) (let [cfg (assoc (or (vis/load-config-raw) {})
-                                                        :providers (->> @items
-                                                                        (map
-                                                                          persisted-provider-config)
-                                                                        vec))]
+                   (= ktype KeyType/Escape) (let
+                                              [cfg (assoc (or (vis/load-config-raw) {})
+                                                     :providers (->> @items
+                                                                     (map persisted-provider-config)
+                                                                     vec))]
                                               (vis/save-config! cfg)
                                               cfg)
                    ;; ↑/↓ navigate; Ctrl+P/Ctrl+N (or Shift/Alt+↑/↓ where supported) reorder
@@ -1520,12 +1557,12 @@
                    (do
                      (when (pos? total)
                        (let [provider (nth @items @selected)]
-                         (when-let [action (dlg/select-dialog!
-                                             screen
-                                             (str (vis/display-label (:id provider)) " Actions")
-                                             (provider-action-items provider
-                                                                    (get @statuses
-                                                                         (:id provider))))]
+                         (when-let
+                           [action (dlg/select-dialog!
+                                     screen
+                                     (str (vis/display-label (:id provider)) " Actions")
+                                     (provider-action-items provider
+                                                            (get @statuses (:id provider))))]
                            (case (:id action)
                              :models
                              (when-let [updated-models (show-model-manager! screen provider)]
@@ -1534,8 +1571,8 @@
                                  (assoc provider :models (:models updated-models))))
 
                              :authenticate
-                             (when-let [updated
-                                        (authenticate-provider! screen provider (:force? action))]
+                             (when-let
+                               [updated (authenticate-provider! screen provider (:force? action))]
                                (swap! items assoc @selected updated))
 
                              :status
@@ -1556,9 +1593,10 @@
                              (refresh-provider-diagnostics! provider* statuses limits)))))
                      (recur))
                    (= ktype KeyType/Character)
-                   (let [c (Character/toLowerCase (.getCharacter
-                                                    ^com.googlecode.lanterna.input.KeyStroke key))
-                         ctrl (.isCtrlDown ^com.googlecode.lanterna.input.KeyStroke key)]
+                   (let
+                     [c (Character/toLowerCase (.getCharacter
+                                                 ^com.googlecode.lanterna.input.KeyStroke key))
+                      ctrl (.isCtrlDown ^com.googlecode.lanterna.input.KeyStroke key)]
 
                      (cond
                        ;; Ctrl+P / Ctrl+N - reorder the selected provider up / down,

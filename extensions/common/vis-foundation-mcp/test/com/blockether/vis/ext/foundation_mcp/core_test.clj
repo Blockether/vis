@@ -11,11 +11,12 @@
                        (expect (str/includes? description "In `python_execution`"))
                        (expect (< (count description) 350))))))
              (it "closes the dispatcher schemas while leaving MCP tool args open"
-                 (let [symbols
-                       (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])
+                 (let
+                   [symbols
+                    (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])
 
-                       call
-                       (first (filter #(= "mcp__call" (:ext.symbol/name %)) symbols))]
+                    call
+                    (first (filter #(= "mcp__call" (:ext.symbol/name %)) symbols))]
 
                    (doseq [s symbols]
                      (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))

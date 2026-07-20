@@ -59,14 +59,15 @@
    `*_test.py` at any depth (top-level single-file siblings AND inside package
    extensions). Deduped on the test file's canonical path."
   [dirs]
-  (->> (for [^File d
-             (map io/file dirs)
+  (->> (for
+         [^File d
+          (map io/file dirs)
 
-             :when (.isDirectory d)
-             ^File f
-             (walk-py d)
+          :when (.isDirectory d)
+          ^File f
+          (walk-py d)
 
-             :when (pyx/test-file? f)]
+          :when (pyx/test-file? f)]
 
          [d f])
        (reduce (fn [[seen acc] [_ ^File f :as pair]]
@@ -85,13 +86,15 @@
   [^File scan-dir ^File test-file]
   (let [scan (.getCanonicalPath scan-dir)]
     (str/join "\u0000"
-              (loop [^File d (.getParentFile (.getCanonicalFile test-file))
-                     acc []]
+              (loop
+                [^File d (.getParentFile (.getCanonicalFile test-file))
+                 acc []]
 
                 (if (nil? d)
                   acc
-                  (let [p (.getCanonicalPath d)
-                        acc (conj acc p)]
+                  (let
+                    [p (.getCanonicalPath d)
+                     acc (conj acc p)]
 
                     (if (= p scan) acc (recur (.getParentFile d) acc))))))))
 
@@ -143,17 +146,18 @@
    Never throws — a broken test file is one `:errored` result, never a host
    crash."
   [^String preamble ^File scan-dir ^File test-file]
-  (let [path
-        (.getCanonicalPath test-file)
+  (let
+    [path
+     (.getCanonicalPath test-file)
 
-        source
-        (slurp test-file)
+     source
+     (slurp test-file)
 
-        paths
-        (test-sys-path scan-dir test-file)
+     paths
+     (test-sys-path scan-dir test-file)
 
-        ^Context ctx
-        (pyx/build-context)]
+     ^Context ctx
+     (pyx/build-context)]
 
     (try (pyx/bind-host! ctx (.getName test-file))
          (locking ctx
@@ -192,33 +196,36 @@
    result, not a crash."
   ([] (test-python-extensions! nil))
   ([{:keys [dirs]}]
-   (let [dirs
-         (or dirs (pyx/default-extension-dirs))
+   (let
+     [dirs
+      (or dirs (pyx/default-extension-dirs))
 
-         preamble
-         (pytest-preamble)
+      preamble
+      (pytest-preamble)
 
-         pairs
-         (discover-tests dirs)]
+      pairs
+      (discover-tests dirs)]
 
      (if (nil? preamble)
        {:files 0 :ok? false :error "pytest shim not registered" :results [] :tests []}
-       (let [results
-             (mapv (fn [[d f]]
-                     (run-test-file! preamble d f))
-                   pairs)
+       (let
+         [results
+          (mapv (fn [[d f]]
+                  (run-test-file! preamble d f))
+                pairs)
 
-             tests
-             (vec (for [r
-                        results
+          tests
+          (vec (for
+                 [r
+                  results
 
-                        t
-                        (:tests r)]
+                  t
+                  (:tests r)]
 
-                    (assoc t :file (:file r))))
+                 (assoc t :file (:file r))))
 
-             counts
-             (frequencies (map :outcome tests))]
+          counts
+          (frequencies (map :outcome tests))]
 
          (merge {:files (count results) :ok? (every? :ok? results) :tests tests :results results}
                 (select-keys counts [:passed :failed :errored :skipped :xfailed :xpassed])))))))
@@ -248,49 +255,49 @@
   (cond (:error res) (str "✗ Python extension tests could not run: " (:error res))
         (zero? (long (or files 0))) "No Python extension tests found (test_*.py / *_test.py)."
         :else
-        (let [summary
-              (str (if ok? "✓" "✗")
-                   " "
-                   files
-                   " file(s): "
-                   (or passed 0)
-                   " passed"
-                   (when (pos? (long (or failed 0))) (str ", " failed " failed"))
-                   (when (pos? (long (or errored 0))) (str ", " errored " errored"))
-                   (when (pos? (long (or skipped 0))) (str ", " skipped " skipped")))
+        (let
+          [summary
+           (str (if ok? "✓" "✗")
+                " "
+                files
+                " file(s): "
+                (or passed 0)
+                " passed"
+                (when (pos? (long (or failed 0))) (str ", " failed " failed"))
+                (when (pos? (long (or errored 0))) (str ", " errored " errored"))
+                (when (pos? (long (or skipped 0))) (str ", " skipped " skipped")))
 
-              mark
-              (fn [outcome]
-                (case outcome
-                  :passed
-                  "✓"
+           mark
+           (fn [outcome]
+             (case outcome
+               :passed
+               "✓"
 
-                  (:failed :errored)
-                  "✗"
+               (:failed :errored)
+               "✗"
 
-                  :skipped
-                  "s"
+               :skipped
+               "s"
 
-                  :xfailed
-                  "x"
+               :xfailed
+               "x"
 
-                  :xpassed
-                  "X"
+               :xpassed
+               "X"
 
-                  "?"))
+               "?"))
 
-              file-block
-              (fn [{:keys [file ok? tests error]}]
-                (into
-                  [(str "  " (if ok? "✓" "✗") " " (rel-name file) (when error (str " — " error)))]
-                  (map (fn [{:keys [nodeid outcome message]}]
-                         (str "      "
-                              (mark outcome)
-                              " "
-                              nodeid
-                              (when (and (#{:failed :errored} outcome) (seq (first-line message)))
-                                (str " — " (first-line message))))))
-                  tests))]
+           file-block
+           (fn [{:keys [file ok? tests error]}]
+             (into [(str "  " (if ok? "✓" "✗") " " (rel-name file) (when error (str " — " error)))]
+                   (map (fn [{:keys [nodeid outcome message]}]
+                          (str "      "
+                               (mark outcome)
+                               " "
+                               nodeid
+                               (when (and (#{:failed :errored} outcome) (seq (first-line message)))
+                                 (str " — " (first-line message))))))
+                   tests))]
 
           (str/join "\n" (cons summary (mapcat file-block results))))))
 

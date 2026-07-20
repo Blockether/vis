@@ -47,17 +47,18 @@
    - submodules - `.gitmodules` at root.
    - workspace - multiple manifests of one kind in distinct subdirs."
   [^File root manifests-by-kind]
-  (let [ext-dir
-        (.exists (io/file root "extensions"))
+  (let
+    [ext-dir
+     (.exists (io/file root "extensions"))
 
-        pkg-dir
-        (.exists (io/file root "packages"))
+     pkg-dir
+     (.exists (io/file root "packages"))
 
-        gitmod
-        (.exists (io/file root ".gitmodules"))
+     gitmod
+     (.exists (io/file root ".gitmodules"))
 
-        any-multi
-        (some #(>= (long %) 2) (map (comp count val) manifests-by-kind))]
+     any-multi
+     (some #(>= (long %) 2) (map (comp count val) manifests-by-kind))]
 
     (cond gitmod "submodules"
           (and ext-dir pkg-dir) "polylith"
@@ -82,67 +83,71 @@
   ([root
     {:keys [max-files deadline-ms]
      :or {max-files default-max-files deadline-ms default-deadline-ms}}]
-   (let [^File root-file
-         (cond (instance? File root) root
-               (instance? Path root) (.toFile ^Path root)
-               :else (java.io.File. (str root)))
+   (let
+     [^File root-file
+      (cond (instance? File root) root
+            (instance? Path root) (.toFile ^Path root)
+            :else (java.io.File. (str root)))
 
-         ^Path start
-         (.toPath root-file)
+      ^Path start
+      (.toPath root-file)
 
-         buckets
-         (java.util.HashMap.)
+      buckets
+      (java.util.HashMap.)
 
-         visited
-         (long-array 1 0)
+      visited
+      (long-array 1 0)
 
-         deadline
-         (+ (System/currentTimeMillis) (long deadline-ms))
+      deadline
+      (+ (System/currentTimeMillis) (long deadline-ms))
 
-         truncated
-         (boolean-array 1 false)
+      truncated
+      (boolean-array 1 false)
 
-         visitor
-         (proxy [SimpleFileVisitor] []
-           (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-             (cond (> (System/currentTimeMillis) deadline) (do (aset truncated 0 true)
-                                                               FileVisitResult/TERMINATE)
-                   (= dir start) FileVisitResult/CONTINUE
-                   :else (let [name (str (.getFileName dir))]
-                           (if (contains? skip-directories name)
-                             FileVisitResult/SKIP_SUBTREE
-                             FileVisitResult/CONTINUE))))
-           (visitFile [^Path file ^BasicFileAttributes _attrs]
-             (let [count* (aget visited 0)]
-               (cond (or (>= count* (long max-files)) (> (System/currentTimeMillis) deadline))
-                     (do (aset truncated 0 true) FileVisitResult/TERMINATE)
-                     :else (do (aset visited 0 (inc count*))
-                               (let [name (str (.getFileName file))
-                                     parent (.getParent file)]
+      visitor
+      (proxy [SimpleFileVisitor] []
+        (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
+          (cond (> (System/currentTimeMillis) deadline) (do (aset truncated 0 true)
+                                                            FileVisitResult/TERMINATE)
+                (= dir start) FileVisitResult/CONTINUE
+                :else (let [name (str (.getFileName dir))]
+                        (if (contains? skip-directories name)
+                          FileVisitResult/SKIP_SUBTREE
+                          FileVisitResult/CONTINUE))))
+        (visitFile [^Path file ^BasicFileAttributes _attrs]
+          (let [count* (aget visited 0)]
+            (cond (or (>= count* (long max-files)) (> (System/currentTimeMillis) deadline))
+                  (do (aset truncated 0 true) FileVisitResult/TERMINATE)
+                  :else (do (aset visited 0 (inc count*))
+                            (let
+                              [name (str (.getFileName file))
+                               parent (.getParent file)]
 
-                                 ;; Ignore manifests sitting in the
-                                 ;; ROOT itself - only descendants
-                                 ;; signal a multi-package shape.
-                                 (when (and parent (not= parent start))
-                                   (when-let [kind (get manifest-kinds name)]
-                                     (let [rel (paths/unixify (.relativize start file))
-                                           cur (or (.get buckets kind) [])]
+                              ;; Ignore manifests sitting in the
+                              ;; ROOT itself - only descendants
+                              ;; signal a multi-package shape.
+                              (when (and parent (not= parent start))
+                                (when-let [kind (get manifest-kinds name)]
+                                  (let
+                                    [rel (paths/unixify (.relativize start file))
+                                     cur (or (.get buckets kind) [])]
 
-                                       (.put buckets kind (conj cur rel))))))
-                               FileVisitResult/CONTINUE))))
-           (visitFileFailed [^Path _file _exception] FileVisitResult/CONTINUE))]
+                                    (.put buckets kind (conj cur rel))))))
+                            FileVisitResult/CONTINUE))))
+        (visitFileFailed [^Path _file _exception] FileVisitResult/CONTINUE))]
 
      (try (Files/walkFileTree start visitor) (catch Throwable _ nil))
-     (let [files-by-kind
-           (into {} buckets)
+     (let
+       [files-by-kind
+        (into {} buckets)
 
-           totals
-           (into {}
-                 (map (fn [[k v]]
-                        [k (count v)])
-                      files-by-kind))
+        totals
+        (into {}
+              (map (fn [[k v]]
+                     [k (count v)])
+                   files-by-kind))
 
-           shape
-           (shape-label root-file files-by-kind)]
+        shape
+        (shape-label root-file files-by-kind)]
 
        {:shape shape :totals totals :files files-by-kind :truncated? (aget truncated 0)}))))

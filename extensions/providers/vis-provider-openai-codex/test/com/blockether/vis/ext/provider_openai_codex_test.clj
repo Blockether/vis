@@ -10,8 +10,9 @@
 
 (defn- jwt
   [payload]
-  (let [->b64 (fn [s]
-                (#'codex/base64url (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))]
+  (let
+    [->b64 (fn [s]
+             (#'codex/base64url (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))]
     (str (->b64 (json/write-json-str {:alg "none"}))
          "."
          (->b64 (json/write-json-str payload))
@@ -27,18 +28,19 @@
                  (expect (= {:code "abc" :state "s1"} (codex/parse-authorization-input "abc#s1")))
                  (expect (= {:code "abc"} (codex/parse-authorization-input "abc")))))
 
-(defdescribe account-id-test
-             (it "extracts the ChatGPT account id from Codex access-token JWTs"
-                 (let [token (jwt {(keyword "https://api.openai.com/auth") {:chatgpt_account_id
-                                                                            "acct_123"}})]
-                   (expect (= "acct_123" (codex/account-id token))))))
+(defdescribe
+  account-id-test
+  (it "extracts the ChatGPT account id from Codex access-token JWTs"
+      (let [token (jwt {(keyword "https://api.openai.com/auth") {:chatgpt_account_id "acct_123"}})]
+        (expect (= "acct_123" (codex/account-id token))))))
 
 (defdescribe browser-open-test
              (it "uses Vis's shared external opener"
                  (let [seen (atom nil)]
-                   (with-redefs [opener/open! (fn [url]
-                                                (reset! seen url)
-                                                {:status :ok :target url})]
+                   (with-redefs
+                     [opener/open! (fn [url]
+                                     (reset! seen url)
+                                     {:status :ok :target url})]
                      (expect (= true (#'codex/open-browser! "https://auth.openai.com/x")))
                      (expect (= "https://auth.openai.com/x" @seen)))))
              (it "surfaces opener failure as false"
@@ -188,11 +190,12 @@
             (expect (= [] (get-in report [:dynamic :limits])))))))
   (it
     "refreshes once and retries dynamic limits after a usage auth rejection"
-    (let [calls
-          (atom [])
+    (let
+      [calls
+       (atom [])
 
-          rejected
-          (atom nil)]
+       rejected
+       (atom nil)]
 
       (with-redefs-fn {#'codex/detect-credentials (constantly {:access-token "stale"
                                                                :account-id "acct_123"})
@@ -229,11 +232,12 @@
                    (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
                    (expect (ifn? (:provider/get-token-fn provider)))
                    (expect (ifn? (:provider/limits-fn provider)))
-                   (let [defaults (get-in provider [:provider/preset :default-models])
-                         by-name (into {}
-                                       (map (fn [m]
-                                              [(config/model-name m) m]))
-                                       defaults)]
+                   (let
+                     [defaults (get-in provider [:provider/preset :default-models])
+                      by-name (into {}
+                                    (map (fn [m]
+                                           [(config/model-name m) m]))
+                                    defaults)]
 
                      ;; svar-catalog models ride as bare strings.
                      (expect (contains? by-name "gpt-5.6-sol"))
@@ -248,21 +252,23 @@
              (it "an inline-map default-model survives default-model-configs with :context"
                  ;; This is the seam that used to drop everything but :name — the reason
                  ;; a provider couldn't declare a context window before.
-                 (let [cfgs
-                       (providers/default-model-configs
-                         {:default-models ["gpt-5.6-sol" {:name "gpt-5.6-terra" :context 272000}]})
+                 (let
+                   [cfgs
+                    (providers/default-model-configs
+                      {:default-models ["gpt-5.6-sol" {:name "gpt-5.6-terra" :context 272000}]})
 
-                       by-name
-                       (into {}
-                             (map (fn [m]
-                                    [(:name m) m]))
-                             cfgs)]
+                    by-name
+                    (into {}
+                          (map (fn [m]
+                                 [(:name m) m]))
+                          cfgs)]
 
                    (expect (= {:name "gpt-5.6-sol"} (get by-name "gpt-5.6-sol")))
                    (expect (= 272000 (:context (get by-name "gpt-5.6-terra")))))))
 
 (defdescribe codex-extension-settings-test
              (it "does not declare legacy TUI settings metadata"
-                 (let [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
-                                          (vis/registered-extensions)))]
+                 (let
+                   [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
+                                       (vis/registered-extensions)))]
                    (expect (= [] (:ext/settings ext))))))

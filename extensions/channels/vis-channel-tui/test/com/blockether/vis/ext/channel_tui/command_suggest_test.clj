@@ -4,19 +4,20 @@
 
 (defdescribe
   slash-command-suggestions-test
-  (let [commands [{:id :new-session :label "New Session"} {:id :new-tab :label "New Tab"}
-                  {:id :worktree
-                   :label "New Worktree"
-                   :args [{:name "branch" :kind :positional :required false}]}
-                  {:id :settings :label "Settings"}
-                  {:id :voice/toggle-recording
-                   :label "Voice: Toggle Recording"
-                   :args [{:name "mode" :kind :positional :required false}
-                          {:name "force" :kind :flag :type :boolean :required false}]}
-                  {:id :exa/search
-                   :label "Exa Search"
-                   :args [{:name "query" :kind :positional :required true}
-                          {:name "limit" :kind :flag :type :int :required false}]}]]
+  (let
+    [commands [{:id :new-session :label "New Session"} {:id :new-tab :label "New Tab"}
+               {:id :worktree
+                :label "New Worktree"
+                :args [{:name "branch" :kind :positional :required false}]}
+               {:id :settings :label "Settings"}
+               {:id :voice/toggle-recording
+                :label "Voice: Toggle Recording"
+                :args [{:name "mode" :kind :positional :required false}
+                       {:name "force" :kind :flag :type :boolean :required false}]}
+               {:id :exa/search
+                :label "Exa Search"
+                :args [{:name "query" :kind :positional :required true}
+                       {:name "limit" :kind :flag :type :int :required false}]}]]
     (it "shows menu commands when the prompt starts with slash"
         (expect (= ["new-session" "new-tab" "worktree"]
                    (->> (suggest/suggestions "/" commands {:limit 3})

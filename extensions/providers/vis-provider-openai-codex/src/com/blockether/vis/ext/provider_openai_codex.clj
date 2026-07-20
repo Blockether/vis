@@ -69,11 +69,12 @@
 
 (defn- generate-pkce
   []
-  (let [verifier
-        (base64url (random-bytes 32))
+  (let
+    [verifier
+     (base64url (random-bytes 32))
 
-        challenge
-        (base64url (sha256 verifier))]
+     challenge
+     (base64url (sha256 verifier))]
 
     {:verifier verifier :challenge challenge}))
 
@@ -105,14 +106,15 @@
   [input]
   (let [value (str/trim (or input ""))]
     (cond (str/blank? value) {}
-          (str/starts-with? value "http")
-          (try (let [[head fragment] (str/split value #"#" 2)
-                     q-idx (.indexOf ^String head "?")
-                     query (when (<= 0 q-idx) (subs head (inc q-idx)))
-                     params (merge (parse-query-string query) (parse-query-string fragment))]
+          (str/starts-with? value "http") (try (let
+                                                 [[head fragment] (str/split value #"#" 2)
+                                                  q-idx (.indexOf ^String head "?")
+                                                  query (when (<= 0 q-idx) (subs head (inc q-idx)))
+                                                  params (merge (parse-query-string query)
+                                                                (parse-query-string fragment))]
 
-                 (select-keys params [:code :state]))
-               (catch Exception _ {:code value}))
+                                                 (select-keys params [:code :state]))
+                                               (catch Exception _ {:code value}))
           (str/includes? value "#") (let [[code state] (str/split value #"#" 2)]
                                       (cond-> {:code code}
                                         (not (str/blank? state))
@@ -122,11 +124,12 @@
 
 (defn- jwt-payload
   [token]
-  (try (let [parts
-             (str/split token #"\.")
+  (try (let
+         [parts
+          (str/split token #"\.")
 
-             payload
-             (second parts)]
+          payload
+          (second parts)]
 
          (when (= 3 (count parts))
            (json/read-json (String. (.decode (Base64/getUrlDecoder) ^String payload)
@@ -138,14 +141,15 @@
 (defn account-id
   "Extract the ChatGPT account id from a Codex access-token JWT."
   [access-token]
-  (let [payload
-        (jwt-payload access-token)
+  (let
+    [payload
+     (jwt-payload access-token)
 
-        auth
-        (get payload (keyword JWT_CLAIM_PATH))
+     auth
+     (get payload (keyword JWT_CLAIM_PATH))
 
-        id
-        (:chatgpt_account_id auth)]
+     id
+     (:chatgpt_account_id auth)]
 
     (when-not (str/blank? id) id)))
 
@@ -155,16 +159,17 @@
 
 (defn- post-form
   [url params]
-  (let [resp
-        (http/post url
-                   {:headers {"Accept" "application/json"
-                              "Content-Type" "application/x-www-form-urlencoded"}
-                    :body (form-encode params)
-                    :timeout 30000
-                    :throw false})
+  (let
+    [resp
+     (http/post url
+                {:headers {"Accept" "application/json"
+                           "Content-Type" "application/x-www-form-urlencoded"}
+                 :body (form-encode params)
+                 :timeout 30000
+                 :throw false})
 
-        text
-        (:body resp)]
+     text
+     (:body resp)]
 
     {:status (:status resp)
      :body text
@@ -172,17 +177,18 @@
 
 (defn- token-result
   [json]
-  (let [access-token
-        (:access_token json)
+  (let
+    [access-token
+     (:access_token json)
 
-        refresh-token
-        (:refresh_token json)
+     refresh-token
+     (:refresh_token json)
 
-        expires-in
-        (:expires_in json)
+     expires-in
+     (:expires_in json)
 
-        account-id*
-        (account-id access-token)]
+     account-id*
+     (account-id access-token)]
 
     (when (or (str/blank? access-token)
               (str/blank? refresh-token)
@@ -197,12 +203,13 @@
 
 (defn- exchange-authorization-code!
   [code verifier]
-  (let [{:keys [status body json]} (post-form TOKEN_URL
-                                              {:grant_type "authorization_code"
-                                               :client_id CLIENT_ID
-                                               :code code
-                                               :code_verifier verifier
-                                               :redirect_uri REDIRECT_URI})]
+  (let
+    [{:keys [status body json]} (post-form TOKEN_URL
+                                           {:grant_type "authorization_code"
+                                            :client_id CLIENT_ID
+                                            :code code
+                                            :code_verifier verifier
+                                            :redirect_uri REDIRECT_URI})]
     (when-not (<= 200 status 299)
       (throw (ex-info (str "OpenAI Codex token exchange failed: HTTP " status)
                       {:status status :body body})))
@@ -210,9 +217,10 @@
 
 (defn- refresh-access-token!
   [refresh-token]
-  (let [{:keys [status body json]}
-        (post-form TOKEN_URL
-                   {:grant_type "refresh_token" :refresh_token refresh-token :client_id CLIENT_ID})]
+  (let
+    [{:keys [status body json]}
+     (post-form TOKEN_URL
+                {:grant_type "refresh_token" :refresh_token refresh-token :client_id CLIENT_ID})]
     (when-not (<= 200 status 299)
       (throw (ex-info (str "OpenAI Codex token refresh failed: HTTP " status)
                       {:status status :body body})))
@@ -255,11 +263,12 @@
   "Provider-token shape for a creds map. Resolves the ChatGPT account id
    (embedded in the JWT when not stored) and throws if absent."
   [auth]
-  (let [token
-        (:access-token auth)
+  (let
+    [token
+     (:access-token auth)
 
-        acct
-        (or (:account-id auth) (account-id token))]
+     acct
+     (or (:account-id auth) (account-id token))]
 
     (when (str/blank? acct)
       (throw (ex-info "OpenAI Codex token is missing a ChatGPT account id"
@@ -294,11 +303,12 @@
   "Return a fresh Codex access token in the provider-token shape used by
    Vis: `{:token access-token :api-url CODEX_BASE_URL :llm-headers {...}}`."
   []
-  (let [auth
-        (load-auth-file)
+  (let
+    [auth
+     (load-auth-file)
 
-        now
-        (System/currentTimeMillis)]
+     now
+     (System/currentTimeMillis)]
 
     (cond
       (and (:access-token auth)
@@ -339,23 +349,24 @@
   "Create PKCE verifier, CSRF state, and OpenAI authorization URL."
   ([] (create-authorization-flow "vis"))
   ([originator]
-   (let [{:keys [verifier challenge]}
-         (generate-pkce)
+   (let
+     [{:keys [verifier challenge]}
+      (generate-pkce)
 
-         state
-         (create-state)
+      state
+      (create-state)
 
-         query
-         (form-encode {:response_type "code"
-                       :client_id CLIENT_ID
-                       :redirect_uri REDIRECT_URI
-                       :scope SCOPE
-                       :code_challenge challenge
-                       :code_challenge_method "S256"
-                       :state state
-                       :id_token_add_organizations "true"
-                       :codex_cli_simplified_flow "true"
-                       :originator originator})]
+      query
+      (form-encode {:response_type "code"
+                    :client_id CLIENT_ID
+                    :redirect_uri REDIRECT_URI
+                    :scope SCOPE
+                    :code_challenge challenge
+                    :code_challenge_method "S256"
+                    :state state
+                    :id_token_add_organizations "true"
+                    :codex_cli_simplified_flow "true"
+                    :originator originator})]
 
      {:verifier verifier :state state :url (str AUTHORIZE_URL "?" query)})))
 
@@ -406,9 +417,10 @@
              (ex-info
                "Manual code entry is disabled for this flow. Run `vis providers auth openai-codex` in a terminal or use a frontend that can collect the redirect URL."
                {:type :vis/openai-codex-manual-entry-disabled})))
-         (let [input (manual-code-fn print!)
-               parsed (parse-authorization-input input)
-               code (:code parsed)]
+         (let
+           [input (manual-code-fn print!)
+            parsed (parse-authorization-input input)
+            code (:code parsed)]
 
            (when (str/blank? (or input ""))
              (throw (ex-info "Missing authorization input"
@@ -430,11 +442,12 @@
 
 (defn status
   []
-  (let [detected
-        (detect-credentials)
+  (let
+    [detected
+     (detect-credentials)
 
-        now
-        (System/currentTimeMillis)]
+     now
+     (System/currentTimeMillis)]
 
     (cond-> {:authenticated? (some? detected)}
       detected

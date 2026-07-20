@@ -27,19 +27,20 @@
   "`/rename <new title>` — set the current session's title. Reuses the
    gateway's single title mutation point."
   [ctx]
-  (let [sid
-        (or (:session/id ctx) (:session-id ctx))
+  (let
+    [sid
+     (or (:session/id ctx) (:session-id ctx))
 
-        db
-        (or (:db-info ctx) (:db ctx))
+     db
+     (or (:db-info ctx) (:db ctx))
 
-        atom*
-        (:session-title-atom ctx)
+     atom*
+     (:session-title-atom ctx)
 
-        title
-        (some-> (str/join " " (:command/argv ctx))
-                str/trim
-                not-empty)]
+     title
+     (some-> (str/join " " (:command/argv ctx))
+             str/trim
+             not-empty)]
 
     (cond (nil? sid) (err "Send a message first, then /rename <title> (session not ready yet)")
           (nil? title) (err "Name it: /rename <new title>")
@@ -54,24 +55,26 @@
    --html` and the web download). Defaults to `vis-transcript-<id8>.html`
    in the working directory."
   [ctx]
-  (let [sid
-        (or (:session/id ctx) (:session-id ctx))
+  (let
+    [sid
+     (or (:session/id ctx) (:session-id ctx))
 
-        db
-        (or (:db-info ctx) (:db ctx))
+     db
+     (or (:db-info ctx) (:db ctx))
 
-        path
-        (some-> (str/join " " (:command/argv ctx))
-                str/trim
-                not-empty)]
+     path
+     (some-> (str/join " " (:command/argv ctx))
+             str/trim
+             not-empty)]
 
     (cond (nil? sid) (err "Send a message first, then /export-html (session not ready yet)")
           (nil? db) (err "No database available to export from.")
-          :else (let [fname
-                      (or path (str "vis-transcript-" (subs (str sid) 0 8) ".html"))
+          :else (let
+                  [fname
+                   (or path (str "vis-transcript-" (subs (str sid) 0 8) ".html"))
 
-                      target
-                      (io/file fname)]
+                   target
+                   (io/file fname)]
 
                   (when-let [parent (.getParentFile ^java.io.File target)]
                     (.mkdirs parent))

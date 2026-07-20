@@ -51,13 +51,15 @@
   [root args]
   (let [args (vec args)]
     (when (and (seq args) (= (first args) (:cmd/name root)))
-      (loop [cur root
-             path [(:cmd/name root)]
-             rest (subvec args 1)]
+      (loop
+        [cur root
+         path [(:cmd/name root)]
+         rest (subvec args 1)]
 
-        (let [children (registry/resolve-subcommands cur)
-              nxt (first rest)
-              child (when nxt (by-name children nxt))]
+        (let
+          [children (registry/resolve-subcommands cur)
+           nxt (first rest)
+           child (when nxt (by-name children nxt))]
 
           (if child
             (recur child (conj path nxt) (subvec rest 1))
@@ -101,31 +103,34 @@
    specs by `--name`; boolean flags need no value. Unknown flags
    are silently dropped so commands can layer their own loose flags."
   [arg-specs raw-args]
-  (let [positional
-        (vec (filter #(= :positional (:kind %)) arg-specs))
+  (let
+    [positional
+     (vec (filter #(= :positional (:kind %)) arg-specs))
 
-        flags
-        (into {}
-              (map (fn [a]
-                     [(str "--" (:name a)) a]))
-              (filter #(= :flag (:kind %)) arg-specs))]
+     flags
+     (into {}
+           (map (fn [a]
+                  [(str "--" (:name a)) a]))
+           (filter #(= :flag (:kind %)) arg-specs))]
 
-    (loop [args
-           (seq raw-args)
+    (loop
+      [args
+       (seq raw-args)
 
-           pos-idx
-           0
+       pos-idx
+       0
 
-           result
-           {}]
+       result
+       {}]
 
       (if-not args
         result
-        (let [arg
-              (first args)
+        (let
+          [arg
+           (first args)
 
-              more
-              (next args)]
+           more
+           (next args)]
 
           (if (flag-arg? arg)
             (if-let [spec (get flags arg)]
@@ -144,11 +149,12 @@
   "Validate parsed args against spec. Returns nil on success, or an
    error string describing the missing required arguments."
   [arg-specs parsed]
-  (let [required
-        (filter :required arg-specs)
+  (let
+    [required
+     (filter :required arg-specs)
 
-        missing
-        (remove #(contains? parsed (:name %)) required)]
+     missing
+     (remove #(contains? parsed (:name %)) required)]
 
     (when (seq missing)
       (str "Missing required argument(s): " (str/join ", " (map :name missing))))))
@@ -169,17 +175,20 @@
    know whether the user intended them to take a value, so the walker
    conservatively advances by one token after each unknown."
   [arg-specs raw-args]
-  (let [flags (into {}
-                    (map (fn [a]
-                           [(str "--" (:name a)) a]))
-                    (filter #(= :flag (:kind %)) arg-specs))]
-    (loop [args (seq raw-args)
-           unknown []]
+  (let
+    [flags (into {}
+                 (map (fn [a]
+                        [(str "--" (:name a)) a]))
+                 (filter #(= :flag (:kind %)) arg-specs))]
+    (loop
+      [args (seq raw-args)
+       unknown []]
 
       (if-not args
         unknown
-        (let [a (first args)
-              more (next args)]
+        (let
+          [a (first args)
+           more (next args)]
 
           (cond (not (flag-arg? a)) (recur more unknown)
                 (contains? universal-help-flags a) (recur more unknown)
@@ -193,16 +202,17 @@
    Lists the accepted flag tokens (`--name TYPE` for typed flags,
    `--name` for booleans) so the user can copy-paste the right one."
   [arg-specs unknown]
-  (let [decl
-        (filter #(= :flag (:kind %)) arg-specs)
+  (let
+    [decl
+     (filter #(= :flag (:kind %)) arg-specs)
 
-        names
-        (mapv #(str "--" (:name %)) decl)
+     names
+     (mapv #(str "--" (:name %)) decl)
 
-        head
-        (if (= 1 (count unknown))
-          (str "Unknown flag: " (first unknown))
-          (str "Unknown flag(s): " (str/join ", " unknown)))]
+     head
+     (if (= 1 (count unknown))
+       (str "Unknown flag: " (first unknown))
+       (str "Unknown flag(s): " (str/join ", " unknown)))]
 
     (str head
          (when (seq names) (str "\n\nAccepted flags: " (str/join ", " names)))
@@ -230,21 +240,23 @@
 
 (defn pad-right
   [s ^long w]
-  (let [s
-        (str s)
+  (let
+    [s
+     (str s)
 
-        c
-        (long (count s))]
+     c
+     (long (count s))]
 
     (if (>= c w) s (str s (apply str (repeat (- w c) \space))))))
 
 (defn pad-left
   [s ^long w]
-  (let [s
-        (str s)
+  (let
+    [s
+     (str s)
 
-        c
-        (long (count s))]
+     c
+     (long (count s))]
 
     (if (>= c w) s (str (apply str (repeat (- w c) \space)) s))))
 
@@ -289,20 +301,21 @@
   "Stringified left-hand side of a flag entry, e.g. `--model MODEL`
    for `:type :string`, `--verbose` for `:type :boolean`."
   [{:keys [name type]}]
-  (let [tag (case (or type :string)
-              :boolean
-              nil
+  (let
+    [tag (case (or type :string)
+           :boolean
+           nil
 
-              :int
-              "N"
+           :int
+           "N"
 
-              :file
-              "PATH"
+           :file
+           "PATH"
 
-              :string
-              (str/upper-case name)
+           :string
+           (str/upper-case name)
 
-              (str/upper-case (clojure.core/name (or type :string))))]
+           (str/upper-case (clojure.core/name (or type :string))))]
     (cond-> (str "--" name)
       tag
       (str " " tag))))
@@ -320,13 +333,14 @@
 (defn- format-flag-args
   [flags col-width]
   (mapv (fn [{:keys [doc required] :as f}]
-          (let [token
-                (yellow (flag-token f))
+          (let
+            [token
+             (yellow (flag-token f))
 
-                doc
-                (cond-> (or doc "")
-                  required
-                  (str " " (dim "(required)")))]
+             doc
+             (cond-> (or doc "")
+               required
+               (str " " (dim "(required)")))]
 
             (str "  " (pad-visible-right token col-width) doc)))
         flags))
@@ -338,8 +352,9 @@
    filters `children` itself and calls this twice; this fn no longer
    mixes groups under a single header."
   [children col-width]
-  (let [fmt (fn [c]
-              (str "  " (pad-visible-right (magenta (:cmd/name c)) col-width) (:cmd/doc c)))]
+  (let
+    [fmt (fn [c]
+           (str "  " (pad-visible-right (magenta (:cmd/name c)) col-width) (:cmd/doc c)))]
     (mapv fmt children)))
 
 (defn- split-children
@@ -357,9 +372,10 @@
    extensions, runtime tables, ...) until help is actually requested.
    Blank body collapses the whole section."
   [{:keys [title body]}]
-  (let [text (cond (fn? body) (try (body) (catch Throwable _ ""))
-                   (string? body) body
-                   :else (str body))]
+  (let
+    [text (cond (fn? body) (try (body) (catch Throwable _ ""))
+                (string? body) body
+                :else (str body))]
     (when-not (str/blank? text) (str "\n" (section title) "\n" text))))
 
 (defn- collect-extra-sections
@@ -367,13 +383,14 @@
    strings. `:cmd/extra-sections` itself may be a fn returning a
    sequence of entry maps, or the entry sequence directly."
   [cmd]
-  (let [raw
-        (:cmd/extra-sections cmd)
+  (let
+    [raw
+     (:cmd/extra-sections cmd)
 
-        entries
-        (cond (nil? raw) []
-              (fn? raw) (try (raw) (catch Throwable _ []))
-              :else raw)]
+     entries
+     (cond (nil? raw) []
+           (fn? raw) (try (raw) (catch Throwable _ []))
+           :else raw)]
 
     (->> entries
          (keep render-extra-section)
@@ -383,15 +400,16 @@
 
 (defn- default-usage-line
   [path pos flags children]
-  (let [parts (cond-> [(str/join " " path)]
-                (seq pos)
-                (into (mapv positional-token pos))
+  (let
+    [parts (cond-> [(str/join " " path)]
+             (seq pos)
+             (into (mapv positional-token pos))
 
-                (seq flags)
-                (conj "[FLAGS]")
+             (seq flags)
+             (conj "[FLAGS]")
 
-                (seq children)
-                (conj "<subcommand>"))]
+             (seq children)
+             (conj "<subcommand>"))]
     (str/join " " parts)))
 
 (defn- usage-line
@@ -422,29 +440,30 @@
    leading up to and including this command - used for the USAGE line
    when `:cmd/usage` isn't set."
   [cmd path]
-  (let [args
-        (or (:cmd/args cmd) [])
+  (let
+    [args
+     (or (:cmd/args cmd) [])
 
-        pos
-        (filter #(= :positional (:kind %)) args)
+     pos
+     (filter #(= :positional (:kind %)) args)
 
-        flags
-        (filter #(= :flag (:kind %)) args)
+     flags
+     (filter #(= :flag (:kind %)) args)
 
-        children
-        (registry/resolve-subcommands cmd)
+     children
+     (registry/resolve-subcommands cmd)
 
-        examples
-        (or (:cmd/examples cmd) [])
+     examples
+     (or (:cmd/examples cmd) [])
 
-        sub-w
-        (col-width (map :cmd/name children) 16)
+     sub-w
+     (col-width (map :cmd/name children) 16)
 
-        pos-w
-        (col-width (map positional-token pos) 16)
+     pos-w
+     (col-width (map positional-token pos) 16)
 
-        flag-w
-        (col-width (map flag-token flags) 20)]
+     flag-w
+     (col-width (map flag-token flags) 20)]
 
     (str/join
       "\n"
@@ -484,17 +503,18 @@
    arguments (or via `vis help`). Shows the root doc, then a single
    COMMANDS block listing every immediate subcommand."
   [root]
-  (let [children
-        (registry/resolve-subcommands root)
+  (let
+    [children
+     (registry/resolve-subcommands root)
 
-        col-w
-        (col-width (map :cmd/name children) 16)
+     col-w
+     (col-width (map :cmd/name children) 16)
 
-        ;; Root doc may carry both a one-liner and an extended
-        ;; paragraph; render verbatim with a 2-space indent so it
-        ;; lines up with the COMMANDS body.
-        doc
-        (doc-block (:cmd/doc root))]
+     ;; Root doc may carry both a one-liner and an extended
+     ;; paragraph; render verbatim with a 2-space indent so it
+     ;; lines up with the COMMANDS body.
+     doc
+     (doc-block (:cmd/doc root))]
 
     (str/join "\n"
               (remove nil?
@@ -524,13 +544,15 @@
   ([root args] (dispatch! root args {:print-fn println}))
   ([root args {:keys [print-fn]}]
    (if-let [{:keys [command path residual]} (find-leaf root args)]
-     (let [help? (some #{"--help" "-h"} residual)
-           children (registry/resolve-subcommands command)
-           unresolved-before-help (take-while #(not (#{"--help" "-h"} %)) residual)]
+     (let
+       [help? (some #{"--help" "-h"} residual)
+        children (registry/resolve-subcommands command)
+        unresolved-before-help (take-while #(not (#{"--help" "-h"} %)) residual)]
 
        (cond (and help? (seq children) (seq unresolved-before-help))
-             (let [err (str "Unknown command: " (str/join " " (concat path unresolved-before-help)))
-                   help (str err "\n\n" (render-command command path))]
+             (let
+               [err (str "Unknown command: " (str/join " " (concat path unresolved-before-help)))
+                help (str err "\n\n" (render-command command path))]
 
                (when print-fn (print-fn help))
                {:status :error :command command :error err :help-text help})
@@ -547,17 +569,20 @@
              ;; - `vis providers status <provider>` and similar bespoke
              ;; handlers stay working without forcing every command to
              ;; declare its full surface up front.
-             (let [arg-specs (:cmd/args command)
-                   has-flags? (some #(= :flag (:kind %)) arg-specs)
-                   unknown (when has-flags? (unknown-flags arg-specs residual))]
+             (let
+               [arg-specs (:cmd/args command)
+                has-flags? (some #(= :flag (:kind %)) arg-specs)
+                unknown (when has-flags? (unknown-flags arg-specs residual))]
 
-               (cond (seq unknown) (let [err (format-unknown-flags-error arg-specs unknown)
-                                         help (str err "\n\n" (render-command command path))]
+               (cond (seq unknown) (let
+                                     [err (format-unknown-flags-error arg-specs unknown)
+                                      help (str err "\n\n" (render-command command path))]
 
                                      (when print-fn (print-fn help))
                                      {:status :error :command command :error err :help-text help})
-                     :else (let [parsed (parse-args arg-specs residual)
-                                 err (validate-args arg-specs parsed)]
+                     :else (let
+                             [parsed (parse-args arg-specs residual)
+                              err (validate-args arg-specs parsed)]
 
                              (if err
                                (let [help (str err "\n\n" (render-command command path))]

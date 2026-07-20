@@ -58,35 +58,38 @@
     "an added root reaches every channel in the canonical string-keyed shape"
     (with-store
       (fn [store]
-        (let [base
-              (temp-dir "vis-rt-base")
+        (let
+          [base
+           (temp-dir "vis-rt-base")
 
-              extra
-              (temp-dir "vis-rt-extra")]
+           extra
+           (temp-dir "vis-rt-extra")]
 
           (try
-            (let [seed
-                  (ps/db-workspace-insert! store
-                                           {:id (str (random-uuid))
-                                            :repo-id "rt"
-                                            :repo-root base
-                                            :root base
-                                            :state :active
-                                            :fork-ms 0})
+            (let
+              [seed
+               (ps/db-workspace-insert! store
+                                        {:id (str (random-uuid))
+                                         :repo-id "rt"
+                                         :repo-root base
+                                         :root base
+                                         :state :active
+                                         :fork-ms 0})
 
-                  wid
-                  (:id seed)]
+               wid
+               (:id seed)]
 
               ;; C-a: add `extra` as an extra filesystem root (trunk session → live).
               (ws/add-filesystem-root! store wid extra)
-              (let [info
-                    (session-workspace-shape (ws/get store wid))
+              (let
+                [info
+                 (session-workspace-shape (ws/get store wid))
 
-                    decoded
-                    (hop info)
+                 decoded
+                 (hop info)
 
-                    raw
-                    (wire/parse-json (wire/json-str info))]
+                 raw
+                 (wire/parse-json (wire/json-str info))]
 
                 ;; The decode is a VERBATIM passthrough — one canonical shape.
                 (expect (= raw decoded))

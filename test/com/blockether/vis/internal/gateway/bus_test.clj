@@ -16,19 +16,20 @@
    the previous deliver-fn afterwards. `f` receives `[capture write-journal!]`
    where `write-journal!` spits ndjson lines for a sid."
   [f]
-  (let [tmp
-        (java.nio.file.Files/createTempDirectory "bus-test"
-                                                 (make-array java.nio.file.attribute.FileAttribute
-                                                             0))
+  (let
+    [tmp
+     (java.nio.file.Files/createTempDirectory "bus-test"
+                                              (make-array java.nio.file.attribute.FileAttribute 0))
 
-        capture
-        (atom [])
+     capture
+     (atom [])
 
-        prev
-        @(var-get #'bus/deliver-fn)]
+     prev
+     @(var-get #'bus/deliver-fn)]
 
-    (with-redefs [bus/events-dir (fn []
-                                   tmp)]
+    (with-redefs
+      [bus/events-dir (fn []
+                        tmp)]
       (bus/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture
@@ -60,11 +61,12 @@
   hydrate-liveness-test
   (it "mirrors a non-terminal turn whose producer process is still ALIVE"
       (with-temp-journal (fn [capture write!]
-                           (let [prod
-                                 (str (java.util.UUID/randomUUID))
+                           (let
+                             [prod
+                              (str (java.util.UUID/randomUUID))
 
-                                 live-pid
-                                 (var-get #'bus/producer-pid)]
+                              live-pid
+                              (var-get #'bus/producer-pid)]
 
                              (write! "sid-live"
                                      [(turn-started prod live-pid "sid-live" "T-live")

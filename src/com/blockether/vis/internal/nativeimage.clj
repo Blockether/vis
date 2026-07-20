@@ -55,11 +55,12 @@
   ;; class is initialized through Clojure's loader (which pushes the binding) and
   ;; its top-level (set! *warn-on-reflection* …) succeeds — before the analysis
   ;; can raw-init it on a binding-less worker thread.
-  (binding [*warn-on-reflection*
-            false
+  (binding
+    [*warn-on-reflection*
+     false
 
-            *unchecked-math*
-            false]
+     *unchecked-math*
+     false]
 
     (let [nses (preload-namespaces)]
       (println "[vis/native-image] pre-initializing" (count nses) "namespaces via require…")

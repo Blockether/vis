@@ -137,30 +137,31 @@
    files. Generated assets are filtered upstream in the visitor; the
    sort here defends against the residual edge cases."
   [buckets]
-  (let [entries
-        (vec buckets)
+  (let
+    [entries
+     (vec buckets)
 
-        total-files
-        (long (reduce + 0 (map (comp :files val) entries)))
+     total-files
+     (long (reduce + 0 (map (comp :files val) entries)))
 
-        total-bytes
-        (long (reduce + 0 (map (comp :bytes val) entries)))
+     total-bytes
+     (long (reduce + 0 (map (comp :bytes val) entries)))
 
-        scored
-        (map (fn [[lang {:keys [files bytes]}]]
-               (let [files*
-                     (long files)
+     scored
+     (map (fn [[lang {:keys [files bytes]}]]
+            (let
+              [files*
+               (long files)
 
-                     bytes*
-                     (long bytes)]
+               bytes*
+               (long bytes)]
 
-                 {:language lang
-                  :files files*
-                  :bytes bytes*
-                  :files-pct (if (zero? total-files) 0.0 (/ (double files*) (double total-files)))
-                  :bytes-pct
-                  (if (zero? total-bytes) 0.0 (/ (double bytes*) (double total-bytes)))}))
-             entries)]
+              {:language lang
+               :files files*
+               :bytes bytes*
+               :files-pct (if (zero? total-files) 0.0 (/ (double files*) (double total-files)))
+               :bytes-pct (if (zero? total-bytes) 0.0 (/ (double bytes*) (double total-bytes)))}))
+          entries)]
 
     (vec (sort-by (fn [m]
                     [(- (long (:files m))) (- (long (:bytes m)))])
@@ -187,72 +188,74 @@
   ([root
     {:keys [max-files deadline-ms]
      :or {max-files default-max-files deadline-ms default-deadline-ms}}]
-   (let [^Path start
-         (cond (instance? Path root) root
-               (instance? File root) (.toPath ^File root)
-               :else (.toPath (java.io.File. (str root))))
+   (let
+     [^Path start
+      (cond (instance? Path root) root
+            (instance? File root) (.toPath ^File root)
+            :else (.toPath (java.io.File. (str root))))
 
-         buckets
-         (java.util.HashMap.)
+      buckets
+      (java.util.HashMap.)
 
-         visited
-         (long-array 1 0)
+      visited
+      (long-array 1 0)
 
-         deadline
-         (+ (System/currentTimeMillis) (long deadline-ms))
+      deadline
+      (+ (System/currentTimeMillis) (long deadline-ms))
 
-         truncated
-         (boolean-array 1 false)
+      truncated
+      (boolean-array 1 false)
 
-         start-ms
-         (System/currentTimeMillis)
+      start-ms
+      (System/currentTimeMillis)
 
-         visitor
-         (proxy [SimpleFileVisitor] []
-           (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-             (cond (> (System/currentTimeMillis) deadline) (do (aset truncated 0 true)
-                                                               FileVisitResult/TERMINATE)
-                   ;; The root itself is never skipped even
-                   ;; if its name matches skip-directories
-                   ;; (e.g. running inside `target/`).
-                   (= dir start) FileVisitResult/CONTINUE
-                   :else (dir-decision dir)))
-           (visitFile [^Path file ^BasicFileAttributes attrs]
-             (let [count* (aget visited 0)]
-               (cond (or (>= count* (long max-files)) (> (System/currentTimeMillis) deadline))
-                     (do (aset truncated 0 true) FileVisitResult/TERMINATE)
-                     (.isRegularFile attrs)
-                     (do (aset visited 0 (inc count*))
-                         (let [filename (str (.getFileName file))]
-                           (when (and (not (generated? filename))
-                                      (some? (file-extension-of filename)))
-                             (when-let [lang (extension-to-language (file-extension-of filename))]
-                               (let [bucket (or (.get buckets lang) {:files 0 :bytes 0})
-                                     size (try (.size attrs) (catch Throwable _ 0))]
+      visitor
+      (proxy [SimpleFileVisitor] []
+        (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
+          (cond (> (System/currentTimeMillis) deadline) (do (aset truncated 0 true)
+                                                            FileVisitResult/TERMINATE)
+                ;; The root itself is never skipped even
+                ;; if its name matches skip-directories
+                ;; (e.g. running inside `target/`).
+                (= dir start) FileVisitResult/CONTINUE
+                :else (dir-decision dir)))
+        (visitFile [^Path file ^BasicFileAttributes attrs]
+          (let [count* (aget visited 0)]
+            (cond (or (>= count* (long max-files)) (> (System/currentTimeMillis) deadline))
+                  (do (aset truncated 0 true) FileVisitResult/TERMINATE)
+                  (.isRegularFile attrs)
+                  (do (aset visited 0 (inc count*))
+                      (let [filename (str (.getFileName file))]
+                        (when (and (not (generated? filename)) (some? (file-extension-of filename)))
+                          (when-let [lang (extension-to-language (file-extension-of filename))]
+                            (let
+                              [bucket (or (.get buckets lang) {:files 0 :bytes 0})
+                               size (try (.size attrs) (catch Throwable _ 0))]
 
-                                 (.put buckets
-                                       lang
-                                       {:files (inc (long (:files bucket)))
-                                        :bytes (+ (long (:bytes bucket)) (long size))})))))
-                         FileVisitResult/CONTINUE)
-                     :else FileVisitResult/CONTINUE)))
-           (visitFileFailed [^Path _file _exception] FileVisitResult/CONTINUE))]
+                              (.put buckets
+                                    lang
+                                    {:files (inc (long (:files bucket)))
+                                     :bytes (+ (long (:bytes bucket)) (long size))})))))
+                      FileVisitResult/CONTINUE)
+                  :else FileVisitResult/CONTINUE)))
+        (visitFileFailed [^Path _file _exception] FileVisitResult/CONTINUE))]
 
      (try (Files/walkFileTree start visitor) (catch Throwable _ nil))
-     (let [bucket-map
-           (into {} buckets)
+     (let
+       [bucket-map
+        (into {} buckets)
 
-           rolled
-           (bucket-rollup bucket-map)
+        rolled
+        (bucket-rollup bucket-map)
 
-           total-files
-           (long (reduce + 0 (map :files rolled)))
+        total-files
+        (long (reduce + 0 (map :files rolled)))
 
-           total-bytes
-           (long (reduce + 0 (map :bytes rolled)))
+        total-bytes
+        (long (reduce + 0 (map :bytes rolled)))
 
-           elapsed
-           (- (System/currentTimeMillis) start-ms)]
+        elapsed
+        (- (System/currentTimeMillis) start-ms)]
 
        {:total-files total-files
         :total-bytes total-bytes

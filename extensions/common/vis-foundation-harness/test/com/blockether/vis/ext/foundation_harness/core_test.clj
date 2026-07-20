@@ -18,13 +18,14 @@
         (expect (string? (get r "error")))
         (expect (vector? (get r "available")))))
   (it "loads a skill body ONCE per session, then acks already-loaded on its string-keyed ctx"
-      (with-redefs [d/skill-by-name
-                    (fn [_]
-                      {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
-        (let [ca (atom {}) ;; stands in for the DB-persisted session ctx
-              env {:ctx-atom ca}
-              r1 (skill-result env "demo")
-              r2 (skill-result env "demo")]
+      (with-redefs
+        [d/skill-by-name (fn [_]
+                           {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
+        (let
+          [ca (atom {}) ;; stands in for the DB-persisted session ctx
+           env {:ctx-atom ca}
+           r1 (skill-result env "demo")
+           r2 (skill-result env "demo")]
 
           (expect (= "BODY" (get r1 "body")))
           (expect (= #{"demo"} (get @ca "session_loaded_skills")))
@@ -32,11 +33,12 @@
           (expect (= "already-loaded" (get r2 "status")))
           (expect (not (contains? r2 "body"))))))
   (it "does not leak a loaded skill into a new conversation ctx"
-      (with-redefs [d/skill-by-name
-                    (fn [_]
-                      {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
-        (let [first-session {:ctx-atom (atom {})}
-              new-session {:ctx-atom (atom {})}]
+      (with-redefs
+        [d/skill-by-name (fn [_]
+                           {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
+        (let
+          [first-session {:ctx-atom (atom {})}
+           new-session {:ctx-atom (atom {})}]
 
           (skill-result first-session "demo")
           (expect (= "BODY" (get (skill-result new-session "demo") "body")))
@@ -46,27 +48,31 @@
 (defdescribe
   skill-template-text-test
   (it "slash skill expansion injects the body and bundled resource paths before marking loaded"
-      (let [s
-            {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
+      (let
+        [s
+         {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
 
-            ca
-            (atom {})]
+         ca
+         (atom {})]
 
-        (with-redefs [d/skill-by-name (fn [_]
-                                        s)]
+        (with-redefs
+          [d/skill-by-name (fn [_]
+                             s)]
           (let [text (skill-template-text {:ctx-atom ca} s "do x")]
             (expect (str/includes? text "BODY"))
             (expect (str/includes? text "- /x/ref.md"))
             (expect (str/includes? text "Task: do x"))))))
   (it "slash skill expansion points at the already-loaded body instead of reinjecting it"
-      (let [s
-            {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}
+      (let
+        [s
+         {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}
 
-            ca
-            (atom {"session_loaded_skills" #{"demo"}})]
+         ca
+         (atom {"session_loaded_skills" #{"demo"}})]
 
-        (with-redefs [d/skill-by-name (fn [_]
-                                        s)]
+        (with-redefs
+          [d/skill-by-name (fn [_]
+                             s)]
           (let [text (skill-template-text {:ctx-atom ca} s "again")]
             (expect (str/includes? text "already loaded earlier"))
             (expect (not (str/includes? text "BODY")))
@@ -78,8 +84,9 @@
     (it "skill is a native tool (schema + handler + render), NOT bound into the env"
         (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts)))
         (expect (fn? (get (extension/native-tool-handlers exts) "skill")))
-        (let [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
-                                   (mapcat extension/ext-symbols exts)))]
+        (let
+          [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
+                                (mapcat extension/ext-symbols exts)))]
           (expect (= false (:ext.symbol/engine-bound? entry)))
           (expect (not (extension/symbol-bound? entry)))
           ;; STRONG flat form: schema/render/colour all on the SYMBOL, no :native-tool map
@@ -96,23 +103,26 @@
           (expect (not (str/includes? (:description schema) "SKILLS block")))
           (expect (false? (get-in schema [:schema :additionalProperties])))))
     (it "the handler runs the load-once logic"
-        (with-redefs [d/skill-by-name
-                      (fn [_]
-                        {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
-          (let [h (get (extension/native-tool-handlers exts) "skill")
-                ca (atom {})
-                r1 (h {:ctx-atom ca} {"name" "demo"})
-                r2 (h {:ctx-atom ca} {"name" "demo"})]
+        (with-redefs
+          [d/skill-by-name (fn [_]
+                             {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
+          (let
+            [h (get (extension/native-tool-handlers exts) "skill")
+             ca (atom {})
+             r1 (h {:ctx-atom ca} {"name" "demo"})
+             r2 (h {:ctx-atom ca} {"name" "demo"})]
 
             (expect (= "B" (get r1 "body")))
             (expect (= "already-loaded" (get r2 "status"))))))
     (it ":active-fn gates advertising + dispatch on the skills toggle"
-        (with-redefs [toggles/enabled? (fn [id]
-                                         (= id :vis/harness-skills))]
+        (with-redefs
+          [toggles/enabled? (fn [id]
+                              (= id :vis/harness-skills))]
           (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil)))
           (expect (contains? (extension/native-tool-handlers exts nil) "skill")))
-        (with-redefs [toggles/enabled? (fn [_]
-                                         false)]
+        (with-redefs
+          [toggles/enabled? (fn [_]
+                              false)]
           (expect (not (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil))))
           (expect (not (contains? (extension/native-tool-handlers exts nil) "skill")))))))
 
@@ -135,31 +145,33 @@
 (defdescribe
   agent-verb-test
   (it "an unknown agent returns a success envelope with \"error\" + \"available\" (no sub_loop run)"
-      (let [env
-            (core/agent {} "definitely-not-a-real-agent-zzz" "do x")
+      (let
+        [env
+         (core/agent {} "definitely-not-a-real-agent-zzz" "do x")
 
-            r
-            (:result env)]
+         r
+         (:result env)]
 
         (expect (extension/envelope-success? env))
         (expect (string? (get r "error")))
         (expect (vector? (get r "available")))))
   (it "dispatch threads the agent's BODY as the child system prompt and its MODEL as a vector"
       (let [captured (atom nil)]
-        (with-redefs [d/agent-by-name (fn [nm]
-                                        (when (= "code-reviewer" nm)
-                                          {:name "code-reviewer"
-                                           :description "Review code"
-                                           :model "review-model"
-                                           :body "review system prompt"}))
-                      lp/sub-loop! (fn [_env opts]
-                                     (reset! captured opts)
-                                     {:task_id (get-in opts [:subctx :focus])
-                                      :status "done"
-                                      :answer "child done"
-                                      :changed_files ["f.txt"]
-                                      :facts {}
-                                      :evidence "ok"})]
+        (with-redefs
+          [d/agent-by-name (fn [nm]
+                             (when (= "code-reviewer" nm)
+                               {:name "code-reviewer"
+                                :description "Review code"
+                                :model "review-model"
+                                :body "review system prompt"}))
+           lp/sub-loop! (fn [_env opts]
+                          (reset! captured opts)
+                          {:task_id (get-in opts [:subctx :focus])
+                           :status "done"
+                           :answer "child done"
+                           :changed_files ["f.txt"]
+                           :facts {}
+                           :evidence "ok"})]
 
           (let [r (:result (core/agent {} "code-reviewer" "review this"))]
             (expect (= "code-reviewer" (get r "agent")))
@@ -172,34 +184,34 @@
             (expect (= "review this" (:prompt @captured)))
             (expect (= "code-reviewer" (get-in @captured [:subctx :focus])))))))
   (it "a completed child with no status string reports done; an errored one failed"
-      (with-redefs [d/agent-by-name
-                    (fn [nm]
-                      (when (= "code-reviewer" nm)
-                        {:name "code-reviewer" :body "review system prompt"}))
+      (with-redefs
+        [d/agent-by-name
+         (fn [nm]
+           (when (= "code-reviewer" nm) {:name "code-reviewer" :body "review system prompt"}))
 
-                    lp/sub-loop!
-                    (fn [_ _]
-                      {:status "" :answer "OK" :changed_files []})]
+         lp/sub-loop!
+         (fn [_ _]
+           {:status "" :answer "OK" :changed_files []})]
 
         (expect (= "done" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
-      (with-redefs [d/agent-by-name
-                    (fn [nm]
-                      (when (= "code-reviewer" nm)
-                        {:name "code-reviewer" :body "review system prompt"}))
+      (with-redefs
+        [d/agent-by-name
+         (fn [nm]
+           (when (= "code-reviewer" nm) {:name "code-reviewer" :body "review system prompt"}))
 
-                    lp/sub-loop!
-                    (fn [_ _]
-                      {:status "" :error "boom"})]
+         lp/sub-loop!
+         (fn [_ _]
+           {:status "" :error "boom"})]
 
         (expect (= "failed" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
-      (with-redefs [d/agent-by-name
-                    (fn [nm]
-                      (when (= "code-reviewer" nm)
-                        {:name "code-reviewer" :body "review system prompt"}))
+      (with-redefs
+        [d/agent-by-name
+         (fn [nm]
+           (when (= "code-reviewer" nm) {:name "code-reviewer" :body "review system prompt"}))
 
-                    lp/sub-loop!
-                    (fn [_ _]
-                      {:status "rejected"})]
+         lp/sub-loop!
+         (fn [_ _]
+           {:status "rejected"})]
 
         ;; an explicit child status is preserved, never overwritten
         (expect (= "rejected" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))))
@@ -207,42 +219,48 @@
 (defdescribe per-verb-gating-test
              ;; both verbs share one extension; each :active-fn gates its OWN toggle, so a
              ;; disabled verb is inactive while the other stays on. ONE gate, no before-fn.
-             (let [skill-entry (first (filter #(= 'skill (:ext.symbol/symbol %))
-                                              (mapcat extension/ext-symbols [core/vis-extension])))]
+             (let
+               [skill-entry (first (filter #(= 'skill (:ext.symbol/symbol %))
+                                           (mapcat extension/ext-symbols [core/vis-extension])))]
                (it "skill :active-fn gates :vis/harness-skills"
-                   (with-redefs [toggles/enabled? (fn [id]
-                                                    (= id :vis/harness-skills))]
+                   (with-redefs
+                     [toggles/enabled? (fn [id]
+                                         (= id :vis/harness-skills))]
                      (expect (extension/symbol-active? skill-entry nil)))
-                   (with-redefs [toggles/enabled? (fn [_]
-                                                    false)]
+                   (with-redefs
+                     [toggles/enabled? (fn [_]
+                                         false)]
                      (expect (not (extension/symbol-active? skill-entry nil))))))
              (it "agent :active-fn gates :vis/harness-agents and declares :inject-env?"
                  (expect (= true (:ext.symbol/inject-env? core/agent-symbol)))
                  (expect (nil? (:ext.symbol/before-fn core/agent-symbol)))
-                 (with-redefs [toggles/enabled? (fn [id]
-                                                  (= id :vis/harness-agents))]
+                 (with-redefs
+                   [toggles/enabled? (fn [id]
+                                       (= id :vis/harness-agents))]
                    (expect (extension/symbol-active? core/agent-symbol nil)))
-                 (with-redefs [toggles/enabled? (fn [_]
-                                                  false)]
+                 (with-redefs
+                   [toggles/enabled? (fn [_]
+                                       false)]
                    (expect (not (extension/symbol-active? core/agent-symbol nil))))))
 
-(defdescribe agents-toggle-test
-             (it "the :vis/harness-agents toggle is registered by this layer, default ON"
-                 (let [spec (first (filter #(= :vis/harness-agents (:id %))
-                                           (toggles/registered-toggles)))]
-                   (expect (some? spec))
-                   (expect (= true (:default spec)))
-                   (expect (= :vis (:owner spec))))))
+(defdescribe
+  agents-toggle-test
+  (it "the :vis/harness-agents toggle is registered by this layer, default ON"
+      (let [spec (first (filter #(= :vis/harness-agents (:id %)) (toggles/registered-toggles)))]
+        (expect (some? spec))
+        (expect (= true (:default spec)))
+        (expect (= :vis (:owner spec))))))
 
 (defdescribe
   extension-shape-test
   (it
     "binds BOTH bare verbs (skill + agent), builtin? no alias, prompt fn, active if either toggle on"
-    (let [e
-          core/vis-extension
+    (let
+      [e
+       core/vis-extension
 
-          syms
-          (get-in e [:ext/engine :ext.engine/symbols])]
+       syms
+       (get-in e [:ext/engine :ext.engine/symbols])]
 
       (expect (= "foundation-harness" (:ext/name e)))
       (expect (true? (get-in e [:ext/engine :ext.engine/builtin?])))
@@ -250,9 +268,11 @@
       (expect (= 2 (count syms)))
       (expect (fn? (:ext/prompt-fn e)))
       ;; active while EITHER toggle is on; inactive only when BOTH are off
-      (with-redefs [toggles/enabled? (fn [_]
-                                       false)]
+      (with-redefs
+        [toggles/enabled? (fn [_]
+                            false)]
         (expect (not ((:ext/activation-fn e) {}))))
-      (with-redefs [toggles/enabled? (fn [id]
-                                       (= id :vis/harness-agents))]
+      (with-redefs
+        [toggles/enabled? (fn [id]
+                            (= id :vis/harness-agents))]
         (expect ((:ext/activation-fn e) {}))))))

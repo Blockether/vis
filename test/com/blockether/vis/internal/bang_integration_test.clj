@@ -22,15 +22,16 @@
 
 (defn- bang-env
   [store]
-  (let [ws
-        (persistance/db-workspace-insert!
-          store
-          {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
+  (let
+    [ws
+     (persistance/db-workspace-insert!
+       store
+       {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
 
-        soul-id
-        (persistance/db-store-session!
-          store
-          {:channel :tui :workspace-id (:id ws) :title "bang-test" :system-prompt ""})]
+     soul-id
+     (persistance/db-store-session!
+       store
+       {:channel :tui :workspace-id (:id ws) :title "bang-test" :system-prompt ""})]
 
     {:extensions (atom [])
      :db-info store
@@ -62,32 +63,34 @@
     "runs shell directly, skips iteration-loop, persists a :user-shell result form"
     (with-store
       (fn [store]
-        (let [env
-              (bang-env store)
+        (let
+          [env
+           (bang-env store)
 
-              called
-              (atom 0)
+           called
+           (atom 0)
 
-              result
-              (with-redefs [lp/iteration-loop
-                            (fn [& _]
-                              (swap! called inc)
-                              {:status :success})
+           result
+           (with-redefs
+             [lp/iteration-loop
+              (fn [& _]
+                (swap! called inc)
+                {:status :success})
 
-                            toggles/enabled?
-                            (fn [_]
-                              true)]
+              toggles/enabled?
+              (fn [_]
+                true)]
 
-                (lp/run-turn! env "!echo hi-from-bang" {}))
+             (lp/run-turn! env "!echo hi-from-bang" {}))
 
-              turns
-              (persistance/db-list-session-turns store (:session-id env))
+           turns
+           (persistance/db-list-session-turns store (:session-id env))
 
-              iters
-              (persistance/db-list-session-turn-iterations store (:id (first turns)))
+           iters
+           (persistance/db-list-session-turn-iterations store (:id (first turns)))
 
-              form
-              (first (:forms (first iters)))]
+           form
+           (first (:forms (first iters)))]
 
           ;; No LLM round-trip.
           (expect (= 0 @called))
@@ -108,20 +111,23 @@
 
 (defdescribe run-turn-bang-disabled-test
              (it "refuses when the shell layer is OFF, without running the command"
-                 (with-store (fn [store]
-                               (let [env
-                                     (bang-env store)
+                 (with-store
+                   (fn [store]
+                     (let
+                       [env
+                        (bang-env store)
 
-                                     result
-                                     (with-redefs [lp/iteration-loop
-                                                   (fn [& _]
-                                                     (throw (ex-info "should not run" {})))
+                        result
+                        (with-redefs
+                          [lp/iteration-loop
+                           (fn [& _]
+                             (throw (ex-info "should not run" {})))
 
-                                                   toggles/enabled?
-                                                   (fn [_]
-                                                     false)]
+                           toggles/enabled?
+                           (fn [_]
+                             false)]
 
-                                       (lp/run-turn! env "!echo nope" {}))]
+                          (lp/run-turn! env "!echo nope" {}))]
 
-                                 (expect (= :success (:status result)))
-                                 (expect (str/includes? (:answer result) "Shell layer is OFF")))))))
+                       (expect (= :success (:status result)))
+                       (expect (str/includes? (:answer result) "Shell layer is OFF")))))))

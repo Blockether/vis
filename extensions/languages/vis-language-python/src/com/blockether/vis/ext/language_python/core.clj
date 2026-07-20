@@ -18,8 +18,9 @@
 
 (defn- workspace-has-python?
   [env]
-  (let [root (some-> (:workspace/root env)
-                     io/file)]
+  (let
+    [root (some-> (:workspace/root env)
+                  io/file)]
     (when (and root (.isDirectory root))
       (or (some #(.exists (io/file root %))
                 ["pyproject.toml" "setup.py" "setup.cfg" "requirements.txt" "Pipfile" "uv.lock"])
@@ -49,9 +50,10 @@
 
 (defn- repl-resource-id
   [dir id]
-  (let [id (some-> id
-                   str
-                   str/trim)]
+  (let
+    [id (some-> id
+                str
+                str/trim)]
     (if (seq id) id (str "pyrepl:" dir))))
 
 (defn register-repl-resource!
@@ -93,17 +95,18 @@
    STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
   [env op opts]
-  (let [root
-        (env-root env)
+  (let
+    [root
+     (env-root env)
 
-        op
-        (if (string? op) op "start")
+     op
+     (if (string? op) op "start")
 
-        id
-        (or (get opts "id") (get opts "repl_id"))
+     id
+     (or (get opts "id") (get opts "repl_id"))
 
-        dir
-        (resolve-dir root (get opts "dir"))]
+     dir
+     (resolve-dir root (get opts "dir"))]
 
     (case op
       "status"
@@ -128,20 +131,21 @@
    `{code, dir, timeout_ms}`. Requires a running REPL for the dir, then evaluates
    with globals persistent across calls."
   [env arg]
-  (let [root
-        (env-root env)
+  (let
+    [root
+     (env-root env)
 
-        code
-        (cond (string? arg) arg
-              (map? arg) (str (or (get arg "code") (get arg "source")))
-              :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
-                                    {:type :py/bad-args :got arg})))
+     code
+     (cond (string? arg) arg
+           (map? arg) (str (or (get arg "code") (get arg "source")))
+           :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
+                                 {:type :py/bad-args :got arg})))
 
-        dir
-        (resolve-dir root (and (map? arg) (get arg "dir")))
+     dir
+     (resolve-dir root (and (map? arg) (get arg "dir")))
 
-        tmo
-        (and (map? arg) (get arg "timeout_ms"))]
+     tmo
+     (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
       (throw (ex-info (str "Python REPL is not up for "
@@ -182,24 +186,26 @@
    `hint` to switch to the project interpreter when a failure smells like a
    missing third-party module the sandbox can't see."
   [paths]
-  (let [res
-        (ptr/test-python-extensions! {:dirs paths})
+  (let
+    [res
+     (ptr/test-python-extensions! {:dirs paths})
 
-        dep-smell?
-        (boolean (some (fn [t]
-                         (and (= :errored (:outcome t))
-                              (re-find #"(?i)ModuleNotFoundError|No module named|ImportError"
-                                       (str (:message t)))))
-                       (:tests res)))]
+     dep-smell?
+     (boolean (some (fn [t]
+                      (and (= :errored (:outcome t))
+                           (re-find #"(?i)ModuleNotFoundError|No module named|ImportError"
+                                    (str (:message t)))))
+                    (:tests res)))]
 
-    (cond-> {"runner" "graalpy"
-             "files" (:files res)
-             "ok" (boolean (:ok? res))
-             "passed" (or (:passed res) 0)
-             "failed" (or (:failed res) 0)
-             "errored" (or (:errored res) 0)
-             "skipped" (or (:skipped res) 0)
-             "output" (ptr/render-test-report res)}
+    (cond->
+      {"runner" "graalpy"
+       "files" (:files res)
+       "ok" (boolean (:ok? res))
+       "passed" (or (:passed res) 0)
+       "failed" (or (:failed res) 0)
+       "errored" (or (:errored res) 0)
+       "skipped" (or (:skipped res) 0)
+       "output" (ptr/render-test-report res)}
       (:error res)
       (assoc "error" (:error res))
 
@@ -213,37 +219,39 @@
   "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
    .venv / python3 `-m pytest <paths>`) in `dir` so installed deps are visible."
   [^String dir paths]
-  (let [cmd
-        (-> (interpreter/resolve-command dir)
-            (conj "-m" "pytest")
-            (into paths))
+  (let
+    [cmd
+     (-> (interpreter/resolve-command dir)
+         (conj "-m" "pytest")
+         (into paths))
 
-        pb
-        (doto (ProcessBuilder. ^java.util.List cmd)
-          (.directory (io/file dir))
-          (.redirectErrorStream true))
+     pb
+     (doto (ProcessBuilder. ^java.util.List cmd)
+       (.directory (io/file dir))
+       (.redirectErrorStream true))
 
-        p
-        (.start pb)
+     p
+     (.start pb)
 
-        out
-        (future (slurp (.getInputStream p)))
+     out
+     (future (slurp (.getInputStream p)))
 
-        done?
-        (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
+     done?
+     (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
 
     (when-not done? (.destroyForcibly p))
-    (let [s
-          (str @out)
+    (let
+      [s
+       (str @out)
 
-          [_ passed]
-          (re-find #"(?m)(\d+) passed" s)
+       [_ passed]
+       (re-find #"(?m)(\d+) passed" s)
 
-          [_ failed]
-          (re-find #"(?m)(\d+) failed" s)
+       [_ failed]
+       (re-find #"(?m)(\d+) failed" s)
 
-          [_ errored]
-          (re-find #"(?m)(\d+) error(?:ed|s)?\b" s)]
+       [_ errored]
+       (re-find #"(?m)(\d+) error(?:ed|s)?\b" s)]
 
       {"runner" "project"
        "cmd" (vec cmd)
@@ -269,23 +277,24 @@
        deps ARE visible. Aliases: `{interpreter true}`.
    Pass an opts map `{runner, paths, dir}` (a bare code string is not accepted)."
   [env arg]
-  (let [root
-        (env-root env)
+  (let
+    [root
+     (env-root env)
 
-        opts
-        (if (map? arg) arg {})
+     opts
+     (if (map? arg) arg {})
 
-        dir
-        (resolve-dir root (get opts "dir"))
+     dir
+     (resolve-dir root (get opts "dir"))
 
-        runner
-        (let [r (str/lower-case (str (or (get opts "runner")
-                                         (when (get opts "interpreter") "project")
-                                         "graalpy")))]
-          (if (contains? #{"project" "interpreter" "real" "system"} r) "project" "graalpy"))
+     runner
+     (let
+       [r (str/lower-case
+            (str (or (get opts "runner") (when (get opts "interpreter") "project") "graalpy")))]
+       (if (contains? #{"project" "interpreter" "real" "system"} r) "project" "graalpy"))
 
-        paths
-        (resolve-test-paths root opts)]
+     paths
+     (resolve-test-paths root opts)]
 
     (extension/success
       {:result (assoc (if (= "project" runner) (project-test dir paths) (graalpy-test paths))
@@ -318,14 +327,15 @@
                                 :dir? true
                                 :label "Python REPL"
                                 :start-fn (fn [env _selected]
-                                            (let [root
-                                                  (env-root env)
+                                            (let
+                                              [root
+                                               (env-root env)
 
-                                                  dir
-                                                  (resolve-dir root (:startable/dir env))
+                                               dir
+                                               (resolve-dir root (:startable/dir env))
 
-                                                  r
-                                                  (repl/start! dir {})]
+                                               r
+                                               (repl/start! dir {})]
 
                                               (register-repl-resource! (:session-id env) dir r)
                                               r))}]

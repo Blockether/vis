@@ -68,11 +68,12 @@
 
 (defdescribe iteration-entry-parity-test
              (it "live and resume produce an equal canonical iteration-entry for the same fixture"
-                 (let [live
-                       (iteration/parity-entry (live-entry))
+                 (let
+                   [live
+                    (iteration/parity-entry (live-entry))
 
-                       resume
-                       (iteration/parity-entry (resume-entry))]
+                    resume
+                    (iteration/parity-entry (resume-entry))]
 
                    ;; The whole regression gate: byte-for-byte equal canonical entries.
                    (expect (= live resume))))

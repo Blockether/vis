@@ -66,12 +66,13 @@
     :zai-coding-plan-7d
     "Z.ai coding plan 7d"
 
-    (let [label (or (:label row)
-                    (some-> (:id row)
-                            name
-                            (str/replace #"[_-]" " ")
-                            str/capitalize)
-                    "Limit")]
+    (let
+      [label (or (:label row)
+                 (some-> (:id row)
+                         name
+                         (str/replace #"[_-]" " ")
+                         str/capitalize)
+                 "Limit")]
       (-> label
           (str/replace #"(?i)\s+quota\s*\(%\)" "")
           (str/replace #"(?i)\s+quota$" "")))))
@@ -100,11 +101,12 @@
    so a report that crossed the gateway wire (string values) matches
    the same as an in-process one (keyword values)."
   [{:keys [id kind limit remaining]}]
-  (let [id
-        (->kw id)
+  (let
+    [id
+     (->kw id)
 
-        kind
-        (->kw kind)]
+     kind
+     (->kw kind)]
 
     (and (number? remaining)
          (or (contains? account-plan-window-ids id)
@@ -158,11 +160,12 @@
    when the row has no usage signal. Returns nil when both are
    blank/absent."
   [row]
-  (let [label
-        (generic-limit-label row)
+  (let
+    [label
+     (generic-limit-label row)
 
-        usage
-        (format-limit-usage row)]
+     usage
+     (format-limit-usage row)]
 
     (cond (and (seq label) usage) (str label " " usage)
           (seq label) label
@@ -180,16 +183,17 @@
    Returns nil when there's nothing to render."
   ([limits] (dynamic-summary limits 2))
   ([limits max-rows]
-   (let [rows
-         (get-in limits [:dynamic :limits])
+   (let
+     [rows
+      (get-in limits [:dynamic :limits])
 
-         pick
-         (or (seq (filter #(or (generic-limit-has-signal? %) (account-plan-window-row? %)) rows))
-             (seq rows))
+      pick
+      (or (seq (filter #(or (generic-limit-has-signal? %) (account-plan-window-row? %)) rows))
+          (seq rows))
 
-         lines
-         (->> pick
-              (keep label+usage)
-              (take max-rows))]
+      lines
+      (->> pick
+           (keep label+usage)
+           (take max-rows))]
 
      (when (seq lines) (str/join " · " lines)))))

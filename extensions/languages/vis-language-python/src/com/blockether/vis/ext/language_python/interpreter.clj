@@ -13,15 +13,15 @@
   "Is executable `bin` resolvable on PATH? (Tries the name and, on Windows, the
    .exe variant.)"
   [bin]
-  (let [names
-        (cond-> [bin]
-          (windows?)
-          (conj (str bin ".exe")))
+  (let
+    [names
+     (cond-> [bin]
+       (windows?)
+       (conj (str bin ".exe")))
 
-        dirs
-        (str/split (or (System/getenv "PATH") "")
-                   (re-pattern (java.util.regex.Pattern/quote (System/getProperty
-                                                                "path.separator"))))]
+     dirs
+     (str/split (or (System/getenv "PATH") "")
+                (re-pattern (java.util.regex.Pattern/quote (System/getProperty "path.separator"))))]
 
     (boolean (some (fn [d]
                      (some (fn [n]

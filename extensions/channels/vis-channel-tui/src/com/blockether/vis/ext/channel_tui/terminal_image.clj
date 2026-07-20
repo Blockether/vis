@@ -58,28 +58,31 @@
   [^String s]
   (when (and (string? s) (seq s))
     (or (when-let [m (re-find #"\u001b\[6;(\d+);(\d+)t" s)]
-          (let [h (parse-long (nth m 1))
-                w (parse-long (nth m 2))]
+          (let
+            [h (parse-long (nth m 1))
+             w (parse-long (nth m 2))]
 
             (when (and (pos? w) (pos? h)) {:w w :h h})))
-        (let [px
-              (re-find #"\u001b\[4;(\d+);(\d+)t" s)
+        (let
+          [px
+           (re-find #"\u001b\[4;(\d+);(\d+)t" s)
 
-              ch
-              (re-find #"\u001b\[8;(\d+);(\d+)t" s)]
+           ch
+           (re-find #"\u001b\[8;(\d+);(\d+)t" s)]
 
           (when (and px ch)
-            (let [hpx
-                  (parse-long (nth px 1))
+            (let
+              [hpx
+               (parse-long (nth px 1))
 
-                  wpx
-                  (parse-long (nth px 2))
+               wpx
+               (parse-long (nth px 2))
 
-                  rows
-                  (parse-long (nth ch 1))
+               rows
+               (parse-long (nth ch 1))
 
-                  cols
-                  (parse-long (nth ch 2))]
+               cols
+               (parse-long (nth ch 2))]
 
               (when (and (pos? wpx) (pos? hpx) (pos? rows) (pos? cols))
                 {:w (quot wpx cols) :h (quot hpx rows)})))))))
@@ -108,10 +111,11 @@
   "Fit an image of `{:w :h}` px into `max-cols` × `max-rows` cells,
    aspect-preserving. Returns `{:cols :rows}` (>= 1)."
   [{:keys [w h]} max-cols max-rows]
-  (let [r (TerminalImage/cellSize (int (or w 1))
-                                  (int (or h 1))
-                                  (int max-cols)
-                                  (when max-rows (Integer/valueOf (int max-rows))))]
+  (let
+    [r (TerminalImage/cellSize (int (or w 1))
+                               (int (or h 1))
+                               (int max-cols)
+                               (when max-rows (Integer/valueOf (int max-rows))))]
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
 
 ;; =============================================================================
@@ -175,8 +179,9 @@
    Returns `{:path :mime :filename :size :size-label :width :height}` or nil.
    `workspace-root` anchors relative candidates. Never throws."
   [text {:keys [workspace-root]}]
-  (try (when-let [{:keys [path media-type filename size size-label]}
-                  (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
+  (try (when-let
+         [{:keys [path media-type filename size size-label]}
+          (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
          (let [{:keys [w h]} (or (probe-dimensions path media-type) {})]
            {:path path
             :mime media-type

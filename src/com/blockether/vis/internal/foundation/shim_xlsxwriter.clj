@@ -43,21 +43,22 @@
 
 (defn- hex->color
   ^XSSFColor [s]
-  (let [low
-        (str/lower-case (str s))
+  (let
+    [low
+     (str/lower-case (str s))
 
-        h
-        (or (color-names low) (if (str/starts-with? (str s) "#") (subs (str s) 1) (str s)))
+     h
+     (or (color-names low) (if (str/starts-with? (str s) "#") (subs (str s) 1) (str s)))
 
-        h
-        (if (= 3 (count h)) (apply str (mapcat #(list % %) h)) h)
+     h
+     (if (= 3 (count h)) (apply str (mapcat #(list % %) h)) h)
 
-        n
-        (Integer/parseInt h 16)
+     n
+     (Integer/parseInt h 16)
 
-        argb
-        (byte-array [(unchecked-byte 0xFF) (unchecked-byte (bit-shift-right n 16))
-                     (unchecked-byte (bit-shift-right n 8)) (unchecked-byte n)])]
+     argb
+     (byte-array [(unchecked-byte 0xFF) (unchecked-byte (bit-shift-right n 16))
+                  (unchecked-byte (bit-shift-right n 8)) (unchecked-byte n)])]
 
     (XSSFColor. ^bytes argb nil)))
 
@@ -131,15 +132,16 @@
 
 (defn- build-style
   ^XSSFCellStyle [^XSSFWorkbook wb props]
-  (let [st
-        (.createCellStyle wb)
+  (let
+    [st
+     (.createCellStyle wb)
 
-        ^XSSFFont ft
-        (.createFont wb)
+     ^XSSFFont ft
+     (.createFont wb)
 
-        {:strs [bold italic underline font_size size font_name font font_color color bg_color
-                num_format align valign text_wrap border]}
-        props]
+     {:strs [bold italic underline font_size size font_name font font_color color bg_color
+             num_format align valign text_wrap border]}
+     props]
 
     (when bold (.setBold ft true))
     (when italic (.setItalic ft true))
@@ -174,11 +176,12 @@
 
 (defn- ensure-cell
   ^Cell [^XSSFWorkbook wb sheet row col]
-  (let [sh
-        (.getSheetAt wb (int sheet))
+  (let
+    [sh
+     (.getSheetAt wb (int sheet))
 
-        r
-        (or (.getRow sh (int row)) (.createRow sh (int row)))]
+     r
+     (or (.getRow sh (int row)) (.createRow sh (int row)))]
 
     (or (.getCell r (int col)) (.createCell r (int col)))))
 
@@ -194,27 +197,29 @@
 
 (defn- op-new
   []
-  (let [wb
-        (XSSFWorkbook.)
+  (let
+    [wb
+     (XSSFWorkbook.)
 
-        h
-        (swap! wb-counter inc)]
+     h
+     (swap! wb-counter inc)]
 
     (swap! wb-registry assoc h {:wb wb :styles (atom [])})
     h))
 
 (defn- op-add-sheet
   [wb-h name]
-  (let [{:keys [^XSSFWorkbook wb]}
-        (entry-of wb-h)
+  (let
+    [{:keys [^XSSFWorkbook wb]}
+     (entry-of wb-h)
 
-        nm
-        (if (and name (seq (str name)))
-          (WorkbookUtil/createSafeSheetName (str name))
-          (str "Sheet" (inc (.getNumberOfSheets wb))))
+     nm
+     (if (and name (seq (str name)))
+       (WorkbookUtil/createSafeSheetName (str name))
+       (str "Sheet" (inc (.getNumberOfSheets wb))))
 
-        sh
-        (.createSheet wb nm)]
+     sh
+     (.createSheet wb nm)]
 
     {"index" (.getSheetIndex wb sh) "name" (.getSheetName sh)}))
 
@@ -226,11 +231,12 @@
 
 (defn- op-write
   [wb-h sheet row col kind value fmt]
-  (let [{:keys [wb styles]}
-        (entry-of wb-h)
+  (let
+    [{:keys [wb styles]}
+     (entry-of wb-h)
 
-        c
-        (ensure-cell wb sheet row col)]
+     c
+     (ensure-cell wb sheet row col)]
 
     (case (str kind)
       "string"
@@ -258,14 +264,15 @@
 
 (defn- op-url
   [wb-h sheet row col url string tip fmt]
-  (let [{:keys [^XSSFWorkbook wb styles]}
-        (entry-of wb-h)
+  (let
+    [{:keys [^XSSFWorkbook wb styles]}
+     (entry-of wb-h)
 
-        c
-        (ensure-cell wb sheet row col)
+     c
+     (ensure-cell wb sheet row col)
 
-        link
-        (.createHyperlink (.getCreationHelper wb) HyperlinkType/URL)]
+     link
+     (.createHyperlink (.getCreationHelper wb) HyperlinkType/URL)]
 
     (.setAddress link (str url))
     (.setHyperlink c link)
@@ -277,28 +284,31 @@
 
 (defn- op-merge
   [wb-h sheet r1 c1 r2 c2 kind value fmt]
-  (let [{:keys [wb styles]}
-        (entry-of wb-h)
+  (let
+    [{:keys [wb styles]}
+     (entry-of wb-h)
 
-        sh
-        (.getSheetAt ^XSSFWorkbook wb (int sheet))]
+     sh
+     (.getSheetAt ^XSSFWorkbook wb (int sheet))]
 
     (.addMergedRegion sh (CellRangeAddress. (int r1) (int r2) (int c1) (int c2)))
     (op-write wb-h sheet r1 c1 kind value fmt)
     (when-let [st (style-of styles fmt)]
-      (doseq [rr (range r1 (inc (long r2)))
-              cc (range c1 (inc (long c2)))]
+      (doseq
+        [rr (range r1 (inc (long r2)))
+         cc (range c1 (inc (long c2)))]
 
         (.setCellStyle (ensure-cell wb sheet rr cc) ^XSSFCellStyle st)))
     nil))
 
 (defn- op-set-column
   [wb-h sheet first-col last-col width fmt hidden]
-  (let [{:keys [^XSSFWorkbook wb styles]}
-        (entry-of wb-h)
+  (let
+    [{:keys [^XSSFWorkbook wb styles]}
+     (entry-of wb-h)
 
-        sh
-        (.getSheetAt wb (int sheet))]
+     sh
+     (.getSheetAt wb (int sheet))]
 
     (doseq [col (range first-col (inc (long last-col)))]
       (when width (.setColumnWidth sh (int col) (int (Math/round (* 256.0 (double width))))))
@@ -309,14 +319,15 @@
 
 (defn- op-set-row
   [wb-h sheet row height fmt hidden]
-  (let [{:keys [^XSSFWorkbook wb styles]}
-        (entry-of wb-h)
+  (let
+    [{:keys [^XSSFWorkbook wb styles]}
+     (entry-of wb-h)
 
-        sh
-        (.getSheetAt wb (int sheet))
+     sh
+     (.getSheetAt wb (int sheet))
 
-        r
-        (or (.getRow sh (int row)) (.createRow sh (int row)))]
+     r
+     (or (.getRow sh (int row)) (.createRow sh (int row)))]
 
     (when height (.setHeightInPoints r (float height)))
     (when-let [st (style-of styles fmt)]
@@ -326,11 +337,12 @@
 
 (defn- op-close
   [wb-h]
-  (let [{:keys [^XSSFWorkbook wb]}
-        (entry-of wb-h)
+  (let
+    [{:keys [^XSSFWorkbook wb]}
+     (entry-of wb-h)
 
-        bos
-        (ByteArrayOutputStream.)]
+     bos
+     (ByteArrayOutputStream.)]
 
     (.write wb bos)
     (.close wb)

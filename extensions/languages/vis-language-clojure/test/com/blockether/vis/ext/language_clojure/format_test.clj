@@ -9,11 +9,12 @@
 ;; the caller's source.
 (defdescribe format-string-test
              (it "normalizes indentation of a mis-indented multi-line form"
-                 (let [src
-                       "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
+                 (let
+                   [src
+                    "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
 
-                       out
-                       (fmt/format-string src)]
+                    out
+                    (fmt/format-string src)]
 
                    (expect (string? out))
                    (expect (not= src out))
@@ -21,11 +22,12 @@
                    (expect (str/includes? out "\n  (let"))
                    (expect (str/includes? out "\n    (* y 2)"))))
              (it "leaves a one-liner on one line (cljfmt does not reflow)"
-                 (let [src
-                       "(defn foo [x] (* x 2))"
+                 (let
+                   [src
+                    "(defn foo [x] (* x 2))"
 
-                       out
-                       (fmt/format-string src)]
+                    out
+                    (fmt/format-string src)]
 
                    (expect (= 1 (count (str/split-lines out))))))
              (it "returns the source unchanged when it cannot parse"

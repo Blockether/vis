@@ -12,8 +12,9 @@
   [f]
   (let [dir (io/file (System/getProperty "java.io.tmpdir") (str "vis-disco-" (System/nanoTime)))]
     (.mkdirs dir)
-    (try (with-redefs [disco/registry-dir (fn []
-                                            dir)]
+    (try (with-redefs
+           [disco/registry-dir (fn []
+                                 dir)]
            (binding [*tmp* dir]
              (f)))
          (finally (run! #(.delete ^java.io.File %) (reverse (file-seq dir)))))))
@@ -53,16 +54,19 @@
 
 (deftest registry-fresh?-needs-live-pid-and-probe
   (testing "alive pid + probe true"
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     true)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          true)]
       (is (disco/registry-fresh? {:pid 1} (constantly true)))))
   (testing "dead pid fails regardless of probe"
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     false)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          false)]
       (is (not (disco/registry-fresh? {:pid 1} (constantly true))))))
   (testing "live pid but probe false (pid reuse guard)"
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     true)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          true)]
       (is (not (disco/registry-fresh? {:pid 1} (constantly false))))))
   (testing "no pid / nil / non-map"
     (is (not (disco/registry-fresh? {} (constantly true))))
@@ -73,11 +77,12 @@
     (is (disco/pid-alive? (disco/current-pid)))))
 
 (deftest spawn-argv-shape
-  (let [base
-        ["/opt/vis"]
+  (let
+    [base
+     ["/opt/vis"]
 
-        ^java.util.List argv
-        (disco/spawn-argv {:db "/x/vis.db" :port 7890 :host "127.0.0.1" :base base})]
+     ^java.util.List argv
+     (disco/spawn-argv {:db "/x/vis.db" :port 7890 :host "127.0.0.1" :base base})]
 
     (testing "--db is a start flag"
       (is (< (.indexOf argv "start") (.indexOf argv "--db")))
@@ -101,35 +106,40 @@
 
 (deftest discover-or-start!-attaches-to-a-fresh-daemon
   (let [db "/tmp/attach/vis.db"]
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     true)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          true)]
       (disco/write-registry! db {:pid 999 :port 7890 :host "127.0.0.1" :secret "s"})
-      (let [res (disco/discover-or-start! {:db db}
-                                          :probe (constantly true)
-                                          :spawn (fn [_]
-                                                   (throw (ex-info "should not spawn" {}))))]
+      (let
+        [res (disco/discover-or-start! {:db db}
+                                       :probe (constantly true)
+                                       :spawn (fn [_]
+                                                (throw (ex-info "should not spawn" {}))))]
         (is (= :attach (:mode res)))
         (is (= 7890 (get-in res [:entry :port])))))))
 
 (deftest discover-or-start!-spawns-when-missing
-  (let [db
-        "/tmp/spawn/vis.db"
+  (let
+    [db
+     "/tmp/spawn/vis.db"
 
-        spawned
-        (atom 0)
+     spawned
+     (atom 0)
 
-        spawn
-        (fn [_]
-          (swap! spawned inc)
-          (disco/write-registry! db {:pid 123 :port 8000 :host "127.0.0.1" :secret "s"}))]
+     spawn
+     (fn [_]
+       (swap! spawned inc)
+       (disco/write-registry! db {:pid 123 :port 8000 :host "127.0.0.1" :secret "s"}))]
 
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     true)]
-      (let [res (disco/discover-or-start! {:db db}
-                                          :probe (constantly true)
-                                          :spawn spawn
-                                          :timeout-ms 2000
-                                          :poll-ms 10)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          true)]
+      (let
+        [res (disco/discover-or-start! {:db db}
+                                       :probe (constantly true)
+                                       :spawn spawn
+                                       :timeout-ms 2000
+                                       :poll-ms 10)]
         (is (= 1 @spawned))
         (is (= :spawned (:mode res)))
         (is (= 8000 (get-in res [:entry :port])))))))
@@ -138,21 +148,23 @@
   (let [db "/tmp/stale/vis.db"]
     ;; stale entry: dead pid, so not fresh; spawn is a no-op so nothing comes up
     (disco/write-registry! db {:pid dead-pid :port 1 :host "127.0.0.1" :secret "s"})
-    (let [res (disco/discover-or-start! {:db db}
-                                        :probe (constantly true)
-                                        :spawn (fn [_]
-                                                 nil)
-                                        :timeout-ms 120
-                                        :poll-ms 20)]
+    (let
+      [res (disco/discover-or-start! {:db db}
+                                     :probe (constantly true)
+                                     :spawn (fn [_]
+                                              nil)
+                                     :timeout-ms 120
+                                     :poll-ms 20)]
       (is (= :timeout (:mode res)))
       (is (nil? (disco/read-registry db))))))
 
 (deftest acquire-spawn-lock!-is-exclusive-across-holders
-  (let [db
-        "/tmp/lock/vis.db"
+  (let
+    [db
+     "/tmp/lock/vis.db"
 
-        h1
-        (disco/acquire-spawn-lock! db)]
+     h1
+     (disco/acquire-spawn-lock! db)]
 
     (is (some? h1) "first acquirer wins the lock")
     (is (nil? (disco/acquire-spawn-lock! db)) "a second acquirer sees the lock held and backs off")
@@ -166,71 +178,80 @@
   ;; bringing a daemon up: we hold the lock here, and a background thread writes
   ;; the fresh registry a beat later (its daemon self-registering). The call
   ;; under test must NOT spawn a competing daemon — it awaits and attaches.
-  (let [db
-        "/tmp/herd/vis.db"
+  (let
+    [db
+     "/tmp/herd/vis.db"
 
-        spawned
-        (atom 0)
+     spawned
+     (atom 0)
 
-        holder
-        (disco/acquire-spawn-lock! db)]
+     holder
+     (disco/acquire-spawn-lock! db)]
 
     (is (some? holder))
-    (try (with-redefs [disco/pid-alive? (fn [_]
-                                          true)]
+    (try (with-redefs
+           [disco/pid-alive? (fn [_]
+                               true)]
            (future (Thread/sleep 60)
                    (disco/write-registry! db {:pid 777 :port 9100 :host "127.0.0.1" :secret "s"}))
-           (let [res (disco/discover-or-start! {:db db}
-                                               :probe (constantly true)
-                                               :spawn (fn [_]
-                                                        (swap! spawned inc))
-                                               :timeout-ms 3000
-                                               :poll-ms 10)]
+           (let
+             [res (disco/discover-or-start! {:db db}
+                                            :probe (constantly true)
+                                            :spawn (fn [_]
+                                                     (swap! spawned inc))
+                                            :timeout-ms 3000
+                                            :poll-ms 10)]
              (is (= :awaited (:mode res)))
              (is (= 9100 (get-in res [:entry :port])))
              (is (zero? @spawned) "no competing daemon is spawned while another holds the lock")))
          (finally (disco/release-spawn-lock! holder)))))
 
 (deftest discover-or-start!-emits-nothing-on-the-fast-attach-path
-  (let [db
-        "/tmp/ev-attach/vis.db"
+  (let
+    [db
+     "/tmp/ev-attach/vis.db"
 
-        events
-        (atom [])]
+     events
+     (atom [])]
 
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     true)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          true)]
       (disco/write-registry! db {:pid 999 :port 7890 :host "127.0.0.1" :secret "s"})
-      (let [res (disco/discover-or-start! {:db db}
-                                          :probe (constantly true)
-                                          :on-event (fn [ev]
-                                                      (swap! events conj ev)))]
+      (let
+        [res (disco/discover-or-start! {:db db}
+                                       :probe (constantly true)
+                                       :on-event (fn [ev]
+                                                   (swap! events conj ev)))]
         (is (= :attach (:mode res)))
         (is (empty? @events) "an instant attach must stay silent")))))
 
 (deftest discover-or-start!-emits-spawning-tick-and-ready-when-it-spawns
-  (let [db
-        "/tmp/ev-spawn/vis.db"
+  (let
+    [db
+     "/tmp/ev-spawn/vis.db"
 
-        events
-        (atom [])
+     events
+     (atom [])
 
-        spawn
-        (fn [_]
-          (disco/write-registry! db {:pid 123 :port 8000 :host "127.0.0.1" :secret "s"}))]
+     spawn
+     (fn [_]
+       (disco/write-registry! db {:pid 123 :port 8000 :host "127.0.0.1" :secret "s"}))]
 
     ;; pid-alive? is false for the first read (nothing registered yet) so we take
     ;; the spawn path; the spawn writes a live entry that await picks up.
-    (with-redefs [disco/pid-alive? (fn [_]
-                                     true)]
-      (let [res (disco/discover-or-start! {:db db}
-                                          :probe (constantly true)
-                                          :spawn spawn
-                                          :on-event (fn [ev]
-                                                      (swap! events conj ev))
-                                          :timeout-ms 2000
-                                          :poll-ms 10)
-            phases (map :phase @events)]
+    (with-redefs
+      [disco/pid-alive? (fn [_]
+                          true)]
+      (let
+        [res (disco/discover-or-start! {:db db}
+                                       :probe (constantly true)
+                                       :spawn spawn
+                                       :on-event (fn [ev]
+                                                   (swap! events conj ev))
+                                       :timeout-ms 2000
+                                       :poll-ms 10)
+         phases (map :phase @events)]
 
         (is (= :spawned (:mode res)))
         (is (= :spawning (first phases)) "the spawner announces it is starting the daemon")
@@ -238,29 +259,32 @@
             "a ready event carries the mode + resolved entry")))))
 
 (deftest discover-or-start!-emits-awaiting-and-ready-when-another-process-spawns
-  (let [db
-        "/tmp/ev-await/vis.db"
+  (let
+    [db
+     "/tmp/ev-await/vis.db"
 
-        events
-        (atom [])
+     events
+     (atom [])
 
-        holder
-        (disco/acquire-spawn-lock! db)]
+     holder
+     (disco/acquire-spawn-lock! db)]
 
     (is (some? holder))
-    (try (with-redefs [disco/pid-alive? (fn [_]
-                                          true)]
+    (try (with-redefs
+           [disco/pid-alive? (fn [_]
+                               true)]
            (future (Thread/sleep 60)
                    (disco/write-registry! db {:pid 777 :port 9100 :host "127.0.0.1" :secret "s"}))
-           (let [res (disco/discover-or-start! {:db db}
-                                               :probe (constantly true)
-                                               :spawn (fn [_]
-                                                        nil)
-                                               :on-event (fn [ev]
-                                                           (swap! events conj ev))
-                                               :timeout-ms 3000
-                                               :poll-ms 10)
-                 phases (map :phase @events)]
+           (let
+             [res (disco/discover-or-start! {:db db}
+                                            :probe (constantly true)
+                                            :spawn (fn [_]
+                                                     nil)
+                                            :on-event (fn [ev]
+                                                        (swap! events conj ev))
+                                            :timeout-ms 3000
+                                            :poll-ms 10)
+              phases (map :phase @events)]
 
              (is (= :awaited (:mode res)))
              (is (= :awaiting (first phases))

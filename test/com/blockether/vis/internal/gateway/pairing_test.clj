@@ -5,8 +5,9 @@
 
 (deftest pairing-url-is-a-scannable-vis-url
   (testing "payload carries gateway URL and bearer token"
-    (with-redefs [pairing/candidate-hosts (fn [_]
-                                            ["127.0.0.1"])]
+    (with-redefs
+      [pairing/candidate-hosts (fn [_]
+                                 ["127.0.0.1"])]
       (let [payload (pairing/pairing-url {:host "127.0.0.1" :port 7890 :token "secret token"})]
         (is (str/starts-with? payload "vis://gateway?"))
         (is (str/includes? payload "url=http%3A%2F%2F127.0.0.1%3A7890"))

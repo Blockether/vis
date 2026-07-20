@@ -29,18 +29,19 @@
       (expect (= "anthropic/claude-opus-4: 429 rate-limit · openai/gpt-5: 401 auth"
                  (perr/provider-error-attempts-summary exhausted-err))))
   (it "no attempts (older svar / non-routing failure) → empty + nil summary"
-      (let [bare {:message "All providers exhausted"
-                  :data {:type :svar.llm/all-providers-exhausted}}]
+      (let
+        [bare {:message "All providers exhausted" :data {:type :svar.llm/all-providers-exhausted}}]
         (expect (empty? (perr/provider-error-attempts bare)))
         (expect (nil? (perr/provider-error-attempts-summary bare)))))
   (it "title for exhausted is the specific headline"
       (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err))))
   (it "emits one structured provider error block"
-      (let [blocks
-            (perr/provider-error-content exhausted-err)
+      (let
+        [blocks
+         (perr/provider-error-content exhausted-err)
 
-            block
-            (first blocks)]
+         block
+         (first blocks)]
 
         (expect (= 1 (count blocks)))
         (expect (= "error" (get block "type")))
@@ -189,8 +190,9 @@
 (defdescribe
   empty-content-kind-test
   (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
-      (let [err {:message "The model produced neither text nor a tool call"
-                 :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
+      (let
+        [err {:message "The model produced neither text nor a tool call"
+              :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
         (expect (= :empty-content (perr/provider-error-kind err)))
         (expect (= "Model returned an empty response" (perr/provider-error-title err)))
         (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))

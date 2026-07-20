@@ -32,9 +32,10 @@
   [content]
   (let [content (str content)]
     (if-let [[_ fm body] (re-find #"(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z" content)]
-      {:meta (loop [lines (str/split-lines fm)
-                    k nil
-                    acc {}]
+      {:meta (loop
+               [lines (str/split-lines fm)
+                k nil
+                acc {}]
 
                (if (empty? lines)
                  acc
@@ -50,9 +51,10 @@
 
 (defn- non-blank
   [s]
-  (let [s (some-> s
-                  str
-                  str/trim)]
+  (let
+    [s (some-> s
+               str
+               str/trim)]
     (when-not (str/blank? s) s)))
 
 ;; =============================================================================
@@ -64,11 +66,12 @@
    filename stem) backs a missing frontmatter `name`. Returns nil when there
    is no usable name. `tool`/`path` are provenance, carried through verbatim."
   [content {:keys [name-default tool path]}]
-  (let [{:keys [meta body]}
-        (parse-frontmatter content)
+  (let
+    [{:keys [meta body]}
+     (parse-frontmatter content)
 
-        nm
-        (or (non-blank (:name meta)) (non-blank name-default))]
+     nm
+     (or (non-blank (:name meta)) (non-blank name-default))]
 
     (when nm
       {:name nm
@@ -84,11 +87,12 @@
    `name-default` is the skill directory name. `dir`/`tool`/`path` are
    provenance. Returns nil when there is no usable name."
   [content {:keys [name-default tool dir path]}]
-  (let [{:keys [meta body]}
-        (parse-frontmatter content)
+  (let
+    [{:keys [meta body]}
+     (parse-frontmatter content)
 
-        nm
-        (or (non-blank (:name meta)) (non-blank name-default))]
+     nm
+     (or (non-blank (:name meta)) (non-blank name-default))]
 
     (when nm
       {:name nm
@@ -139,17 +143,19 @@
    nearest first, so nearer definitions win the name dedup. pi-style
    `.agents/skills` ancestor discovery."
   [parts]
-  (let [start
-        (project-root)
+  (let
+    [start
+     (project-root)
 
-        stop
-        (git-boundary start)]
+     stop
+     (git-boundary start)]
 
-    (loop [d
-           start
+    (loop
+      [d
+       start
 
-           acc
-           []]
+       acc
+       []]
 
       (if (nil? d)
         acc
@@ -162,12 +168,13 @@
   [leaf]
   (let [cache (dir home ".claude" "plugins" "cache")]
     (when (existing-dir? cache)
-      (for [plugin (.listFiles ^java.io.File cache)
-            :when (existing-dir? plugin)
-            version (.listFiles ^java.io.File plugin)
-            :when (existing-dir? version)
-            :let [d (io/file version leaf)]
-            :when (existing-dir? d)]
+      (for
+        [plugin (.listFiles ^java.io.File cache)
+         :when (existing-dir? plugin)
+         version (.listFiles ^java.io.File plugin)
+         :when (existing-dir? version)
+         :let [d (io/file version leaf)]
+         :when (existing-dir? d)]
 
         d))))
 
@@ -275,19 +282,20 @@
 (defn discover-agents
   "Parse every agent file across `agent-dirs`, first-name-wins, tagged by tool."
   []
-  (dedup-by-name (for [[tool ^java.io.File d]
-                       (agent-dirs)
+  (dedup-by-name (for
+                   [[tool ^java.io.File d]
+                    (agent-dirs)
 
-                       ^java.io.File f
-                       (md-files d)
+                    ^java.io.File f
+                    (md-files d)
 
-                       :let [e
-                             (try (parse-agent (slurp f)
-                                               {:name-default (name-stem (.getName f))
-                                                :tool tool
-                                                :path (.getPath f)})
-                                  (catch Throwable _ nil))]
-                       :when e]
+                    :let [e
+                          (try (parse-agent (slurp f)
+                                            {:name-default (name-stem (.getName f))
+                                             :tool tool
+                                             :path (.getPath f)})
+                               (catch Throwable _ nil))]
+                    :when e]
 
                    e)))
 
@@ -296,24 +304,25 @@
    skill's bundled resource paths attached."
   []
   (dedup-by-name
-    (for [[tool ^java.io.File d]
-          (skill-dirs)
+    (for
+      [[tool ^java.io.File d]
+       (skill-dirs)
 
-          ^java.io.File f
-          (skill-md-files d)
+       ^java.io.File f
+       (skill-md-files d)
 
-          :let [sdir
-                (.getParentFile f)
+       :let [sdir
+             (.getParentFile f)
 
-                e
-                (try (some-> (parse-skill-meta (slurp f)
-                                               {:name-default (.getName sdir)
-                                                :tool tool
-                                                :dir (.getPath sdir)
-                                                :path (.getPath f)})
-                             (assoc :resources (skill-resources sdir)))
-                     (catch Throwable _ nil))]
-          :when e]
+             e
+             (try (some-> (parse-skill-meta (slurp f)
+                                            {:name-default (.getName sdir)
+                                             :tool tool
+                                             :dir (.getPath sdir)
+                                             :path (.getPath f)})
+                          (assoc :resources (skill-resources sdir)))
+                  (catch Throwable _ nil))]
+       :when e]
 
       e)))
 
@@ -330,28 +339,31 @@
 (defn- source-marker
   []
   {:root (.getPath (project-root))
-   :agents (vec (for [[tool ^java.io.File d]
-                      (agent-dirs)
+   :agents (vec (for
+                  [[tool ^java.io.File d]
+                   (agent-dirs)
 
-                      ^java.io.File f
-                      (md-files d)]
+                   ^java.io.File f
+                   (md-files d)]
 
                   [tool (file-mark f)]))
-   :skills (vec (for [[tool ^java.io.File d]
-                      (skill-dirs)
+   :skills (vec (for
+                  [[tool ^java.io.File d]
+                   (skill-dirs)
 
-                      ^java.io.File f
-                      (skill-md-files d)]
+                   ^java.io.File f
+                   (skill-md-files d)]
 
                   [tool (file-mark f)]))})
 
 (defn- ensure!
   []
-  (let [m
-        (source-marker)
+  (let
+    [m
+     (source-marker)
 
-        c
-        @cache]
+     c
+     @cache]
 
     (if (and c (= m (:marker c)))
       c

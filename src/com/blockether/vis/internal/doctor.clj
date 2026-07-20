@@ -39,20 +39,21 @@
 
 (defn- host-system-messages
   [environment]
-  (let [rt
-        (Runtime/getRuntime)
+  (let
+    [rt
+     (Runtime/getRuntime)
 
-        used
-        (- (.totalMemory rt) (.freeMemory rt))
+     used
+     (- (.totalMemory rt) (.freeMemory rt))
 
-        max-mem
-        (.maxMemory rt)
+     max-mem
+     (.maxMemory rt)
 
-        db-path
-        (or (some-> environment
-                    :db-info
-                    :path)
-            "(no DB)")]
+     db-path
+     (or (some-> environment
+                 :db-info
+                 :path)
+         "(no DB)")]
 
     (mapv #(assoc %
              :ext "vis"
@@ -75,12 +76,13 @@
    `:level` into the allowed set; missing/blank `:message` becomes a
    placeholder so the output never has empty lines."
   [m]
-  (let [level
-        (let [l (:level m)]
-          (if (#{:info :warn :error} l) l :error))
+  (let
+    [level
+     (let [l (:level m)]
+       (if (#{:info :warn :error} l) l :error))
 
-        message
-        (or (:message m) "(no message)")]
+     message
+     (or (:message m) "(no message)")]
 
     (-> m
         (assoc :level level
@@ -92,16 +94,17 @@
    the extension to stamp. Throwables become a single :error message
    describing the throw."
   [ext-ns doctor-fn environment]
-  (try (let [returned
-             (doctor-fn environment)
+  (try (let
+         [returned
+          (doctor-fn environment)
 
-             msgs
-             (cond (nil? returned) []
-                   (map? returned) [returned]
-                   (sequential? returned) (vec returned)
-                   :else [{:level :error
-                           :message (str ":ext/doctor-fn returned non-message value: "
-                                         (pr-str returned))}])]
+          msgs
+          (cond (nil? returned) []
+                (map? returned) [returned]
+                (sequential? returned) (vec returned)
+                :else [{:level :error
+                        :message (str ":ext/doctor-fn returned non-message value: "
+                                      (pr-str returned))}])]
 
          (mapv (fn [m]
                  (-> (coerce-message m)
@@ -178,46 +181,48 @@
    (optionally) by an indented `-> <remediation>`. `use-ansi?` controls
    whether to wrap level-colored bits."
   [{:keys [level message remediation] :as m} use-ansi?]
-  (let [icon
-        (or (ICONS level) "•")
+  (let
+    [icon
+     (or (ICONS level) "•")
 
-        color
-        (color-for level use-ansi?)
+     color
+     (color-for level use-ansi?)
 
-        reset
-        (if use-ansi? (:reset ANSI) "")
+     reset
+     (if use-ansi? (:reset ANSI) "")
 
-        dim
-        (if use-ansi? (:dim ANSI) "")
+     dim
+     (if use-ansi? (:dim ANSI) "")
 
-        head
-        (str "  " color icon reset " " (message-label m) ": " message)
+     head
+     (str "  " color icon reset " " (message-label m) ": " message)
 
-        tail
-        (when (and remediation (not (string/blank? remediation)))
-          (str "\n      " dim "-> " remediation reset))]
+     tail
+     (when (and remediation (not (string/blank? remediation)))
+       (str "\n      " dim "-> " remediation reset))]
 
     (str head tail)))
 
 (defn- format-extension-section
   [ext-name messages use-ansi?]
-  (let [bold
-        (if use-ansi? (:bold ANSI) "")
+  (let
+    [bold
+     (if use-ansi? (:bold ANSI) "")
 
-        rst
-        (if use-ansi? (:reset ANSI) "")
+     rst
+     (if use-ansi? (:reset ANSI) "")
 
-        ext-str
-        (str ext-name)
+     ext-str
+     (str ext-name)
 
-        head
-        (str "  " bold ext-str rst)
+     head
+     (str "  " bold ext-str rst)
 
-        rule
-        (str "  " (apply str (repeat (count ext-str) "─")))
+     rule
+     (str "  " (apply str (repeat (count ext-str) "─")))
 
-        body
-        (string/join "\n" (mapv #(format-message % use-ansi?) messages))]
+     body
+     (string/join "\n" (mapv #(format-message % use-ansi?) messages))]
 
     (string/join "\n" [head rule body])))
 
@@ -227,34 +232,36 @@
    auto-detected; pass `:use-ansi?` to override."
   ([messages] (format-output messages {:use-ansi? (tty?)}))
   ([messages {:keys [use-ansi?]}]
-   (let [bold
-         (if use-ansi? (:bold ANSI) "")
+   (let
+     [bold
+      (if use-ansi? (:bold ANSI) "")
 
-         rst
-         (if use-ansi? (:reset ANSI) "")]
+      rst
+      (if use-ansi? (:reset ANSI) "")]
 
      (cond (empty? messages) "vis doctor\n\nNo diagnostic checks registered."
            :else
-           (let [grouped
-                 (group-by :ext messages)
+           (let
+             [grouped
+              (group-by :ext messages)
 
-                 ext-order
-                 (vec (distinct (mapv :ext messages)))
+              ext-order
+              (vec (distinct (mapv :ext messages)))
 
-                 sections
-                 (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
+              sections
+              (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
 
-                 totals
-                 (frequencies (mapv :level messages))
+              totals
+              (frequencies (mapv :level messages))
 
-                 summary
-                 (str "Summary: "
-                      (or (:error totals) 0)
-                      " errors, "
-                      (or (:warn totals) 0)
-                      " warnings, "
-                      (or (:info totals) 0)
-                      " info")]
+              summary
+              (str "Summary: "
+                   (or (:error totals) 0)
+                   " errors, "
+                   (or (:warn totals) 0)
+                   " warnings, "
+                   (or (:info totals) 0)
+                   " info")]
 
              (str bold "vis doctor" rst "\n\n" (string/join "\n\n" sections) "\n\n" summary))))))
 
@@ -270,14 +277,15 @@
    command being dispatched IS `vis doctor`)."
   ([] (startup-hint-line {}))
   ([environment]
-   (let [msgs
-         (try (run-checks environment)
-              (catch Throwable t
-                (tel/log! {:level :error :id ::startup-hint-failed :data {:error (ex-message t)}})
-                []))
+   (let
+     [msgs
+      (try (run-checks environment)
+           (catch Throwable t
+             (tel/log! {:level :error :id ::startup-hint-failed :data {:error (ex-message t)}})
+             []))
 
-         issues
-         (count (filter #(#{:warn :error} (:level %)) msgs))]
+      issues
+      (count (filter #(#{:warn :error} (:level %)) msgs))]
 
      (when (pos? issues)
        (str "⚠ vis: "

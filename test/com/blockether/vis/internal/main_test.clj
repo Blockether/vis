@@ -31,21 +31,23 @@
           (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
         (expect (.contains (str out) "vis providers"))))
   (it "loads channels before rendering channels parent help"
-      (let [out
-            (java.io.StringWriter.)
+      (let
+        [out
+         (java.io.StringWriter.)
 
-            discovered?
-            (atom false)
+         discovered?
+         (atom false)
 
-            fake-channel
-            {:channel/id ::fast-help-test
-             :channel/cmd "zzz-test"
-             :channel/doc "Test channel for help."
-             :channel/main-fn (fn [_args])}]
+         fake-channel
+         {:channel/id ::fast-help-test
+          :channel/cmd "zzz-test"
+          :channel/doc "Test channel for help."
+          :channel/main-fn (fn [_args])}]
 
-        (try (with-redefs [main/discover-all! (fn []
-                                                (reset! discovered? true)
-                                                (registry/register-channel! fake-channel))]
+        (try (with-redefs
+               [main/discover-all! (fn []
+                                     (reset! discovered? true)
+                                     (registry/register-channel! fake-channel))]
                (binding [*out* out]
                  (expect (true? (#'main/fast-help-dispatched? false ["channels" "--help"]))))
                (expect (true? @discovered?))
@@ -149,11 +151,12 @@
 
 (defdescribe sessions-command-test
              (it "registers canonical session verbs under host-owned sessions command"
-                 (let [{:keys [command]}
-                       (commandline/find-leaf (#'main/root-command) ["vis" "sessions"])
+                 (let
+                   [{:keys [command]}
+                    (commandline/find-leaf (#'main/root-command) ["vis" "sessions"])
 
-                       ^String help
-                       (commandline/render-command command ["vis" "sessions"])]
+                    ^String help
+                    (commandline/render-command command ["vis" "sessions"])]
 
                    (expect (.contains help "vis sessions <list|show|fork|delete|search|export>"))
                    (expect (.contains help "list"))

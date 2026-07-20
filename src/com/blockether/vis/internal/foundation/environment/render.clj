@@ -3,9 +3,10 @@
 
 (defn- compact-runtime
   [{:keys [host git languages monorepo repositories]}]
-  (cond-> {:host (select-keys host
-                              [:cwd :user :home :shell :os-name :os-arch :os-version :locale :jvm
-                               :time :timezone])}
+  (cond->
+    {:host (select-keys host
+                        [:cwd :user :home :shell :os-name :os-arch :os-version :locale :jvm :time
+                         :timezone])}
     git
     (assoc :git
       (select-keys git
@@ -37,17 +38,18 @@
   "Build foundation-owned `(:project ctx)` data from runtime snapshot, project
    guidance, and scan warnings."
   [snapshot guidance warnings]
-  (let [runtime
-        (compact-runtime snapshot)
+  (let
+    [runtime
+     (compact-runtime snapshot)
 
-        root
-        (or (get-in runtime [:git :root]) (get-in runtime [:host :cwd]))
+     root
+     (or (get-in runtime [:git :root]) (get-in runtime [:host :cwd]))
 
-        guidance*
-        (when (:found? guidance) (select-keys guidance [:source :path :content]))
+     guidance*
+     (when (:found? guidance) (select-keys guidance [:source :path :content]))
 
-        warnings*
-        (vec (or warnings []))]
+     warnings*
+     (vec (or warnings []))]
 
     {:project (cond-> (assoc runtime :root root)
                 guidance*

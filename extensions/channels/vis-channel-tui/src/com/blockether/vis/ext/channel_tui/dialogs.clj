@@ -27,11 +27,12 @@
   "Shorten an absolute path for DISPLAY by replacing the user's home dir with
    `~`, matching the footer/navigator and web filesystem-roots rail."
   [^String path]
-  (let [path
-        (str path)
+  (let
+    [path
+     (str path)
 
-        home
-        (System/getProperty "user.home")]
+     home
+     (System/getProperty "user.home")]
 
     (if (and (seq path) home (str/starts-with? path home))
       (let [suffix (subs path (count home))]
@@ -55,51 +56,54 @@
    between the theme's dialog min/max widths and bounded by the terminal so
    the box never paints off-screen."
   ^long [^long cols]
-  (let [terminal-w
-        (max 40 (- cols 4))
+  (let
+    [terminal-w
+     (max 40 (- cols 4))
 
-        min-w
-        (min (long t/dialog-min-width) terminal-w)
+     min-w
+     (min (long t/dialog-min-width) terminal-w)
 
-        box-w
-        (-> (long (* cols (double t/dialog-width-ratio)))
-            (max min-w)
-            (min (long t/dialog-max-width))
-            (min terminal-w))]
+     box-w
+     (-> (long (* cols (double t/dialog-width-ratio)))
+         (max min-w)
+         (min (long t/dialog-max-width))
+         (min terminal-w))]
 
     (max 1 (- box-w (long t/dialog-chrome-w)))))
 (defn default-content-height
   "Shared content height every dialog uses, derived from `rows`.
    Clamped to a common modal footprint so dialogs keep equal height."
   ^long [^long rows]
-  (let [terminal-h
-        (max 8 (- rows 4))
+  (let
+    [terminal-h
+     (max 8 (- rows 4))
 
-        min-h
-        (min (long t/dialog-min-height) terminal-h)
+     min-h
+     (min (long t/dialog-min-height) terminal-h)
 
-        box-h
-        (-> (long (* rows (double t/dialog-height-ratio)))
-            (max min-h)
-            (min (long t/dialog-max-height))
-            (min terminal-h))]
+     box-h
+     (-> (long (* rows (double t/dialog-height-ratio)))
+         (max min-h)
+         (min (long t/dialog-max-height))
+         (min terminal-h))]
 
     (max 1 (- box-h (long t/dialog-chrome-h)))))
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
    to cleanly replace the current dialog (wizard step pattern)."
   [^TerminalScreen screen]
-  (let [size
-        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+  (let
+    [size
+     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-        cols
-        (.getColumns size)
+     cols
+     (.getColumns size)
 
-        rows
-        (.getRows size)
+     rows
+     (.getRows size)
 
-        g
-        (.newTextGraphics screen)]
+     g
+     (.newTextGraphics screen)]
 
     (p/set-bg! g t/terminal-bg)
     (p/fill-rect! g 0 0 cols rows)
@@ -125,14 +129,15 @@
   ^long [^long rows requested]
   (if (nil? requested)
     (default-content-height rows)
-    (let [terminal-box
-          (max 8 (- rows 4))
+    (let
+      [terminal-box
+       (max 8 (- rows 4))
 
-          max-h
-          (max 1 (- (min (long t/dialog-max-height) terminal-box) (long t/dialog-chrome-h)))
+       max-h
+       (max 1 (- (min (long t/dialog-max-height) terminal-box) (long t/dialog-chrome-h)))
 
-          floor
-          (min (long min-adaptive-content-h) max-h)]
+       floor
+       (min (long min-adaptive-content-h) max-h)]
 
       (p/clamp (long requested) floor max-h))))
 (defn dialog-layout
@@ -141,38 +146,39 @@
    Layout: border -> title bar -> top separator -> CONTENT -> bottom separator -> hint -> border."
   ([bounds] (dialog-layout bounds nil))
   ([{:keys [top bottom]} content-count]
-   (let [top
-         (long top)
+   (let
+     [top
+      (long top)
 
-         bottom
-         (long bottom)
+      bottom
+      (long bottom)
 
-         raw-top
-         (+ top 3)
+      raw-top
+      (+ top 3)
 
-         hint-row
-         (- bottom 1)
+      hint-row
+      (- bottom 1)
 
-         bot-sep-row
-         (- bottom 2)
+      bot-sep-row
+      (- bottom 2)
 
-         content-bot
-         (dec bot-sep-row)
+      content-bot
+      (dec bot-sep-row)
 
-         full-h
-         (max 1 (inc (- content-bot raw-top)))
+      full-h
+      (max 1 (inc (- content-bot raw-top)))
 
-         v-offset
-         (long (if (and content-count (< (long content-count) full-h))
-                 (quot (- full-h (long content-count)) 2)
-                 0))
+      v-offset
+      (long (if (and content-count (< (long content-count) full-h))
+              (quot (- full-h (long content-count)) 2)
+              0))
 
-         content-top
-         (+ raw-top v-offset)
+      content-top
+      (+ raw-top v-offset)
 
-         ;; Usable height from centered top - never exceeds content-bot
-         content-h
-         (max 1 (inc (- content-bot content-top)))]
+      ;; Usable height from centered top - never exceeds content-bot
+      content-h
+      (max 1 (inc (- content-bot content-top)))]
 
      {:content-top content-top
       :content-bottom content-bot
@@ -180,11 +186,12 @@
       :hint-row hint-row})))
 (defn visible-window-start
   ^long [^long idx ^long current-start ^long visible-count ^long total-count]
-  (let [last-start
-        (max 0 (- total-count visible-count))
+  (let
+    [last-start
+     (max 0 (- total-count visible-count))
 
-        start
-        (p/clamp current-start 0 last-start)]
+     start
+     (p/clamp current-start 0 last-start)]
 
     (cond (< idx start) idx
           (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
@@ -247,9 +254,10 @@
     (let [a (.getActionType ^MouseAction key)]
       (when (= a MouseActionType/CLICK_RELEASE)
         (when-let [b @(.get ^ThreadLocal modal-close-bounds)]
-          (let [pos (.getPosition ^MouseAction key)
-                cx (.getColumn pos)
-                cy (.getRow pos)]
+          (let
+            [pos (.getPosition ^MouseAction key)
+             cx (.getColumn pos)
+             cy (.getRow pos)]
 
             (and (= cy (:y b)) (>= (long cx) (long (:x0 b))) (<= (long cx) (long (:x1 b))))))))))
 
@@ -263,14 +271,14 @@
   (when (instance? MouseAction key)
     (let [a (.getActionType ^MouseAction key)]
       (when (or (= a MouseActionType/MOVE) (= a MouseActionType/DRAG))
-        (let [b @(.get ^ThreadLocal modal-close-bounds)
-              pos (.getPosition ^MouseAction key)
-              cx (.getColumn pos)
-              cy (.getRow pos)
-              hit?
-              (boolean
-                (and b (= cy (:y b)) (>= (long cx) (long (:x0 b))) (<= (long cx) (long (:x1 b)))))
-              cell (.get ^ThreadLocal modal-close-hover)]
+        (let
+          [b @(.get ^ThreadLocal modal-close-bounds)
+           pos (.getPosition ^MouseAction key)
+           cx (.getColumn pos)
+           cy (.getRow pos)
+           hit? (boolean
+                  (and b (= cy (:y b)) (>= (long cx) (long (:x0 b))) (<= (long cx) (long (:x1 b)))))
+           cell (.get ^ThreadLocal modal-close-hover)]
 
           (when (not= @cell hit?) (clojure.core/reset! cell hit?) true))))))
 
@@ -281,19 +289,21 @@
    modal read on this thread. MOVE/DRAG events also refresh the close (X)
    hover flag so the button can light up under the cursor."
   [^TerminalScreen screen]
-  (let [pending-key
-        (.get ^ThreadLocal modal-pending-key)
+  (let
+    [pending-key
+     (.get ^ThreadLocal modal-pending-key)
 
-        key
-        (normalize-modal-key (or @pending-key (.readInput screen)))]
+     key
+     (normalize-modal-key (or @pending-key (.readInput screen)))]
 
     (reset! pending-key nil)
     (update-modal-close-hover! key)
     (cond (modal-close-click? key) {:key (KeyStroke. KeyType/Escape)}
           :else (if-let [delta (modal-wheel-delta key)]
                   (loop [acc (long delta)]
-                    (if-let [next-key (some-> (.pollInput screen)
-                                              normalize-modal-key)]
+                    (if-let
+                      [next-key (some-> (.pollInput screen)
+                                        normalize-modal-key)]
                       (if-let [next-delta (modal-wheel-delta next-key)]
                         (recur (+ acc (long next-delta)))
                         (do (reset! pending-key next-key) {:scroll-delta acc}))
@@ -331,21 +341,23 @@
    SCREEN, not the dialog box, so a footer wider than the content area must
    drop whole trailing chords instead of painting across the border."
   [hint text-w]
-  (let [sep-w
-        (p/display-width "  \u00b7  ")
+  (let
+    [sep-w
+     (p/display-width "  \u00b7  ")
 
-        seg-w
-        (fn [[k a]]
-          (+ (p/display-width k) 1 (p/display-width a)))
+     seg-w
+     (fn [[k a]]
+       (+ (p/display-width k) 1 (p/display-width a)))
 
-        pairs
-        (vec hint)]
+     pairs
+     (vec hint)]
 
-    (loop [i
-           0
+    (loop
+      [i
+       0
 
-           used
-           0]
+       used
+       0]
 
       (if (>= i (count pairs))
         pairs
@@ -368,17 +380,18 @@
      [\"move\" \"select\" \"cancel\"]
      [[\"Up/Dn\" \"move\"] [\"Enter\" \"select\"] [\"Esc\" \"cancel\"]]"
   [g left row inner-w hint]
-  (let [text-w
-        (max 0 (- (long inner-w) 2))
+  (let
+    [text-w
+     (max 0 (- (long inner-w) 2))
 
-        text-x
-        (+ (long left) 2)
+     text-x
+     (+ (long left) 2)
 
-        sep
-        "  \u00b7  "
+     sep
+     "  \u00b7  "
 
-        sep-w
-        (p/display-width sep)]
+     sep-w
+     (p/display-width sep)]
 
     (p/set-colors! g t/dialog-hint t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -388,34 +401,37 @@
       ;; Vec of [key action] pairs - key bold, action dim italic, centered.
       ;; Clipped to whole pairs that fit `text-w` (see `fit-hint-pairs`).
       (and (vector? hint) (seq hint) (vector? (first hint)))
-      (let [pairs
-            (fit-hint-pairs hint text-w)
+      (let
+        [pairs
+         (fit-hint-pairs hint text-w)
 
-            n
-            (count pairs)
+         n
+         (count pairs)
 
-            seg-w
-            (fn [[k a]]
-              (+ (p/display-width k) 1 (p/display-width a)))
+         seg-w
+         (fn [[k a]]
+           (+ (p/display-width k) 1 (p/display-width a)))
 
-            total
-            (+ (long (reduce + (map seg-w pairs))) (long (* sep-w (max 0 (dec n)))))
+         total
+         (+ (long (reduce + (map seg-w pairs))) (long (* sep-w (max 0 (dec n)))))
 
-            start
-            (+ (long text-x) (max 0 (quot (- (long text-w) (long total)) 2)))]
+         start
+         (+ (long text-x) (max 0 (quot (- (long text-w) (long total)) 2)))]
 
-        (loop [i
-               0
+        (loop
+          [i
+           0
 
-               col
-               start]
+           col
+           start]
 
           (when (< i n)
-            (let [[k a]
-                  (nth pairs i)
+            (let
+              [[k a]
+               (nth pairs i)
 
-                  next-col
-                  (+ (long col) (long (seg-w (nth pairs i))))]
+               next-col
+               (+ (long col) (long (seg-w (nth pairs i))))]
 
               ;; Key part - bold, stronger color
               (p/set-fg! g t/dialog-hint-key)
@@ -429,12 +445,13 @@
               (when (< i (dec n)) (p/set-fg! g t/dialog-hint) (p/put-str! g next-col row sep))
               (recur (inc i) (+ (long next-col) sep-w))))))
       ;; Vec of strings - centered, dim italic, dot-joined, clipped to fit.
-      (vector? hint) (let [joined
-                           (ellipsize (apply str (interpose sep hint)) text-w)
+      (vector? hint) (let
+                       [joined
+                        (ellipsize (apply str (interpose sep hint)) text-w)
 
-                           start
-                           (+ (long text-x)
-                              (max 0 (quot (- (long text-w) (p/display-width joined)) 2)))]
+                        start
+                        (+ (long text-x)
+                           (max 0 (quot (- (long text-w) (p/display-width joined)) 2)))]
 
                        (p/set-fg! g t/dialog-hint)
                        (p/styled g [p/ITALIC] (p/put-str! g start row joined))))))
@@ -485,19 +502,20 @@
    ;; `hint` (optional) is a dim, right-aligned chip — e.g. a command's keybind
    ;; — drawn opposite the label (opencode's justify-between rows). The label is
    ;; truncated so it never collides with the hint.
-   (let [prefix
-         (p/selection-prefix selected?)
+   (let
+     [prefix
+      (p/selection-prefix selected?)
 
-         hint
-         (some-> hint
-                 str
-                 not-empty)
+      hint
+      (some-> hint
+              str
+              not-empty)
 
-         hint-w
-         (if hint (+ 2 (p/display-width hint)) 0)
+      hint-w
+      (if hint (+ 2 (p/display-width hint)) 0)
 
-         draw-text
-         (ellipsize (str prefix label) (max 0 (- (long inner-w) 2 (long hint-w))))]
+      draw-text
+      (ellipsize (str prefix label) (max 0 (- (long inner-w) 2 (long hint-w))))]
 
      (p/set-colors! g t/dialog-fg t/dialog-bg)
      (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -516,14 +534,15 @@
   ;; alone is the selection cue. Anchored at `(inc left)` so the
   ;; marker sits right at the dialog's inner edge (see `draw-list-item!`).
   [g left row inner-w selected? checked? label]
-  (let [mark
-        (if checked? "✓" " ")
+  (let
+    [mark
+     (if checked? "✓" " ")
 
-        prefix
-        (str (p/selection-prefix selected?) "[" mark "] ")
+     prefix
+     (str (p/selection-prefix selected?) "[" mark "] ")
 
-        draw-text
-        (ellipsize (str prefix label) (max 0 (- (long inner-w) 2)))]
+     draw-text
+     (ellipsize (str prefix label) (max 0 (- (long inner-w) 2)))]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -536,26 +555,27 @@
   ;; Drawn on `row`; the caller reserves the surrounding rows as margin.
   ([g left row inner-w text cursor] (draw-text-input-field! g left row inner-w text cursor nil))
   ([g left row inner-w text cursor placeholder]
-   (let [prompt
-         "› "
+   (let
+     [prompt
+      "› "
 
-         pw
-         (count prompt)
+      pw
+      (count prompt)
 
-         field-left
-         (+ (long left) 1)
+      field-left
+      (+ (long left) 1)
 
-         text-left
-         (+ (long field-left) (long pw))
+      text-left
+      (+ (long field-left) (long pw))
 
-         text-w
-         (max 1 (- (long inner-w) 2 (long pw) 1))
+      text-w
+      (max 1 (- (long inner-w) 2 (long pw) 1))
 
-         h-off
-         (max 0 (- (long cursor) (dec (long text-w))))
+      h-off
+      (max 0 (- (long cursor) (dec (long text-w))))
 
-         visible
-         (subs text h-off (min (count text) (+ (long h-off) (long text-w))))]
+      visible
+      (subs text h-off (min (count text) (+ (long h-off) (long text-w))))]
 
      (p/set-colors! g t/dialog-fg t/dialog-bg)
      (p/fill-rect! g field-left row (max 1 (- (long inner-w) 2)) 1)
@@ -575,17 +595,18 @@
    help/tasks overlay close buttons use - so modal X buttons are no longer
    static."
   [g box-right title-row]
-  (let [label
-        " \u2715 "
+  (let
+    [label
+     " \u2715 "
 
-        x1
-        (- (long box-right) 1)
+     x1
+     (- (long box-right) 1)
 
-        x0
-        (- (long x1) (dec (count label)))
+     x0
+     (- (long x1) (dec (count label)))
 
-        hovered?
-        @(.get ^ThreadLocal modal-close-hover)]
+     hovered?
+     @(.get ^ThreadLocal modal-close-hover)]
 
     (p/clear-styles! g)
     (p/set-colors! g
@@ -614,54 +635,56 @@
                         (default-content-width cols)
                         (adaptive-content-height rows content-h)))
   ([g cols rows title content-w content-h]
-   (let [cols
-         (long cols)
+   (let
+     [cols
+      (long cols)
 
-         rows
-         (long rows)
+      rows
+      (long rows)
 
-         content-w
-         (long content-w)
+      content-w
+      (long content-w)
 
-         content-h
-         (long content-h)
+      content-h
+      (long content-h)
 
-         [box-w box-h]
-         (render/golden-dialog-size cols rows content-w content-h)
+      [box-w box-h]
+      (render/golden-dialog-size cols rows content-w content-h)
 
-         box-w
-         (long box-w)
+      box-w
+      (long box-w)
 
-         box-h
-         (long box-h)
+      box-h
+      (long box-h)
 
-         box-left
-         (quot (- cols box-w) 2)
+      box-left
+      (quot (- cols box-w) 2)
 
-         box-top
-         (quot (- rows box-h) 2)
+      box-top
+      (quot (- rows box-h) 2)
 
-         box-right
-         (+ box-left box-w -1)
+      box-right
+      (+ box-left box-w -1)
 
-         box-bottom
-         (+ box-top box-h -1)
+      box-bottom
+      (+ box-top box-h -1)
 
-         inner-w
-         (- box-w 2)]
+      inner-w
+      (- box-w 2)]
 
      ;; Shadow - clipped to terminal bounds
-     (let [shd-left
-           (+ box-left 2)
+     (let
+       [shd-left
+        (+ box-left 2)
 
-           shd-top
-           (inc box-top)
+        shd-top
+        (inc box-top)
 
-           shd-w
-           (min box-w (- cols shd-left))
+        shd-w
+        (min box-w (- cols shd-left))
 
-           shd-h
-           (min box-h (- rows shd-top))]
+        shd-h
+        (min box-h (- rows shd-top))]
 
        (when (and (pos? shd-w) (pos? shd-h))
          (p/set-bg! g t/dialog-shadow)
@@ -673,14 +696,15 @@
      (p/set-colors! g t/dialog-border t/dialog-bg)
      (p/draw-box! g box-left box-top box-w box-h)
      ;; Title bar - full-width accent stripe with centered title
-     (let [title-row
-           (inc box-top)
+     (let
+       [title-row
+        (inc box-top)
 
-           title-text
-           (ellipsize (or title "") (max 0 (- inner-w 2)))
+        title-text
+        (ellipsize (or title "") (max 0 (- inner-w 2)))
 
-           tx
-           (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
+        tx
+        (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
 
        ;; Accent bar background
        (p/set-bg! g t/dialog-title-bg)
@@ -718,35 +742,36 @@
    with the title inline on the top border. Same default footprint and the
    same bounds map as the boxed chrome, so `dialog-layout` works unchanged."
   [g ^long cols ^long rows title]
-  (let [content-w
-        (default-content-width cols)
+  (let
+    [content-w
+     (default-content-width cols)
 
-        content-h
-        (default-content-height rows)
+     content-h
+     (default-content-height rows)
 
-        [box-w box-h]
-        (render/golden-dialog-size cols rows content-w content-h)
+     [box-w box-h]
+     (render/golden-dialog-size cols rows content-w content-h)
 
-        box-w
-        (long box-w)
+     box-w
+     (long box-w)
 
-        box-h
-        (long box-h)
+     box-h
+     (long box-h)
 
-        box-left
-        (quot (- cols box-w) 2)
+     box-left
+     (quot (- cols box-w) 2)
 
-        box-top
-        (quot (- rows box-h) 2)
+     box-top
+     (quot (- rows box-h) 2)
 
-        box-right
-        (+ box-left box-w -1)
+     box-right
+     (+ box-left box-w -1)
 
-        box-bottom
-        (+ box-top box-h -1)
+     box-bottom
+     (+ box-top box-h -1)
 
-        inner-w
-        (- box-w 2)]
+     inner-w
+     (- box-w 2)]
 
     (p/set-bg! g t/dialog-bg)
     (p/fill-rect! g box-left box-top box-w box-h)
@@ -774,20 +799,21 @@
    window — before any drawing happens. Returns the SAME shape the chrome does
    ({:left :top :right :bottom :inner-w :inner-h}), from the same golden math."
   [^long cols ^long rows ^long content-w ^long content-h]
-  (let [[box-w box-h]
-        (render/golden-dialog-size cols rows content-w content-h)
+  (let
+    [[box-w box-h]
+     (render/golden-dialog-size cols rows content-w content-h)
 
-        box-w
-        (long box-w)
+     box-w
+     (long box-w)
 
-        box-h
-        (long box-h)
+     box-h
+     (long box-h)
 
-        box-left
-        (quot (- cols box-w) 2)
+     box-left
+     (quot (- cols box-w) 2)
 
-        box-top
-        (quot (- rows box-h) 2)]
+     box-top
+     (quot (- rows box-h) 2)]
 
     {:left box-left
      :top box-top
@@ -816,13 +842,14 @@
    terminal at all — the React-like win."
   [^TerminalScreen screen {:keys [init measure reconcile paint on-key]}]
   (loop [state (if (fn? init) (init) init)]
-    (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-          cols (.getColumns size)
-          rows (.getRows size)
-          geom (measure state cols rows)
-          state (if reconcile (reconcile state geom) state)
-          g (.newTextGraphics screen)
-          cursor (paint g state geom)]
+    (let
+      [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+       cols (.getColumns size)
+       rows (.getRows size)
+       geom (measure state cols rows)
+       state (if reconcile (reconcile state geom) state)
+       g (.newTextGraphics screen)
+       cursor (paint g state geom)]
 
       ;; nil cursor HIDES the hardware cursor (no parked top-left blink — the
       ;; same fix applied to the magit buffer); a text field returns its cell.
@@ -842,63 +869,65 @@
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
   [title items {:keys [filter? placeholder enter-label height]}]
-  (let [items
-        (vec items)
+  (let
+    [items
+     (vec items)
 
-        content?
-        (= height :content)
+     content?
+     (= height :content)
 
-        head-rows
-        (if filter? 2 0)]
+     head-rows
+     (if filter? 2 0)]
 
     {:init {:query "" :selected 0 :scroll 0}
      :measure
      (fn [{:keys [query]} cols rows]
-       (let [q
-             (str/lower-case query)
+       (let
+         [q
+          (str/lower-case query)
 
-             filtered
-             (if (and filter? (not (str/blank? q)))
-               (filterv #(str/includes? (str/lower-case (str (:label %))) q) items)
-               items)
+          filtered
+          (if (and filter? (not (str/blank? q)))
+            (filterv #(str/includes? (str/lower-case (str (:label %))) q) items)
+            items)
 
-             total
-             (count filtered)
+          total
+          (count filtered)
 
-             footer
-             (cond-> []
-               filter?
-               (conj ["type" "filter"])
+          footer
+          (cond-> []
+            filter?
+            (conj ["type" "filter"])
 
-               true
-               (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
+            true
+            (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
 
-             item-w
-             (+ 4
-                (long (reduce max
-                              0
-                              (map (fn [it]
-                                     (+ (p/display-width (str (:label it)))
-                                        (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
-                                   items))))
+          item-w
+          (+ 4
+             (long (reduce max
+                           0
+                           (map (fn [it]
+                                  (+ (p/display-width (str (:label it)))
+                                     (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
+                                items))))
 
-             content-w
-             (footer-content-width cols footer item-w)
+          content-w
+          (footer-content-width cols footer item-w)
 
-             content-h-req
-             (if content? (+ head-rows (min (count items) 16) 1) (adaptive-content-height rows nil))
+          content-h-req
+          (if content? (+ head-rows (min (count items) 16) 1) (adaptive-content-height rows nil))
 
-             bounds
-             (dialog-bounds cols rows content-w content-h-req)
+          bounds
+          (dialog-bounds cols rows content-w content-h-req)
 
-             {:keys [content-top content-h hint-row]}
-             (dialog-layout bounds)
+          {:keys [content-top content-h hint-row]}
+          (dialog-layout bounds)
 
-             list-top
-             (+ (long content-top) (long head-rows))
+          list-top
+          (+ (long content-top) (long head-rows))
 
-             list-h
-             (max 1 (- (long content-h) (long head-rows) 1))]
+          list-h
+          (max 1 (- (long content-h) (long head-rows) 1))]
 
          {:cols cols
           :rows rows
@@ -921,48 +950,46 @@
                     (assoc state
                       :selected selected
                       :scroll (visible-window-start selected (:scroll state) list-h total))))
-     :paint (fn [g {:keys [selected scroll query]}
-                 {:keys [cols rows title filtered total footer content-w content-h-req bounds
-                         content-top content-h hint-row list-top list-h filter? placeholder]}]
-              (let [{:keys [left right inner-w]} bounds]
-                (draw-dialog-chrome! g cols rows title content-w content-h-req)
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-                (let [cursor (when filter?
-                               (draw-text-input-field! g
-                                                       left
-                                                       content-top
-                                                       inner-w
-                                                       query
-                                                       (count query)
-                                                       placeholder))]
-                  (when filter?
-                    (p/set-colors! g t/dialog-border t/dialog-bg)
-                    (p/draw-separator! g left right (inc (long content-top))))
-                  (dotimes [i (min (long list-h) (long total))]
-                    (let [idx (+ (long scroll) (long i))
-                          row (+ (long list-top) (long i))]
+     :paint
+     (fn
+       [g {:keys [selected scroll query]}
+        {:keys [cols rows title filtered total footer content-w content-h-req bounds content-top
+                content-h hint-row list-top list-h filter? placeholder]}]
+       (let [{:keys [left right inner-w]} bounds]
+         (draw-dialog-chrome! g cols rows title content-w content-h-req)
+         (p/set-colors! g t/dialog-fg t/dialog-bg)
+         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
+         (let
+           [cursor
+            (when filter?
+              (draw-text-input-field! g left content-top inner-w query (count query) placeholder))]
+           (when filter?
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (p/draw-separator! g left right (inc (long content-top))))
+           (dotimes [i (min (long list-h) (long total))]
+             (let
+               [idx (+ (long scroll) (long i))
+                row (+ (long list-top) (long i))]
 
-                      (when (< (long idx) (long total))
-                        (let [item (nth filtered idx)]
-                          (draw-list-item!
-                            g
-                            left
-                            row
-                            (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
-                            (= idx selected)
-                            (:label item)
-                            (:hint item))))))
-                  (when (> (long total) (long list-h))
-                    (scrollbar/draw! g
-                                     {:col (+ (long left) (long inner-w))
-                                      :top list-top
-                                      :track-h list-h
-                                      :total-h total
-                                      :inner-h list-h
-                                      :scroll scroll}))
-                  (draw-hint-bar! g left hint-row inner-w footer)
-                  cursor)))
+               (when (< (long idx) (long total))
+                 (let [item (nth filtered idx)]
+                   (draw-list-item! g
+                                    left
+                                    row
+                                    (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
+                                    (= idx selected)
+                                    (:label item)
+                                    (:hint item))))))
+           (when (> (long total) (long list-h))
+             (scrollbar/draw! g
+                              {:col (+ (long left) (long inner-w))
+                               :top list-top
+                               :track-h list-h
+                               :total-h total
+                               :inner-h list-h
+                               :scroll scroll}))
+           (draw-hint-bar! g left hint-row inner-w footer)
+           cursor)))
      :on-key
      (fn [{:keys [selected query] :as state} key {:keys [total filtered]}]
        (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
@@ -1016,69 +1043,72 @@
    of selected strings (possibly empty) on confirm, nil on Esc. Mirrors the
    web modal's alias chips — same proposed options, multi-pick semantics."
   [^TerminalScreen screen title items]
-  (let [items
-        (vec items)
+  (let
+    [items
+     (vec items)
 
-        total
-        (count items)
+     total
+     (count items)
 
-        selected
-        (atom 0)
+     selected
+     (atom 0)
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        checked
-        (atom #{})]
+     checked
+     (atom #{})]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            footer
-            [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
+         footer
+         [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
 
-            item-w
-            (+ 6 (long (reduce max 0 (map #(p/display-width (str %)) items))))
+         item-w
+         (+ 6 (long (reduce max 0 (map #(p/display-width (str %)) items))))
 
-            bounds
-            (draw-dialog-chrome! g
-                                 cols
-                                 rows
-                                 title
-                                 (footer-content-width cols footer item-w)
-                                 (adaptive-content-height rows (max 1 total)))
+         bounds
+         (draw-dialog-chrome! g
+                              cols
+                              rows
+                              title
+                              (footer-content-width cols footer item-w)
+                              (adaptive-content-height rows (max 1 total)))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds (max 1 total))
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds (max 1 total))
 
-            visible
-            (min (long total) (long content-h))
+         visible
+         (min (long total) (long content-h))
 
-            _
-            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+         _
+         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-            _
-            (swap! scroll #(visible-window-start @selected % content-h total))]
+         _
+         (swap! scroll #(visible-window-start @selected % content-h total))]
 
         (if (zero? total)
           (draw-list-item! g left content-top inner-w false "  (no options)")
           (dotimes [i visible]
-            (let [idx (+ (long @scroll) (long i))
-                  row (+ (long content-top) (long i))]
+            (let
+              [idx (+ (long @scroll) (long i))
+               row (+ (long content-top) (long i))]
 
               (when (< (long idx) (long total))
                 (draw-checkbox-item! g
@@ -1122,72 +1152,75 @@
    empty field shows its placeholder dim as a hint. Returns `{(keyword name)
    value}` or ::cancel."
   [^TerminalScreen screen sr]
-  (let [fields
-        (vec (:fields sr))
+  (let
+    [fields
+     (vec (:fields sr))
 
-        n
-        (count fields)
+     n
+     (count fields)
 
-        states
-        (mapv (fn [f]
-                (let [d (vec (str (or (:default f) "")))]
-                  {:text (atom d) :cursor (atom (count d))}))
-              fields)
+     states
+     (mapv (fn [f]
+             (let [d (vec (str (or (:default f) "")))]
+               {:text (atom d) :cursor (atom (count d))}))
+           fields)
 
-        focus
-        (atom 0)
+     focus
+     (atom 0)
 
-        ;; 0..n-1 = fields, n = Start button
-        paste
-        (volatile! nil)
+     ;; 0..n-1 = fields, n = Start button
+     paste
+     (volatile! nil)
 
-        val-of
-        (fn [i]
-          (str/trim (apply str @(:text (nth states i)))))
+     val-of
+     (fn [i]
+       (str/trim (apply str @(:text (nth states i)))))
 
-        title
-        (str "Start " (:label sr))]
+     title
+     (str "Start " (:label sr))]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            ;; each field = label row + input row + gap row (3); + 1 Start row
-            content-h
-            (+ (* n 3) 1)
+         ;; each field = label row + input row + gap row (3); + 1 Start row
+         content-h
+         (+ (* n 3) 1)
 
-            bounds
-            (draw-dialog-chrome! g cols rows title content-h)
+         bounds
+         (draw-dialog-chrome! g cols rows title content-h)
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            {:keys [content-top hint-row]}
-            (dialog-layout bounds content-h)
+         {:keys [content-top hint-row]}
+         (dialog-layout bounds content-h)
 
-            body-w
-            (max 1 (- (long inner-w) 4))
+         body-w
+         (max 1 (- (long inner-w) 4))
 
-            cursor-screen
-            (atom nil)]
+         cursor-screen
+         (atom nil)]
 
         (dotimes [i n]
-          (let [f (nth fields i)
-                st (nth states i)
-                fy (+ (long content-top) (* (long i) 3))
-                iy (inc (long fy))
-                focused? (= @focus i)
-                val (apply str @(:text st))]
+          (let
+            [f (nth fields i)
+             st (nth states i)
+             fy (+ (long content-top) (* (long i) 3))
+             iy (inc (long fy))
+             focused? (= @focus i)
+             val (apply str @(:text st))]
 
             ;; label (accent when focused), with a * for required
             (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
@@ -1216,20 +1249,21 @@
                 (p/put-str! g (+ (long left) 3) iy (ellipsize val body-w))))))
         ;; Add button — the primary action, centered and framed so it reads
         ;; as a button: a solid accent block when focused, accent-inked when not.
-        (let [by
-              (+ (long content-top) (* (long n) 3))
+        (let
+          [by
+           (+ (long content-top) (* (long n) 3))
 
-              focused?
-              (= @focus n)
+           focused?
+           (= @focus n)
 
-              label
-              "  Add  "
+           label
+           "  Add  "
 
-              bw
-              (count label)
+           bw
+           (count label)
 
-              bx
-              (+ (inc (long left)) (max 0 (quot (- (long inner-w) (long bw)) 2)))]
+           bx
+           (+ (inc (long left)) (max 0 (quot (- (long inner-w) (long bw)) 2)))]
 
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc (long left)) by inner-w 1)
@@ -1244,29 +1278,30 @@
                         [["↑/↓/Tab" "field"] ["Enter" "add"] ["Esc" "cancel"]])
         (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
         (.refresh screen Screen$RefreshType/DELTA)
-        (let [submit!
-              (fn []
-                (if-let [missing (first (filter #(and (:required (nth fields %))
-                                                      (str/blank? (val-of %)))
-                                                (range n)))]
-                  (do (vis/notify! (str (or (:label (nth fields missing))
-                                            (some-> (:name (nth fields missing))
-                                                    name))
-                                        " is required")
-                                   :level :warn
-                                   :ttl-ms 3000)
-                      (reset! focus missing)
-                      nil)
-                  (into {}
-                        (map (fn [i]
-                               [(keyword (:name (nth fields i))) (val-of i)])
-                             (range n)))))
+        (let
+          [submit!
+           (fn []
+             (if-let
+               [missing (first (filter #(and (:required (nth fields %)) (str/blank? (val-of %)))
+                                       (range n)))]
+               (do (vis/notify! (str (or (:label (nth fields missing))
+                                         (some-> (:name (nth fields missing))
+                                                 name))
+                                     " is required")
+                                :level :warn
+                                :ttl-ms 3000)
+                   (reset! focus missing)
+                   nil)
+               (into {}
+                     (map (fn [i]
+                            [(keyword (:name (nth fields i))) (val-of i)])
+                          (range n)))))
 
-              cur-field
-              (when (< (long @focus) (long n)) (nth states @focus))
+           cur-field
+           (when (< (long @focus) (long n)) (nth states @focus))
 
-              key
-              (read-modal-key! screen)]
+           key
+           (read-modal-key! screen)]
 
           (cond
             (nil? key) (recur)
@@ -1318,9 +1353,10 @@
    the footer and the settings rows: ● status-ok = live/healthy, ● status-bad =
    errored, ○ dim = otherwise. Returns `[glyph color]`."
   [status]
-  (case (some-> status
-                name
-                keyword)
+  (case
+    (some-> status
+            name
+            keyword)
     (:up :running :ok :active :ready :live :started)
     [p/STATUS_ON t/status-ok]
 
@@ -1338,52 +1374,58 @@
    ITS registry and shows up in this same Backgrounds list (a locally-started one
    never would). No resource type is hardcoded here. Returns nil."
   [^TerminalScreen screen session-id]
-  (let [startables (vec (try (vis/gateway-list-startables session-id)
-                             (catch Throwable t
-                               (tel/log! :warn
-                                         ["dialogs: gateway-list-startables failed" (ex-message t)])
-                               nil)))]
+  (let
+    [startables (vec (try (vis/gateway-list-startables session-id)
+                          (catch Throwable t
+                            (tel/log! :warn
+                                      ["dialogs: gateway-list-startables failed" (ex-message t)])
+                            nil)))]
     (cond (empty? startables)
           (vis/notify! "No startable resources registered" :level :warn :ttl-ms 3000)
           :else
-          (let [sr (if (= 1 (count startables))
-                     (first startables)
-                     (select-dialog! screen
-                                     "Start resource"
-                                     (mapv #(assoc %
-                                              :label (str "Start "
-                                                          (:label %)
-                                                          (when-let [v (get-in % [:variant :label])]
-                                                            (str " · " v))))
-                                           startables)))]
+          (let
+            [sr (if (= 1 (count startables))
+                  (first startables)
+                  (select-dialog! screen
+                                  "Start resource"
+                                  (mapv #(assoc %
+                                           :label (str "Start "
+                                                       (:label %)
+                                                       (when-let [v (get-in % [:variant :label])]
+                                                         (str " · " v))))
+                                        startables)))]
             (when sr
-              (let [root (str (:root sr))
-                    dir (when (:dir? sr)
-                          (let [r (startable-fields-form! screen
-                                                          (assoc sr
-                                                            :label (str (:label sr) " directory")
-                                                            :fields [{:name "dir"
-                                                                      :label "Directory"
-                                                                      :default root
-                                                                      :placeholder root}]))]
-                            (if (= ::cancel r)
-                              ::cancel
-                              (let [d (str/trim (str (:dir r)))]
-                                (if (str/blank? d) root d)))))]
+              (let
+                [root (str (:root sr))
+                 dir (when (:dir? sr)
+                       (let
+                         [r (startable-fields-form! screen
+                                                    (assoc sr
+                                                      :label (str (:label sr) " directory")
+                                                      :fields [{:name "dir"
+                                                                :label "Directory"
+                                                                :default root
+                                                                :placeholder root}]))]
+                         (if (= ::cancel r)
+                           ::cancel
+                           (let [d (str/trim (str (:dir r)))]
+                             (if (str/blank? d) root d)))))]
 
                 (when-not (= ::cancel dir)
-                  (let [selected (cond (seq (:fields sr)) (startable-fields-form! screen sr)
-                                       (:options? sr)
-                                       (multi-select-dialog!
-                                         screen
-                                         (str (:label sr) " — " (or (:options-label sr) "options"))
-                                         (or (:options sr) []))
-                                       :else [])]
+                  (let
+                    [selected (cond (seq (:fields sr)) (startable-fields-form! screen sr)
+                                    (:options? sr)
+                                    (multi-select-dialog!
+                                      screen
+                                      (str (:label sr) " — " (or (:options-label sr) "options"))
+                                      (or (:options sr) []))
+                                    :else [])]
                     (when (and (some? selected) (not= ::cancel selected))
-                      (let [res (try (vis/gateway-start-resource!
-                                       session-id
-                                       {:kind (:kind sr) :dir dir :selected (not-empty selected)})
-                                     (catch Throwable t {:result "error" :message (ex-message t)}))]
+                      (let
+                        [res (try (vis/gateway-start-resource!
+                                    session-id
+                                    {:kind (:kind sr) :dir dir :selected (not-empty selected)})
+                                  (catch Throwable t {:result "error" :message (ex-message t)}))]
                         (cond (= "error" (:result res)) (vis/notify! (str "Start failed: "
                                                                           (or (:message res)
                                                                               "unknown error"))
@@ -1419,64 +1461,65 @@
       ;; UNcached fetch would round-trip the daemon — with per-resource health
       ;; probes — on EVERY keystroke, making the list feel like it hangs. The
       ;; footer uses the same cached path.
-      (let [items (vec (try (vis/gateway-list-resources-cached session-id)
-                            (catch Throwable t
-                              (tel/log! :warn
-                                        ["dialogs: list-resources failed" session-id
-                                         (ex-message t)])
-                              nil)))
-            total (count items)
-            size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            ;; Fixed-size box (the 5-arg chrome ignores item count) drawn over the
-            ;; live screen with a shadow — exactly like select-dialog! — so the
-            ;; chat shows around it instead of a blank wipe. The box's own bg fill
-            ;; clears its interior each frame, so a shrinking list leaves nothing.
-            footer [["↑/↓" "move"] ["a" "add"] ["l" "logs"] ["s" "stop"] ["r" "restart"]
-                    ["Esc" "close"]]
-            bounds (draw-dialog-chrome! g
-                                        cols
-                                        rows
-                                        "Backgrounds"
-                                        (footer-content-width cols footer)
-                                        (max 1 total))
-            {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
+      (let
+        [items (vec (try (vis/gateway-list-resources-cached session-id)
+                         (catch Throwable t
+                           (tel/log! :warn
+                                     ["dialogs: list-resources failed" session-id (ex-message t)])
+                           nil)))
+         total (count items)
+         size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         cols (.getColumns size)
+         rows (.getRows size)
+         g (.newTextGraphics screen)
+         ;; Fixed-size box (the 5-arg chrome ignores item count) drawn over the
+         ;; live screen with a shadow — exactly like select-dialog! — so the
+         ;; chat shows around it instead of a blank wipe. The box's own bg fill
+         ;; clears its interior each frame, so a shrinking list leaves nothing.
+         footer [["↑/↓" "move"] ["a" "add"] ["l" "logs"] ["s" "stop"] ["r" "restart"]
+                 ["Esc" "close"]]
+         bounds (draw-dialog-chrome! g
+                                     cols
+                                     rows
+                                     "Backgrounds"
+                                     (footer-content-width cols footer)
+                                     (max 1 total))
+         {:keys [left inner-w]} bounds
+         {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
 
         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
         (if (zero? total)
           (draw-list-item! g left content-top inner-w false "  (no managed resources)")
           (dotimes [i (min (long total) (long content-h))]
-            (let [r (nth items i)
-                  row-y (+ (long content-top) (long i))
-                  selected? (= i @selected)
-                  ;; `list-resources` returns STRING-keyed data maps (strings-only
-                  ;; boundary); `detail` is a string-keyed sub-map too.
-                  port (get-in r ["detail" "port"])
-                  [glyph gcolor] (resource-status-mark (get r "status"))
-                  ;; kind reads as a TYPE prefix, then the readable name, then
-                  ;; the dim port + status — the ● glyph already says live/errored.
-                  label (str (get r "kind")
-                             "  "
-                             (get r "label")
-                             (when port (str "  :" port))
-                             "  "
-                             (get r "status"))
-                  actions (str (when (get r "can_logs") "[l] logs  ")
-                               (if (get r "can_restart") "[r] restart  [s] stop" "[s] stop"))
-                  action-w (count actions)]
+            (let
+              [r (nth items i)
+               row-y (+ (long content-top) (long i))
+               selected? (= i @selected)
+               ;; `list-resources` returns STRING-keyed data maps (strings-only
+               ;; boundary); `detail` is a string-keyed sub-map too.
+               port (get-in r ["detail" "port"])
+               [glyph gcolor] (resource-status-mark (get r "status"))
+               ;; kind reads as a TYPE prefix, then the readable name, then
+               ;; the dim port + status — the ● glyph already says live/errored.
+               label (str (get r "kind")
+                          "  "
+                          (get r "label")
+                          (when port (str "  :" port))
+                          "  "
+                          (get r "status"))
+               actions (str (when (get r "can_logs") "[l] logs  ")
+                            (if (get r "can_restart") "[r] restart  [s] stop" "[s] stop"))
+               action-w (count actions)]
 
               (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/fill-rect! g (inc (long left)) row-y inner-w 1)
               (p/set-colors! g t/dialog-hint-key t/dialog-bg)
               (p/draw-selection-marker! g (inc (long left)) row-y selected?)
-              (let [label-x (p/status-mark! g (+ (long left) 3) row-y glyph gcolor t/dialog-bg)
-                    action-x (max (long label-x)
-                                  (- (+ (long left) (long inner-w)) (long action-w) 1))
-                    label-w (max 1 (- (long action-x) (long label-x) 2))
-                    lbl (ellipsize label label-w)]
+              (let
+                [label-x (p/status-mark! g (+ (long left) 3) row-y glyph gcolor t/dialog-bg)
+                 action-x (max (long label-x) (- (+ (long left) (long inner-w)) (long action-w) 1))
+                 label-w (max 1 (- (long action-x) (long label-x) 2))
+                 lbl (ellipsize label label-w)]
 
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (if selected?
@@ -1524,9 +1567,10 @@
                                ;; re-raises on the UI thread, which would wedge
                                ;; the dialog — surface it as an inline line.
                                fetch
-                               #(let [f (future (try (vis/gateway-resource-logs session-id rid)
-                                                     (catch Throwable t {::log-fetch-error t})))
-                                      v (deref f 3000 ::log-fetch-timeout)]
+                               #(let
+                                  [f (future (try (vis/gateway-resource-logs session-id rid)
+                                                  (catch Throwable t {::log-fetch-error t})))
+                                   v (deref f 3000 ::log-fetch-timeout)]
 
                                   (cond
                                     (= ::log-fetch-timeout v)
@@ -1568,67 +1612,70 @@
    - :tail?       start pinned to the newest line and re-follow the bottom on
                   refresh (log-tail behaviour); scrolling up releases the pin."
   [^TerminalScreen screen title lines & {:keys [refresh-fn tail?]}]
-  (let [lines*
-        (atom (vec lines))
+  (let
+    [lines*
+     (atom (vec lines))
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        follow
-        (atom (boolean tail?))]
+     follow
+     (atom (boolean tail?))]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            cur-lines
-            @lines*
+         cur-lines
+         @lines*
 
-            bounds
-            (draw-dialog-chrome! g cols rows title (max 8 (count cur-lines)))
+         bounds
+         (draw-dialog-chrome! g cols rows title (max 8 (count cur-lines)))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            text-w
-            (max 1 (- (long inner-w) 2))
+         text-w
+         (max 1 (- (long inner-w) 2))
 
-            wrapped
-            (vec (mapcat (fn [line]
-                           (if (str/blank? (str line)) [""] (render/wrap-text (str line) text-w)))
-                         (or cur-lines [])))
+         wrapped
+         (vec (mapcat (fn [line]
+                        (if (str/blank? (str line)) [""] (render/wrap-text (str line) text-w)))
+                      (or cur-lines [])))
 
-            total
-            (count wrapped)
+         total
+         (count wrapped)
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds total)
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds total)
 
-            visible
-            (min (long total) (long content-h))
+         visible
+         (min (long total) (long content-h))
 
-            max-scroll
-            (max 0 (- (long total) (long visible)))
+         max-scroll
+         (max 0 (- (long total) (long visible)))
 
-            _
-            (when @follow (reset! scroll max-scroll))
+         _
+         (when @follow (reset! scroll max-scroll))
 
-            _
-            (swap! scroll #(p/clamp % 0 max-scroll))]
+         _
+         (swap! scroll #(p/clamp % 0 max-scroll))]
 
         (dotimes [i visible]
-          (let [idx (+ (long @scroll) (long i))
-                row (+ (long content-top) (long i))]
+          (let
+            [idx (+ (long @scroll) (long i))
+             row (+ (long content-top) (long i))]
 
             (when (< (long idx) (long total))
               (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -1653,16 +1700,17 @@
                           (conj ["Enter/Esc" "close"])))
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
-        (let [key
-              (read-modal-key! screen)
+        (let
+          [key
+           (read-modal-key! screen)
 
-              wheel
-              (modal-wheel-step key)
+           wheel
+           (modal-wheel-step key)
 
-              move!
-              (fn [f]
-                (reset! follow false)
-                (swap! scroll #(p/clamp (f %) 0 max-scroll)))]
+           move!
+           (fn [f]
+             (reset! follow false)
+             (swap! scroll #(p/clamp (f %) 0 max-scroll)))]
 
           (cond (nil? key) (recur)
                 wheel (do (move! #(+ (long %) (long wheel))) (recur))
@@ -1703,71 +1751,71 @@
    - :grammar     tree-sitter grammar for coloring (default \"bash\"); nil = plain.
    Returns nil after close."
   [^TerminalScreen screen title lines & {:keys [refresh-fn tail? grammar] :or {grammar "bash"}}]
-  (let [lines*
-        (atom (vec lines))
+  (let
+    [lines*
+     (atom (vec lines))
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        follow
-        (atom (boolean tail?))]
+     follow
+     (atom (boolean tail?))]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            cur-lines
-            @lines*
+         cur-lines
+         @lines*
 
-            ;; Colorize the WHOLE buffer at once (cached by [grammar source]) so
-            ;; multi-line shell constructs classify correctly and identical
-            ;; buffers aren't re-parsed on every scroll keystroke. nil = plain.
-            colored
-            (when (and grammar (seq cur-lines))
-              (some-> (highlight/highlight grammar (str/join "\n" (map str cur-lines)))
-                      str/split-lines))
+         ;; Colorize the WHOLE buffer at once (cached by [grammar source]) so
+         ;; multi-line shell constructs classify correctly and identical
+         ;; buffers aren't re-parsed on every scroll keystroke. nil = plain.
+         colored
+         (when (and grammar (seq cur-lines))
+           (some-> (highlight/highlight grammar (str/join "\n" (map str cur-lines)))
+                   str/split-lines))
 
-            painted
-            (if (and colored (= (count colored) (count cur-lines)))
-              (vec colored)
-              (mapv str cur-lines))
+         painted
+         (if (and colored (= (count colored) (count cur-lines))) (vec colored) (mapv str cur-lines))
 
-            total
-            (count painted)
+         total
+         (count painted)
 
-            title-row
-            0
+         title-row
+         0
 
-            body-top
-            1
+         body-top
+         1
 
-            hint-row
-            (dec rows)
+         hint-row
+         (dec rows)
 
-            body-h
-            (max 1 (- rows 2))
+         body-h
+         (max 1 (- rows 2))
 
-            visible
-            (min total body-h)
+         visible
+         (min total body-h)
 
-            max-scroll
-            (max 0 (- total body-h))
+         max-scroll
+         (max 0 (- total body-h))
 
-            _
-            (when @follow (reset! scroll max-scroll))
+         _
+         (when @follow (reset! scroll max-scroll))
 
-            _
-            (swap! scroll #(p/clamp % 0 max-scroll))]
+         _
+         (swap! scroll #(p/clamp % 0 max-scroll))]
 
         ;; Whole-screen wipe, then the code-block background under the body.
         (render/fill-background! g cols rows)
@@ -1776,24 +1824,26 @@
         ;; Top strip: title left, tail/position indicator right.
         (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
         (p/fill-rect! g 0 title-row cols 1)
-        (let [tag
-              (if @follow
-                "  ● tailing  "
-                (str "  " (min (long total) (+ (long @scroll) (long body-h))) "/" total "  "))
+        (let
+          [tag
+           (if @follow
+             "  ● tailing  "
+             (str "  " (min (long total) (+ (long @scroll) (long body-h))) "/" total "  "))
 
-              tag-w
-              (p/display-width tag)
+           tag-w
+           (p/display-width tag)
 
-              tag-x
-              (max 0 (- cols tag-w))]
+           tag-x
+           (max 0 (- cols tag-w))]
 
           (p/put-str! g 1 title-row (ellipsize (str " " title) (max 1 (- tag-x 1))))
           (p/put-str! g tag-x title-row tag))
         ;; Body: one source line per row, ANSI runs → theme colors, clipped at
         ;; the right edge (no wrap — log lines stay whole and scroll math simple).
         (dotimes [i visible]
-          (let [idx (+ (long @scroll) (long i))
-                y (+ body-top i)]
+          (let
+            [idx (+ (long @scroll) (long i))
+             y (+ body-top i)]
 
             (when (< (long idx) (long total))
               (render/paint-ansi-line! g 0 y (nth painted idx) t/code-block-fg t/code-block-bg))))
@@ -1820,16 +1870,17 @@
         ;; instead of parking it at 0,0, where it blinks in the top-left corner.
         (.setCursorPosition screen nil)
         (.refresh screen Screen$RefreshType/DELTA)
-        (let [key
-              (read-modal-key! screen)
+        (let
+          [key
+           (read-modal-key! screen)
 
-              wheel
-              (modal-wheel-step key)
+           wheel
+           (modal-wheel-step key)
 
-              move!
-              (fn [f]
-                (reset! follow false)
-                (swap! scroll #(p/clamp (f %) 0 max-scroll)))]
+           move!
+           (fn [f]
+             (reset! follow false)
+             (swap! scroll #(p/clamp (f %) 0 max-scroll)))]
 
           (cond (nil? key) (recur)
                 wheel (do (move! #(+ (long %) (long wheel))) (recur))
@@ -1864,120 +1915,122 @@
    :logo lines drawn centered in the accent color above the body,
    :flat? true for the flat chrome (no shadow / title stripe)."
   [^TerminalScreen screen title label & {:keys [mask initial body logo flat?] :or {initial ""}}]
-  (let [text
-        (atom (vec initial))
+  (let
+    [text
+     (atom (vec initial))
 
-        cursor
-        (atom (count initial))
+     cursor
+     (atom (count initial))
 
-        body-lines
-        (text-input-body-lines body)
+     body-lines
+     (text-input-body-lines body)
 
-        paste-buffer
-        (volatile! nil)]
+     paste-buffer
+     (volatile! nil)]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            ;; Content: optional logo + body rows + label row + spacer + 3-row bordered input box.
-            ;; Pre-estimate the content height (at the default width) so the box
-            ;; adapts to a plain prompt; a logo keeps the spacious footprint (nil).
-            est-w
-            (max 1 (- (default-content-width cols) 2))
+         ;; Content: optional logo + body rows + label row + spacer + 3-row bordered input box.
+         ;; Pre-estimate the content height (at the default width) so the box
+         ;; adapts to a plain prompt; a logo keeps the spacious footprint (nil).
+         est-w
+         (max 1 (- (default-content-width cols) 2))
 
-            est-body
-            (->> body-lines
-                 (mapcat (fn [line]
-                           (if (str/blank? line) [""] (render/wrap-text line est-w))))
-                 vec)
+         est-body
+         (->> body-lines
+              (mapcat (fn [line]
+                        (if (str/blank? line) [""] (render/wrap-text line est-w))))
+              vec)
 
-            req-h
-            (when-not (seq logo) (+ 4 (if (seq est-body) 1 0) (count est-body)))
+         req-h
+         (when-not (seq logo) (+ 4 (if (seq est-body) 1 0) (count est-body)))
 
-            bounds
-            (if flat?
-              (draw-flat-dialog-chrome! g cols rows title)
-              (draw-dialog-chrome! g cols rows title req-h))
+         bounds
+         (if flat?
+           (draw-flat-dialog-chrome! g cols rows title)
+           (draw-dialog-chrome! g cols rows title req-h))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            left
-            (long left)
+         left
+         (long left)
 
-            inner-w
-            (long inner-w)
+         inner-w
+         (long inner-w)
 
-            text-w
-            (max 1 (- inner-w 2))
+         text-w
+         (max 1 (- inner-w 2))
 
-            wrapped-body
-            (->> body-lines
-                 (mapcat (fn [line]
-                           (if (str/blank? line) [""] (render/wrap-text line text-w))))
-                 vec)
+         wrapped-body
+         (->> body-lines
+              (mapcat (fn [line]
+                        (if (str/blank? line) [""] (render/wrap-text line text-w))))
+              vec)
 
-            body-gap
-            (if (seq wrapped-body) 1 0)
+         body-gap
+         (if (seq wrapped-body) 1 0)
 
-            full-h
-            (long (:content-h (dialog-layout bounds)))
+         full-h
+         (long (:content-h (dialog-layout bounds)))
 
-            ;; Drop the logo before clipping the body when the terminal is short.
-            logo-lines
-            (if (and (seq logo) (<= (+ 5 body-gap (count logo)) full-h)) (mapv str logo) [])
+         ;; Drop the logo before clipping the body when the terminal is short.
+         logo-lines
+         (if (and (seq logo) (<= (+ 5 body-gap (count logo)) full-h)) (mapv str logo) [])
 
-            logo-block
-            (if (seq logo-lines) (inc (count logo-lines)) 0)
+         logo-block
+         (if (seq logo-lines) (inc (count logo-lines)) 0)
 
-            content-count
-            (+ 4 body-gap logo-block (count wrapped-body))
+         content-count
+         (+ 4 body-gap logo-block (count wrapped-body))
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds content-count)
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds content-count)
 
-            content-top
-            (long content-top)
+         content-top
+         (long content-top)
 
-            content-h
-            (long content-h)
+         content-h
+         (long content-h)
 
-            max-body-lines
-            (max 0 (- content-h 4 body-gap logo-block))
+         max-body-lines
+         (max 0 (- content-h 4 body-gap logo-block))
 
-            visible-body
-            (if (<= (count wrapped-body) max-body-lines)
-              wrapped-body
-              (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "..."))
+         visible-body
+         (if (<= (count wrapped-body) max-body-lines)
+           wrapped-body
+           (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "..."))
 
-            body-top
-            (+ content-top logo-block)
+         body-top
+         (+ content-top logo-block)
 
-            label-row
-            (+ body-top (count visible-body) body-gap)
+         label-row
+         (+ body-top (count visible-body) body-gap)
 
-            input-row
-            (inc label-row)
+         input-row
+         (inc label-row)
 
-            txt
-            (apply str @text)
+         txt
+         (apply str @text)
 
-            display
-            (if mask (apply str (repeat (count txt) mask)) txt)
+         display
+         (if mask (apply str (repeat (count txt) mask)) txt)
 
-            cursor-pos
-            (draw-text-input-field! g (inc left) input-row inner-w display @cursor)]
+         cursor-pos
+         (draw-text-input-field! g (inc left) input-row inner-w display @cursor)]
 
         (when (seq logo-lines)
           ;; Brand accent for the `v i s` emblem — visible on every theme's
@@ -1985,8 +2038,9 @@
           (p/set-colors! g t/header-active-tab-accent t/dialog-bg)
           (p/enable! g p/BOLD)
           (doseq [[idx line] (map-indexed vector logo-lines)]
-            (let [row (+ content-top (long idx))
-                  lx (+ left 1 (max 0 (quot (- inner-w (p/display-width line)) 2)))]
+            (let
+              [row (+ content-top (long idx))
+               lx (+ left 1 (max 0 (quot (- inner-w (p/display-width line)) 2)))]
 
               (p/put-str! g lx row (ellipsize line text-w))))
           (p/clear-styles! g))
@@ -2018,8 +2072,9 @@
               (input/paste-end? key)
               (let [^StringBuilder sb @paste-buffer]
                 (when sb
-                  (let [payload (.toString sb)
-                        chars (vec payload)]
+                  (let
+                    [payload (.toString sb)
+                     chars (vec payload)]
 
                     (vreset! paste-buffer nil)
                     (when-not (.isEmpty payload)
@@ -2053,11 +2108,12 @@
 (defn- draw-button!
   "Draw a button label. Selected = accent bg, normal = dialog bg."
   [g col row label selected?]
-  (let [text
-        (str " " label " ")
+  (let
+    [text
+     (str " " label " ")
 
-        w
-        (count text)]
+     w
+     (count text)]
 
     (if selected?
       (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
@@ -2067,69 +2123,71 @@
 (defn confirm-dialog!
   "Show Y/N confirmation with side-by-side buttons. Returns true/false, nil on Esc."
   [^TerminalScreen screen title message]
-  (let [raw-lines
-        (if (string? message) [message] message)
+  (let
+    [raw-lines
+     (if (string? message) [message] message)
 
-        btn-yes
-        "Yes"
+     btn-yes
+     "Yes"
 
-        btn-no
-        "No"
+     btn-no
+     "No"
 
-        btn-w
-        (+ 2 (max (count btn-yes) (count btn-no)))
+     btn-w
+     (+ 2 (max (count btn-yes) (count btn-no)))
 
-        ;; " Yes " / " No  "
-        btn-gap
-        4
+     ;; " Yes " / " No  "
+     btn-gap
+     4
 
-        ;; content: message lines + blank + button row = lines + 2
-        ch
-        (+ (count raw-lines) 2)
+     ;; content: message lines + blank + button row = lines + 2
+     ch
+     (+ (count raw-lines) 2)
 
-        focus
-        (atom 0)]
+     focus
+     (atom 0)]
 
     ;; 0 = Yes, 1 = No
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            bounds
-            (draw-dialog-chrome! g cols rows title ch)
+         bounds
+         (draw-dialog-chrome! g cols rows title ch)
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds ch)
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds ch)
 
-            text-w
-            (max 0 (- (long inner-w) 2))
+         text-w
+         (max 0 (- (long inner-w) 2))
 
-            lines
-            (vec (mapcat #(render/wrap-text % text-w) raw-lines))
+         lines
+         (vec (mapcat #(render/wrap-text % text-w) raw-lines))
 
-            btn-row
-            (+ (long content-top) (count lines) 1)
+         btn-row
+         (+ (long content-top) (count lines) 1)
 
-            ;; blank line then buttons
-            ;; Center buttons horizontally
-            total-btn-w
-            (+ btn-w btn-gap btn-w)
+         ;; blank line then buttons
+         ;; Center buttons horizontally
+         total-btn-w
+         (+ btn-w btn-gap btn-w)
 
-            btn-start
-            (+ (long left) 1 (quot (- (long inner-w) (long total-btn-w)) 2))]
+         btn-start
+         (+ (long left) 1 (quot (- (long inner-w) (long total-btn-w)) 2))]
 
         ;; Message text - centered per line
         (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -2236,18 +2294,19 @@
    in the path colour magit gives it. nil for lines that name no file (context,
    hunk `@@`, +/- body), which stay flat."
   [text]
-  (let [full
-        (str text)
+  (let
+    [full
+     (str text)
 
-        t
-        (str/triml full)
+     t
+     (str/triml full)
 
-        lead
-        (- (count full) (count t))
+     lead
+     (- (count full) (count t))
 
-        after
-        (fn [marker]
-          (when (str/starts-with? t marker) (+ lead (count marker))))]
+     after
+     (fn [marker]
+       (when (str/starts-with? t marker) (+ lead (count marker))))]
 
     (or (after "diff --git ")
         (after "--- ")
@@ -2265,9 +2324,10 @@
    as an exception onto the modal loop. Screen-free control flow, so it is
    unit-testable with a plain counting `tick!`."
   [thunk tick! poll-ms]
-  (let [fut (future (try (thunk)
-                         (catch Throwable t
-                           {:ok? false :msg (or (not-empty (ex-message t)) (str t))})))]
+  (let
+    [fut (future (try (thunk)
+                      (catch Throwable t
+                        {:ok? false :msg (or (not-empty (ex-message t)) (str t))})))]
     (loop []
 
       (if (realized? fut) @fut (do (tick!) (Thread/sleep (long poll-ms)) (recur))))))
@@ -2356,31 +2416,33 @@
    `<label> <text>` with a live cursor. Enter submits the trimmed string (may
    be empty), Esc returns nil. Opts: :initial (seed text), :mask (echo char)."
   [^TerminalScreen screen g left inner-w hint-row text-w label {:keys [initial mask]}]
-  (let [prefix
-        (str label " ")
+  (let
+    [prefix
+     (str label " ")
 
-        pw
-        (p/display-width prefix)
+     pw
+     (p/display-width prefix)
 
-        text
-        (atom (vec (or initial "")))
+     text
+     (atom (vec (or initial "")))
 
-        cursor
-        (atom (count (or initial "")))]
+     cursor
+     (atom (count (or initial "")))]
 
     (loop []
 
-      (let [txt
-            (apply str @text)
+      (let
+        [txt
+         (apply str @text)
 
-            display
-            (if mask (apply str (repeat (count txt) mask)) txt)
+         display
+         (if mask (apply str (repeat (count txt) mask)) txt)
 
-            field-w
-            (max 1 (- (long text-w) pw))
+         field-w
+         (max 1 (- (long text-w) pw))
 
-            cx
-            (min (+ (long left) 2 pw (long @cursor)) (+ (long left) (long inner-w)))]
+         cx
+         (min (+ (long left) 2 pw (long @cursor)) (+ (long left) (long inner-w)))]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc (long left)) hint-row inner-w 1)
@@ -2415,19 +2477,20 @@
    vec of {:key char :label str :id kw}; renders `<title>  [k] label …` and
    returns the chosen :id, or nil on Esc."
   [^TerminalScreen screen g left inner-w hint-row text-w title choices]
-  (let [by-key
-        (into {}
-              (map (fn [{:keys [key] :as it}]
-                     [(Character/toLowerCase (char key)) it]))
-              choices)
+  (let
+    [by-key
+     (into {}
+           (map (fn [{:keys [key] :as it}]
+                  [(Character/toLowerCase (char key)) it]))
+           choices)
 
-        full
-        (str title
-             "  "
-             (str/join "   "
-                       (map (fn [{:keys [key label]}]
-                              (str "[" key "] " label))
-                            choices)))]
+     full
+     (str title
+          "  "
+          (str/join "   "
+                    (map (fn [{:keys [key label]}]
+                           (str "[" key "] " label))
+                         choices)))]
 
     (loop []
 
@@ -2458,16 +2521,18 @@
 
 (defn- magit-commit-flow!
   [mini root model]
-  (when-let [id ((:choose! mini)
-                  "Commit:"
-                  [{:key \c :label "commit staged" :id :commit}
-                   {:key \a :label "amend last commit" :id :amend}])]
+  (when-let
+    [id ((:choose! mini)
+          "Commit:"
+          [{:key \c :label "commit staged" :id :commit}
+           {:key \a :label "amend last commit" :id :amend}])]
     (let [amend? (= :amend id)]
       (if (and (not amend?) (empty? (:staged model)))
         {:ok? false :msg "Nothing staged — stage with s/S first"}
-        (when-let [msg ((:read! mini)
-                         (if amend? "Amend message:" "Commit message:")
-                         {:initial (if amend? (or (magit/last-commit-message root) "") "")})]
+        (when-let
+          [msg ((:read! mini)
+                 (if amend? "Amend message:" "Commit message:")
+                 {:initial (if amend? (or (magit/last-commit-message root) "") "")})]
           (if (str/blank? msg)
             {:ok? false :msg "Empty message — commit aborted"}
             (magit/commit! root msg {:amend? amend?})))))))
@@ -2512,23 +2577,24 @@
    switch or a set option shows in full `dialog-fg`; inactive rows dim to
    `dialog-hint`, so live switches visibly pop. An option's value trails in parens."
   [g left row inner-w {:keys [key label]} active? value]
-  (let [keytxt
-        (str key)
+  (let
+    [keytxt
+     (str key)
 
-        x
-        (+ (long left) 2)
+     x
+     (+ (long left) 2)
 
-        lx
-        (+ (long x) (p/display-width keytxt) 2)
+     lx
+     (+ (long x) (p/display-width keytxt) 2)
 
-        has-val?
-        (and value (not (str/blank? (str value))))
+     has-val?
+     (and value (not (str/blank? (str value))))
 
-        body
-        (str label (when has-val? (str "  (" value ")")))
+     body
+     (str label (when has-val? (str "  (" value ")")))
 
-        shown
-        (ellipsize body (max 0 (- (+ (long left) (long inner-w)) (long lx) 1)))]
+     shown
+     (ellipsize body (max 0 (- (+ (long left) (long inner-w)) (long lx) 1)))]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -2557,32 +2623,47 @@
    inline minibuffer primitives receive, so the popup shares the status buffer's
    canvas instead of allocating its own screen."
   [^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
-  (let [display-rows
-        (vec (butlast (into []
-                            (mapcat (fn [{:keys [title items]}]
-                                      (concat [{:kind :header :text title}]
-                                              (map (fn [it]
-                                                     {:kind :item :item it})
-                                                   items)
-                                              [{:kind :blank}]))
-                                    (:groups spec)))))
+  (let
+    [display-rows
+     (vec (butlast (into []
+                         (mapcat (fn [{:keys [title items]}]
+                                   (concat [{:kind :header :text title}]
+                                           (map (fn [it]
+                                                  {:kind :item :item it})
+                                                items)
+                                           [{:kind :blank}]))
+                                 (:groups spec)))))
 
-        n
-        (count display-rows)
+     n
+     (count display-rows)
 
-        ;; Anchor the popup to the BOTTOM: body rows sit just above the hint row,
-        ;; the bold title one row above them. Clamp so a short terminal never
-        ;; paints above the top edge.
-        body-top
-        (max 1 (- (long hint-row) (long n)))
+     ;; Anchor the popup to the BOTTOM: body rows sit just above the hint row,
+     ;; the bold title one row above them. Clamp so a short terminal never
+     ;; paints above the top edge.
+     body-top
+     (max 1 (- (long hint-row) (long n)))
 
-        title-row
-        (max 0 (dec (long body-top)))
+     title-row
+     (max 0 (dec (long body-top)))
 
-        footer
-        [["key" "toggle/run"] ["Esc" "cancel"]]]
+     footer
+     [["key" "toggle/run"] ["Esc" "cancel"]]
+
+     ;; Right border column of the host status dialog. Its left/right/bottom
+     ;; borders already frame this bottom region; a top separator one row
+     ;; above the title CAPS it into a compact box sized to the transient's
+     ;; own height — no empty status void floating above the popup.
+     box-right
+     (+ (long left) (long inner-w) 1)
+
+     sep-row
+     (max 0 (dec (long title-row)))]
 
     (loop [state {:switches #{} :options {}}]
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g (inc (long left)) sep-row inner-w 1)
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/draw-separator! g left box-right sep-row)
       (p/set-colors! g t/dialog-fg t/dialog-bg)
       (p/fill-rect! g (inc (long left)) title-row inner-w 1)
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -2590,8 +2671,9 @@
                 [p/BOLD]
                 (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
       (dotimes [i n]
-        (let [r (nth display-rows i)
-              row (+ (long body-top) (long i))]
+        (let
+          [r (nth display-rows i)
+           row (+ (long body-top) (long i))]
 
           (case (:kind r)
             :header
@@ -2607,16 +2689,17 @@
                 (p/fill-rect! g (inc (long left)) row inner-w 1))
 
             :item
-            (let [{:keys [type id] :as it} (:item r)
-                  active? (case type
-                            :switch
-                            (contains? (:switches state) id)
+            (let
+              [{:keys [type id] :as it} (:item r)
+               active? (case type
+                         :switch
+                         (contains? (:switches state) id)
 
-                            :option
-                            (contains? (:options state) id)
+                         :option
+                         (contains? (:options state) id)
 
-                            false)
-                  value (when (= type :option) (get (:options state) id))]
+                         false)
+               value (when (= type :option) (get (:options state) id))]
 
               (draw-transient-item! g left row inner-w it active? value)))))
       (draw-hint-bar! g left hint-row inner-w footer)
@@ -2628,16 +2711,18 @@
           (condp = (key-type key)
             KeyType/Escape nil
             KeyType/Character
-            (let [ch (lower-key-character key)
-                  r (transient-toggle spec state ch)]
+            (let
+              [ch (lower-key-character key)
+               r (transient-toggle spec state ch)]
 
               (case (:kind r)
                 :continue
                 (recur (:state r))
 
                 :option
-                (let [{:keys [id] :as it} (:item r)
-                      v (read-option it (get (:options state) id))]
+                (let
+                  [{:keys [id] :as it} (:item r)
+                   v (read-option it (get (:options state) id))]
 
                   (recur (if (nil? v) state (assoc-in state [:options id] v))))
 
@@ -2654,83 +2739,83 @@
    listed INLINE as its own `Push to <remote>` action in the SAME overlay (magit
    lists push targets in the transient — no second dialog)."
   [busy! mini root]
-  (let [upstream
-        (magit/upstream-name root)
+  (let
+    [upstream
+     (magit/upstream-name root)
 
-        remotes
-        (magit/remotes root)
+     remotes
+     (magit/remotes root)
 
-        g-remote
-        (magit/gerrit-remote root)
+     g-remote
+     (magit/gerrit-remote root)
 
-        g-branch
-        (magit/gerrit-target-branch root)
+     g-branch
+     (magit/gerrit-target-branch root)
 
-        branch
-        (magit/current-branch root)
+     branch
+     (magit/current-branch root)
 
-        gerrit?
-        (some? g-remote)
+     gerrit?
+     (some? g-remote)
 
-        other-remotes
-        (->> remotes
-             (map :name)
-             (remove #(or (= "origin" %) (= g-remote %)))
-             (take 9)
-             vec)
+     other-remotes
+     (->> remotes
+          (map :name)
+          (remove #(or (= "origin" %) (= g-remote %)))
+          (take 9)
+          vec)
 
-        arg-items
-        (cond-> [{:key "f" :type :switch :id :force :label "Force with lease (--force-with-lease)"}
-                 {:key "n" :type :switch :id :dry-run :label "Dry run (--dry-run)"}
-                 {:key "h" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}
-                 {:key "u" :type :switch :id :set-upstream :label "Set upstream (-u)"}]
-          gerrit?
-          (conj {:key "t" :type :option :id :topic :label "Topic"}))
+     arg-items
+     (cond->
+       [{:key "f" :type :switch :id :force :label "Force with lease (--force-with-lease)"}
+        {:key "n" :type :switch :id :dry-run :label "Dry run (--dry-run)"}
+        {:key "h" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}
+        {:key "u" :type :switch :id :set-upstream :label "Set upstream (-u)"}]
+       gerrit?
+       (conj {:key "t" :type :option :id :topic :label "Topic"}))
 
-        primary
-        (if gerrit?
-          {:key "p" :type :action :id :review :label (str "Push for review → refs/for/" g-branch)}
-          {:key "p"
-           :type :action
-           :id :push
-           :label (str "Push" (when upstream (str " to " upstream)))})
+     primary
+     (if gerrit?
+       {:key "p" :type :action :id :review :label (str "Push for review → refs/for/" g-branch)}
+       {:key "p" :type :action :id :push :label (str "Push" (when upstream (str " to " upstream)))})
 
-        ;; Each remaining remote becomes its own inline action row keyed by a
-        ;; digit — magit lists push targets in the SAME transient, never a
-        ;; second dialog.
-        remote-rows
-        (map-indexed (fn [i name]
-                       {:key (str (inc (long i)))
-                        :type :action
-                        :id (keyword "remote" name)
-                        :label (str "Push to " name)})
-                     other-remotes)
+     ;; Each remaining remote becomes its own inline action row keyed by a
+     ;; digit — magit lists push targets in the SAME transient, never a
+     ;; second dialog.
+     remote-rows
+     (map-indexed (fn [i name]
+                    {:key (str (inc (long i)))
+                     :type :action
+                     :id (keyword "remote" name)
+                     :label (str "Push to " name)})
+                  other-remotes)
 
-        remote-action->name
-        (into {}
-              (map (fn [name]
-                     [(keyword "remote" name) name]))
-              other-remotes)
+     remote-action->name
+     (into {}
+           (map (fn [name]
+                  [(keyword "remote" name) name]))
+           other-remotes)
 
-        push-items
-        (vec (cons primary remote-rows))
+     push-items
+     (vec (cons primary remote-rows))
 
-        spec
-        {:groups [{:title "Arguments" :items arg-items} {:title "Push" :items push-items}]}
+     spec
+     {:groups [{:title "Arguments" :items arg-items} {:title "Push" :items push-items}]}
 
-        read-option
-        (fn [{:keys [id]} current]
-          (when (= id :topic)
-            ((:read! mini)
-              "Topic:"
-              {:initial (or current (when (and branch (not= branch g-branch)) branch) "")})))]
+     read-option
+     (fn [{:keys [id]} current]
+       (when (= id :topic)
+         ((:read! mini)
+           "Topic:"
+           {:initial (or current (when (and branch (not= branch g-branch)) branch) "")})))]
 
     (when-let [{:keys [action switches options]} ((:transient! mini) "Push" spec read-option)]
-      (let [base {:set-upstream? (contains? switches :set-upstream)
-                  :force? (contains? switches :force)
-                  :dry-run? (contains? switches :dry-run)
-                  :no-verify? (contains? switches :no-verify)}
-            topic (:topic options)]
+      (let
+        [base {:set-upstream? (contains? switches :set-upstream)
+               :force? (contains? switches :force)
+               :dry-run? (contains? switches :dry-run)
+               :no-verify? (contains? switches :no-verify)}
+         topic (:topic options)]
 
         (cond (= action :review) (run-network! busy!
                                                "Pushing for review"
@@ -2749,11 +2834,11 @@
 
 (defn- magit-branch-flow!
   [mini root]
-  (when-let [id ((:choose! mini)
-                  "Branch:"
-                  [{:key \b :label "checkout" :id :checkout}
-                   {:key \c :label "create & checkout" :id :create}
-                   {:key \k :label "delete" :id :delete}])]
+  (when-let
+    [id ((:choose! mini)
+          "Branch:"
+          [{:key \b :label "checkout" :id :checkout}
+           {:key \c :label "create & checkout" :id :create} {:key \k :label "delete" :id :delete}])]
     (case id
       :checkout
       (when-let [nm ((:read! mini) "Checkout branch:" {})]
@@ -2766,8 +2851,9 @@
       :delete
       (when-let [nm ((:read! mini) "Delete branch:" {})]
         (when-not (str/blank? nm)
-          (let [nm (str/trim nm)
-                r (magit/delete-branch! root nm {})]
+          (let
+            [nm (str/trim nm)
+             r (magit/delete-branch! root nm {})]
 
             (if (:ok? r)
               r
@@ -2779,15 +2865,16 @@
   "`selected-ref` is the stash under the cursor (when the cursor sits on a
    stash row), else the newest stash is the target of pop/apply/drop."
   [mini root selected-ref model]
-  (let [ref
-        (or selected-ref (:ref (first (:stashes model))))
+  (let
+    [ref
+     (or selected-ref (:ref (first (:stashes model))))
 
-        choices
-        (cond-> [{:key \z :label "stash working tree" :id :push}]
-          ref
-          (into [{:key \p :label (str "pop " ref) :id :pop}
-                 {:key \a :label (str "apply " ref) :id :apply}
-                 {:key \k :label (str "drop " ref) :id :drop}]))]
+     choices
+     (cond-> [{:key \z :label "stash working tree" :id :push}]
+       ref
+       (into [{:key \p :label (str "pop " ref) :id :pop}
+              {:key \a :label (str "apply " ref) :id :apply}
+              {:key \k :label (str "drop " ref) :id :drop}]))]
 
     (when-let [id ((:choose! mini) "Stash:" choices)]
       (case id
@@ -2810,13 +2897,15 @@
    viewer opens on git's own colored `--graph` output. `r` inside re-pulls it.
    Returns nil (the log viewer is its own screen; nothing to echo/refresh)."
   [^TerminalScreen screen mini root]
-  (when-let [id ((:choose! mini)
-                  "Log:"
-                  [{:key \l :label "current branch" :id :current}
-                   {:key \a :label "all branches" :id :all}])]
-    (let [all? (= id :all)
-          reload #(magit/log-graph-lines root {:all? all?})
-          title (str "Git log — " (if all? "all branches" (or (magit/current-branch root) "HEAD")))]
+  (when-let
+    [id ((:choose! mini)
+          "Log:"
+          [{:key \l :label "current branch" :id :current}
+           {:key \a :label "all branches" :id :all}])]
+    (let
+      [all? (= id :all)
+       reload #(magit/log-graph-lines root {:all? all?})
+       title (str "Git log — " (if all? "all branches" (or (magit/current-branch root) "HEAD")))]
 
       (log-view-dialog! screen title (reload) :grammar nil :refresh-fn reload)
       (clear-screen! screen)))
@@ -2828,20 +2917,21 @@
    `input/clipboard-copy!` shell helpers. Returns the `{:ok? :msg}` echo
    contract so the action lands in the buffer's footer like every other verb."
   [root {:keys [kind sha ref path]}]
-  (let [payload (case kind
-                  :commit
-                  sha
+  (let
+    [payload (case kind
+               :commit
+               sha
 
-                  :stash
-                  ref
+               :stash
+               ref
 
-                  :file
-                  path
+               :file
+               path
 
-                  :repo
-                  (str root)
+               :repo
+               (str root)
 
-                  nil)]
+               nil)]
     (if (seq (str payload))
       (do (input/clipboard-copy! (str payload)) {:ok? true :msg (str "Copied " payload)})
       {:ok? false :msg "Nothing to copy here"})))
@@ -2850,11 +2940,12 @@
   "Tree-sitter grammar name for a file `path`'s extension (for the RET-visit
    viewer's syntax coloring), or nil when we don't colorize that language."
   [path]
-  (let [s
-        (str path)
+  (let
+    [s
+     (str path)
 
-        dot
-        (str/last-index-of s ".")]
+     dot
+     (str/last-index-of s ".")]
 
     (when (and dot (< (inc (long dot)) (count s)))
       (highlight/grammar-for (subs s (inc (long dot)))))))
@@ -2932,224 +3023,227 @@
    `internal.git`, and the buffer re-reads every repo after each action, so
    what you see is always `git status` truth. Returns nil."
   [^TerminalScreen screen root-or-repos]
-  (let [repo-entries
-        (if (sequential? root-or-repos)
-          (vec root-or-repos)
-          (magit/workspace-roots nil root-or-repos))
+  (let
+    [repo-entries
+     (if (sequential? root-or-repos) (vec root-or-repos) (magit/workspace-roots nil root-or-repos))
 
-        repos*
-        (atom (magit/load-repos repo-entries))
+     repos*
+     (atom (magit/load-repos repo-entries))
 
-        ;; primary-root / multi? read the LOADED repos so non-git roots that
-        ;; load-repos dropped never skew the title or the fallback root.
-        primary-root
-        (:root (first @repos*))
+     ;; primary-root / multi? read the LOADED repos so non-git roots that
+     ;; load-repos dropped never skew the title or the fallback root.
+     primary-root
+     (:root (first @repos*))
 
-        multi?
-        (> (count @repos*) 1)
+     multi?
+     (> (count @repos*) 1)
 
-        expanded
-        (atom #{})
+     expanded
+     (atom #{})
 
-        diff-cache
-        (atom {})
+     diff-cache
+     (atom {})
 
-        sel
-        (atom 0)
+     sel
+     (atom 0)
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        echo
-        (atom nil)
+     echo
+     (atom nil)
 
-        refresh!
-        (fn []
-          (reset! diff-cache {})
-          (reset! repos* (magit/load-repos repo-entries)))
+     refresh!
+     (fn []
+       (reset! diff-cache {})
+       (reset! repos* (magit/load-repos repo-entries)))
 
-        run-action!
-        (fn [result]
-          (when result (reset! echo result) (refresh!))
-          nil)
+     run-action!
+     (fn [result]
+       (when result (reset! echo result) (refresh!))
+       nil)
 
-        model-for
-        (fn [root]
-          (or (some #(when (= (:root %) root) (:model %)) @repos*) (:model (first @repos*))))
+     model-for
+     (fn [root]
+       (or (some #(when (= (:root %) root) (:model %)) @repos*) (:model (first @repos*))))
 
-        diff-fn
-        (fn [row]
-          (let [root
-                (or (:root row) primary-root)
+     diff-fn
+     (fn [row]
+       (let
+         [root
+          (or (:root row) primary-root)
 
-                kind
-                (:kind row)
+          kind
+          (:kind row)
 
-                id
-                (case kind
-                  :commit
-                  (:sha row)
+          id
+          (case kind
+            :commit
+            (:sha row)
 
-                  :stash
-                  (:ref row)
+            :stash
+            (:ref row)
 
-                  (:path row))
+            (:path row))
 
-                k
-                [root (:area row) id]]
+          k
+          [root (:area row) id]]
 
-            (or (get @diff-cache k)
-                (let [lines (or (not-empty (case kind
-                                             :commit
-                                             (magit/commit-diff-lines root row)
+         (or (get @diff-cache k)
+             (let
+               [lines (or (not-empty (case kind
+                                       :commit
+                                       (magit/commit-diff-lines root row)
 
-                                             :stash
-                                             (magit/stash-diff-lines root row)
+                                       :stash
+                                       (magit/stash-diff-lines root row)
 
-                                             (magit/file-diff-lines root row)))
-                                ["(no diff)"])]
-                  (swap! diff-cache assoc k lines)
-                  lines))))]
+                                       (magit/file-diff-lines root row)))
+                          ["(no diff)"])]
+               (swap! diff-cache assoc k lines)
+               lines))))]
 
     (loop []
 
-      (let [repos
-            @repos*
+      (let
+        [repos
+         @repos*
 
-            size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            term-rows
-            (.getRows size)
+         term-rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            buf-rows
-            (magit/multi-status-rows repos @expanded diff-fn)
+         buf-rows
+         (magit/multi-status-rows repos @expanded diff-fn)
 
-            total
-            (count buf-rows)
+         total
+         (count buf-rows)
 
-            title
-            (if multi?
-              (str "Git — " (count repos) " roots")
-              (let [model (:model (first repos))]
-                (str "Git — "
-                     (cond (nil? model) "?"
-                           (:detached? model) "detached HEAD"
-                           :else (:branch model)))))
+         title
+         (if multi?
+           (str "Git — " (count repos) " roots")
+           (let [model (:model (first repos))]
+             (str "Git — "
+                  (cond (nil? model) "?"
+                        (:detached? model) "detached HEAD"
+                        :else (:branch model)))))
 
-            ;; FULLSCREEN overlay that still spares the app's 2-row footer:
-            ;; center in `term-rows - 1` so the box border AND its drop shadow
-            ;; stay ABOVE the persistent footer (model/limits chips) instead of
-            ;; the shadow bleeding onto the footer's top row and hiding it.
-            content-w
-            (max (footer-content-width cols magit-hints) (- cols 4))
+         ;; FULLSCREEN overlay that still spares the app's 2-row footer:
+         ;; center in `term-rows - 1` so the box border AND its drop shadow
+         ;; stay ABOVE the persistent footer (model/limits chips) instead of
+         ;; the shadow bleeding onto the footer's top row and hiding it.
+         content-w
+         (max (footer-content-width cols magit-hints) (- cols 4))
 
-            bounds
-            (draw-dialog-chrome! g cols (dec term-rows) title content-w (max 1 (- term-rows 5)))
+         bounds
+         (draw-dialog-chrome! g cols (dec term-rows) title content-w (max 1 (- term-rows 5)))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            left
-            (long left)
+         left
+         (long left)
 
-            inner-w
-            (long inner-w)
+         inner-w
+         (long inner-w)
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds)
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds)
 
-            content-top
-            (long content-top)
+         content-top
+         (long content-top)
 
-            content-h
-            (long content-h)
+         content-h
+         (long content-h)
 
-            echo-h
-            (if @echo 1 0)
+         echo-h
+         (if @echo 1 0)
 
-            list-h
-            (long (max 1 (- content-h echo-h)))
+         list-h
+         (long (max 1 (- content-h echo-h)))
 
-            _
-            (reset! sel (or (magit/first-selectable buf-rows (min (long @sel) (max 0 (dec total))))
-                            0))
+         _
+         (reset! sel (or (magit/first-selectable buf-rows (min (long @sel) (max 0 (dec total)))) 0))
 
-            visible
-            (long (min total list-h))
+         visible
+         (long (min total list-h))
 
-            max-start
-            (long (max 0 (- total visible)))
+         max-start
+         (long (max 0 (- total visible)))
 
-            start
-            (p/clamp @scroll 0 max-start)
+         start
+         (p/clamp @scroll 0 max-start)
 
-            _
-            (reset! scroll start)
+         _
+         (reset! scroll start)
 
-            text-w
-            (long (max 1 (- inner-w 3)))
+         text-w
+         (long (max 1 (- inner-w 3)))
 
-            busy!
-            (fn [label]
-              ;; Progress lives in the buffer's OWN footer, not a modal overlay:
-              ;; drain keystrokes typed mid-op (so they can't misfire once the
-              ;; verb returns), then paint the spinner + `label…` over the
-              ;; hint-bar row. The rest of the status buffer stays untouched.
-              (try (loop []
+         busy!
+         (fn [label]
+           ;; Progress lives in the buffer's OWN footer, not a modal overlay:
+           ;; drain keystrokes typed mid-op (so they can't misfire once the
+           ;; verb returns), then paint the spinner + `label…` over the
+           ;; hint-bar row. The rest of the status buffer stays untouched.
+           (try (loop []
 
-                     (when (.pollInput screen) (recur)))
-                   (p/set-colors! g t/dialog-fg t/dialog-bg)
-                   (p/fill-rect! g (inc left) hint-row inner-w 1)
-                   (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                   (p/put-str!
-                     g
-                     (+ left 2)
-                     hint-row
-                     (ellipsize
-                       (str (render/spinner-frame (System/currentTimeMillis)) "  " label "…")
-                       text-w))
-                   (.setCursorPosition screen nil)
-                   (.refresh screen Screen$RefreshType/DELTA)
-                   (catch Throwable _ nil)))
+                  (when (.pollInput screen) (recur)))
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) hint-row inner-w 1)
+                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/put-str! g
+                            (+ left 2)
+                            hint-row
+                            (ellipsize
+                              (str (render/spinner-frame (System/currentTimeMillis)) "  " label "…")
+                              text-w))
+                (.setCursorPosition screen nil)
+                (.refresh screen Screen$RefreshType/DELTA)
+                (catch Throwable _ nil)))
 
-            mini
-            {:confirm! (fn [prompt]
-                         (magit-mini-confirm! screen g left inner-w hint-row text-w prompt))
-             :read! (fn [label opts]
-                      (magit-mini-read! screen g left inner-w hint-row text-w label opts))
-             :choose! (fn [title choices]
-                        (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
-             :transient!
-             (fn [title spec read-option]
-               (magit-transient! screen g left inner-w hint-row text-w title spec read-option))}]
+         mini
+         {:confirm! (fn [prompt]
+                      (magit-mini-confirm! screen g left inner-w hint-row text-w prompt))
+          :read! (fn [label opts]
+                   (magit-mini-read! screen g left inner-w hint-row text-w label opts))
+          :choose! (fn [title choices]
+                     (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
+          :transient!
+          (fn [title spec read-option]
+            (magit-transient! screen g left inner-w hint-row text-w title spec read-option))}]
 
         (dotimes [i visible]
-          (let [idx (+ start i)
-                row-y (+ content-top i)]
+          (let
+            [idx (+ start i)
+             row-y (+ content-top i)]
 
             (when (< idx total)
-              (let [row (nth buf-rows idx)
-                    [fg bold? row-bg] (magit-row-style row)
-                    bg (or row-bg t/dialog-bg)
-                    selected? (and (= idx @sel) (magit/selectable? row))]
+              (let
+                [row (nth buf-rows idx)
+                 [fg bold? row-bg] (magit-row-style row)
+                 bg (or row-bg t/dialog-bg)
+                 selected? (and (= idx @sel) (magit/selectable? row))]
 
                 (p/set-colors! g t/dialog-fg bg)
                 (p/fill-rect! g (inc left) row-y inner-w 1)
                 (p/set-colors! g t/dialog-hint-key bg)
                 (p/draw-selection-marker! g (inc left) row-y selected?)
                 (p/set-colors! g fg bg)
-                (let [txt (ellipsize (:text row) text-w)
-                      ;; On a diff HEADER row, split off the filename so it pops
-                      ;; in the path colour while the `diff --git`/a-/b- scaffolding
-                      ;; stays dim — magit's file-heading look.
-                      split (when (= :diff (:kind row)) (magit-diff-filename-split (:text row)))]
+                (let
+                  [txt (ellipsize (:text row) text-w)
+                   ;; On a diff HEADER row, split off the filename so it pops
+                   ;; in the path colour while the `diff --git`/a-/b- scaffolding
+                   ;; stays dim — magit's file-heading look.
+                   split (when (= :diff (:kind row)) (magit-diff-filename-split (:text row)))]
 
                   (cond (and split (< (long split) (count txt)))
                         (let [pre (subs txt 0 split)]
@@ -3180,109 +3274,113 @@
         ;; top-left corner.
         (.setCursorPosition screen nil)
         (.refresh screen Screen$RefreshType/DELTA)
-        (let [key
-              (read-modal-key! screen)
+        (let
+          [key
+           (read-modal-key! screen)
 
-              wheel
-              (modal-wheel-step key)
+           wheel
+           (modal-wheel-step key)
 
-              row
-              (when (and (pos? total) (< (long @sel) total)) (nth buf-rows @sel))
+           row
+           (when (and (pos? total) (< (long @sel) total)) (nth buf-rows @sel))
 
-              row-root
-              (or (:root row) primary-root)
+           row-root
+           (or (:root row) primary-root)
 
-              move!
-              (fn [dir]
-                ;; Move the selection AND keep it in view (arrows follow point).
-                (let [n (magit/next-selectable buf-rows @sel dir)]
-                  (reset! sel n)
-                  (reset! scroll (visible-window-start n @scroll visible total))))
+           move!
+           (fn [dir]
+             ;; Move the selection AND keep it in view (arrows follow point).
+             (let [n (magit/next-selectable buf-rows @sel dir)]
+               (reset! sel n)
+               (reset! scroll (visible-window-start n @scroll visible total))))
 
-              scroll-view!
-              (fn [delta]
-                ;; Scroll the VIEWPORT independently of the selection, so a long
-                ;; expanded diff (whose lines aren't selectable) can be read.
-                (swap! scroll #(p/clamp (+ (long %) (long delta)) 0 max-start)))
+           scroll-view!
+           (fn [delta]
+             ;; Scroll the VIEWPORT independently of the selection, so a long
+             ;; expanded diff (whose lines aren't selectable) can be read.
+             (swap! scroll #(p/clamp (+ (long %) (long delta)) 0 max-start)))
 
-              reconcile-sel!
-              (fn []
-                ;; After a pure viewport scroll, pull the point onto the nearest
-                ;; selectable row still on screen so verbs act on something visible.
-                (let [s
-                      (long @scroll)
+           reconcile-sel!
+           (fn []
+             ;; After a pure viewport scroll, pull the point onto the nearest
+             ;; selectable row still on screen so verbs act on something visible.
+             (let
+               [s
+                (long @scroll)
 
-                      hi
-                      (long (min total (+ s visible)))]
+                hi
+                (long (min total (+ s visible)))]
 
-                  (when (or (< (long @sel) s) (>= (long @sel) hi))
-                    (when-let [n (some #(when (magit/selectable? (nth buf-rows %)) %) (range s hi))]
-                      (reset! sel n)))))
+               (when (or (< (long @sel) s) (>= (long @sel) hi))
+                 (when-let [n (some #(when (magit/selectable? (nth buf-rows %)) %) (range s hi))]
+                   (reset! sel n)))))
 
-              toggle-diff!
-              (fn []
-                (let [kind
-                      (:kind row)
+           toggle-diff!
+           (fn []
+             (let
+               [kind
+                (:kind row)
 
-                      root
-                      (or (:root row) primary-root)
+                root
+                (or (:root row) primary-root)
 
-                      k
-                      (case kind
-                        ;; TAB on a section header folds/unfolds the whole
-                        ;; section (magit's section visibility toggle).
-                        :section
-                        (when (:collapsible? row) [root :section (:area row)])
+                k
+                (case kind
+                  ;; TAB on a section header folds/unfolds the whole
+                  ;; section (magit's section visibility toggle).
+                  :section
+                  (when (:collapsible? row) [root :section (:area row)])
 
-                        :commit
-                        [root (:area row) (:sha row)]
+                  :commit
+                  [root (:area row) (:sha row)]
 
-                        :stash
-                        [root :stashes (:ref row)]
+                  :stash
+                  [root :stashes (:ref row)]
 
-                        :file
-                        [root (:area row) (:path row)]
+                  :file
+                  [root (:area row) (:path row)]
 
-                        nil)]
+                  nil)]
 
-                  (when k (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))
+               (when k (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))
 
-              visit!
-              (fn [target]
-                ;; magit's RET: VISIT the thing under point in the FULLSCREEN
-                ;; viewer (TAB still folds the inline diff peek). A file opens
-                ;; its working-tree body, syntax-highlighted by extension and
-                ;; falling back to its diff for a deleted/renamed entry; a
-                ;; commit or stash opens its full patch.
-                (when target
-                  (let [vroot (or (:root target) primary-root)]
-                    (case (:kind target)
-                      :file
-                      (let [{:keys [path]} target
-                            body (magit/visit-file-lines vroot path)]
+           visit!
+           (fn [target]
+             ;; magit's RET: VISIT the thing under point in the FULLSCREEN
+             ;; viewer (TAB still folds the inline diff peek). A file opens
+             ;; its working-tree body, syntax-highlighted by extension and
+             ;; falling back to its diff for a deleted/renamed entry; a
+             ;; commit or stash opens its full patch.
+             (when target
+               (let [vroot (or (:root target) primary-root)]
+                 (case (:kind target)
+                   :file
+                   (let
+                     [{:keys [path]} target
+                      body (magit/visit-file-lines vroot path)]
 
-                        (if (seq body)
-                          (do (log-view-dialog! screen
-                                                (str path)
-                                                body
-                                                :grammar
-                                                (magit-path-grammar path))
-                              (clear-screen! screen))
-                          (when-let [d (not-empty (magit/file-diff-lines vroot target))]
-                            (log-view-dialog! screen (str path "  (diff)") d :grammar nil)
-                            (clear-screen! screen))))
+                     (if (seq body)
+                       (do (log-view-dialog! screen
+                                             (str path)
+                                             body
+                                             :grammar
+                                             (magit-path-grammar path))
+                           (clear-screen! screen))
+                       (when-let [d (not-empty (magit/file-diff-lines vroot target))]
+                         (log-view-dialog! screen (str path "  (diff)") d :grammar nil)
+                         (clear-screen! screen))))
 
-                      :commit
-                      (when-let [d (not-empty (magit/commit-diff-lines vroot target))]
-                        (log-view-dialog! screen (str "commit " (:sha target)) d :grammar nil)
-                        (clear-screen! screen))
+                   :commit
+                   (when-let [d (not-empty (magit/commit-diff-lines vroot target))]
+                     (log-view-dialog! screen (str "commit " (:sha target)) d :grammar nil)
+                     (clear-screen! screen))
 
-                      :stash
-                      (when-let [d (not-empty (magit/stash-diff-lines vroot target))]
-                        (log-view-dialog! screen (str (:ref target)) d :grammar nil)
-                        (clear-screen! screen))
+                   :stash
+                   (when-let [d (not-empty (magit/stash-diff-lines vroot target))]
+                     (log-view-dialog! screen (str (:ref target)) d :grammar nil)
+                     (clear-screen! screen))
 
-                      nil))))]
+                   nil))))]
 
           (cond (nil? key) (recur)
                 wheel (do (scroll-view! wheel) (reconcile-sel!) (recur))
@@ -3329,10 +3427,10 @@
 
 (defn- current-model-info
   []
-  (when-let [router (try (vis/get-router)
-                         (catch Throwable t
-                           (tel/log! :warn ["dialogs: get-router failed" (ex-message t)])
-                           nil))]
+  (when-let
+    [router
+     (try (vis/get-router)
+          (catch Throwable t (tel/log! :warn ["dialogs: get-router failed" (ex-message t)]) nil))]
     (try (vis/resolve-effective-model router)
          (catch Throwable t
            (tel/log! :warn ["dialogs: resolve-effective-model failed" (ex-message t)])
@@ -3376,8 +3474,9 @@
    ;; Grouped by `:group` into one section per group — the SAME flat, grouped
    ;; shape the web settings modal uses (no tabs, no single "Feature Toggles"
    ;; bucket). Returns nil when nothing matches so no empty header shows.
-   (let [specs (->> (vis/toggles-for-channel :tui)
-                    (filter include?))]
+   (let
+     [specs (->> (vis/toggles-for-channel :tui)
+                 (filter include?))]
      (when (seq specs)
        (vec (mapcat (fn [[group group-specs]]
                       (cons
@@ -3407,10 +3506,11 @@
    When no extensions have registered toggleable TUI contributors,
    returns nil so the section stays hidden — don't show an empty band."
   []
-  (let [contributions (->> (vis/channel-contributions-for :tui)
-                           (filter #(contains? tui-contributor-slots (:slot %)))
-                           (remove #(contains? undisableable-tui-contributions (:id %)))
-                           (sort-by (juxt #(str (:slot %)) #(str (:id %)))))]
+  (let
+    [contributions (->> (vis/channel-contributions-for :tui)
+                        (filter #(contains? tui-contributor-slots (:slot %)))
+                        (remove #(contains? undisableable-tui-contributions (:id %)))
+                        (sort-by (juxt #(str (:slot %)) #(str (:id %)))))]
     (when (seq contributions)
       (vec (cons {:type :section :label "Header / Footer Contributors"}
                  (for [{:keys [id slot]} contributions]
@@ -3464,19 +3564,20 @@
    `Channel Tui`. Falls back to the full string if nothing useful
    survives."
   [sym-or-str]
-  (let [raw
-        (str sym-or-str)
+  (let
+    [raw
+     (str sym-or-str)
 
-        segments
-        (->> (str/split raw #"\.")
-             (remove str/blank?)
-             vec)
+     segments
+     (->> (str/split raw #"\.")
+          (remove str/blank?)
+          vec)
 
-        cleaned
-        (vec (remove #(contains? namespace-noise-segments %) segments))
+     cleaned
+     (vec (remove #(contains? namespace-noise-segments %) segments))
 
-        leaf
-        (or (last cleaned) (last (remove #{"com" "blockether"} segments)) (last segments))]
+     leaf
+     (or (last cleaned) (last (remove #{"com" "blockether"} segments)) (last segments))]
 
     (or leaf raw)))
 (defn- extension-kind
@@ -3486,35 +3587,36 @@
         :else :extension))
 (defn- extension-display-label
   [ext]
-  (let [provider-label
-        (some-> (first (:ext/providers ext))
-                :provider/label
-                (str/replace #"\s+\(.*\)$" ""))
+  (let
+    [provider-label
+     (some-> (first (:ext/providers ext))
+             :provider/label
+             (str/replace #"\s+\(.*\)$" ""))
 
-        channel-label
-        (or (some-> (first (:ext/channels ext))
-                    :channel/cmd
-                    titleize-label)
-            (some-> (first (:ext/channels ext))
-                    :channel/id
-                    name
-                    titleize-label))
+     channel-label
+     (or (some-> (first (:ext/channels ext))
+                 :channel/cmd
+                 titleize-label)
+         (some-> (first (:ext/channels ext))
+                 :channel/id
+                 name
+                 titleize-label))
 
-        alias-label
-        (some-> (get-in ext [:ext/engine :ext.engine/alias])
-                name
-                titleize-label)
+     alias-label
+     (some-> (get-in ext [:ext/engine :ext.engine/alias])
+             name
+             titleize-label)
 
-        ;; Take the meaningful tail segment of the namespace (drop
-        ;; `com.blockether.vis.ext` vendor prefix and the trailing
-        ;; `core` / `bot` / `main` registrar entry-point convention)
-        ;; and titleize THAT, so `voice` -> `Voice`, `goal` ->
-        ;; `Goal`, `channel-tui` -> `Channel Tui` instead of the
-        ;; previous `Com.blockether.vis.ext.voice.core`.
-        ns-label
-        (some-> (:ext/name ext)
-                meaningful-namespace-segment
-                titleize-label)]
+     ;; Take the meaningful tail segment of the namespace (drop
+     ;; `com.blockether.vis.ext` vendor prefix and the trailing
+     ;; `core` / `bot` / `main` registrar entry-point convention)
+     ;; and titleize THAT, so `voice` -> `Voice`, `goal` ->
+     ;; `Goal`, `channel-tui` -> `Channel Tui` instead of the
+     ;; previous `Com.blockether.vis.ext.voice.core`.
+     ns-label
+     (some-> (:ext/name ext)
+             meaningful-namespace-segment
+             titleize-label)]
 
     (or (not-empty provider-label)
         (not-empty channel-label)
@@ -3539,17 +3641,18 @@
   (->> (vis/registered-extensions)
        (mapcat
          (fn [ext]
-           (let [ext-id
-                 (:ext/name ext)
+           (let
+             [ext-id
+              (:ext/name ext)
 
-                 ext-kind
-                 (extension-kind ext)
+              ext-kind
+              (extension-kind ext)
 
-                 ext-label
-                 (extension-display-label ext)
+              ext-label
+              (extension-display-label ext)
 
-                 provider-ids
-                 (set (keep :provider/id (:ext/providers ext)))]
+              provider-ids
+              (set (keep :provider/id (:ext/providers ext)))]
 
              (keep-indexed (fn [idx decl]
                              (when-let [k (setting-key (:key decl))]
@@ -3566,8 +3669,9 @@
        vec))
 (defn- extension-setting-rows
   []
-  (mapv (fn [{:keys [key type choices label description extension-id extension-kind extension-label
-                     provider-ids]}]
+  (mapv (fn
+          [{:keys [key type choices label description extension-id extension-kind extension-label
+                   provider-ids]}]
           {:type (or type :toggle)
            :id [:extension-setting extension-id key]
            :key key
@@ -3584,23 +3688,25 @@
   (->> (vis/registered-extensions)
        (mapcat
          (fn [ext]
-           (let [ext-id
-                 (:ext/name ext)
+           (let
+             [ext-id
+              (:ext/name ext)
 
-                 ext-kind
-                 (extension-kind ext)
+              ext-kind
+              (extension-kind ext)
 
-                 ext-label
-                 (extension-display-label ext)]
+              ext-label
+              (extension-display-label ext)]
 
-             (for [decl
-                   (:ext/env ext)
+             (for
+               [decl
+                (:ext/env ext)
 
-                   :let [name
-                         (some-> (:name decl)
-                                 str
-                                 str/trim)]
-                   :when (not (str/blank? name))]
+                :let [name
+                      (some-> (:name decl)
+                              str
+                              str/trim)]
+                :when (not (str/blank? name))]
 
                (assoc decl
                  :name name
@@ -3611,8 +3717,9 @@
        vec))
 (defn- extension-env-rows
   []
-  (mapv (fn [{:keys [name label description extension-id extension-kind extension-label secret?
-                     required?]}]
+  (mapv (fn
+          [{:keys [name label description extension-id extension-kind extension-label secret?
+                   required?]}]
           {:type :env-var
            :id [:environment name]
            :name name
@@ -3651,20 +3758,21 @@
    with nothing to show drop out."
   ([] (settings-rows (extension-option-rows)))
   ([extension-rows]
-   (let [active-provider
-         (current-provider-id)
+   (let
+     [active-provider
+      (current-provider-id)
 
-         all-extension-rows
-         (filterv #(provider-row-active? active-provider %) extension-rows)
+      all-extension-rows
+      (filterv #(provider-row-active? active-provider %) extension-rows)
 
-         provider-rows
-         (extension-rows-of-kind all-extension-rows :provider)
+      provider-rows
+      (extension-rows-of-kind all-extension-rows :provider)
 
-         channel-rows
-         (extension-rows-of-kind all-extension-rows :channel)
+      channel-rows
+      (extension-rows-of-kind all-extension-rows :channel)
 
-         generic-rows
-         (extension-rows-of-kind all-extension-rows :extension)]
+      generic-rows
+      (extension-rows-of-kind all-extension-rows :extension)]
 
      (vec (concat [{:type :section :label "Terminal UI"}]
                   (settings-ui-options)
@@ -3710,11 +3818,12 @@
     label
 
     :registry-toggle
-    (let [spec
-          (vis/toggle-spec toggle-id)
+    (let
+      [spec
+       (vis/toggle-spec toggle-id)
 
-          toggle-val
-          (vis/toggle-value toggle-id)]
+       toggle-val
+       (vis/toggle-value toggle-id)]
 
       (if (= :enum (:type spec)) (str label ": " (clojure.core/name toggle-val)) label))
 
@@ -3727,20 +3836,21 @@
    ◆ (accent) = a value/enum to cycle, ▸ (accent) = an action. Returns
    `[glyph fg-color]`."
   [{:keys [key type set-key item-id toggle-id]} values]
-  (let [on
-        [p/STATUS_ON t/status-ok]
+  (let
+    [on
+     [p/STATUS_ON t/status-ok]
 
-        ;; enabled
-        off
-        [p/STATUS_OFF t/dialog-hint]
+     ;; enabled
+     off
+     [p/STATUS_OFF t/dialog-hint]
 
-        ;; disabled
-        val
-        [p/MARK_VALUE t/header-active-tab-accent]
+     ;; disabled
+     val
+     [p/MARK_VALUE t/header-active-tab-accent]
 
-        ;; cycles a value
-        act
-        [p/MARK_ACTION t/header-active-tab-accent]]
+     ;; cycles a value
+     act
+     [p/MARK_ACTION t/header-active-tab-accent]]
 
     ;; runs an action
     (case type
@@ -3761,11 +3871,12 @@
 
       ;; in disabled-set → off
       :registry-toggle
-      (let [spec
-            (vis/toggle-spec toggle-id)
+      (let
+        [spec
+         (vis/toggle-spec toggle-id)
 
-            tv
-            (vis/toggle-value toggle-id)]
+         tv
+         (vis/toggle-value toggle-id)]
 
         (cond (= :enum (:type spec)) val
               (boolean tv) on
@@ -3777,11 +3888,12 @@
       [" " t/dialog-fg])))
 (defn- cycle-choice
   [choices current]
-  (let [choices
-        (vec choices)
+  (let
+    [choices
+     (vec choices)
 
-        idx
-        (.indexOf ^java.util.List choices current)]
+     idx
+     (.indexOf ^java.util.List choices current)]
 
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
 (defn- apply-settings-option
@@ -3832,18 +3944,18 @@
             :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
 (defn- edit-extension-env-var!
   [^TerminalScreen screen {:keys [name label description secret?]}]
-  (let [{:keys [source value]}
-        (vis/extension-env-status name)
+  (let
+    [{:keys [source value]}
+     (vis/extension-env-status name)
 
-        raw
-        (text-input-dialog! screen
-                            "Extension Environment" (str name ":")
-                            :mask (when secret? \*)
-                            :initial (if secret? "" (or value ""))
-                            :body
-                            [(str label " - " (extension-env-status-label source))
-                             (or description "")
-                             "Blank input clears the Vis config override; OS env still applies."])]
+     raw
+     (text-input-dialog! screen
+                         "Extension Environment" (str name ":")
+                         :mask (when secret? \*)
+                         :initial (if secret? "" (or value ""))
+                         :body
+                         [(str label " - " (extension-env-status-label source)) (or description "")
+                          "Blank input clears the Vis config override; OS env still applies."])]
 
     (when (some? raw) (vis/save-extension-env-var! name raw))))
 (defn- theme-display-label
@@ -3865,74 +3977,75 @@
   "Small theme chooser. Moving selection previews the theme immediately;
    Enter commits the preview, Esc restores the original theme."
   [^TerminalScreen screen choices current preview!]
-  (let [items
-        (theme-picker-items choices)
+  (let
+    [items
+     (theme-picker-items choices)
 
-        total
-        (count items)
+     total
+     (count items)
 
-        original
-        (or current (:theme-id (first items)))
+     original
+     (or current (:theme-id (first items)))
 
-        selected
-        (atom (max 0 (.indexOf ^java.util.List (vec choices) original)))
+     selected
+     (atom (max 0 (.indexOf ^java.util.List (vec choices) original)))
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        last-preview
-        (atom ::none)
+     last-preview
+     (atom ::none)
 
-        preview-selected!
-        (fn []
-          (when-let [theme-id (:theme-id (nth items @selected nil))]
-            (when-not (= theme-id @last-preview)
-              (reset! last-preview theme-id)
-              (preview! theme-id))))]
+     preview-selected!
+     (fn []
+       (when-let [theme-id (:theme-id (nth items @selected nil))]
+         (when-not (= theme-id @last-preview) (reset! last-preview theme-id) (preview! theme-id))))]
 
     (when (pos? total)
       (loop []
 
         (preview-selected!)
-        (let [size
-              (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+        (let
+          [size
+           (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-              cols
-              (.getColumns size)
+           cols
+           (.getColumns size)
 
-              rows
-              (.getRows size)
+           rows
+           (.getRows size)
 
-              g
-              (.newTextGraphics screen)
+           g
+           (.newTextGraphics screen)
 
-              content-w
-              (theme-picker-content-width cols)
+           content-w
+           (theme-picker-content-width cols)
 
-              content-h
-              (theme-picker-content-height rows)
+           content-h
+           (theme-picker-content-height rows)
 
-              bounds
-              (draw-dialog-chrome! g cols rows "Theme" content-w content-h)
+           bounds
+           (draw-dialog-chrome! g cols rows "Theme" content-w content-h)
 
-              {:keys [left inner-w]}
-              bounds
+           {:keys [left inner-w]}
+           bounds
 
-              {:keys [content-top content-h hint-row]}
-              (dialog-layout bounds total)
+           {:keys [content-top content-h hint-row]}
+           (dialog-layout bounds total)
 
-              visible
-              (min (long total) (long content-h))
+           visible
+           (min (long total) (long content-h))
 
-              _
-              (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+           _
+           (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-              _
-              (swap! scroll #(visible-window-start @selected % content-h total))]
+           _
+           (swap! scroll #(visible-window-start @selected % content-h total))]
 
           (dotimes [i visible]
-            (let [idx (+ (long @scroll) (long i))
-                  row-y (+ (long content-top) (long i))]
+            (let
+              [idx (+ (long @scroll) (long i))
+               row-y (+ (long content-top) (long i))]
 
               (when (< (long idx) (long total))
                 (draw-list-item! g
@@ -3967,14 +4080,15 @@
                 (recur)))))))))
 (defn- activate-theme-row!
   [screen values callbacks {:keys [choices key]}]
-  (let [original
-        (get @values key)
+  (let
+    [original
+     (get @values key)
 
-        preview!
-        (fn [theme-id]
-          (let [next-values (assoc @values key theme-id)]
-            (reset! values next-values)
-            (notify-settings-change! callbacks next-values)))]
+     preview!
+     (fn [theme-id]
+       (let [next-values (assoc @values key theme-id)]
+         (reset! values next-values)
+         (notify-settings-change! callbacks next-values)))]
 
     (if-let [selected (theme-picker-dialog! screen choices original preview!)]
       (preview! selected)
@@ -3995,14 +4109,15 @@
            (notify-settings-change! callbacks)))))
 (defn- settings-section-text
   [label inner-w]
-  (let [prefix
-        (str "── " label " ")
+  (let
+    [prefix
+     (str "── " label " ")
 
-        available
-        (max 0 (- (long inner-w) 2))
+     available
+     (max 0 (- (long inner-w) 2))
 
-        filler
-        (apply str (repeat (max 0 (- (long available) (count prefix))) \─))]
+     filler
+     (apply str (repeat (max 0 (- (long available) (count prefix))) \─))]
 
     (ellipsize (str prefix filler) available)))
 (defn- settings-option-indent [] t/settings-option-indent)
@@ -4011,11 +4126,12 @@
   (ellipsize (str "◆ " label) (max 0 (- (long inner-w) 2))))
 (defn- settings-wrap-lines
   [s w]
-  (let [w
-        (max 1 (long w))
+  (let
+    [w
+     (max 1 (long w))
 
-        s
-        (str/trim (str (or s "")))]
+     s
+     (str/trim (str (or s "")))]
 
     (if (str/blank? s) [] (vec (remove str/blank? (render/wrap-text s w))))))
 (defn- settings-render-entries
@@ -4023,11 +4139,12 @@
    their owning option instead of stealing a fixed inline column and
    collapsing to `...` on narrow dialogs / long extension labels."
   [rows option-w desc-w]
-  (let [option-w
-        (max 1 (long option-w))
+  (let
+    [option-w
+     (max 1 (long option-w))
 
-        desc-w
-        (max 1 (long desc-w))]
+     desc-w
+     (max 1 (long desc-w))]
 
     (vec
       (mapcat (fn [idx {:keys [type label description]}]
@@ -4039,13 +4156,13 @@
                   [{:row-idx idx :part :subsection}]
 
                   :info
-                  (let [text
-                        (str label
-                             (when-not (str/blank? (str (or description "")))
-                               (str "  " description)))
+                  (let
+                    [text
+                     (str label
+                          (when-not (str/blank? (str (or description ""))) (str "  " description)))
 
-                        lines
-                        (settings-wrap-lines text (max 1 (- option-w 2)))]
+                     lines
+                     (settings-wrap-lines text (max 1 (- option-w 2)))]
 
                     (mapv (fn [line]
                             {:row-idx idx :part :info-line :text line})
@@ -4069,37 +4186,39 @@
    matching option remains beneath them, so the grouped shape is preserved.
    A blank query returns `rows` unchanged."
   [rows query]
-  (let [rows
-        (vec rows)
+  (let
+    [rows
+     (vec rows)
 
-        q
-        (str/lower-case (str/trim (str query)))]
+     q
+     (str/lower-case (str/trim (str query)))]
 
     (if (str/blank? q)
       rows
-      (let [n
-            (count rows)
+      (let
+        [n
+         (count rows)
 
-            match?
-            (fn [i]
-              (let [row (nth rows i)]
-                (and (settings-selectable? row) (str/includes? (settings-row-search-text row) q))))
+         match?
+         (fn [i]
+           (let [row (nth rows i)]
+             (and (settings-selectable? row) (str/includes? (settings-row-search-text row) q))))
 
-            matched
-            (into #{} (filter match? (range n)))
+         matched
+         (into #{} (filter match? (range n)))
 
-            next-idx
-            (fn [i pred]
-              (or (first (filter #(and (> (long %) (long i)) (pred (nth rows %))) (range n))) n))
+         next-idx
+         (fn [i pred]
+           (or (first (filter #(and (> (long %) (long i)) (pred (nth rows %))) (range n))) n))
 
-            headers
-            (for [i
-                  (range n)
+         headers
+         (for
+           [i
+            (range n)
 
-                  :let [row
-                        (nth rows i)]
-                  :when
-                  (case (:type row)
+            :let [row
+                  (nth rows i)]
+            :when (case (:type row)
                     :section
                     (some matched (range (inc (long i)) (next-idx i #(= :section (:type %)))))
 
@@ -4108,10 +4227,10 @@
 
                     false)]
 
-              i)
+           i)
 
-            keep
-            (into matched headers)]
+         keep
+         (into matched headers)]
 
         (vec (keep-indexed (fn [i row]
                              (when (contains? keep i) row))
@@ -4122,21 +4241,23 @@
    and whether it owns the currently-selected row. `rows` is the (already
    filtered) flat settings list; `selected` is the selected row index."
   [rows selected]
-  (let [rows
-        (vec rows)
+  (let
+    [rows
+     (vec rows)
 
-        n
-        (count rows)
+     n
+     (count rows)
 
-        sec-idxs
-        (filterv #(= :section (:type (nth rows %))) (range n))]
+     sec-idxs
+     (filterv #(= :section (:type (nth rows %))) (range n))]
 
     (vec (map-indexed (fn [k start]
-                        (let [end
-                              (long (or (get sec-idxs (inc (long k))) n))
+                        (let
+                          [end
+                           (long (or (get sec-idxs (inc (long k))) n))
 
-                              cnt
-                              (count (filter settings-selectable? (subvec rows start end)))]
+                           cnt
+                           (count (filter settings-selectable? (subvec rows start end)))]
 
                           {:label (:label (nth rows start))
                            :count cnt
@@ -4161,223 +4282,225 @@
    and returns the current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
-   (let [extension-rows
-         (extension-option-rows)
+   (let
+     [extension-rows
+      (extension-option-rows)
 
-         selected
-         (atom (first-selectable-index (settings-rows extension-rows)))
+      selected
+      (atom (first-selectable-index (settings-rows extension-rows)))
 
-         scroll
-         (atom 0)
+      scroll
+      (atom 0)
 
-         values
-         (atom (or settings {}))
+      values
+      (atom (or settings {}))
 
-         scrollbar-drag-offset
-         (volatile! nil)
+      scrollbar-drag-offset
+      (volatile! nil)
 
-         query
-         (atom "")
+      query
+      (atom "")
 
-         ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
-         ;; option descriptions indent to this so they sit under the label.
-         check-w
-         2]
+      ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
+      ;; option descriptions indent to this so they sit under the label.
+      check-w
+      2]
 
      (loop []
 
-       (let [all-rows
-             (settings-rows extension-rows)
+       (let
+         [all-rows
+          (settings-rows extension-rows)
 
-             rows
-             (filter-settings-rows all-rows @query)
+          rows
+          (filter-settings-rows all-rows @query)
 
-             n
-             (count rows)
+          n
+          (count rows)
 
-             size
-             (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+          size
+          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-             cols
-             (.getColumns size)
+          cols
+          (.getColumns size)
 
-             screen-rows
-             (.getRows size)
+          screen-rows
+          (.getRows size)
 
-             g
-             (.newTextGraphics screen)
+          g
+          (.newTextGraphics screen)
 
-             bounds
-             (draw-dialog-chrome! g
-                                  cols
-                                  screen-rows
-                                  "Settings"
-                                  (settings-content-width cols)
-                                  (settings-content-height screen-rows))
+          bounds
+          (draw-dialog-chrome! g
+                               cols
+                               screen-rows
+                               "Settings"
+                               (settings-content-width cols)
+                               (settings-content-height screen-rows))
 
-             {:keys [left inner-w]}
-             bounds
+          {:keys [left inner-w]}
+          bounds
 
-             left
-             (long left)
+          left
+          (long left)
 
-             inner-w
-             (long inner-w)
+          inner-w
+          (long inner-w)
 
-             ;; VS Code split: a left sidebar rail (the section Table of
-             ;; Contents) + a vertical divider + the right settings pane.
-             ;; `lleft`/`linner` are the right pane's own left/inner-w, so the
-             ;; whole list-painting block below reuses the single-pane math
-             ;; unchanged — only the search bar and hint bar stay full width.
-             rail-w
-             (p/clamp (quot inner-w 4) 14 22)
+          ;; VS Code split: a left sidebar rail (the section Table of
+          ;; Contents) + a vertical divider + the right settings pane.
+          ;; `lleft`/`linner` are the right pane's own left/inner-w, so the
+          ;; whole list-painting block below reuses the single-pane math
+          ;; unchanged — only the search bar and hint bar stay full width.
+          rail-w
+          (p/clamp (quot inner-w 4) 14 22)
 
-             lleft
-             (+ left rail-w 1)
+          lleft
+          (+ left rail-w 1)
 
-             linner
-             (max 1 (- inner-w rail-w 1))
+          linner
+          (max 1 (- inner-w rail-w 1))
 
-             {:keys [content-top content-h hint-row]}
-             (dialog-layout bounds)
+          {:keys [content-top content-h hint-row]}
+          (dialog-layout bounds)
 
-             content-top
-             (long content-top)
+          content-top
+          (long content-top)
 
-             content-h
-             (long content-h)
+          content-h
+          (long content-h)
 
-             search-row
-             content-top
+          search-row
+          content-top
 
-             list-top
-             (+ content-top 2)
+          list-top
+          (+ content-top 2)
 
-             visible-h
-             (max 1 (- content-h 2))
+          visible-h
+          (max 1 (- content-h 2))
 
-             _
-             (swap! selected #(p/clamp % 0 (max 0 (dec n))))
+          _
+          (swap! selected #(p/clamp % 0 (max 0 (dec n))))
 
-             option-indent
-             (long (settings-option-indent))
+          option-indent
+          (long (settings-option-indent))
 
-             ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
-             ;; option row for the selection gutter (`>` glyph + 1
-             ;; col margin). The cursor itself is painted at
-             ;; `(inc lleft)` (the pane's inner edge) by the row
-             ;; loop; option body shifts right by the gutter.
-             option-x
-             (+ lleft 2 option-indent p/SELECTION_WIDTH)
+          ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
+          ;; option row for the selection gutter (`>` glyph + 1
+          ;; col margin). The cursor itself is painted at
+          ;; `(inc lleft)` (the pane's inner edge) by the row
+          ;; loop; option body shifts right by the gutter.
+          option-x
+          (+ lleft 2 option-indent p/SELECTION_WIDTH)
 
-             labels
-             (mapv #(settings-option-label % @values) rows)
+          labels
+          (mapv #(settings-option-label % @values) rows)
 
-             base-paint-w
-             linner
+          base-paint-w
+          linner
 
-             base-option-w
-             (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
+          base-option-w
+          (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
 
-             base-desc-w
-             (max 1 (- base-option-w check-w))
+          base-desc-w
+          (max 1 (- base-option-w check-w))
 
-             base-entries
-             (settings-render-entries rows base-option-w base-desc-w)
+          base-entries
+          (settings-render-entries rows base-option-w base-desc-w)
 
-             scrollable?
-             (> (count base-entries) visible-h)
+          scrollable?
+          (> (count base-entries) visible-h)
 
-             paint-w
-             (if scrollable? (max 1 (dec linner)) linner)
+          paint-w
+          (if scrollable? (max 1 (dec linner)) linner)
 
-             option-w
-             (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
+          option-w
+          (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
 
-             desc-x
-             (+ option-x check-w)
+          desc-x
+          (+ option-x check-w)
 
-             desc-w
-             (max 1 (- option-w check-w))
+          desc-w
+          (max 1 (- option-w check-w))
 
-             entries
-             (settings-render-entries rows option-w desc-w)
+          entries
+          (settings-render-entries rows option-w desc-w)
 
-             visual-n
-             (count entries)
+          visual-n
+          (count entries)
 
-             sel-entry-idxs
-             (keep-indexed (fn [entry-idx {:keys [row-idx]}]
-                             (when (= row-idx @selected) entry-idx))
-                           entries)
+          sel-entry-idxs
+          (keep-indexed (fn [entry-idx {:keys [row-idx]}]
+                          (when (= row-idx @selected) entry-idx))
+                        entries)
 
-             ;; Option line of the selected row (first non-description entry).
-             selected-visual
-             (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
-                                              (when (and (= row-idx @selected)
-                                                         (not= part :option-desc))
-                                                entry-idx))
-                                            entries))
-                       0))
+          ;; Option line of the selected row (first non-description entry).
+          selected-visual
+          (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
+                                           (when (and (= row-idx @selected)
+                                                      (not= part :option-desc))
+                                             entry-idx))
+                                         entries))
+                    0))
 
-             ;; Last paint row owned by the selected option, INCLUDING its
-             ;; wrapped description rows. The scroll window must be able to
-             ;; reach this so the trailing desc lines (and, for the bottom-most
-             ;; option, the true content end) come into view — otherwise scroll
-             ;; caps short of `visual-n - visible-h` and the scrollbar thumb
-             ;; never reaches the bottom (selectable rows < paint rows).
-             selected-visual-end
-             (long (or (last sel-entry-idxs) selected-visual))
+          ;; Last paint row owned by the selected option, INCLUDING its
+          ;; wrapped description rows. The scroll window must be able to
+          ;; reach this so the trailing desc lines (and, for the bottom-most
+          ;; option, the true content end) come into view — otherwise scroll
+          ;; caps short of `visual-n - visible-h` and the scrollbar thumb
+          ;; never reaches the bottom (selectable rows < paint rows).
+          selected-visual-end
+          (long (or (last sel-entry-idxs) selected-visual))
 
-             ;; Visual index where the intro rows (section / subsection /
-             ;; info-line) that directly precede the selected option begin.
-             ;; The scroll window is selection-driven, so without this the
-             ;; first option pins itself to the top and its SECTION HEADER
-             ;; (a non-selectable row above it) is clipped forever — you can
-             ;; scroll to the first setting but never see its header.
-             header-start
-             (long (loop [i (dec selected-visual)]
-                     (if (and (>= i 0)
-                              (contains? #{:section :subsection :info-line}
-                                         (:part (nth entries i))))
-                       (recur (dec i))
-                       (inc i))))
+          ;; Visual index where the intro rows (section / subsection /
+          ;; info-line) that directly precede the selected option begin.
+          ;; The scroll window is selection-driven, so without this the
+          ;; first option pins itself to the top and its SECTION HEADER
+          ;; (a non-selectable row above it) is clipped forever — you can
+          ;; scroll to the first setting but never see its header.
+          header-start
+          (long (loop [i (dec selected-visual)]
+                  (if (and (>= i 0)
+                           (contains? #{:section :subsection :info-line} (:part (nth entries i))))
+                    (recur (dec i))
+                    (inc i))))
 
-             _
-             (let [start0
-                   (visible-window-start selected-visual @scroll visible-h visual-n)
+          _
+          (let
+            [start0
+             (visible-window-start selected-visual @scroll visible-h visual-n)
 
-                   ;; Back UP to reveal those intro headers whenever the
-                   ;; option (through its last desc line) still fits in the
-                   ;; viewport from `header-start`.
-                   start0
-                   (if (and (< header-start start0)
-                            (<= (- selected-visual-end header-start) (dec visible-h)))
-                     header-start
-                     start0)
+             ;; Back UP to reveal those intro headers whenever the
+             ;; option (through its last desc line) still fits in the
+             ;; viewport from `header-start`.
+             start0
+             (if (and (< header-start start0)
+                      (<= (- selected-visual-end header-start) (dec visible-h)))
+               header-start
+               start0)
 
-                   ;; Pull the window down to reveal the selected row's last
-                   ;; desc line, but never so far that the option line itself
-                   ;; scrolls out of view (cap at `selected-visual`).
-                   start1
-                   (if (>= selected-visual-end (+ start0 visible-h))
-                     (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
-                     start0)]
+             ;; Pull the window down to reveal the selected row's last
+             ;; desc line, but never so far that the option line itself
+             ;; scrolls out of view (cap at `selected-visual`).
+             start1
+             (if (>= selected-visual-end (+ start0 visible-h))
+               (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
+               start0)]
 
-               (reset! scroll start1))
+            (reset! scroll start1))
 
-             ;; Frame 1 search bar: borderless full-width query field sitting
-             ;; above the split — identical to the command palette
-             ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
-             ;; which draw no count on the query row. Returns the cursor pos.
-             search-cursor
-             (draw-text-input-field! g
-                                     left
-                                     search-row
-                                     inner-w
-                                     @query
-                                     (count @query)
-                                     "Search settings…")]
+          ;; Frame 1 search bar: borderless full-width query field sitting
+          ;; above the split — identical to the command palette
+          ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
+          ;; which draw no count on the query row. Returns the cursor pos.
+          search-cursor
+          (draw-text-input-field! g
+                                  left
+                                  search-row
+                                  inner-w
+                                  @query
+                                  (count @query)
+                                  "Search settings…")]
 
          ;; Full-width rule under the search bar — the same framed-input
          ;; compartment the command palette (`list-dialog!`) and the session
@@ -4388,15 +4511,17 @@
          (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
          (p/put-str! g lleft (inc content-top) "┬")
          (dotimes [i visible-h]
-           (let [entry-idx (+ (long @scroll) i)
-                 row-y (+ list-top i)]
+           (let
+             [entry-idx (+ (long @scroll) i)
+              row-y (+ list-top i)]
 
              (if (< entry-idx visual-n)
-               (let [{:keys [row-idx part text]} (nth entries entry-idx)
-                     {:keys [label]} (nth rows row-idx)
-                     option-label (nth labels row-idx)
-                     selected? (= row-idx @selected)
-                     [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
+               (let
+                 [{:keys [row-idx part text]} (nth entries entry-idx)
+                  {:keys [label]} (nth rows row-idx)
+                  option-label (nth labels row-idx)
+                  selected? (= row-idx @selected)
+                  [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
 
                  (case part
                    :section
@@ -4435,8 +4560,9 @@
                        (p/draw-selection-marker! g (inc lleft) row-y selected?)
                        ;; Leading status glyph (●/○/◆/▸) via the shared component,
                        ;; which returns the col to start the label at.
-                       (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
-                             lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
+                       (let
+                         [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                          lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
 
                          (p/set-colors! g t/dialog-fg t/dialog-bg)
                          (if selected?
@@ -4453,13 +4579,14 @@
            (doseq [ry (range list-top (+ content-top content-h))]
              (p/put-str! g lleft ry "│"))
            (dotimes [i (min (count toc) visible-h)]
-             (let [{lbl :label cnt :count active? :active?} (nth toc i)
-                   ry (+ list-top i)
-                   rail-x (inc left)
-                   cstr (str cnt)
-                   lbl-w (max 1 (- rail-w 2 (count cstr) 1))
-                   bg (if active? t/header-active-tab-accent t/dialog-bg)
-                   fg (if active? t/dialog-bg t/dialog-fg)]
+             (let
+               [{lbl :label cnt :count active? :active?} (nth toc i)
+                ry (+ list-top i)
+                rail-x (inc left)
+                cstr (str cnt)
+                lbl-w (max 1 (- rail-w 2 (count cstr) 1))
+                bg (if active? t/header-active-tab-accent t/dialog-bg)
+                fg (if active? t/dialog-bg t/dialog-fg)]
 
                (p/set-colors! g fg bg)
                (p/fill-rect! g rail-x ry rail-w 1)
@@ -4483,35 +4610,37 @@
                           ["Esc" "clear/close"]])
          (.setCursorPosition screen search-cursor)
          (.refresh screen Screen$RefreshType/DELTA)
-         (let [key
-               (read-modal-key! screen)
+         (let
+           [key
+            (read-modal-key! screen)
 
-               selected-row
-               (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
+            selected-row
+            (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
 
            (when key
              (cond
                (instance? MouseAction key)
-               (let [^MouseAction ma
-                     key
+               (let
+                 [^MouseAction ma
+                  key
 
-                     action
-                     (.getActionType ma)
+                  action
+                  (.getActionType ma)
 
-                     pos
-                     (.getPosition ma)
+                  pos
+                  (.getPosition ma)
 
-                     mx
-                     (.getColumn pos)
+                  mx
+                  (.getColumn pos)
 
-                     my
-                     (.getRow pos)
+                  my
+                  (.getRow pos)
 
-                     bar-col
-                     (+ lleft linner)
+                  bar-col
+                  (+ lleft linner)
 
-                     geom
-                     (scrollbar/geometry visual-n visible-h visible-h @scroll)]
+                  geom
+                  (scrollbar/geometry visual-n visible-h visible-h @scroll)]
 
                  (cond
                    ;; Mouse wheel anywhere in the dialog — scroll the
@@ -4519,8 +4648,9 @@
                    ;; so the cursor stays in the visible window without
                    ;; the user having to chase it with arrow keys.
                    (or (= action MouseActionType/SCROLL_UP) (= action MouseActionType/SCROLL_DOWN))
-                   (let [step (or (modal-wheel-step key)
-                                  (if (= action MouseActionType/SCROLL_UP) -1 1))]
+                   (let
+                     [step (or (modal-wheel-step key)
+                               (if (= action MouseActionType/SCROLL_UP) -1 1))]
                      (swap! selected #(move-settings-selection rows % step))
                      (recur))
                    ;; CLICK_DOWN on the scrollbar thumb — start drag,
@@ -4612,14 +4742,15 @@
   (and (not (pos? (long (or (get s "turn_count") 0)))) (untitled-session-title? (get s "title"))))
 (defn- session-title
   [session]
-  (let [title
-        (get session "title")
+  (let
+    [title
+     (get session "title")
 
-        base-title
-        (if (untitled-session-title? title) untitled-session-title (str title))
+     base-title
+     (if (untitled-session-title? title) untitled-session-title (str title))
 
-        fork-count
-        (long (or (get session "fork_count") 0))]
+     fork-count
+     (long (or (get session "fork_count") 0))]
 
     (cond-> base-title
       (pos? fork-count)
@@ -4657,58 +4788,61 @@
   "Column widths for the boxed session table. Total rendered row width equals
    `table-w`, including side borders, inter-cell separators, and padding."
   [^long table-w]
-  (let [n
-        (count session-table-headers)
+  (let
+    [n
+     (count session-table-headers)
 
-        overhead
-        (inc (* 3 n))
+     overhead
+     (inc (* 3 n))
 
-        available
-        (max n (- table-w overhead))]
+     available
+     (max n (- table-w overhead))]
 
     (if (>= available 70)
-      (let [active-w
-            1
+      (let
+        [active-w
+         1
 
-            id-w
-            8
+         id-w
+         8
 
-            title-w
-            (max 10 (- available active-w id-w 5 10 5 11 5))
+         title-w
+         (max 10 (- available active-w id-w 5 10 5 11 5))
 
-            turns-w
-            5
+         turns-w
+         5
 
-            created-w
-            10
+         created-w
+         10
 
-            modified-w
-            11
+         modified-w
+         11
 
-            time-w
-            5]
+         time-w
+         5]
 
         [active-w id-w title-w turns-w created-w time-w modified-w time-w])
-      (let [active-w
-            1
+      (let
+        [active-w
+         1
 
-            id-w
-            (max 1 (min 8 (quot available 8)))
+         id-w
+         (max 1 (min 8 (quot available 8)))
 
-            turns-w
-            (max 1 (min 5 (quot available 8)))
+         turns-w
+         (max 1 (min 5 (quot available 8)))
 
-            created-w
-            (max 1 (min 10 (quot available 7)))
+         created-w
+         (max 1 (min 10 (quot available 7)))
 
-            modified-w
-            (max 1 (min 11 (quot available 7)))
+         modified-w
+         (max 1 (min 11 (quot available 7)))
 
-            time-w
-            (max 1 (min 5 (quot available 12)))
+         time-w
+         (max 1 (min 5 (quot available 12)))
 
-            title-w
-            (max 1 (- available active-w id-w turns-w created-w time-w modified-w time-w))]
+         title-w
+         (max 1 (- available active-w id-w turns-w created-w time-w modified-w time-w))]
 
         [active-w id-w title-w turns-w created-w time-w modified-w time-w]))))
 (defn- session-table-border-line
@@ -4723,22 +4857,23 @@
   "Format one fixed-width session table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
   [session active-id body-w]
-  (let [id
-        (get session "id")
+  (let
+    [id
+     (get session "id")
 
-        turn-count
-        (get session "turn_count")
+     turn-count
+     (get session "turn_count")
 
-        modified-at
-        (get session "modified_at")
+     modified-at
+     (get session "modified_at")
 
-        created-at
-        (get session "created_at")
+     created-at
+     (get session "created_at")
 
-        active?
-        (= (str id)
-           (some-> active-id
-                   str))]
+     active?
+     (= (str id)
+        (some-> active-id
+                str))]
 
     (session-table-row-label [(if active? "●" "") (short-session-id session) (session-title session)
                               (str (long (or turn-count 0))) (format-session-day created-at)
@@ -4771,11 +4906,12 @@
   ;; text echoes marker cue.
   (p/set-colors! g t/dialog-fg t/dialog-bg)
   (p/fill-rect! g (inc (long left)) row inner-w 1)
-  (let [body-x
-        (+ (long left) 1 p/SELECTION_WIDTH)
+  (let
+    [body-x
+     (+ (long left) 1 p/SELECTION_WIDTH)
 
-        body-w
-        (max 0 (- (long inner-w) 1 p/SELECTION_WIDTH))]
+     body-w
+     (max 0 (- (long inner-w) 1 p/SELECTION_WIDTH))]
 
     (if selected?
       (p/styled g [p/BOLD] (p/put-str! g body-x row (ellipsize label body-w)))
@@ -4785,78 +4921,80 @@
    `{:action :new}`, `{:action :fork}`, `{:action :switch :id <session-id>}`,
    or nil on Esc."
   [^TerminalScreen screen sessions active-id]
-  (let [selected
-        (atom 0)
+  (let
+    [selected
+     (atom 0)
 
-        scroll
-        (atom 0)]
+     scroll
+     (atom 0)]
 
     (loop []
 
-      (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let
+        [size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows
-            (.getRows size)
+         rows
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            ;; nil content-h -> shared full-height footprint, matching the
-            ;; directory picker (both are long, scrollable browsers)
-            bounds
-            (draw-dialog-chrome! g cols rows "Sessions" (- cols 4) (- rows 4))
+         ;; nil content-h -> shared full-height footprint, matching the
+         ;; directory picker (both are long, scrollable browsers)
+         bounds
+         (draw-dialog-chrome! g cols rows "Sessions" (- cols 4) (- rows 4))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            ;; Reserve `p/SELECTION_WIDTH` cols at start of inner area
-            ;; for dot marker gutter. Table itself is boxed; marker stays
-            ;; outside table so columns never shift.
-            body-w
-            (long (max 1 (- (long inner-w) 4 p/SELECTION_WIDTH)))
+         ;; Reserve `p/SELECTION_WIDTH` cols at start of inner area
+         ;; for dot marker gutter. Table itself is boxed; marker stays
+         ;; outside table so columns never shift.
+         body-w
+         (long (max 1 (- (long inner-w) 4 p/SELECTION_WIDTH)))
 
-            items
-            (session-dialog-items sessions active-id body-w)
+         items
+         (session-dialog-items sessions active-id body-w)
 
-            total
-            (count items)
+         total
+         (count items)
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds)
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds)
 
-            table-x
-            (+ (long left) 1 p/SELECTION_WIDTH)
+         table-x
+         (+ (long left) 1 p/SELECTION_WIDTH)
 
-            table-top
-            (long content-top)
+         table-top
+         (long content-top)
 
-            header-row
-            (inc table-top)
+         header-row
+         (inc table-top)
 
-            sep-row
-            (inc header-row)
+         sep-row
+         (inc header-row)
 
-            body-top
-            (inc sep-row)
+         body-top
+         (inc sep-row)
 
-            body-h
-            (long (max 1 (- (long content-h) 4)))
+         body-h
+         (long (max 1 (- (long content-h) 4)))
 
-            bottom-row
-            (+ body-top body-h)
+         bottom-row
+         (+ body-top body-h)
 
-            _visible
-            (min total body-h)
+         _visible
+         (min total body-h)
 
-            _
-            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+         _
+         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-            _
-            (swap! scroll #(visible-window-start @selected % body-h total))]
+         _
+         (swap! scroll #(visible-window-start @selected % body-h total))]
 
         (p/set-colors! g t/dialog-border t/dialog-bg)
         (p/fill-rect! g (inc (long left)) table-top inner-w 1)
@@ -4876,8 +5014,9 @@
         (p/fill-rect! g (inc (long left)) sep-row inner-w 1)
         (p/put-str! g table-x sep-row (session-table-border-line body-w :middle))
         (dotimes [i body-h]
-          (let [idx (+ (long @scroll) i)
-                row (+ body-top i)]
+          (let
+            [idx (+ (long @scroll) i)
+             row (+ body-top i)]
 
             (if (< idx total)
               (do (draw-session-row! g left row inner-w (= idx @selected) (:label (nth items idx)))
@@ -4915,8 +5054,9 @@
                 KeyType/ArrowDown
                 (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (when (pos? total) (select-keys (nth items @selected) [:action :id]))
-                KeyType/Character (let [raw-c (key-character key)
-                                        c (lower-character raw-c)]
+                KeyType/Character (let
+                                    [raw-c (key-character key)
+                                     c (lower-character raw-c)]
 
                                     (case c
                                       \n
@@ -4953,13 +5093,14 @@
    dialog accent + bold so it reads as 'you are here', visually distinct
    from the switch-to-other rows; its status shows `● focused`."
   [active-session-id session]
-  (let [id
-        (get session "id")
+  (let
+    [id
+     (get session "id")
 
-        active?
-        (= (str id)
-           (some-> active-session-id
-                   str))]
+     active?
+     (= (str id)
+        (some-> active-session-id
+                str))]
 
     {:id (str "session:" id)
      :focused? active?
@@ -4985,11 +5126,12 @@
    projects by their most recent session; within a group the recency order
    is preserved."
   [rows]
-  (let [order
-        (distinct (map :dir rows))
+  (let
+    [order
+     (distinct (map :dir rows))
 
-        by-dir
-        (group-by :dir rows)]
+     by-dir
+     (group-by :dir rows)]
 
     ;; Within each project group, honour the persisted manual order
     ;; (`:position`); projectless rows (nil position) keep recency order.
@@ -5008,21 +5150,21 @@
    action row mixed in with actual sessions read as just another session
    and pushed the newest real one down."
   [{:keys [sessions active-session-id show-empty-untitled?]}]
-  (let [focused-id
-        (some-> active-session-id
-                str)
+  (let
+    [focused-id
+     (some-> active-session-id
+             str)
 
-        focused?
-        (fn [s]
-          (= (str (get s "id")) focused-id))
+     focused?
+     (fn [s]
+       (= (str (get s "id")) focused-id))
 
-        rows
-        (->> sessions
-             ;; Keep the FOCUSED session even when it is an empty
-             ;; untitled shell — you must always see "you are here".
-             (remove
-               #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %))))
-             (mapv #(navigator-session-row active-session-id %)))]
+     rows
+     (->> sessions
+          ;; Keep the FOCUSED session even when it is an empty
+          ;; untitled shell — you must always see "you are here".
+          (remove #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %))))
+          (mapv #(navigator-session-row active-session-id %)))]
 
     ;; Focused row pinned to the top; the rest regrouped by project, each
     ;; group ordered by its most recent session (see `group-rows-by-dir`).
@@ -5050,12 +5192,13 @@
   (p/set-colors! g t/dialog-border t/dialog-bg)
   (p/put-str! g x row (table/boxed-row-line widths (vec (repeat (count widths) "")) aligns))
   (p/set-colors! g text-fg t/dialog-bg)
-  (let [draw (fn []
-               (doseq [[i [off w]] (map-indexed vector (navigator-cell-spans widths))]
-                 (p/put-str! g
-                             (+ (long x) (long off))
-                             row
-                             (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
+  (let
+    [draw (fn []
+            (doseq [[i [off w]] (map-indexed vector (navigator-cell-spans widths))]
+              (p/put-str! g
+                          (+ (long x) (long off))
+                          row
+                          (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
     (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
 (defn- dir-canon
   ^java.io.File [^java.io.File f]
@@ -5118,414 +5261,411 @@
    directory\", `:new-folder` → \"Create a directory\", `:remove` → \"Remove a
    filesystem directory\"); the controls are identical regardless."
   [^TerminalScreen screen start-path & {:keys [sid workspace-info purpose]}]
-  (let [path
-        (atom (dir-canon (java.io.File. (str (or start-path ".")))))
+  (let
+    [path
+     (atom (dir-canon (java.io.File. (str (or start-path ".")))))
 
-        selected
-        (atom 0)
+     selected
+     (atom 0)
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        query
-        (atom "")
+     query
+     (atom "")
 
-        ;; Last C-a / C-r outcome, so a FAILED mutation is visible instead of
-        ;; silently swallowed. `[dir-canon-str level text]` — shown only while the
-        ;; picker still sits on the same folder (navigating away clears it).
-        notice
-        (atom nil)
+     ;; Last C-a / C-r outcome, so a FAILED mutation is visible instead of
+     ;; silently swallowed. `[dir-canon-str level text]` — shown only while the
+     ;; picker still sits on the same folder (navigating away clears it).
+     notice
+     (atom nil)
 
-        ;; C-r (change root) repoints the session to a NEW workspace row — the
-        ;; picker tracks the live id so the header roots stay truthful after.
-        wid
-        (atom (:id workspace-info))
+     ;; C-r (change root) repoints the session to a NEW workspace row — the
+     ;; picker tracks the live id so the header roots stay truthful after.
+     wid
+     (atom (:id workspace-info))
 
-        ;; Live gateway workspace snapshot (root + filesystem-roots). Seeded from
-        ;; the caller and REFRESHED from every mutation's return value, so the
-        ;; header reflects the DAEMON's authoritative roots — the local db-info
-        ;; index the picker used to read/write never reached the running session.
-        ws-info
-        (atom workspace-info)
+     ;; Live gateway workspace snapshot (root + filesystem-roots). Seeded from
+     ;; the caller and REFRESHED from every mutation's return value, so the
+     ;; header reflects the DAEMON's authoritative roots — the local db-info
+     ;; index the picker used to read/write never reached the running session.
+     ws-info
+     (atom workspace-info)
 
-        manager?
-        (boolean (and sid workspace-info))
+     manager?
+     (boolean (and sid workspace-info))
 
-        title
-        (case purpose
-          :add-root
-          "Add a filesystem directory"
+     title
+     (case purpose
+       :add-root
+       "Add a filesystem directory"
 
-          :new-folder
-          "Create a directory"
+       :new-folder
+       "Create a directory"
 
-          :remove
-          "Remove a filesystem directory"
+       :remove
+       "Remove a filesystem directory"
 
-          "Filesystem Permissions")
+       "Filesystem Permissions")
 
-        norm
-        (fn [p]
-          (some-> p
-                  str
-                  not-empty
-                  (#(try (str (workspace/normalize-root %))
-                         (catch Throwable t
-                           (tel/log! :debug
-                                     ["dialogs: normalize-root failed" (str %) (ex-message t)])
-                           %)))))]
+     norm
+     (fn [p]
+       (some-> p
+               str
+               not-empty
+               (#(try (str (workspace/normalize-root %))
+                      (catch Throwable t
+                        (tel/log! :debug ["dialogs: normalize-root failed" (str %) (ex-message t)])
+                        %)))))]
 
     (loop []
 
-      (let [^java.io.File dir
-            @path
+      (let
+        [^java.io.File dir
+         @path
 
-            up?
-            (some? (.getParentFile dir))
+         up?
+         (some? (.getParentFile dir))
 
-            ws
-            (when manager? @ws-info)
+         ws
+         (when manager? @ws-info)
 
-            base
-            (get ws "root")
+         base
+         (get ws "root")
 
-            extras
-            (get ws "filesystem_roots")
+         extras
+         (get ws "filesystem_roots")
 
-            dir-canon-str
-            (norm (.getPath dir))
+         dir-canon-str
+         (norm (.getPath dir))
 
-            base-canon
-            (norm base)
+         base-canon
+         (norm base)
 
-            extra-set
-            (set (keep #(norm (get % "dir")) extras))
+         extra-set
+         (set (keep #(norm (get % "dir")) extras))
 
-            path-within?
-            (fn [root p]
-              (boolean (and root
-                            p
-                            (or (= p root)
-                                (str/starts-with? p (str root java.io.File/separator))))))
+         path-within?
+         (fn [root p]
+           (boolean
+             (and root p (or (= p root) (str/starts-with? p (str root java.io.File/separator))))))
 
-            covering-root
-            (fn [p]
-              (some #(when (path-within? % p) %) (cons base-canon extra-set)))
+         covering-root
+         (fn [p]
+           (some #(when (path-within? % p) %) (cons base-canon extra-set)))
 
-            q
-            (str/lower-case (str/trim @query))
+         q
+         (str/lower-case (str/trim @query))
 
-            match?
-            (fn [n]
-              (or (str/blank? q) (str/includes? (str/lower-case n) q)))
+         match?
+         (fn [n]
+           (or (str/blank? q) (str/includes? (str/lower-case n) q)))
 
-            subdirs
-            (filterv match? (list-subdirs dir))
+         subdirs
+         (filterv match? (list-subdirs dir))
 
-            ;; The list is PURELY filesystem navigation — subfolders only.
-            ;; Files are hidden (they were inert noise); every folder shows a
-            ;; ●/○ membership mark (manager mode) so you can tell, before you
-            ;; act, whether it is already a filesystem root.
-            root-of?
-            (fn [n]
-              (let [s (norm (.getPath (dir-canon (java.io.File. dir ^String n))))]
-                (covering-root s)))
+         ;; The list is PURELY filesystem navigation — subfolders only.
+         ;; Files are hidden (they were inert noise); every folder shows a
+         ;; ●/○ membership mark (manager mode) so you can tell, before you
+         ;; act, whether it is already a filesystem root.
+         root-of?
+         (fn [n]
+           (let [s (norm (.getPath (dir-canon (java.io.File. dir ^String n))))]
+             (covering-root s)))
 
-            entries
-            (vec (concat (when up? [{:kind :up}])
-                         (map (fn [n]
-                                {:kind :into :name n :root? (boolean (and manager? (root-of? n)))})
-                              subdirs)))
+         entries
+         (vec (concat (when up? [{:kind :up}])
+                      (map (fn [n]
+                             {:kind :into :name n :root? (boolean (and manager? (root-of? n)))})
+                           subdirs)))
 
-            total
-            (count entries)
+         total
+         (count entries)
 
-            ;; C-a acts on the HIGHLIGHTED entry when it's a subfolder, so you
-            ;; can add `foo/` straight from the list without stepping into it;
-            ;; with a file or `..` highlighted it falls back to THIS folder.
-            sel-idx
-            (p/clamp @selected 0 (max 0 (dec total)))
+         ;; C-a acts on the HIGHLIGHTED entry when it's a subfolder, so you
+         ;; can add `foo/` straight from the list without stepping into it;
+         ;; with a file or `..` highlighted it falls back to THIS folder.
+         sel-idx
+         (p/clamp @selected 0 (max 0 (dec total)))
 
-            sel-entry
-            (when (pos? total) (nth entries sel-idx))
+         sel-entry
+         (when (pos? total) (nth entries sel-idx))
 
-            target-dir
-            (if (= :into (:kind sel-entry))
-              (dir-canon (java.io.File. dir ^String (:name sel-entry)))
-              dir)
+         target-dir
+         (if (= :into (:kind sel-entry))
+           (dir-canon (java.io.File. dir ^String (:name sel-entry)))
+           dir)
 
-            target-str
-            (norm (.getPath target-dir))
+         target-str
+         (norm (.getPath target-dir))
 
-            target-base?
-            (= target-str base-canon)
+         target-base?
+         (= target-str base-canon)
 
-            target-covered-by
-            (covering-root target-str)
+         target-covered-by
+         (covering-root target-str)
 
-            target-already?
-            (or target-base? (contains? extra-set target-str))
+         target-already?
+         (or target-base? (contains? extra-set target-str))
 
-            target-name
-            (if (= :into (:kind sel-entry)) (str (:name sel-entry) "/") "this folder")
+         target-name
+         (if (= :into (:kind sel-entry)) (str (:name sel-entry) "/") "this folder")
 
-            size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows-n
-            (.getRows size)
+         rows-n
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            bounds
-            (draw-dialog-chrome! g cols rows-n title (default-content-height rows-n))
+         bounds
+         (draw-dialog-chrome! g cols rows-n title (default-content-height rows-n))
 
-            {:keys [left inner-w]}
-            bounds
+         {:keys [left inner-w]}
+         bounds
 
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds)
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds)
 
-            list-x
-            (+ (long left) 2)
+         list-x
+         (+ (long left) 2)
 
-            list-w
-            (long (max 1 (- (long inner-w) 3)))
+         list-w
+         (long (max 1 (- (long inner-w) 3)))
 
-            ;; ── Header zone ────────────────────────────────────────────────
-            ;; Manager mode lists this session's filesystem roots as a plain
-            ;; indented ● list (bright path + dim membership tag), a single
-            ;; hairline rule, then an IN breadcrumb for the current folder.
-            ;; Non-manager mode is just the breadcrumb.
-            notice-here
-            (when (and manager? @notice (= (first @notice) dir-canon-str)) @notice)
+         ;; ── Header zone ────────────────────────────────────────────────
+         ;; Manager mode lists this session's filesystem roots as a plain
+         ;; indented ● list (bright path + dim membership tag), a single
+         ;; hairline rule, then an IN breadcrumb for the current folder.
+         ;; Non-manager mode is just the breadcrumb.
+         notice-here
+         (when (and manager? @notice (= (first @notice) dir-canon-str)) @notice)
 
-            roots
-            (when manager?
-              (vec (concat (when base [{:path (str base) :tag "session root"}])
-                           (map (fn [e]
-                                  {:path (get e "dir") :tag "added"})
-                                extras))))
+         roots
+         (when manager?
+           (vec (concat (when base [{:path (str base) :tag "session root"}])
+                        (map (fn [e]
+                               {:path (get e "dir") :tag "added"})
+                             extras))))
 
-            root-row
-            (fn [{:keys [path tag]}]
-              (let [p
-                    (ellipsize (str "  \u25cf " (abbreviate-home path))
-                               (max 1 (- list-w (count tag) 2)))
+         root-row
+         (fn [{:keys [path tag]}]
+           (let
+             [p
+              (ellipsize (str "  \u25cf " (abbreviate-home path)) (max 1 (- list-w (count tag) 2)))
 
-                    pad
-                    (max 1 (- list-w (count p) (count tag)))]
+              pad
+              (max 1 (- list-w (count p) (count tag)))]
 
-                (str p (apply str (repeat pad \space)) tag)))
+             (str p (apply str (repeat pad \space)) tag)))
 
-            filter-suffix
-            (when-not (str/blank? @query) (str "   filter: " @query))
+         filter-suffix
+         (when-not (str/blank? @query) (str "   filter: " @query))
 
-            header-rows
-            (if manager?
-              (vec
-                (concat
-                  [{:kind :blank :text ""}
-                   {:kind :section
-                    :text (str "ALLOWED  "
-                               (count roots)
-                               (if (= 1 (count roots)) " directory" " directories"))}
-                   {:kind :blank :text ""}]
-                  (if (seq roots)
-                    (map (fn [r]
-                           (assoc r
-                             :kind :root
-                             :text (root-row r)))
-                         roots)
-                    [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
-                  [{:kind :blank :text ""} {:kind :rule :text (apply str (repeat list-w "\u2500"))}
-                   {:kind :blank :text ""}
-                   {:kind :browse
-                    :text (let [a (abbreviate-home (.getPath dir))]
-                            (str "IN  " a (when-not (str/ends-with? a "/") "/") filter-suffix))}]
-                  (when notice-here
-                    [{:kind :notice
-                      :text (str (case (second notice-here)
-                                   :error
-                                   "\u2716 "
+         header-rows
+         (if manager?
+           (vec
+             (concat [{:kind :blank :text ""}
+                      {:kind :section
+                       :text (str "ALLOWED  "
+                                  (count roots)
+                                  (if (= 1 (count roots)) " directory" " directories"))}
+                      {:kind :blank :text ""}]
+                     (if (seq roots)
+                       (map (fn [r]
+                              (assoc r
+                                :kind :root
+                                :text (root-row r)))
+                            roots)
+                       [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
+                     [{:kind :blank :text ""}
+                      {:kind :rule :text (apply str (repeat list-w "\u2500"))}
+                      {:kind :blank :text ""}
+                      {:kind :browse
+                       :text (let [a (abbreviate-home (.getPath dir))]
+                               (str "IN  " a (when-not (str/ends-with? a "/") "/") filter-suffix))}]
+                     (when notice-here
+                       [{:kind :notice
+                         :text (str (case (second notice-here)
+                                      :error
+                                      "\u2716 "
 
-                                   :ok
-                                   "\u2714 "
+                                      :ok
+                                      "\u2714 "
 
-                                   "")
-                                 (nth notice-here 2))
-                      :error? (= :error (second notice-here))}])
-                  [{:kind :blank :text ""}]))
-              [{:kind :blank :text ""}
-               {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}
-               {:kind :blank :text ""}])
+                                      "")
+                                    (nth notice-here 2))
+                         :error? (= :error (second notice-here))}])
+                     [{:kind :blank :text ""}]))
+           [{:kind :blank :text ""}
+            {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}
+            {:kind :blank :text ""}])
 
-            header-n
-            (count header-rows)
+         header-n
+         (count header-rows)
 
-            hdr-h
-            (long (min header-n (max 1 (dec (long content-h)))))
+         hdr-h
+         (long (min header-n (max 1 (dec (long content-h)))))
 
-            list-top
-            (+ (long content-top) hdr-h)
+         list-top
+         (+ (long content-top) hdr-h)
 
-            body-h
-            (p/clamp total 1 (max 1 (- (long content-h) hdr-h)))
+         body-h
+         (p/clamp total 1 (max 1 (- (long content-h) hdr-h)))
 
-            _
-            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+         _
+         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-            _
-            (swap! scroll #(visible-window-start @selected % body-h total))
+         _
+         (swap! scroll #(visible-window-start @selected % body-h total))
 
-            ascend!
-            (fn []
-              (when up?
-                (reset! path (dir-canon (.getParentFile dir)))
-                (reset! query "")
-                (reset! selected 0)
-                (reset! scroll 0)))
+         ascend!
+         (fn []
+           (when up?
+             (reset! path (dir-canon (.getParentFile dir)))
+             (reset! query "")
+             (reset! selected 0)
+             (reset! scroll 0)))
 
-            reset-list!
-            (fn []
-              (reset! selected 0)
-              (reset! scroll 0))
+         reset-list!
+         (fn []
+           (reset! selected 0)
+           (reset! scroll 0))
 
-            toggle-root!
-            (fn []
-              (when manager?
-                (cond target-base?
-                      (reset! notice
-                        [dir-canon-str :error
-                         "This is the session's root — C-r on another folder to change it"])
-                      (and target-covered-by (not target-already?))
-                      (reset! notice [dir-canon-str :error
-                                      (str "Already allowed by "
-                                           (abbreviate-home target-covered-by))])
-                      :else
-                      (try (let [updated
-                                 (if target-already?
-                                   (vis/gateway-remove-filesystem-root! sid (.getPath target-dir))
-                                   (vis/gateway-add-filesystem-root! sid (.getPath target-dir)))]
-                             (reset! ws-info updated)
-                             (reset! wid (get updated "id")))
-                           (reset! notice [dir-canon-str :ok
-                                           (str (if target-already? "Removed " "Added ")
-                                                target-name)])
-                           (catch Throwable t
-                             (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
+         toggle-root!
+         (fn []
+           (when manager?
+             (cond target-base?
+                   (reset! notice
+                     [dir-canon-str :error
+                      "This is the session's root — C-r on another folder to change it"])
+                   (and target-covered-by (not target-already?))
+                   (reset! notice [dir-canon-str :error
+                                   (str "Already allowed by " (abbreviate-home target-covered-by))])
+                   :else
+                   (try (let
+                          [updated (if target-already?
+                                     (vis/gateway-remove-filesystem-root! sid (.getPath target-dir))
+                                     (vis/gateway-add-filesystem-root! sid (.getPath target-dir)))]
+                          (reset! ws-info updated)
+                          (reset! wid (get updated "id")))
+                        (reset! notice [dir-canon-str :ok
+                                        (str (if target-already? "Removed " "Added ") target-name)])
+                        (catch Throwable t
+                          (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
 
-            ;; C-r: make the highlighted (or current) folder the session's
-            ;; PRIMARY root — repoints the session workspace; shell/file
-            ;; tools/search follow from the next turn.
-            set-root!
-            (fn []
-              (when manager?
-                (cond (nil? sid) (reset! notice
-                                   [dir-canon-str :error
-                                    "No session yet — send a message first, then set a root"])
-                      target-base? (reset! notice [dir-canon-str :ok "Already the session's root"])
-                      :else (try (let [new-ws (vis/gateway-change-root! sid (.getPath target-dir))]
-                                   (reset! ws-info new-ws)
-                                   (reset! wid (get new-ws "id"))
-                                   ;; The footer reads the gateway `:git` fact (kept
-                                   ;; fresh by the workspace-refresh poller), so no
-                                   ;; client-side git walk is needed on the root switch.
-                                   (reset! notice [dir-canon-str :ok
-                                                   (str "Root changed — session now works in "
-                                                        target-name)]))
-                                 (catch Throwable t
-                                   (reset! notice [dir-canon-str :error
-                                                   (or (ex-message t) (str t))]))))))
+         ;; C-r: make the highlighted (or current) folder the session's
+         ;; PRIMARY root — repoints the session workspace; shell/file
+         ;; tools/search follow from the next turn.
+         set-root!
+         (fn []
+           (when manager?
+             (cond (nil? sid) (reset! notice
+                                [dir-canon-str :error
+                                 "No session yet — send a message first, then set a root"])
+                   target-base? (reset! notice [dir-canon-str :ok "Already the session's root"])
+                   :else (try (let [new-ws (vis/gateway-change-root! sid (.getPath target-dir))]
+                                (reset! ws-info new-ws)
+                                (reset! wid (get new-ws "id"))
+                                ;; The footer reads the gateway `:git` fact (kept
+                                ;; fresh by the workspace-refresh poller), so no
+                                ;; client-side git walk is needed on the root switch.
+                                (reset! notice [dir-canon-str :ok
+                                                (str "Root changed — session now works in "
+                                                     target-name)]))
+                              (catch Throwable t
+                                (reset! notice [dir-canon-str :error
+                                                (or (ex-message t) (str t))]))))))
 
-            ;; C-x d: remove one of this session's ADDED roots via a chooser.
-            ;; Works from ANYWHERE, unlike C-a which only toggles the folder you
-            ;; are currently standing in — so a root you added elsewhere is
-            ;; reachable without navigating back into it. The session root itself
-            ;; is never offered here (C-r repoints it instead).
-            remove-root!
-            (fn []
-              (when manager?
-                (cond (nil? sid) (reset! notice
-                                   [dir-canon-str :error
-                                    "No session yet — send a message first, then remove a root"])
-                      (empty? extra-set)
-                      (reset! notice
-                        [dir-canon-str :error
-                         "No added directories to remove — C-r changes the session root"])
-                      :else (let [items
-                                  (mapv (fn [p]
-                                          {:label (abbreviate-home p) :path p})
-                                        (sort extra-set))
+         ;; C-x d: remove one of this session's ADDED roots via a chooser.
+         ;; Works from ANYWHERE, unlike C-a which only toggles the folder you
+         ;; are currently standing in — so a root you added elsewhere is
+         ;; reachable without navigating back into it. The session root itself
+         ;; is never offered here (C-r repoints it instead).
+         remove-root!
+         (fn []
+           (when manager?
+             (cond (nil? sid) (reset! notice
+                                [dir-canon-str :error
+                                 "No session yet — send a message first, then remove a root"])
+                   (empty? extra-set)
+                   (reset! notice [dir-canon-str :error
+                                   "No added directories to remove — C-r changes the session root"])
+                   :else
+                   (let
+                     [items
+                      (mapv (fn [p]
+                              {:label (abbreviate-home p) :path p})
+                            (sort extra-set))
 
-                                  chosen
-                                  (select-dialog! screen "Remove a filesystem directory" items)]
+                      chosen
+                      (select-dialog! screen "Remove a filesystem directory" items)]
 
-                              (when chosen
-                                (try (let [updated
-                                           (vis/gateway-remove-filesystem-root! sid (:path chosen))]
-                                       (reset! ws-info updated)
-                                       (reset! wid (get updated "id"))
-                                       (reset! notice [dir-canon-str :ok
-                                                       (str "Removed "
-                                                            (abbreviate-home (:path chosen)))]))
-                                     (catch Throwable t
-                                       (reset! notice [dir-canon-str :error
-                                                       (or (ex-message t) (str t))]))))))))
+                     (when chosen
+                       (try (let [updated (vis/gateway-remove-filesystem-root! sid (:path chosen))]
+                              (reset! ws-info updated)
+                              (reset! wid (get updated "id"))
+                              (reset! notice [dir-canon-str :ok
+                                              (str "Removed " (abbreviate-home (:path chosen)))]))
+                            (catch Throwable t
+                              (reset! notice [dir-canon-str :error
+                                              (or (ex-message t) (str t))]))))))))
 
-            enter!
-            (fn []
-              ;; Pure navigation: mutate state, then return nil so the
-              ;; loop RECURS. Tab is the "choose this folder" action (it
-              ;; returns the path string); Enter must NEVER return a value
-              ;; — `ascend!` / `reset-list!` end in `reset!`, which yields a
-              ;; Long, and `(or (enter!) (recur))` would mis-return that as
-              ;; the chosen path → `(File. ^String <Long>)` ClassCastException.
-              (when (pos? total)
-                (let [entry (nth entries @selected)]
-                  (case (:kind entry)
-                    :up
-                    (ascend!)
+         enter!
+         (fn []
+           ;; Pure navigation: mutate state, then return nil so the
+           ;; loop RECURS. Tab is the "choose this folder" action (it
+           ;; returns the path string); Enter must NEVER return a value
+           ;; — `ascend!` / `reset-list!` end in `reset!`, which yields a
+           ;; Long, and `(or (enter!) (recur))` would mis-return that as
+           ;; the chosen path → `(File. ^String <Long>)` ClassCastException.
+           (when (pos? total)
+             (let [entry (nth entries @selected)]
+               (case (:kind entry)
+                 :up
+                 (ascend!)
 
-                    :into
-                    (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
-                        (reset! query "")
-                        (reset-list!))
+                 :into
+                 (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
+                     (reset! query "")
+                     (reset-list!))
 
-                    nil)
-                  nil)))]
+                 nil)
+               nil)))]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
         ;; Header zone (read-only): section label, boxed roots, browse line.
         (dotimes [i hdr-h]
-          (let [{:keys [kind text error?]} (nth header-rows i)
-                row (+ (long content-top) i)
-                fg (case kind
-                     :section
-                     t/dialog-hint-key
+          (let
+            [{:keys [kind text error?]} (nth header-rows i)
+             row (+ (long content-top) i)
+             fg (case kind
+                  :section
+                  t/dialog-hint-key
 
-                     :root
-                     t/dialog-fg
+                  :root
+                  t/dialog-fg
 
-                     :box
-                     t/dialog-border
+                  :box
+                  t/dialog-border
 
-                     :browse
-                     t/dialog-hint-key
+                  :browse
+                  t/dialog-hint-key
 
-                     :rule
-                     t/dialog-border
+                  :rule
+                  t/dialog-border
 
-                     :notice
-                     (if error? t/code-error-fg t/dialog-hint-key)
+                  :notice
+                  (if error? t/code-error-fg t/dialog-hint-key)
 
-                     t/dialog-hint)
-                rendered (ellipsize (str text) list-w)]
+                  t/dialog-hint)
+             rendered (ellipsize (str text) list-w)]
 
             (p/set-colors! g fg t/dialog-bg)
             (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -5534,11 +5674,12 @@
             ;; and accent the \u25cf so a bright path reads as "which dir" and the
             ;; dim tag as "how it got here", with no borders competing for the eye.
             (when (= kind :root)
-              (let [row-map (nth header-rows i)
-                    tag (str (:tag row-map))
-                    tag-n (count tag)
-                    tag-start (long (max 0 (- (count rendered) tag-n)))
-                    dot-i (str/index-of rendered "\u25cf")]
+              (let
+                [row-map (nth header-rows i)
+                 tag (str (:tag row-map))
+                 tag-n (count tag)
+                 tag-start (long (max 0 (- (count rendered) tag-n)))
+                 dot-i (str/index-of rendered "\u25cf")]
 
                 (when (pos? tag-n)
                   (p/set-colors! g t/dialog-hint t/dialog-bg)
@@ -5552,29 +5693,30 @@
         (dotimes [i body-h]
           (let [idx (+ (long @scroll) i)]
             (when (< idx total)
-              (let [row (+ list-top i)
-                    entry (nth entries idx)
-                    selected? (= idx @selected)
-                    bg (if selected? t/dialog-title-bg t/dialog-bg)
-                    ;; On the selected slab the text must jump to the title
-                    ;; FG (near-white) — dialog-fg on title-bg is base0-on-base01
-                    ;; in Solarized: too low contrast to read.
-                    fg (if selected? t/dialog-title-fg t/dialog-fg)
-                    mark (when (and manager? (= :into (:kind entry))) (if (:root? entry) "●" "○"))
-                    mark-fg (cond selected? t/dialog-title-fg
-                                  (:root? entry) t/dialog-hint-key
-                                  :else t/dialog-hint)
-                    up? (= :up (:kind entry))
-                    label (if up? "↑ Go up" (str (:name entry) "/"))
-                    ;; ".." stays flush-left; browsable folders indent UNDER
-                    ;; it so the ●/○ marks + names form their own column:
-                    ;;   ↑ Go up
-                    ;;     ● foo/
-                    ;;     ○ bar/
-                    mark-x (+ list-x 2)
-                    name-x (cond (not manager?) list-x
-                                 up? list-x
-                                 :else (+ list-x 4))]
+              (let
+                [row (+ list-top i)
+                 entry (nth entries idx)
+                 selected? (= idx @selected)
+                 bg (if selected? t/dialog-title-bg t/dialog-bg)
+                 ;; On the selected slab the text must jump to the title
+                 ;; FG (near-white) — dialog-fg on title-bg is base0-on-base01
+                 ;; in Solarized: too low contrast to read.
+                 fg (if selected? t/dialog-title-fg t/dialog-fg)
+                 mark (when (and manager? (= :into (:kind entry))) (if (:root? entry) "●" "○"))
+                 mark-fg (cond selected? t/dialog-title-fg
+                               (:root? entry) t/dialog-hint-key
+                               :else t/dialog-hint)
+                 up? (= :up (:kind entry))
+                 label (if up? "↑ Go up" (str (:name entry) "/"))
+                 ;; ".." stays flush-left; browsable folders indent UNDER
+                 ;; it so the ●/○ marks + names form their own column:
+                 ;;   ↑ Go up
+                 ;;     ● foo/
+                 ;;     ○ bar/
+                 mark-x (+ list-x 2)
+                 name-x (cond (not manager?) list-x
+                              up? list-x
+                              :else (+ list-x 4))]
 
                 (p/set-colors! g fg bg)
                 (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -5591,8 +5733,8 @@
                 ;; ↑ "Go up" arrow: accent when unselected (visible on the light
                 ;; and dark dialog bg) and WHITE when selected/hovered (visible
                 ;; on the title slab in every theme).
-                (let [label-fg
-                      (if up? (if selected? t/dialog-title-fg t/header-active-tab-accent) fg)]
+                (let
+                  [label-fg (if up? (if selected? t/dialog-title-fg t/header-active-tab-accent) fg)]
                   (p/set-colors! g label-fg bg)
                   (p/put-str! g
                               name-x
@@ -5633,9 +5775,10 @@
                                             (recur))
                   (ctrl-letter? key \r) (do (set-root!) (recur))
                   (ctrl-letter? key \n)
-                  (let [nm (text-input-dialog! screen
-                                               "New folder" (str "Create under " (.getPath dir))
-                                               :flat? true)]
+                  (let
+                    [nm (text-input-dialog! screen
+                                            "New folder" (str "Create under " (.getPath dir))
+                                            :flat? true)]
                     (when (and nm (seq (str/trim nm)))
                       (try (workspace/create-dir! (.getPath dir) nm)
                            (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
@@ -5678,133 +5821,132 @@
 (defn navigator-dialog!
   "Global C-g picker. Returns a target action map or nil on Esc."
   [^TerminalScreen screen opts]
-  (let [query
-        (atom "")
+  (let
+    [query
+     (atom "")
 
-        selected
-        (atom 0)
+     selected
+     (atom 0)
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        ;; Rows between the thumb top and the user's grip point, saved on
-        ;; CLICK_DOWN so a drag keeps the cursor glued to the same spot on
-        ;; the thumb. nil = not dragging.
-        scrollbar-drag-offset
-        (volatile! nil)
+     ;; Rows between the thumb top and the user's grip point, saved on
+     ;; CLICK_DOWN so a drag keeps the cursor glued to the same spot on
+     ;; the thumb. nil = not dragging.
+     scrollbar-drag-offset
+     (volatile! nil)
 
-        show-empty-untitled?
-        (atom (boolean (:show-empty-untitled? opts)))]
+     show-empty-untitled?
+     (atom (boolean (:show-empty-untitled? opts)))]
 
     (loop []
 
-      (let [rows
-            (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
+      (let
+        [rows
+         (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
 
-            visible-rows
-            (navigator-visible-rows rows @query)
+         visible-rows
+         (navigator-visible-rows rows @query)
 
-            total
-            (count visible-rows)
+         total
+         (count visible-rows)
 
-            size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         size
+         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-            cols
-            (.getColumns size)
+         cols
+         (.getColumns size)
 
-            rows-n
-            (.getRows size)
+         rows-n
+         (.getRows size)
 
-            g
-            (.newTextGraphics screen)
+         g
+         (.newTextGraphics screen)
 
-            bounds
-            (draw-dialog-chrome! g cols rows-n "Sessions" (- cols 4) (- rows-n 4))
+         bounds
+         (draw-dialog-chrome! g cols rows-n "Sessions" (- cols 4) (- rows-n 4))
 
-            {:keys [left right inner-w]}
-            bounds
+         {:keys [left right inner-w]}
+         bounds
 
-            ;; Input is pinned to a FIXED top position (no vertical
-            ;; centering) so it never jumps as the row count changes
-            ;; while typing. The table grows DOWN from there.
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds)
+         ;; Input is pinned to a FIXED top position (no vertical
+         ;; centering) so it never jumps as the row count changes
+         ;; while typing. The table grows DOWN from there.
+         {:keys [content-top content-h hint-row]}
+         (dialog-layout bounds)
 
-            table?
-            (pos? total)
+         table?
+         (pos? total)
 
-            query-row
-            content-top
+         query-row
+         content-top
 
-            ;; Reserve a right-side scrollbar gutter so the bar is a
-            ;; SEPARATE element, not painted on top of the table's right
-            ;; border. `content-w` shrinks BOTH the query box and the
-            ;; table by the gutter so their right edges stay aligned; the
-            ;; bar then floats one blank column clear of that edge.
-            sb-gutter
-            2
+         ;; Reserve a right-side scrollbar gutter so the bar is a
+         ;; SEPARATE element, not painted on top of the table's right
+         ;; border. `content-w` shrinks BOTH the query box and the
+         ;; table by the gutter so their right edges stay aligned; the
+         ;; bar then floats one blank column clear of that edge.
+         sb-gutter
+         2
 
-            content-w
-            (long (max 1 (- (long inner-w) sb-gutter)))
+         content-w
+         (long (max 1 (- (long inner-w) sb-gutter)))
 
-            ;; Table is inset one column on each side, exactly matching the
-            ;; query box; the selection marker lives INSIDE the left
-            ;; padding, so there is no external gutter.
-            table-x
-            (+ (long left) 2)
+         ;; Table is inset one column on each side, exactly matching the
+         ;; query box; the selection marker lives INSIDE the left
+         ;; padding, so there is no external gutter.
+         table-x
+         (+ (long left) 2)
 
-            table-w
-            (long (max 1 (- content-w 2)))
+         table-w
+         (long (max 1 (- content-w 2)))
 
-            table-body-w
-            (long (max 1 (- table-w 2)))
+         table-body-w
+         (long (max 1 (- table-w 2)))
 
-            ;; table-x+table-w-1 is the table's right border; +1 leaves a
-            ;; blank separator column before the bar.
-            scrollbar-col
-            (+ table-x table-w 1)
+         ;; table-x+table-w-1 is the table's right border; +1 leaves a
+         ;; blank separator column before the bar.
+         scrollbar-col
+         (+ table-x table-w 1)
 
-            table-widths
-            (table/column-widths navigator-columns (max 1 table-body-w))
+         table-widths
+         (table/column-widths navigator-columns (max 1 table-body-w))
 
-            aligns
-            (mapv #(or (:align %) :left) navigator-columns)
+         aligns
+         (mapv #(or (:align %) :left) navigator-columns)
 
-            top-row
-            (+ (long content-top) 2)
+         top-row
+         (+ (long content-top) 2)
 
-            header-row
-            (inc top-row)
+         header-row
+         (inc top-row)
 
-            sep-row
-            (inc header-row)
+         sep-row
+         (inc header-row)
 
-            body-top
-            (inc sep-row)
+         body-top
+         (inc sep-row)
 
-            ;; Height = actual row count (capped) so the bottom border is
-            ;; glued to the last row instead of floating below blanks.
-            body-h
-            (p/clamp total 1 (max 1 (- (long content-h) 6)))
+         ;; Height = actual row count (capped) so the bottom border is
+         ;; glued to the last row instead of floating below blanks.
+         body-h
+         (p/clamp total 1 (max 1 (- (long content-h) 6)))
 
-            bottom-row
-            (+ body-top body-h)
+         bottom-row
+         (+ body-top body-h)
 
-            _
-            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+         _
+         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-            _
-            (swap! scroll #(visible-window-start @selected % body-h total))]
+         _
+         (swap! scroll #(visible-window-start @selected % body-h total))]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-        (let [cursor-pos (draw-text-input-field! g
-                                                 (inc (long left))
-                                                 query-row
-                                                 content-w
-                                                 @query
-                                                 (count @query))]
+        (let
+          [cursor-pos
+           (draw-text-input-field! g (inc (long left)) query-row content-w @query (count @query))]
           ;; Border rule under the search field, T-joined to the dialog frame —
           ;; the same framed-input look the C-x p command palette uses
           ;; (`list-dialog!`), so the session switcher reads as one cohesive box.
@@ -5812,12 +5954,13 @@
           (p/draw-separator! g left right (inc (long content-top)))
           (if-not table?
             ;; Empty state: no skeleton table, just a quiet line below input.
-            (let [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
-                  msg (cond (not (str/blank? @query)) "No matches"
-                            (and (pos? hidden-count) (not @show-empty-untitled?))
-                            "Only empty untitled sessions hidden"
-                            :else "No sessions yet")
-                  msg-x (+ table-x (long (max 0 (quot (- table-w (count msg)) 2))))]
+            (let
+              [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
+               msg (cond (not (str/blank? @query)) "No matches"
+                         (and (pos? hidden-count) (not @show-empty-untitled?))
+                         "Only empty untitled sessions hidden"
+                         :else "No sessions yet")
+               msg-x (+ table-x (long (max 0 (quot (- table-w (count msg)) 2))))]
 
               (p/set-colors! g t/dialog-hint t/dialog-bg)
               (p/put-str! g msg-x (+ (long content-top) 3) msg))
@@ -5835,18 +5978,19 @@
                 (p/set-colors! g t/dialog-border t/dialog-bg)
                 (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
                 (dotimes [i body-h]
-                  (let [idx (+ (long @scroll) i)
-                        row (+ body-top i)
-                        selected? (= idx @selected)
-                        entry (nth visible-rows idx)
-                        ;; The currently-focused session paints in the dialog
-                        ;; accent + bold (always), so it pops as "you are
-                        ;; here" against the plain switch-to rows.
-                        focused? (:focused? entry)
-                        row-fg (if focused? t/dialog-hint-key t/dialog-fg)
-                        cells (navigator-with-selection-gutter (mapv (fn [{:keys [id]}]
-                                                                       (str (get entry id "")))
-                                                                     navigator-columns))]
+                  (let
+                    [idx (+ (long @scroll) i)
+                     row (+ body-top i)
+                     selected? (= idx @selected)
+                     entry (nth visible-rows idx)
+                     ;; The currently-focused session paints in the dialog
+                     ;; accent + bold (always), so it pops as "you are
+                     ;; here" against the plain switch-to rows.
+                     focused? (:focused? entry)
+                     row-fg (if focused? t/dialog-hint-key t/dialog-fg)
+                     cells (navigator-with-selection-gutter (mapv (fn [{:keys [id]}]
+                                                                    (str (get entry id "")))
+                                                                  navigator-columns))]
 
                     (draw-navigator-row! g
                                          table-x
@@ -5879,13 +6023,14 @@
                            ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
           (.refresh screen Screen$RefreshType/DELTA))
-        (let [key
-              (read-modal-key! screen)
+        (let
+          [key
+           (read-modal-key! screen)
 
-              reset-list!
-              (fn []
-                (reset! selected 0)
-                (reset! scroll 0))]
+           reset-list!
+           (fn []
+             (reset! selected 0)
+             (reset! scroll 0))]
 
           (when key
             (cond
@@ -5911,33 +6056,34 @@
                                   (.getColumn pos)
                                   (.getRow pos)
                                   {:col scrollbar-col :top body-top :track-h body-h :x-band 2}))))))
-              (let [^MouseAction ma
-                    key
+              (let
+                [^MouseAction ma
+                 key
 
-                    action
-                    (.getActionType ma)
+                 action
+                 (.getActionType ma)
 
-                    pos
-                    (.getPosition ma)
+                 pos
+                 (.getPosition ma)
 
-                    mx
-                    (.getColumn pos)
+                 mx
+                 (.getColumn pos)
 
-                    my
-                    (.getRow pos)
+                 my
+                 (.getRow pos)
 
-                    geom
-                    (scrollbar/geometry total body-h body-h @scroll)
+                 geom
+                 (scrollbar/geometry total body-h body-h @scroll)
 
-                    apply-scroll!
-                    (fn [grip]
-                      (let [ns
-                            (or (scrollbar/scroll-from-mouse-y my body-top body-h total body-h grip)
-                                0)]
-                        (reset! scroll ns)
-                        (swap! selected #(p/clamp %
-                                                  ns
-                                                  (min (dec total) (+ (long ns) (dec body-h)))))))]
+                 apply-scroll!
+                 (fn [grip]
+                   (let
+                     [ns (or (scrollbar/scroll-from-mouse-y my body-top body-h total body-h grip)
+                             0)]
+                     (reset! scroll ns)
+                     (swap! selected #(p/clamp %
+                                               ns
+                                               (min (dec total) (+ (long ns) (dec body-h)))))))]
 
                 (cond (= action MouseActionType/CLICK_RELEASE)
                       (do (vreset! scrollbar-drag-offset nil) (recur))
@@ -6075,9 +6221,10 @@
    ;; Each built-in carries its direct keybind as a dim right-aligned `:hint`
    ;; (opencode-style), so the palette doubles as a live keymap reference;
    ;; palette-only verbs and slash roots have no chord, so no hint.
-   (let [with-hints (mapv (fn [c]
-                            (assoc c :hint (keymap/label-for (:id c))))
-                          palette-commands)]
+   (let
+     [with-hints (mapv (fn [c]
+                         (assoc c :hint (keymap/label-for (:id c))))
+                       palette-commands)]
      (searchable-select! screen "Command Palette" (vec (concat with-hints extra-commands))))))
 (defn model-picker!
   "Searchable per-session model picker — TUI parity with the web footer
@@ -6089,45 +6236,47 @@
    — `{:reset? true}` for the router-default row, else `{:provider <str>
    :model <str>}` — or nil on Esc."
   [^TerminalScreen screen current]
-  (let [providers
-        (try (vis/configured-providers)
-             (catch Throwable t
-               (tel/log! :warn ["dialogs: configured-providers failed" (ex-message t)])
-               nil))
+  (let
+    [providers
+     (try (vis/configured-providers)
+          (catch Throwable t
+            (tel/log! :warn ["dialogs: configured-providers failed" (ex-message t)])
+            nil))
 
-        cur-provider
-        (some-> (:provider current)
-                name)
+     cur-provider
+     (some-> (:provider current)
+             name)
 
-        cur-model
-        (:model current)
+     cur-model
+     (:model current)
 
-        model-rows
-        (for [p
-              providers
+     model-rows
+     (for
+       [p
+        providers
 
-              :let [pid
-                    (name (:id p))
+        :let [pid
+              (name (:id p))
 
-                    plabel
-                    (vis/display-label (:id p))]
-              m
-              (:models p)
+              plabel
+              (vis/display-label (:id p))]
+        m
+        (:models p)
 
-              :let [nm
-                    (vis/model-name m)]
-              :when nm]
+        :let [nm
+              (vis/model-name m)]
+        :when nm]
 
-          {:label (str plabel " / " nm)
-           :hint (when (and (= nm cur-model) (= pid cur-provider)) "● current")
-           :provider pid
-           :model nm})
+       {:label (str plabel " / " nm)
+        :hint (when (and (= nm cur-model) (= pid cur-provider)) "● current")
+        :provider pid
+        :model nm})
 
-        items
-        (vec (cons {:label "★ router default"
-                    :hint (when (and (nil? cur-provider) (nil? cur-model)) "● current")
-                    :reset? true}
-                   model-rows))]
+     items
+     (vec (cons {:label "★ router default"
+                 :hint (when (and (nil? cur-provider) (nil? cur-model)) "● current")
+                 :reset? true}
+                model-rows))]
 
     (list-dialog! screen
                   "Session model"
@@ -6148,27 +6297,28 @@
   (let [scroll (atom 0)]
     (loop []
 
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            ;; Text viewer is the only dialog that should consume the
-            ;; vertical room it can get - it scrolls long content. Ask
-            ;; for terminal-bound height so the viewport is generous,
-            ;; while still sharing the standard width.
-            bounds (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
-            {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-            ;; Reserve the last inner column for a scrollbar that matches
-            ;; the chat area's track+thumb style. Text wraps into the
-            ;; remaining width so nothing collides with the bar.
-            scroll-col (+ (long left) (long inner-w))
-            text-w (max 1 (- (long inner-w) 3))
-            lines (vec (mapcat #(render/wrap-text % text-w) (str/split-lines (or text "(empty)"))))
-            total (count lines)
-            max-scroll (long (max 0 (- total (long content-h))))
-            _ (swap! scroll #(p/clamp % 0 max-scroll))
-            visible (subvec lines @scroll (min total (+ (long @scroll) (long content-h))))]
+      (let
+        [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         cols (.getColumns size)
+         rows (.getRows size)
+         g (.newTextGraphics screen)
+         ;; Text viewer is the only dialog that should consume the
+         ;; vertical room it can get - it scrolls long content. Ask
+         ;; for terminal-bound height so the viewport is generous,
+         ;; while still sharing the standard width.
+         bounds (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
+         {:keys [left inner-w]} bounds
+         {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+         ;; Reserve the last inner column for a scrollbar that matches
+         ;; the chat area's track+thumb style. Text wraps into the
+         ;; remaining width so nothing collides with the bar.
+         scroll-col (+ (long left) (long inner-w))
+         text-w (max 1 (- (long inner-w) 3))
+         lines (vec (mapcat #(render/wrap-text % text-w) (str/split-lines (or text "(empty)"))))
+         total (count lines)
+         max-scroll (long (max 0 (- total (long content-h))))
+         _ (swap! scroll #(p/clamp % 0 max-scroll))
+         visible (subvec lines @scroll (min total (+ (long @scroll) (long content-h))))]
 
         ;; Body - verbatim line render, no ellipsization (wrap-text
         ;; already produced lines that fit `text-w`).
@@ -6179,8 +6329,9 @@
               (p/fill-rect! g (inc (long left)) row inner-w 1)
               (p/put-str! g (+ (long left) 2) row line))))
         ;; Clear remaining rows in the content area
-        (doseq [row (range (+ (long content-top) (count visible))
-                           (+ (long content-top) (long content-h)))]
+        (doseq
+          [row (range (+ (long content-top) (count visible))
+                      (+ (long content-top) (long content-h)))]
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc (long left)) row inner-w 1))
         ;; Scrollbar - same style as the chat messages area: a vertical
@@ -6188,11 +6339,12 @@
         ;; visible window. Drawn over the content's right margin, on the
         ;; dialog background so it visually blends with the dialog frame.
         (when (> total (long content-h))
-          (let [track-h (long content-h)
-                ratio (/ (double content-h) total)
-                thumb-h (long (max 1 (int (* track-h ratio))))
-                den (long (max 1 max-scroll))
-                thumb-pos (int (* (- track-h thumb-h) (/ (double @scroll) den)))]
+          (let
+            [track-h (long content-h)
+             ratio (/ (double content-h) total)
+             thumb-h (long (max 1 (int (* track-h ratio))))
+             den (long (max 1 max-scroll))
+             thumb-pos (int (* (- track-h thumb-h) (/ (double @scroll) den)))]
 
             (doseq [r (range track-h)]
               (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -6220,29 +6372,30 @@
    dialog-palette mapping: headings title-accent bold, code/links/list
    markers hint-key accent, dim/quote hint, **bold**/_italic_ as SGR."
   [g x row {:keys [text style]}]
-  (let [style
-        (or style #{})
+  (let
+    [style
+     (or style #{})
 
-        head?
-        (contains? style :heading)
+     head?
+     (contains? style :heading)
 
-        code?
-        (or (contains? style :code) (contains? style :link))
+     code?
+     (or (contains? style :code) (contains? style :link))
 
-        ;; Headings paint dialog-fg + BOLD, NOT dialog-title-fg: the
-        ;; title token is white in BOTH palettes (it sits on the title
-        ;; bar), so on the light dialog body it was invisible.
-        fg
-        (cond code? t/dialog-hint-key
-              (contains? style :marker) t/dialog-hint-key
-              (or (contains? style :dim) (contains? style :quote)) t/dialog-hint
-              :else t/dialog-fg)
+     ;; Headings paint dialog-fg + BOLD, NOT dialog-title-fg: the
+     ;; title token is white in BOTH palettes (it sits on the title
+     ;; bar), so on the light dialog body it was invisible.
+     fg
+     (cond code? t/dialog-hint-key
+           (contains? style :marker) t/dialog-hint-key
+           (or (contains? style :dim) (contains? style :quote)) t/dialog-hint
+           :else t/dialog-fg)
 
-        bold?
-        (or head? (contains? style :bold))
+     bold?
+     (or head? (contains? style :bold))
 
-        italic?
-        (contains? style :italic)]
+     italic?
+     (contains? style :italic)]
 
     (p/set-colors! g fg t/dialog-bg)
     (cond (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x row text))
@@ -6257,63 +6410,63 @@
    (`layout/ast->lines`). The rich twin of `text-viewer-dialog!`.
    Returns nil on Esc. Supports keyboard scrolling."
   [^TerminalScreen screen title md]
-  (let [scroll
-        (atom 0)
+  (let
+    [scroll
+     (atom 0)
 
-        ir
-        (try (vis/markdown->ast (str md))
-             (catch Throwable t
-               (tel/log! :warn ["dialogs: markdown->ast failed" (ex-message t)])
-               nil))]
+     ir
+     (try
+       (vis/markdown->ast (str md))
+       (catch Throwable t (tel/log! :warn ["dialogs: markdown->ast failed" (ex-message t)]) nil))]
 
     (if (nil? ir)
       (text-viewer-dialog! screen title (str md))
       (loop []
 
-        (let [size
-              (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+        (let
+          [size
+           (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-              cols
-              (.getColumns size)
+           cols
+           (.getColumns size)
 
-              rows
-              (.getRows size)
+           rows
+           (.getRows size)
 
-              g
-              (.newTextGraphics screen)
+           g
+           (.newTextGraphics screen)
 
-              bounds
-              (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
+           bounds
+           (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
 
-              {:keys [left inner-w]}
-              bounds
+           {:keys [left inner-w]}
+           bounds
 
-              {:keys [content-top content-h hint-row]}
-              (dialog-layout bounds)
+           {:keys [content-top content-h hint-row]}
+           (dialog-layout bounds)
 
-              scroll-col
-              (+ (long left) (long inner-w))
+           scroll-col
+           (+ (long left) (long inner-w))
 
-              text-w
-              (max 1 (- (long inner-w) 3))
+           text-w
+           (max 1 (- (long inner-w) 3))
 
-              lines
-              (try (layout/ast->lines ir text-w)
-                   (catch Throwable t
-                     (tel/log! :warn ["dialogs: ast->lines failed" (ex-message t)])
-                     []))
+           lines
+           (try
+             (layout/ast->lines ir text-w)
+             (catch Throwable t (tel/log! :warn ["dialogs: ast->lines failed" (ex-message t)]) []))
 
-              total
-              (count lines)
+           total
+           (count lines)
 
-              max-scroll
-              (long (max 0 (- total (long content-h))))
+           max-scroll
+           (long (max 0 (- total (long content-h))))
 
-              _
-              (swap! scroll #(p/clamp % 0 max-scroll))
+           _
+           (swap! scroll #(p/clamp % 0 max-scroll))
 
-              visible
-              (subvec (vec lines) @scroll (min total (+ (long @scroll) (long content-h))))]
+           visible
+           (subvec (vec lines) @scroll (min total (+ (long @scroll) (long content-h))))]
 
           (doseq [[i line] (map-indexed vector visible)]
             (let [row (+ (long content-top) (long i))]
@@ -6324,25 +6477,27 @@
                           (md-run-paint! g x row run))
                         (+ (long left) 2)
                         (:runs line)))))
-          (doseq [row (range (+ (long content-top) (count visible))
-                             (+ (long content-top) (long content-h)))]
+          (doseq
+            [row (range (+ (long content-top) (count visible))
+                        (+ (long content-top) (long content-h)))]
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g (inc (long left)) row inner-w 1))
           (when (> total (long content-h))
-            (let [track-h
-                  (long content-h)
+            (let
+              [track-h
+               (long content-h)
 
-                  ratio
-                  (/ (double content-h) total)
+               ratio
+               (/ (double content-h) total)
 
-                  thumb-h
-                  (long (max 1 (int (* track-h ratio))))
+               thumb-h
+               (long (max 1 (int (* track-h ratio))))
 
-                  den
-                  (long (max 1 max-scroll))
+               den
+               (long (max 1 max-scroll))
 
-                  thumb-pos
-                  (int (* (- track-h thumb-h) (/ (double @scroll) den)))]
+               thumb-pos
+               (int (* (- track-h thumb-h) (/ (double @scroll) den)))]
 
               (doseq [r (range track-h)]
                 (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -6385,37 +6540,40 @@
   "Show copy dialog for chat messages.
    Space toggles, A toggles all, Enter copies selected, Esc cancels."
   [^TerminalScreen screen messages]
-  (let [items
-        (vec messages)
+  (let
+    [items
+     (vec messages)
 
-        selected
-        (atom 0)
+     selected
+     (atom 0)
 
-        scroll
-        (atom 0)
+     scroll
+     (atom 0)
 
-        checked
-        (atom #{})
+     checked
+     (atom #{})
 
-        ch
-        (count items)]
+     ch
+     (count items)]
 
     (loop [status [["Space" "toggle"] ["A" "all"] ["Enter" "copy"] ["Esc" "cancel"]]]
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Copy Messages" ch)
-            {:keys [left inner-w]} bounds
-            total (count items)
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
-            visible (min total (long content-h))
-            _ (swap! selected #(p/clamp % 0 (max 0 (dec total))))
-            _ (swap! scroll #(visible-window-start @selected % content-h total))]
+      (let
+        [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         cols (.getColumns size)
+         rows (.getRows size)
+         g (.newTextGraphics screen)
+         bounds (draw-dialog-chrome! g cols rows "Copy Messages" ch)
+         {:keys [left inner-w]} bounds
+         total (count items)
+         {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
+         visible (min total (long content-h))
+         _ (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+         _ (swap! scroll #(visible-window-start @selected % content-h total))]
 
         (dotimes [i visible]
-          (let [idx (+ (long @scroll) i)
-                row (+ (long content-top) i)]
+          (let
+            [idx (+ (long @scroll) i)
+             row (+ (long content-top) i)]
 
             (when (< idx total)
               (draw-checkbox-item! g

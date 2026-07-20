@@ -67,11 +67,12 @@
                    (expect (contains? (:project ctx) :host))
                    (expect (contains? (:project ctx) :root))))
              (it "uses active workspace root instead of JVM cwd for internal git facts"
-                 (let [root
-                       (make-tmp-dir)
+                 (let
+                   [root
+                    (make-tmp-dir)
 
-                       branch
-                       "feature/ws"]
+                    branch
+                    "feature/ws"]
 
                    (try (init-repo-on-branch! root branch)
                         (binding [workspace/*workspace-root* (.getCanonicalPath root)]

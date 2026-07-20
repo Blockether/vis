@@ -79,28 +79,29 @@
   "Build one picker entry from a filesystem path + attrs. `cwd` is the
    scan root; `git-info` is from `git-status-snapshot`."
   [^Path cwd {:keys [repo-root path-status] :as git-info} ^Path path ^BasicFileAttributes attrs]
-  (let [abs-path
-        (.toAbsolutePath path)
+  (let
+    [abs-path
+     (.toAbsolutePath path)
 
-        rel-path
-        (display-path cwd abs-path)
+     rel-path
+     (display-path cwd abs-path)
 
-        parent-path
-        (let [parent (.getParent abs-path)]
-          (cond (nil? parent) "."
-                (= (.toAbsolutePath parent) (.toAbsolutePath cwd)) "."
-                :else (display-path cwd parent)))
+     parent-path
+     (let [parent (.getParent abs-path)]
+       (cond (nil? parent) "."
+             (= (.toAbsolutePath parent) (.toAbsolutePath cwd)) "."
+             :else (display-path cwd parent)))
 
-        repo-rel
-        (when repo-root
-          (let [repo-root-abs (.toAbsolutePath ^Path repo-root)]
-            (when (.startsWith abs-path repo-root-abs) (display-path repo-root-abs abs-path))))
+     repo-rel
+     (when repo-root
+       (let [repo-root-abs (.toAbsolutePath ^Path repo-root)]
+         (when (.startsWith abs-path repo-root-abs) (display-path repo-root-abs abs-path))))
 
-        ignored?
-        (ignored-path? git-info repo-rel)
+     ignored?
+     (ignored-path? git-info repo-rel)
 
-        git-status
-        (or (get path-status repo-rel) (when ignored? :ignored))]
+     git-status
+     (or (get path-status repo-rel) (when ignored? :ignored))]
 
     {:path rel-path
      :name (str (.getFileName abs-path))
@@ -115,14 +116,15 @@
    internals unconditionally; everything else stays eligible so the UI can
    toggle ignored files on/off without rebuilding the index."
   []
-  (let [cwd
-        (cwd-path)
+  (let
+    [cwd
+     (cwd-path)
 
-        git-info
-        (git-status-snapshot cwd)
+     git-info
+     (git-status-snapshot cwd)
 
-        entries
-        (volatile! [])]
+     entries
+     (volatile! [])]
 
     (Files/walkFileTree cwd
                         (proxy [SimpleFileVisitor] []
@@ -151,17 +153,18 @@
 (defn format-relative-age
   "Compact relative age for picker rows."
   [^long now-ms ^long mtime-ms]
-  (let [delta-ms
-        (long (max 0 (- now-ms mtime-ms)))
+  (let
+    [delta-ms
+     (long (max 0 (- now-ms mtime-ms)))
 
-        minutes
-        (quot delta-ms 60000)
+     minutes
+     (quot delta-ms 60000)
 
-        hours
-        (quot delta-ms 3600000)
+     hours
+     (quot delta-ms 3600000)
 
-        days
-        (quot delta-ms 86400000)]
+     days
+     (quot delta-ms 86400000)]
 
     (cond (< minutes 1) "now"
           (< minutes 60) (str minutes "m")
@@ -171,17 +174,18 @@
 (defn file-picker-score
   "Heuristic fuzzy score for `query` against `path`. Nil means no match."
   [path query]
-  (let [path-lc
-        (str/lower-case path)
+  (let
+    [path-lc
+     (str/lower-case path)
 
-        query-lc
-        (str/lower-case (or query ""))
+     query-lc
+     (str/lower-case (or query ""))
 
-        file-name
-        (last (str/split path-lc #"/"))
+     file-name
+     (last (str/split path-lc #"/"))
 
-        segments
-        (str/split path-lc #"/")]
+     segments
+     (str/split path-lc #"/")]
 
     (cond (str/blank? query-lc) nil
           (= path-lc query-lc) 1000
@@ -289,14 +293,15 @@
    close it — but NEVER while a search may still be running on it: fff's
    native `search` crashes the JVM (SIGSEGV) on a closed handle."
   ^java.io.Closeable []
-  (let [root
-        (.toFile (cwd-path))
+  (let
+    [root
+     (.toFile (cwd-path))
 
-        idx
-        (fff/create {:base-path (.getCanonicalPath root)
-                     :watch? false
-                     :ai-mode? true
-                     :enable-mmap-cache? false})]
+     idx
+     (fff/create {:base-path (.getCanonicalPath root)
+                  :watch? false
+                  :ai-mode? true
+                  :enable-mmap-cache? false})]
 
     (fff/wait-for-scan idx 30000)
     idx))
@@ -312,10 +317,11 @@
   ([idx query {:keys [now-ms limit] :or {now-ms (System/currentTimeMillis) limit max-results}}]
    (->> (:items (fff/search idx {:query (or query "") :page-size limit}))
         (mapv (fn [{:keys [relative-path git-status size modified]}]
-                (let [status (when (and (string? git-status)
-                                        (not (str/blank? git-status))
-                                        (not= "clean" git-status))
-                               git-status)]
+                (let
+                  [status (when (and (string? git-status)
+                                     (not (str/blank? git-status))
+                                     (not= "clean" git-status))
+                            git-status)]
                   {:path relative-path
                    :label relative-path
                    :status-label (or status "clean")

@@ -102,12 +102,13 @@
   render-heartbeat-test
   (it "keeps live render heartbeat at 80ms" (expect (= 80 (deref #'screen/spinner-tick-ms))))
   (it "classifies progress-only loading ticks for partial repaint"
-      (let [base {:loading? true
-                  :messages [{:role :assistant :text "live"}]
-                  :input {:lines [""]}
-                  :progress {:iterations []}
-                  :render-version 1
-                  :layout {:total-h 1}}]
+      (let
+        [base {:loading? true
+               :messages [{:role :assistant :text "live"}]
+               :input {:lines [""]}
+               :progress {:iterations []}
+               :render-version 1
+               :layout {:total-h 1}}]
         (expect (live-progress-only-change? base
                                             (assoc base
                                               :progress {:iterations [:new]}
@@ -118,58 +119,61 @@
                                                    :input {:lines ["typed"]}
                                                    :progress {:iterations [:new]}))))))
   (it "does not use partial live repaint for scroll changes during streaming"
-      (let [base
-            {:loading? true
-             :scroll scroll/follow
-             :messages [{:role :user :text "old"} {:role :assistant :text "live"}]
-             :input {:lines [""]}
-             :progress {:iterations []}
-             :render-version 1
-             :layout {:total-h 100}}
+      (let
+        [base
+         {:loading? true
+          :scroll scroll/follow
+          :messages [{:role :user :text "old"} {:role :assistant :text "live"}]
+          :input {:lines [""]}
+          :progress {:iterations []}
+          :render-version 1
+          :layout {:total-h 100}}
 
-            scrolled
-            (assoc base
-              :scroll (scroll/parked 20)
-              :render-version 2)]
+         scrolled
+         (assoc base
+           :scroll (scroll/parked 20)
+           :render-version 2)]
 
         (expect (false? (live-progress-only-change? base scrolled)))
         (expect (false? (boolean (partial-live-frame? base scrolled true {:total-h 100}))))))
   (it "does not use partial live repaint while cancellation is in flight"
-      (let [base
-            {:loading? true
-             :cancelling? true
-             :messages [{:role :assistant :text "live"}]
-             :input {:lines [""]}
-             :progress {:iterations []}
-             :render-version 1
-             :layout {:total-h 10}}
+      (let
+        [base
+         {:loading? true
+          :cancelling? true
+          :messages [{:role :assistant :text "live"}]
+          :input {:lines [""]}
+          :progress {:iterations []}
+          :render-version 1
+          :layout {:total-h 10}}
 
-            cancelling
-            (assoc base
-              :progress {:iterations [:new]}
-              :render-version 2
-              :layout {:total-h 12})]
+         cancelling
+         (assoc base
+           :progress {:iterations [:new]}
+           :render-version 2
+           :layout {:total-h 12})]
 
         (expect (live-progress-only-change? base cancelling))
         (expect (false? (boolean (partial-live-frame? base cancelling true {:total-h 10}))))))
   (it "classifies header hover bumps as header-only repaints"
-      (let [base
-            {:loading? false
-             :messages [{:role :assistant :text "stable body"}]
-             :input {:lines [""]}
-             :render-version 1
-             :layout {:total-h 10}}
+      (let
+        [base
+         {:loading? false
+          :messages [{:role :assistant :text "stable body"}]
+          :input {:lines [""]}
+          :render-version 1
+          :layout {:total-h 10}}
 
-            bumped
-            (assoc base
-              :render-version 2
-              :layout {:total-h 10})
+         bumped
+         (assoc base
+           :render-version 2
+           :layout {:total-h 10})
 
-            header-region
-            {:kind :copy-id :bounds {:row 1 :col 60 :width 12}}
+         header-region
+         {:kind :copy-id :bounds {:row 1 :col 60 :width 12}}
 
-            body-region
-            {:kind :url :bounds {:row 8 :col 4 :width 12}}]
+         body-region
+         {:kind :url :bounds {:row 8 :col 4 :width 12}}]
 
         (expect (header-hover-only-change? base bumped nil header-region))
         (expect (header-hover-only-change? base bumped header-region nil))
@@ -181,92 +185,96 @@
 
 (defdescribe wheel-coalescing-test
              (it "classifies wheel actions to signed deltas"
-                 (let [up
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 10 4))
+                 (let
+                   [up
+                    (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 10 4))
 
-                       down
-                       (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 10 4))
+                    down
+                    (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 10 4))
 
-                       click
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 10 4))]
+                    click
+                    (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 10 4))]
 
                    (expect (= -1 (mouse-wheel-delta up)))
                    (expect (= 1 (mouse-wheel-delta down)))
                    (expect (nil? (mouse-wheel-delta click)))))
              (it "coalesces wheel floods and preserves first non-wheel key"
-                 (let [first-wheel
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
+                 (let
+                   [first-wheel
+                    (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
 
-                       second-wheel
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
+                    second-wheel
+                    (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
 
-                       non-wheel
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 3 7))
+                    non-wheel
+                    (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 3 7))
 
-                       queue
-                       (atom [second-wheel non-wheel])
+                    queue
+                    (atom [second-wheel non-wheel])
 
-                       poll-next
-                       (fn []
-                         (let [v @queue]
-                           (when-let [k (first v)]
-                             (swap! queue subvec 1)
-                             k)))
+                    poll-next
+                    (fn []
+                      (let [v @queue]
+                        (when-let [k (first v)]
+                          (swap! queue subvec 1)
+                          k)))
 
-                       {:keys [wheel-delta next-key]}
-                       (coalesce-wheel-input first-wheel poll-next)]
+                    {:keys [wheel-delta next-key]}
+                    (coalesce-wheel-input first-wheel poll-next)]
 
                    (expect (= -2 wheel-delta))
                    (expect (= non-wheel next-key))
                    (expect (empty? @queue))))
              (it "drops net-zero wheel jitter (up then down)"
-                 (let [first-wheel
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 1 1))
+                 (let
+                   [first-wheel
+                    (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 1 1))
 
-                       second-wheel
-                       (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 1 1))
+                    second-wheel
+                    (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 1 1))
 
-                       queue
-                       (atom [second-wheel])
+                    queue
+                    (atom [second-wheel])
 
-                       poll-next
-                       (fn []
-                         (let [v @queue]
-                           (when-let [k (first v)]
-                             (swap! queue subvec 1)
-                             k)))
+                    poll-next
+                    (fn []
+                      (let [v @queue]
+                        (when-let [k (first v)]
+                          (swap! queue subvec 1)
+                          k)))
 
-                       {:keys [wheel-delta]}
-                       (coalesce-wheel-input first-wheel poll-next)]
+                    {:keys [wheel-delta]}
+                    (coalesce-wheel-input first-wheel poll-next)]
 
                    (expect (nil? wheel-delta)))))
 
 (defdescribe drag-coalescing-test
              (it "coalesces drag bursts and keeps last drag event + first non-drag"
-                 (let [d1
-                       (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 5))
+                 (let
+                   [d1
+                    (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 5))
 
-                       d2
-                       (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 6))
+                    d2
+                    (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 6))
 
-                       d3
-                       (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 7))
+                    d3
+                    (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 7))
 
-                       click
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 5 7))
+                    click
+                    (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 5 7))
 
-                       queue
-                       (atom [d2 d3 click])
+                    queue
+                    (atom [d2 d3 click])
 
-                       poll-next
-                       (fn []
-                         (let [v @queue]
-                           (when-let [k (first v)]
-                             (swap! queue subvec 1)
-                             k)))
+                    poll-next
+                    (fn []
+                      (let [v @queue]
+                        (when-let [k (first v)]
+                          (swap! queue subvec 1)
+                          k)))
 
-                       {:keys [key drag-events next-key]}
-                       (coalesce-drag-input d1 poll-next)]
+                    {:keys [key drag-events next-key]}
+                    (coalesce-drag-input d1 poll-next)]
 
                    (expect (= 3 drag-events))
                    (expect (= d3 key))
@@ -289,63 +297,65 @@
         (expect (= "/workspace" (:slash/text adapted)))
         (expect (= "Workspace ops" (:label adapted)))))
   (it "slash-spec->menu-command adapts a nested slash spec"
-      (let [adapted (slash-spec->menu-command {:slash/name "new"
-                                               :slash/parent ["workspace"]
-                                               :slash/doc "Create workspace"})]
+      (let
+        [adapted (slash-spec->menu-command
+                   {:slash/name "new" :slash/parent ["workspace"] :slash/doc "Create workspace"})]
         (expect (= :workspace.new (:id adapted)))
         (expect (= "/workspace new" (:slash/text adapted)))
         (expect (= "Create workspace" (:label adapted)))
         (expect (= "workspace new" (:slash/name adapted)))))
   (it "registry-slash-commands lists children but hides their group root"
-      (with-redefs [vis/registered-slashes
-                    (constantly
-                      [{:slash/name "workspace" :slash/doc "Workspace ops"}
-                       {:slash/name "apply" :slash/parent ["workspace"] :slash/doc "Apply"}
-                       {:slash/name "voice"
-                        :slash/doc "Voice toggle"
-                        :slash/availability-fn (fn [{ch :channel/id}]
-                                                 (= :tui ch))}
-                       {:slash/name "help"
-                        :slash/doc "CLI help"
-                        :slash/availability-fn (fn [{ch :channel/id}]
-                                                 (= :cli ch))}
-                       {:slash/name "start" :slash/doc "Hidden alias" :slash/hidden? true}
-                       {:slash/name "broken"
-                        :slash/doc "Broken availability"
-                        :slash/availability-fn (fn [_ctx]
-                                                 (throw (ex-info "boom" {})))}])]
+      (with-redefs
+        [vis/registered-slashes
+         (constantly [{:slash/name "workspace" :slash/doc "Workspace ops"}
+                      {:slash/name "apply" :slash/parent ["workspace"] :slash/doc "Apply"}
+                      {:slash/name "voice"
+                       :slash/doc "Voice toggle"
+                       :slash/availability-fn (fn [{ch :channel/id}]
+                                                (= :tui ch))}
+                      {:slash/name "help"
+                       :slash/doc "CLI help"
+                       :slash/availability-fn (fn [{ch :channel/id}]
+                                                (= :cli ch))}
+                      {:slash/name "start" :slash/doc "Hidden alias" :slash/hidden? true}
+                      {:slash/name "broken"
+                       :slash/doc "Broken availability"
+                       :slash/availability-fn (fn [_ctx]
+                                                (throw (ex-info "boom" {})))}])]
         ;; `workspace` is a group root (parent of `apply`); its run-fn only
         ;; reprints the child list the palette already shows, so it is
         ;; suppressed. The child `workspace.apply` and the leaf `voice` stay.
         (let [ids (mapv :id (registry-slash-commands))]
           (expect (= #{:workspace.apply :voice} (set ids))))))
   (it "menu-commands keeps slash registry for typed slash suggestions"
-      (with-redefs [vis/registered-slashes (constantly [{:slash/name "voice"
-                                                         :slash/doc "Voice toggle"}])]
+      (with-redefs
+        [vis/registered-slashes (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}])]
         (let [ids (mapv :id (menu-commands nil))]
           (expect (some #{:new-session} ids))
           (expect (some #{:voice} ids)))))
   (it "Ctrl+K palette gets no registry slash roots by default"
-      (with-redefs [vis/registered-slashes
-                    (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}
-                                 {:slash/name "workspace" :slash/doc "Workspace ops"}])]
+      (with-redefs
+        [vis/registered-slashes (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}
+                                             {:slash/name "workspace" :slash/doc "Workspace ops"}])]
         (expect (= [] (command-palette-extra-commands))))))
 
 (defdescribe channel-status-error-routing-test
              (it "routes error status events to the notification lane only"
-                 (let [events
-                       (atom [])
+                 (let
+                   [events
+                    (atom [])
 
-                       notified
-                       (atom nil)]
+                    notified
+                    (atom nil)]
 
-                   (with-redefs [state/dispatch
-                                 (fn [event]
-                                   (swap! events conj event))
+                   (with-redefs
+                     [state/dispatch
+                      (fn [event]
+                        (swap! events conj event))
 
-                                 vis/notify!
-                                 (fn [text & kvs]
-                                   (reset! notified [text kvs]))]
+                      vis/notify!
+                      (fn [text & kvs]
+                        (reset! notified [text kvs]))]
 
                      (handle-channel-event! {:op :status/set
                                              :id :voice/piper
@@ -357,8 +367,9 @@
                                 @notified)))))
              (it "clears ready status events instead of storing them forever"
                  (let [events (atom [])]
-                   (with-redefs [state/dispatch (fn [event]
-                                                  (swap! events conj event))]
+                   (with-redefs
+                     [state/dispatch (fn [event]
+                                       (swap! events conj event))]
                      (handle-channel-event! {:op :status/set
                                              :id :voice/piper
                                              :text "Voice response complete 100%"
@@ -400,14 +411,16 @@
                                                                                  "draft")})))
                  (expect (= :quit (terminal-interrupt-action {:input (input/empty-input)}))))
              (it "dispatches reset-input for the first interrupt and shutdown for the next"
-                 (let [old-db
-                       @state/app-db
+                 (let
+                   [old-db
+                    @state/app-db
 
-                       events
-                       (atom [])]
+                    events
+                    (atom [])]
 
-                   (try (with-redefs [state/dispatch (fn [event]
-                                                       (swap! events conj event))]
+                   (try (with-redefs
+                          [state/dispatch (fn [event]
+                                            (swap! events conj event))]
                           (reset! state/app-db {:input (input/paste-text (input/empty-input)
                                                                          "draft")})
                           (handle-terminal-interrupt!)
@@ -427,18 +440,19 @@
        has always called shutdown-agents - this test pins the same
        guarantee for the TUI channel."
     (let [calls (atom [])]
-      (with-redefs [screen/redirect-stdio-to-log! (fn []
-                                                    (swap! calls conj :redirect))
-                    vis/init! (fn []
-                                (swap! calls conj :init))
-                    screen/run-chat! (fn [_opts]
-                                       (swap! calls conj :run))
-                    screen/print-session-id-on-exit! (fn []
-                                                       (swap! calls conj :print-id))
-                    vis/shutdown! (fn []
-                                    (swap! calls conj :vis-shutdown))
-                    clojure.core/shutdown-agents (fn []
-                                                   (swap! calls conj :shutdown-agents))]
+      (with-redefs
+        [screen/redirect-stdio-to-log! (fn []
+                                         (swap! calls conj :redirect))
+         vis/init! (fn []
+                     (swap! calls conj :init))
+         screen/run-chat! (fn [_opts]
+                            (swap! calls conj :run))
+         screen/print-session-id-on-exit! (fn []
+                                            (swap! calls conj :print-id))
+         vis/shutdown! (fn []
+                         (swap! calls conj :vis-shutdown))
+         clojure.core/shutdown-agents (fn []
+                                        (swap! calls conj :shutdown-agents))]
 
         (screen/channel-main []))
       ;; Order matters: print the resume id after the TUI exits, then stop
@@ -452,22 +466,24 @@
                  ;; The sweep now goes through the gateway (`gateway-reconcile-running-turns!`)
                  ;; rather than poking the DB directly — but it must STILL run before the
                  ;; resume so the rebuilt history carries no stale :running turns.
-                 (let [calls
-                       (atom [])
+                 (let
+                   [calls
+                    (atom [])
 
-                       resumed
-                       {:id "c1" :history [{:role :assistant :text "interrupted"}]}]
+                    resumed
+                    {:id "c1" :history [{:role :assistant :text "interrupted"}]}]
 
-                   (with-redefs [vis/gateway-reconcile-running-turns!
-                                 (fn []
-                                   (swap! calls conj :reconcile)
-                                   1)
+                   (with-redefs
+                     [vis/gateway-reconcile-running-turns!
+                      (fn []
+                        (swap! calls conj :reconcile)
+                        1)
 
-                                 chat/resume-session
-                                 (fn [cid]
-                                   (swap! calls conj [:resume cid])
-                                   (expect (= "c1" cid))
-                                   resumed)]
+                      chat/resume-session
+                      (fn [cid]
+                        (swap! calls conj [:resume cid])
+                        (expect (= "c1" cid))
+                        resumed)]
 
                      (expect (= resumed (pre-resolve-session-id! {:session-id "c1"})))
                      (expect (= [:reconcile [:resume "c1"]] @calls))))))
@@ -475,21 +491,22 @@
 (defdescribe
   session-switcher-data-test
   (it "uses latest turn creation time as modification time and sorts newest first"
-      (with-redefs [vis/gateway-list-turns
-                    (fn [session-id]
-                      (case session-id
-                        "old"
-                        [{"created_at" #inst "2024-01-04T00:00:00.000-00:00"}]
+      (with-redefs
+        [vis/gateway-list-turns (fn [session-id]
+                                  (case session-id
+                                    "old"
+                                    [{"created_at" #inst "2024-01-04T00:00:00.000-00:00"}]
 
-                        "new"
-                        [{"created_at" #inst "2024-01-02T00:00:00.000-00:00"}
-                         {"created_at" #inst "2024-01-08T00:00:00.000-00:00"}]
+                                    "new"
+                                    [{"created_at" #inst "2024-01-02T00:00:00.000-00:00"}
+                                     {"created_at" #inst "2024-01-08T00:00:00.000-00:00"}]
 
-                        []))]
-        (let [old-summary (session-summary {"id" "old"
-                                            "created_at" #inst "2024-01-01T00:00:00.000-00:00"})
-              new-summary (session-summary {"id" "new"
-                                            "created_at" #inst "2024-01-03T00:00:00.000-00:00"})]
+                                    []))]
+        (let
+          [old-summary (session-summary {"id" "old"
+                                         "created_at" #inst "2024-01-01T00:00:00.000-00:00"})
+           new-summary (session-summary {"id" "new"
+                                         "created_at" #inst "2024-01-03T00:00:00.000-00:00"})]
 
           (expect (= 1 (get old-summary "turn_count")))
           (expect (= 2 (get new-summary "turn_count")))
@@ -499,20 +516,22 @@
 
 (defdescribe submit-input-test
              (it "dispatches send before reset so paste placeholders can expand"
-                 (let [events
-                       (atom [])
+                 (let
+                   [events
+                    (atom [])
 
-                       payload
-                       "therapy line 1\ntherapy line 2"
+                    payload
+                    "therapy line 1\ntherapy line 2"
 
-                       token
-                       (input/format-paste-placeholder {:id 1 :content payload})
+                    token
+                    (input/format-paste-placeholder {:id 1 :content payload})
 
-                       input-state
-                       (input/paste-text (input/empty-input) (str "context " token))]
+                    input-state
+                    (input/paste-text (input/empty-input) (str "context " token))]
 
-                   (with-redefs [state/dispatch (fn [event]
-                                                  (swap! events conj event))]
+                   (with-redefs
+                     [state/dispatch (fn [event]
+                                       (swap! events conj event))]
                      (submit-input! {:session {:id "c1"} :loading? false} input-state)
                      (expect (= [[:send-message (str "context " token)] [:reset-input]]
                                 @events))))))
@@ -549,88 +568,91 @@
                    6
                    20))))
   (it "sorts sessions by real turns, latest modified time, then turn count by default"
-      (let [old-with-turns
-            {"id" :old
-             "turn_count" 1
-             "modified_at" #inst "2024-01-02T00:00:00.000-00:00"
-             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
+      (let
+        [old-with-turns
+         {"id" :old
+          "turn_count" 1
+          "modified_at" #inst "2024-01-02T00:00:00.000-00:00"
+          "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
 
-            latest-empty
-            {"id" :empty
-             "turn_count" 0
-             "modified_at" #inst "2024-01-10T00:00:00.000-00:00"
-             "created_at" #inst "2024-01-10T00:00:00.000-00:00"}
+         latest-empty
+         {"id" :empty
+          "turn_count" 0
+          "modified_at" #inst "2024-01-10T00:00:00.000-00:00"
+          "created_at" #inst "2024-01-10T00:00:00.000-00:00"}
 
-            latest-with-turns
-            {"id" :latest
-             "turn_count" 2
-             "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
-             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
+         latest-with-turns
+         {"id" :latest
+          "turn_count" 2
+          "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
+          "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
 
-            same-latest-more-turns
-            {"id" :more-turns
-             "turn_count" 5
-             "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
-             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}]
+         same-latest-more-turns
+         {"id" :more-turns
+          "turn_count" 5
+          "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
+          "created_at" #inst "2024-01-01T00:00:00.000-00:00"}]
 
         (expect (= [1 1704240000000 2] (session-sort-key latest-with-turns)))
         (expect (= [:more-turns :latest :old :empty]
                    (mapv #(get % "id")
                          (latest-modified-first [old-with-turns latest-empty latest-with-turns
                                                  same-latest-more-turns]))))))
-  (it
-    "copies transcript content without role labels, answer separators, or model metadata"
-    (let [ranges
-          (bubble-selectable-ranges {:visible [{:top 0
-                                                :height 6
-                                                :projected
-                                                {:role :assistant
-                                                 :prewrapped-lines
-                                                 ["(done (v/p \"hi\"))" (str p/MARKER_ANSWER_SEP "")
-                                                  (str p/MARKER_ANSWER_TXT "hi there")]}}]}
-                                    0
-                                    6
-                                    40)
+  (it "copies transcript content without role labels, answer separators, or model metadata"
+      (let
+        [ranges
+         (bubble-selectable-ranges {:visible [{:top 0
+                                               :height 6
+                                               :projected
+                                               {:role :assistant
+                                                :prewrapped-lines
+                                                ["(done (v/p \"hi\"))" (str p/MARKER_ANSWER_SEP "")
+                                                 (str p/MARKER_ANSWER_TXT "hi there")]}}]}
+                                   0
+                                   6
+                                   40)
 
-          rows
-          ["  Vis                                   " "  (done (v/p \"hi\"))          "
-           "────────────────────────────────────────" "  hi there                              "
-           "                    zai/glm / 1 iter    " "                                        "]]
+         rows
+         ["  Vis                                   " "  (done (v/p \"hi\"))          "
+          "────────────────────────────────────────" "  hi there                              "
+          "                    zai/glm / 1 iter    " "                                        "]]
 
-      (expect (= "(done (v/p \"hi\"))\nhi there"
-                 (selection/selected-text rows
-                                          {:anchor (selection/point 0 0)
-                                           :focus (selection/point 39 5)}
-                                          ranges)))))
+        (expect (= "(done (v/p \"hi\"))\nhi there"
+                   (selection/selected-text rows
+                                            {:anchor (selection/point 0 0)
+                                             :focus (selection/point 39 5)}
+                                            ranges)))))
   (it "copies transcript selection from document rows after auto-scroll"
-      (let [message
-            {:role :assistant :prewrapped-lines ["line zero" "line one" "line two" "line three"]}
+      (let
+        [message
+         {:role :assistant :prewrapped-lines ["line zero" "line one" "line two" "line three"]}
 
-            layout
-            {:total-h 6 :heights [6] :offsets [0 6]}
+         layout
+         {:total-h 6 :heights [6] :offsets [0 6]}
 
-            sel
-            {:anchor (selection/point 0 1) :focus (selection/point 39 4)}]
+         sel
+         {:anchor (selection/point 0 1) :focus (selection/point 39 4)}]
 
         (expect (= "line zero\nline one\nline two\nline three"
                    (selected-transcript-text [message] layout 40 {} {} sel)))))
   (it "copies visible live text for pending assistant drag selection"
-      (let [message
-            {:role :assistant :pending? true :text "Sending request to provider..."}
+      (let
+        [message
+         {:role :assistant :pending? true :text "Sending request to provider..."}
 
-            layout
-            {:total-h 4
-             :heights [4]
-             :offsets [0 4]
-             :visible [{:idx 0
-                        :top 0
-                        :height 4
-                        :projected {:role :assistant
-                                    :text "live visible text"
-                                    :prewrapped-lines ["live visible text"]}}]}
+         layout
+         {:total-h 4
+          :heights [4]
+          :offsets [0 4]
+          :visible [{:idx 0
+                     :top 0
+                     :height 4
+                     :projected {:role :assistant
+                                 :text "live visible text"
+                                 :prewrapped-lines ["live visible text"]}}]}
 
-            sel
-            {:anchor (selection/point 0 1) :focus (selection/point 39 1)}]
+         sel
+         {:anchor (selection/point 0 1) :focus (selection/point 39 1)}]
 
         (expect (= "live visible text" (selected-transcript-text [message] layout 40 {} {} sel)))))
   (it "uses release viewport for drag-copy focus after scrolling beyond the first screen"
@@ -654,11 +676,12 @@
 (defdescribe
   clipboard-copy-actions-test
   (it "session-id copy uses the same icon-era notification TTL"
-      (let [copied
-            (promise)
+      (let
+        [copied
+         (promise)
 
-            notified
-            (atom nil)]
+         notified
+         (atom nil)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
@@ -670,11 +693,12 @@
             (expect (= "123e4567-e89b-12d3-a456-426614174000" (deref copied 1000 ::timeout)))
             (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]] @notified))))))
   (it "mouse selection copy uses the shared success notification contract"
-      (let [copied
-            (promise)
+      (let
+        [copied
+         (promise)
 
-            notified
-            (atom nil)]
+         notified
+         (atom nil)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
@@ -686,11 +710,12 @@
             (expect (= "selected text" (deref copied 1000 ::timeout)))
             (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]] @notified))))))
   (it "single-click bubble copy uses the shared success notification contract"
-      (let [copied
-            (promise)
+      (let
+        [copied
+         (promise)
 
-            notified
-            (atom nil)]
+         notified
+         (atom nil)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
@@ -712,11 +737,12 @@
             (copy-bubble! (str "\u001B[32m(def\u001B[0m x 1)\n" "\u241B[31mok\u241B[0m"))
             (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
   (it "input mouse selection copy names the input in the notification"
-      (let [copied
-            (promise)
+      (let
+        [copied
+         (promise)
 
-            notified
-            (atom nil)]
+         notified
+         (atom nil)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
@@ -728,11 +754,12 @@
             (expect (= "typed mistake" (deref copied 1000 ::timeout)))
             (expect (= ["✓ Copied input selection" [:level :success :ttl-ms 1500]] @notified))))))
   (it "file click targets open through the editor path, not the generic URL opener"
-      (let [editor-opened
-            (promise)
+      (let
+        [editor-opened
+         (promise)
 
-            url-opened
-            (promise)]
+         url-opened
+         (promise)]
 
         (with-redefs-fn {#'opener/open-file-in-editor! (fn [target]
                                                          (deliver editor-opened target)
@@ -755,11 +782,12 @@
 
 (defdescribe session-id-exit-print-test
              (it "prints the active session id after the TUI exits"
-                 (let [bytes
-                       (java.io.ByteArrayOutputStream.)
+                 (let
+                   [bytes
+                    (java.io.ByteArrayOutputStream.)
 
-                       ps
-                       (java.io.PrintStream. bytes true "UTF-8")]
+                    ps
+                    (java.io.PrintStream. bytes true "UTF-8")]
 
                    (with-redefs-fn {#'screen/current-session-id (fn []
                                                                   "abc123")
@@ -804,31 +832,33 @@
 (defdescribe
   input-only-fast-path-test
   (it "classifies a same-height input edit as an input-only frame"
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["hello"]} :scroll nil :messages [] :loading? false}
+         base
+         {:input {:lines ["hello"]} :scroll nil :messages [] :loading? false}
 
-            typed
-            (assoc base :input {:lines ["hello world"]})]
+         typed
+         (assoc base :input {:lines ["hello world"]})]
 
         (expect (true? (boolean (input-only-change? base typed cols))))))
   (it "falls through around inline suggestion triggers so stale picker rows clear"
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["open @src"]} :scroll nil :messages [] :loading? false}
+         base
+         {:input {:lines ["open @src"]} :scroll nil :messages [] :loading? false}
 
-            file-complete
-            (assoc base :input {:lines ["open @src "]})
+         file-complete
+         (assoc base :input {:lines ["open @src "]})
 
-            slash-base
-            {:input {:lines ["/new-tab"]} :scroll nil :messages [] :loading? false}
+         slash-base
+         {:input {:lines ["/new-tab"]} :scroll nil :messages [] :loading? false}
 
-            slash-complete
-            (assoc slash-base :input {:lines ["/new-tab "]})]
+         slash-complete
+         (assoc slash-base :input {:lines ["/new-tab "]})]
 
         (expect (false? (boolean (input-only-change? base file-complete cols))))
         (expect (false? (boolean (input-only-change? slash-base slash-complete cols))))))
@@ -836,51 +866,55 @@
       ;; A keystroke that wraps the input to a new visual row resizes the
       ;; transcript band (input-box-h feeds inner-h), so the fast path MUST NOT
       ;; fire — the transcript needs a real re-layout.
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["hi"]} :scroll nil :messages [] :loading? false}
+         base
+         {:input {:lines ["hi"]} :scroll nil :messages [] :loading? false}
 
-            wrapped
-            (assoc base :input {:lines [(apply str (repeat 400 "x"))]})]
+         wrapped
+         (assoc base :input {:lines [(apply str (repeat 400 "x"))]})]
 
         (expect (false? (boolean (input-only-change? base wrapped cols))))))
   (it "falls through when any non-input key differs"
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
+         base
+         {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
 
-            edited
-            (assoc base
-              :input {:lines ["ab"]}
-              :messages [{:role :user}])]
+         edited
+         (assoc base
+           :input {:lines ["ab"]}
+           :messages [{:role :user}])]
 
         (expect (false? (boolean (input-only-change? base edited cols))))))
   (it "falls through while loading (the live bubble grows)"
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
+         base
+         {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
 
-            edited
-            (assoc base
-              :input {:lines ["ab"]}
-              :loading? true)]
+         edited
+         (assoc base
+           :input {:lines ["ab"]}
+           :loading? true)]
 
         (expect (false? (boolean (input-only-change? base edited cols))))))
   (it "falls through while a mouse selection / overlay / find bar is active"
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
+         base
+         {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
 
-            edited
-            {:input {:lines ["ab"]} :scroll nil :messages [] :loading? false}]
+         edited
+         {:input {:lines ["ab"]} :scroll nil :messages [] :loading? false}]
 
         (expect (false? (boolean
                           (input-only-change? base (assoc edited :mouse-selection {:x 1}) cols))))
@@ -890,11 +924,12 @@
                                                      (assoc-in edited [:search :active?] true)
                                                      cols))))))
   (it "needs a real input change and a previous frame"
-      (let [cols
-            80
+      (let
+        [cols
+         80
 
-            base
-            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}]
+         base
+         {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}]
 
         (expect (false? (boolean (input-only-change? base base cols))))
         (expect (false? (boolean (input-only-change? nil base cols)))))))
@@ -915,16 +950,17 @@
       (expect (= spinner-tick-ms (park-wait-ms {} true)))
       (expect (= 250 (park-wait-ms {} false))))
   (it "frame-change-flags takes NO cheap path while recovering from a dialog block"
-      (let [flags (frame-change-flags {:last-db {}
-                                       :db {}
-                                       :last-layout {:total-h 10 :inner-h 5}
-                                       :last-hover nil
-                                       :current-hover nil
-                                       :cols 80
-                                       :same-size? true
-                                       :animate? false
-                                       :loading? false
-                                       :scroll-anim? false
-                                       :overlay-open? false
-                                       :was-blocked? true})]
+      (let
+        [flags (frame-change-flags {:last-db {}
+                                    :db {}
+                                    :last-layout {:total-h 10 :inner-h 5}
+                                    :last-hover nil
+                                    :current-hover nil
+                                    :cols 80
+                                    :same-size? true
+                                    :animate? false
+                                    :loading? false
+                                    :scroll-anim? false
+                                    :overlay-open? false
+                                    :was-blocked? true})]
         (expect (every? false? (map boolean (vals flags)))))))

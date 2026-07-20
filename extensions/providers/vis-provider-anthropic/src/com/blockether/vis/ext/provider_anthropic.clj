@@ -75,13 +75,14 @@
   (let [value (str/trim (or input ""))]
     (cond (str/blank? value) {}
           (str/starts-with? value "http")
-          (try (let [[head fragment] (str/split value #"#" 2)
-                     q-idx (.indexOf ^String head "?")
-                     query (when (<= 0 q-idx) (subs head (inc q-idx)))
-                     params (merge (parse-query-string query)
-                                   (if (and fragment (str/includes? fragment "="))
-                                     (parse-query-string fragment)
-                                     (when fragment {:state fragment})))]
+          (try (let
+                 [[head fragment] (str/split value #"#" 2)
+                  q-idx (.indexOf ^String head "?")
+                  query (when (<= 0 q-idx) (subs head (inc q-idx)))
+                  params (merge (parse-query-string query)
+                                (if (and fragment (str/includes? fragment "="))
+                                  (parse-query-string fragment)
+                                  (when fragment {:state fragment})))]
 
                  (select-keys params [:code :state]))
                (catch Exception _ {:code value}))
@@ -95,21 +96,22 @@
 (defn create-authorization-flow
   "Create Anthropic Claude subscription OAuth PKCE flow data."
   []
-  (let [verifier
-        (base64url (random-bytes 32))
+  (let
+    [verifier
+     (base64url (random-bytes 32))
 
-        challenge
-        (base64url (sha256 verifier))
+     challenge
+     (base64url (sha256 verifier))
 
-        query
-        (query-string {:code "true"
-                       :client_id client-id
-                       :response_type "code"
-                       :redirect_uri redirect-uri
-                       :scope scopes
-                       :code_challenge challenge
-                       :code_challenge_method "S256"
-                       :state verifier})]
+     query
+     (query-string {:code "true"
+                    :client_id client-id
+                    :response_type "code"
+                    :redirect_uri redirect-uri
+                    :scope scopes
+                    :code_challenge challenge
+                    :code_challenge_method "S256"
+                    :state verifier})]
 
     {:verifier verifier :state verifier :url (str authorize-url "?" query)}))
 
@@ -119,28 +121,30 @@
 
 (defn- post-token
   [body]
-  (let [resp
-        (http/post token-url
-                   {:headers {"Accept" "application/json" "Content-Type" "application/json"}
-                    :body (json/write-json-str body)
-                    :timeout 30000
-                    :throw false})
+  (let
+    [resp
+     (http/post token-url
+                {:headers {"Accept" "application/json" "Content-Type" "application/json"}
+                 :body (json/write-json-str body)
+                 :timeout 30000
+                 :throw false})
 
-        text
-        (:body resp)]
+     text
+     (:body resp)]
 
     {:status (:status resp) :body text :json (read-json-body text)}))
 
 (defn- credentials-result
   [json]
-  (let [access-token
-        (:access_token json)
+  (let
+    [access-token
+     (:access_token json)
 
-        refresh-token
-        (:refresh_token json)
+     refresh-token
+     (:refresh_token json)
 
-        expires-in
-        (:expires_in json)]
+     expires-in
+     (:expires_in json)]
 
     (when (or (str/blank? access-token) (str/blank? refresh-token) (not (number? expires-in)))
       (throw (ex-info "Anthropic token response missing required fields"
@@ -159,12 +163,13 @@
   (when (and (not (str/blank? returned-state)) (not= state returned-state))
     (throw (ex-info "Anthropic OAuth state mismatch"
                     {:type :vis/anthropic-state-mismatch :expected state :actual returned-state})))
-  (let [{:keys [status body json]} (post-token {:grant_type "authorization_code"
-                                                :client_id client-id
-                                                :code code
-                                                :state (or returned-state state verifier)
-                                                :redirect_uri redirect-uri
-                                                :code_verifier verifier})]
+  (let
+    [{:keys [status body json]} (post-token {:grant_type "authorization_code"
+                                             :client_id client-id
+                                             :code code
+                                             :state (or returned-state state verifier)
+                                             :redirect_uri redirect-uri
+                                             :code_verifier verifier})]
     (when-not (<= 200 status 299)
       (throw (ex-info (str "Anthropic token exchange failed: HTTP " status)
                       {:type :vis/anthropic-token-exchange-failed :status status :body body})))
@@ -172,9 +177,9 @@
 
 (defn- refresh-access-token!
   [refresh-token]
-  (let [{:keys [status body json]} (post-token {:grant_type "refresh_token"
-                                                :client_id client-id
-                                                :refresh_token refresh-token})]
+  (let
+    [{:keys [status body json]}
+     (post-token {:grant_type "refresh_token" :client_id client-id :refresh_token refresh-token})]
     (when-not (<= 200 status 299)
       (throw (ex-info (str "Anthropic token refresh failed: HTTP " status)
                       {:type :vis/anthropic-token-refresh-failed :status status :body body})))
@@ -231,11 +236,12 @@
 (defn get-anthropic-token!
   "Return a fresh Anthropic Claude subscription access token for Vis runtime."
   []
-  (let [auth
-        (load-auth-file)
+  (let
+    [auth
+     (load-auth-file)
 
-        now
-        (System/currentTimeMillis)]
+     now
+     (System/currentTimeMillis)]
 
     (if (and (:access-token auth)
              (:expires-at-ms auth)
@@ -273,14 +279,15 @@
 (defn- usage-field
   [m k]
   (when (map? m)
-    (let [snake
-          (name k)
+    (let
+      [snake
+       (name k)
 
-          camel
-          (str/replace snake #"_([a-zA-Z])" #(str/upper-case (second %)))
+       camel
+       (str/replace snake #"_([a-zA-Z])" #(str/upper-case (second %)))
 
-          kebab
-          (str/replace snake #"_" "-")]
+       kebab
+       (str/replace snake #"_" "-")]
 
       (reduce (fn [_ k*]
                 (when (contains? m k*) (reduced (get m k*))))
@@ -297,17 +304,18 @@
 (defn- percentage-limit-row
   [id label window-unit window-size usage]
   (when-let [used (clamp-percent (usage-field usage :utilization))]
-    (cond-> {:id id
-             :label label
-             :scope :plan
-             :kind :rate
-             :precision :estimate
-             :source :provider-api
-             :unlimited? false
-             :used used
-             :limit 100.0
-             :remaining (- 100.0 (double used))
-             :window {:kind :rolling :unit window-unit :size window-size}}
+    (cond->
+      {:id id
+       :label label
+       :scope :plan
+       :kind :rate
+       :precision :estimate
+       :source :provider-api
+       :unlimited? false
+       :used used
+       :limit 100.0
+       :remaining (- 100.0 (double used))
+       :window {:kind :rolling :unit window-unit :size window-size}}
       (usage-field usage :resets_at)
       (assoc-in [:window :resets-at-ms] (parse-instant-ms (usage-field usage :resets_at))))))
 
@@ -326,17 +334,18 @@
 
 (defn- fetch-usage!
   [token]
-  (let [resp
-        (http/get usage-url
-                  {:headers {"Accept" "application/json"
-                             "Authorization" (str "Bearer " token)
-                             "anthropic-beta" "oauth-2025-04-20"
-                             "Content-Type" "application/json"}
-                   :timeout 10000
-                   :throw false})
+  (let
+    [resp
+     (http/get usage-url
+               {:headers {"Accept" "application/json"
+                          "Authorization" (str "Bearer " token)
+                          "anthropic-beta" "oauth-2025-04-20"
+                          "Content-Type" "application/json"}
+                :timeout 10000
+                :throw false})
 
-        text
-        (:body resp)]
+     text
+     (:body resp)]
 
     {:status (:status resp) :body text :json (read-json-body text)}))
 
@@ -392,25 +401,26 @@
 
 (defn- remember-limits-report!
   [report now-ms]
-  (let [prev
-        @limits-cache
+  (let
+    [prev
+     @limits-cache
 
-        transient?
-        (transient-limits-report? report)
+     transient?
+     (transient-limits-report? report)
 
-        stale-ok
-        (:stale-ok-report prev)
+     stale-ok
+     (:stale-ok-report prev)
 
-        report*
-        (if (and transient? stale-ok)
-          (annotate-stale-limits-report stale-ok (get-in report [:error :data :status]))
-          report)
+     report*
+     (if (and transient? stale-ok)
+       (annotate-stale-limits-report stale-ok (get-in report [:error :data :status]))
+       report)
 
-        ttl-ms
-        (limits-cache-ttl-ms report* transient?)
+     ttl-ms
+     (limits-cache-ttl-ms report* transient?)
 
-        stale-ok*
-        (if (= :ok (:status report*)) report* stale-ok)]
+     stale-ok*
+     (if (= :ok (:status report*)) report* stale-ok)]
 
     (reset! limits-cache {:report report*
                           :expires-at-ms (+ (long now-ms) (long ttl-ms))
@@ -427,11 +437,12 @@
 (defn- fetch-limits-report
   []
   (try
-    (let [{:keys [token]}
-          (get-anthropic-token!)
+    (let
+      [{:keys [token]}
+       (get-anthropic-token!)
 
-          {:keys [status body json]}
-          (fetch-usage! token)]
+       {:keys [status body json]}
+       (fetch-usage! token)]
 
       (cond
         (= 200 status)
@@ -486,11 +497,12 @@
 
 (defn status
   []
-  (let [detected
-        (detect-credentials)
+  (let
+    [detected
+     (detect-credentials)
 
-        now
-        (System/currentTimeMillis)]
+     now
+     (System/currentTimeMillis)]
 
     (cond-> {:authenticated? (some? detected)}
       detected
@@ -550,14 +562,16 @@
              (ex-info
                "Manual code entry is disabled for this flow. Run `vis providers auth anthropic-coding-plan` in a terminal or use a frontend that can collect the redirect URL."
                {:type :vis/anthropic-manual-entry-disabled})))
-         (let [input (manual-code-fn print!)
-               parsed (parse-authorization-input input)
-               code (:code parsed)]
+         (let
+           [input (manual-code-fn print!)
+            parsed (parse-authorization-input input)
+            code (:code parsed)]
 
            (when (str/blank? (or input ""))
              (throw (ex-info "Missing authorization input" {:type :vis/anthropic-missing-input})))
-           (let [credentials (save-auth-file!
-                               (exchange-authorization-code! code flow (:state parsed)))]
+           (let
+             [credentials (save-auth-file!
+                            (exchange-authorization-code! code flow (:state parsed)))]
              (print! "  ✓ Authenticated! Anthropic Claude subscription is ready.")
              (when (str/blank? (:access-token credentials))
                (throw (ex-info "Anthropic credentials missing access token"

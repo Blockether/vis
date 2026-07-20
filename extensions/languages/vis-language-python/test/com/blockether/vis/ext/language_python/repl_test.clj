@@ -26,11 +26,12 @@
 ;; ── interpreter detection (no subprocess) ────────────────────────────────────
 (defdescribe interpreter-test
              (it "prefers a project-local .venv interpreter when present"
-                 (let [root
-                       (tmp-dir)
+                 (let
+                   [root
+                    (tmp-dir)
 
-                       py
-                       (io/file root ".venv" "bin" "python")]
+                    py
+                    (io/file root ".venv" "bin" "python")]
 
                    (try (.mkdirs (.getParentFile py))
                         (spit py "#!/bin/sh\n")
@@ -80,14 +81,15 @@
   facade-test
   (it "repl_eval requires explicit repl_start and then returns the value"
       (when (has-python?)
-        (let [root
-              (tmp-dir)
+        (let
+          [root
+           (tmp-dir)
 
-              dir
-              (.getCanonicalPath root)
+           dir
+           (.getCanonicalPath root)
 
-              env
-              {:workspace/root (.getPath root)}]
+           env
+           {:workspace/root (.getPath root)}]
 
           (try (expect (= :py/no-repl
                           (try (core/py-repl-eval-fn env "3 * 7")
@@ -100,14 +102,15 @@
                (finally (repl/stop! dir))))))
   (it "repl_start status/stop lifecycle ops route through the manager"
       (when (has-python?)
-        (let [root
-              (tmp-dir)
+        (let
+          [root
+           (tmp-dir)
 
-              dir
-              (.getCanonicalPath root)
+           dir
+           (.getCanonicalPath root)
 
-              env
-              {:workspace/root (.getPath root)}]
+           env
+           {:workspace/root (.getPath root)}]
 
           (try
             (expect (:success? (core/py-start-repl-fn env "start" nil)))

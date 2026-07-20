@@ -43,8 +43,9 @@
   ([dir]
    ;; `/`-separated on every OS — Windows native loaders accept `/`, and the
    ;; model address stays identical across platforms.
-   (let [p (fn [name]
-             (paths/unixify (io/file dir name)))]
+   (let
+     [p (fn [name]
+          (paths/unixify (io/file dir name)))]
      {:encoder (p "encoder.int8.onnx")
       :decoder (p "decoder.int8.onnx")
       :joiner (p "joiner.int8.onnx")
@@ -58,26 +59,26 @@
 
 (defn- native-platform
   []
-  (let [os
-        (str/lower-case (System/getProperty "os.name" "generic"))
+  (let
+    [os
+     (str/lower-case (System/getProperty "os.name" "generic"))
 
-        arch
-        (str/lower-case (System/getProperty "os.arch" "generic"))
+     arch
+     (str/lower-case (System/getProperty "os.arch" "generic"))
 
-        os'
-        (cond (or (str/includes? os "mac") (str/includes? os "darwin")) "osx"
-              (str/includes? os "win") "win"
-              (str/includes? os "nux") "linux"
-              :else (throw (ex-info
-                             "Unsupported OS for sherpa-onnx"
-                             {:type :voice-asr/unsupported-native-platform :os os :arch arch})))
+     os'
+     (cond (or (str/includes? os "mac") (str/includes? os "darwin")) "osx"
+           (str/includes? os "win") "win"
+           (str/includes? os "nux") "linux"
+           :else (throw (ex-info "Unsupported OS for sherpa-onnx"
+                                 {:type :voice-asr/unsupported-native-platform :os os :arch arch})))
 
-        arch'
-        (cond (or (str/starts-with? arch "amd64") (str/starts-with? arch "x86_64")) "x64"
-              (str/starts-with? arch "aarch64") "aarch64"
-              :else (throw (ex-info
-                             "Unsupported architecture for sherpa-onnx"
-                             {:type :voice-asr/unsupported-native-platform :os os :arch arch})))]
+     arch'
+     (cond (or (str/starts-with? arch "amd64") (str/starts-with? arch "x86_64")) "x64"
+           (str/starts-with? arch "aarch64") "aarch64"
+           :else (throw (ex-info
+                          "Unsupported architecture for sherpa-onnx"
+                          {:type :voice-asr/unsupported-native-platform :os os :arch arch})))]
 
     (str os' "-" arch')))
 
@@ -111,17 +112,18 @@
    library as a resource, but it does not place the versioned filename sherpa
    expects. Copy it there before sherpa's LibraryLoader calls System/load."
   []
-  (let [platform
-        (native-platform)
+  (let
+    [platform
+     (native-platform)
 
-        ^File dir
-        (native-lib-dir platform)
+     ^File dir
+     (native-lib-dir platform)
 
-        resource
-        (onnxruntime-resource-name platform)
+     resource
+     (onnxruntime-resource-name platform)
 
-        targets
-        (mapv #(io/file dir %) (onnxruntime-target-names platform))]
+     targets
+     (mapv #(io/file dir %) (onnxruntime-target-names platform))]
 
     (.mkdirs dir)
     (doseq [^File target targets]
@@ -129,38 +131,41 @@
         ;; ^InputStream: `(or …)` erases the type and with-open's `.close`
         ;; goes REFLECTIVE — works on the JVM, but in a native image it
         ;; needs reflection metadata and fails without it.
-        (with-open [^java.io.InputStream in
-                    (or (resource-stream resource)
-                        (throw (ex-info "ONNX Runtime native library resource not found"
-                                        {:type :voice-asr/missing-onnxruntime-native
-                                         :resource resource
-                                         :platform platform})))
-                    out (FileOutputStream. target)]
+        (with-open
+          [^java.io.InputStream in (or (resource-stream resource)
+                                       (throw (ex-info
+                                                "ONNX Runtime native library resource not found"
+                                                {:type :voice-asr/missing-onnxruntime-native
+                                                 :resource resource
+                                                 :platform platform})))
+           out (FileOutputStream. target)]
 
           (io/copy in out))))
     (first targets)))
 
 (defn- safe-entry-name
   [entry-name]
-  (let [parts (->> (str/split entry-name #"/")
-                   (remove str/blank?)
-                   ;; Release archives contain a top-level directory. Strip it so
-                   ;; custom VIS_PARAKEET_MODEL_DIR targets get the files directly.
-                   rest)]
+  (let
+    [parts (->> (str/split entry-name #"/")
+                (remove str/blank?)
+                ;; Release archives contain a top-level directory. Strip it so
+                ;; custom VIS_PARAKEET_MODEL_DIR targets get the files directly.
+                rest)]
     (when (and (seq parts) (not-any? #(or (= % "..") (str/includes? % "\\")) parts))
       (str/join File/separator parts))))
 
 (defn- extract-tar-bz2!
   [archive-path target-dir]
   (.mkdirs (io/file target-dir))
-  (with-open [fis
-              (FileInputStream. (io/file archive-path))
+  (with-open
+    [fis
+     (FileInputStream. (io/file archive-path))
 
-              bz
-              (BZip2CompressorInputStream. fis)
+     bz
+     (BZip2CompressorInputStream. fis)
 
-              tar
-              (TarArchiveInputStream. bz)]
+     tar
+     (TarArchiveInputStream. bz)]
 
     (loop []
 
@@ -180,17 +185,19 @@
    when the server reports a content length. nil `on-progress` is fine."
   [url path on-progress]
   (.mkdirs (.getParentFile (io/file path)))
-  (let [^java.net.URLConnection conn
-        (.openConnection (URL. url))
+  (let
+    [^java.net.URLConnection conn
+     (.openConnection (URL. url))
 
-        total
-        (.getContentLengthLong conn)]
+     total
+     (.getContentLengthLong conn)]
 
-    (with-open [in
-                (.getInputStream conn)
+    (with-open
+      [in
+       (.getInputStream conn)
 
-                out
-                (FileOutputStream. (io/file path))]
+       out
+       (FileOutputStream. (io/file path))]
 
       (let [buf (byte-array 1048576)]
         (loop [done 0]
@@ -230,11 +237,12 @@
          (doseq [name bundled-file-names]
            ;; ^InputStream: same reflective-`.close` trap as
            ;; ensure-onnxruntime-native! — fatal in a native image.
-           (with-open [^java.io.InputStream in
-                       (or (resource-stream (str bundled-resource-dir "/" name))
-                           (throw (ex-info "bundled model resource missing"
-                                           {:type :voice-asr/bundled-missing :resource name})))
-                       out (FileOutputStream. (io/file staging name))]
+           (with-open
+             [^java.io.InputStream in (or (resource-stream (str bundled-resource-dir "/" name))
+                                          (throw (ex-info "bundled model resource missing"
+                                                          {:type :voice-asr/bundled-missing
+                                                           :resource name})))
+              out (FileOutputStream. (io/file staging name))]
 
              (io/copy in out)))
          (when-not (model-installed? (str staging))
@@ -255,11 +263,12 @@
    interrupted or corrupt download can't leave a truncated `.onnx` that
    native-aborts the JVM on the next load; it just stays absent. Returns dir."
   [dir on-progress]
-  (let [archive
-        (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")
+  (let
+    [archive
+     (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")
 
-        staging
-        (io/file (str dir ".staging-" (System/nanoTime)))]
+     staging
+     (io/file (str dir ".staging-" (System/nanoTime)))]
 
     (try (download-with-progress! model-url (str archive) on-progress)
          (extract-tar-bz2! (str archive) (str staging))
@@ -350,27 +359,28 @@
 (defn- recognizer
   [{:keys [encoder decoder joiner tokens]}]
   (ensure-onnxruntime-native!)
-  (let [transducer
-        (.. (OfflineTransducerModelConfig/builder)
-            (setEncoder encoder)
-            (setDecoder decoder)
-            (setJoiner joiner)
-            build)
+  (let
+    [transducer
+     (.. (OfflineTransducerModelConfig/builder)
+         (setEncoder encoder)
+         (setDecoder decoder)
+         (setJoiner joiner)
+         build)
 
-        model
-        (.. (OfflineModelConfig/builder)
-            (setTransducer transducer)
-            (setTokens tokens)
-            (setNumThreads (max 1 (.availableProcessors (Runtime/getRuntime))))
-            (setDebug false)
-            (setModelType "nemo_transducer")
-            build)
+     model
+     (.. (OfflineModelConfig/builder)
+         (setTransducer transducer)
+         (setTokens tokens)
+         (setNumThreads (max 1 (.availableProcessors (Runtime/getRuntime))))
+         (setDebug false)
+         (setModelType "nemo_transducer")
+         build)
 
-        config
-        (.. (OfflineRecognizerConfig/builder)
-            (setOfflineModelConfig model)
-            (setDecodingMethod "greedy_search")
-            build)]
+     config
+     (.. (OfflineRecognizerConfig/builder)
+         (setOfflineModelConfig model)
+         (setDecodingMethod "greedy_search")
+         build)]
 
     (OfflineRecognizer. config)))
 
@@ -394,20 +404,20 @@
    only one WaveReader reads). Throws ex-info :voice-asr/invalid-wav.
    Returns audio-path."
   [audio-path]
-  (let [f
-        (io/file audio-path)
+  (let
+    [f
+     (io/file audio-path)
 
-        len
-        (.length f)
+     len
+     (.length f)
 
-        fail!
-        (fn [reason data]
-          (throw (ex-info (str "Voice audio is not a readable WAV file - " reason)
-                          (merge {:type :voice-asr/invalid-wav
-                                  :path (str audio-path)
-                                  :reason reason
-                                  :length len}
-                                 data))))]
+     fail!
+     (fn [reason data]
+       (throw (ex-info
+                (str "Voice audio is not a readable WAV file - " reason)
+                (merge
+                  {:type :voice-asr/invalid-wav :path (str audio-path) :reason reason :length len}
+                  data))))]
 
     (when (< len 44) (fail! "shorter than a WAV header" {}))
     (with-open [in (java.io.DataInputStream. (java.io.BufferedInputStream. (io/input-stream f)))]
@@ -416,33 +426,36 @@
         (when-not (and (= "RIFF" (String. head 0 4 "US-ASCII"))
                        (= "WAVE" (String. head 8 4 "US-ASCII")))
           (fail! "missing RIFF/WAVE magic" {})))
-      (loop [pos 12
-             pcm16? false
-             data? false]
+      (loop
+        [pos 12
+         pcm16? false
+         data? false]
 
         (if (>= pos len)
           (do (when-not pcm16? (fail! "no 16-bit PCM fmt chunk" {}))
               (when-not data? (fail! "no data chunk" {})))
           (do (when (> (+ pos 8) len) (fail! "dangling bytes after the last chunk" {:at pos}))
-              (let [hdr (byte-array 8)
-                    _ (.readFully in hdr)
-                    id (String. hdr 0 4 "US-ASCII")
-                    size (u32le hdr 4)
-                    end (+ pos 8 size)]
+              (let
+                [hdr (byte-array 8)
+                 _ (.readFully in hdr)
+                 id (String. hdr 0 4 "US-ASCII")
+                 size (u32le hdr 4)
+                 end (+ pos 8 size)]
 
                 (when (> end len)
                   (fail! "chunk declares more bytes than the file holds (truncated?)"
                          {:chunk id :declared-size size :at pos}))
-                (let [fmt-read? (and (= id "fmt ") (>= size 16))
-                      pcm16? (or pcm16?
-                                 (and fmt-read?
-                                      (let [fb (byte-array 16)]
-                                        (.readFully in fb)
-                                        (and (= 1 (u16le fb 0)) ; PCM
-                                             (= 16 (u16le fb 14)))))) ; 16-bit
-                      ;; chunks are word-aligned, but a final odd-sized
-                      ;; chunk may legally arrive unpadded
-                      next-pos (long (min len (+ end (rem size 2))))]
+                (let
+                  [fmt-read? (and (= id "fmt ") (>= size 16))
+                   pcm16? (or pcm16?
+                              (and fmt-read?
+                                   (let [fb (byte-array 16)]
+                                     (.readFully in fb)
+                                     (and (= 1 (u16le fb 0)) ; PCM
+                                          (= 16 (u16le fb 14)))))) ; 16-bit
+                   ;; chunks are word-aligned, but a final odd-sized
+                   ;; chunk may legally arrive unpadded
+                   next-pos (long (min len (+ end (rem size 2))))]
 
                   (loop [n (- next-pos (+ pos 8 (long (if fmt-read? 16 0))))]
                     (when (pos? n)
@@ -460,14 +473,15 @@
 
 (defn- audio-stats
   [^WaveReader reader]
-  (let [samples
-        (alength ^floats (.getSamples reader))
+  (let
+    [samples
+     (alength ^floats (.getSamples reader))
 
-        sample-rate
-        (.getSampleRate reader)
+     sample-rate
+     (.getSampleRate reader)
 
-        duration
-        (if (pos? sample-rate) (/ samples (double sample-rate)) 0.0)]
+     duration
+     (if (pos? sample-rate) (/ samples (double sample-rate)) 0.0)]
 
     {:samples samples :sample-rate sample-rate :duration-seconds duration}))
 
@@ -486,14 +500,15 @@
    Java API. Auto-downloads the model on first use. Returns plain text."
   ([audio-path] (transcribe-file! (model-dir) audio-path))
   ([dir audio-path]
-   (let [dir
-         (ensure-model! dir)
+   (let
+     [dir
+      (ensure-model! dir)
 
-         files
-         (assert-files! (model-files dir))
+      files
+      (assert-files! (model-files dir))
 
-         ^File audio-file
-         (io/file audio-path)]
+      ^File audio-file
+      (io/file audio-path)]
 
      (when-not (.isFile audio-file)
        (throw (ex-info (str "Missing audio file: " audio-path)
@@ -502,17 +517,18 @@
      ;; every interop call below is TYPE-HINTED: reflective calls in a native
      ;; image only work when reflection metadata happens to cover them — the
      ;; hot path must not depend on that.
-     (let [reader
-           (WaveReader. (str audio-file))
+     (let
+       [reader
+        (WaveReader. (str audio-file))
 
-           _
-           (assert-audio-long-enough! audio-path reader)
+        _
+        (assert-audio-long-enough! audio-path reader)
 
-           ^OfflineRecognizer r
-           (recognizer files)
+        ^OfflineRecognizer r
+        (recognizer files)
 
-           ^OfflineStream stream
-           (.createStream r)]
+        ^OfflineStream stream
+        (.createStream r)]
 
        (try (.acceptWaveform stream (.getSamples reader) (.getSampleRate reader))
             (.decode r stream)

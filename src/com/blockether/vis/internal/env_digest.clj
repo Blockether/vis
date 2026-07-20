@@ -31,8 +31,9 @@
 
 (defn- normalize-os
   [^String os-name]
-  (let [s (some-> os-name
-                  str/lower-case)]
+  (let
+    [s (some-> os-name
+               str/lower-case)]
     (cond (nil? s) :unknown
           (str/includes? s "mac") :macos
           (str/includes? s "darwin") :macos
@@ -44,11 +45,12 @@
 (defn- normalize-shell
   [^String shell]
   (when shell
-    (let [base (some-> shell
-                       str/lower-case
-                       (str/split #"/")
-                       last
-                       not-empty)]
+    (let
+      [base (some-> shell
+                    str/lower-case
+                    (str/split #"/")
+                    last
+                    not-empty)]
       (case base
         "zsh"
         :zsh
@@ -75,14 +77,15 @@
    root (when bound) wins over the JVM `user.dir`, so the model sees
    the active workspace cwd instead of the shell from which Vis launched."
   []
-  (try (let [os
-             (normalize-os (System/getProperty "os.name"))
+  (try (let
+         [os
+          (normalize-os (System/getProperty "os.name"))
 
-             shell
-             (normalize-shell (System/getenv "SHELL"))
+          shell
+          (normalize-shell (System/getenv "SHELL"))
 
-             clock
-             (iso-clock)]
+          clock
+          (iso-clock)]
 
          ;; No "cwd" — it duplicates session["workspace"]["root"] (both the
          ;; active workspace dir). The model reads the cwd from the workspace block.
@@ -105,15 +108,16 @@
 (defn- project-kind
   "Detect project shape from top-level directory listing."
   [cwd]
-  (try (let [root
-             (File. (str cwd))
+  (try (let
+         [root
+          (File. (str cwd))
 
-             names
-             (when (.isDirectory root)
-               (into #{}
-                     (map (fn [^File f]
-                            (.getName f)))
-                     (.listFiles root)))]
+          names
+          (when (.isDirectory root)
+            (into #{}
+                  (map (fn [^File f]
+                         (.getName f)))
+                  (.listFiles root)))]
 
          (cond (every? names (:polylith monorepo-markers)) :polylith
                (some names (:monorepo monorepo-markers)) :monorepo
@@ -127,15 +131,16 @@
    one universally-diagnostic build artifact per language. Internal
    never byte-counts files; focused project-shape helpers own that."
   [cwd]
-  (try (let [root
-             (File. (str cwd))
+  (try (let
+         [root
+          (File. (str cwd))
 
-             names
-             (when (.isDirectory root)
-               (into #{}
-                     (map (fn [^File f]
-                            (.getName f)))
-                     (.listFiles root)))]
+          names
+          (when (.isDirectory root)
+            (into #{}
+                  (map (fn [^File f]
+                         (.getName f)))
+                  (.listFiles root)))]
 
          (cond (some names clojure-lang-files) :clojure
                (some names ["package.json"]) :typescript
@@ -153,14 +158,15 @@
   ;; the PROJECT-INSTRUCTIONS system block (see `internal.prompt`), so
   ;; we no longer surface a boolean `:agents-md?` here — the model sees
   ;; the actual rules instead of a stale hint.
-  (try (let [cwd
-             (.getPath (workspace/cwd))
+  (try (let
+         [cwd
+          (.getPath (workspace/cwd))
 
-             kind
-             (project-kind cwd)
+          kind
+          (project-kind cwd)
 
-             primary
-             (primary-language-guess cwd)]
+          primary
+          (primary-language-guess cwd)]
 
          (cond-> {"kind" (name kind)}
            primary
@@ -169,13 +175,14 @@
 
 (defn- extensions-digest
   [environment]
-  (try (let [active
-             (or (prompt/active-extensions environment) [])
+  (try (let
+         [active
+          (or (prompt/active-extensions environment) [])
 
-             ;; ext-alias-symbol yields a Clojure SYMBOL — forbidden as a boundary
-             ;; value; stringify each alias so the set carries plain strings.
-             aliases
-             (into (sorted-set) (comp (keep extension/ext-alias-symbol) (map str)) active)]
+          ;; ext-alias-symbol yields a Clojure SYMBOL — forbidden as a boundary
+          ;; value; stringify each alias so the set carries plain strings.
+          aliases
+          (into (sorted-set) (comp (keep extension/ext-alias-symbol) (map str)) active)]
 
          {"active_count" (count active) "aliases" aliases})
        (catch Throwable _ nil)))
@@ -194,14 +201,15 @@
    layer additional slices on top via `:ext/ctx-fn` (`render-block!`
    deep-merges before render)."
   [environment]
-  (let [host
-        (host-digest)
+  (let
+    [host
+     (host-digest)
 
-        project
-        (project-digest)
+     project
+     (project-digest)
 
-        exts
-        (when environment (extensions-digest environment))]
+     exts
+     (when environment (extensions-digest environment))]
 
     (cond-> {}
       host

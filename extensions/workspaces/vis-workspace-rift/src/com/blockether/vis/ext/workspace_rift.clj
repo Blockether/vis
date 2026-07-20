@@ -21,9 +21,10 @@
    then throw with both failures and remaining paths so callers get actionable
    cleanup diagnostics."
   [dir]
-  (let [root (some-> dir
-                     io/file
-                     .toPath)]
+  (let
+    [root (some-> dir
+                  io/file
+                  .toPath)]
     (when (and root (Files/exists root (make-array LinkOption 0)))
       (let [failures (atom [])]
         (Files/walkFileTree
@@ -42,12 +43,12 @@
                      (swap! failures conj {:path (str path) :error (or (ex-message t) (str t))})))
               FileVisitResult/CONTINUE)))
         (when (seq @failures)
-          (let [remaining
-                (try (with-open [stream (Files/walk root
-                                                    (make-array java.nio.file.FileVisitOption 0))]
-                       (vec (map str (iterator-seq (.iterator stream)))))
-                     (catch Throwable t
-                       [(str "<remaining-path-scan-failed: " (or (ex-message t) (str t)) ">")]))]
+          (let
+            [remaining
+             (try (with-open [stream (Files/walk root (make-array java.nio.file.FileVisitOption 0))]
+                    (vec (map str (iterator-seq (.iterator stream)))))
+                  (catch Throwable t
+                    [(str "<remaining-path-scan-failed: " (or (ex-message t) (str t)) ">")]))]
             (throw (ex-info "Failed to fully delete Rift temporary tree"
                             {:type :workspace-rift/delete-tree-failed
                              :root (str root)
@@ -69,14 +70,15 @@
 
 (defn- failure-data
   [{:keys [source-root store-root name]} t]
-  (let [into-file
-        (io/file store-root)
+  (let
+    [into-file
+     (io/file store-root)
 
-        parent-file
-        (.getParentFile into-file)
+     parent-file
+     (.getParentFile into-file)
 
-        data
-        (ex-data t)]
+     data
+     (ex-data t)]
 
     {:source-root (file-path source-root)
      :source-linked-worktree? (linked-git-worktree-source? source-root)
@@ -127,15 +129,16 @@
          (throw (ex-info "Linked Git worktrees are not supported as Rift sources"
                          {:type :workspace/unsupported-rift-source :reason :linked-git-worktree})))
        (Files/createDirectories (.toPath (io/file store-root)) (make-array FileAttribute 0))
-       (let [src
-             (str (Files/createTempDirectory (.toPath (io/file source-root))
-                                             ".vis-rift-probe-"
-                                             (make-array FileAttribute 0)))
+       (let
+         [src
+          (str (Files/createTempDirectory (.toPath (io/file source-root))
+                                          ".vis-rift-probe-"
+                                          (make-array FileAttribute 0)))
 
-             dst
-             (str (Files/createTempDirectory (.toPath (io/file store-root))
-                                             ".vis-rift-probe-"
-                                             (make-array FileAttribute 0)))]
+          dst
+          (str (Files/createTempDirectory (.toPath (io/file store-root))
+                                          ".vis-rift-probe-"
+                                          (make-array FileAttribute 0)))]
 
          (try (spit (io/file src "probe") "ok")
               (rift/init {:at src})
@@ -156,11 +159,12 @@
 
 (defn- available?
   [{:keys [source-root store-root] :as opts}]
-  (let [store-root
-        (or store-root source-root)
+  (let
+    [store-root
+     (or store-root source-root)
 
-        opts
-        (assoc opts :store-root store-root)]
+     opts
+     (assoc opts :store-root store-root)]
 
     (try (if (linked-git-worktree-source? source-root)
            {:available? false :reason :linked-git-worktree}

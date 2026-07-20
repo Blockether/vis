@@ -37,14 +37,15 @@
   "Read+parse config `f` through `config-cache`, keyed on canonical path +
    mtime. `parse` turns the `io/file` into an opts map."
   [^java.io.File f parse]
-  (let [stamp
-        (.lastModified f)
+  (let
+    [stamp
+     (.lastModified f)
 
-        k
-        (.getCanonicalPath f)
+     k
+     (.getCanonicalPath f)
 
-        hit
-        (get @config-cache k)]
+     hit
+     (get @config-cache k)]
 
     (if (and hit (= (:mtime hit) stamp))
       (:opts hit)
@@ -89,13 +90,15 @@
    presence check that decides whether the zprint backend is used at all."
   ^java.io.File [path]
   (when (seq (str path))
-    (try (loop [dir (let [f (.getAbsoluteFile (io/file (str path)))]
-                      (if (.isDirectory f) f (.getParentFile f)))]
+    (try (loop
+           [dir (let [f (.getAbsoluteFile (io/file (str path)))]
+                  (if (.isDirectory f) f (.getParentFile f)))]
            (when dir
-             (if-let [cf (some (fn [n]
-                                 (let [c (io/file dir n)]
-                                   (when (.isFile c) c)))
-                               zprint-config-names)]
+             (if-let
+               [cf (some (fn [n]
+                           (let [c (io/file dir n)]
+                             (when (.isFile c) c)))
+                         zprint-config-names)]
                cf
                (recur (.getParentFile dir)))))
          (catch Throwable _ nil))))
@@ -109,12 +112,12 @@
    leave them as bare lists that zprint rejects. Cached per config-file + mtime."
   [path]
   (try (when-let [f (zprint-config-file path)]
-         (cached-opts f
-                      (fn [^java.io.File cf]
-                        (let [[opts err] (zprint-config/get-config-from-file (.getCanonicalPath cf)
-                                                                             true)]
-                          (when err (throw (ex-info (str err) {:file (str cf)})))
-                          opts))))
+         (cached-opts
+           f
+           (fn [^java.io.File cf]
+             (let [[opts err] (zprint-config/get-config-from-file (.getCanonicalPath cf) true)]
+               (when err (throw (ex-info (str err) {:file (str cf)})))
+               opts))))
        (catch Throwable _ nil)))
 
 (defn zprint-string

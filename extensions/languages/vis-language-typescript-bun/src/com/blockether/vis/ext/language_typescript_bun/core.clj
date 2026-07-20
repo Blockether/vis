@@ -36,8 +36,9 @@
 
 (defn- workspace-has-bun?
   [env]
-  (let [root (some-> (:workspace/root env)
-                     io/file)]
+  (let
+    [root (some-> (:workspace/root env)
+                  io/file)]
     (when (and root (.isDirectory root))
       (or (some #(.exists (io/file root %)) ["bunfig.toml" "bun.lock" "bun.lockb" ".bun-version"])
           ;; a generic package.json workspace with TS/TSX/JS/JSX sources runs on
@@ -66,9 +67,10 @@
 
 (defn- repl-resource-id
   [dir id]
-  (let [id (some-> id
-                   str
-                   str/trim)]
+  (let
+    [id (some-> id
+                str
+                str/trim)]
     (if (seq id) id (str "bunrepl:" dir))))
 
 (defn register-repl-resource!
@@ -109,40 +111,42 @@
    workspace app dirs, else nil."
   [root dir]
   (when (= (str dir) (.getCanonicalPath (io/file root)))
-    (let [pj
-          (io/file root "package.json")
+    (let
+      [pj
+       (io/file root "package.json")
 
-          m
-          (when (.exists pj) (try (json/read-json (slurp pj)) (catch Throwable _ nil)))
+       m
+       (when (.exists pj) (try (json/read-json (slurp pj)) (catch Throwable _ nil)))
 
-          ws
-          (get m "workspaces")
+       ws
+       (get m "workspaces")
 
-          globs
-          (cond (sequential? ws) ws
-                (map? ws) (get ws "packages")
-                :else nil)]
+       globs
+       (cond (sequential? ws) ws
+             (map? ws) (get ws "packages")
+             :else nil)]
 
       (when (seq globs)
-        (let [candidates
-              (->> globs
-                   (mapcat (fn [g]
-                             (let [g (str g)]
-                               (if (str/ends-with? g "/*")
-                                 (let [d (io/file root (subs g 0 (- (count g) 2)))]
-                                   (when (.isDirectory d) (.listFiles d)))
-                                 [(io/file root g)]))))
-                   (filter (fn [^java.io.File f]
-                             (and f (.isDirectory f) (.exists (io/file f "package.json")))))
-                   (map (fn [^java.io.File f]
-                          (str (.getName (.getParentFile f)) "/" (.getName f))))
-                   sort
-                   (take 8))
+        (let
+          [candidates
+           (->> globs
+                (mapcat (fn [g]
+                          (let [g (str g)]
+                            (if (str/ends-with? g "/*")
+                              (let [d (io/file root (subs g 0 (- (count g) 2)))]
+                                (when (.isDirectory d) (.listFiles d)))
+                              [(io/file root g)]))))
+                (filter (fn [^java.io.File f]
+                          (and f (.isDirectory f) (.exists (io/file f "package.json")))))
+                (map (fn [^java.io.File f]
+                       (str (.getName (.getParentFile f)) "/" (.getName f))))
+                sort
+                (take 8))
 
-              suggestion
-              (or (first (filter #(str/ends-with? % "/api") candidates))
-                  (first candidates)
-                  "apps/<app>")]
+           suggestion
+           (or (first (filter #(str/ends-with? % "/api") candidates))
+               (first candidates)
+               "apps/<app>")]
 
           (str "This is a Bun MONOREPO ROOT (package.json has \"workspaces\") — a REPL "
                "here picks up the ROOT tsconfig/package.json, so app code misbehaves "
@@ -158,17 +162,18 @@
    a STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
   [env op opts]
-  (let [root
-        (env-root env)
+  (let
+    [root
+     (env-root env)
 
-        op
-        (if (string? op) op "start")
+     op
+     (if (string? op) op "start")
 
-        id
-        (or (get opts "id") (get opts "repl_id"))
+     id
+     (or (get opts "id") (get opts "repl_id"))
 
-        dir
-        (resolve-dir root (get opts "dir"))]
+     dir
+     (resolve-dir root (get opts "dir"))]
 
     (case op
       "status"
@@ -200,20 +205,21 @@
    (globals persist across calls; top-level await works;
    `reload(path)` re-imports a project module cache-busted)."
   [env arg]
-  (let [root
-        (env-root env)
+  (let
+    [root
+     (env-root env)
 
-        code
-        (cond (string? arg) arg
-              (map? arg) (str (or (get arg "code") (get arg "source")))
-              :else (throw (ex-info "repl_eval(typescript) expects a code string or {\"code\": ...}"
-                                    {:type :ts/bad-args :got arg})))
+     code
+     (cond (string? arg) arg
+           (map? arg) (str (or (get arg "code") (get arg "source")))
+           :else (throw (ex-info "repl_eval(typescript) expects a code string or {\"code\": ...}"
+                                 {:type :ts/bad-args :got arg})))
 
-        dir
-        (resolve-dir root (and (map? arg) (get arg "dir")))
+     dir
+     (resolve-dir root (and (map? arg) (get arg "dir")))
 
-        tmo
-        (and (map? arg) (get arg "timeout_ms"))]
+     tmo
+     (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
       ;; Preserve the more specific monorepo error when the caller omitted dir.
@@ -240,49 +246,51 @@
    narrowed to `{paths [...]}` / a `{filter \"name\"}` (-t). Returns the parsed
    pass/fail counts + the output tail."
   [env arg]
-  (let [root
-        (env-root env)
+  (let
+    [root
+     (env-root env)
 
-        opts
-        (if (map? arg) arg {})
+     opts
+     (if (map? arg) arg {})
 
-        dir
-        (resolve-dir root (get opts "dir"))
+     dir
+     (resolve-dir root (get opts "dir"))
 
-        paths
-        (seq (map str (get opts "paths")))
+     paths
+     (seq (map str (get opts "paths")))
 
-        cmd
-        (cond-> (conj (runner/resolve-command dir) "test")
-          (get opts "filter")
-          (conj "-t" (str (get opts "filter")))
+     cmd
+     (cond-> (conj (runner/resolve-command dir) "test")
+       (get opts "filter")
+       (conj "-t" (str (get opts "filter")))
 
-          paths
-          (into paths))
+       paths
+       (into paths))
 
-        pb
-        (doto (ProcessBuilder. ^java.util.List cmd)
-          (.directory (io/file dir))
-          (.redirectErrorStream true))
+     pb
+     (doto (ProcessBuilder. ^java.util.List cmd)
+       (.directory (io/file dir))
+       (.redirectErrorStream true))
 
-        p
-        (.start pb)
+     p
+     (.start pb)
 
-        out
-        (future (slurp (.getInputStream p)))
+     out
+     (future (slurp (.getInputStream p)))
 
-        done?
-        (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
+     done?
+     (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
 
     (when-not done? (.destroyForcibly p))
-    (let [s
-          (str @out)
+    (let
+      [s
+       (str @out)
 
-          [_ pass]
-          (re-find #"(?m)^\s*(\d+) pass" s)
+       [_ pass]
+       (re-find #"(?m)^\s*(\d+) pass" s)
 
-          [_ fail]
-          (re-find #"(?m)^\s*(\d+) fail" s)]
+       [_ fail]
+       (re-find #"(?m)^\s*(\d+) fail" s)]
 
       (extension/success {:result {"cmd" (vec cmd)
                                    "dir" dir
@@ -331,14 +339,15 @@
                                 :dir? true
                                 :label "Bun REPL"
                                 :start-fn (fn [env _selected]
-                                            (let [root
-                                                  (env-root env)
+                                            (let
+                                              [root
+                                               (env-root env)
 
-                                                  dir
-                                                  (resolve-dir root (:startable/dir env))
+                                               dir
+                                               (resolve-dir root (:startable/dir env))
 
-                                                  r
-                                                  (repl/start! dir {})]
+                                               r
+                                               (repl/start! dir {})]
 
                                               (register-repl-resource! (:session-id env) dir r)
                                               r))}]

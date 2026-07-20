@@ -75,22 +75,23 @@
   "Shared `/draft new` + `/draft-fresh` implementation. `fresh?` forks an
    EMPTY draft — nothing from the current HEAD is carried into it."
   [ctx fresh?]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        state-id
-        (ctx-session-state-id ctx)
+     state-id
+     (ctx-session-state-id ctx)
 
-        label
-        (some-> (str/join " " (:command/argv ctx))
-                str/trim
-                not-empty)
+     label
+     (some-> (str/join " " (:command/argv ctx))
+             str/trim
+             not-empty)
 
-        current
-        (session-workspace ctx)
+     current
+     (session-workspace ctx)
 
-        usage
-        (if fresh? "/draft-fresh <label>" "/draft new <label>")]
+     usage
+     (if fresh? "/draft-fresh <label>" "/draft new <label>")]
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
@@ -133,22 +134,24 @@
 (defn- handle-apply
   "`/draft apply` — land the draft's changes into cwd, then leave the draft."
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        state-id
-        (ctx-session-state-id ctx)
+     state-id
+     (ctx-session-state-id ctx)
 
-        current
-        (session-workspace ctx)]
+     current
+     (session-workspace ctx)]
 
     (cond (nil? current) (err "No active workspace")
           (not (workspace/draft? current)) (err "Not in a draft — /draft new <label> to start one")
-          :else (let [{:keys [landed changed]}
-                      (workspace/apply! db {:workspace-id (:id current)})
+          :else (let
+                  [{:keys [landed changed]}
+                   (workspace/apply! db {:workspace-id (:id current)})
 
-                      label
-                      (workspace/display-label current)]
+                   label
+                   (workspace/display-label current)]
 
                   (workspace/abandon! db {:workspace-id (:id current) :reason "applied"})
                   (when state-id (workspace/exit-to-trunk! db state-id))
@@ -167,19 +170,20 @@
 (defn- handle-abandon
   "`/draft abandon [reason]` — discard the draft and leave it."
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        state-id
-        (ctx-session-state-id ctx)
+     state-id
+     (ctx-session-state-id ctx)
 
-        current
-        (session-workspace ctx)
+     current
+     (session-workspace ctx)
 
-        reason
-        (some-> (str/join " " (:command/argv ctx))
-                str/trim
-                not-empty)]
+     reason
+     (some-> (str/join " " (:command/argv ctx))
+             str/trim
+             not-empty)]
 
     (cond (nil? current) (err "No active workspace")
           (not (workspace/draft? current)) (err "Not in a draft")
@@ -193,11 +197,12 @@
 (defn- handle-status
   "Bare `/draft` — are you on trunk or in a draft?"
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        current
-        (session-workspace ctx)]
+     current
+     (session-workspace ctx)]
 
     (cond (workspace/draft? current)
           (let [st (workspace/status db (:id current))]
@@ -243,17 +248,18 @@
    relative paths, file tools, and search all follow. Additional filesystem
    roots carry over. Bare (no path) shows the current root."
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        state-id
-        (ctx-session-state-id ctx)
+     state-id
+     (ctx-session-state-id ctx)
 
-        current
-        (session-workspace ctx)
+     current
+     (session-workspace ctx)
 
-        path
-        (argv-path ctx)]
+     path
+     (argv-path ctx)]
 
     (cond (nil? path)
           {:slash/status :ok
@@ -263,11 +269,12 @@
            :slash/data {:root (:root current)}}
           (nil? state-id) (err "Send a message first, then /root <path> (session not ready yet)")
           :else (try
-                  (let [ws
-                        (sync-confinement! ctx (workspace/change-root! db state-id path))
+                  (let
+                    [ws
+                     (sync-confinement! ctx (workspace/change-root! db state-id path))
 
-                        roots
-                        (workspace/filesystem-roots ws)]
+                     roots
+                     (workspace/filesystem-roots ws)]
 
                     {:slash/status :ok
                      :slash/title (str "Root changed — now working in " (:root ws))
@@ -284,100 +291,104 @@
   "`/fs add <path>` - widen the session so it may also operate on files under
    <path>, in addition to its primary filesystem root."
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        current
-        (session-workspace ctx)
+     current
+     (session-workspace ctx)
 
-        path
-        (argv-path ctx)]
+     path
+     (argv-path ctx)]
 
     (cond (nil? current) (err "No active workspace")
           (nil? path) (err "Give a directory: /fs add <path>")
-          :else
-          (try (let [ws
+          :else (try
+                  (let
+                    [ws
                      (sync-confinement! ctx (workspace/add-filesystem-root! db (:id current) path))
 
                      roots
                      (workspace/filesystem-roots ws)]
 
-                 {:slash/status :ok
-                  :slash/title "Added a filesystem directory - the session can work there now"
-                  :slash/body
-                  (str "Filesystem dirs (" (count roots)
-                       "):\n" (str/join
-                                "\n"
-                                (map #(str "  "
-                                           (:trunk %)
-                                           (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-                                             " (isolated draft copy — lands on /draft apply)"))
-                                     roots)))
-                  :slash/data {:filesystem-roots roots}})
-               (catch Exception e
-                 (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
+                    {:slash/status :ok
+                     :slash/title "Added a filesystem directory - the session can work there now"
+                     :slash/body
+                     (str "Filesystem dirs (" (count roots)
+                          "):\n" (str/join
+                                   "\n"
+                                   (map #(str "  "
+                                              (:trunk %)
+                                              (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+                                                " (isolated draft copy — lands on /draft apply)"))
+                                        roots)))
+                     :slash/data {:filesystem-roots roots}})
+                  (catch Exception e
+                    (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
 
 (defn- handle-fs-create
   "`/fs create <path>` - make the directory <path> (its last segment, under an
    existing parent), then add it as a filesystem root so the session can work
    there. The parent must already exist; only the final segment is created."
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        current
-        (session-workspace ctx)
+     current
+     (session-workspace ctx)
 
-        path
-        (argv-path ctx)]
+     path
+     (argv-path ctx)]
 
     (cond (nil? current) (err "No active workspace")
           (nil? path) (err "Give a directory: /fs create <path>")
-          :else (try (let [f
-                           (io/file path)
+          :else
+          (try (let
+                 [f
+                  (io/file path)
 
-                           parent
-                           (or (.getParent f) ".")
+                  parent
+                  (or (.getParent f) ".")
 
-                           created
-                           (workspace/create-dir! parent (.getName f))
+                  created
+                  (workspace/create-dir! parent (.getName f))
 
-                           ws
-                           (sync-confinement!
-                             ctx
-                             (workspace/add-filesystem-root! db (:id current) created))
+                  ws
+                  (sync-confinement! ctx (workspace/add-filesystem-root! db (:id current) created))
 
-                           roots
-                           (workspace/filesystem-roots ws)]
+                  roots
+                  (workspace/filesystem-roots ws)]
 
-                       {:slash/status :ok
-                        :slash/title (str "Created and added '" created "'")
-                        :slash/body (str "Filesystem dirs (" (count roots)
-                                         "):\n" (str/join "\n" (map #(str "  " (:trunk %)) roots)))
-                        :slash/data {:filesystem-roots roots :created created}})
-                     (catch Exception e
-                       (err (str "Can't create '" path "': " (or (ex-message e) (str e)))))))))
+                 {:slash/status :ok
+                  :slash/title (str "Created and added '" created "'")
+                  :slash/body (str "Filesystem dirs (" (count roots)
+                                   "):\n" (str/join "\n" (map #(str "  " (:trunk %)) roots)))
+                  :slash/data {:filesystem-roots roots :created created}})
+               (catch Exception e
+                 (err (str "Can't create '" path "': " (or (ex-message e) (str e)))))))))
 
 (defn- handle-fs-remove
   "`/fs remove <path>` - stop letting the session operate under <path>."
   [ctx]
-  (let [db
-        (ctx-db ctx)
+  (let
+    [db
+     (ctx-db ctx)
 
-        current
-        (session-workspace ctx)
+     current
+     (session-workspace ctx)
 
-        path
-        (argv-path ctx)]
+     path
+     (argv-path ctx)]
 
     (cond (nil? current) (err "No active workspace")
           (nil? path) (err "Give a directory: /fs remove <path>")
-          :else (let [ws
-                      (sync-confinement! ctx
-                                         (workspace/remove-filesystem-root! db (:id current) path))
+          :else (let
+                  [ws
+                   (sync-confinement! ctx (workspace/remove-filesystem-root! db (:id current) path))
 
-                      roots
-                      (workspace/filesystem-roots ws)]
+                   roots
+                   (workspace/filesystem-roots ws)]
 
                   {:slash/status :ok
                    :slash/title "Removed a filesystem directory"
@@ -400,18 +411,19 @@
    there by default; added roots are extra grants. Enumerated so the listing
    matches the web rail's `Filesystem` section (root first)."
   [ctx]
-  (let [current
-        (session-workspace ctx)
+  (let
+    [current
+     (session-workspace ctx)
 
-        base
-        (:root current)
+     base
+     (:root current)
 
-        roots
-        (some-> current
-                workspace/filesystem-roots)
+     roots
+     (some-> current
+             workspace/filesystem-roots)
 
-        total
-        (+ (if base 1 0) (count roots))]
+     total
+     (+ (if base 1 0) (count roots))]
 
     {:slash/status :ok
      :slash/title "Filesystem"

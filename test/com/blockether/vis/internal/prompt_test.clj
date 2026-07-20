@@ -7,24 +7,25 @@
 
 (defdescribe prompt-assembly-test
              (it "normalizes core addendum and extension prompt text"
-                 (let [ext
-                       {:ext/name "test.prompt"
-                        :ext/engine {:ext.engine/alias 't}
-                        :ext/prompt-fn
-                        (fn [_]
-                          "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
+                 (let
+                   [ext
+                    {:ext/name "test.prompt"
+                     :ext/engine {:ext.engine/alias 't}
+                     :ext/prompt-fn
+                     (fn [_]
+                       "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
 
-                       env
-                       {:extensions (atom [ext])}
+                    env
+                    {:extensions (atom [ext])}
 
-                       messages
-                       (prompt/assemble-stable-prompt-messages
-                         env
-                         {:system-prompt "\n\n    Addendum line\n\n\n\n      Nested addendum line\n"
-                          :active-extensions [ext]})
+                    messages
+                    (prompt/assemble-stable-prompt-messages
+                      env
+                      {:system-prompt "\n\n    Addendum line\n\n\n\n      Nested addendum line\n"
+                       :active-extensions [ext]})
 
-                       text
-                       (prompt/stable-prompt-text messages)]
+                    text
+                    (prompt/stable-prompt-text messages)]
 
                    (expect (str/includes? text "Addendum line\n\n  Nested addendum line"))
                    (expect (str/includes? text "Extension line\n\n  Nested extension line"))
@@ -32,14 +33,15 @@
 
 (defdescribe cli-autonomous-override-test
              (it "drops the candidate approval STOP for the non-interactive :cli channel only"
-                 (let [text-for
-                       (fn [ch]
-                         (-> (prompt/assemble-stable-prompt-messages {:channel ch}
-                                                                     {:active-extensions []})
-                             prompt/stable-prompt-text))
+                 (let
+                   [text-for
+                    (fn [ch]
+                      (-> (prompt/assemble-stable-prompt-messages {:channel ch}
+                                                                  {:active-extensions []})
+                          prompt/stable-prompt-text))
 
-                       marker
-                       "NON-INTERACTIVE ONE-SHOT RUN"]
+                    marker
+                    "NON-INTERACTIVE ONE-SHOT RUN"]
 
                    ;; :cli (headless one-shot — no approver) gets the override
                    (expect (str/includes? (text-for :cli) marker))
@@ -70,15 +72,18 @@
     "keeps CORE compact and cross-tool while native contracts own mechanics"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
       (expect (< (count text) 4000))
-      (doseq [step ["## 1. Identity" "## 2. Tool contracts" "## 3. Inspect" "## 4. Act"
-                    "## 5. Edit + verify" "## 6. Manage context" "## 7. Style and finish"]]
+      (doseq
+        [step ["## 1. Identity" "## 2. Tool contracts" "## 3. Inspect" "## 4. Act"
+               "## 5. Edit + verify" "## 6. Manage context" "## 7. Style and finish"]]
         (expect (str/includes? text step)))
-      (doseq [tool ["`struct_index`" "`struct_patch`" "`struct_node`" "`struct_occurrences`"
-                    "`struct_rename`" "`python_execution`" "`apropos(query)`" "`doc(name)`"
-                    "`repl_eval`"]]
+      (doseq
+        [tool ["`struct_index`" "`struct_patch`" "`struct_node`" "`struct_occurrences`"
+               "`struct_rename`" "`python_execution`" "`apropos(query)`" "`doc(name)`"
+               "`repl_eval`"]]
         (expect (not (str/includes? text tool))))
-      (doseq [duplicated ["absent/down/failed → start" "`repl_stop(id)`" "`N < session[\"turn\"]`"
-                          "from_anchor"]]
+      (doseq
+        [duplicated ["absent/down/failed → start" "`repl_stop(id)`" "`N < session[\"turn\"]`"
+                     "from_anchor"]]
         (expect (not (str/includes? text duplicated))))
       (expect (str/includes? text "Step N of M complete"))
       (expect (str/includes? text "location → cause → fix"))
@@ -127,16 +132,17 @@
 (defdescribe
   project-instructions-hoist-test
   (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
-      (with-redefs [agents/instructions
-                    (constantly
-                      {:found? true
-                       :source :repo
-                       :path "/tmp/repo/AGENTS.md"
-                       :content
-                       "PROJECT-RULE-FROM-AGENTS-MD\nreproduce -> inspect -> minimal change"})]
-        (let [env {:extensions (atom [])}
-              messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-              text (prompt/stable-prompt-text messages)]
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? true
+                      :source :repo
+                      :path "/tmp/repo/AGENTS.md"
+                      :content
+                      "PROJECT-RULE-FROM-AGENTS-MD\nreproduce -> inspect -> minimal change"})]
+        (let
+          [env {:extensions (atom [])}
+           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+           text (prompt/stable-prompt-text messages)]
 
           (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
           (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
@@ -147,42 +153,46 @@
           (expect (< (str/index-of text "SYSTEM-PROMPT")
                      (str/index-of text "PROJECT-INSTRUCTIONS"))))))
   (it "falls back to CLAUDE.md when AGENTS.md is absent and labels the source"
-      (with-redefs [agents/instructions (constantly {:found? true
-                                                     :source :repo:claude-md-fallback
-                                                     :path "/tmp/repo/CLAUDE.md"
-                                                     :content "CLAUDE-FALLBACK-RULE"})]
-        (let [env {:extensions (atom [])}
-              messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-              text (prompt/stable-prompt-text messages)]
+      (with-redefs
+        [agents/instructions (constantly {:found? true
+                                          :source :repo:claude-md-fallback
+                                          :path "/tmp/repo/CLAUDE.md"
+                                          :content "CLAUDE-FALLBACK-RULE"})]
+        (let
+          [env {:extensions (atom [])}
+           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+           text (prompt/stable-prompt-text messages)]
 
           (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
           (expect (str/includes? text "CLAUDE-FALLBACK-RULE"))
           (expect (str/includes? text "CLAUDE.md")))))
   (it "emits no PROJECT-INSTRUCTIONS block when no guidance file is present"
       (with-redefs [agents/instructions (constantly {:found? false})]
-        (let [env {:extensions (atom [])}
-              messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-              text (prompt/stable-prompt-text messages)]
+        (let
+          [env {:extensions (atom [])}
+           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+           text (prompt/stable-prompt-text messages)]
 
           (expect (not (str/includes? text "PROJECT-INSTRUCTIONS")))))))
 
 (defdescribe extension-activation-test
              (it "assembles from precomputed active extensions without activating again"
-                 (let [calls
-                       (atom 0)
+                 (let
+                   [calls
+                    (atom 0)
 
-                       ext
-                       {:ext/name "test.activation"
-                        :ext/activation-fn (fn [_]
-                                             (swap! calls inc)
-                                             true)
-                        :ext/prompt-fn (constantly "Active prompt")}
+                    ext
+                    {:ext/name "test.activation"
+                     :ext/activation-fn (fn [_]
+                                          (swap! calls inc)
+                                          true)
+                     :ext/prompt-fn (constantly "Active prompt")}
 
-                       env
-                       {:extensions (atom [ext])}
+                    env
+                    {:extensions (atom [ext])}
 
-                       active
-                       (prompt/active-extensions env)]
+                    active
+                    (prompt/active-extensions env)]
 
                    (expect (= 1 @calls))
                    (prompt/assemble-stable-prompt-messages env {:active-extensions active})
@@ -192,36 +202,38 @@
   assemble-initial-messages-images-test
   "Image attachments turn the initial user message multimodal."
   (it "keeps text-only messages as a plain content string"
-      (let [msgs
-            (prompt/assemble-initial-messages {:stable-prompt-messages [{:role "system"
-                                                                         :content "sys"}]
-                                               :initial-user-content "hello"})
+      (let
+        [msgs
+         (prompt/assemble-initial-messages {:stable-prompt-messages [{:role "system"
+                                                                      :content "sys"}]
+                                            :initial-user-content "hello"})
 
-            user
-            (last msgs)]
+         user
+         (last msgs)]
 
         (expect (= "user" (:role user)))
         (expect (string? (:content user)))
         (expect (str/includes? (:content user) "CURRENT-USER-MESSAGE"))
         (expect (not (str/includes? (:content user) "ATTACHED-IMAGES")))))
   (it "rides svar image blocks ahead of the text block and lists a manifest"
-      (let [msgs
-            (prompt/assemble-initial-messages
-              {:stable-prompt-messages []
-               :initial-user-content "what is on /tmp/shot.png?"
-               :user-images [{:path "/tmp/shot.png"
-                              :media-type "image/png"
-                              :base64 "aGVsbG8="
-                              :size 5
-                              :size-label "5B"}]
-               :skipped-images [{:path "/tmp/huge.png"
-                                 :reason "6.0MB exceeds the 5.0MB attachment limit"}]})
+      (let
+        [msgs
+         (prompt/assemble-initial-messages {:stable-prompt-messages []
+                                            :initial-user-content "what is on /tmp/shot.png?"
+                                            :user-images [{:path "/tmp/shot.png"
+                                                           :media-type "image/png"
+                                                           :base64 "aGVsbG8="
+                                                           :size 5
+                                                           :size-label "5B"}]
+                                            :skipped-images
+                                            [{:path "/tmp/huge.png"
+                                              :reason "6.0MB exceeds the 5.0MB attachment limit"}]})
 
-            user
-            (last msgs)
+         user
+         (last msgs)
 
-            blocks
-            (:content user)]
+         blocks
+         (:content user)]
 
         (expect (= "user" (:role user)))
         (expect (vector? blocks))
@@ -236,10 +248,11 @@
           (expect (str/includes? text "NOT attached"))
           (expect (str/includes? text "/tmp/huge.png")))))
   (it "omits the manifest when there is no user content at all"
-      (let [msgs (prompt/assemble-initial-messages
-                   {:stable-prompt-messages [{:role "system" :content "sys"}]
-                    :user-images
-                    [{:path "p" :media-type "image/png" :base64 "eA==" :size 1 :size-label "1B"}]})]
+      (let
+        [msgs (prompt/assemble-initial-messages
+                {:stable-prompt-messages [{:role "system" :content "sys"}]
+                 :user-images
+                 [{:path "p" :media-type "image/png" :base64 "eA==" :size 1 :size-label "1B"}]})]
         ;; no user message without initial-user-content — images can't ride alone
         (expect (= 1 (count msgs)))
         (expect (= "system" (:role (first msgs)))))))

@@ -44,11 +44,12 @@
    `src/foo.clj` or `./diagram.png`."
   [s]
   (cond (or (nil? s) (str/blank? (str s))) :rejected
-        :else (let [t
-                    (str/trim (str s))
+        :else (let
+                [t
+                 (str/trim (str s))
 
-                    m
-                    (re-find scheme-re t)]
+                 m
+                 (re-find scheme-re t)]
 
                 (cond (nil? m) :rel
                       :else (case (str/lower-case (nth m 1))
@@ -80,11 +81,12 @@
 (defn- under-cwd?
   "True when the resolved absolute path lives under `cwd-path`."
   [^File f]
-  (let [cwd
-        (cwd-path)
+  (let
+    [cwd
+     (cwd-path)
 
-        resolved
-        (.normalize (.toPath f))]
+     resolved
+     (.normalize (.toPath f))]
 
     (.startsWith resolved cwd)))
 
@@ -99,19 +101,21 @@
      file:/abs/path    -> /abs/path
      file:relative     -> relative"
   ^String [^String s]
-  (let [no-scheme
-        (str/replace-first s #"(?i)^file:" "")
+  (let
+    [no-scheme
+     (str/replace-first s #"(?i)^file:" "")
 
-        stripped
-        (cond (str/starts-with? no-scheme "//")
-              (let [after-slashes
-                    (subs no-scheme 2)
+     stripped
+     (cond (str/starts-with? no-scheme "//")
+           (let
+             [after-slashes
+              (subs no-scheme 2)
 
-                    slash-idx
-                    (.indexOf after-slashes "/")]
+              slash-idx
+              (.indexOf after-slashes "/")]
 
-                (if (neg? slash-idx) "" (subs after-slashes slash-idx)))
-              :else no-scheme)]
+             (if (neg? slash-idx) "" (subs after-slashes slash-idx)))
+           :else no-scheme)]
 
     (try (java.net.URLDecoder/decode stripped "UTF-8") (catch Throwable _ stripped))))
 
@@ -141,23 +145,24 @@
         {:scheme scheme :target (str/trim (str s)) :line nil}
 
         :file
-        (let [decoded (file-url->path (str/trim (str s)))
-              [path* line] (strip-line-anchor decoded)
-              ^String path path*
-              ^Path cwd (cwd-path)
-              ^Path resolved
-              (if (str/starts-with? path "/") (path-of path) (resolve-segment cwd path))
-              ^Path file (.normalize resolved)
-              f (.toFile file)]
+        (let
+          [decoded (file-url->path (str/trim (str s)))
+           [path* line] (strip-line-anchor decoded)
+           ^String path path*
+           ^Path cwd (cwd-path)
+           ^Path resolved (if (str/starts-with? path "/") (path-of path) (resolve-segment cwd path))
+           ^Path file (.normalize resolved)
+           f (.toFile file)]
 
           (when (under-cwd? f) {:scheme :file :target (.getAbsolutePath f) :line line}))
 
         :rel
-        (let [[path* line] (strip-line-anchor (str/trim (str s)))
-              ^String path path*
-              ^Path cwd (cwd-path)
-              ^Path file (.normalize (resolve-segment cwd path))
-              f (.toFile file)]
+        (let
+          [[path* line] (strip-line-anchor (str/trim (str s)))
+           ^String path path*
+           ^Path cwd (cwd-path)
+           ^Path file (.normalize (resolve-segment cwd path))
+           f (.toFile file)]
 
           (when (under-cwd? f) {:scheme :rel :target (.getAbsolutePath f) :line line}))))))
 
@@ -253,8 +258,9 @@
               (and (= "xdg-open" (first argv)) (instance? java.io.IOException err))
               (loop [chain linux-fallbacks]
                 (if-let [head (first chain)]
-                  (let [argv* (conj (vec head) target)
-                        err* (spawn! argv*)]
+                  (let
+                    [argv* (conj (vec head) target)
+                     err* (spawn! argv*)]
 
                     (if (nil? err*)
                       {:status :ok

@@ -72,9 +72,8 @@
    form (nil rejected) keeps plain freshness reuse."
   [reuse refresh!]
   (let [lock (new-lock)]
-    (fn ([] (single-flight! lock #(reuse nil) refresh!)) ([rejected] (single-flight! lock
-                                                                       #(reuse rejected)
-                                                                       refresh!)))))
+    (fn ([] (single-flight! lock #(reuse nil) refresh!))
+      ([rejected] (single-flight! lock #(reuse rejected) refresh!)))))
 
 (defn make-file-refresher
   "Build a 0/1-arg single-flight refresh fn for a FILE-backed credential
@@ -110,8 +109,9 @@
                        ;; differs, reuse still collapses the 401 storm.
                        (when-not (= rejected (:token tok)) tok)))))
                (fn []
-                 (let [creds (load)
-                       rt (refresh-token creds)]
+                 (let
+                   [creds (load)
+                    rt (refresh-token creds)]
 
                    (when (str/blank? rt) (no-token!))
                    (-> (exchange! rt)

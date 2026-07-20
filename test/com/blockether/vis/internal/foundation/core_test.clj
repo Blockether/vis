@@ -19,8 +19,9 @@
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
   (it "keeps only dynamic language routing in the foundation prompt"
-      (with-redefs [agents/instructions (fn []
-                                          {:found? false})]
+      (with-redefs
+        [agents/instructions (fn []
+                               {:found? false})]
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
           ;; Stable state/introspection/self-doc contracts belong in CORE or tool docs.
           (expect (not (str/includes? prompt "Env strategy")))
@@ -103,11 +104,12 @@
         ;; Stable workflow lives in CORE; this dynamic block is capabilities only.
         (expect (not (str/includes? p "session[\"resources\"]")))))
   (it "ACTIVATION-SENSITIVE: a pack's verbs appear only when its pack is active"
-      (let [with-py
-            ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))
+      (let
+        [with-py
+         ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))
 
-            without
-            ((:ext/prompt-fn foundation/vis-extension) (env-with-langs []))]
+         without
+         ((:ext/prompt-fn foundation/vis-extension) (env-with-langs []))]
 
         (expect (str/includes? with-py "python : repl_eval"))
         (expect (not (str/includes? without "python : repl_eval")))))
@@ -116,11 +118,12 @@
         (expect (= ["format_code" "run_tests" "repl_eval" "repl_start"]
                    (get-in ctx ["session_language_tools" "clojure"])))))
   (it "ctx GAINS a language the turn its pack activates, drops it when it deactivates"
-      (let [active
-            ((:ext/ctx-fn foundation/vis-extension) (env-with-langs py-pack))
+      (let
+        [active
+         ((:ext/ctx-fn foundation/vis-extension) (env-with-langs py-pack))
 
-            inactive
-            ((:ext/ctx-fn foundation/vis-extension) (env-with-langs []))]
+         inactive
+         ((:ext/ctx-fn foundation/vis-extension) (env-with-langs []))]
 
         (expect (= ["repl_eval" "repl_start"] (get-in active ["session_language_tools" "python"])))
         (expect (nil? (get inactive "session_language_tools"))))))

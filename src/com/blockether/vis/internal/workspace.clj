@@ -52,9 +52,10 @@
 (defn normalize-root
   "Canonicalize a workspace root string/File. Blank/nil → nil."
   [root]
-  (let [s (some-> root
-                  str
-                  str/trim)]
+  (let
+    [s (some-> root
+               str
+               str/trim)]
     (when (seq s) (.getCanonicalPath (io/file s)))))
 
 (defn- path-within-root?
@@ -82,11 +83,12 @@
    the since-fork mtime baseline (nil = live). Returns nil for junk."
   [e]
   (when (map? e)
-    (let [t
-          (normalize-root (:trunk e))
+    (let
+      [t
+       (normalize-root (:trunk e))
 
-          c
-          (normalize-root (:clone e))]
+       c
+       (normalize-root (:clone e))]
 
       (when t
         {:trunk t :clone (or c t) :fork-ms (:fork-ms e) :backend (backend-id (:backend e))}))))
@@ -119,13 +121,14 @@
    `:clone`. Deduped; the primary is always present. The confinement set the
    editing layer's `safe-path` checks the (possibly remapped) target against."
   []
-  (let [primary
-        (.getCanonicalPath (cwd))
+  (let
+    [primary
+     (.getCanonicalPath (cwd))
 
-        extra
-        (keep #(some-> (:clone %)
-                       normalize-root)
-              *filesystem-roots*)]
+     extra
+     (keep #(some-> (:clone %)
+                    normalize-root)
+           *filesystem-roots*)]
 
     (vec (distinct (cons primary extra)))))
 
@@ -150,24 +153,26 @@
 
 (defn- sanitize-id
   [s]
-  (let [s (-> (str (or s "ws"))
-              str/lower-case
-              (str/replace #"[^a-z0-9._-]+" "-")
-              (str/replace #"(^-+|-+$)" ""))]
+  (let
+    [s (-> (str (or s "ws"))
+           str/lower-case
+           (str/replace #"[^a-z0-9._-]+" "-")
+           (str/replace #"(^-+|-+$)" ""))]
     (if (str/blank? s) "ws" s)))
 
 (defn- repo-id-for
   "Stable per-root grouping id (sanitized basename + path hash).
    Groups a repo's clones together in listings; no git involved."
   [root]
-  (let [root
-        (file-path root)
+  (let
+    [root
+     (file-path root)
 
-        name
-        (sanitize-id (.getName (io/file root)))
+     name
+     (sanitize-id (.getName (io/file root)))
 
-        hash
-        (Long/toUnsignedString (Integer/toUnsignedLong (hash root)) 36)]
+     hash
+     (Long/toUnsignedString (Integer/toUnsignedLong (hash root)) 36)]
 
     (str name "-" hash)))
 
@@ -195,11 +200,12 @@
      :workspace.backend/fork-fn       ({:source-root :store-root :name} -> path)
      :workspace.backend/discard-fn    ({:root} -> nil)"
   [backend]
-  (let [id
-        (:workspace.backend/id backend)
+  (let
+    [id
+     (:workspace.backend/id backend)
 
-        caps
-        (:workspace.backend/capabilities backend)]
+     caps
+     (:workspace.backend/capabilities backend)]
 
     (when-not (keyword? id)
       (throw (ex-info "Workspace backend id must be a keyword"
@@ -207,8 +213,8 @@
     (when-not (and (set? caps) (every? workspace-capabilities caps))
       (throw (ex-info "Workspace backend has invalid capabilities"
                       {:type :workspace/invalid-backend :backend-id id :capabilities caps})))
-    (doseq [k [:workspace.backend/available-fn :workspace.backend/fork-fn
-               :workspace.backend/discard-fn]]
+    (doseq
+      [k [:workspace.backend/available-fn :workspace.backend/fork-fn :workspace.backend/discard-fn]]
       (when-not (ifn? (clojure.core/get backend k))
         (throw (ex-info (str "Workspace backend requires " k)
                         {:type :workspace/invalid-backend :backend-id id :key k}))))
@@ -217,11 +223,12 @@
 (defn register-backend!
   "Register a workspace backend. Idempotent by backend id."
   [backend]
-  (let [backend
-        (workspace-backend backend)
+  (let
+    [backend
+     (workspace-backend backend)
 
-        id
-        (:workspace.backend/id backend)]
+     id
+     (:workspace.backend/id backend)]
 
     (swap! backend-registry assoc id backend)
     backend))
@@ -243,16 +250,17 @@
   ([source-root] (capability-matrix source-root source-root))
   ([source-root store-root]
    (mapv (fn [backend]
-           (let [availability
-                 (try ((:workspace.backend/available-fn backend)
-                        {:source-root (file-path source-root) :store-root (file-path store-root)})
-                      (catch Throwable t
-                        {:available? false
-                         :reason :availability-check-failed
-                         :details {:error (or (ex-message t) (str t))}}))
+           (let
+             [availability
+              (try ((:workspace.backend/available-fn backend)
+                     {:source-root (file-path source-root) :store-root (file-path store-root)})
+                   (catch Throwable t
+                     {:available? false
+                      :reason :availability-check-failed
+                      :details {:error (or (ex-message t) (str t))}}))
 
-                 availability
-                 (if (map? availability) availability {:available? (boolean availability)})]
+              availability
+              (if (map? availability) availability {:available? (boolean availability)})]
 
              (merge {:backend (:workspace.backend/id backend)
                      :priority (:workspace.backend/priority backend)
@@ -265,11 +273,12 @@
   "Select the highest-priority available backend covering `required`.
    Returns nil when no backend can provide the requested semantics."
   [source-root store-root required]
-  (let [required
-        (set required)
+  (let
+    [required
+     (set required)
 
-        available
-        (capability-matrix source-root store-root)]
+     available
+     (capability-matrix source-root store-root)]
 
     (some (fn [{:keys [backend available? capabilities]}]
             (when (and available? (set/subset? required capabilities))
@@ -288,11 +297,12 @@
    workspace storage location rather than assuming source and destination are
    on the same filesystem."
   [workspace-or-root]
-  (let [source-root
-        (if (map? workspace-or-root) (:root workspace-or-root) workspace-or-root)
+  (let
+    [source-root
+     (if (map? workspace-or-root) (:root workspace-or-root) workspace-or-root)
 
-        repo-root
-        (if (map? workspace-or-root) (:repo-root workspace-or-root) workspace-or-root)]
+     repo-root
+     (if (map? workspace-or-root) (:repo-root workspace-or-root) workspace-or-root)]
 
     (capability-matrix source-root (draft-store-root repo-root))))
 
@@ -331,11 +341,12 @@
 
 (defn- backend-fork!
   [source-root store-root name required]
-  (let [store-root
-        (draft-store-root store-root)
+  (let
+    [store-root
+     (draft-store-root store-root)
 
-        backend
-        (select-backend source-root store-root required)]
+     backend
+     (select-backend source-root store-root required)]
 
     (when-not backend
       (throw (ex-info "No workspace backend provides the required capabilities"
@@ -343,9 +354,9 @@
                        :required (set required)
                        :source-root (file-path source-root)
                        :capability-matrix (capability-matrix source-root store-root)})))
-    (let [root
-          ((:workspace.backend/fork-fn backend)
-            {:source-root (file-path source-root) :store-root (file-path store-root) :name name})]
+    (let
+      [root ((:workspace.backend/fork-fn backend)
+              {:source-root (file-path source-root) :store-root (file-path store-root) :name name})]
       {:root (file-path root) :backend (:workspace.backend/id backend)})))
 
 (defn- discard-root!
@@ -391,11 +402,12 @@
    trunk's repo, and tool caches would flood the result. Returns a vec
    of strings."
   [clone fork-ms]
-  (let [root
-        (.toPath (io/file clone))
+  (let
+    [root
+     (.toPath (io/file clone))
 
-        acc
-        (java.util.ArrayList.)]
+     acc
+     (java.util.ArrayList.)]
 
     (Files/walkFileTree root
                         (proxy [SimpleFileVisitor] []
@@ -435,17 +447,18 @@
   [clone trunk fork-ms]
   (if-not (pos? (long fork-ms))
     []
-    (let [troot
-          (.toPath (io/file trunk))
+    (let
+      [troot
+       (.toPath (io/file trunk))
 
-          croot
-          (.toPath (io/file clone))
+       croot
+       (.toPath (io/file clone))
 
-          nofollow
-          (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
+       nofollow
+       (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
 
-          acc
-          (java.util.ArrayList.)]
+       acc
+       (java.util.ArrayList.)]
 
       (Files/walkFileTree troot
                           (proxy [SimpleFileVisitor] []
@@ -513,10 +526,11 @@
 (defn set-label!
   "Set the workspace's human-friendly `:label`. Empty/nil clears it."
   [db-info {:keys [workspace-id label]}]
-  (let [trimmed (some-> label
-                        str
-                        str/trim
-                        not-empty)]
+  (let
+    [trimmed (some-> label
+                     str
+                     str/trim
+                     not-empty)]
     (p/db-workspace-update-label! db-info workspace-id trimmed)))
 
 ;; `draft?` / `free-draft-name` are defined further down (Mutations); the
@@ -551,12 +565,13 @@
    isolation capabilities for every added root; live workspaces add it live."
   [db-info workspace-id path]
   (when-let [ws (get db-info workspace-id)]
-    (let [canon (normalize-root path)
-          dir (some-> canon
-                      io/file)
-          roots (filesystem-roots ws)
-          covering (some #(when (path-within-root? (:trunk %) canon) %)
-                         (cons {:trunk (:root ws)} roots))]
+    (let
+      [canon (normalize-root path)
+       dir (some-> canon
+                   io/file)
+       roots (filesystem-roots ws)
+       covering (some #(when (path-within-root? (:trunk %) canon) %)
+                      (cons {:trunk (:root ws)} roots))]
 
       (cond (nil? canon) (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path}))
             (not (.isDirectory ^File dir)) (throw (ex-info (str "Not a directory: " path)
@@ -567,16 +582,16 @@
             (throw (ex-info (str "Already allowed by " (:trunk covering))
                             {:type :workspace/already-covered :path path :root (:trunk covering)}))
             :else
-            (let [entry (if (draft? ws)
-                          (let [nm (free-workspace-name canon "ctx")
-                                {:keys [root backend]}
-                                (backend-fork! canon canon nm draft-required-capabilities)]
+            (let
+              [entry
+               (if (draft? ws)
+                 (let
+                   [nm (free-workspace-name canon "ctx")
+                    {:keys [root backend]}
+                    (backend-fork! canon canon nm draft-required-capabilities)]
 
-                            {:trunk canon
-                             :clone root
-                             :fork-ms (System/currentTimeMillis)
-                             :backend backend})
-                          {:trunk canon :clone canon :fork-ms nil :backend :live})]
+                   {:trunk canon :clone root :fork-ms (System/currentTimeMillis) :backend backend})
+                 {:trunk canon :clone canon :fork-ms nil :backend :live})]
               (p/db-workspace-set-filesystem-roots! db-info workspace-id (conj roots entry)))))))
 
 (defn remove-filesystem-root!
@@ -584,9 +599,10 @@
    backend-owned isolated root."
   [db-info workspace-id path]
   (when-let [ws (get db-info workspace-id)]
-    (let [canon (normalize-root path)
-          roots (filesystem-roots ws)
-          gone (some #(when (= canon (:trunk %)) %) roots)]
+    (let
+      [canon (normalize-root path)
+       roots (filesystem-roots ws)
+       gone (some #(when (= canon (:trunk %)) %) roots)]
 
       (when (and gone (:clone gone) (not= (:clone gone) (:trunk gone)))
         (try (discard-root! (:backend gone) (:clone gone)) (catch Throwable _ nil)))
@@ -598,9 +614,10 @@
   "Child directory names (non-hidden) of `path`, case-insensitively sorted.
    Empty vec when `path` is blank, not a directory, or unreadable."
   [path]
-  (let [dir (some-> path
-                    normalize-root
-                    io/file)]
+  (let
+    [dir (some-> path
+                 normalize-root
+                 io/file)]
     (->> (when (and dir (.isDirectory ^File dir)) (.listFiles ^File dir))
          (filter (fn [^File f]
                    (and (.isDirectory f) (not (.isHidden f)))))
@@ -615,15 +632,16 @@
    when `parent` is not a directory or `name` is not a single safe path segment.
    `name` may not contain a separator, be blank, or be `.`/`..`."
   [parent name]
-  (let [base
-        (some-> parent
-                normalize-root
-                io/file)
+  (let
+    [base
+     (some-> parent
+             normalize-root
+             io/file)
 
-        seg
-        (some-> name
-                str
-                str/trim)]
+     seg
+     (some-> name
+             str
+             str/trim)]
 
     (cond (or (nil? base) (not (.isDirectory ^File base)))
           (throw (ex-info (str "Not a directory: " parent)
@@ -660,11 +678,12 @@
    pinned session title → clone name (`:branch`) → id prefix."
   ([workspace] (display-label nil workspace nil))
   ([db-info workspace session]
-   (let [hydrated (or session
-                      (when (and db-info (:id workspace))
-                        (some->> (:id workspace)
-                                 (p/db-session-state-list-for-workspace db-info)
-                                 first)))]
+   (let
+     [hydrated (or session
+                   (when (and db-info (:id workspace))
+                     (some->> (:id workspace)
+                              (p/db-session-state-list-for-workspace db-info)
+                              first)))]
      (or (some-> (:label workspace)
                  str/trim
                  not-empty)
@@ -691,22 +710,24 @@
    pair, sorted by `last_focused_at_ms` DESC NULLS LAST, then
    `created_at` DESC."
   [db-info repo-id]
-  (let [rows
-        (list-active db-info repo-id)
+  (let
+    [rows
+     (list-active db-info repo-id)
 
-        cmp
-        (fn [a b]
-          (let [recency-of
-                #(or (:last-focused-at-ms %) Long/MIN_VALUE)
+     cmp
+     (fn [a b]
+       (let
+         [recency-of
+          #(or (:last-focused-at-ms %) Long/MIN_VALUE)
 
-                ra
-                (recency-of a)
+          ra
+          (recency-of a)
 
-                rb
-                (recency-of b)]
+          rb
+          (recency-of b)]
 
-            (cond (not= ra rb) (compare rb ra)
-                  :else (compare (str (:created-at b)) (str (:created-at a))))))]
+         (cond (not= ra rb) (compare rb ra)
+               :else (compare (str (:created-at b)) (str (:created-at a))))))]
 
     (mapv (fn [ws]
             (let [pair (workspace-with-session db-info (:id ws))]
@@ -719,11 +740,13 @@
    (count of since-fork edits) and `:workspace/dirty?`. No git."
   [db-info workspace-id]
   (when-let [ws (get db-info workspace-id)]
-    (let [root (:root ws)
-          fork-ms (apply-fork-ms-of ws)]
+    (let
+      [root (:root ws)
+       fork-ms (apply-fork-ms-of ws)]
 
-      (try (let [exists? (.exists (io/file root))
-                 changed (when (and exists? fork-ms) (count (changed-paths root fork-ms)))]
+      (try (let
+             [exists? (.exists (io/file root))
+              changed (when (and exists? fork-ms) (count (changed-paths root fork-ms)))]
 
              (assoc ws
                :workspace/root root
@@ -767,8 +790,9 @@
   "Workspace name derived from `label`, with a numeric collision suffix."
   [trunk label]
   (let [base (sanitize-id (or label "draft"))]
-    (loop [n base
-           i 2]
+    (loop
+      [n base
+       i 2]
 
       (if (.exists (workspace-dir trunk n)) (recur (str base "-" i) (inc i)) n))))
 
@@ -778,17 +802,18 @@
    when given."
   ([db-info session-state-id] (insert-trunk! db-info session-state-id (trunk-root)))
   ([db-info session-state-id root]
-   (let [trunk
-         (file-path root)
+   (let
+     [trunk
+      (file-path root)
 
-         ws
-         (p/db-workspace-insert! db-info
-                                 {:repo-id (repo-id-for trunk)
-                                  :repo-root trunk
-                                  :root trunk
-                                  :workspace-kind :trunk
-                                  :workspace-backend :live
-                                  :state :active})]
+      ws
+      (p/db-workspace-insert! db-info
+                              {:repo-id (repo-id-for trunk)
+                               :repo-root trunk
+                               :root trunk
+                               :workspace-kind :trunk
+                               :workspace-backend :live
+                               :state :active})]
 
      (when session-state-id (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
      ws)))
@@ -822,12 +847,13 @@
    newly pinned trunk workspace (or the current one when `path` already IS
    the root)."
   [db-info session-state-id path]
-  (let [canon
-        (normalize-root path)
+  (let
+    [canon
+     (normalize-root path)
 
-        dir
-        (some-> canon
-                io/file)]
+     dir
+     (some-> canon
+             io/file)]
 
     (when-not canon (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path})))
     (when-not (.isDirectory ^File dir)
@@ -842,8 +868,9 @@
              (some-> (:root current)
                      normalize-root))
         current
-        (let [carried (vec (remove #(= canon (:trunk %)) (filesystem-roots current)))
-              ws (insert-trunk! db-info session-state-id canon)]
+        (let
+          [carried (vec (remove #(= canon (:trunk %)) (filesystem-roots current)))
+           ws (insert-trunk! db-info session-state-id canon)]
 
           (if (seq carried)
             (or (p/db-workspace-set-filesystem-roots! db-info (:id ws) carried) ws)
@@ -880,54 +907,55 @@
    applying it with a real fork timestamp would mass-report trunk's files
    as deletions and wipe the repo."
   [db-info {:keys [session-state-id label from required-capabilities fresh?]}]
-  (let [trunk
-        (or (:repo-root from) (trunk-root))
+  (let
+    [trunk
+     (or (:repo-root from) (trunk-root))
 
-        parent
-        (if fresh? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
+     parent
+     (if fresh? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
 
-        rid
-        (repo-id-for trunk)
+     rid
+     (repo-id-for trunk)
 
-        nm
-        (free-workspace-name trunk label)
+     nm
+     (free-workspace-name trunk label)
 
-        {:keys [root backend]}
-        (backend-fork! parent trunk nm (or required-capabilities draft-required-capabilities))
+     {:keys [root backend]}
+     (backend-fork! parent trunk nm (or required-capabilities draft-required-capabilities))
 
-        ;; Capture AFTER the clone returns: cloned files keep their (older)
-        ;; source mtime, so only post-fork agent edits exceed this. A FRESH
-        ;; LINEAGE instead anchors at 0 — the lineage never saw trunk's files,
-        ;; so everything that ever appears in the clone is an agent edit and
-        ;; no trunk file can predate the baseline into a spurious deletion.
-        ;; Zero-heredity applies only to a real non-trunk parent (its clone
-        ;; lacks trunk's files); a nil `from` / trunk parent forks the REAL
-        ;; tree and must get a real timestamp or deletions can never land.
-        inherited-fresh?
-        (boolean (and from
-                      (not= (:root from) (:repo-root from))
-                      (zero? (long (or (apply-fork-ms-of from) 0)))))
+     ;; Capture AFTER the clone returns: cloned files keep their (older)
+     ;; source mtime, so only post-fork agent edits exceed this. A FRESH
+     ;; LINEAGE instead anchors at 0 — the lineage never saw trunk's files,
+     ;; so everything that ever appears in the clone is an agent edit and
+     ;; no trunk file can predate the baseline into a spurious deletion.
+     ;; Zero-heredity applies only to a real non-trunk parent (its clone
+     ;; lacks trunk's files); a nil `from` / trunk parent forks the REAL
+     ;; tree and must get a real timestamp or deletions can never land.
+     inherited-fresh?
+     (boolean (and from
+                   (not= (:root from) (:repo-root from))
+                   (zero? (long (or (apply-fork-ms-of from) 0)))))
 
-        fork-ms
-        (if (or fresh? inherited-fresh?) 0 (System/currentTimeMillis))
+     fork-ms
+     (if (or fresh? inherited-fresh?) 0 (System/currentTimeMillis))
 
-        ws
-        (p/db-workspace-insert! db-info
-                                {:repo-id rid
-                                 :repo-root trunk
-                                 :root root
-                                 :workspace-kind :draft
-                                 :workspace-backend backend
-                                 :parent-workspace-id (:id from)
-                                 :state :active
-                                 :fork-ms fork-ms
-                                 ;; Drafts apply from their immediate fork; apply-fork-ms
-                                 ;; equals fork-ms so apply! reads one baseline uniformly.
-                                 :apply-fork-ms fork-ms})
+     ws
+     (p/db-workspace-insert! db-info
+                             {:repo-id rid
+                              :repo-root trunk
+                              :root root
+                              :workspace-kind :draft
+                              :workspace-backend backend
+                              :parent-workspace-id (:id from)
+                              :state :active
+                              :fork-ms fork-ms
+                              ;; Drafts apply from their immediate fork; apply-fork-ms
+                              ;; equals fork-ms so apply! reads one baseline uniformly.
+                              :apply-fork-ms fork-ms})
 
-        ;; Label = the actual folder name, including collision suffixes.
-        ws
-        (or (p/db-workspace-update-label! db-info (:id ws) nm) ws)]
+     ;; Label = the actual folder name, including collision suffixes.
+     ws
+     (or (p/db-workspace-update-label! db-info (:id ws) nm) ws)]
 
     (when session-state-id (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
     (fire-hook! :on-spawn ws)
@@ -945,27 +973,29 @@
    tagging each change with the `trunk` it landed under (so a multi-root
    apply is unambiguous). Returns a vec of `{:status :path :root}`."
   [clone trunk fork-ms]
-  (let [edits
-        (mapv (fn [path]
-                (let [src
-                      (io/file clone path)
+  (let
+    [edits
+     (mapv (fn [path]
+             (let
+               [src
+                (io/file clone path)
 
-                      dst
-                      (io/file trunk path)
+                dst
+                (io/file trunk path)
 
-                      status
-                      (if (.exists dst) :modify :add)]
+                status
+                (if (.exists dst) :modify :add)]
 
-                  (io/make-parents dst)
-                  (Files/copy (.toPath src) (.toPath dst) copy-opts)
-                  {:status status :path path :root trunk}))
-              (changed-paths clone fork-ms))
+               (io/make-parents dst)
+               (Files/copy (.toPath src) (.toPath dst) copy-opts)
+               {:status status :path path :root trunk}))
+           (changed-paths clone fork-ms))
 
-        deletes
-        (mapv (fn [path]
-                (.delete (io/file trunk path))
-                {:status :delete :path path :root trunk})
-              (deleted-paths clone trunk fork-ms))]
+     deletes
+     (mapv (fn [path]
+             (.delete (io/file trunk path))
+             {:status :delete :path path :root trunk})
+           (deleted-paths clone trunk fork-ms))]
 
     (into edits deletes)))
 
@@ -980,20 +1010,21 @@
   [db-info {:keys [workspace-id]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
-    (let [clone (:root ws)
-          trunk (:repo-root ws)
-          fork-ms (apply-fork-ms-of ws)]
+    (let
+      [clone (:root ws)
+       trunk (:repo-root ws)
+       fork-ms (apply-fork-ms-of ws)]
 
       (when-not fork-ms
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                         {:type :workspace/no-baseline :workspace-id workspace-id})))
-      (let [primary (land-clone! clone trunk fork-ms)
-            ;; each isolated filesystem root lands back into its own trunk
-            extra (mapcat (fn [{:keys [trunk clone fork-ms]}]
-                            (when (and fork-ms (not= clone trunk))
-                              (land-clone! clone trunk fork-ms)))
-                          (filesystem-roots ws))
-            changes (vec (concat primary extra))]
+      (let
+        [primary (land-clone! clone trunk fork-ms)
+         ;; each isolated filesystem root lands back into its own trunk
+         extra (mapcat (fn [{:keys [trunk clone fork-ms]}]
+                         (when (and fork-ms (not= clone trunk)) (land-clone! clone trunk fork-ms)))
+                       (filesystem-roots ws))
+         changes (vec (concat primary extra))]
 
         (fire-hook! :on-apply ws {:changed changes})
         {:status :ok :changed changes :landed (count changes) :workspace ws}))))
@@ -1003,19 +1034,21 @@
    trunk. Used when an operator applies or abandons the session draft. A plain
    draft's parent is its trunk, so this normally abandons the single draft."
   [db-info {:keys [workspace-id reason]}]
-  (loop [ws
-         (get db-info workspace-id)
+  (loop
+    [ws
+     (get db-info workspace-id)
 
-         discarded
-         []]
+     discarded
+     []]
 
     (if-not (draft? ws)
       {:status :discarded :workspace-ids discarded}
-      (let [parent-id
-            (:parent-workspace-id ws)
+      (let
+        [parent-id
+         (:parent-workspace-id ws)
 
-            done
-            (abandon! db-info {:workspace-id (:id ws) :reason reason})]
+         done
+         (abandon! db-info {:workspace-id (:id ws) :reason reason})]
 
         (recur (some->> parent-id
                         (get db-info))
@@ -1028,8 +1061,9 @@
   (let [ws (get db-info workspace-id)]
     (when-not ws (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (discard-root! (:workspace-backend ws) (:root ws))
-    (doseq [{:keys [trunk clone backend]} (filesystem-roots ws)
-            :when (and clone (not= clone trunk))]
+    (doseq
+      [{:keys [trunk clone backend]} (filesystem-roots ws)
+       :when (and clone (not= clone trunk))]
 
       (try (discard-root! backend clone) (catch Throwable _ nil)))
     (let [done (p/db-workspace-update-state! db-info workspace-id :discarded)]
@@ -1045,8 +1079,9 @@
       (loop [ws (for-session db-info state-id)]
         (when ws
           (try (discard-root! (:workspace-backend ws) (:root ws)) (catch Throwable _ nil))
-          (doseq [{:keys [trunk clone backend]} (filesystem-roots ws)
-                  :when (and clone (not= clone trunk))]
+          (doseq
+            [{:keys [trunk clone backend]} (filesystem-roots ws)
+             :when (and clone (not= clone trunk))]
 
             (try (discard-root! backend clone) (catch Throwable _ nil)))
           (recur (some->> (:parent-workspace-id ws)

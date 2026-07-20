@@ -54,23 +54,25 @@
   ([code file]
    (if (str/blank? (str code))
      []
-     (let [before
-           (set (all-ns))
+     (let
+       [before
+        (set (all-ns))
 
-           sw
-           (java.io.StringWriter.)]
+        sw
+        (java.io.StringWriter.)]
 
-       (try (binding [*err*
-                      sw
+       (try (binding
+              [*err*
+               sw
 
-                      *warn-on-reflection*
-                      true
+               *warn-on-reflection*
+               true
 
-                      *unchecked-math*
-                      :warn-on-boxed
+               *unchecked-math*
+               :warn-on-boxed
 
-                      *ns*
-                      (create-ns (gensym "vis-lint-reflect-"))]
+               *ns*
+               (create-ns (gensym "vis-lint-reflect-"))]
 
               (clojure.core/refer-clojure)
               (try (load-string (str code)) (catch Throwable _ nil)))

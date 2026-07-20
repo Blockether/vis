@@ -157,11 +157,12 @@
   {\A KeyType/ArrowUp \B KeyType/ArrowDown \C KeyType/ArrowRight \D KeyType/ArrowLeft})
 
 (def ^:private modified-arrow-targets
-  (for [modifier
-        (range 2 9)
+  (for
+    [modifier
+     (range 2 9)
 
-        final
-        (keys arrow-final->keytype)]
+     final
+     (keys arrow-final->keytype)]
 
     (str (char 0x1b) "[1;" modifier final)))
 
@@ -169,8 +170,9 @@
   [^String s]
   (when-let [final (get s (dec (count s)))]
     (when-let [^KeyType ktype (arrow-final->keytype final)]
-      (let [modifier (Character/digit (.charAt s 4) 10)
-            bits (dec modifier)]
+      (let
+        [modifier (Character/digit (.charAt s 4) 10)
+         bits (dec modifier)]
 
         (when (<= 2 modifier 8)
           (KeyStroke. ktype
@@ -297,18 +299,19 @@
    byte distinguish button-press / drag / scroll, the case of the
    final character distinguishes press (`M`) from release (`m`)."
   [^long button ^long _col ^long _row ^long final-ch]
-  (let [release?
-        (= final-ch (long (int \m)))
+  (let
+    [release?
+     (= final-ch (long (int \m)))
 
-        ;; bit 5 (0x20) = drag/move, bit 6 (0x40) = wheel.
-        drag?
-        (not (zero? (bit-and button 0x20)))
+     ;; bit 5 (0x20) = drag/move, bit 6 (0x40) = wheel.
+     drag?
+     (not (zero? (bit-and button 0x20)))
 
-        wheel?
-        (not (zero? (bit-and button 0x40)))
+     wheel?
+     (not (zero? (bit-and button 0x40)))
 
-        button-bits
-        (bit-and button 0x03)]
+     button-bits
+     (bit-and button 0x03)]
 
     (cond wheel? (if (zero? button-bits) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
           drag?
@@ -324,11 +327,12 @@
   ;; matching `MouseCharacterPattern` semantics (1=left, 2=middle,
   ;; 3=right, 4=wheel-up, 5=wheel-down). For DRAG/MOVE/RELEASE the
   ;; field still carries the button bits, so the same mapping holds.
-  (let [wheel?
-        (not (zero? (bit-and button 0x40)))
+  (let
+    [wheel?
+     (not (zero? (bit-and button 0x40)))
 
-        bits
-        (bit-and button 0x03)]
+     bits
+     (bit-and button 0x03)]
 
     (cond wheel? (if (zero? bits) 4 5)
           ;; bits == 3 in non-wheel modes means \"no button held\" -
@@ -350,11 +354,12 @@
   (reify
     CharacterPattern
       (match [_ chars]
-        (let [^java.util.List chars
-              chars
+        (let
+          [^java.util.List chars
+           chars
 
-              n
-              (.size chars)]
+           n
+           (.size chars)]
 
           (cond (zero? n) CharacterPattern$Matching/NOT_YET
                 ;; chars[0] must be ESC (0x1B); chars[1] '['; chars[2] '<'.
@@ -368,31 +373,33 @@
                 ;; Keep primitive numeric accumulators. This path runs once
                 ;; per received byte while the user scrolls; persistent
                 ;; vectors here used to peg a core under SGR wheel floods.
-                (loop [i
-                       (long 3)
+                (loop
+                  [i
+                   (long 3)
 
-                       field
-                       (long 0)
+                   field
+                   (long 0)
 
-                       acc
-                       (long 0)
+                   acc
+                   (long 0)
 
-                       have-digit?
-                       false
+                   have-digit?
+                   false
 
-                       button
-                       (long 0)
+                   button
+                   (long 0)
 
-                       col
-                       (long 0)]
+                   col
+                   (long 0)]
 
                   (if (>= i n)
                     CharacterPattern$Matching/NOT_YET
-                    (let [c
-                          (.charValue ^Character (.get chars i))
+                    (let
+                      [c
+                       (.charValue ^Character (.get chars i))
 
-                          ci
-                          (long (int c))]
+                       ci
+                       (long (int c))]
 
                       (cond
                         ;; ASCII digit: accumulate current numeric field.
@@ -416,18 +423,19 @@
                         ;; button + col completed and row in progress.
                         (or (= c \M) (= c \m))
                         (if (and (= field 2) have-digit?)
-                          (let [row
-                                acc
+                          (let
+                            [row
+                             acc
 
-                                atype
-                                (sgr-mouse-decode button col row ci)
+                             atype
+                             (sgr-mouse-decode button col row ci)
 
-                                btn
-                                (sgr-button-number button)
+                             btn
+                             (sgr-button-number button)
 
-                                ;; SGR is 1-indexed, Lanterna's 0-indexed.
-                                pos
-                                (TerminalPosition. (max 0 (dec col)) (max 0 (dec row)))]
+                             ;; SGR is 1-indexed, Lanterna's 0-indexed.
+                             pos
+                             (TerminalPosition. (max 0 (dec col)) (max 0 (dec row)))]
 
                             (CharacterPattern$Matching. (MouseAction. atype (int btn) pos)))
                           nil)
@@ -463,20 +471,21 @@
    millisecond burst as an Escape press, and an incomplete candidate is
    replayed verbatim."
   [poll-next]
-  (loop [swallowed?
-         false
+  (loop
+    [swallowed?
+     false
 
-         consumed
-         []
+     consumed
+     []
 
-         st
-         ::start
+     st
+     ::start
 
-         fields
-         0
+     fields
+     0
 
-         digit?
-         false]
+     digit?
+     false]
 
     (let [k (poll-next)]
       (if-not (and k
@@ -484,8 +493,9 @@
                    (not (instance? MouseAction k))
                    (= KeyType/Character (.getKeyType ^KeyStroke k)))
         {:swallowed? swallowed? :replay (if k (conj consumed k) consumed)}
-        (let [ch (.charValue ^Character (.getCharacter ^KeyStroke k))
-              consumed (conj consumed k)]
+        (let
+          [ch (.charValue ^Character (.getCharacter ^KeyStroke k))
+           consumed (conj consumed k)]
 
           (case st
             ::start
@@ -661,36 +671,36 @@
    is DISCARDED so a binary payload can't be corrupted by warnings."
   [cmd {:keys [^bytes stdin-bytes merge-stderr? timeout-ms] :or {timeout-ms 2000}}]
   (try
-    (let [pb
-          (ProcessBuilder. ^java.util.List cmd)
+    (let
+      [pb
+       (ProcessBuilder. ^java.util.List cmd)
 
-          _
-          (if merge-stderr?
-            (.redirectErrorStream pb true)
-            (.redirectError pb java.lang.ProcessBuilder$Redirect/DISCARD))
+       _
+       (if merge-stderr?
+         (.redirectErrorStream pb true)
+         (.redirectError pb java.lang.ProcessBuilder$Redirect/DISCARD))
 
-          p
-          (.start pb)
+       p
+       (.start pb)
 
-          _
-          (try (let [out (.getOutputStream p)]
-                 (when stdin-bytes (.write out ^bytes stdin-bytes))
-                 (.close out))
-               (catch Throwable _ nil))
+       _
+       (try (let [out (.getOutputStream p)]
+              (when stdin-bytes (.write out ^bytes stdin-bytes))
+              (.close out))
+            (catch Throwable _ nil))
 
-          watchdog
-          (future
-            (when-not (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
-              (.destroyForcibly p)))
+       watchdog
+       (future (when-not (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
+                 (.destroyForcibly p)))
 
-          in
-          (.getInputStream p)
+       in
+       (.getInputStream p)
 
-          buf
-          (java.io.ByteArrayOutputStream.)
+       buf
+       (java.io.ByteArrayOutputStream.)
 
-          tmp
-          (byte-array 8192)]
+       tmp
+       (byte-array 8192)]
 
       ;; Deadline-bounded drain — trap 3 in the docstring. A bare blocking
       ;; `.read`-to-EOF needs every pipe write-end closed; a lingering
@@ -702,8 +712,9 @@
         (loop []
 
           (let [avail (long (try (.available in) (catch Throwable _ -1)))]
-            (cond (pos? avail) (let [n (long (try (.read in tmp 0 (int (min (long avail) 8192)))
-                                                  (catch Throwable _ -1)))]
+            (cond (pos? avail) (let
+                                 [n (long (try (.read in tmp 0 (int (min (long avail) 8192)))
+                                               (catch Throwable _ -1)))]
                                  (when (pos? n) (.write buf tmp 0 n) (recur)))
                   ;; stream closed / broken — nothing more will arrive
                   (neg? avail) nil
@@ -723,8 +734,9 @@
    `run-helper-process!`'s hard deadline — a wedged helper can no longer
    freeze the input loop."
   [cmd ^bytes stdin-bytes]
-  (let [{:keys [success? ^bytes bytes]}
-        (run-helper-process! cmd {:stdin-bytes stdin-bytes :merge-stderr? true})]
+  (let
+    [{:keys [success? ^bytes bytes]}
+     (run-helper-process! cmd {:stdin-bytes stdin-bytes :merge-stderr? true})]
     {:success? success? :stdout (when bytes (String. bytes "UTF-8"))}))
 
 (defn- shell-clipboard-copy!
@@ -761,11 +773,12 @@
    helper so \"the copy didn't work\" reports can be diagnosed
    against `~/.vis/vis.log`."
   [^String text]
-  (let [winner
-        (shell-clipboard-copy! text)
+  (let
+    [winner
+     (shell-clipboard-copy! text)
 
-        ok?
-        (not= winner :none)]
+     ok?
+     (not= winner :none)]
 
     (try (tel/log! {:level (if ok? :info :warn)
                     :id ::clipboard-copy
@@ -834,11 +847,11 @@
    command exited cleanly. No image on the pasteboard raises inside the script,
    so the exit is non-zero and we report false."
   [^String path]
-  (let [script (str "set outFile to (POSIX file \"" path
-                    "\")\n" "set pngData to (the clipboard as \u00abclass PNGf\u00bb)\n"
-                    "set fh to open for access outFile with write permission\n"
-                    "set eof of fh to 0\n"
-                    "write pngData to fh\n" "close access fh")]
+  (let
+    [script (str "set outFile to (POSIX file \"" path
+                 "\")\n" "set pngData to (the clipboard as \u00abclass PNGf\u00bb)\n"
+                 "set fh to open for access outFile with write permission\n" "set eof of fh to 0\n"
+                 "write pngData to fh\n" "close access fh")]
     (boolean (:success? (run-shell-helper-bytes! ["osascript" "-e" script])))))
 
 (defn read-clipboard-image!
@@ -858,11 +871,12 @@
                  (recur rest)))))
          ;; macOS with no pngpaste: let AppleScript write the PNG for us.
          (when (macos?)
-           (let [f
-                 (java.io.File/createTempFile "vis-clip-" ".png")
+           (let
+             [f
+              (java.io.File/createTempFile "vis-clip-" ".png")
 
-                 path
-                 (.getAbsolutePath f)]
+              path
+              (.getAbsolutePath f)]
 
              (.deleteOnExit f)
              (if (and (macos-osascript-clipboard-png! path)
@@ -1001,11 +1015,12 @@
   (if image
     ;; Image drop: name the file + its intrinsic size instead of the
     ;; pasted PATH's line/byte weight, which is meaningless to the user.
-    (let [{:keys [filename width height size-label]}
-          image
+    (let
+      [{:keys [filename width height size-label]}
+       image
 
-          dims
-          (when (and width height (pos? (long width)) (pos? (long height))) (str width "×" height))]
+       dims
+       (when (and width height (pos? (long width)) (pos? (long height))) (str width "×" height))]
 
       (str "[Image #"
            id
@@ -1014,17 +1029,18 @@
            (when dims (str " " dims))
            (when size-label (str ", " size-label))
            "]"))
-    (let [text
-          (str content)
+    (let
+      [text
+       (str content)
 
-          line-count
-          (inc (count (filter #(= % \newline) text)))
+       line-count
+       (inc (count (filter #(= % \newline) text)))
 
-          char-count
-          (count text)
+       char-count
+       (count text)
 
-          line-word
-          (if (= 1 line-count) "line" "lines")]
+       line-word
+       (if (= 1 line-count) "line" "lines")]
 
       (str "[Pasted #" id ": " line-count " " line-word ", " (format-bytes char-count) "]"))))
 
@@ -1058,11 +1074,12 @@
   (str/replace text
                placeholder-regex
                (fn [[whole id-str]]
-                 (let [id
-                       (try (Integer/parseInt id-str) (catch Throwable _ nil))
+                 (let
+                   [id
+                    (try (Integer/parseInt id-str) (catch Throwable _ nil))
 
-                       entry
-                       (when id (get pastes-map id))]
+                    entry
+                    (when id (get pastes-map id))]
 
                    (if entry (str (:content entry)) whole)))))
 (def ^:const PASTE_PREVIEW_HEAD_LINES
@@ -1095,11 +1112,12 @@
    `PASTE_PREVIEW_HEAD_LINES` and last `PASTE_PREVIEW_TAIL_LINES` lines with
    a `⋯ N more lines ⋯` marker between them. Returns a seq of strings."
   [^String content]
-  (let [lines
-        (str/split (str content) #"\n" -1)
+  (let
+    [lines
+     (str/split (str content) #"\n" -1)
 
-        n
-        (count lines)]
+     n
+     (count lines)]
 
     (if (<= n (+ PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES 1))
       (map clamp-preview-line lines)
@@ -1126,11 +1144,12 @@
   (str/replace text
                placeholder-regex
                (fn [[whole id-str]]
-                 (let [id
-                       (try (Integer/parseInt id-str) (catch Throwable _ nil))
+                 (let
+                   [id
+                    (try (Integer/parseInt id-str) (catch Throwable _ nil))
 
-                       entry
-                       (when id (get pastes-map id))]
+                    entry
+                    (when id (get pastes-map id))]
 
                    (cond (nil? entry) whole
                          ;; Image drop: a `vis-image` fence carries the file path +
@@ -1158,22 +1177,24 @@
    placeholder's `:id` (Integer). nil otherwise. The screen loop
    uses this to turn one Backspace into a whole-token delete."
   [{:keys [lines crow ccol]}]
-  (let [line
-        (nth lines crow nil)
+  (let
+    [line
+     (nth lines crow nil)
 
-        ccol
-        (long ccol)]
+     ccol
+     (long ccol)]
 
     (when (and (string? line) (pos? ccol))
       (let [before (subs line 0 ccol)]
         (when (str/ends-with? before "]")
-          (let [m (re-find placeholder-regex before)
-                ;; Only fire when the match SITS AT THE END of
-                ;; `before`. A placeholder somewhere earlier on the
-                ;; line shouldn't get nuked just because the cursor
-                ;; is past it.
-                match-start (when m (str/last-index-of before (first m)))
-                match-end (when match-start (+ (long match-start) (count (first m))))]
+          (let
+            [m (re-find placeholder-regex before)
+             ;; Only fire when the match SITS AT THE END of
+             ;; `before`. A placeholder somewhere earlier on the
+             ;; line shouldn't get nuked just because the cursor
+             ;; is past it.
+             match-start (when m (str/last-index-of before (first m)))
+             match-end (when match-start (+ (long match-start) (count (first m))))]
 
             (when (and m match-end (= match-end (count before)))
               (try (Integer/parseInt (second m)) (catch Throwable _ nil)))))))))
@@ -1187,21 +1208,23 @@
    No-op when no placeholder ends at the cursor - the screen loop
    guards via `placeholder-id-before-cursor` first."
   [{:keys [lines crow ccol] :as state}]
-  (let [line
-        (nth lines crow "")
+  (let
+    [line
+     (nth lines crow "")
 
-        before
-        (subs line 0 ccol)
+     before
+     (subs line 0 ccol)
 
-        after
-        (subs line ccol)
+     after
+     (subs line ccol)
 
-        m
-        (re-find placeholder-regex before)]
+     m
+     (re-find placeholder-regex before)]
 
     (if-let [match-start (when m (str/last-index-of before (first m)))]
-      (let [new-line (str (subs before 0 match-start) after)
-            new-ccol match-start]
+      (let
+        [new-line (str (subs before 0 match-start) after)
+         new-ccol match-start]
 
         (-> state
             (assoc-in [:lines crow] new-line)
@@ -1222,20 +1245,21 @@
 
 (defn- resolve-local-file
   [path]
-  (try (let [cwd
-             (.getCanonicalFile (workspace/cwd))
+  (try (let
+         [cwd
+          (.getCanonicalFile (workspace/cwd))
 
-             cwd-path
-             (.getPath cwd)
+          cwd-path
+          (.getPath cwd)
 
-             prefix
-             (str cwd-path java.io.File/separator)
+          prefix
+          (str cwd-path java.io.File/separator)
 
-             candidate
-             (.getCanonicalFile (io/file cwd path))
+          candidate
+          (.getCanonicalFile (io/file cwd path))
 
-             candidate-p
-             (.getPath candidate)]
+          candidate-p
+          (.getPath candidate)]
 
          (when (and (.isFile candidate)
                     (or (= candidate-p cwd-path) (str/starts-with? candidate-p prefix)))
@@ -1281,33 +1305,35 @@
 
 (defn paste-text
   [{:keys [lines crow ccol] :as st} text]
-  (let [paste-lines
-        (str/split text #"\r?\n" -1)
+  (let
+    [paste-lines
+     (str/split text #"\r?\n" -1)
 
-        current-line
-        (nth lines crow)
+     current-line
+     (nth lines crow)
 
-        before
-        (subs current-line 0 ccol)
+     before
+     (subs current-line 0 ccol)
 
-        after
-        (subs current-line ccol)]
+     after
+     (subs current-line ccol)]
 
     (if (= 1 (count paste-lines))
       (-> st
           (assoc-in [:lines crow] (str before (first paste-lines) after))
           (assoc :ccol (+ (long ccol) (count (first paste-lines)))))
-      (let [first-l
-            (str before (first paste-lines))
+      (let
+        [first-l
+         (str before (first paste-lines))
 
-            last-l
-            (str (last paste-lines) after)
+         last-l
+         (str (last paste-lines) after)
 
-            mid
-            (subvec (vec paste-lines) 1 (dec (count paste-lines)))
+         mid
+         (subvec (vec paste-lines) 1 (dec (count paste-lines)))
 
-            new-crow
-            (+ (long crow) (dec (count paste-lines)))]
+         new-crow
+         (+ (long crow) (dec (count paste-lines)))]
 
         (-> st
             (assoc :lines (into (conj (subvec lines 0 crow) first-l)
@@ -1325,11 +1351,12 @@
      • anything else → abort the prefix (no-op), so a stray C-x never swallows
        the next keystroke."
   [^KeyStroke key state]
-  (let [state
-        (dissoc state :prefix)
+  (let
+    [state
+     (dissoc state :prefix)
 
-        c
-        (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
+     c
+     (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
 
     (cond
       ;; C-x p → command palette. A PLAIN `p` is the advertised trigger; a Ctrl'd
@@ -1372,12 +1399,13 @@
                          {:action :cancel :state state}
                          {:action :clear-input :state (empty-input)})
         KeyType/Character
-        (let [c (.getCharacter key)
-              ctrl (.isCtrlDown key)
-              alt (.isAltDown key)
-              ;; Emacs editing chord result (nil unless `key` is one) — computed
-              ;; once, applied below. Editing keys take PRECEDENCE over app verbs.
-              emacs (emacs-edit key state)]
+        (let
+          [c (.getCharacter key)
+           ctrl (.isCtrlDown key)
+           alt (.isAltDown key)
+           ;; Emacs editing chord result (nil unless `key` is one) — computed
+           ;; once, applied below. Editing keys take PRECEDENCE over app verbs.
+           emacs (emacs-edit key state)]
 
           (cond
             ;; ── Clipboard is the TERMINAL's job, not ours ───────────────────

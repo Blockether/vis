@@ -118,21 +118,22 @@
   [{:keys [id label default description owner since persist? group type choices visible-fn channels
            settings?]}]
   (let [t (or type :boolean)]
-    (cond-> {:id id
-             :label (str label)
-             :type t
-             :default (case t
-                        :boolean
-                        (boolean default)
+    (cond->
+      {:id id
+       :label (str label)
+       :type t
+       :default (case t
+                  :boolean
+                  (boolean default)
 
-                        :enum
-                        default)
-             :owner (or owner :vis)
-             :persist? (boolean persist?)
-             ;; `:settings? false` keeps a toggle registered/persisted but OUT
-             ;; of every channel's Settings dialog (it has its own control,
-             ;; e.g. reasoning-effort on Ctrl+R). Default true = shown.
-             :settings? (not (false? settings?))}
+                  :enum
+                  default)
+       :owner (or owner :vis)
+       :persist? (boolean persist?)
+       ;; `:settings? false` keeps a toggle registered/persisted but OUT
+       ;; of every channel's Settings dialog (it has its own control,
+       ;; e.g. reasoning-effort on Ctrl+R). Default true = shown.
+       :settings? (not (false? settings?))}
       description
       (assoc :description description)
 
@@ -165,11 +166,12 @@
                     {:type :vis.toggles/invalid-spec
                      :spec spec
                      :explain (s/explain-data :toggle/spec spec)})))
-  (let [normalized
-        (normalize-spec spec)
+  (let
+    [normalized
+     (normalize-spec spec)
 
-        id
-        (:id normalized)]
+     id
+     (:id normalized)]
 
     (swap! registry assoc id normalized)
     normalized))
@@ -278,25 +280,26 @@
                    `:vis.toggles/invalid-value` so the bug surfaces
                    at the call site instead of later in render."
   [id value]
-  (let [spec
-        (get @registry id)
+  (let
+    [spec
+     (get @registry id)
 
-        v
-        (case (or (:type spec) :boolean)
-          :boolean
-          (boolean value)
+     v
+     (case (or (:type spec) :boolean)
+       :boolean
+       (boolean value)
 
-          :enum
-          (let [allowed (set (:choices spec))]
-            (when-not (contains? allowed value)
-              (throw
-                (ex-info
-                  "Toggle value is not one of the registered :choices"
-                  {:type :vis.toggles/invalid-value :id id :value value :choices (:choices spec)})))
-            value))
+       :enum
+       (let [allowed (set (:choices spec))]
+         (when-not (contains? allowed value)
+           (throw
+             (ex-info
+               "Toggle value is not one of the registered :choices"
+               {:type :vis.toggles/invalid-value :id id :value value :choices (:choices spec)})))
+         value))
 
-        old
-        (value-of id)]
+     old
+     (value-of id)]
 
     (swap! state assoc id v)
     (when (not= old v) (notify! {:id id :old old :new v}))
@@ -306,31 +309,34 @@
   "Advance an `:enum` toggle one step through its registered
    `:choices`. Wraps at the end. Throws on boolean toggles."
   [id]
-  (let [spec
-        (get @registry id)
+  (let
+    [spec
+     (get @registry id)
 
-        choices
-        (vec (:choices spec))]
+     choices
+     (vec (:choices spec))]
 
     (when-not (and spec (= :enum (:type spec)))
       (throw (ex-info "cycle-value! requires an :enum toggle"
                       {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)})))
     (when-not (seq choices)
       (throw (ex-info "Enum toggle has no choices" {:type :vis.toggles/invalid-spec :id id})))
-    (let [current
-          (value-of id)
+    (let
+      [current
+       (value-of id)
 
-          idx
-          (.indexOf ^java.util.List choices current)
+       idx
+       (.indexOf ^java.util.List choices current)
 
-          next-v
-          (let [idx
-                (long idx)
+       next-v
+       (let
+         [idx
+          (long idx)
 
-                n
-                (long (count choices))]
+          n
+          (long (count choices))]
 
-            (nth choices (mod (inc (if (neg? idx) -1 idx)) n)))]
+         (nth choices (mod (inc (if (neg? idx) -1 idx)) n)))]
 
       (set-value! id next-v))))
 
@@ -364,26 +370,28 @@
    enum toggles surface their raw choice value. Orphans from a
    previously-installed extension are dropped."
   []
-  (let [reg
-        @registry
+  (let
+    [reg
+     @registry
 
-        s
-        @state]
+     s
+     @state]
 
     (reduce-kv (fn [acc id spec]
                  (if (:persist? spec)
-                   (let [v
-                         (if (contains? s id) (get s id) (:default spec))
+                   (let
+                     [v
+                      (if (contains? s id) (get s id) (:default spec))
 
-                         v
-                         (case (:type spec)
-                           :boolean
-                           (boolean v)
+                      v
+                      (case (:type spec)
+                        :boolean
+                        (boolean v)
 
-                           :enum
-                           v
+                        :enum
+                        v
 
-                           (boolean v))]
+                        (boolean v))]
 
                      (assoc acc id v))
                    acc))
@@ -398,12 +406,14 @@
    dropped (logged via the listener) instead of aborting the whole
    hydrate."
   [config-map]
-  (let [persisted (some-> config-map
-                          :toggles)]
+  (let
+    [persisted (some-> config-map
+                       :toggles)]
     (when (map? persisted)
       (let [reg @registry]
-        (doseq [[id v] persisted
-                :when (contains? reg id)]
+        (doseq
+          [[id v] persisted
+           :when (contains? reg id)]
 
           (try (set-value! id v) (catch clojure.lang.ExceptionInfo _ nil)))))))
 
@@ -417,11 +427,12 @@
    extension reload, ...)."
   [f]
   (when (fn? f)
-    (let [key
-          (Object.)
+    (let
+      [key
+       (Object.)
 
-          entry
-          (with-meta f {::key key})]
+       entry
+       (with-meta f {::key key})]
 
       (swap! listeners conj entry)
       (fn dispose! []

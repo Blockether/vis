@@ -144,31 +144,33 @@
    and the input handler (resolving a keypress) derive the SAME assignment from
    the same frame, so neither needs to share mutable state with the other."
   [regions]
-  (let [toggles (:out (reduce (fn [{:keys [seen] :as acc} r]
-                                (if (= :toggle-details (:kind r))
-                                  (let [k [(:session-id r) (:node-id r)]]
-                                    (if (contains? seen k)
-                                      acc
-                                      (-> acc
-                                          (update :seen conj k)
-                                          (update :out conj r))))
-                                  acc))
-                              {:seen #{} :out []}
-                              regions))]
+  (let
+    [toggles (:out (reduce (fn [{:keys [seen] :as acc} r]
+                             (if (= :toggle-details (:kind r))
+                               (let [k [(:session-id r) (:node-id r)]]
+                                 (if (contains? seen k)
+                                   acc
+                                   (-> acc
+                                       (update :seen conj k)
+                                       (update :out conj r))))
+                               acc))
+                           {:seen #{} :out []}
+                           regions))]
     (mapv vector label-alphabet toggles)))
 
 (defn- contains-point?
   "True when (col, row) lies inside `bounds`. Inclusive on the left
    edge, exclusive on the right edge."
   [{:keys [row col width]} c r]
-  (let [col
-        (long col)
+  (let
+    [col
+     (long col)
 
-        width
-        (long width)
+     width
+     (long width)
 
-        c
-        (long c)]
+     c
+     (long c)]
 
     (and (= r row) (>= c col) (< c (+ col width)))))
 

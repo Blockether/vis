@@ -166,11 +166,12 @@
    the full SKILL.md (once — an already-loaded skill gets a pointer
    instead of a re-injection, same as skill()) plus the optional task."
   [env s args]
-  (let [r
-        (skill-result env (:name s))
+  (let
+    [r
+     (skill-result env (:name s))
 
-        task
-        (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
+     task
+     (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
 
     (if (= "already-loaded" (get r "status"))
       (str "Use the skill \""
@@ -222,24 +223,26 @@
    task. Unknown name → an error dict carrying the available names."
   [env nm prompt]
   (if-let [a (d/agent-by-name nm)]
-    (let [res (lp/sub-loop! env
-                            {:prompt (str prompt)
-                             :subctx {:focus (:name a)}
-                             :models (when (:model a) [(:model a)])
-                             :system-prompt (:body a)})
-          ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
-          ;; none, so a completed child turn carries no status string. Read it
-          ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
-          ;; ran to completion → done.
-          status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
+    (let
+      [res (lp/sub-loop! env
+                         {:prompt (str prompt)
+                          :subctx {:focus (:name a)}
+                          :models (when (:model a) [(:model a)])
+                          :system-prompt (:body a)})
+       ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
+       ;; none, so a completed child turn carries no status string. Read it
+       ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
+       ;; ran to completion → done.
+       status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
 
       ;; Model-facing result crosses the strings-only boundary — build it with
       ;; string keys straight from the (internal, keyword-keyed) sub_loop result.
-      (cond-> {"agent" (:name a)
-               "task_id" (:task_id res)
-               "status" status
-               "answer" (:answer res)
-               "changed_files" (vec (:changed_files res))}
+      (cond->
+        {"agent" (:name a)
+         "task_id" (:task_id res)
+         "status" status
+         "answer" (:answer res)
+         "changed_files" (vec (:changed_files res))}
         (:error res)
         (assoc "error" (:error res))))
     {"error" (str "No agent named " (pr-str (str nm)) ".") "available" (mapv :name (d/agents))}))
@@ -273,11 +276,12 @@
 (defn- skills-prompt
   [env]
   (when (toggles/enabled? :vis/harness-skills)
-    (let [ss
-          (d/skills)
+    (let
+      [ss
+       (d/skills)
 
-          loaded
-          (loaded-skill-names env)]
+       loaded
+       (loaded-skill-names env)]
 
       (when (seq ss)
         (str/join

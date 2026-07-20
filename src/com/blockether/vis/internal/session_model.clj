@@ -77,10 +77,11 @@
     (let [k (str sid)]
       (if (contains? @pending k)
         (pending->val (get @pending k))
-        (let [now (System/currentTimeMillis)
-              c (get @display-cache k)
-              at (long (or (:at c) 0))
-              c (get @display-cache k)]
+        (let
+          [now (System/currentTimeMillis)
+           c (get @display-cache k)
+           at (long (or (:at c) 0))
+           c (get @display-cache k)]
 
           (if (and c (< (- now at) (long display-ttl-ms)))
             (:v c)
@@ -94,35 +95,37 @@
    rapid cycling coalesces to one write. Returns `{:provider :model}` (or nil)."
   [db-info sid provider model]
   (when (and db-info sid)
-    (let [model
-          (some-> model
-                  str
-                  str/trim
-                  not-empty)
+    (let
+      [model
+       (some-> model
+               str
+               str/trim
+               not-empty)
 
-          provider
-          (some-> provider
-                  str
-                  str/trim
-                  not-empty)
+       provider
+       (some-> provider
+               str
+               str/trim
+               not-empty)
 
-          k
-          (str sid)]
+       k
+       (str sid)]
 
       (swap! pending assoc k {:db-info db-info :provider provider :model model})
       (swap! display-cache dissoc k)
       (when-let [^ScheduledFuture old (get @flush-futures k)]
         (.cancel old false))
-      (let [^ScheduledExecutorService s
-            scheduler
+      (let
+        [^ScheduledExecutorService s
+         scheduler
 
-            f
-            (.schedule s
-                       ^Runnable
-                       (fn []
-                         (flush-one! k))
-                       (long debounce-ms)
-                       TimeUnit/MILLISECONDS)]
+         f
+         (.schedule s
+                    ^Runnable
+                    (fn []
+                      (flush-one! k))
+                    (long debounce-ms)
+                    TimeUnit/MILLISECONDS)]
 
         (swap! flush-futures assoc k f))
       (when model {:provider provider :model model}))))

@@ -352,14 +352,22 @@
    `/Users/…/test/foo_test.clj` (load-file pins the compiled frame to the absolute
    path it was handed). Paths outside root and non-path sentinels pass through."
   [^java.io.File root fault]
-  (let [raw (get fault "file")
-        s (str raw)]
+  (let
+    [raw
+     (get fault "file")
+
+     s
+     (str raw)]
+
     (if (and root (not (str/blank? s)))
-      (try (let [rp (.toPath (.getCanonicalFile root))
-                 fp (.toPath (.getCanonicalFile (io/file s)))]
-             (if (.startsWith fp rp)
-               (assoc fault "file" (str (.relativize rp fp)))
-               fault))
+      (try (let
+             [rp
+              (.toPath (.getCanonicalFile root))
+
+              fp
+              (.toPath (.getCanonicalFile (io/file s)))]
+
+             (if (.startsWith fp rp) (assoc fault "file" (str (.relativize rp fp))) fault))
            (catch Throwable _ fault))
       fault)))
 
@@ -370,9 +378,7 @@
   [root parsed]
   (let [root-file (io/file (str root))]
     (reduce (fn [m k]
-              (if (seq (get m k))
-                (update m k (partial mapv (partial rel-fault-file root-file)))
-                m))
+              (if (seq (get m k)) (update m k (partial mapv (partial rel-fault-file root-file))) m))
             parsed
             ["failures" "errors"])))
 

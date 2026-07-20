@@ -108,20 +108,21 @@
    balloon the heap. Returns {:text :truncated}. Never throws: a stream closed
    mid-read (the timeout/stop path closes it) just ends the drain."
   [^java.io.Reader r ^long head-limit ^long tail-limit]
-  (let [sb
-        (StringBuilder.)
+  (let
+    [sb
+     (StringBuilder.)
 
-        buf
-        (char-array 8192)
+     buf
+     (char-array 8192)
 
-        cap
-        (+ head-limit tail-limit)
+     cap
+     (+ head-limit tail-limit)
 
-        total
-        (volatile! 0)
+     total
+     (volatile! 0)
 
-        trunc
-        (volatile! false)]
+     trunc
+     (volatile! false)]
 
     (try (loop []
 
@@ -159,9 +160,10 @@
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
   [s ^long limit]
-  (let [s (-> (str s)
-              (str/replace #"\s+" " ")
-              str/trim)]
+  (let
+    [s (-> (str s)
+           (str/replace #"\s+" " ")
+           str/trim)]
     (if (> (count s) limit) (str (subs s 0 limit) "…") s)))
 
 (defn- contains-dir?
@@ -171,11 +173,12 @@
    An ABSOLUTE `rel` is taken as-is (not joined onto root), so a path the model
    can already see/edit — e.g. the workspace root itself — is runnable verbatim."
   ^File [^File root rel]
-  (let [f
-        (io/file rel)
+  (let
+    [f
+     (io/file rel)
 
-        dir
-        (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel)))]
+     dir
+     (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel)))]
 
     (when (and (or (= dir root)
                    (str/starts-with? (.getPath dir) (str (.getPath root) File/separator)))
@@ -193,17 +196,18 @@
    root differs (forked/trunk-clone workspaces, or an unbound root falling
    back to the process cwd)."
   ^File [opts]
-  (let [root
-        (.getCanonicalFile (workspace/cwd))
+  (let
+    [root
+     (.getCanonicalFile (workspace/cwd))
 
-        roots
-        (into [root]
-              (comp (keep :trunk) (map #(.getCanonicalFile (io/file %))))
-              workspace/*filesystem-roots*)
+     roots
+     (into [root]
+           (comp (keep :trunk) (map #(.getCanonicalFile (io/file %))))
+           workspace/*filesystem-roots*)
 
-        rel
-        (let [c (get opts "cwd")]
-          (when-not (str/blank? (str (or c ""))) (str c)))]
+     rel
+     (let [c (get opts "cwd")]
+       (when-not (str/blank? (str (or c ""))) (str c)))]
 
     (if-not rel
       root
@@ -211,12 +215,13 @@
           ;; Nothing matched — build the most useful diagnostic we can: report
           ;; the base(s) tried and the absolute path we looked for, and say
           ;; WHY (escapes / is-a-file / missing) against the primary root.
-          (let [dir
-                (let [f (io/file rel)]
-                  (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel))))
+          (let
+            [dir
+             (let [f (io/file rel)]
+               (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel))))
 
-                bases
-                (str/join ", " (distinct (map #(.getPath ^File %) roots)))]
+             bases
+             (str/join ", " (distinct (map #(.getPath ^File %) roots)))]
 
             (throw
               (ex-info
@@ -260,40 +265,42 @@
    override first, then the standard Git install roots, then bash alongside a
    `git.exe` found on PATH (Git\\cmd\\git.exe → Git\\bin\\bash.exe)."
   []
-  (let [path-sep
-        (System/getProperty "path.separator" ";")
+  (let
+    [path-sep
+     (System/getProperty "path.separator" ";")
 
-        from-path
-        (for [dir
-              (str/split (or (System/getenv "PATH") "")
-                         (re-pattern (java.util.regex.Pattern/quote path-sep)))
+     from-path
+     (for
+       [dir
+        (str/split (or (System/getenv "PATH") "")
+                   (re-pattern (java.util.regex.Pattern/quote path-sep)))
 
-              :when (not (str/blank? dir))
-              :let [git
-                    (io/file dir "git.exe")]
-              :when (.isFile git)
-              :let [root
-                    (let [^java.io.File p (.getParentFile ^java.io.File git)]
-                      (when p (.getParentFile p)))
+        :when (not (str/blank? dir))
+        :let [git
+              (io/file dir "git.exe")]
+        :when (.isFile git)
+        :let [root
+              (let [^java.io.File p (.getParentFile ^java.io.File git)]
+                (when p (.getParentFile p)))
 
-                    bash
-                    (when root (io/file root "bin" "bash.exe"))]
-              :when (and bash (.isFile bash))]
+              bash
+              (when root (io/file root "bin" "bash.exe"))]
+        :when (and bash (.isFile bash))]
 
-          (.getPath bash))
+       (.getPath bash))
 
-        roots
-        (keep identity
-              [(System/getenv "ProgramFiles") (System/getenv "ProgramW6432")
-               (System/getenv "ProgramFiles(x86)")
-               (some-> (System/getenv "LOCALAPPDATA")
-                       (str "\\Programs"))])
+     roots
+     (keep identity
+           [(System/getenv "ProgramFiles") (System/getenv "ProgramW6432")
+            (System/getenv "ProgramFiles(x86)")
+            (some-> (System/getenv "LOCALAPPDATA")
+                    (str "\\Programs"))])
 
-        candidates
-        (concat (when-let [o (System/getenv "VIS_BASH")]
-                  [o])
-                (map #(str % "\\Git\\bin\\bash.exe") roots)
-                from-path)]
+     candidates
+     (concat (when-let [o (System/getenv "VIS_BASH")]
+               [o])
+             (map #(str % "\\Git\\bin\\bash.exe") roots)
+             from-path)]
 
     (some #(when (and (not (str/blank? %)) (.isFile (io/file %))) %) candidates)))
 
@@ -312,11 +319,12 @@
 
 (defn- spawn!
   ^Process [cmd ^File dir merge-err?]
-  (let [^java.util.List args
-        [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
+  (let
+    [^java.util.List args
+     [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
 
-        pb
-        (ProcessBuilder. args)]
+     pb
+     (ProcessBuilder. args)]
 
     (.directory pb dir)
     (when merge-err? (.redirectErrorStream pb true))
@@ -375,26 +383,27 @@
    by closing the stream in the stop-fn, but the orphan keeps running."
   [p]
   (try
-    (let [pid
-          (if (map? p) (:pid p) (.pid ^Process p))
+    (let
+      [pid
+       (if (map? p) (:pid p) (.pid ^Process p))
 
-          destroy
-          (if (map? p)
-            (:destroy p)
-            (fn [force?]
-              (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
+       destroy
+       (if (map? p)
+         (:destroy p)
+         (fn [force?]
+           (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
 
-          ^ProcessHandle ph
-          (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
+       ^ProcessHandle ph
+       (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
 
-          descendants
-          (fn []
-            (if ph
-              (-> ph
-                  .descendants
-                  .iterator
-                  iterator-seq)
-              []))]
+       descendants
+       (fn []
+         (if ph
+           (-> ph
+               .descendants
+               .iterator
+               iterator-seq)
+           []))]
 
       (run! (fn [^ProcessHandle d]
               (try (.destroy d) (catch Throwable _ nil)))
@@ -432,29 +441,30 @@
    (let [cmd (str cmd)]
      (when (str/blank? cmd)
        (throw (ex-info "shell_run needs a non-blank command string." {:type ::blank-command})))
-     (let [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
-           cwd-opt? (not (str/blank? (str (or (get opts "cwd") ""))))
-           dir (resolve-cwd opts)
-           t0 (now-ms)
-           p (spawn! cmd dir false)
-           empty-tail {:text "" :truncated false}
-           ;; Separate reader futures per stream — avoids the classic full-pipe
-           ;; deadlock on chatty commands. `read-capped` bounds memory to the
-           ;; head+tail budget per stream at READ time (dropping only the MIDDLE
-           ;; of a huge stream, not its start), so a megabyte-then-killed command
-           ;; can't balloon the heap yet the opening context survives.
-           out-f (future (read-capped (io/reader (.getInputStream p))
-                                      max-sync-head-chars
-                                      max-sync-tail-chars))
-           err-f (future (read-capped (io/reader (.getErrorStream p))
-                                      max-sync-head-chars
-                                      max-sync-tail-chars))
-           finished? (try (.waitFor p timeout-secs TimeUnit/SECONDS)
-                          (catch InterruptedException ie
-                            ;; Turn cancellation: kill the spawned tree before
-                            ;; the interrupt propagates to the loop.
-                            (kill-tree! p)
-                            (throw ie)))]
+     (let
+       [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
+        cwd-opt? (not (str/blank? (str (or (get opts "cwd") ""))))
+        dir (resolve-cwd opts)
+        t0 (now-ms)
+        p (spawn! cmd dir false)
+        empty-tail {:text "" :truncated false}
+        ;; Separate reader futures per stream — avoids the classic full-pipe
+        ;; deadlock on chatty commands. `read-capped` bounds memory to the
+        ;; head+tail budget per stream at READ time (dropping only the MIDDLE
+        ;; of a huge stream, not its start), so a megabyte-then-killed command
+        ;; can't balloon the heap yet the opening context survives.
+        out-f (future (read-capped (io/reader (.getInputStream p))
+                                   max-sync-head-chars
+                                   max-sync-tail-chars))
+        err-f (future (read-capped (io/reader (.getErrorStream p))
+                                   max-sync-head-chars
+                                   max-sync-tail-chars))
+        finished? (try (.waitFor p timeout-secs TimeUnit/SECONDS)
+                       (catch InterruptedException ie
+                         ;; Turn cancellation: kill the spawned tree before
+                         ;; the interrupt propagates to the loop.
+                         (kill-tree! p)
+                         (throw ie)))]
 
        (when-not finished?
          (kill-tree! p)
@@ -462,10 +472,11 @@
          ;; so their threads don't linger past our 5s deref ceiling.
          (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
            (try (.close s) (catch Throwable _ nil))))
-       (let [out (deref out-f 5000 empty-tail)
-             err (deref err-f 5000 empty-tail)
-             exit (when finished? (.exitValue p))
-             t1 (now-ms)]
+       (let
+         [out (deref out-f 5000 empty-tail)
+          err (deref err-f 5000 empty-tail)
+          exit (when finished? (.exitValue p))
+          t1 (now-ms)]
 
          (extension/success
            ;; Lean result: this map rides every later prompt as a frozen
@@ -520,11 +531,12 @@
 
 (defn- drop-bg-entry!
   [session id]
-  (let [sk
-        (str session)
+  (let
+    [sk
+     (str session)
 
-        id
-        (str id)]
+     id
+     (str id)]
 
     (swap! bg-procs (fn [m]
                       (let [m (update m sk dissoc id)]
@@ -535,11 +547,13 @@
   [buffer line]
   ;; A char-pump split on `\n` leaves the `\r` of a CRLF line behind; strip it
   ;; so a Windows-emitted line reads identically to a POSIX one.
-  (let [line
-        (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
+  (let
+    [line
+     (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
     (swap! buffer (fn [{:keys [lines next-seq dropped]}]
-                    (let [lines (conj lines [next-seq line])
-                          over (- (count lines) (long max-bg-lines))]
+                    (let
+                      [lines (conj lines [next-seq line])
+                       over (- (count lines) (long max-bg-lines))]
 
                       {:lines (if (< 0 over) (subvec lines over) lines)
                        :next-seq (inc (long next-seq))
@@ -599,14 +613,15 @@
 
 (defn- shell-bg-impl
   [env id cmd]
-  (let [session
-        (:session-id env)
+  (let
+    [session
+     (:session-id env)
 
-        id
-        (str id)
+     id
+     (str id)
 
-        cmd
-        (str cmd)]
+     cmd
+     (str cmd)]
 
     (when (str/blank? id)
       (throw (ex-info "shell_bg needs a non-blank resource id (first arg)." {:type ::blank-id})))
@@ -624,45 +639,46 @@
         ;; Exited-but-unread entry under the same id: replacing it discards
         ;; its retained logs by intent (the model chose to reuse the id).
         (do (resources/unregister! session id) (drop-bg-entry! session id))))
-    (let [dir
-          (resolve-cwd nil)
+    (let
+      [dir
+       (resolve-cwd nil)
 
-          p
-          (pty-spawn! cmd dir)
+       p
+       (pty-spawn! cmd dir)
 
-          buffer
-          (atom {:lines [] :next-seq 1 :dropped 0})
+       buffer
+       (atom {:lines [] :next-seq 1 :dropped 0})
 
-          exit-atom
-          (atom nil)
+       exit-atom
+       (atom nil)
 
-          stopped?
-          (atom false)
+       stopped?
+       (atom false)
 
-          bridge-atom
-          (atom nil)
+       bridge-atom
+       (atom nil)
 
-          t0
-          (now-ms)
+       t0
+       (now-ms)
 
-          pump
-          (start-pump! session id p buffer exit-atom stopped? bridge-atom)
+       pump
+       (start-pump! session id p buffer exit-atom stopped? bridge-atom)
 
-          ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
-          ;; so a HUMAN can `vis ext shell attach <id>` into the live terminal
-          ;; (browser OAuth, a prompt only a person can answer) and detach again,
-          ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
-          ;; runs, just without human attach.
-          bridge
-          (try (pty-bridge/serve! {:pty p
-                                   :path (pty-bridge/socket-path session id)
-                                   :replay-fn (fn []
-                                                (let [ls (:lines @buffer)]
-                                                  (when (seq ls)
-                                                    (.getBytes
-                                                      (str (str/join "\n" (map second ls)) "\n")
-                                                      java.nio.charset.StandardCharsets/UTF_8))))})
-               (catch Throwable _ nil))]
+       ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
+       ;; so a HUMAN can `vis ext shell attach <id>` into the live terminal
+       ;; (browser OAuth, a prompt only a person can answer) and detach again,
+       ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
+       ;; runs, just without human attach.
+       bridge
+       (try (pty-bridge/serve! {:pty p
+                                :path (pty-bridge/socket-path session id)
+                                :replay-fn (fn []
+                                             (let [ls (:lines @buffer)]
+                                               (when (seq ls)
+                                                 (.getBytes
+                                                   (str (str/join "\n" (map second ls)) "\n")
+                                                   java.nio.charset.StandardCharsets/UTF_8))))})
+            (catch Throwable _ nil))]
 
       (reset! bridge-atom bridge)
       (swap! bg-procs assoc-in
@@ -734,14 +750,15 @@
 (defn- shell-logs-impl
   ([env id] (shell-logs-impl env id default-log-tail))
   ([env id n]
-   (let [session
-         (:session-id env)
+   (let
+     [session
+      (:session-id env)
 
-         id
-         (str id)
+      id
+      (str id)
 
-         entry
-         (bg-entry session id)]
+      entry
+      (bg-entry session id)]
 
      (when-not entry
        (throw (ex-info (str "No background shell '"
@@ -750,37 +767,39 @@
                             " start one with shell_bg(id, cmd); live ids are"
                             " listed in resources.")
                        {:type ::unknown-bg-id :id id})))
-     (let [n
-           (-> (long (or (->pos-long n "n") default-log-tail))
-               (max 1)
-               long
-               (min (long max-bg-lines)))
+     (let
+       [n
+        (-> (long (or (->pos-long n "n") default-log-tail))
+            (max 1)
+            long
+            (min (long max-bg-lines)))
 
-           {:keys [lines dropped next-seq]}
-           @(:buffer entry)
+        {:keys [lines dropped next-seq]}
+        @(:buffer entry)
 
-           total
-           (dec (long next-seq))
+        total
+        (dec (long next-seq))
 
-           shown
-           (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
+        shown
+        (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
 
-           exit
-           @(:exit entry)
+        exit
+        @(:exit entry)
 
-           t
-           (now-ms)]
+        t
+        (now-ms)]
 
        (extension/success
          ;; Lean result: no :op / :cmd / :cwd / :pid (the shell_bg result
          ;; already carries process identity) and no :shown_count (it's
          ;; len(lines)). :exit only once exited, :dropped only when the ring
          ;; buffer actually evicted — absent keys read as None via .get.
-         {:result (cond-> {"id" id
-                           "status" (if (some? exit) "exited" "running")
-                           "lines" shown
-                           "line_count" total
-                           "uptime_ms" (- t (long (:started-at entry)))}
+         {:result (cond->
+                    {"id" id
+                     "status" (if (some? exit) "exited" "running")
+                     "lines" shown
+                     "line_count" total
+                     "uptime_ms" (- t (long (:started-at entry)))}
                     (some? exit)
                     (assoc "exit" exit)
 
@@ -797,18 +816,19 @@
    response with shell_logs(id). Returns {id, sent, status}."
   ([env id text] (shell-send-impl env id text nil))
   ([env id text opts]
-   (let [session
-         (:session-id env)
+   (let
+     [session
+      (:session-id env)
 
-         id
-         (str id)
+      id
+      (str id)
 
-         entry
-         (bg-entry session id)
+      entry
+      (bg-entry session id)
 
-         enter?
-         (let [e (get opts "enter" (get opts :enter true))]
-           (if (nil? e) true (boolean e)))]
+      enter?
+      (let [e (get opts "enter" (get opts :enter true))]
+        (if (nil? e) true (boolean e)))]
 
      (when-not entry
        (throw (ex-info (str "No background shell '"
@@ -826,8 +846,9 @@
        (when (nil? send-fn)
          (throw (ex-info (str "Background shell '" id "' has no writable stdin.")
                          {:type ::no-stdin :id id})))
-       (let [payload (str text (when enter? "\n"))
-             t (now-ms)]
+       (let
+         [payload (str text (when enter? "\n"))
+          t (now-ms)]
 
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
          (extension/success {:result {"id" id "sent" (count payload) "status" "running"}
@@ -873,11 +894,12 @@
    throwable split so turn cancellation renders as a clean interruption."
   [op]
   (fn [err _env _f _args]
-    (let [interrupted?
-          (instance? InterruptedException err)
+    (let
+      [interrupted?
+       (instance? InterruptedException err)
 
-          t
-          (now-ms)]
+       t
+       (now-ms)]
 
       {:result (extension/failure
                  {:result nil
@@ -979,11 +1001,12 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
   "Clip a single-line preview with an ellipsis so shell commands cannot blow out
    collapsed cards."
   [s n]
-  (let [s
-        (str s)
+  (let
+    [s
+     (str s)
 
-        n
-        (long n)]
+     n
+     (long n)]
 
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
@@ -1003,38 +1026,42 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
    or nested `$(…)` / `(…)` stay put (so `$(f || g)` and `2>&1 &` are never
    split), and a simple command comes back unchanged."
   [s]
-  (let [s
-        (str s)
+  (let
+    [s
+     (str s)
 
-        n
-        (count s)
+     n
+     (count s)
 
-        sb
-        (StringBuilder.)]
+     sb
+     (StringBuilder.)]
 
-    (loop [i
-           0
+    (loop
+      [i
+       0
 
-           sq
-           false
+       sq
+       false
 
-           dq
-           false
+       dq
+       false
 
-           depth
-           0]
+       depth
+       0]
 
       (if (>= i n)
-        (let [out (->> (str/split-lines (str sb))
-                       (map str/trim)
-                       (remove str/blank?)
-                       (str/join "\n"))]
+        (let
+          [out (->> (str/split-lines (str sb))
+                    (map str/trim)
+                    (remove str/blank?)
+                    (str/join "\n"))]
           (if (str/blank? out) (str/trim s) out))
-        (let [c
-              (.charAt s i)
+        (let
+          [c
+           (.charAt s i)
 
-              nxt
-              (when (< (inc i) n) (.charAt s (inc i)))]
+           nxt
+           (when (< (inc i) n) (.charAt s (inc i)))]
 
           (cond
             ;; backslash escape (not inside single quotes): copy the pair verbatim
@@ -1100,37 +1127,38 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
    always present so shell cards are collapsible even when the command produced no
    output; the full command and metadata stay available behind the disclosure."
   [r]
-  (let [{:keys [label failed?]}
-        (shell-run-status r)
+  (let
+    [{:keys [label failed?]}
+     (shell-run-status r)
 
-        cmd
-        (or (shell-one-line (get r "cmd")) "shell")
+     cmd
+     (or (shell-one-line (get r "cmd")) "shell")
 
-        duration
-        (duration-label (get r "duration_ms"))
+     duration
+     (duration-label (get r "duration_ms"))
 
-        summary
-        (str "$ "
-             (clip-chip cmd shell-chip-max)
-             " ("
-             (if failed? "failure" "success")
-             ")"
-             (when failed? (str " · " label))
-             (when duration (str " · " duration)))
+     summary
+     (str "$ "
+          (clip-chip cmd shell-chip-max)
+          " ("
+          (if failed? "failure" "success")
+          ")"
+          (when failed? (str " · " label))
+          (when duration (str " · " duration)))
 
-        status
-        (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
-                   ["timeout"
-                    (when-let [s (get r "timeout_secs")]
-                      (str s "s"))] ["stdout" (when (get r "stdout_truncated") "truncated")]
-                   ["stderr" (when (get r "stderr_truncated") "truncated")]])
+     status
+     (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
+                ["timeout"
+                 (when-let [s (get r "timeout_secs")]
+                   (str s "s"))] ["stdout" (when (get r "stdout_truncated") "truncated")]
+                ["stderr" (when (get r "stderr_truncated") "truncated")]])
 
-        body
-        (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
-              (shell-section "STATUS" status) (shell-section "STDOUT" (get r "stdout") "bash")
-              (shell-section "STDERR" (get r "stderr"))]
-             (remove nil?)
-             (str/join "\n\n"))]
+     body
+     (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
+           (shell-section "STATUS" status) (shell-section "STDOUT" (get r "stdout") "bash")
+           (shell-section "STDERR" (get r "stderr"))]
+          (remove nil?)
+          (str/join "\n\n"))]
 
     {:summary summary :body (when (seq body) body)}))
 
@@ -1138,89 +1166,92 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
   "shell_bg → lifecycle card with the command, pid, and human attach hint in the
    expandable body."
   [r]
-  (let [id
-        (get r "id")
+  (let
+    [id
+     (get r "id")
 
-        status
-        (or (get r "status") "started")
+     status
+     (or (get r "status") "started")
 
-        summary
-        (str "⚙ bg `"
-             id
-             "` "
-             status
-             (when-let [pid (get r "pid")]
-               (str " · pid " pid)))
+     summary
+     (str "⚙ bg `"
+          id
+          "` "
+          status
+          (when-let [pid (get r "pid")]
+            (str " · pid " pid)))
 
-        details
-        (kv-lines [["id" id] ["status" status] ["pid" (get r "pid")] ["attach" (get r "attach")]
-                   ["socket" (get r "socket")]])
+     details
+     (kv-lines [["id" id] ["status" status] ["pid" (get r "pid")] ["attach" (get r "attach")]
+                ["socket" (get r "socket")]])
 
-        body
-        (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
-              (shell-section "STATUS" details)]
-             (remove nil?)
-             (str/join "\n\n"))]
+     body
+     (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
+           (shell-section "STATUS" details)]
+          (remove nil?)
+          (str/join "\n\n"))]
 
     {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-logs-result
   "shell_logs → compact process/log status plus a terminal transcript body."
   [r]
-  (let [lines
-        (or (get r "lines") [])
+  (let
+    [lines
+     (or (get r "lines") [])
 
-        text
-        (->> lines
-             (map (fn [pair]
-                    (if (sequential? pair) (second pair) pair)))
-             (str/join "\n"))
+     text
+     (->> lines
+          (map (fn [pair]
+                 (if (sequential? pair) (second pair) pair)))
+          (str/join "\n"))
 
-        status
-        (or (get r "status") "?")
+     status
+     (or (get r "status") "?")
 
-        duration
-        (duration-label (get r "uptime_ms"))
+     duration
+     (duration-label (get r "uptime_ms"))
 
-        exited?
-        (= "exited" status)
+     exited?
+     (= "exited" status)
 
-        summary
-        (str (if exited? "■" "◷")
-             " `"
-             (get r "id")
-             "` "
-             status
-             (when-let [exit (get r "exit")]
-               (str " · exit " exit))
-             " · "
-             (count lines)
-             " lines"
-             (when-let [total (get r "line_count")]
-               (when (not= total (count lines)) (str " / " total " total")))
-             (when-let [d (get r "dropped")]
-               (str " · " d " dropped"))
-             (when duration (str " · " duration)))
+     summary
+     (str (if exited? "■" "◷")
+          " `"
+          (get r "id")
+          "` "
+          status
+          (when-let [exit (get r "exit")]
+            (str " · exit " exit))
+          " · "
+          (count lines)
+          " lines"
+          (when-let [total (get r "line_count")]
+            (when (not= total (count lines)) (str " / " total " total")))
+          (when-let [d (get r "dropped")]
+            (str " · " d " dropped"))
+          (when duration (str " · " duration)))
 
-        details
-        (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")]
-                   ["shown" (str (count lines) " lines")] ["total" (get r "line_count")]
-                   ["dropped" (get r "dropped")] ["uptime" duration]])
+     details
+     (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")]
+                ["shown" (str (count lines) " lines")] ["total" (get r "line_count")]
+                ["dropped" (get r "dropped")] ["uptime" duration]])
 
-        body
-        (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
-             (remove nil?)
-             (str/join "\n\n"))]
+     body
+     (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
+          (remove nil?)
+          (str/join "\n\n"))]
 
     {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-send-result
   "shell_send → send-keys lifecycle card."
   [r]
-  (let [details (kv-lines [["id" (get r "id")]
-                           ["sent"
-                            (when-let [n (get r "sent")]
-                              (str n " chars"))] ["status" (get r "status")]])]
+  (let
+    [details (kv-lines [["id" (get r "id")]
+                        ["sent"
+                         (when-let [n (get r "sent")]
+                           (str n " chars"))] ["status" (get r "status")]])]
     {:summary (str "↵ `" (get r "id") "` sent " (get r "sent") " chars")
      :body (shell-section "STATUS" details)}))
 
@@ -1348,17 +1379,18 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
    `--socket PATH` targets an explicit socket; otherwise the newest shell whose
    id matches. Returns the attach exit code."
   [_parsed residual]
-  (let [args
-        (vec residual)
+  (let
+    [args
+     (vec residual)
 
-        socket
-        (loop [xs args]
-          (cond (empty? xs) nil
-                (= (first xs) "--socket") (second xs)
-                :else (recur (rest xs))))
+     socket
+     (loop [xs args]
+       (cond (empty? xs) nil
+             (= (first xs) "--socket") (second xs)
+             :else (recur (rest xs))))
 
-        id
-        (first (remove #(str/starts-with? % "--") args))]
+     id
+     (first (remove #(str/starts-with? % "--") args))]
 
     (pty-bridge/attach! {:id id :socket socket})))
 

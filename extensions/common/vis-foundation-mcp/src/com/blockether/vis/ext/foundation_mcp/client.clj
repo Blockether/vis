@@ -53,78 +53,80 @@
   "Spawn `command`+`args` (with extra `env`), wire newline-delimited JSON-RPC.
    Returns `{:request-fn :notify-fn :close-fn :alive-fn :pid}`."
   [name {:keys [command args env cwd]}]
-  (let [pb
-        (ProcessBuilder. ^java.util.List (vec (cons command (map str (or args [])))))
+  (let
+    [pb
+     (ProcessBuilder. ^java.util.List (vec (cons command (map str (or args [])))))
 
-        _
-        (when (seq env)
-          (let [m (.environment pb)]
-            (doseq [[k v] env]
-              (.put m (str (clj-name k)) (str v)))))
+     _
+     (when (seq env)
+       (let [m (.environment pb)]
+         (doseq [[k v] env]
+           (.put m (str (clj-name k)) (str v)))))
 
-        _
-        (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) (.directory pb (io/file cwd)))
+     _
+     (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) (.directory pb (io/file cwd)))
 
-        _
-        (.redirectErrorStream pb false)
+     _
+     (.redirectErrorStream pb false)
 
-        proc
-        (.start pb)
+     proc
+     (.start pb)
 
-        out
-        (BufferedReader. (io/reader (.getInputStream proc)))
+     out
+     (BufferedReader. (io/reader (.getInputStream proc)))
 
-        in
-        (.getOutputStream proc)
+     in
+     (.getOutputStream proc)
 
-        pending
-        (ConcurrentHashMap.)
+     pending
+     (ConcurrentHashMap.)
 
-        next-id
-        (atom 0)
+     next-id
+     (atom 0)
 
-        closed?
-        (atom false)
+     closed?
+     (atom false)
 
-        write!
-        (fn [m]
-          (locking in (.write in (.getBytes (str (->json m) "\n") "UTF-8")) (.flush in)))
+     write!
+     (fn [m]
+       (locking in (.write in (.getBytes (str (->json m) "\n") "UTF-8")) (.flush in)))
 
-        read-loop
-        (fn []
-          (try (loop []
+     read-loop
+     (fn []
+       (try (loop []
 
-                 (when-let [line (.readLine out)]
-                   (when-not (str/blank? line)
-                     (try (let [msg (json-> line)]
-                            (when-let [id (get msg "id")]
-                              (when-let [p (.remove pending id)]
-                                (deliver p msg))))
-                          (catch Throwable t
-                            (tel/log! {:level :debug
-                                       :id ::stdio-parse
-                                       :data {:server name :error (ex-message t)}}
-                                      "MCP stdio: unparseable line dropped"))))
-                   (recur)))
-               (catch Throwable _ nil)
-               (finally
-                 ;; stream ended — fail any in-flight requests so callers
-                 ;; don't hang forever.
-                 (reset! closed? true)
-                 (doseq [k (enumeration-seq (.keys pending))]
-                   (when-let [p (.remove pending k)]
-                     (deliver p {"error" {"message" "server stream closed"}}))))))]
+              (when-let [line (.readLine out)]
+                (when-not (str/blank? line)
+                  (try (let [msg (json-> line)]
+                         (when-let [id (get msg "id")]
+                           (when-let [p (.remove pending id)]
+                             (deliver p msg))))
+                       (catch Throwable t
+                         (tel/log! {:level :debug
+                                    :id ::stdio-parse
+                                    :data {:server name :error (ex-message t)}}
+                                   "MCP stdio: unparseable line dropped"))))
+                (recur)))
+            (catch Throwable _ nil)
+            (finally
+              ;; stream ended — fail any in-flight requests so callers
+              ;; don't hang forever.
+              (reset! closed? true)
+              (doseq [k (enumeration-seq (.keys pending))]
+                (when-let [p (.remove pending k)]
+                  (deliver p {"error" {"message" "server stream closed"}}))))))]
 
     (doto (Thread. ^Runnable read-loop (str "mcp-stdio-" name)) (.setDaemon true) (.start))
     {:pid (try (.pid proc) (catch Throwable _ nil))
      :request-fn (fn [method params timeout-ms]
                    (when @closed?
                      (throw (ex-info "MCP server not running" {:type :mcp/closed :server name})))
-                   (let [id
-                         (str (swap! next-id inc))
+                   (let
+                     [id
+                      (str (swap! next-id inc))
 
-                         p
-                         (promise)]
+                      p
+                      (promise)]
 
                      (.put pending id p)
                      (write! (cond-> {"jsonrpc" "2.0" "id" id "method" method}
@@ -182,63 +184,68 @@
    POSTs and ignores the reply. The `Mcp-Session-Id` from `initialize` is
    captured and replayed."
   [name {:keys [url headers]}]
-  (let [session
-        (atom nil)
+  (let
+    [session
+     (atom nil)
 
-        post!
-        (fn [body timeout-ms]
-          (let [b
-                (-> (HttpRequest/newBuilder (URI/create url))
-                    (.timeout (Duration/ofMillis (long timeout-ms)))
-                    (.header "Content-Type" "application/json")
-                    (.header "Accept" "application/json, text/event-stream")
-                    (.POST (HttpRequest$BodyPublishers/ofString body)))
+     post!
+     (fn [body timeout-ms]
+       (let
+         [b
+          (-> (HttpRequest/newBuilder (URI/create url))
+              (.timeout (Duration/ofMillis (long timeout-ms)))
+              (.header "Content-Type" "application/json")
+              (.header "Accept" "application/json, text/event-stream")
+              (.POST (HttpRequest$BodyPublishers/ofString body)))
 
-                ^java.net.http.HttpRequest$Builder b
-                (reduce-kv (fn [^java.net.http.HttpRequest$Builder bb k v]
-                             (.header bb (clj-name k) (str v)))
-                           b
-                           (or headers {}))
+          ^java.net.http.HttpRequest$Builder b
+          (reduce-kv (fn [^java.net.http.HttpRequest$Builder bb k v]
+                       (.header bb (clj-name k) (str v)))
+                     b
+                     (or headers {}))
 
-                ^java.net.http.HttpRequest$Builder b
-                (if-let [s @session]
-                  (.header b "Mcp-Session-Id" s)
-                  b)
+          ^java.net.http.HttpRequest$Builder b
+          (if-let [s @session]
+            (.header b "Mcp-Session-Id" s)
+            b)
 
-                resp
-                (.send ^HttpClient @http-client (.build b) (HttpResponse$BodyHandlers/ofString))]
+          resp
+          (.send ^HttpClient @http-client (.build b) (HttpResponse$BodyHandlers/ofString))]
 
-            (when-let [sid (-> (.headers resp)
-                               (.firstValue "mcp-session-id")
-                               (.orElse nil))]
-              (reset! session sid))
-            {:status (.statusCode resp) :body (.body resp)}))]
+         (when-let
+           [sid (-> (.headers resp)
+                    (.firstValue "mcp-session-id")
+                    (.orElse nil))]
+           (reset! session sid))
+         {:status (.statusCode resp) :body (.body resp)}))]
 
     {:request-fn (fn [method params timeout-ms]
-                   (let [req-id
-                         (str (System/nanoTime))
+                   (let
+                     [req-id
+                      (str (System/nanoTime))
 
-                         body
-                         (->json (cond-> {"jsonrpc" "2.0" "id" req-id "method" method}
-                                   (some? params)
-                                   (assoc "params" params)))
+                      body
+                      (->json (cond-> {"jsonrpc" "2.0" "id" req-id "method" method}
+                                (some? params)
+                                (assoc "params" params)))
 
-                         {:keys [status body]}
-                         (post! body timeout-ms)]
+                      {:keys [status body]}
+                      (post! body timeout-ms)]
 
                      (when (>= (long status) 400)
                        (throw (ex-info
                                 (str "MCP " name " HTTP " status " on " method)
                                 {:type :mcp/http-error :server name :status status :body body})))
-                     (let [objs
-                           (if (str/includes? (str body) "data:")
-                             (sse-data-objects body)
-                             (try [(json-> body)] (catch Throwable _ [])))
+                     (let
+                       [objs
+                        (if (str/includes? (str body) "data:")
+                          (sse-data-objects body)
+                          (try [(json-> body)] (catch Throwable _ [])))
 
-                           msg
-                           (or (some #(when (= (get % "id") req-id) %) objs)
-                               (first (filter #(contains? % "result") objs))
-                               (first objs))]
+                        msg
+                        (or (some #(when (= (get % "id") req-id) %) objs)
+                            (first (filter #(contains? % "result") objs))
+                            (first objs))]
 
                        (cond (nil? msg) (throw (ex-info (str "MCP " name " empty reply on " method)
                                                         {:type :mcp/protocol :server name}))
@@ -270,32 +277,31 @@
      http  → `{:url \"https://...\" :headers {...}}`
    Returns a `conn` map (opaque) or throws."
   [name spec]
-  (let [transport
-        (transport-of spec)
+  (let
+    [transport
+     (transport-of spec)
 
-        t
-        (case transport
-          :stdio
-          (start-stdio! name spec)
+     t
+     (case transport
+       :stdio
+       (start-stdio! name spec)
 
-          :http
-          (start-http! name spec)
+       :http
+       (start-http! name spec)
 
-          (throw (ex-info (str "MCP: unknown transport " (pr-str transport))
-                          {:type :mcp/config :server name})))
+       (throw (ex-info (str "MCP: unknown transport " (pr-str transport))
+                       {:type :mcp/config :server name})))
 
-        conn
-        (merge
-          t
-          {:name name :transport transport :spec spec :connected-at (now-ms) :tools (atom nil)})
+     conn
+     (merge t {:name name :transport transport :spec spec :connected-at (now-ms) :tools (atom nil)})
 
-        init
-        ((:request-fn conn)
-          "initialize"
-          {"protocolVersion" protocol-version
-           "capabilities" {}
-           "clientInfo" {"name" "vis" "version" "0.1.0"}}
-          default-timeout-ms)]
+     init
+     ((:request-fn conn)
+       "initialize"
+       {"protocolVersion" protocol-version
+        "capabilities" {}
+        "clientInfo" {"name" "vis" "version" "0.1.0"}}
+       default-timeout-ms)]
 
     ;; Per spec, acknowledge before issuing further requests.
     ((:notify-fn conn) "notifications/initialized" nil)
@@ -309,11 +315,12 @@
    Cached on the conn after the first call."
   [conn]
   (or @(:tools conn)
-      (let [result
-            ((:request-fn conn) "tools/list" {} default-timeout-ms)
+      (let
+        [result
+         ((:request-fn conn) "tools/list" {} default-timeout-ms)
 
-            tools
-            (vec (get result "tools"))]
+         tools
+         (vec (get result "tools"))]
 
         (reset! (:tools conn) tools)
         tools)))

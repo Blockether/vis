@@ -39,11 +39,12 @@
 
 (defn- recording-file
   ^File [role]
-  (let [ts
-        (.format (DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss") (LocalDateTime/now))
+  (let
+    [ts
+     (.format (DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss") (LocalDateTime/now))
 
-        pid
-        (.pid (ProcessHandle/current))]
+     pid
+     (.pid (ProcessHandle/current))]
 
     (io/file (jfr-dir) (format "vis-%s-%s-%s.jfr" role pid ts))))
 
@@ -63,14 +64,15 @@
   "Keep only the newest `MAX_RECORDINGS` `vis-*.jfr` dumps under ~/.vis/logs and delete
    the rest (dead processes' orphaned recordings). Never throws."
   []
-  (try (let [files (->> (.listFiles (jfr-dir))
-                        (filter (fn [^File f]
-                                  (let [n (.getName f)]
-                                    (and (.isFile f)
-                                         (str/starts-with? n "vis-")
-                                         (str/ends-with? n ".jfr")))))
-                        (sort-by (fn [^File f]
-                                   (- (.lastModified f)))))]
+  (try (let
+         [files (->> (.listFiles (jfr-dir))
+                     (filter (fn [^File f]
+                               (let [n (.getName f)]
+                                 (and (.isFile f)
+                                      (str/starts-with? n "vis-")
+                                      (str/ends-with? n ".jfr")))))
+                     (sort-by (fn [^File f]
+                                (- (.lastModified f)))))]
          (doseq [^File f (drop MAX_RECORDINGS files)]
            (.delete f)))
        (catch Throwable _ nil)))
@@ -83,11 +85,12 @@
   (when (and (enabled?) (compare-and-set! started false true))
     (try (.mkdirs (jfr-dir))
          (prune-old-recordings!)
-         (let [f
-               (recording-file role)
+         (let
+           [f
+            (recording-file role)
 
-               rec
-               (Recording. (Configuration/getConfiguration "profile"))]
+            rec
+            (Recording. (Configuration/getConfiguration "profile"))]
 
            (doto rec
              (.setName (str "vis-" role))

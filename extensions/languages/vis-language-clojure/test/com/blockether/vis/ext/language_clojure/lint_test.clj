@@ -32,11 +32,12 @@
                    (expect (number? (get r "info")))
                    (expect (vector? (get r "findings")))))
              (it "flags an unused binding as a warning"
-                 (let [r
-                       (lint/lint-code "(ns a) (defn h [a b] a)")
+                 (let
+                   [r
+                    (lint/lint-code "(ns a) (defn h [a b] a)")
 
-                       findings
-                       (get r "findings")]
+                    findings
+                    (get r "findings")]
 
                    (expect (pos? (get r "warning")))
                    ;; the finding carries the uniform per-item shape
@@ -53,11 +54,12 @@
 
 (defdescribe lint-paths-test
              (it "lints a file on disk and reports its findings"
-                 (let [dir
-                       (tmp-dir)
+                 (let
+                   [dir
+                    (tmp-dir)
 
-                       f
-                       (io/file dir "bad.clj")]
+                    f
+                    (io/file dir "bad.clj")]
 
                    (try (spit f "(ns bad) (defn h [a b] a)")
                         (let [r (lint/lint-paths [(.getAbsolutePath f)])]
@@ -115,8 +117,9 @@
             (spit (io/file root-kondo "config.edn")
                   "{:linters {:unused-binding {:level :warning}}}"))
           ;; nested project silences unused-binding
-          (let [sub-kondo (io/file dir "sub" ".clj-kondo")
-                src (io/file dir "sub" "src" "x.clj")]
+          (let
+            [sub-kondo (io/file dir "sub" ".clj-kondo")
+             src (io/file dir "sub" "src" "x.clj")]
 
             (.mkdirs sub-kondo)
             (spit (io/file sub-kondo "config.edn") "{:linters {:unused-binding {:level :off}}}")
@@ -151,10 +154,11 @@
                    (expect (seq findings))
                    (expect (every? #(= "clj-kondo" (get % "provider")) findings))))
              (it "group-by-dir nests findings by directory then basename then level"
-                 (let [grouped (lint/group-by-dir
-                                 [{"file" "src/x.clj" "level" "warning" "type" "a"}
-                                  {"file" "src/x.clj" "level" "error" "type" "b"}
-                                  {"file" "test/y.clj" "level" "warning" "type" "c"}])]
+                 (let
+                   [grouped (lint/group-by-dir
+                              [{"file" "src/x.clj" "level" "warning" "type" "a"}
+                               {"file" "src/x.clj" "level" "error" "type" "b"}
+                               {"file" "test/y.clj" "level" "warning" "type" "c"}])]
                    (expect (= #{"src" "test"} (set (keys grouped))))
                    (expect (= 1 (count (get-in grouped ["src" "x.clj" "warning"]))))
                    (expect (= 1 (count (get-in grouped ["src" "x.clj" "error"]))))
@@ -176,11 +180,12 @@
       (let [res (lint-result {} "(ns demo) (defn add [a b] (+ a b))")]
         (expect (some #(= "boxed-math" (get % "type")) (get res "findings")))))
   (it "exposes the by-dir grouped view nested directory → basename"
-      (let [res
-            (lint-result {} "(ns demo) (defn h [a b] (.length a))")
+      (let
+        [res
+         (lint-result {} "(ns demo) (defn h [a b] (.length a))")
 
-            grouped
-            (get res "by-dir")]
+         grouped
+         (get res "by-dir")]
 
         ;; <stdin> has no directory → grouped under "." then its basename;
         ;; clj-kondo (unused b) + general (reflection) mix under one file group

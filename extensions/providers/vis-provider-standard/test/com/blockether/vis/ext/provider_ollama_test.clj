@@ -5,11 +5,12 @@
 
 (defdescribe provider-ollama-test
              (it "registers one Ollama provider extension"
-                 (let [provider
-                       (vis/provider-by-id :ollama)
+                 (let
+                   [provider
+                    (vis/provider-by-id :ollama)
 
-                       status
-                       ((:provider/status-fn provider))]
+                    status
+                    ((:provider/status-fn provider))]
 
                    (expect (= :ollama (:provider/id provider)))
                    (expect (= "Ollama" (:provider/label provider)))

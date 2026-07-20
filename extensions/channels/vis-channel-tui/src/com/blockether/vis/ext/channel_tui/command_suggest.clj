@@ -37,21 +37,22 @@
 
 (defn- arg-token
   [{:keys [kind type required] :as arg}]
-  (let [n
-        (arg-name arg)
+  (let
+    [n
+     (arg-name arg)
 
-        required?
-        (true? required)
+     required?
+     (true? required)
 
-        token
-        (case kind
-          :flag
-          (if (= :boolean type) (flag-token arg) (str (flag-token arg) " <" n ">"))
+     token
+     (case kind
+       :flag
+       (if (= :boolean type) (flag-token arg) (str (flag-token arg) " <" n ">"))
 
-          :positional
-          (str "<" n ">")
+       :positional
+       (str "<" n ">")
 
-          (str "<" n ">"))]
+       (str "<" n ">"))]
 
     (if required? token (str "[" token "]"))))
 
@@ -60,11 +61,12 @@
 (defn usage
   "Return compact slash-command usage, including extension-provided args."
   [cmd]
-  (let [base
-        (str "/" (command-name cmd))
+  (let
+    [base
+     (str "/" (command-name cmd))
 
-        args
-        (seq (keep arg-token (command-args cmd)))]
+     args
+     (seq (keep arg-token (command-args cmd)))]
 
     (cond-> base
       args
@@ -83,8 +85,9 @@
   [text]
   (let [s (str/triml (or text ""))]
     (when (and (str/starts-with? s "/") (not (str/starts-with? s "//")))
-      (let [without-slash (subs s 1)
-            [token args] (str/split without-slash #"\s+" 2)]
+      (let
+        [without-slash (subs s 1)
+         [token args] (str/split without-slash #"\s+" 2)]
 
         {:query (or token "") :args (or args "")}))))
 
@@ -97,26 +100,28 @@
 
 (defn- fuzzy-score
   [query candidate]
-  (let [q
-        (str/lower-case (or query ""))
+  (let
+    [q
+     (str/lower-case (or query ""))
 
-        c
-        (str/lower-case (or candidate ""))]
+     c
+     (str/lower-case (or candidate ""))]
 
     (cond (str/blank? q) [0 0]
           (str/starts-with? c q) [0 0]
           (str/includes? c q) [1 (or (str/index-of c q) 0)]
-          :else (loop [qi
-                       0
+          :else (loop
+                  [qi
+                   0
 
-                       ci
-                       0
+                   ci
+                   0
 
-                       gaps
-                       0
+                   gaps
+                   0
 
-                       last-ci
-                       -1]
+                   last-ci
+                   -1]
 
                   (cond
                     (= qi (count q)) [2 gaps]
@@ -132,21 +137,23 @@
   ([text commands {:keys [limit selected-index] :or {limit default-limit}}]
    (when-not (slash-command-token-complete? text)
      (when-let [{:keys [query args]} (slash-query text)]
-       (let [matches (keep-indexed (fn [idx cmd]
-                                     (let [cmd' (enrich cmd)
-                                           score (fuzzy-score query (:slash/search cmd'))]
+       (let
+         [matches (keep-indexed (fn [idx cmd]
+                                  (let
+                                    [cmd' (enrich cmd)
+                                     score (fuzzy-score query (:slash/search cmd'))]
 
-                                       (when score
-                                         (assoc cmd'
-                                           :slash/score score
-                                           :slash/index idx
-                                           :slash/args args))))
-                                   commands)
-             result (->> matches
-                         (sort-by (juxt :slash/score :slash/index))
-                         (take limit)
-                         vec)
-             sel (clamp-index selected-index (count result))]
+                                    (when score
+                                      (assoc cmd'
+                                        :slash/score score
+                                        :slash/index idx
+                                        :slash/args args))))
+                                commands)
+          result (->> matches
+                      (sort-by (juxt :slash/score :slash/index))
+                      (take limit)
+                      vec)
+          sel (clamp-index selected-index (count result))]
 
          (mapv (fn [idx suggestion]
                  (assoc suggestion :slash/selected? (= idx sel)))

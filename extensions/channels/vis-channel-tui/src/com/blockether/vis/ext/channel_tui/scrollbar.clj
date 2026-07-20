@@ -38,28 +38,30 @@
    drawn and every click hit-test below should return off-thumb)."
   ([total-h inner-h scroll] (geometry total-h inner-h inner-h scroll))
   ([total-h inner-h track-h scroll]
-   (let [total-h
-         (long total-h)
+   (let
+     [total-h
+      (long total-h)
 
-         inner-h
-         (long inner-h)
+      inner-h
+      (long inner-h)
 
-         track-h
-         (long track-h)]
+      track-h
+      (long track-h)]
 
      (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
-       (let [max-scroll
-             (max 1 (- total-h inner-h))
+       (let
+         [max-scroll
+          (max 1 (- total-h inner-h))
 
-             eff
-             (let [s (long (or scroll max-scroll))]
-               (max 0 (min s max-scroll)))
+          eff
+          (let [s (long (or scroll max-scroll))]
+            (max 0 (min s max-scroll)))
 
-             thumb-h
-             THUMB_H
+          thumb-h
+          THUMB_H
 
-             thumb-top
-             (long (* (- track-h thumb-h) (/ (double eff) max-scroll)))]
+          thumb-top
+          (long (* (- track-h thumb-h) (/ (double eff) max-scroll)))]
 
          {:thumb-top-rel thumb-top :thumb-h thumb-h :max-scroll max-scroll :track-h track-h})))))
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
@@ -72,9 +74,10 @@
          thumb-fg t/dialog-hint-key
          thumb-bg t/dialog-bg}}]
   (when-let [{:keys [thumb-top-rel thumb-h] :as geom} (geometry total-h inner-h track-h scroll)]
-    (let [col (long col)
-          top (long top)
-          track-h (long track-h)]
+    (let
+      [col (long col)
+       top (long top)
+       track-h (long track-h)]
 
       (doseq [r (range track-h)]
         (p/set-colors! g track-fg track-bg)
@@ -108,46 +111,48 @@
    x-axis tolerance (default 1) — chat messages use 3 so users don't
    need pixel-perfect aim on the right gutter."
   [mx my {:keys [col top track-h x-band] :or {x-band 1}}]
-  (let [mx
-        (long mx)
+  (let
+    [mx
+     (long mx)
 
-        my
-        (long my)
+     my
+     (long my)
 
-        col
-        (long col)
+     col
+     (long col)
 
-        top
-        (long top)
+     top
+     (long top)
 
-        track-h
-        (long track-h)
+     track-h
+     (long track-h)
 
-        x-band
-        (long x-band)]
+     x-band
+     (long x-band)]
 
     (and (>= mx (- col (dec x-band))) (<= mx col) (>= my top) (< my (+ top track-h)))))
 (defn on-thumb?
   "True when (mx,my) lands on the thumb. `bar` carries `:col :top
    [:x-band]`; `geom` is the result of `geometry`."
   [mx my {:keys [col top x-band] :or {x-band 1}} {:keys [thumb-top-rel thumb-h]}]
-  (let [mx
-        (long mx)
+  (let
+    [mx
+     (long mx)
 
-        my
-        (long my)
+     my
+     (long my)
 
-        col
-        (long col)
+     col
+     (long col)
 
-        top
-        (long top)
+     top
+     (long top)
 
-        x-band
-        (long x-band)
+     x-band
+     (long x-band)
 
-        thumb-top
-        (+ top (long thumb-top-rel))]
+     thumb-top
+     (+ top (long thumb-top-rel))]
 
     (and (>= mx (- col (dec x-band)))
          (<= mx col)
@@ -169,29 +174,31 @@
   ([mouse-y top track-h total-h inner-h]
    (scroll-from-mouse-y mouse-y top track-h total-h inner-h 0))
   ([mouse-y top track-h total-h inner-h grip-offset]
-   (let [total-h
-         (long total-h)
+   (let
+     [total-h
+      (long total-h)
 
-         inner-h
-         (long inner-h)
+      inner-h
+      (long inner-h)
 
-         track-h
-         (long track-h)]
+      track-h
+      (long track-h)]
 
      (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
-       (let [thumb-h
-             THUMB_H
+       (let
+         [thumb-h
+          THUMB_H
 
-             max-scroll
-             (max 0 (- total-h inner-h))
+          max-scroll
+          (max 0 (- total-h inner-h))
 
-             rel
-             (- (long mouse-y) (long top) (long (or grip-offset 0)))
+          rel
+          (- (long mouse-y) (long top) (long (or grip-offset 0)))
 
-             denom
-             (max 1 (- track-h thumb-h))
+          denom
+          (max 1 (- track-h thumb-h))
 
-             frac
-             (max 0.0 (min 1.0 (double (/ rel denom))))]
+          frac
+          (max 0.0 (min 1.0 (double (/ rel denom))))]
 
          (long (Math/round (* frac max-scroll))))))))

@@ -49,11 +49,12 @@
                        overrides `default-offload?` when present
      :storage/priority long; higher wins when several are registered (default 0)"
   [backend]
-  (let [id
-        (:storage/id backend)
+  (let
+    [id
+     (:storage/id backend)
 
-        scheme
-        (:storage/scheme backend)]
+     scheme
+     (:storage/scheme backend)]
 
     (when-not (keyword? id)
       (throw (ex-info "Storage backend id must be a keyword"
@@ -144,12 +145,13 @@
   (let [backend (active-backend)]
     (if (and backend (:base64 att) (offload? backend att))
       (or (try (when-let [^bytes data (decode-b64 att)]
-                 (let [uri ((:storage/put-fn backend)
-                             {:bytes data
-                              :media-type (:media-type att)
-                              :kind (:kind att)
-                              :filename (:filename att)
-                              :id (:id att)})]
+                 (let
+                   [uri ((:storage/put-fn backend)
+                          {:bytes data
+                           :media-type (:media-type att)
+                           :kind (:kind att)
+                           :filename (:filename att)
+                           :id (:id att)})]
                    (when (string? uri)
                      (-> att
                          (assoc :storage-uri uri
@@ -228,19 +230,21 @@
   (when (str/blank? (str dir)) (throw (ex-info "file-backend requires :dir" {:opts {:dir dir}})))
   (let [^Path root (Path/of (str dir) (make-array String 0))]
     (Files/createDirectories root (make-array FileAttribute 0))
-    (cond-> {:storage/id id
-             :storage/scheme "file"
-             :storage/priority (long priority)
-             :storage/put-fn
-             (fn [{:keys [^bytes bytes]}]
-               (let [^Path p (.resolve root (str (UUID/randomUUID)))]
-                 (Files/write p bytes ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
-                 (str "file://" (.toAbsolutePath p))))
-             :storage/get-fn (fn [uri]
-                               (let [path (subs (str uri) (count "file://"))
-                                     ^Path p (Path/of path (make-array String 0))]
+    (cond->
+      {:storage/id id
+       :storage/scheme "file"
+       :storage/priority (long priority)
+       :storage/put-fn
+       (fn [{:keys [^bytes bytes]}]
+         (let [^Path p (.resolve root (str (UUID/randomUUID)))]
+           (Files/write p bytes ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
+           (str "file://" (.toAbsolutePath p))))
+       :storage/get-fn (fn [uri]
+                         (let
+                           [path (subs (str uri) (count "file://"))
+                            ^Path p (Path/of path (make-array String 0))]
 
-                                 (when (Files/isRegularFile p (make-array LinkOption 0))
-                                   (Files/readAllBytes p))))}
+                           (when (Files/isRegularFile p (make-array LinkOption 0))
+                             (Files/readAllBytes p))))}
       offload?
       (assoc :storage/offload? offload?))))

@@ -108,18 +108,19 @@
 
 (defn- profile-discovery
   [root opts]
-  (let [explicit-path
-        (get opts "profile")
+  (let
+    [explicit-path
+     (get opts "profile")
 
-        searched
-        (mapv #(br/resolve-path root %) default-profile-paths)
+     searched
+     (mapv #(br/resolve-path root %) default-profile-paths)
 
-        discovered
-        (or explicit-path
-            (some (fn [path]
-                    (let [resolved (br/resolve-path root path)]
-                      (when (br/exists? resolved) resolved)))
-                  default-profile-paths))]
+     discovered
+     (or explicit-path
+         (some (fn [path]
+                 (let [resolved (br/resolve-path root path)]
+                   (when (br/exists? resolved) resolved)))
+               default-profile-paths))]
 
     {:workspace-root root
      :configured? (boolean discovered)
@@ -156,14 +157,16 @@
     (when-not (:configured? discovery)
       (throw (ex-info "Bridge profile not configured."
                       {:type :vis.bridge/profile-not-found :bridge/discovery discovery})))
-    (let [profile-path* (:profile-path discovery)
-          profile (br/load-profile profile-path*)
-          policy-path (or (get opts "policy")
-                          (:verification-policy-path profile)
-                          (let [default-path (br/resolve-path (:root-path profile)
-                                                              ".bridge/verification-policy.yaml")]
-                            (when (br/exists? default-path) default-path)))
-          policy (when (and policy-path (br/exists? policy-path)) (br/load-policy policy-path))]
+    (let
+      [profile-path* (:profile-path discovery)
+       profile (br/load-profile profile-path*)
+       policy-path (or (get opts "policy")
+                       (:verification-policy-path profile)
+                       (let
+                         [default-path (br/resolve-path (:root-path profile)
+                                                        ".bridge/verification-policy.yaml")]
+                         (when (br/exists? default-path) default-path)))
+       policy (when (and policy-path (br/exists? policy-path)) (br/load-policy policy-path))]
 
       {:profile profile
        :policy policy
@@ -191,12 +194,13 @@
 
 (defn- prefixed-glob
   [prefix pattern]
-  (let [prefix*
-        (clean-path-prefix prefix)
+  (let
+    [prefix*
+     (clean-path-prefix prefix)
 
-        pattern*
-        (-> (normalize-path-fragment pattern)
-            (str/replace #"^/+" ""))]
+     pattern*
+     (-> (normalize-path-fragment pattern)
+         (str/replace #"^/+" ""))]
 
     (cond (str/blank? pattern*) nil
           (or (str/blank? prefix*) (= "." prefix*)) pattern*
@@ -206,26 +210,28 @@
 
 (defn- policy-pattern->workspace-glob
   [env profile pattern]
-  (let [workspace-root*
-        (workspace-root env)
+  (let
+    [workspace-root*
+     (workspace-root env)
 
-        ^String pattern*
-        (normalize-path-fragment pattern)
+     ^String pattern*
+     (normalize-path-fragment pattern)
 
-        file
-        (java.io.File. pattern*)]
+     file
+     (java.io.File. pattern*)]
 
-    (directory-glob (if (.isAbsolute file)
-                      (relative-to-workspace workspace-root* pattern*)
-                      (let [profile-prefix (relative-to-workspace workspace-root*
-                                                                  (:root-path profile))]
-                        (when profile-prefix (prefixed-glob profile-prefix pattern*)))))))
+    (directory-glob
+      (if (.isAbsolute file)
+        (relative-to-workspace workspace-root* pattern*)
+        (let [profile-prefix (relative-to-workspace workspace-root* (:root-path profile))]
+          (when profile-prefix (prefixed-glob profile-prefix pattern*)))))))
 
 (defn- protected-access
   [access]
-  (case (cond (keyword? access) (name access)
-              (some? access) (str access)
-              :else nil)
+  (case
+    (cond (keyword? access) (name access)
+          (some? access) (str access)
+          :else nil)
     "read-only"
     :read-only
 
@@ -258,8 +264,9 @@
   (let [discovery (profile-discovery (workspace-root env) {})]
     (if-not (:configured? discovery)
       []
-      (let [{:keys [profile policy]} (load-profile+policy env {})
-            sandbox (:bridge-path-sandbox policy)]
+      (let
+        [{:keys [profile policy]} (load-profile+policy env {})
+         sandbox (:bridge-path-sandbox policy)]
 
         (if (and sandbox (:enforce? sandbox))
           (mapv identity
@@ -297,11 +304,12 @@
 
 (defn- bridge-tool
   [op _env opts f]
-  (let [started-at-ms
-        (now-ms)
+  (let
+    [started-at-ms
+     (now-ms)
 
-        opts*
-        (normalize-opts opts)]
+     opts*
+     (normalize-opts opts)]
 
     (try (tool-success op started-at-ms (f opts*) opts*)
          (catch Throwable t
@@ -318,13 +326,14 @@
                env
                opts
                (fn [opts]
-                 (let [{:keys [profile policy profile-path policy-path]}
-                       (load-profile+policy env opts)
+                 (let
+                   [{:keys [profile policy profile-path policy-path]}
+                    (load-profile+policy env opts)
 
-                       summary
-                       (br/check profile
-                                 {:changed-files (ensure-vector (get opts "changed_files"))
-                                  :policy policy})]
+                    summary
+                    (br/check profile
+                              {:changed-files (ensure-vector (get opts "changed_files"))
+                               :policy policy})]
 
                    (assoc summary
                      :configured? true
@@ -333,11 +342,12 @@
 
 (defn- next-suggestion
   [action]
-  (let [op-name
-        (:op action)
+  (let
+    [op-name
+     (:op action)
 
-        evidence-id
-        (or (:evidence-id action) (get-in action [:args :id]))]
+     evidence-id
+     (or (:evidence-id action) (get-in action [:args :id]))]
 
     (cond (or (= "run-evidence" (:kind action)) (= "bridge/run-evidence" op-name))
           (action->extension-op (assoc action :evidence-id evidence-id))
@@ -388,10 +398,11 @@
   [root]
   (try (let [dir (java.io.File. (str root) ".bridge")]
          (when (.isDirectory dir)
-           (loop [stack [dir]
-                  mx 0
-                  sz 0
-                  n 0]
+           (loop
+             [stack [dir]
+              mx 0
+              sz 0
+              n 0]
 
              (if-let [^java.io.File f (peek stack)]
                (let [stack (pop stack)]
@@ -429,24 +440,26 @@
    fingerprint) or the cached value ages past `hint-recheck-ms` — rather than
    running a fresh reflective check on every single agent iteration."
   [{:keys [environment]}]
-  (let [env
-        (or environment {})
+  (let
+    [env
+     (or environment {})
 
-        root
-        (workspace-root env)
+     root
+     (workspace-root env)
 
-        discovery
-        (profile-discovery root {})]
+     discovery
+     (profile-discovery root {})]
 
     (when (:configured? discovery)
-      (let [fp
-            (bridge-dir-fingerprint root)
+      (let
+        [fp
+         (bridge-dir-fingerprint root)
 
-            now
-            (now-ms)
+         now
+         (now-ms)
 
-            cached
-            (get @hint-cache root)]
+         cached
+         (get @hint-cache root)]
 
         (if (and cached
                  (= (:fingerprint cached) fp)
@@ -464,11 +477,12 @@
                  env
                  opts
                  (fn [opts]
-                   (let [root
-                         (or (get opts "root") (workspace-root env))
+                   (let
+                     [root
+                      (or (get opts "root") (workspace-root env))
 
-                         discovery
-                         (profile-discovery root opts)]
+                      discovery
+                      (profile-discovery root opts)]
 
                      (if (:configured? discovery)
                        {:configured? true
@@ -479,11 +493,12 @@
                         :created []
                         :updated []
                         :message "Bridge is already configured for this workspace."}
-                       (let [result
-                             (br/init! {:root root})
+                       (let
+                         [result
+                          (br/init! {:root root})
 
-                             refreshed
-                             (profile-discovery root opts)]
+                          refreshed
+                          (profile-discovery root opts)]
 
                          {:configured? true
                           :already-configured? false
@@ -504,8 +519,9 @@
                                    (let [discovery (profile-discovery (workspace-root env) opts)]
                                      (if-not (:configured? discovery)
                                        (no-profile-result discovery)
-                                       (let [{:keys [profile policy profile-path policy-path]}
-                                             (load-profile+policy env opts)]
+                                       (let
+                                         [{:keys [profile policy profile-path policy-path]}
+                                          (load-profile+policy env opts)]
                                          {:configured? true
                                           :summary (br/profile-summary profile)
                                           :profile-path profile-path
@@ -515,11 +531,12 @@
 (defn check
   "Run Bridge check. `await br_check({\"changed_files\": [path, ...]})` (also `\"profile\"`/`\"policy\"`). Returns `{\"status\", \"issue_count\", \"next_action\", ...}` (an unconfigured project returns `\"next_step\"` guidance instead) — summarize it, don't paste raw."
   [env & [opts]]
-  (let [opts*
-        (normalize-opts opts)
+  (let
+    [opts*
+     (normalize-opts opts)
 
-        discovery
-        (profile-discovery (workspace-root env) opts*)]
+     discovery
+     (profile-discovery (workspace-root env) opts*)]
 
     (stringify-result (if-not (:configured? discovery)
                         (tool-success :br/check
@@ -535,11 +552,12 @@
 (defn next
   "Next suggested Bridge action(s). `await br_next({\"changed_files\": [path, ...]})`. Returns `{\"status\", \"suggestions\": [...], \"next_step\"}`."
   [env & [opts]]
-  (let [opts*
-        (normalize-opts opts)
+  (let
+    [opts*
+     (normalize-opts opts)
 
-        discovery
-        (profile-discovery (workspace-root env) opts*)]
+     discovery
+     (profile-discovery (workspace-root env) opts*)]
 
     (stringify-result
       (if-not (:configured? discovery)
@@ -557,18 +575,18 @@
 (defn list-evidence
   "List the active profile's evidence commands. `await br_list_evidence()`. Returns `{\"commands\": [...]}`."
   [env & [opts]]
-  (stringify-result (bridge-tool :br/list-evidence
-                                 env
-                                 opts
-                                 (fn [opts]
-                                   (let [discovery (profile-discovery (workspace-root env) opts)]
-                                     (if-not (:configured? discovery)
-                                       (assoc (no-profile-result discovery) :commands [])
-                                       (let [{:keys [profile profile-path]}
-                                             (load-profile+policy env opts)]
-                                         {:configured? true
-                                          :profile-path profile-path
-                                          :commands (br/list-commands profile)})))))))
+  (stringify-result (bridge-tool
+                      :br/list-evidence
+                      env
+                      opts
+                      (fn [opts]
+                        (let [discovery (profile-discovery (workspace-root env) opts)]
+                          (if-not (:configured? discovery)
+                            (assoc (no-profile-result discovery) :commands [])
+                            (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
+                              {:configured? true
+                               :profile-path profile-path
+                               :commands (br/list-commands profile)})))))))
 
 (defn run-evidence
   "Run one evidence command and write its receipt. `await br_run_evidence(id, {\"subject\": s, \"out\": path, \"out_dir\": path, \"timeout_seconds\": n, \"is_dry_run\": True})`. `is_dry_run` previews the plan without writing."
@@ -662,31 +680,33 @@
    `--timeout-seconds N`, `--dry-run`. Unknown flags raise so the
    user sees a structural error instead of a silent drop."
   [residual]
-  (loop [xs
-         (vec residual)
+  (loop
+    [xs
+     (vec residual)
 
-         opts
-         {}]
+     opts
+     {}]
 
     (let [[head & tail] xs]
       (cond (nil? head) opts
             (= "--dry-run" head) (recur (vec tail) (assoc opts "is_dry_run" true))
             (#{"--profile" "--policy" "--subject" "--out" "--out-dir"} head)
-            (let [k (case head
-                      "--profile"
-                      "profile"
+            (let
+              [k (case head
+                   "--profile"
+                   "profile"
 
-                      "--policy"
-                      "policy"
+                   "--policy"
+                   "policy"
 
-                      "--subject"
-                      "subject"
+                   "--subject"
+                   "subject"
 
-                      "--out"
-                      "out"
+                   "--out"
+                   "out"
 
-                      "--out-dir"
-                      "out_dir")]
+                   "--out-dir"
+                   "out_dir")]
               (recur (vec (rest tail)) (assoc opts k (first tail))))
             (= "--changed-file" head)
             (recur (vec (rest tail)) (update opts "changed_files" (fnil conj []) (first tail)))

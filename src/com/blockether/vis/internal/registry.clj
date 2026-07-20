@@ -354,14 +354,15 @@
    entry, useful for REPL-driven development. Returns the validated
    command map."
   [spec]
-  (let [c
-        (command spec)
+  (let
+    [c
+     (command spec)
 
-        k
-        (registry-key c)
+     k
+     (registry-key c)
 
-        cur
-        @command-registry]
+     cur
+     @command-registry]
 
     (reset! command-registry (let [stripped (vec (remove #(= k (registry-key %)) cur))]
                                (conj stripped c)))
@@ -420,14 +421,15 @@
    :cmd/doc (:channel/doc c)
    :cmd/usage (or (:channel/usage c) (str "vis channels " (:channel/cmd c)))
    :cmd/owns-tty? (boolean (:channel/owns-tty? c))
-   :cmd/subcommands #(let [s
-                           (:channel/subcommands c)
+   :cmd/subcommands #(let
+                       [s
+                        (:channel/subcommands c)
 
-                           direct
-                           (cond (nil? s) []
-                                 (ifn? s) (vec (s))
-                                 (sequential? s) (vec s)
-                                 :else [])]
+                        direct
+                        (cond (nil? s) []
+                              (ifn? s) (vec (s))
+                              (sequential? s) (vec s)
+                              :else [])]
 
                        (into direct (registered-under ["channels" (:channel/cmd c)])))
    :cmd/run-fn (fn [_parsed residual]
@@ -445,14 +447,15 @@
    stray extension can't shadow a real channel name. Both sorted
    together so help output is alphabetic."
   []
-  (let [from-channels
-        (mapv channel->command (registered-channels))
+  (let
+    [from-channels
+     (mapv channel->command (registered-channels))
 
-        regd
-        (registered-under ["channels"])
+     regd
+     (registered-under ["channels"])
 
-        names
-        (set (map :cmd/name from-channels))]
+     names
+     (set (map :cmd/name from-channels))]
 
     (vec (sort-by :cmd/name (concat from-channels (remove #(names (:cmd/name %)) regd))))))
 

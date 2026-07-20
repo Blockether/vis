@@ -28,18 +28,20 @@
              (it "doctor-fn is a function suitable for `:ext/doctor-fn`"
                  (expect (fn? doctor/doctor-fn)))
              (it "every emitted message carries one of the documented :check-ids in section order"
-                 (let [msgs
-                       (doctor/doctor-fn {})
+                 (let
+                   [msgs
+                    (doctor/doctor-fn {})
 
-                       ids
-                       (distinct (mapv :check-id msgs))]
+                    ids
+                    (distinct (mapv :check-id msgs))]
 
                    (expect (every? #{::doctor/agents-md} ids))
                    ;; Sections appear in documented order.
-                   (let [section-order
-                         [::doctor/agents-md]
+                   (let
+                     [section-order
+                      [::doctor/agents-md]
 
-                         present
-                         (filter (set ids) section-order)]
+                      present
+                      (filter (set ids) section-order)]
 
                      (expect (= present ids))))))

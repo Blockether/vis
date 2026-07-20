@@ -15,11 +15,12 @@
    `**/`→optional dir prefix, `?`→`[^/]`, `[...]` char classes preserved
    (`[!` → `[^`); every other char is taken literally."
   ^String [^String pat]
-  (let [n
-        (count pat)
+  (let
+    [n
+     (count pat)
 
-        sb
-        (StringBuilder.)]
+     sb
+     (StringBuilder.)]
 
     (loop [i 0]
       (when (< i n)
@@ -37,8 +38,9 @@
             (= c \[) (let [close (.indexOf pat "]" (inc i))]
                        (if (neg? close)
                          (do (.append sb "\\[") (recur (inc i)))
-                         (let [body (subs pat (inc i) close)
-                               body (if (str/starts-with? body "!") (str "^" (subs body 1)) body)]
+                         (let
+                           [body (subs pat (inc i) close)
+                            body (if (str/starts-with? body "!") (str "^" (subs body 1)) body)]
 
                            (.append sb "[")
                            (.append sb body)
@@ -63,19 +65,20 @@
   [^String raw]
   (let [line (str/replace raw #"\s+$" "")]
     (when-not (or (str/blank? line) (str/starts-with? line "#"))
-      (let [neg? (str/starts-with? line "!")
-            line (if neg? (subs line 1) line)
-            ;; an unescaped leading `\` escapes a literal `#`/`!`
-            line (if (str/starts-with? line "\\") (subs line 1) line)
-            dir? (str/ends-with? line "/")
-            line (if dir? (subs line 0 (dec (count line))) line)
-            ;; anchored when a `/` appears anywhere but the (already stripped)
-            ;; trailing one — including a leading `/`.
-            anchored? (str/includes? line "/")
-            line (if (str/starts-with? line "/") (subs line 1) line)
-            body (translate-body line)
-            self (re-pattern (str "^" body "$"))
-            under (re-pattern (str "^" body "/.*$"))]
+      (let
+        [neg? (str/starts-with? line "!")
+         line (if neg? (subs line 1) line)
+         ;; an unescaped leading `\` escapes a literal `#`/`!`
+         line (if (str/starts-with? line "\\") (subs line 1) line)
+         dir? (str/ends-with? line "/")
+         line (if dir? (subs line 0 (dec (count line))) line)
+         ;; anchored when a `/` appears anywhere but the (already stripped)
+         ;; trailing one — including a leading `/`.
+         anchored? (str/includes? line "/")
+         line (if (str/starts-with? line "/") (subs line 1) line)
+         body (translate-body line)
+         self (re-pattern (str "^" body "$"))
+         under (re-pattern (str "^" body "/.*$"))]
 
         {:neg? neg? :dir? dir? :anchored? anchored? :self self :under under}))))
 
@@ -95,12 +98,13 @@
    `corp/` while `.gitignore` keeps git ignoring it. The returned value is opaque;
    pass it to `ignored?`."
   [^File root]
-  (let [rules (into []
-                    (comp (map #(io/file root ^String %))
-                          (filter (fn [^File f]
-                                    (.exists f)))
-                          (mapcat #(keep compile-rule (str/split-lines (slurp %)))))
-                    ignore-file-names)]
+  (let
+    [rules (into []
+                 (comp (map #(io/file root ^String %))
+                       (filter (fn [^File f]
+                                 (.exists f)))
+                       (mapcat #(keep compile-rule (str/split-lines (slurp %)))))
+                 ignore-file-names)]
     (when (seq rules) rules)))
 
 (defn compile-rules
@@ -140,23 +144,26 @@
   [matcher ^String rel path-dir?]
   (boolean
     (when (and matcher (seq rel))
-      (let [;; `/`-aligned suffixes: `rel` itself and the tail after each `/`.
-            suffixes (loop [acc (transient [rel])
-                            i (.indexOf rel (int \/))]
+      (let
+        [;; `/`-aligned suffixes: `rel` itself and the tail after each `/`.
+         suffixes (loop
+                    [acc (transient [rel])
+                     i (.indexOf rel (int \/))]
 
-                       (if (neg? i)
-                         (persistent! acc)
-                         (let [nxt (unchecked-inc i)]
-                           (recur (conj! acc (subs rel nxt)) (.indexOf rel (int \/) nxt)))))]
+                    (if (neg? i)
+                      (persistent! acc)
+                      (let [nxt (unchecked-inc i)]
+                        (recur (conj! acc (subs rel nxt)) (.indexOf rel (int \/) nxt)))))]
         (reduce (fn [ignored {:keys [neg? dir? anchored? self under]}]
-                  (let [cands (if anchored? [rel] suffixes)
-                        match? (if dir?
-                                 ;; dir-only rule: children (`under`) always match;
-                                 ;; the exact path matches only when it is itself a dir.
-                                 (or (boolean (some #(re-matches under %) cands))
-                                     (and path-dir? (boolean (some #(re-matches self %) cands))))
-                                 (or (boolean (some #(re-matches self %) cands))
-                                     (boolean (some #(re-matches under %) cands))))]
+                  (let
+                    [cands (if anchored? [rel] suffixes)
+                     match? (if dir?
+                              ;; dir-only rule: children (`under`) always match;
+                              ;; the exact path matches only when it is itself a dir.
+                              (or (boolean (some #(re-matches under %) cands))
+                                  (and path-dir? (boolean (some #(re-matches self %) cands))))
+                              (or (boolean (some #(re-matches self %) cands))
+                                  (boolean (some #(re-matches under %) cands))))]
 
                     (if match? (not neg?) ignored)))
                 false

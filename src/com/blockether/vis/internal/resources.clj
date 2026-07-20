@@ -134,16 +134,17 @@
    `\"session\"` is stamped from the owning session."
   [session {:keys [id kind label status detail pid owner language]}
    {:keys [stop-fn restart-fn logs-fn health-fn]}]
-  (cond-> {"id" (str id)
-           "session" (skey session)
-           "kind" (sval (or kind :resource))
-           "label" (str (or label id))
-           "status" (sval (or status :up))
-           "can_stop" (boolean stop-fn)
-           "can_restart" (boolean restart-fn)
-           "can_logs" (boolean logs-fn)
-           "can_health" (boolean health-fn)
-           "created_at" (System/currentTimeMillis)}
+  (cond->
+    {"id" (str id)
+     "session" (skey session)
+     "kind" (sval (or kind :resource))
+     "label" (str (or label id))
+     "status" (sval (or status :up))
+     "can_stop" (boolean stop-fn)
+     "can_restart" (boolean restart-fn)
+     "can_logs" (boolean logs-fn)
+     "can_health" (boolean health-fn)
+     "created_at" (System/currentTimeMillis)}
     detail
     (assoc "detail" detail)
 
@@ -168,14 +169,15 @@
    reports `can_stop false`). Returns the stored DATA map."
   ([session resource] (register! session resource nil))
   ([session resource {:keys [stop-fn restart-fn alive-fn logs-fn health-fn] :as fns}]
-   (let [sid
-         (skey session)
+   (let
+     [sid
+      (skey session)
 
-         id
-         (str (:id resource))
+      id
+      (str (:id resource))
 
-         data
-         (->data session resource fns)]
+      data
+      (->data session resource fns)]
 
      (swap! registry assoc-in
        [sid id]
@@ -201,15 +203,17 @@
   "Patch the DATA of an existing resource (e.g. flip `:status`, refresh
    `:detail`). No-op if unknown. Returns the updated DATA map or nil."
   [session id patch]
-  (let [sid
-        (skey session)
+  (let
+    [sid
+     (skey session)
 
-        id
-        (str id)]
+     id
+     (str id)]
 
     (when (get-in @registry [sid id])
-      (let [data (-> (swap! registry update-in [sid id :data] merge (normalize-patch patch))
-                     (get-in [sid id :data]))]
+      (let
+        [data (-> (swap! registry update-in [sid id :data] merge (normalize-patch patch))
+                  (get-in [sid id :data]))]
         (persist-snapshot!)
         data))))
 
@@ -217,14 +221,15 @@
   "Drop a resource from `session` (does NOT run its stop-fn — caller decides).
    Returns true if something was removed."
   [session id]
-  (let [sid
-        (skey session)
+  (let
+    [sid
+     (skey session)
 
-        id
-        (str id)
+     id
+     (str id)
 
-        present
-        (boolean (get-in @registry [sid id]))]
+     present
+     (boolean (get-in @registry [sid id]))]
 
     (when present
       (swap! registry update sid dissoc id)
@@ -236,18 +241,19 @@
   "Drop `session` resources whose process is gone (per `:alive-fn`/pid). Returns
    the vector of pruned ids. Cheap enough to call before every list/render."
   [session]
-  (let [sid
-        (skey session)
+  (let
+    [sid
+     (skey session)
 
-        snap
-        (get @registry sid)
+     snap
+     (get @registry sid)
 
-        dead
-        (into []
-              (comp (filter (fn [[_ r]]
-                              (not (record-alive? r))))
-                    (map key))
-              snap)]
+     dead
+     (into []
+           (comp (filter (fn [[_ r]]
+                           (not (record-alive? r))))
+                 (map key))
+           snap)]
 
     (when (seq dead)
       (apply swap! registry update sid dissoc dead)
@@ -266,17 +272,18 @@
    :down …); nil / a throw / a timeout means UNKNOWN and leaves the stored
    status alone. Best-effort; persists once when anything flipped."
   [session]
-  (let [sid
-        (skey session)
+  (let
+    [sid
+     (skey session)
 
-        probes
-        (into []
-              (keep (fn [[id {:keys [health-fn]}]]
-                      (when health-fn [id (future (try (health-fn) (catch Throwable _ nil)))])))
-              (get @registry sid))
+     probes
+     (into []
+           (keep (fn [[id {:keys [health-fn]}]]
+                   (when health-fn [id (future (try (health-fn) (catch Throwable _ nil)))])))
+           (get @registry sid))
 
-        changed?
-        (volatile! false)]
+     changed?
+     (volatile! false)]
 
     (doseq [[id fut] probes]
       (let [st (deref fut health-timeout-ms nil)]
@@ -305,17 +312,17 @@
   "Canonical workspace-relative REPL directory for model lookup. The workspace
    root is `\".\"`; nested dirs use forward slashes; external dirs stay absolute."
   [root dir]
-  (try (let [root
-             (some-> root
-                     io/file
-                     .getCanonicalFile)
+  (try (let
+         [root
+          (some-> root
+                  io/file
+                  .getCanonicalFile)
 
-             target
-             (cond (and dir (.isAbsolute (io/file (str dir)))) (.getCanonicalFile (io/file (str
-                                                                                             dir)))
-                   root (.getCanonicalFile (io/file root (str (or dir ""))))
-                   dir (.getCanonicalFile (io/file (str dir)))
-                   :else nil)]
+          target
+          (cond (and dir (.isAbsolute (io/file (str dir)))) (.getCanonicalFile (io/file (str dir)))
+                root (.getCanonicalFile (io/file root (str (or dir ""))))
+                dir (.getCanonicalFile (io/file (str dir)))
+                :else nil)]
 
          (cond (nil? target) "."
                (nil? root) (.getPath target)
@@ -334,29 +341,30 @@
    with empty maps so absence at a dir means inactive. Non-REPL resources live
    under `[\"other\"][kind][id]`. The registry/footer keep their flat DATA API."
   [resource-data {:keys [root languages]}]
-  (let [seed-repls
-        (into (sorted-map)
-              (map (fn [language]
-                     [(str/lower-case (str language)) (sorted-map)]))
-              languages)
+  (let
+    [seed-repls
+     (into (sorted-map)
+           (map (fn [language]
+                  [(str/lower-case (str language)) (sorted-map)]))
+           languages)
 
-        {:keys [repls other]}
-        (reduce (fn [{:keys [repls other] :as acc} resource]
-                  (let [kind (get resource "kind")]
-                    (if (repl-kind? kind)
-                      (let [language (str/lower-case (str (or (get resource "language") "unknown")))
-                            detail (or (get resource "detail") {})
-                            dir (model-dir root (get detail "dir"))
-                            leaf (-> resource
-                                     (dissoc "detail")
-                                     (merge detail)
-                                     (assoc "dir" dir))]
+     {:keys [repls other]}
+     (reduce (fn [{:keys [repls other] :as acc} resource]
+               (let [kind (get resource "kind")]
+                 (if (repl-kind? kind)
+                   (let
+                     [language (str/lower-case (str (or (get resource "language") "unknown")))
+                      detail (or (get resource "detail") {})
+                      dir (model-dir root (get detail "dir"))
+                      leaf (-> resource
+                               (dissoc "detail")
+                               (merge detail)
+                               (assoc "dir" dir))]
 
-                        (assoc acc :repls (assoc-in repls [language dir] leaf)))
-                      (assoc acc
-                        :other (assoc-in other [(str kind) (get resource "id")] resource)))))
-                {:repls seed-repls :other (sorted-map)}
-                (sort-by #(get % "id") resource-data))]
+                     (assoc acc :repls (assoc-in repls [language dir] leaf)))
+                   (assoc acc :other (assoc-in other [(str kind) (get resource "id")] resource)))))
+             {:repls seed-repls :other (sorted-map)}
+             (sort-by #(get % "id") resource-data))]
 
     (cond-> (array-map)
       (seq repls)
@@ -384,22 +392,24 @@
    agent tool and the footer both land here, always scoped to `session` so no
    session can stop another's resource. Returns a result map."
   [session id]
-  (let [sid
-        (skey session)
+  (let
+    [sid
+     (skey session)
 
-        id
-        (str id)
+     id
+     (str id)
 
-        r
-        (get-in @registry [sid id])]
+     r
+     (get-in @registry [sid id])]
 
     (cond (nil? r) {:result :unknown :id id :message "No such resource in this session."}
           (nil? (:stop-fn r))
           {:result :not-stoppable
            :id id
            :message "Resource has no stop handle (owner must re-register after a restart)."}
-          :else (let [res (try {:ok (do ((:stop-fn r)) true)}
-                               (catch Throwable t {:error (ex-message t)}))]
+          :else (let
+                  [res (try {:ok (do ((:stop-fn r)) true)}
+                            (catch Throwable t {:error (ex-message t)}))]
                   (unregister! session id)
                   (if (:error res)
                     {:result :error :id id :message (:error res)}
@@ -409,14 +419,15 @@
   "Run a resource's `:restart-fn` (kept registered). Scoped to `session`. The
    restart-fn owns re-registration of any changed DATA (e.g. a new port)."
   [session id]
-  (let [sid
-        (skey session)
+  (let
+    [sid
+     (skey session)
 
-        id
-        (str id)
+     id
+     (str id)
 
-        r
-        (get-in @registry [sid id])]
+     r
+     (get-in @registry [sid id])]
 
     (cond (nil? r) {:result :unknown :id id :message "No such resource in this session."}
           (nil? (:restart-fn r))

@@ -57,14 +57,15 @@
                               :state :active})))
 (defn- pin-session!
   [store workspace-id]
-  (let [ds
-        (:datasource store)
+  (let
+    [ds
+     (:datasource store)
 
-        sid
-        (str (java.util.UUID/randomUUID))
+     sid
+     (str (java.util.UUID/randomUUID))
 
-        st
-        (str (java.util.UUID/randomUUID))]
+     st
+     (str (java.util.UUID/randomUUID))]
 
     (jdbc/execute! ds
                    ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
@@ -83,17 +84,18 @@
 (defdescribe ctx-contract-test
              (it "requires the canonical namespaced session state key"
                  (with-store (fn [store]
-                               (let [env
-                                     (env-with store)
+                               (let
+                                 [env
+                                  (env-with store)
 
-                                     out
-                                     (slash/dispatch env
-                                                     {:channel/id :tui
-                                                      :session/id "soul"
-                                                      :session-state-id
-                                                      (str (java.util.UUID/randomUUID))
-                                                      :db-info store}
-                                                     "/draft new flat-key")]
+                                  out
+                                  (slash/dispatch env
+                                                  {:channel/id :tui
+                                                   :session/id "soul"
+                                                   :session-state-id (str
+                                                                       (java.util.UUID/randomUUID))
+                                                   :db-info store}
+                                                  "/draft new flat-key")]
 
                                  (expect (= :error (get-in out [:result :slash/status])))
                                  (expect (str/includes? (get-in out [:result :slash/title])
@@ -112,8 +114,9 @@
       (let [tops (filter #(nil? (:slash/parent %)) ws-slashes/specs)]
         (expect (contains? (set (map :slash/name tops)) "root"))))
   (it "the /fs slash commands carry no channel availability gate (every channel gets them)"
-      (let [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
-                            ws-slashes/specs)]
+      (let
+        [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
+                         ws-slashes/specs)]
         (expect (every? #(nil? (:slash/availability-fn %)) fs-tree))))
   (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
       (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
@@ -135,17 +138,18 @@
   "Seed + pin a session, then mint a real draft (clone of `base`) as its
    active draft. Returns [env state-id draft]."
   [store base]
-  (let [seed
-        (seed-workspace! store base)
+  (let
+    [seed
+     (seed-workspace! store base)
 
-        state-id
-        (pin-session! store (:id seed))
+     state-id
+     (pin-session! store (:id seed))
 
-        env
-        (env-with store)
+     env
+     (env-with store)
 
-        draft
-        (workspace/create! store {:session-state-id state-id})]
+     draft
+     (workspace/create! store {:session-state-id state-id})]
 
     [env state-id draft]))
 (defdescribe
@@ -192,12 +196,13 @@
                    (fn []
                      (with-store
                        (fn [store]
-                         (let [[env state-id draft] (setup! store base)
-                               out (dispatch! env store state-id "/draft abandon not-good")
-                               ;; abandon discards the draft and re-pins the session to
-                               ;; a fresh active workspace (trunk) — read it off the
-                               ;; session.
-                               fresh (:id (workspace/for-session store state-id))]
+                         (let
+                           [[env state-id draft] (setup! store base)
+                            out (dispatch! env store state-id "/draft abandon not-good")
+                            ;; abandon discards the draft and re-pins the session to
+                            ;; a fresh active workspace (trunk) — read it off the
+                            ;; session.
+                            fresh (:id (workspace/for-session store state-id))]
 
                            (try (expect (= :ok (get-in out [:result :slash/status])))
                                 (expect (= (:id draft)
@@ -226,11 +231,12 @@
                              (fn []
                                (with-store
                                  (fn [store]
-                                   (let [seed (seed-workspace! store base)
-                                         state-id (pin-session! store (:id seed))
-                                         env (env-with store)
-                                         out (dispatch! env store state-id "/draft-fresh scratch")
-                                         draft (workspace/for-session store state-id)]
+                                   (let
+                                     [seed (seed-workspace! store base)
+                                      state-id (pin-session! store (:id seed))
+                                      env (env-with store)
+                                      out (dispatch! env store state-id "/draft-fresh scratch")
+                                      draft (workspace/for-session store state-id)]
 
                                      (try
                                        (expect (= :ok (get-in out [:result :slash/status])))
@@ -247,10 +253,11 @@
   (it "/draft-fresh requires a label, like /draft new"
       (with-store (fn [store]
                     (let [base (temp-dir "vis-draft-fresh-nolabel")]
-                      (try (let [seed (seed-workspace! store base)
-                                 state-id (pin-session! store (:id seed))
-                                 env (env-with store)
-                                 out (dispatch! env store state-id "/draft-fresh")]
+                      (try (let
+                             [seed (seed-workspace! store base)
+                              state-id (pin-session! store (:id seed))
+                              env (env-with store)
+                              out (dispatch! env store state-id "/draft-fresh")]
 
                              (expect (= :error (get-in out [:result :slash/status])))
                              (expect (str/includes? (get-in out [:result :slash/title])
@@ -269,15 +276,16 @@
       (with-store
         (fn [store]
           (let [base (temp-dir "vis-draft-unavailable")]
-            (try (let [seed (seed-workspace! store base)
-                       state-id (pin-session! store (:id seed))
-                       env (env-with store)]
+            (try (let
+                   [seed (seed-workspace! store base)
+                    state-id (pin-session! store (:id seed))
+                    env (env-with store)]
 
-                   (with-redefs [workspace/isolated-workspaces-supported? (constantly false)
-                                 workspace/workspace-capability-matrix
-                                 (constantly [{:backend :rift
-                                               :available? false
-                                               :capabilities #{:isolated-fork}}])]
+                   (with-redefs
+                     [workspace/isolated-workspaces-supported? (constantly false)
+                      workspace/workspace-capability-matrix
+                      (constantly
+                        [{:backend :rift :available? false :capabilities #{:isolated-fork}}])]
 
                      (let [out (dispatch! env store state-id "/draft new test")]
                        (expect (= :error (get-in out [:result :slash/status])))
@@ -289,24 +297,26 @@
 (defdescribe
   dispatch-root-test
   (it "/root <path> repoints the session's primary filesystem root"
-      (let [a
-            (temp-dir "vis-slash-root-a")
+      (let
+        [a
+         (temp-dir "vis-slash-root-a")
 
-            b
-            (temp-dir "vis-slash-root-b")]
+         b
+         (temp-dir "vis-slash-root-b")]
 
         (try (with-store (fn [store]
-                           (let [trunk
-                                 (workspace/create-trunk-at! store a)
+                           (let
+                             [trunk
+                              (workspace/create-trunk-at! store a)
 
-                                 state-id
-                                 (pin-session! store (:id trunk))
+                              state-id
+                              (pin-session! store (:id trunk))
 
-                                 env
-                                 (env-with store)
+                              env
+                              (env-with store)
 
-                                 out
-                                 (dispatch! env store state-id (str "/root " b))]
+                              out
+                              (dispatch! env store state-id (str "/root " b))]
 
                              (expect (= :ok (get-in out [:result :slash/status])))
                              (expect (= (workspace/normalize-root b)
@@ -315,38 +325,41 @@
   (it "bare /root reports the current root without changing anything"
       (let [a (temp-dir "vis-slash-root-show")]
         (try (with-store (fn [store]
-                           (let [trunk (workspace/create-trunk-at! store a)
-                                 state-id (pin-session! store (:id trunk))
-                                 env (env-with store)
-                                 out (dispatch! env store state-id "/root")]
+                           (let
+                             [trunk (workspace/create-trunk-at! store a)
+                              state-id (pin-session! store (:id trunk))
+                              env (env-with store)
+                              out (dispatch! env store state-id "/root")]
 
                              (expect (= :ok (get-in out [:result :slash/status])))
                              (expect (= (:id trunk)
                                         (:id (workspace/for-session store state-id)))))))
              (finally (delete-tree! a)))))
   (it "/fs lists the root plus additional filesystem roots"
-      (let [a
-            (temp-dir "vis-slash-fs-a")
+      (let
+        [a
+         (temp-dir "vis-slash-fs-a")
 
-            ext
-            (temp-dir "vis-slash-fs-ext")]
+         ext
+         (temp-dir "vis-slash-fs-ext")]
 
         (try (with-store
                (fn [store]
-                 (let [trunk
-                       (workspace/create-trunk-at! store a)
+                 (let
+                   [trunk
+                    (workspace/create-trunk-at! store a)
 
-                       state-id
-                       (pin-session! store (:id trunk))
+                    state-id
+                    (pin-session! store (:id trunk))
 
-                       env
-                       (env-with store)
+                    env
+                    (env-with store)
 
-                       _
-                       (dispatch! env store state-id (str "/fs add " ext))
+                    _
+                    (dispatch! env store state-id (str "/fs add " ext))
 
-                       out
-                       (dispatch! env store state-id "/fs list")]
+                    out
+                    (dispatch! env store state-id "/fs list")]
 
                    (expect (= :ok (get-in out [:result :slash/status])))
                    (expect (= [(workspace/normalize-root ext)]
@@ -358,40 +371,42 @@
   fs-confinement-sync-test
   (it
     "/fs add resets the live sandbox confinement pointer in the SAME turn"
-    (let [a
-          (temp-dir "vis-slash-conf-a")
+    (let
+      [a
+       (temp-dir "vis-slash-conf-a")
 
-          ext
-          (temp-dir "vis-slash-conf-ext")]
+       ext
+       (temp-dir "vis-slash-conf-ext")]
 
       (try
         (with-store
           (fn [store]
-            (let [trunk
-                  (workspace/create-trunk-at! store a)
+            (let
+              [trunk
+               (workspace/create-trunk-at! store a)
 
-                  state-id
-                  (pin-session! store (:id trunk))
+               state-id
+               (pin-session! store (:id trunk))
 
-                  env
-                  (env-with store)
+               env
+               (env-with store)
 
-                  ;; The gateway seeds this atom from the workspace at turn
-                  ;; start; `sandbox-roots-fn` derefs it on every real-fs
-                  ;; access. Before the fix `/fs add` never touched it, so
-                  ;; the new root stayed invisible until the next run-turn!.
-                  ws-atom
-                  (atom (workspace/for-session store state-id))
+               ;; The gateway seeds this atom from the workspace at turn
+               ;; start; `sandbox-roots-fn` derefs it on every real-fs
+               ;; access. Before the fix `/fs add` never touched it, so
+               ;; the new root stayed invisible until the next run-turn!.
+               ws-atom
+               (atom (workspace/for-session store state-id))
 
-                  ctx
-                  {:channel/id :tui
-                   :session/id "soul"
-                   :session/state-id state-id
-                   :db-info store
-                   :workspace-atom ws-atom}
+               ctx
+               {:channel/id :tui
+                :session/id "soul"
+                :session/state-id state-id
+                :db-info store
+                :workspace-atom ws-atom}
 
-                  out
-                  (slash/dispatch env ctx (str "/fs add " ext))]
+               out
+               (slash/dispatch env ctx (str "/fs add " ext))]
 
               (expect (= :ok (get-in out [:result :slash/status])))
               ;; Pointer now reflects the widened workspace — confinement

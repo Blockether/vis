@@ -7,17 +7,18 @@
 
 (defn- write-silence-wav!
   [^java.io.File file seconds]
-  (let [format
-        (AudioFormat. 16000.0 16 1 true false)
+  (let
+    [format
+     (AudioFormat. 16000.0 16 1 true false)
 
-        frame-count
-        (long (* 16000 seconds))
+     frame-count
+     (long (* 16000 seconds))
 
-        audio-bytes
-        (byte-array (* frame-count 2))
+     audio-bytes
+     (byte-array (* frame-count 2))
 
-        stream
-        (AudioInputStream. (ByteArrayInputStream. audio-bytes) format frame-count)]
+     stream
+     (AudioInputStream. (ByteArrayInputStream. audio-bytes) format frame-count)]
 
     (AudioSystem/write stream AudioFileFormat$Type/WAVE file)
     file))
@@ -31,9 +32,10 @@
                   :tokens "/m/tokens.txt"}
                  (asr/model-files "/m"))))
   (it "detects installed model files"
-      (let [dir (.toFile (java.nio.file.Files/createTempDirectory
-                           "vis-voice-asr-test"
-                           (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (let
+        [dir (.toFile (java.nio.file.Files/createTempDirectory
+                        "vis-voice-asr-test"
+                        (make-array java.nio.file.attribute.FileAttribute 0)))]
         (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
           (spit (io/file dir name) "x"))
         (expect (true? (asr/model-installed? (str dir))))))
@@ -55,8 +57,9 @@
       ;; handing this to the native WaveReader SIGSEGVs the whole JVM
       (let [wav (java.io.File/createTempFile "vis-voice-asr-truncated" ".wav")]
         (write-silence-wav! wav 2.0)
-        (let [bytes (java.nio.file.Files/readAllBytes (.toPath wav))
-              cut (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
+        (let
+          [bytes (java.nio.file.Files/readAllBytes (.toPath wav))
+           cut (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
 
           (java.nio.file.Files/write (.toPath wav)
                                      cut
@@ -92,22 +95,24 @@
                               ex-data
                               :type)))))))
   (it "surfaces invalid WAVs from transcribe-file! before any native code runs"
-      (let [dir
-            (.toFile (java.nio.file.Files/createTempDirectory
-                       "vis-voice-asr-model-test"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+      (let
+        [dir
+         (.toFile (java.nio.file.Files/createTempDirectory
+                    "vis-voice-asr-model-test"
+                    (make-array java.nio.file.attribute.FileAttribute 0)))
 
-            wav
-            (java.io.File/createTempFile "vis-voice-asr-truncated2" ".wav")]
+         wav
+         (java.io.File/createTempFile "vis-voice-asr-truncated2" ".wav")]
 
         (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
           (spit (io/file dir name) "x"))
         (write-silence-wav! wav 2.0)
-        (let [bytes
-              (java.nio.file.Files/readAllBytes (.toPath wav))
+        (let
+          [bytes
+           (java.nio.file.Files/readAllBytes (.toPath wav))
 
-              cut
-              (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
+           cut
+           (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
 
           (java.nio.file.Files/write (.toPath wav)
                                      cut
@@ -123,13 +128,14 @@
                                 :type))))))))
   (it
     "rejects empty or too-short recordings before ONNX inference"
-    (let [dir
-          (.toFile (java.nio.file.Files/createTempDirectory
-                     "vis-voice-asr-model-test"
-                     (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let
+      [dir
+       (.toFile (java.nio.file.Files/createTempDirectory
+                  "vis-voice-asr-model-test"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          wav
-          (java.io.File/createTempFile "vis-voice-asr-too-short" ".wav")]
+       wav
+       (java.io.File/createTempFile "vis-voice-asr-too-short" ".wav")]
 
       (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
         (spit (io/file dir name) "x"))

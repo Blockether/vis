@@ -125,25 +125,28 @@
 (defdescribe
   assign-labels-test
   (it "labels only :toggle-details regions, home row first, in paint order"
-      (let [pairs (cr/assign-labels [(region 1 0 5 "https://a") (toggle-region 3 4 "s" "n1" true)
-                                     (toggle-region 6 4 "s" "n2" false)])]
+      (let
+        [pairs (cr/assign-labels [(region 1 0 5 "https://a") (toggle-region 3 4 "s" "n1" true)
+                                  (toggle-region 6 4 "s" "n2" false)])]
         (expect (= [["a" "n1"] ["s" "n2"]]
                    (mapv (fn [[l r]]
                            [l (:node-id r)])
                          pairs)))))
   (it "dedupes by [session-id node-id] keeping the first glyph row"
-      (let [pairs (cr/assign-labels [(toggle-region 3 4 "s" "n1" true)
-                                     (toggle-region 9 4 "s" "n1" true) ; same fold, 2nd glyph row
-                                     (toggle-region 6 4 "s" "n2" false)])]
+      (let
+        [pairs (cr/assign-labels [(toggle-region 3 4 "s" "n1" true)
+                                  (toggle-region 9 4 "s" "n1" true) ; same fold, 2nd glyph row
+                                  (toggle-region 6 4 "s" "n2" false)])]
         (expect (= 2 (count pairs)))
         (expect (= ["n1" "n2"] (mapv (comp :node-id second) pairs)))
         ;; first occurrence's row (3) wins, not the duplicate (9)
         (expect (= 3 (:row (:bounds (second (first pairs))))))))
   (it "caps at the alphabet length; extras stay unlabeled"
-      (let [many
-            (mapv #(toggle-region % 0 "s" (str "n" %) true) (range (+ 3 (count cr/label-alphabet))))
+      (let
+        [many
+         (mapv #(toggle-region % 0 "s" (str "n" %) true) (range (+ 3 (count cr/label-alphabet))))
 
-            pairs
-            (cr/assign-labels many)]
+         pairs
+         (cr/assign-labels many)]
 
         (expect (= (count cr/label-alphabet) (count pairs))))))

@@ -13,15 +13,17 @@
   (ns-resolve 'com.blockether.vis.internal.providers sym))
 
 (deftest configured-providers-cached-warm-reads-never-re-enumerate
-  (let [calls
-        (atom 0)
+  (let
+    [calls
+     (atom 0)
 
-        fleet
-        [{:id :fake :models [{:name "m1"}]}]]
+     fleet
+     [{:id :fake :models [{:name "m1"}]}]]
 
-    (with-redefs [config/load-config (fn []
-                                       (swap! calls inc)
-                                       {:providers fleet})]
+    (with-redefs
+      [config/load-config (fn []
+                            (swap! calls inc)
+                            {:providers fleet})]
       (providers/invalidate-configured-providers!)
       (is (= fleet (providers/configured-providers-cached))
           "cold read enumerates synchronously ONCE and returns the real fleet")
@@ -36,27 +38,30 @@
   ;; frame. The enumeration (~200ms on machines with slow file IO) must NEVER
   ;; run synchronously on a warm caller — a stale snapshot is served as-is
   ;; while ONE background refresh replaces it.
-  (let [slow-ms
-        200
+  (let
+    [slow-ms
+     200
 
-        calls
-        (atom 0)
+     calls
+     (atom 0)
 
-        fleet
-        [{:id :fake :models [{:name "m1"}]}]
+     fleet
+     [{:id :fake :models [{:name "m1"}]}]
 
-        cache
-        (rv 'fleet-cache)]
+     cache
+     (rv 'fleet-cache)]
 
-    (with-redefs [config/load-config (fn []
-                                       (swap! calls inc)
-                                       (Thread/sleep slow-ms)
-                                       {:providers fleet})]
+    (with-redefs
+      [config/load-config (fn []
+                            (swap! calls inc)
+                            (Thread/sleep slow-ms)
+                            {:providers fleet})]
       ;; plant a STALE snapshot
       (reset! @cache {:at 0 :val [{:id :old}]})
-      (let [t0 (System/nanoTime)
-            stale (providers/configured-providers-cached)
-            stale-ms (/ (- (System/nanoTime) t0) 1e6)]
+      (let
+        [t0 (System/nanoTime)
+         stale (providers/configured-providers-cached)
+         stale-ms (/ (- (System/nanoTime) t0) 1e6)]
 
         (is (= [{:id :old}] stale) "stale read serves the last-known snapshot immediately")
         (is (< stale-ms 50.0) "stale read must NOT block on the enumeration")
@@ -72,17 +77,19 @@
   ;; The issue #29 follow-up: invalidate on change (long TTL stays safe), so a
   ;; provider add/remove/reorder shows in the footer cycle count immediately.
   (let [cache (rv 'fleet-cache)]
-    (with-redefs [config/load-global-config-raw (constantly {:providers []})
-                  config/save-config! (fn [& _]
-                                        nil)
-                  config/reload-config! (constantly nil)]
+    (with-redefs
+      [config/load-global-config-raw (constantly {:providers []})
+       config/save-config! (fn [& _]
+                             nil)
+       config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/save-providers! [] nil)
       (is (nil? @@cache) "save-providers! drops the snapshot"))
-    (with-redefs [config/remove-config-provider! (fn [& _]
-                                                   true)
-                  config/reload-config! (constantly nil)]
+    (with-redefs
+      [config/remove-config-provider! (fn [& _]
+                                        true)
+       config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/remove-provider! :warm nil)

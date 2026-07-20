@@ -31,11 +31,12 @@
                    (expect (not (str/includes? sql "?")))
                    (expect (nil? (re-find #"(?m)^\s*[a-z0-9_]+-[a-z0-9-]+\s" sql)))))
              (it "projects are cross-channel: the project table has NO channel column"
-                 (let [sql
-                       (v1-sql)
+                 (let
+                   [sql
+                    (v1-sql)
 
-                       project-ddl
-                       (re-find #"(?s)CREATE TABLE project\s*\((.*?)\);" sql)]
+                    project-ddl
+                    (re-find #"(?s)CREATE TABLE project\s*\((.*?)\);" sql)]
 
                    (expect (some? project-ddl))
                    (expect (not (str/includes? (str/lower-case (second project-ddl)) "channel"))))))

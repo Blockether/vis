@@ -50,26 +50,27 @@
   "Compute table geometry inside a dialog `bounds` ({:left :inner-w}).
    Pure: no drawing. Useful for mouse hit-testing before `draw!`."
   [{:keys [left inner-w]}]
-  (let [left
-        (long left)
+  (let
+    [left
+     (long left)
 
-        inner-w
-        (long inner-w)
+     inner-w
+     (long inner-w)
 
-        table-x
-        (+ left 1)
+     table-x
+     (+ left 1)
 
-        table-w
-        (long (max 1 (- inner-w 1)))
+     table-w
+     (long (max 1 (- inner-w 1)))
 
-        ;; Full rendered row width (both `│` borders included).
-        rendered-w
-        table-w
+     ;; Full rendered row width (both `│` borders included).
+     rendered-w
+     table-w
 
-        ;; First column hosts the marker inside the box, so the caller's
-        ;; data columns get `SELECTION_WIDTH` fewer cells.
-        table-content-w
-        (long (max 1 (- rendered-w p/SELECTION_WIDTH)))]
+     ;; First column hosts the marker inside the box, so the caller's
+     ;; data columns get `SELECTION_WIDTH` fewer cells.
+     table-content-w
+     (long (max 1 (- rendered-w p/SELECTION_WIDTH)))]
 
     {:marker-col (+ table-x 2)
      :table-x table-x
@@ -82,14 +83,15 @@
   "Resolve the absolute row indices for each painted line, given the
    caller-supplied `top` and `body-h`."
   [top body-h]
-  (let [top
-        (long top)
+  (let
+    [top
+     (long top)
 
-        body-h
-        (long body-h)
+     body-h
+     (long body-h)
 
-        body-top
-        (+ top 3)]
+     body-top
+     (+ top 3)]
 
     {:border-top top
      :header (+ top 1)
@@ -102,29 +104,30 @@
    table body. `geom` is `(layout bounds)`, `top` and `body-h` match the
    `draw!` call, `scroll` is the current scroll offset."
   [{:keys [table-x rendered-w table-content-w]} top body-h scroll mx my]
-  (let [{:keys [body-top]}
-        (rows top body-h)
+  (let
+    [{:keys [body-top]}
+     (rows top body-h)
 
-        table-x
-        (long table-x)
+     table-x
+     (long table-x)
 
-        body-top
-        (long body-top)
+     body-top
+     (long body-top)
 
-        body-h
-        (long body-h)
+     body-h
+     (long body-h)
 
-        scroll
-        (long scroll)
+     scroll
+     (long scroll)
 
-        mx
-        (long mx)
+     mx
+     (long mx)
 
-        my
-        (long my)
+     my
+     (long my)
 
-        row-w
-        (long (or rendered-w table-content-w))]
+     row-w
+     (long (or rendered-w table-content-w))]
 
     (when (and (>= mx table-x) (< mx (+ table-x row-w)) (>= my body-top) (< my (+ body-top body-h)))
       (+ scroll (- my body-top)))))
@@ -170,55 +173,56 @@
    {:keys [bounds top body-h headers widths total scroll selected cell-fn empty-cells empty-message
            aligns closed?]
     :or {empty-message "No items." aligns (repeat :left) closed? false}}]
-  (let [{:keys [marker-col table-x rendered-w scrollbar-col] :as geom}
-        (layout bounds)
+  (let
+    [{:keys [marker-col table-x rendered-w scrollbar-col] :as geom}
+     (layout bounds)
 
-        row-ix
-        (rows top body-h)
+     row-ix
+     (rows top body-h)
 
-        {:keys [border-top header separator body-top]}
-        row-ix
+     {:keys [border-top header separator body-top]}
+     row-ix
 
-        rendered-w
-        (long rendered-w)
+     rendered-w
+     (long rendered-w)
 
-        table-x
-        (long table-x)
+     table-x
+     (long table-x)
 
-        body-top
-        (long body-top)
+     body-top
+     (long body-top)
 
-        body-h
-        (long body-h)
+     body-h
+     (long body-h)
 
-        scroll
-        (long scroll)
+     scroll
+     (long scroll)
 
-        total
-        (long total)
+     total
+     (long total)
 
-        aligns
-        (vec (take (count widths) aligns))
+     aligns
+     (vec (take (count widths) aligns))
 
-        mk
-        p/SELECTION_WIDTH
+     mk
+     p/SELECTION_WIDTH
 
-        pad
-        (apply str (repeat mk \space))
+     pad
+     (apply str (repeat mk \space))
 
-        ;; Widen the first column to host the in-box marker gutter and
-        ;; indent that column's text so the glyph never overpaints data.
-        full-widths
-        (let [v (vec widths)]
-          (if (seq v) (update v 0 + mk) v))
+     ;; Widen the first column to host the in-box marker gutter and
+     ;; indent that column's text so the glyph never overpaints data.
+     full-widths
+     (let [v (vec widths)]
+       (if (seq v) (update v 0 + mk) v))
 
-        mark-first
-        (fn [cells]
-          (let [v (vec cells)]
-            (if (seq v) (update v 0 #(str pad %)) v)))
+     mark-first
+     (fn [cells]
+       (let [v (vec cells)]
+         (if (seq v) (update v 0 #(str pad %)) v)))
 
-        empty-cells
-        (mark-first (or empty-cells (empty-row-cells widths empty-message)))]
+     empty-cells
+     (mark-first (or empty-cells (empty-row-cells widths empty-message)))]
 
     ;; Chrome
     (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -234,8 +238,9 @@
     (p/put-str! g table-x separator (table/boxed-border-line full-widths :middle))
     ;; Body
     (dotimes [i body-h]
-      (let [idx (+ scroll i)
-            row (+ body-top i)]
+      (let
+        [idx (+ scroll i)
+         row (+ body-top i)]
 
         (cond (< idx total) (do (table/draw-line! g
                                                   table-x

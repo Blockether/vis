@@ -44,9 +44,9 @@
       ;; def sink speak.
       (expect (= [{:kind :code :source "(def x 1)"}] (render/parse-block-display "(def x 1)"))))
   (it "hides defn / defn- / defmacro / defmulti / defmethod / defonce uniformly"
-      (doseq [src ["(defn foo [] 1)" "(defn- bar [] 2)" "(defmacro baz [] `(println 1))"
-                   "(defmulti qux :kind)" "(defmethod qux :a [_] :a)"
-                   "(defonce only-once (atom {}))"]]
+      (doseq
+        [src ["(defn foo [] 1)" "(defn- bar [] 2)" "(defmacro baz [] `(println 1))"
+              "(defmulti qux :kind)" "(defmethod qux :a [_] :a)" "(defonce only-once (atom {}))"]]
         (let [out (render/parse-block-display src)]
           (expect (= 1 (count out)))
           (expect (= :code
@@ -61,8 +61,9 @@
     ;; SINK + the channel preview of the underlying tool call; the
     ;; projection row only repeats `<runtime ref>` next to a code
     ;; line nobody reads. Hide them.
-    (doseq [src ["(:size ir-file)" "(:k m :default)" "(get m :k)" "(get-in m [:a :b])"
-                 "(select-keys r [:a :b])" "(first xs)" "(count xs)" "(name :foo)" "(str x)"]]
+    (doseq
+      [src ["(:size ir-file)" "(:k m :default)" "(get m :k)" "(get-in m [:a :b])"
+            "(select-keys r [:a :b])" "(first xs)" "(count xs)" "(name :foo)" "(str x)"]]
       (let [out (render/parse-block-display src)]
         (expect (= 1 (count out)))
         (expect (= :code
@@ -117,8 +118,9 @@
     ;; SINK + the channel preview of the underlying tool call. The
     ;; renderer coalesces consecutive hidden code segments into one
     ;; entry, so the result is a single suppressed source row.
-    (let [out (render/parse-block-display
-                "(def r (ls \".\"))\n(select-keys r [:entry-count :file-count])")]
+    (let
+      [out (render/parse-block-display
+             "(def r (ls \".\"))\n(select-keys r [:entry-count :file-count])")]
       (expect (= 1 (count out)))
       (expect (= :code
                  (-> out
@@ -128,20 +130,21 @@
 (defdescribe
   markdown-html-comment-test
   (it "drops standalone HTML comments instead of painting them in the bubble"
-      (let [md
-            "Confirming missing database and cleaning files\n\n<!-- -->\nFixed."
+      (let
+        [md
+         "Confirming missing database and cleaning files\n\n<!-- -->\nFixed."
 
-            ast
-            (render/markdown->ast md)
+         ast
+         (render/markdown->ast md)
 
-            rendered
-            (render/render ast :markdown {})]
+         rendered
+         (render/render ast :markdown {})]
 
         (expect (not (str/includes? rendered "<!-- -->")))
         (expect (= "Confirming missing database and cleaning files\n\nFixed." rendered))))
   (it "keeps non-comment raw HTML visible as escaped/text content"
-      (let [rendered
-            (render/render (render/markdown->ast "<details>secret</details>") :markdown {})]
+      (let
+        [rendered (render/render (render/markdown->ast "<details>secret</details>") :markdown {})]
         (expect (str/includes? rendered "<details>secret</details>")))))
 
 (defdescribe
@@ -159,11 +162,12 @@
       (expect (= [:ast {} [:p {} [:span {} "line A"] [:br {}] [:span {} "line B"]]]
                  (render/markdown->ast "line A\nline B" {:soft-break :hard}))))
   (it "hard-break mode preserves indentation + line breaks of a pasted code dump"
-      (let [ast
-            (render/markdown->ast "2493:    ;; foo\n2494:    (when x)" {:soft-break :hard})
+      (let
+        [ast
+         (render/markdown->ast "2493:    ;; foo\n2494:    (when x)" {:soft-break :hard})
 
-            [_ _ p]
-            ast]
+         [_ _ p]
+         ast]
 
         ;; Three inline children: line, [:br], line — no space-join that
         ;; would mash "2493: ;; foo 2494: (when x)" onto one row.
@@ -192,8 +196,9 @@
       ;; promotion threshold; promoting them to :code blocks silently drops
       ;; the path-chip styling in every channel. Path-like literals (no
       ;; whitespace, has `/`, no URL scheme) stay inline however long.
-      (let [path
-            "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/screen.clj"]
+      (let
+        [path
+         "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/screen.clj"]
         (expect (= [:ast {} [:p {} [:c {} path]]] (render/markdown->ast (str "`" path "`"))))))
   (it "still promotes a long URL code span (scheme prefix = not a path)"
       (let [url "https://example.com/some/very/long/path/that/exceeds/the/threshold"]

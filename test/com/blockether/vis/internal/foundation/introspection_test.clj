@@ -8,11 +8,12 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe patch-diagnosis-contract-test
-             (let [classify
-                   @#'introspection/classify-expression-failure
+             (let
+               [classify
+                @#'introspection/classify-expression-failure
 
-                   advice
-                   @#'introspection/advice-for-classification]
+                advice
+                @#'introspection/advice-for-classification]
 
                (it "classifies stale anchors and recommends the anchor-only contract"
                    (expect (= :patch-stale-anchor
@@ -38,11 +39,12 @@
 
 (defdescribe session-state-envelope-test
              (it "returns a canonical envelope so observed symbol wrapping can unwrap it"
-                 (let [inspect
-                       @#'introspection/foundation-inspect
+                 (let
+                   [inspect
+                    @#'introspection/foundation-inspect
 
-                       result
-                       (inspect {:session-id nil :db-info nil})]
+                    result
+                    (inspect {:session-id nil :db-info nil})]
 
                    (expect (extension/tool-result? result))
                    ;; Envelope key stays keyword — internal, unwrapped before the boundary.
@@ -57,11 +59,12 @@
   ;; including the embedded diagnosis / failures / transcript sub-maps — reads
   ;; snake_case exactly like the old boundary rendered it.
   (it "returns a fully string-keyed result with no keyword keys/values at any depth"
-      (let [inspect
-            @#'introspection/foundation-inspect
+      (let
+        [inspect
+         @#'introspection/foundation-inspect
 
-            data
-            (:result (inspect {:session-id nil :db-info nil}))]
+         data
+         (:result (inspect {:session-id nil :db-info nil}))]
 
         ;; Top-level keys are snake_case strings (`:schema-version` -> "schema_version").
         (expect (every? string? (keys data)))
@@ -77,34 +80,35 @@
     "a POPULATED session_state (turns/calls/timeline/diagnosis + string-keyed llm maps) crosses the boundary with no keyword leak"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid (h/store-session!
-                    s
-                    {:channel :tui :title "Boundary fixture" :provider :openai :model "gpt-4o"})
-              turn (vis/db-store-session-turn!
-                     s
-                     {:parent-session-id cid :user-request "run a tool" :status :running})
-              _ (h/store-iteration!
+        (let
+          [cid (h/store-session!
+                 s
+                 {:channel :tui :title "Boundary fixture" :provider :openai :model "gpt-4o"})
+           turn (vis/db-store-session-turn!
                   s
-                  {:session-turn-id turn
-                   :code "(v/tool \"echo hi\")"
-                   ;; nippy `:forms` (keyword-keyed) alongside `<-json`
-                   ;; llm maps (string-keyed) — the mixed shape the verb
-                   ;; must fully stringify at egress.
-                   :forms [{:scope "t1/i1/f1"
-                            :tag :observation
-                            :src "(v/tool \"echo hi\")"
-                            :result {:success? true
-                                     :result {:exit 0 :command "echo hi"}
-                                     :info {:op :v/tool
-                                            :tool {:symbol 'tool :call "v/tool"}
-                                            :command "echo hi"}
-                                     :error nil}}]
-                   :answer "done"
-                   :llm-messages [{:role "system" :content "SYS"} {:role "user" :content "hi"}]
-                   :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
-                   :duration-ms 10})
-              _ (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
+                  {:parent-session-id cid :user-request "run a tool" :status :running})
+           _ (h/store-iteration!
+               s
+               {:session-turn-id turn
+                :code "(v/tool \"echo hi\")"
+                ;; nippy `:forms` (keyword-keyed) alongside `<-json`
+                ;; llm maps (string-keyed) — the mixed shape the verb
+                ;; must fully stringify at egress.
+                :forms [{:scope "t1/i1/f1"
+                         :tag :observation
+                         :src "(v/tool \"echo hi\")"
+                         :result {:success? true
+                                  :result {:exit 0 :command "echo hi"}
+                                  :info {:op :v/tool
+                                         :tool {:symbol 'tool :call "v/tool"}
+                                         :command "echo hi"}
+                                  :error nil}}]
+                :answer "done"
+                :llm-messages [{:role "system" :content "SYS"} {:role "user" :content "hi"}]
+                :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
+                :duration-ms 10})
+           _ (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
+           data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
 
           ;; The whole model-facing surface survives the strings-only boundary
           ;; mirror — keyword enum values like `:op :v/tool`, `:kind :code`,
@@ -119,21 +123,23 @@
              ;; so `assert-symbol-envelope!` rejected EVERY call ("Symbol 'sessions'
              ;; must return a canonical :envelope map").
              (it "no-arg arity returns a canonical envelope (empty index without a db)"
-                 (let [sessions
-                       @#'introspection/foundation-sessions
+                 (let
+                   [sessions
+                    @#'introspection/foundation-sessions
 
-                       result
-                       (sessions {:session-id nil :db-info nil})]
+                    result
+                    (sessions {:session-id nil :db-info nil})]
 
                    (expect (extension/tool-result? result))
                    (expect (= :sessions (:symbol result)))
                    (expect (= [] (:result result)))))
              (it "channel-filtered arity is enveloped too"
-                 (let [sessions
-                       @#'introspection/foundation-sessions
+                 (let
+                   [sessions
+                    @#'introspection/foundation-sessions
 
-                       result
-                       (sessions {:db-info nil} :tui)]
+                    result
+                    (sessions {:db-info nil} :tui)]
 
                    (expect (extension/tool-result? result))
                    (expect (= [] (:result result))))))

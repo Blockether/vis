@@ -41,10 +41,11 @@
                      ;; Live override survived the re-register.
                      (expect (true? (t/enabled? :test/beta))))))
              (it "rejects invalid specs with :vis.toggles/invalid-spec"
-                 (let [thrown? (try (t/register-toggle! {:label "no-id"})
-                                    false
-                                    (catch clojure.lang.ExceptionInfo e
-                                      (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                 (let
+                   [thrown? (try (t/register-toggle! {:label "no-id"})
+                                 false
+                                 (catch clojure.lang.ExceptionInfo e
+                                   (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
                    (expect thrown?))))
 
 (defdescribe
@@ -87,11 +88,12 @@
                  (with-clean-state
                    (fn []
                      (t/register-toggle! {:id :test/epsilon :label "Epsilon" :default false})
-                     (let [events
-                           (atom [])
+                     (let
+                       [events
+                        (atom [])
 
-                           dispose
-                           (t/add-listener! #(swap! events conj %))]
+                        dispose
+                        (t/add-listener! #(swap! events conj %))]
 
                        (t/set-enabled! :test/epsilon true)
                        (t/set-enabled! :test/epsilon true) ;; no-op transition

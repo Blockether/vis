@@ -185,36 +185,39 @@
    outbox write must not break a turn."
   [^Path path]
   (try
-    (let [k
-          (str (.toAbsolutePath path))
+    (let
+      [k
+       (str (.toAbsolutePath path))
 
-          seen
-          *outbox-seen*]
+       seen
+       *outbox-seen*]
 
       (when (and *attachment-sink*
                  (or (nil? seen) (not (contains? @seen k)))
                  (not (contains? noisy-capture-exts (ext-of (str (.getFileName path)))))
                  (Files/isRegularFile path (make-array LinkOption 0)))
-        (let [^BasicFileAttributes attrs
-              (Files/readAttributes path
-                                    BasicFileAttributes
-                                    ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
+        (let
+          [^BasicFileAttributes attrs
+           (Files/readAttributes path
+                                 BasicFileAttributes
+                                 ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
 
-              size
-              (.size attrs)]
+           size
+           (.size attrs)]
 
           (when (<= 1 size max-capture-bytes)
-            (let [data
-                  (Files/readAllBytes path)
+            (let
+              [data
+               (Files/readAllBytes path)
 
-                  fname
-                  (str (.getFileName path))
+               fname
+               (str (.getFileName path))
 
-                  mt
-                  (sniff-media-type data fname)
+               mt
+               (sniff-media-type data fname)
 
-                  b64
-                  (.encodeToString (Base64/getEncoder) data)]
+               b64
+               (.encodeToString (Base64/getEncoder) data)]
 
               (when seen (swap! seen conj k))
               (record-attachment! {:kind (if (str/starts-with? mt "image/") "image" "file")

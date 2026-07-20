@@ -34,32 +34,33 @@
   "For wall-clock `[y m d H M S]` interpreted in zone `key`, return
    `[offset-seconds dst-seconds abbrev]`."
   [key ymdhms]
-  (let [[y mo d H M S]
-        (map i ymdhms)
+  (let
+    [[y mo d H M S]
+     (map i ymdhms)
 
-        z
-        (ZoneId/of (str key))
+     z
+     (ZoneId/of (str key))
 
-        rules
-        (.getRules z)
+     rules
+     (.getRules z)
 
-        ldt
-        (LocalDateTime/of (int y) (int mo) (int d) (int H) (int M) (int S))
+     ldt
+     (LocalDateTime/of (int y) (int mo) (int d) (int H) (int M) (int S))
 
-        off
-        (.getOffset rules ldt)
+     off
+     (.getOffset rules ldt)
 
-        inst
-        (.toInstant (.atZone ldt z))
+     inst
+     (.toInstant (.atZone ldt z))
 
-        dst
-        (.getDaylightSavings rules inst)
+     dst
+     (.getDaylightSavings rules inst)
 
-        in-dst
-        (pos? (.getSeconds dst))
+     in-dst
+     (pos? (.getSeconds dst))
 
-        tzname
-        (.getDisplayName (TimeZone/getTimeZone (str key)) in-dst TimeZone/SHORT Locale/US)]
+     tzname
+     (.getDisplayName (TimeZone/getTimeZone (str key)) in-dst TimeZone/SHORT Locale/US)]
 
     [(long (.getTotalSeconds off)) (long (.getSeconds dst)) (str tzname)]))
 
@@ -67,23 +68,24 @@
   "For wall-clock `[y m d H M S]` interpreted as UTC in zone `key`, return
    `[offset-seconds]` to add to reach that zone's local wall time."
   [key ymdhms]
-  (let [[y mo d H M S]
-        (map i ymdhms)
+  (let
+    [[y mo d H M S]
+     (map i ymdhms)
 
-        z
-        (ZoneId/of (str key))
+     z
+     (ZoneId/of (str key))
 
-        rules
-        (.getRules z)
+     rules
+     (.getRules z)
 
-        ldt
-        (LocalDateTime/of (int y) (int mo) (int d) (int H) (int M) (int S))
+     ldt
+     (LocalDateTime/of (int y) (int mo) (int d) (int H) (int M) (int S))
 
-        inst
-        (.toInstant ldt ZoneOffset/UTC)
+     inst
+     (.toInstant ldt ZoneOffset/UTC)
 
-        off
-        (.getOffset rules inst)]
+     off
+     (.getOffset rules inst)]
 
     [(long (.getTotalSeconds off))]))
 

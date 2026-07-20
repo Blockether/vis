@@ -32,56 +32,64 @@
                    (expect (= 0 (:crow s)))
                    (expect (= 0 (:ccol s)))))
              (it "insert-char appends + advances cursor"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \h)
-                             (input/insert-char \i))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/insert-char \h)
+                          (input/insert-char \i))]
                    (expect (= ["hi"] (:lines s)))
                    (expect (= 2 (:ccol s)))))
              (it "insert-newline splits the current line at the cursor"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \a)
-                             (input/insert-char \b)
-                             (input/move-left)
-                             (input/insert-newline))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/insert-char \a)
+                          (input/insert-char \b)
+                          (input/move-left)
+                          (input/insert-newline))]
                    (expect (= ["a" "b"] (:lines s)))
                    (expect (= 1 (:crow s)))
                    (expect (= 0 (:ccol s)))))
              (it "delete-backward removes the char before the cursor"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \x)
-                             (input/insert-char \y)
-                             (input/delete-backward))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/insert-char \x)
+                          (input/insert-char \y)
+                          (input/delete-backward))]
                    (expect (= ["x"] (:lines s)))))
              (it "input->text re-joins lines with newlines"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \a)
-                             (input/insert-newline)
-                             (input/insert-char \b))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/insert-char \a)
+                          (input/insert-newline)
+                          (input/insert-char \b))]
                    (expect (= "a\nb" (input/input->text s))))))
 
 (defdescribe paste-text-test
              (it "single-line paste inserts inline"
-                 (let [s (-> (input/empty-input)
-                             (input/paste-text "hello"))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/paste-text "hello"))]
                    (expect (= ["hello"] (:lines s)))
                    (expect (= 5 (:ccol s)))))
              (it "multi-line paste lays each line out as its own row"
-                 (let [s (-> (input/empty-input)
-                             (input/paste-text "first\nsecond\nthird"))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/paste-text "first\nsecond\nthird"))]
                    (expect (= ["first" "second" "third"] (:lines s)))
                    (expect (= 2 (:crow s)))
                    (expect (= 5 (:ccol s)))))
              (it "paste at non-zero cursor splices around the existing text"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \[)
-                             (input/paste-text "x\ny")
-                             (input/insert-char \]))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/insert-char \[)
+                          (input/paste-text "x\ny")
+                          (input/insert-char \]))]
                    (expect (= ["[x" "y]"] (:lines s)))
                    (expect (= 1 (:crow s)))
                    (expect (= 2 (:ccol s)))))
              (it "CRLF newlines in the payload are normalised to LF"
-                 (let [s (-> (input/empty-input)
-                             (input/paste-text "a\r\nb"))]
+                 (let
+                   [s (-> (input/empty-input)
+                          (input/paste-text "a\r\nb"))]
                    (expect (= ["a" "b"] (:lines s))))))
 
 (defn- char-key [^Character ch] (KeyStroke. ch false false))
@@ -114,8 +122,9 @@
       ;; Sessions is a palette-only verb now (Ctrl+P → Switch Session); the
       ;; Alt+Shift+↑/↓ arrow shortcut stays (decoded from the xterm sequence,
       ;; which terminals do deliver — unlike a bare Option+letter).
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "draft"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "draft"))]
         (expect (= {:action :show-sessions :state state}
                    (input/handle-key (alt-shift-special-key KeyType/ArrowUp) state)))
         (expect (= {:action :show-sessions :state state}
@@ -124,12 +133,13 @@
       ;; No DIRECT verb chords anymore: every vis command lives behind the Emacs
       ;; prefix C-x (C-x C-m/r/l/f/a/v/d/s/h), and the Ctrl letters they vacated
       ;; are Emacs editing keys.
-      (let [state
-            (-> (input/empty-input)
-                (input/paste-text "draft"))
+      (let
+        [state
+         (-> (input/empty-input)
+             (input/paste-text "draft"))
 
-            armed
-            (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+         armed
+         (:state (input/handle-key (ctrl-key (Character. \x)) state))]
 
         ;; C-x arms the prefix; the next key runs the verb (with or without Ctrl).
         (expect (= :cx (:prefix armed)))
@@ -153,15 +163,17 @@
       ;; The retired Alt VERB chords (settings/model/resources) fall through to
       ;; :continue — those verbs live on the C-x prefix + palette now. (The Emacs
       ;; NAVIGATION Meta keys M-> / M-< / M-v ARE live, like M-x — covered above.)
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "draft"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "draft"))]
         (expect (= {:action :continue :state state}
                    (input/handle-key (alt-key (Character. \s)) state)))
         (expect (= {:action :continue :state state}
                    (input/handle-key (alt-key (Character. \o)) state)))))
   (it "Ctrl+C and Escape clear non-empty input instead of exiting"
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "draft"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "draft"))]
         (expect (= {:action :clear-input :state (input/empty-input)}
                    (input/handle-key (ctrl-key (Character. \c)) state)))
         (expect (= {:action :clear-input :state (input/empty-input)}
@@ -172,50 +184,54 @@
                    (input/handle-key (ctrl-key (Character. \c)) state)))
         (expect (= {:action :cancel :state state}
                    (input/handle-key (special-key KeyType/Escape) state)))))
-  (it "C-x p (and C-x C-p) open the palette; C-x n is new-session; bare Ctrl+P/N are line motion"
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "keep"))]
-        ;; C-x C-p — the primary trigger: C-x arms the prefix, then Ctrl+P fires the
-        ;; palette (the second key is consumed by the prefix, not line motion).
-        (let [armed (input/handle-key (ctrl-key (Character. \x)) state)]
-          (expect (= :continue (:action armed)))
-          (expect (= :cx (:prefix (:state armed))))
-          (expect (= :show-palette
-                     (:action (input/handle-key (ctrl-key (Character. \p)) (:state armed)))))
-          ;; C-x p — the ADVERTISED trigger: a PLAIN p after the prefix.
-          (expect (= :show-palette
-                     (:action (input/handle-key (char-key (Character. \p)) (:state armed)))))
-          ;; C-x n — start a fresh session.
-          (expect (= :new-session
-                     (:action (input/handle-key (char-key (Character. \n)) (:state armed))))))
-        ;; M-x — the Emacs command-launcher alias, in the Meta keyspace.
-        (expect (= {:action :show-palette :state state}
-                   (input/handle-key (alt-key (Character. \x)) state)))
-        ;; Plain x types; Alt+x does NOT touch the Ctrl editing keys.
-        (expect (= :continue (:action (input/handle-key (char-key (Character. \x)) state))))
-        ;; BARE Ctrl+P prev-line, Ctrl+N next-line (no prefix armed) — on a
-        ;; single-line draft they are a no-op on the TEXT (action :continue, draft
-        ;; intact), NOT an app verb and NOT the palette.
-        (let [p (input/handle-key (ctrl-key (Character. \p)) state)
-              n (input/handle-key (ctrl-key (Character. \n)) state)]
+  (it
+    "C-x p (and C-x C-p) open the palette; C-x n is new-session; bare Ctrl+P/N are line motion"
+    (let
+      [state (-> (input/empty-input)
+                 (input/paste-text "keep"))]
+      ;; C-x C-p — the primary trigger: C-x arms the prefix, then Ctrl+P fires the
+      ;; palette (the second key is consumed by the prefix, not line motion).
+      (let [armed (input/handle-key (ctrl-key (Character. \x)) state)]
+        (expect (= :continue (:action armed)))
+        (expect (= :cx (:prefix (:state armed))))
+        (expect (= :show-palette
+                   (:action (input/handle-key (ctrl-key (Character. \p)) (:state armed)))))
+        ;; C-x p — the ADVERTISED trigger: a PLAIN p after the prefix.
+        (expect (= :show-palette
+                   (:action (input/handle-key (char-key (Character. \p)) (:state armed)))))
+        ;; C-x n — start a fresh session.
+        (expect (= :new-session
+                   (:action (input/handle-key (char-key (Character. \n)) (:state armed))))))
+      ;; M-x — the Emacs command-launcher alias, in the Meta keyspace.
+      (expect (= {:action :show-palette :state state}
+                 (input/handle-key (alt-key (Character. \x)) state)))
+      ;; Plain x types; Alt+x does NOT touch the Ctrl editing keys.
+      (expect (= :continue (:action (input/handle-key (char-key (Character. \x)) state))))
+      ;; BARE Ctrl+P prev-line, Ctrl+N next-line (no prefix armed) — on a
+      ;; single-line draft they are a no-op on the TEXT (action :continue, draft
+      ;; intact), NOT an app verb and NOT the palette.
+      (let
+        [p (input/handle-key (ctrl-key (Character. \p)) state)
+         n (input/handle-key (ctrl-key (Character. \n)) state)]
 
-          (expect (= :continue (:action p)))
-          (expect (= :continue (:action n)))
-          (expect (= (:lines state) (:lines (:state p))))
-          (expect (= (:lines state) (:lines (:state n)))))))
+        (expect (= :continue (:action p)))
+        (expect (= :continue (:action n)))
+        (expect (= (:lines state) (:lines (:state p))))
+        (expect (= (:lines state) (:lines (:state n)))))))
   (it "C-x C-h opens help; a LONE Ctrl+H is inert (help moved to the C-x prefix)"
       ;; ctrl-h-pattern still decodes a lone 0x08 to Ctrl+H (physical Backspace
       ;; sends 0x7f, so it stays Backspace) — that decode is what lets the SECOND
       ;; key of C-x C-h arrive as Ctrl+H. Help is no longer a direct chord, so a
       ;; lone Ctrl+H does nothing; only C-x then Ctrl+H toggles help.
-      (let [ctrl-h-pattern
-            @#'input/ctrl-h-pattern
+      (let
+        [ctrl-h-pattern
+         @#'input/ctrl-h-pattern
 
-            m
-            (pat-match ctrl-h-pattern [(Character. (char 0x08))])
+         m
+         (pat-match ctrl-h-pattern [(Character. (char 0x08))])
 
-            ks
-            (.fullMatch m)]
+         ks
+         (.fullMatch m)]
 
         (expect (= \h (.getCharacter ks)))
         (expect (true? (.isCtrlDown ks))))
@@ -236,16 +252,18 @@
   (it "the old setting-cycle chords are Emacs keys now, not direct verbs"
       ;; Reasoning/length/model moved to C-x r/v/m. The Ctrl letters they vacated
       ;; are Emacs keys: C-l recenter, C-t transpose (editing), C-r unbound.
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "keep"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "keep"))]
         (expect (= :recenter (:action (input/handle-key (ctrl-key (Character. \l)) state))))
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \t)) state))))
         (expect (not= :cycle-reasoning
                       (:action (input/handle-key (ctrl-key (Character. \r)) state))))))
   (it
     "Tab/Shift+Tab and C-x arrows switch workspaces; bare Ctrl+arrows are word motion"
-    (let [state (-> (input/empty-input)
-                    (input/paste-text "keep"))]
+    (let
+      [state (-> (input/empty-input)
+                 (input/paste-text "keep"))]
       ;; Plain Tab cycles forward, Shift+Tab (both decodings) backward.
       (expect (= {:action :select-tab-index :workspace-index :next :state state}
                  (input/handle-key (special-key KeyType/Tab) state)))
@@ -289,8 +307,9 @@
   (it "Alt+Left/Right move by whitespace-delimited words"
       ;; Word motion rides Alt+arrow (the xterm modified-arrow sequence, which
       ;; some terminals deliver).
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "hello   world"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "hello   world"))]
         (expect (= {:action :continue :state (assoc state :ccol 8)}
                    (input/handle-key (alt-special-key KeyType/ArrowLeft) state)))
         (expect (= {:action :continue :state (assoc state :ccol 5)}
@@ -300,15 +319,17 @@
       ;; into the readline bytes `ESC b` / `ESC f`, NOT the xterm modified-arrow
       ;; sequence. Lanterna decodes those as Alt+b / Alt+f Character keystrokes,
       ;; so these chords ARE Option+arrow on a stock macOS terminal.
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "hello   world"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "hello   world"))]
         (expect (= {:action :continue :state (assoc state :ccol 8)}
                    (input/handle-key (alt-key \b) state)))
         (expect (= {:action :continue :state (assoc state :ccol 5)}
                    (input/handle-key (alt-key \f) (assoc state :ccol 0))))))
   (it "Home/End and Ctrl+A/E move to current line bounds"
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "first\nsecond"))]
+      (let
+        [state (-> (input/empty-input)
+                   (input/paste-text "first\nsecond"))]
         (expect (= {:action :continue :state (assoc state :ccol 0)}
                    (input/handle-key (special-key KeyType/Home) state)))
         (expect (= {:action :continue :state state}
@@ -318,19 +339,20 @@
         (expect (= {:action :continue :state state}
                    (input/handle-key (ctrl-key (Character. \e)) (assoc state :ccol 0))))))
   (it "Alt+Backspace and Ctrl+Backspace delete a word back; Ctrl+U deletes to line start"
-      (let [state
-            (-> (input/empty-input)
-                (input/paste-text "hello world"))
+      (let
+        [state
+         (-> (input/empty-input)
+             (input/paste-text "hello world"))
 
-            word-gone
-            (-> state
-                (assoc-in [:lines 0] "hello ")
-                (assoc :ccol 6))
+         word-gone
+         (-> state
+             (assoc-in [:lines 0] "hello ")
+             (assoc :ccol 6))
 
-            line-gone
-            (-> state
-                (assoc-in [:lines 0] "")
-                (assoc :ccol 0))]
+         line-gone
+         (-> state
+             (assoc-in [:lines 0] "")
+             (assoc :ccol 0))]
 
         (expect (= {:action :continue :state word-gone}
                    (input/handle-key (alt-special-key KeyType/Backspace) state)))
@@ -356,33 +378,36 @@
 
 (defdescribe escape-pattern-test
              (it "bare ESC decodes immediately instead of poisoning the next key"
-                 (let [decoder
-                       (custom-decoder (str (char 0x1b)))
+                 (let
+                   [decoder
+                    (custom-decoder (str (char 0x1b)))
 
-                       key
-                       (.getNextCharacter decoder false)]
+                    key
+                    (.getNextCharacter decoder false)]
 
                    (expect (= KeyType/Escape (.getKeyType key)))
                    (expect (not (.isAltDown key)))))
              (it "ESC+Enter still decodes as Alt+Enter when both bytes are queued"
-                 (let [decoder
-                       (custom-decoder (str (char 0x1b) \newline))
+                 (let
+                   [decoder
+                    (custom-decoder (str (char 0x1b) \newline))
 
-                       key
-                       (.getNextCharacter decoder false)]
+                    key
+                    (.getNextCharacter decoder false)]
 
                    (expect (= KeyType/Enter (.getKeyType key)))
                    (expect (.isAltDown key)))))
 
 (defdescribe modified-arrow-pattern-test
              (it "decodes xterm modified arrows so Alt+arrow works on macOS terminals"
-                 (let [alt-up
-                       (let [decoder (custom-decoder (str (char 0x1b) "[1;3A"))]
-                         (.getNextCharacter decoder false))
+                 (let
+                   [alt-up
+                    (let [decoder (custom-decoder (str (char 0x1b) "[1;3A"))]
+                      (.getNextCharacter decoder false))
 
-                       shift-down
-                       (let [decoder (custom-decoder (str (char 0x1b) "[1;2B"))]
-                         (.getNextCharacter decoder false))]
+                    shift-down
+                    (let [decoder (custom-decoder (str (char 0x1b) "[1;2B"))]
+                      (.getNextCharacter decoder false))]
 
                    (expect (= KeyType/ArrowUp (.getKeyType alt-up)))
                    (expect (.isAltDown alt-up))
@@ -394,8 +419,9 @@
 (defdescribe alt-backspace-pattern-test
              (it "ESC+DEL and ESC+Ctrl-H decode as Alt+Backspace"
                  (doseq [ch [(Character. (char 0x7f)) (Character. (char 0x08))]]
-                   (let [match (pat-match input/alt-backspace-pattern [(Character. (char 0x1b)) ch])
-                         key (.-fullMatch match)]
+                   (let
+                     [match (pat-match input/alt-backspace-pattern [(Character. (char 0x1b)) ch])
+                      key (.-fullMatch match)]
 
                      (expect (= KeyType/Backspace (.getKeyType key)))
                      (expect (.isAltDown key))
@@ -428,11 +454,12 @@
 (defdescribe
   placeholder-format-test
   (it "multi-line paste shows lines AND bytes"
-      (let [text
-            (apply str (repeat 42 "line of text\n"))
+      (let
+        [text
+         (apply str (repeat 42 "line of text\n"))
 
-            token
-            (input/format-paste-placeholder {:id 1 :content text})]
+         token
+         (input/format-paste-placeholder {:id 1 :content text})]
 
         (expect (str/includes? token "#1"))
         (expect (str/includes? token "43 lines"))
@@ -441,23 +468,26 @@
       (let [token (input/format-paste-placeholder {:id 7 :content "abcdef"})]
         (expect (= "[Pasted #7: 1 line, 6B]" token))))
   (it "sub-1024 chars render as <N>B; 1024+ render as KB"
-      (let [small
-            (input/format-paste-placeholder {:id 1 :content "x"})
+      (let
+        [small
+         (input/format-paste-placeholder {:id 1 :content "x"})
 
-            big
-            (input/format-paste-placeholder {:id 2 :content (apply str (repeat 2048 "a"))})]
+         big
+         (input/format-paste-placeholder {:id 2 :content (apply str (repeat 2048 "a"))})]
 
         (expect (str/includes? small "1B"))
         (expect (str/includes? big "2.0KB"))))
   (it "an image entry is labelled `Image` with filename + dims + size"
-      (let [token (input/format-paste-placeholder
-                    {:id 3
-                     :content "/tmp/shot.png"
-                     :image {:filename "shot.png" :width 1200 :height 800 :size-label "245KB"}})]
+      (let
+        [token (input/format-paste-placeholder
+                 {:id 3
+                  :content "/tmp/shot.png"
+                  :image {:filename "shot.png" :width 1200 :height 800 :size-label "245KB"}})]
         (expect (= "[Image #3: shot.png 1200×800, 245KB]" token))))
   (it "an image with unknown dims omits the WxH clause"
-      (let [token (input/format-paste-placeholder
-                    {:id 4 :content "/tmp/x.gif" :image {:filename "x.gif" :size-label "12KB"}})]
+      (let
+        [token (input/format-paste-placeholder
+                 {:id 4 :content "/tmp/x.gif" :image {:filename "x.gif" :size-label "12KB"}})]
         (expect (= "[Image #4: x.gif, 12KB]" token)))))
 
 (defdescribe placeholder-threshold-test
@@ -470,11 +500,12 @@
 
 (defdescribe placeholder-expand-test
              (it "substitutes every known token; passes unknown ones through"
-                 (let [pastes-map
-                       {1 {:id 1 :content "FIRST"} 2 {:id 2 :content "SECOND"}}
+                 (let
+                   [pastes-map
+                    {1 {:id 1 :content "FIRST"} 2 {:id 2 :content "SECOND"}}
 
-                       input-text
-                       "prefix [Pasted #1: 5 lines, 1.0KB] middle [Pasted #2: 1 line, 6B] suffix"]
+                    input-text
+                    "prefix [Pasted #1: 5 lines, 1.0KB] middle [Pasted #2: 1 line, 6B] suffix"]
 
                    (expect (= "prefix FIRST middle SECOND suffix"
                               (input/expand-paste-placeholders input-text pastes-map)))))
@@ -482,11 +513,12 @@
                  (let [unchanged "hello [Pasted #99: 1 line, 1B] world"]
                    (expect (= unchanged (input/expand-paste-placeholders unchanged {})))))
              (it "replacement preserves regex-special chars in the content"
-                 (let [pastes
-                       {1 {:id 1 :content "$1 \\n raw"}}
+                 (let
+                   [pastes
+                    {1 {:id 1 :content "$1 \\n raw"}}
 
-                       out
-                       (input/expand-paste-placeholders "x [Pasted #1: 1 line, 9B] y" pastes)]
+                    out
+                    (input/expand-paste-placeholders "x [Pasted #1: 1 line, 9B] y" pastes)]
 
                    (expect (= "x $1 \\n raw y" out)))))
 
@@ -496,11 +528,12 @@
       (let [content "line-1\nline-2\nline-3"]
         (expect (= ["line-1" "line-2" "line-3"] (input/paste-content-preview content)))))
   (it "long payload keeps head + tail with a `more lines` marker between"
-      (let [content
-            (str/join "\n" (map #(str "line-" %) (range 1 30)))
+      (let
+        [content
+         (str/join "\n" (map #(str "line-" %) (range 1 30)))
 
-            preview
-            (input/paste-content-preview content)]
+         preview
+         (input/paste-content-preview content)]
 
         (expect (= (take input/PASTE_PREVIEW_HEAD_LINES preview)
                    (map #(str "line-" %) (range 1 (inc input/PASTE_PREVIEW_HEAD_LINES)))))
@@ -508,23 +541,25 @@
         (expect (= (take-last input/PASTE_PREVIEW_TAIL_LINES preview)
                    (map #(str "line-" %) (range 27 30))))))
   (it "a single very long line is itself middle-elided"
-      (let [line
-            (apply str (repeat 500 "x"))
+      (let
+        [line
+         (apply str (repeat 500 "x"))
 
-            [out]
-            (input/paste-content-preview line)]
+         [out]
+         (input/paste-content-preview line)]
 
         (expect (< (count out) 500))
         (expect (str/includes? out " … "))))
   (it "collapse folds the token into a `vis-paste` fence carrying token + full payload"
-      (let [content
-            (str/join "\n" (map #(str "line-" %) (range 1 30)))
+      (let
+        [content
+         (str/join "\n" (map #(str "line-" %) (range 1 30)))
 
-            pastes
-            {1 {:id 1 :content content}}
+         pastes
+         {1 {:id 1 :content content}}
 
-            out
-            (input/collapse-paste-placeholders "before [Pasted #1: 29 lines, 1KB] after" pastes)]
+         out
+         (input/collapse-paste-placeholders "before [Pasted #1: 29 lines, 1KB] after" pastes)]
 
         ;; Token becomes the summary FIRST body line of a `vis-paste` fence,
         ;; the WHOLE payload verbatim underneath (no head+tail truncation).
@@ -539,73 +574,78 @@
       (let [unchanged "hello [Pasted #99: 1 line, 1B] world"]
         (expect (= unchanged (input/collapse-paste-placeholders unchanged {})))))
   (it "an image token collapses into a `vis-image` fence carrying path + metadata"
-      (let [pastes
-            {1 {:id 1
-                :content "/tmp/shot.png"
-                :image {:path "/tmp/shot.png"
-                        :mime "image/png"
-                        :filename "shot.png"
-                        :width 1200
-                        :height 800
-                        :size-label "245KB"}}}
+      (let
+        [pastes
+         {1 {:id 1
+             :content "/tmp/shot.png"
+             :image {:path "/tmp/shot.png"
+                     :mime "image/png"
+                     :filename "shot.png"
+                     :width 1200
+                     :height 800
+                     :size-label "245KB"}}}
 
-            out
-            (input/collapse-paste-placeholders "see [Image #1: shot.png 1200×800, 245KB]" pastes)]
+         out
+         (input/collapse-paste-placeholders "see [Image #1: shot.png 1200×800, 245KB]" pastes)]
 
         (expect (str/includes? out "````vis-image\n[Image #1: shot.png 1200×800, 245KB]\n"))
         (expect (str/includes? out "/tmp/shot.png\nimage/png\n1200x800\n245KB\n"))
         (expect (str/ends-with? out "````\n"))))
   (it "an image token expands to just the file PATH for the engine to attach"
-      (let [pastes {1 {:id 1
-                       :content "/tmp/shot.png"
-                       :image {:path "/tmp/shot.png" :filename "shot.png"}}}]
+      (let
+        [pastes
+         {1 {:id 1 :content "/tmp/shot.png" :image {:path "/tmp/shot.png" :filename "shot.png"}}}]
         (expect (= "see /tmp/shot.png"
                    (input/expand-paste-placeholders "see [Image #1: shot.png 1200×800, 245KB]"
                                                     pastes))))))
 
 (defdescribe placeholder-smart-delete-test
              (it "placeholder-id-before-cursor returns the id when cursor sits right after `]`"
-                 (let [token
-                       (input/format-paste-placeholder {:id 4 :content "line one\nline two"})
+                 (let
+                   [token
+                    (input/format-paste-placeholder {:id 4 :content "line one\nline two"})
 
-                       state
-                       (-> (input/empty-input)
-                           (input/paste-text token))]
+                    state
+                    (-> (input/empty-input)
+                        (input/paste-text token))]
 
                    (expect (= 4 (input/placeholder-id-before-cursor state)))))
              (it "returns nil when the cursor is somewhere in the middle of a placeholder"
-                 (let [token
-                       (input/format-paste-placeholder {:id 4 :content "a\nb"})
+                 (let
+                   [token
+                    (input/format-paste-placeholder {:id 4 :content "a\nb"})
 
-                       state
-                       (-> (input/empty-input)
-                           (input/paste-text token)
-                           (input/move-left)
-                           (input/move-left))]
+                    state
+                    (-> (input/empty-input)
+                        (input/paste-text token)
+                        (input/move-left)
+                        (input/move-left))]
 
                    (expect (nil? (input/placeholder-id-before-cursor state)))))
              (it "returns nil when there's no placeholder on the line"
-                 (let [state (-> (input/empty-input)
-                                 (input/paste-text "plain text"))]
+                 (let
+                   [state (-> (input/empty-input)
+                              (input/paste-text "plain text"))]
                    (expect (nil? (input/placeholder-id-before-cursor state)))))
              (it "delete-placeholder-backward removes the WHOLE token in one shot"
-                 (let [token
-                       (input/format-paste-placeholder {:id 4 :content "a\nb"})
+                 (let
+                   [token
+                    (input/format-paste-placeholder {:id 4 :content "a\nb"})
 
-                       state
-                       (-> (input/empty-input)
-                           (input/insert-char \h)
-                           (input/insert-char \i)
-                           (input/insert-char \space)
-                           (input/paste-text token)
-                           (input/insert-char \space)
-                           (input/insert-char \!)
-                           ;; Move cursor back to right after `]`.
-                           (input/move-left)
-                           (input/move-left))
+                    state
+                    (-> (input/empty-input)
+                        (input/insert-char \h)
+                        (input/insert-char \i)
+                        (input/insert-char \space)
+                        (input/paste-text token)
+                        (input/insert-char \space)
+                        (input/insert-char \!)
+                        ;; Move cursor back to right after `]`.
+                        (input/move-left)
+                        (input/move-left))
 
-                       deleted
-                       (input/delete-placeholder-backward state)]
+                    deleted
+                    (input/delete-placeholder-backward state)]
 
                    (expect (= ["hi  !"] (:lines deleted)))
                    ;; Cursor lands at the start of where the token used to be.
@@ -652,123 +692,135 @@
       ;; sgr-mouse-pattern must reject them so Lanterna keeps trying.
       (expect (nil? (pat-match input/sgr-mouse-pattern (mk-chars "\u001B[A")))))
   (it "left-button press at column 50, row 1 decodes correctly"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 50 1 \M)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 50 1 \M)))
 
-            ks
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ks
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (instance? com.googlecode.lanterna.input.MouseAction ks))
-        (let [^com.googlecode.lanterna.input.MouseAction ma
-              ks
+        (let
+          [^com.googlecode.lanterna.input.MouseAction ma
+           ks
 
-              pos
-              (.getPosition ma)]
+           pos
+           (.getPosition ma)]
 
           (expect (= 49 (.getColumn pos))) ; SGR is 1-based, ours is 0-based
           (expect (= 0 (.getRow pos)))
           (expect (= com.googlecode.lanterna.input.MouseActionType/CLICK_DOWN
                      (.getActionType ma))))))
   (it "left-button release uses lowercase 'm' as terminator"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 112 1 \m)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 112 1 \m)))
 
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ma
+         ^com.googlecode.lanterna.input.MouseAction
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (= com.googlecode.lanterna.input.MouseActionType/CLICK_RELEASE (.getActionType ma)))
         ;; Critically: column 112 (the copy-id range) decodes to 111,
         ;; NOT to the broken 65500 the legacy parser produced.
         (expect (= 111 (.getColumn (.getPosition ma))))))
   (it "wheel-up button (64) maps to SCROLL_UP"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 64 10 5 \M)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 64 10 5 \M)))
 
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ma
+         ^com.googlecode.lanterna.input.MouseAction
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_UP (.getActionType ma)))))
   (it "wheel-down button (65) maps to SCROLL_DOWN without reflection warnings"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
 
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ma
+         ^com.googlecode.lanterna.input.MouseAction
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_DOWN (.getActionType ma))))
       (let [err (java.io.StringWriter.)]
-        (binding [*warn-on-reflection* true
-                  *err* err]
+        (binding
+          [*warn-on-reflection* true
+           *err* err]
 
           (require 'com.blockether.vis.ext.channel-tui.input :reload))
         (expect (not (str/includes? (str err) "input.clj")))))
   (it "drag with button held (32) maps to DRAG"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
 
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ma
+         ^com.googlecode.lanterna.input.MouseAction
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (= com.googlecode.lanterna.input.MouseActionType/DRAG (.getActionType ma)))))
   (it "plain motion (35: bits=3 + drag bit) maps to MOVE"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 35 10 5 \M)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 35 10 5 \M)))
 
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ma
+         ^com.googlecode.lanterna.input.MouseAction
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (= com.googlecode.lanterna.input.MouseActionType/MOVE (.getActionType ma)))))
   (it "wide-column press at column 200 decodes faithfully"
       ;; The whole point of switching to SGR: legacy X10 corrupted
       ;; this case to mx=65500. SGR is ASCII text so col 200 stays 200.
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 200 50 \M)))
+      (let
+        [m
+         (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 200 50 \M)))
 
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
+         ma
+         ^com.googlecode.lanterna.input.MouseAction
+         (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
 
         (expect (= 199 (.getColumn (.getPosition ma))))
         (expect (= 49 (.getRow (.getPosition ma)))))))
 
-(defdescribe
-  file-mention-expand-test
-  (it "replaces inline @mentions via the file-expander helper"
-      (with-redefs [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
+(defdescribe file-mention-expand-test
+             (it "replaces inline @mentions via the file-expander helper"
+                 (with-redefs
+                   [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
                     (fn [path]
                       (str "<FILE:" path ">"))]
-        (expect (= "see <FILE:src/foo.clj> please"
-                   (input/expand-file-mentions "see @src/foo.clj please")))))
-  (it "expands local @mentions to a tool-agnostic attached-file directive"
-      ;; Per `file-mention->prompt-block` contract: emit a short
-      ;; directive only (no `(cat ...)` / `(v/preview ...)`
-      ;; boilerplate). The model picks the right tool itself.
-      (let [file (java.io.File/createTempFile "vis-input-large" ".clj")]
-        (spit file (str/join "\n" (repeat 121 "x")))
-        (try (with-redefs [com.blockether.vis.ext.channel-tui.input/resolve-local-file (fn [_path]
+                   (expect (= "see <FILE:src/foo.clj> please"
+                              (input/expand-file-mentions "see @src/foo.clj please")))))
+             (it "expands local @mentions to a tool-agnostic attached-file directive"
+                 ;; Per `file-mention->prompt-block` contract: emit a short
+                 ;; directive only (no `(cat ...)` / `(v/preview ...)`
+                 ;; boilerplate). The model picks the right tool itself.
+                 (let [file (java.io.File/createTempFile "vis-input-large" ".clj")]
+                   (spit file (str/join "\n" (repeat 121 "x")))
+                   (try (with-redefs
+                          [com.blockether.vis.ext.channel-tui.input/resolve-local-file (fn [_path]
                                                                                          file)]
-               (let [expanded (input/expand-file-mentions "inspect @src/foo.clj now")]
-                 (expect (str/includes? expanded "[Attached File: src/foo.clj]"))
-                 (expect (str/includes? expanded "Read it"))
-                 (expect (not (str/includes? expanded "v/preview")))))
-             (finally (.delete file)))))
-  (it "supports quoted @mentions for paths with spaces"
-      (with-redefs [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
+                          (let [expanded (input/expand-file-mentions "inspect @src/foo.clj now")]
+                            (expect (str/includes? expanded "[Attached File: src/foo.clj]"))
+                            (expect (str/includes? expanded "Read it"))
+                            (expect (not (str/includes? expanded "v/preview")))))
+                        (finally (.delete file)))))
+             (it "supports quoted @mentions for paths with spaces"
+                 (with-redefs
+                   [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
                     (fn [path]
                       (str "<FILE:" path ">"))]
-        (expect (= "see <FILE:docs/My File.md> please"
-                   (input/expand-file-mentions "see @\"docs/My File.md\" please")))))
-  (it "leaves non-matching @text alone"
-      (expect (= "email me at a@b.com" (input/expand-file-mentions "email me at a@b.com"))))
-  (it "formats simple visible mention tokens with a leading @"
-      (expect (= "@src/foo.clj" (input/format-file-mention "src/foo.clj"))))
-  (it "quotes visible mention tokens when the path contains whitespace"
-      (expect (= "@\"docs/My File.md\"" (input/format-file-mention "docs/My File.md")))))
+                   (expect (= "see <FILE:docs/My File.md> please"
+                              (input/expand-file-mentions "see @\"docs/My File.md\" please")))))
+             (it "leaves non-matching @text alone"
+                 (expect (= "email me at a@b.com"
+                            (input/expand-file-mentions "email me at a@b.com"))))
+             (it "formats simple visible mention tokens with a leading @"
+                 (expect (= "@src/foo.clj" (input/format-file-mention "src/foo.clj"))))
+             (it "quotes visible mention tokens when the path contains whitespace"
+                 (expect (= "@\"docs/My File.md\"" (input/format-file-mention "docs/My File.md")))))
 
 (defdescribe
   jump-to-bottom-keymap-test
@@ -787,14 +839,14 @@
   ;; Faithful Emacs buffer navigation over the transcript: M-> end-of-buffer,
   ;; M-< beginning-of-buffer, C-v scroll forward a screen, M-v scroll backward.
   ;; KeyStroke(char, ctrlDown, altDown).
-  (let [st
-        (input/empty-input)
+  (let
+    [st
+     (input/empty-input)
 
-        act
-        (fn [ch ctrl? alt?]
-          (:action (input/handle-key
-                     (KeyStroke. (Character/valueOf ch) (boolean ctrl?) (boolean alt?))
-                     st)))]
+     act
+     (fn [ch ctrl? alt?]
+       (:action (input/handle-key (KeyStroke. (Character/valueOf ch) (boolean ctrl?) (boolean alt?))
+                                  st)))]
 
     (it "M-> jumps to the bottom (end-of-buffer → :recenter)"
         (expect (= :recenter (act \> false true))))
@@ -812,14 +864,15 @@
   ;; the whole vis session. `run-helper-process!` now kills the child at a
   ;; hard deadline and closes its stdin so stdin-readers see EOF.
   (it "a never-exiting helper is killed at the deadline instead of hanging"
-      (let [t0
-            (System/currentTimeMillis)
+      (let
+        [t0
+         (System/currentTimeMillis)
 
-            r
-            (deref (future (#'input/run-shell-helper-bytes! ["sleep" "30"] 500)) 5000 ::still-hung)
+         r
+         (deref (future (#'input/run-shell-helper-bytes! ["sleep" "30"] 500)) 5000 ::still-hung)
 
-            elapsed
-            (- (System/currentTimeMillis) t0)]
+         elapsed
+         (- (System/currentTimeMillis) t0)]
 
         (expect (map? r) "still blocked after 5s — the deadline never fired")
         (expect (false? (:success? r)) "a killed helper must not report success")
@@ -843,18 +896,19 @@
       ;; arrives — and the watchdog has nothing to kill (the helper is already
       ;; dead). This is the xclip-daemonize shape. The deadline-bounded drain
       ;; must return anyway, with the bytes the helper DID write.
-      (let [t0
-            (System/currentTimeMillis)
+      (let
+        [t0
+         (System/currentTimeMillis)
 
-            r
-            (deref (future (#'input/run-shell-helper-bytes!
-                            ["bash" "-c" "printf abc; sleep 600 & exit 0"]
-                            700))
-                   5000
-                   ::still-hung)
+         r
+         (deref (future (#'input/run-shell-helper-bytes!
+                         ["bash" "-c" "printf abc; sleep 600 & exit 0"]
+                         700))
+                5000
+                ::still-hung)
 
-            elapsed
-            (- (System/currentTimeMillis) t0)]
+         elapsed
+         (- (System/currentTimeMillis) t0)]
 
         (expect (map? r) "grandchild pipe-hold must not hang the caller")
         (expect (< elapsed 4000))

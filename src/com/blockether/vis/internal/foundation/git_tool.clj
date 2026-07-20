@@ -38,17 +38,18 @@
    token. The model passes a LIST (the native-tool schema is an array), which
    skips this path entirely — each element is a literal arg, spaces and all."
   [^String s]
-  (loop [chars
-         (seq s)
+  (loop
+    [chars
+     (seq s)
 
-         cur
-         (StringBuilder.)
+     cur
+     (StringBuilder.)
 
-         quote
-         nil
+     quote
+     nil
 
-         acc
-         []]
+     acc
+     []]
 
     (if-let [c (first chars)]
       (cond quote (if (= c quote)
@@ -94,17 +95,19 @@
          (ex-info
            "git needs at least one argument, e.g. git([\"status\"]) or git([\"commit\", \"-m\", \"msg\"])."
            {:type ::no-args})))
-     (let [dir ^File (.getCanonicalFile (workspace/cwd))
-           t0 (now-ms)
-           {:keys [exit out err timed-out? duration-ms]}
-           (git/run-git dir (verbose-add-tokens tokens) {:timeout-secs default-timeout-secs})
-           t1 (now-ms)]
+     (let
+       [dir ^File (.getCanonicalFile (workspace/cwd))
+        t0 (now-ms)
+        {:keys [exit out err timed-out? duration-ms]}
+        (git/run-git dir (verbose-add-tokens tokens) {:timeout-secs default-timeout-secs})
+        t1 (now-ms)]
 
        (extension/success
-         {:result (cond-> {"cmd" (str "git " (str/join " " tokens))
-                           "args" (vec tokens)
-                           "stdout" (or out "")
-                           "duration_ms" (or duration-ms (- t1 t0))}
+         {:result (cond->
+                    {"cmd" (str "git " (str/join " " tokens))
+                     "args" (vec tokens)
+                     "stdout" (or out "")
+                     "duration_ms" (or duration-ms (- t1 t0))}
                     (some? exit)
                     (assoc "exit" exit)
 
@@ -157,10 +160,11 @@
   "Render non-nil `[label value]` pairs as `label: value` lines."
   [pairs]
   (not-empty (str/join "\n"
-                       (for [[k v]
-                             pairs
+                       (for
+                         [[k v]
+                          pairs
 
-                             :when (some? v)]
+                          :when (some? v)]
 
                          (str k ": " v)))))
 
@@ -172,11 +176,12 @@
   [args]
   (when (= "commit" (first args))
     (not-empty (str/join "\n\n"
-                         (loop [xs
-                                (rest args)
+                         (loop
+                           [xs
+                            (rest args)
 
-                                acc
-                                []]
+                            acc
+                            []]
 
                            (if-let [a (first xs)]
                              (cond (#{"-m" "--message"} a) (recur (drop 2 xs)
@@ -193,11 +198,12 @@
    itself stays) so the headline reads `commit -m` instead of cramming the whole
    message onto one line — the message renders as its own quoted block below."
   [args]
-  (loop [xs
-         args
+  (loop
+    [xs
+     args
 
-         out
-         []]
+     out
+     []]
 
     (if-let [a (first xs)]
       (cond (#{"-m" "--message"} a) (recur (drop 2 xs) (conj out a))
@@ -228,68 +234,69 @@
 
 (defn- render-git-result
   [r]
-  (let [args
-        (get r "args")
+  (let
+    [args
+     (get r "args")
 
-        exit
-        (get r "exit")
+     exit
+     (get r "exit")
 
-        failed?
-        (or (get r "timed_out") (and exit (not (zero? (long exit)))))
+     failed?
+     (or (get r "timed_out") (and exit (not (zero? (long exit)))))
 
-        note
-        (cond (get r "timed_out") " (timed out)"
-              (and exit (not (zero? (long exit)))) (str " (exit " exit ")")
-              :else "")
+     note
+     (cond (get r "timed_out") " (timed out)"
+           (and exit (not (zero? (long exit)))) (str " (exit " exit ")")
+           :else "")
 
-        msg
-        (commit-message args)
+     msg
+     (commit-message args)
 
-        ;; A commit lifts its SUBJECT (first message line) onto the headline
-        ;; after an em-dash — `commit — <subject>` — so the collapsed card
-        ;; shows WHAT was committed while the full message still renders as the
-        ;; blockquote body below. The now-redundant `-m` flags are dropped (the
-        ;; subject already says it's a message commit); any OTHER flag
-        ;; (`--amend`, `-a`, …) survives. Dropped on failure so the `(exit N)`
-        ;; note stays the headline's focus.
-        subject
-        (some-> msg
-                str/split-lines
-                first
-                str/trim
-                not-empty)
+     ;; A commit lifts its SUBJECT (first message line) onto the headline
+     ;; after an em-dash — `commit — <subject>` — so the collapsed card
+     ;; shows WHAT was committed while the full message still renders as the
+     ;; blockquote body below. The now-redundant `-m` flags are dropped (the
+     ;; subject already says it's a message commit); any OTHER flag
+     ;; (`--amend`, `-a`, …) survives. Dropped on failure so the `(exit N)`
+     ;; note stays the headline's focus.
+     subject
+     (some-> msg
+             str/split-lines
+             first
+             str/trim
+             not-empty)
 
-        show?
-        (and subject (not failed?))
+     show?
+     (and subject (not failed?))
 
-        base
-        (cond->> (if msg (strip-commit-message args) args)
-          show?
-          (remove #{"-m" "--message"}))
+     base
+     (cond->> (if msg (strip-commit-message args) args)
+       show?
+       (remove #{"-m" "--message"}))
 
-        head
-        (cond-> (str/join " " base)
-          show?
-          (str " \u2014 " (clip-subject subject)))
+     head
+     (cond-> (str/join " " base)
+       show?
+       (str " \u2014 " (clip-subject subject)))
 
-        status
-        (kv-lines [["status"
-                    (cond (get r "timed_out") "timed out"
-                          failed? "failure"
-                          :else "success")] ["exit" exit]
-                   ["duration"
-                    (some-> (get r "duration_ms")
-                            vis/format-duration)]
-                   ["timeout"
-                    (when-let [s (get r "timeout_secs")]
-                      (str s "s"))]])
+     status
+     (kv-lines [["status"
+                 (cond (get r "timed_out") "timed out"
+                       failed? "failure"
+                       :else "success")] ["exit" exit]
+                ["duration"
+                 (some-> (get r "duration_ms")
+                         vis/format-duration)]
+                ["timeout"
+                 (when-let [s (get r "timeout_secs")]
+                   (str s "s"))]])
 
-        body
-        (->> [(section "COMMAND" (str "git " (str/join " " args)) "bash") (section "STATUS" status)
-              (when msg (prose-section "MESSAGE" (quote-block msg)))
-              (section "STDOUT" (get r "stdout")) (section "STDERR" (get r "stderr"))]
-             (remove nil?)
-             (str/join "\n\n"))]
+     body
+     (->> [(section "COMMAND" (str "git " (str/join " " args)) "bash") (section "STATUS" status)
+           (when msg (prose-section "MESSAGE" (quote-block msg)))
+           (section "STDOUT" (get r "stdout")) (section "STDERR" (get r "stderr"))]
+          (remove nil?)
+          (str/join "\n\n"))]
 
     {:summary (str "⎇ " head note) :body (when (seq body) body)}))
 

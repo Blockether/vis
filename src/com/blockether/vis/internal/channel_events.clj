@@ -52,13 +52,14 @@
   (when-not (map? event)
     (throw (ex-info "channel event must be a map"
                     {:type :vis/channel-event-bad-event :event event})))
-  (let [snapshot
-        (get @listeners channel-id)
+  (let
+    [snapshot
+     (get @listeners channel-id)
 
-        event
-        (cond-> event
-          (nil? (:channel/id event))
-          (assoc :channel/id channel-id))]
+     event
+     (cond-> event
+       (nil? (:channel/id event))
+       (assoc :channel/id channel-id))]
 
     (doseq [[listener-id listener-fn] snapshot]
       (try (listener-fn event)

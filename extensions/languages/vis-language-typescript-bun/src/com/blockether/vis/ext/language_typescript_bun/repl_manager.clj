@@ -46,24 +46,25 @@
   [dir _opts]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
-  (let [cmd
-        (conj (runner/resolve-command dir) "-e" (server-script))
+  (let
+    [cmd
+     (conj (runner/resolve-command dir) "-e" (server-script))
 
-        pb
-        (doto (ProcessBuilder. ^java.util.List cmd)
-          (.directory (io/file dir))
-          (.redirectErrorStream false))
+     pb
+     (doto (ProcessBuilder. ^java.util.List cmd)
+       (.directory (io/file dir))
+       (.redirectErrorStream false))
 
-        p
-        (.start pb)
+     p
+     (.start pb)
 
-        info
-        {:process p
-         :writer (io/writer (.getOutputStream p))
-         :reader (io/reader (.getInputStream p))
-         :cmd (display-cmd cmd)
-         :pid (.pid p)
-         :started-at (System/currentTimeMillis)}]
+     info
+     {:process p
+      :writer (io/writer (.getOutputStream p))
+      :reader (io/reader (.getInputStream p))
+      :cmd (display-cmd cmd)
+      :pid (.pid p)
+      :started-at (System/currentTimeMillis)}]
 
     (swap! processes assoc dir info)
     {"status" "up" "pid" (.pid p) "cmd" (display-cmd cmd) "dir" dir}))
@@ -75,13 +76,15 @@
       (throw (ex-info "Bun REPL is not running for this dir — repl_start(\"typescript\") first."
                       {:type :ts/no-repl :dir dir})))
     (locking info
-      (let [^BufferedWriter w (:writer info)
-            ^BufferedReader r (:reader info)]
+      (let
+        [^BufferedWriter w (:writer info)
+         ^BufferedReader r (:reader info)]
 
         (.write w (str (json/write-json-str req) "\n"))
         (.flush w)
-        (let [fut (future (.readLine r))
-              line (deref fut timeout-ms ::timeout)]
+        (let
+          [fut (future (.readLine r))
+           line (deref fut timeout-ms ::timeout)]
 
           (if (= line ::timeout)
             (do (future-cancel fut)

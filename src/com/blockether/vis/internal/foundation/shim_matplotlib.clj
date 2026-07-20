@@ -89,13 +89,14 @@
 
 (defn- ->color
   ^Color [c idx]
-  (let [cs
-        (when (and (string? c) (seq c)) (.toLowerCase ^String (str c)))
+  (let
+    [cs
+     (when (and (string? c) (seq c)) (.toLowerCase ^String (str c)))
 
-        rgb
-        (or (when cs (get named-colors cs))
-            (when (and cs (.startsWith ^String cs "#")) (hex->rgb cs))
-            (nth palette (mod (int idx) (count palette))))]
+     rgb
+     (or (when cs (get named-colors cs))
+         (when (and cs (.startsWith ^String cs "#")) (hex->rgb cs))
+         (nth palette (mod (int idx) (count palette))))]
 
     (Color. (int (nth rgb 0)) (int (nth rgb 1)) (int (nth rgb 2)))))
 
@@ -133,11 +134,12 @@
 
 (defn- new-canvas
   [^long W ^long H]
-  (let [img
-        (BufferedImage. W H BufferedImage/TYPE_INT_RGB)
+  (let
+    [img
+     (BufferedImage. W H BufferedImage/TYPE_INT_RGB)
 
-        g
-        (.createGraphics img)]
+     g
+     (.createGraphics img)]
 
     (.setRenderingHint g RenderingHints/KEY_ANTIALIASING RenderingHints/VALUE_ANTIALIAS_ON)
     (.setRenderingHint g
@@ -161,23 +163,24 @@
 
 (defn- viridis
   ^Color [^double t]
-  (let [t
-        (double (max 0.0 (min 1.0 t)))
+  (let
+    [t
+     (double (max 0.0 (min 1.0 t)))
 
-        stops
-        [[68 1 84] [59 82 139] [33 145 140] [94 201 98] [253 231 37]]
+     stops
+     [[68 1 84] [59 82 139] [33 145 140] [94 201 98] [253 231 37]]
 
-        n
-        (dec (count stops))
+     n
+     (dec (count stops))
 
-        f
-        (* t n)
+     f
+     (* t n)
 
-        i
-        (min (int f) (dec n))
+     i
+     (min (int f) (dec n))
 
-        [a b c]
-        (lerp-col (nth stops i) (nth stops (inc i)) (- f i))]
+     [a b c]
+     (lerp-col (nth stops i) (nth stops (inc i)) (- f i))]
 
     (Color. (int a) (int b) (int c))))
 
@@ -198,20 +201,22 @@
   ^String [^long W ^long H spec s]
   (let [[img ^Graphics2D g] (new-canvas W H)]
     (try
-      (let [vals (mapv #(Math/abs (as-double %)) (get s "x"))
-            labels (get s "labels")
-            total (double (reduce + 0.0 vals))
-            cx (/ W 2.0)
-            cy (+ 12.0 (/ H 2.0))
-            r (double (- (quot (long (min W H)) 2) 66))
-            start (volatile! 90.0)]
+      (let
+        [vals (mapv #(Math/abs (as-double %)) (get s "x"))
+         labels (get s "labels")
+         total (double (reduce + 0.0 vals))
+         cx (/ W 2.0)
+         cy (+ 12.0 (/ H 2.0))
+         r (double (- (quot (long (min W H)) 2) 66))
+         start (volatile! 90.0)]
 
         (.setFont g (Font. "SansSerif" Font/PLAIN 11))
         (dotimes [i (count vals)]
-          (let [frac (if (< 0.0 total) (/ (double (nth vals i)) total) 0.0)
-                ang (* 360.0 frac)
-                col (->color nil i)
-                mid (Math/toRadians (- (double @start) (/ ang 2.0)))]
+          (let
+            [frac (if (< 0.0 total) (/ (double (nth vals i)) total) 0.0)
+             ang (* 360.0 frac)
+             col (->color nil i)
+             mid (Math/toRadians (- (double @start) (/ ang 2.0)))]
 
             (.setColor g col)
             (.fillArc g
@@ -221,12 +226,13 @@
                       (int (* 2 r))
                       (int (Math/round (double @start)))
                       (int (Math/round (- ang))))
-            (let [lx (+ cx (* (+ r 16) (Math/cos mid)))
-                  ly (- cy (* (+ r 16) (Math/sin mid)))
-                  lbl (if (and labels (< i (count labels)))
-                        (str (nth labels i))
-                        (str (Math/round (* 100.0 frac)) "%"))
-                  fm (.getFontMetrics g)]
+            (let
+              [lx (+ cx (* (+ r 16) (Math/cos mid)))
+               ly (- cy (* (+ r 16) (Math/sin mid)))
+               lbl (if (and labels (< i (count labels)))
+                     (str (nth labels i))
+                     (str (Math/round (* 100.0 frac)) "%"))
+               fm (.getFontMetrics g)]
 
               (.setColor g (Color. 40 40 40))
               (.drawString g
@@ -244,149 +250,146 @@
   "Line/scatter/bar/hist/fill/step/hline/vline figure with axes, ticks, grid,
    labels, log scales, annotations and legend."
   ^String [^long W ^long H spec series]
-  (let [title
-        (get spec "title")
+  (let
+    [title
+     (get spec "title")
 
-        xlabel
-        (get spec "xlabel")
+     xlabel
+     (get spec "xlabel")
 
-        ylabel
-        (get spec "ylabel")
+     ylabel
+     (get spec "ylabel")
 
-        grid?
-        (boolean (get spec "grid"))
+     grid?
+     (boolean (get spec "grid"))
 
-        legend?
-        (boolean (get spec "legend"))
+     legend?
+     (boolean (get spec "legend"))
 
-        axis-off?
-        (boolean (get spec "axis_off"))
+     axis-off?
+     (boolean (get spec "axis_off"))
 
-        annotations
-        (get spec "annotations")
+     annotations
+     (get spec "annotations")
 
-        xlog?
-        (= "log" (str (get spec "xscale")))
+     xlog?
+     (= "log" (str (get spec "xscale")))
 
-        ylog?
-        (= "log" (str (get spec "yscale")))
+     ylog?
+     (= "log" (str (get spec "yscale")))
 
-        xfwd
-        (fn ^double [^double v]
-          (if xlog? (Math/log10 (Math/max 1.0e-12 v)) v))
+     xfwd
+     (fn ^double [^double v]
+       (if xlog? (Math/log10 (Math/max 1.0e-12 v)) v))
 
-        yfwd
-        (fn ^double [^double v]
-          (if ylog? (Math/log10 (Math/max 1.0e-12 v)) v))
+     yfwd
+     (fn ^double [^double v]
+       (if ylog? (Math/log10 (Math/max 1.0e-12 v)) v))
 
-        xinv
-        (fn ^double [^double v]
-          (if xlog? (Math/pow 10.0 v) v))
+     xinv
+     (fn ^double [^double v]
+       (if xlog? (Math/pow 10.0 v) v))
 
-        yinv
-        (fn ^double [^double v]
-          (if ylog? (Math/pow 10.0 v) v))
+     yinv
+     (fn ^double [^double v]
+       (if ylog? (Math/pow 10.0 v) v))
 
-        has-bar?
-        (some #(= "bar" (str (get % "kind"))) series)
+     has-bar?
+     (some #(= "bar" (str (get % "kind"))) series)
 
-        cat-labels
-        (some (fn [s]
-                (when (= "bar" (str (get s "kind"))) (get s "labels")))
-              series)
+     cat-labels
+     (some (fn [s]
+             (when (= "bar" (str (get s "kind"))) (get s "labels")))
+           series)
 
-        ml
-        62
+     ml
+     62
 
-        mr
-        26
+     mr
+     26
 
-        mt
-        (if (and (string? title) (seq title)) 46 22)
+     mt
+     (if (and (string? title) (seq title)) 46 22)
 
-        mb
-        (if (and (string? xlabel) (seq xlabel)) 58 42)
+     mb
+     (if (and (string? xlabel) (seq xlabel)) 58 42)
 
-        px0
-        ml
+     px0
+     ml
 
-        py0
-        mt
+     py0
+     mt
 
-        pw
-        (long (max 1 (- W ml mr)))
+     pw
+     (long (max 1 (- W ml mr)))
 
-        ph
-        (long (max 1 (- H mt mb)))
+     ph
+     (long (max 1 (- H mt mb)))
 
-        all-x
-        (map xfwd (mapcat series-xs series))
+     all-x
+     (map xfwd (mapcat series-xs series))
 
-        all-y
-        (map yfwd
-             (concat (mapcat series-ys series)
-                     (mapcat (fn [s]
-                               (mapv as-double (get s "y2")))
-                             series)))
+     all-y
+     (map yfwd
+          (concat (mapcat series-ys series)
+                  (mapcat (fn [s]
+                            (mapv as-double (get s "y2")))
+                          series)))
 
-        xlim
-        (get spec "xlim")
+     xlim
+     (get spec "xlim")
 
-        ylim
-        (get spec "ylim")
+     ylim
+     (get spec "ylim")
 
-        [xmin xmax]
-        (if (seq xlim)
-          [(xfwd (as-double (first xlim))) (xfwd (as-double (second xlim)))]
-          (if (seq all-x) [(apply min all-x) (apply max all-x)] [0.0 1.0]))
+     [xmin xmax]
+     (if (seq xlim)
+       [(xfwd (as-double (first xlim))) (xfwd (as-double (second xlim)))]
+       (if (seq all-x) [(apply min all-x) (apply max all-x)] [0.0 1.0]))
 
-        raw-ys
-        (cond-> (vec all-y)
-          has-bar?
-          (conj 0.0))
+     raw-ys
+     (cond-> (vec all-y)
+       has-bar?
+       (conj 0.0))
 
-        [ymin ymax]
-        (if (seq ylim)
-          [(yfwd (as-double (first ylim))) (yfwd (as-double (second ylim)))]
-          (if (seq raw-ys) [(apply min raw-ys) (apply max raw-ys)] [0.0 1.0]))
+     [ymin ymax]
+     (if (seq ylim)
+       [(yfwd (as-double (first ylim))) (yfwd (as-double (second ylim)))]
+       (if (seq raw-ys) [(apply min raw-ys) (apply max raw-ys)] [0.0 1.0]))
 
-        [xmin xmax]
-        (if (== (double xmin) (double xmax))
-          [(- (double xmin) 1.0) (+ (double xmax) 1.0)]
-          [xmin xmax])
+     [xmin xmax]
+     (if (== (double xmin) (double xmax)) [(- (double xmin) 1.0) (+ (double xmax) 1.0)] [xmin xmax])
 
-        [ymin ymax]
-        (if (== (double ymin) (double ymax))
-          [(- (double ymin) 1.0) (+ (double ymax) 1.0)]
-          [ymin ymax])
+     [ymin ymax]
+     (if (== (double ymin) (double ymax)) [(- (double ymin) 1.0) (+ (double ymax) 1.0)] [ymin ymax])
 
-        ypad
-        (* 0.05 (- (double ymax) (double ymin)))
+     ypad
+     (* 0.05 (- (double ymax) (double ymin)))
 
-        ymin
-        (- (double ymin) ypad)
+     ymin
+     (- (double ymin) ypad)
 
-        ymax
-        (+ (double ymax) ypad)
+     ymax
+     (+ (double ymax) ypad)
 
-        sxf
-        (fn ^double [^double xf]
-          (+ px0 (* pw (/ (- xf (double xmin)) (- (double xmax) (double xmin))))))
+     sxf
+     (fn ^double [^double xf]
+       (+ px0 (* pw (/ (- xf (double xmin)) (- (double xmax) (double xmin))))))
 
-        syf
-        (fn ^double [^double yf]
-          (+ py0 (* ph (- 1.0 (/ (- yf ymin) (- ymax ymin))))))
+     syf
+     (fn ^double [^double yf]
+       (+ py0 (* ph (- 1.0 (/ (- yf ymin) (- ymax ymin))))))
 
-        sx
-        (fn ^double [^double x]
-          (sxf (xfwd x)))
+     sx
+     (fn ^double [^double x]
+       (sxf (xfwd x)))
 
-        sy
-        (fn ^double [^double y]
-          (syf (yfwd y)))
+     sy
+     (fn ^double [^double y]
+       (syf (yfwd y)))
 
-        [img ^Graphics2D g]
-        (new-canvas W H)]
+     [img ^Graphics2D g]
+     (new-canvas W H)]
 
     (try
       ;; gridlines + tick labels + frame (all skipped when axis('off'))
@@ -395,11 +398,12 @@
           (.setFont g (Font. "SansSerif" Font/PLAIN 10))
           (let [fm (.getFontMetrics g)]
             (dotimes [i (inc ticks)]
-              (let [t (/ (double i) ticks)
-                    xv (+ (double xmin) (* t (- (double xmax) (double xmin))))
-                    yv (+ ymin (* t (- ymax ymin)))
-                    xp (int (sxf xv))
-                    yp (int (syf yv))]
+              (let
+                [t (/ (double i) ticks)
+                 xv (+ (double xmin) (* t (- (double xmax) (double xmin))))
+                 yv (+ ymin (* t (- ymax ymin)))
+                 xp (int (sxf xv))
+                 yp (int (syf yv))]
 
                 (when grid?
                   (.setColor g (Color. 230 230 230))
@@ -417,8 +421,9 @@
             (when cat-labels
               (.setColor g (Color. 90 90 90))
               (dotimes [i (count cat-labels)]
-                (let [^String xl (str (nth cat-labels i))
-                      xp (int (sx (double i)))]
+                (let
+                  [^String xl (str (nth cat-labels i))
+                   xp (int (sx (double i)))]
 
                   (.drawString g
                                xl
@@ -429,18 +434,20 @@
         (.setStroke g (BasicStroke. 1.0))
         (.drawRect g px0 py0 pw ph))
       ;; series
-      (let [nbar
-            (count (filter #(= "bar" (str (get % "kind"))) series))
+      (let
+        [nbar
+         (count (filter #(= "bar" (str (get % "kind"))) series))
 
-            bar-slots
-            (long (max 1 (long (reduce max 1 (map #(count (series-xs %)) series)))))]
+         bar-slots
+         (long (max 1 (long (reduce max 1 (map #(count (series-xs %)) series)))))]
 
         (doseq [[idx s] (map-indexed vector series)]
-          (let [kind (str (get s "kind"))
-                xs (series-xs s)
-                ys (series-ys s)
-                col (->color (get s "color") idx)
-                pts (map vector xs ys)]
+          (let
+            [kind (str (get s "kind"))
+             xs (series-xs s)
+             ys (series-ys s)
+             col (->color (get s "color") idx)
+             pts (map vector xs ys)]
 
             (.setColor g col)
             (case kind
@@ -449,13 +456,15 @@
                 (.fillOval g (int (- (long (sx x)) 3)) (int (- (long (sy y)) 3)) 6 6))
 
               "bar"
-              (let [bw (long (max 2 (int (* (quot pw bar-slots) (/ 0.7 (long (max 1 nbar)))))))
-                    y0 (int (syf (max ymin (min ymax 0.0))))]
+              (let
+                [bw (long (max 2 (int (* (quot pw bar-slots) (/ 0.7 (long (max 1 nbar)))))))
+                 y0 (int (syf (max ymin (min ymax 0.0))))]
 
                 (doseq [[x y] pts]
-                  (let [yp (int (sy y))
-                        top (min y0 yp)
-                        hgt (Math/abs (- y0 yp))]
+                  (let
+                    [yp (int (sy y))
+                     top (min y0 yp)
+                     hgt (Math/abs (- y0 yp))]
 
                     (.fillRect g (int (- (long (sx x)) (quot bw 2))) top bw (max 1 hgt)))))
 
@@ -472,15 +481,17 @@
                   (.drawLine g xp py0 xp (+ py0 ph))))
 
               "fill"
-              (let [y2 (mapv as-double (get s "y2"))
-                    n (count xs)]
+              (let
+                [y2 (mapv as-double (get s "y2"))
+                 n (count xs)]
 
                 (when (and (pos? n) (= n (count y2)))
-                  (let [xsi (int-array (concat (map #(int (sx %)) xs)
-                                               (map #(int (sx %)) (reverse xs))))
-                        ysi (int-array (concat (map #(int (sy %)) ys)
-                                               (map #(int (sy %)) (reverse y2))))
-                        fc (Color. (.getRed col) (.getGreen col) (.getBlue col) 90)]
+                  (let
+                    [xsi (int-array (concat (map #(int (sx %)) xs)
+                                            (map #(int (sx %)) (reverse xs))))
+                     ysi (int-array (concat (map #(int (sy %)) ys)
+                                            (map #(int (sy %)) (reverse y2))))
+                     fc (Color. (.getRed col) (.getGreen col) (.getBlue col) 90)]
 
                     (.setColor g fc)
                     (.fillPolygon g xsi ysi (* 2 n)))))
@@ -492,23 +503,25 @@
                     (.drawLine g (int (sx x2)) (int (sy y1)) (int (sx x2)) (int (sy y2)))))
 
               "image"
-              (let [rows (get s "rows")
-                    nr (int (as-double (get s "nrows")))
-                    nc (int (as-double (get s "ncols")))
-                    vmin (as-double (get s "vmin"))
-                    vmax (as-double (get s "vmax"))
-                    span (let [d (- vmax vmin)]
-                           (if (zero? d) 1.0 d))]
+              (let
+                [rows (get s "rows")
+                 nr (int (as-double (get s "nrows")))
+                 nc (int (as-double (get s "ncols")))
+                 vmin (as-double (get s "vmin"))
+                 vmax (as-double (get s "vmax"))
+                 span (let [d (- vmax vmin)]
+                        (if (zero? d) 1.0 d))]
 
                 (dotimes [ri nr]
                   (let [row (nth rows ri nil)]
                     (dotimes [ci nc]
-                      (let [v (as-double (nth row ci 0))
-                            col (viridis (/ (- v vmin) span))
-                            x0 (int (sx ci))
-                            x1 (int (sx (inc ci)))
-                            yt (int (sy (- nr ri)))
-                            yb (int (sy (- nr (inc ri))))]
+                      (let
+                        [v (as-double (nth row ci 0))
+                         col (viridis (/ (- v vmin) span))
+                         x0 (int (sx ci))
+                         x1 (int (sx (inc ci)))
+                         yt (int (sy (- nr ri)))
+                         yb (int (sy (- nr (inc ri))))]
 
                         (.setColor g col)
                         (.fillRect g
@@ -518,19 +531,21 @@
                                    (max 1 (Math/abs (- yb yt)))))))))
 
               "box"
-              (let [stats (get s "stats")
-                    pos (mapv as-double (get s "positions"))
-                    bw 24]
+              (let
+                [stats (get s "stats")
+                 pos (mapv as-double (get s "positions"))
+                 bw 24]
 
                 (doseq [[bi st] (map-indexed vector stats)]
-                  (let [xc (int (sx (nth pos bi (inc (long bi)))))
-                        q1 (int (sy (as-double (get st "q1"))))
-                        q2 (int (sy (as-double (get st "q2"))))
-                        q3 (int (sy (as-double (get st "q3"))))
-                        lo (int (sy (as-double (get st "lo"))))
-                        hi (int (sy (as-double (get st "hi"))))
-                        hw (int (/ bw 2))
-                        col (->color nil bi)]
+                  (let
+                    [xc (int (sx (nth pos bi (inc (long bi)))))
+                     q1 (int (sy (as-double (get st "q1"))))
+                     q2 (int (sy (as-double (get st "q2"))))
+                     q3 (int (sy (as-double (get st "q3"))))
+                     lo (int (sy (as-double (get st "lo"))))
+                     hi (int (sy (as-double (get st "hi"))))
+                     hw (int (/ bw 2))
+                     col (->color nil bi)]
 
                     (.setStroke g (BasicStroke. 1.5))
                     (.setColor g (Color. 60 60 60))
@@ -563,11 +578,12 @@
                        (int (- H 12)))))
       (when (and (string? ylabel) (seq ylabel))
         (.setFont g (Font. "SansSerif" Font/PLAIN 12))
-        (let [fm
-              (.getFontMetrics g)
+        (let
+          [fm
+           (.getFontMetrics g)
 
-              tx
-              (.getTransform g)]
+           tx
+           (.getTransform g)]
 
           (.translate g 16.0 (double (+ py0 (quot ph 2))))
           (.rotate g (- (/ Math/PI 2)))
@@ -583,20 +599,22 @@
                        (int (sx (as-double (get a "x"))))
                        (int (sy (as-double (get a "y")))))))
       ;; legend
-      (let [labelled (filter #(let [l (get % "label")]
+      (let
+        [labelled (filter #(let [l (get % "label")]
 
-                                (and (string? l) (seq l)))
-                             (map-indexed (fn [i s]
-                                            (assoc s "__idx" i))
-                                          series))]
+                             (and (string? l) (seq l)))
+                          (map-indexed (fn [i s]
+                                         (assoc s "__idx" i))
+                                       series))]
         (when (and (seq labelled) (or legend? (seq labelled)))
           (.setFont g (Font. "SansSerif" Font/PLAIN 11))
-          (let [fm (.getFontMetrics g)
-                rows (vec labelled)
-                lw (+ 34 (long (reduce max 0 (map #(.stringWidth fm (str (get % "label"))) rows))))
-                lh (+ 8 (* 16 (count rows)))
-                lx (- (+ px0 pw) lw 8)
-                ly (+ py0 8)]
+          (let
+            [fm (.getFontMetrics g)
+             rows (vec labelled)
+             lw (+ 34 (long (reduce max 0 (map #(.stringWidth fm (str (get % "label"))) rows))))
+             lh (+ 8 (* 16 (count rows)))
+             lx (- (+ px0 pw) lw 8)
+             ly (+ py0 8)]
 
             (.setColor g (Color. 255 255 255))
             (.fillRect g lx ly lw lh)
@@ -616,17 +634,18 @@
    Dispatches to a pie chart when a pie series is present, else the XY renderer.
    Throws on any drawing failure (the caller wraps it in an envelope)."
   ^String [spec]
-  (let [W
-        (int (as-double (or (get spec "width") 640)))
+  (let
+    [W
+     (int (as-double (or (get spec "width") 640)))
 
-        H
-        (int (as-double (or (get spec "height") 480)))
+     H
+     (int (as-double (or (get spec "height") 480)))
 
-        series
-        (vec (get spec "series"))
+     series
+     (vec (get spec "series"))
 
-        pie
-        (first (filter #(= "pie" (str (get % "kind"))) series))]
+     pie
+     (first (filter #(= "pie" (str (get % "kind"))) series))]
 
     (if pie (render-pie W H spec pie) (render-xy W H spec series))))
 
@@ -653,23 +672,24 @@
    "__vis_mpl_render_file__"
    (fn [spec]
      (mpl-envelope
-       #(let [b64
-              (render-png-base64 spec)
+       #(let
+          [b64
+           (render-png-base64 spec)
 
-              bytes
-              (.decode (Base64/getDecoder) ^String b64)
+           bytes
+           (.decode (Base64/getDecoder) ^String b64)
 
-              dir
-              (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-mpl") (.mkdirs))
+           dir
+           (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-mpl") (.mkdirs))
 
-              f
-              (java.io.File/createTempFile "fig-" ".png" dir)
+           f
+           (java.io.File/createTempFile "fig-" ".png" dir)
 
-              w
-              (int (as-double (or (get spec "width") 640)))
+           w
+           (int (as-double (or (get spec "width") 640)))
 
-              h
-              (int (as-double (or (get spec "height") 480)))]
+           h
+           (int (as-double (or (get spec "height") 480)))]
 
           (with-open [o (java.io.FileOutputStream. f)]
             (.write o ^bytes bytes))
@@ -681,8 +701,8 @@
                                            :base64 b64
                                            :size (alength bytes)
                                            :filename (.getName f)
-                                           :dims (str w "x" h)}) [(.getAbsolutePath f) w h
-                                                                  (alength bytes)])))})
+                                           :dims (str w "x" h)})
+          [(.getAbsolutePath f) w h (alength bytes)])))})
 
 (def ^:private matplotlib-shim-src
   "Pure-Python preamble publishing a minimal `matplotlib` package with a

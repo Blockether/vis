@@ -95,31 +95,33 @@
    reset to `[]` on entry so consecutive scans don't compound stale
    warnings."
   []
-  (let [scan-started
-        (System/nanoTime)
+  (let
+    [scan-started
+     (System/nanoTime)
 
-        urls
-        (try (enumeration-seq (.getResources (.getContextClassLoader (Thread/currentThread))
-                                             EXTENSIONS_RESOURCE))
-             (catch Exception _ nil))
+     urls
+     (try (enumeration-seq (.getResources (.getContextClassLoader (Thread/currentThread))
+                                          EXTENSIONS_RESOURCE))
+          (catch Exception _ nil))
 
-        merged
-        (atom {})
+     merged
+     (atom {})
 
-        seen
-        (atom #{})]
+     seen
+     (atom #{})]
 
     (measure-line! "resources" (str "count=" (count urls)))
     (reset! load-failures-atom [])
     (doseq [^java.net.URL url urls]
       (let [url-started (System/nanoTime)]
         (try
-          (let [content (slurp url)
-                parsed (edn/read-string {:readers {}
-                                         :default (fn [_ form]
-                                                    form)}
-                                        content)
-                normalized (normalize-vis-edn parsed)]
+          (let
+            [content (slurp url)
+             parsed (edn/read-string {:readers {}
+                                      :default (fn [_ form]
+                                                 form)}
+                                     content)
+             normalized (normalize-vis-edn parsed)]
 
             (measure-line! "resource parsed"
                            (format-ms (elapsed-ms url-started))

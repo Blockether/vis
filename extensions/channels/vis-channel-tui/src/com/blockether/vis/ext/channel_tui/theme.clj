@@ -294,17 +294,18 @@
    updated Lanterna colors/widths/spacing without requiring channels to ship
    their own theme declaration."
   [theme-id]
-  (let [theme-id
-        (or theme-id theme/default-theme-id)
+  (let
+    [theme-id
+     (or theme-id theme/default-theme-id)
 
-        theme-map
-        (theme/theme theme-id)
+     theme-map
+     (theme/theme theme-id)
 
-        widths
-        (:widths theme-map)
+     widths
+     (:widths theme-map)
 
-        spacing
-        (:spacing theme-map)]
+     spacing
+     (:spacing theme-map)]
 
     (reset! active-theme-id (:name theme-map))
     (alter-var-root #'default-theme (constantly theme-map))

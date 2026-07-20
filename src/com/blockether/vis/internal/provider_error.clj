@@ -50,9 +50,10 @@
   "True when the svar wrapper message is just a status echo (e.g.
    `Exceptional status code: 400`) that adds nothing beyond the HTTP row."
   [message]
-  (boolean (when-let [t (some-> message
-                                str
-                                str/lower-case)]
+  (boolean (when-let
+             [t (some-> message
+                        str
+                        str/lower-case)]
              (or (str/includes? t "exceptional status code")
                  (str/includes? t "provider error http")
                  ;; the title already says "All providers unavailable" and the
@@ -71,8 +72,9 @@
   "True when a provider rejected a native tool because its input-schema root
    uses a JSON Schema union that provider tool APIs forbid."
   [message]
-  (let [text (some-> message
-                     str/lower-case)]
+  (let
+    [text (some-> message
+                  str/lower-case)]
     (boolean (and text
                   (or (str/includes? text "input_schema") (str/includes? text "input schema"))
                   (str/includes? text "does not support")
@@ -151,25 +153,26 @@
    `nil status` guard keeps 4xx/5xx out of this path."
   [^Throwable t]
   (when t
-    (let [chain
-          (take 16
-                (take-while some?
-                            (iterate (fn [^Throwable x]
-                                       (some-> x
-                                               .getCause))
-                                     t)))
+    (let
+      [chain
+       (take 16
+             (take-while some?
+                         (iterate (fn [^Throwable x]
+                                    (some-> x
+                                            .getCause))
+                                  t)))
 
-          text
-          (str/join "\n"
-                    (keep (fn [^Throwable x]
-                            (.getMessage x))
-                          chain))
+       text
+       (str/join "\n"
+                 (keep (fn [^Throwable x]
+                         (.getMessage x))
+                       chain))
 
-          data
-          (ex-data t)
+       data
+       (ex-data t)
 
-          status
-          (or (:status data) (:status (:data data)))]
+       status
+       (or (:status data) (:status (:data data)))]
 
       (transport-error? status text nil))))
 
@@ -215,30 +218,31 @@
    failure, shared by every surface. The actionable step lives in
    `provider-error-next-step` (a separate block), so this is JUST the diagnosis."
   [err]
-  (let [message
-        (or (ex-message err) (:message err) (str err))
+  (let
+    [message
+     (or (ex-message err) (:message err) (str err))
 
-        data
-        (:data err)
+     data
+     (:data err)
 
-        body-raw
-        (some-> (:body data)
-                str)
+     body-raw
+     (some-> (:body data)
+             str)
 
-        status
-        (:status data)
+     status
+     (:status data)
 
-        provider-message
-        (provider-body-message body-raw)
+     provider-message
+     (provider-body-message body-raw)
 
-        schema-rejection?
-        (tool-schema-rejection-message? (str provider-message "\n" message))
+     schema-rejection?
+     (tool-schema-rejection-message? (str provider-message "\n" message))
 
-        tool-name
-        (:tool-name data)
+     tool-name
+     (:tool-name data)
 
-        schema-field
-        (:tool-schema-field data)]
+     schema-field
+     (:tool-schema-field data)]
 
     (cond
       (empty-content-error? err)
@@ -301,11 +305,12 @@
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
   [err]
-  (let [message
-        (or (ex-message err) (:message err) (str err))
+  (let
+    [message
+     (or (ex-message err) (:message err) (str err))
 
-        data
-        (:data err)]
+     data
+     (:data err)]
 
     (case (provider-error-kind err)
       :empty-content
@@ -339,11 +344,12 @@
   "The actionable `NEXT STEP:` line — what the user should DO — by kind. Kept
    SEPARATE from the diagnosis so surfaces can make it prominent."
   [err]
-  (let [message
-        (or (ex-message err) (:message err) (str err))
+  (let
+    [message
+     (or (ex-message err) (:message err) (str err))
 
-        data
-        (:data err)]
+     data
+     (:data err)]
 
     (case (provider-error-kind err)
       :empty-content
@@ -403,24 +409,25 @@
 
 (defn provider-error-kind
   [err]
-  (let [message
-        (or (ex-message err) (:message err) (str err))
+  (let
+    [message
+     (or (ex-message err) (:message err) (str err))
 
-        data
-        (:data err)
+     data
+     (:data err)
 
-        body-raw
-        (some-> (:body data)
-                str)
+     body-raw
+     (some-> (:body data)
+             str)
 
-        status
-        (:status data)
+     status
+     (:status data)
 
-        provider-message
-        (provider-body-message body-raw)
+     provider-message
+     (provider-body-message body-raw)
 
-        schema-rejection?
-        (tool-schema-rejection-message? (str provider-message "\n" message))]
+     schema-rejection?
+     (tool-schema-rejection-message? (str provider-message "\n" message))]
 
     (cond (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
@@ -435,29 +442,30 @@
   "Ordered `[label value]` rows of the bare facts (no prose). Same set the
    IR renders as a `<ul>` and the TUI renders as plain rows."
   [err]
-  (let [message
-        (or (ex-message err) (:message err) (str err))
+  (let
+    [message
+     (or (ex-message err) (:message err) (str err))
 
-        data
-        (:data err)
+     data
+     (:data err)
 
-        status
-        (:status data)
+     status
+     (:status data)
 
-        request-id
-        (or (:request-id data) (:request_id data))
+     request-id
+     (or (:request-id data) (:request_id data))
 
-        provider-id
-        (provider-id-of data)
+     provider-id
+     (provider-id-of data)
 
-        tool-name
-        (:tool-name data)
+     tool-name
+     (:tool-name data)
 
-        schema-field
-        (:tool-schema-field data)
+     schema-field
+     (:tool-schema-field data)
 
-        schema-path
-        (:tool-schema-path data)]
+     schema-path
+     (:tool-schema-path data)]
 
     (cond-> []
       (and (seq message) (not (generic-wrapper-message? message)))
@@ -486,12 +494,13 @@
    message could be extracted (HTML pages, bare 5xx). nil otherwise so the
    readable message isn't echoed twice."
   [err]
-  (let [body-raw
-        (some-> (:body (:data err))
-                str)
+  (let
+    [body-raw
+     (some-> (:body (:data err))
+             str)
 
-        structured-msg
-        (provider-structured-message body-raw)]
+     structured-msg
+     (provider-structured-message body-raw)]
 
     (when (and body-raw (not (str/blank? body-raw)) (not structured-msg))
       (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))))
@@ -500,24 +509,25 @@
   "Structured echo of the facts a chat surface can render
    compactly without parsing the IR back out."
   [err]
-  (let [message
-        (or (ex-message err) (:message err) (str err))
+  (let
+    [message
+     (or (ex-message err) (:message err) (str err))
 
-        data
-        (:data err)
+     data
+     (:data err)
 
-        body-raw
-        (some-> (:body data)
-                str)
+     body-raw
+     (some-> (:body data)
+             str)
 
-        status
-        (:status data)
+     status
+     (:status data)
 
-        request-id
-        (or (:request-id data) (:request_id data))
+     request-id
+     (or (:request-id data) (:request_id data))
 
-        provider-message
-        (provider-body-message body-raw)]
+     provider-message
+     (provider-body-message body-raw)]
 
     {:kind (provider-error-kind err)
      :title (provider-error-title err)
@@ -554,14 +564,15 @@
   "Canonical typed content for a provider failure. The error remains data;
    channels decide how to present it and Markdown is not used as an envelope."
   [err]
-  (let [{:keys [kind title explanation next-step status request-id provider-id attempts body]}
-        (provider-error-info err)
+  (let
+    [{:keys [kind title explanation next-step status request-id provider-id attempts body]}
+     (provider-error-info err)
 
-        retryable?
-        (contains? #{:rate-limit :transport :overloaded :empty-content} kind)
+     retryable?
+     (contains? #{:rate-limit :transport :overloaded :empty-content} kind)
 
-        message
-        (str/join "\n\n" (remove str/blank? [title explanation next-step]))]
+     message
+     (str/join "\n\n" (remove str/blank? [title explanation next-step]))]
 
     [(cond-> (content/error (str "provider_" (name (or kind :failure))) message retryable?)
        status

@@ -67,13 +67,14 @@
    stall the render. Each probe is `describe` + a `(+ 1 1)` eval health check.
    Returns `{port {:status .. [:versions :dialect :form :hint :ms]}}`."
   [repls]
-  (let [budget
-        (+ (long probe-timeout-ms) (long health-timeout-ms) 200)
+  (let
+    [budget
+     (+ (long probe-timeout-ms) (long health-timeout-ms) 200)
 
-        futs
-        (mapv (fn [{:keys [host port]}]
-                [port (future (probe-one (or host "localhost") port))])
-              repls)]
+     futs
+     (mapv (fn [{:keys [host port]}]
+             [port (future (probe-one (or host "localhost") port))])
+           repls)]
 
     (into {}
           (map (fn [[p f]]
@@ -96,42 +97,43 @@
    the footer badge + stop/restart dialog see it. No-op when already registered.
    Managed REPLs get stop + restart thunks driving repl-manager."
   [session-id statuses {:keys [id dir port tool aliases log external? host]}]
-  (let [existing
-        (when (and session-id id) (vis/get-resource session-id id))
+  (let
+    [existing
+     (when (and session-id id) (vis/get-resource session-id id))
 
-        probe
-        (get statuses port)
+     probe
+     (get statuses port)
 
-        status
-        (or (:status probe) :unknown)
+     status
+     (or (:status probe) :unknown)
 
-        detail
-        (cond-> {"dir" dir "port" port "managed" (not external?)}
-          external?
-          (assoc "host"
-            (or host "localhost") "external"
-            true)
+     detail
+     (cond-> {"dir" dir "port" port "managed" (not external?)}
+       external?
+       (assoc "host"
+         (or host "localhost") "external"
+         true)
 
-          tool
-          (assoc "tool" (name tool))
+       tool
+       (assoc "tool" (name tool))
 
-          (seq aliases)
-          (assoc "aliases" (mapv name aliases))
+       (seq aliases)
+       (assoc "aliases" (mapv name aliases))
 
-          log
-          (assoc "log" log)
+       log
+       (assoc "log" log)
 
-          (seq (:versions probe))
-          (assoc "versions" (update-keys (:versions probe) name))
+       (seq (:versions probe))
+       (assoc "versions" (update-keys (:versions probe) name))
 
-          (:dialect probe)
-          (assoc "dialect" (name (:dialect probe)))
+       (:dialect probe)
+       (assoc "dialect" (name (:dialect probe)))
 
-          (:form probe)
-          (assoc "form" (:form probe))
+       (:form probe)
+       (assoc "form" (:form probe))
 
-          (:hint probe)
-          (assoc "hint" (:hint probe)))]
+       (:hint probe)
+       (assoc "hint" (:hint probe)))]
 
     (when (and session-id
                id
@@ -153,32 +155,32 @@
          ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim.
          :detail detail
          :owner :ext/language-clojure}
-        (cond-> {:stop-fn (fn []
-                            (repl-manager/stop! session-id dir))
-                 :restart-fn
-                 (if external?
-                   ;; External: re-CONNECT — never spawn a managed
-                   ;; JVM over the user's REPL (stop! only detaches).
-                   (fn []
-                     (repl-manager/stop! session-id dir)
-                     (let [r (repl-manager/connect! session-id dir {:host host :port port})]
-                       (vis/unregister-resource! session-id id)
-                       r))
-                   (fn []
-                     (repl-manager/stop! session-id dir)
-                     (let [r (repl-manager/start! session-id dir {:aliases aliases})]
-                       (vis/unregister-resource! session-id id)
-                       r)))
-                 ;; Keep a FAILED REPL visible (alive while a failure is on
-                 ;; record) so the crash + its log tail stay inspectable in F4
-                 ;; instead of being pruned the moment the pid dies.
-                 :alive-fn (fn []
-                             (boolean (or (repl-manager/repl-by-id session-id id)
-                                          (repl-manager/last-failure session-id dir))))
-                 ;; "alive, but is it WORKING?" — probed on every list/render,
-                 ;; flips the stored `status` to :up/:starting/:failed/:down.
-                 :health-fn (fn []
-                              (repl-manager/health session-id dir))}
+        (cond->
+          {:stop-fn (fn []
+                      (repl-manager/stop! session-id dir))
+           :restart-fn (if external?
+                         ;; External: re-CONNECT — never spawn a managed
+                         ;; JVM over the user's REPL (stop! only detaches).
+                         (fn []
+                           (repl-manager/stop! session-id dir)
+                           (let [r (repl-manager/connect! session-id dir {:host host :port port})]
+                             (vis/unregister-resource! session-id id)
+                             r))
+                         (fn []
+                           (repl-manager/stop! session-id dir)
+                           (let [r (repl-manager/start! session-id dir {:aliases aliases})]
+                             (vis/unregister-resource! session-id id)
+                             r)))
+           ;; Keep a FAILED REPL visible (alive while a failure is on
+           ;; record) so the crash + its log tail stay inspectable in F4
+           ;; instead of being pruned the moment the pid dies.
+           :alive-fn (fn []
+                       (boolean (or (repl-manager/repl-by-id session-id id)
+                                    (repl-manager/last-failure session-id dir))))
+           ;; "alive, but is it WORKING?" — probed on every list/render,
+           ;; flips the stored `status` to :up/:starting/:failed/:down.
+           :health-fn (fn []
+                        (repl-manager/health session-id dir))}
           log
           (assoc :logs-fn
             (fn []
@@ -190,14 +192,15 @@
    the registry into `session[\"resources\"]`. Never throws."
   [env]
   (try (if (:workspace/root env)
-         (let [sid
-               (:session-id env)
+         (let
+           [sid
+            (:session-id env)
 
-               repls
-               (repl-manager/session-repls sid)
+            repls
+            (repl-manager/session-repls sid)
 
-               statuses
-               (when (seq repls) (liveness-for (current-turn env) repls))]
+            statuses
+            (when (seq repls) (liveness-for (current-turn env) repls))]
 
            (doseq [r repls]
              (try (ensure-resource! sid statuses r)

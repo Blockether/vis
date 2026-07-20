@@ -74,38 +74,42 @@
    Kept here so the lookup runs without loading the screen ns, but it still
    goes through the public gateway facade."
   [session-id]
-  (let [cid (some-> session-id
-                    str
-                    str/trim)]
+  (let
+    [cid (some-> session-id
+                 str
+                 str/trim)]
     (when (seq cid)
       (or (when-let [session (try (vis/gateway-soul cid) (catch Throwable _ nil))]
             (get session "id"))
-          (let [matches (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ []))
-                             (map #(get % "id"))
-                             (filter #(str/starts-with? (str %) cid))
-                             vec)]
+          (let
+            [matches (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ []))
+                          (map #(get % "id"))
+                          (filter #(str/starts-with? (str %) cid))
+                          vec)]
             (when (= 1 (count matches)) (str (first matches))))))))
 
 (defn- format-session-not-found
   "Same wording as `screen/format-session-not-found` (intentional -
    the user message must not regress)."
   [cid]
-  (let [available
-        (try (vec (take 10 (vis/gateway-list-sessions :all))) (catch Throwable _ []))
+  (let
+    [available
+     (try (vec (take 10 (vis/gateway-list-sessions :all))) (catch Throwable _ []))
 
-        line
-        (fn [c]
-          (let [id-str
-                (str (get c "id"))
+     line
+     (fn [c]
+       (let
+         [id-str
+          (str (get c "id"))
 
-                id8
-                (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
+          id8
+          (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
 
-                title
-                (let [t (get c "title")]
-                  (when-not (str/blank? t) t))]
+          title
+          (let [t (get c "title")]
+            (when-not (str/blank? t) t))]
 
-            (str "  " id8 "  " (or title "(untitled)"))))]
+         (str "  " id8 "  " (or title "(untitled)"))))]
 
     (str "Session not found: "
          cid

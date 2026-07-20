@@ -132,19 +132,20 @@
 
 (defdescribe put-str-sanitizer-test
              (it "strips inline style sentinels before raw Lanterna putString"
-                 (let [captured
-                       (atom [])
+                 (let
+                   [captured
+                    (atom [])
 
-                       graphics
-                       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                         (putString ([_col _row text] (swap! captured conj text) this)))
+                    graphics
+                    (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                      (putString ([_col _row text] (swap! captured conj text) this)))
 
-                       line
-                       (str "Searched — 0 hit(s), truncated-by "
-                            p/INLINE_CODE_ON
-                            "end-of-results"
-                            p/INLINE_CODE_OFF
-                            ".")]
+                    line
+                    (str "Searched — 0 hit(s), truncated-by "
+                         p/INLINE_CODE_ON
+                         "end-of-results"
+                         p/INLINE_CODE_OFF
+                         ".")]
 
                    (p/put-str! graphics 0 0 line)
                    (let [painted (apply str @captured)]
@@ -203,11 +204,12 @@
                 (let [s (apply str (repeat 100 "a"))]
                   (expect (= (p/fold-cols s 40) (p/ansi-fold-cols s 40)))))
             (it "a wide colorized line folds to the budget, visible content preserved"
-                (let [line
-                      (str (sgr 31) (apply str (repeat 100 "x")) (sgr 0))
+                (let
+                  [line
+                   (str (sgr 31) (apply str (repeat 100 "x")) (sgr 0))
 
-                      segs
-                      (p/ansi-fold-cols line 40)]
+                   segs
+                   (p/ansi-fold-cols line 40)]
 
                   ;; every segment fits once escapes are stripped...
                   (expect (every? #(<= (p/display-width (strip-ansi %)) 40) segs))
@@ -217,20 +219,22 @@
                   (expect (= (strip-ansi line) (apply str (map strip-ansi segs))))))
             (it "re-opens the SGR active at each cut on every continuation row"
                 ;; one green token spanning >1 row: each row must carry the color.
-                (let [line
-                      (str (sgr 32) (apply str (repeat 100 "x")) (sgr 0))
+                (let
+                  [line
+                   (str (sgr 32) (apply str (repeat 100 "x")) (sgr 0))
 
-                      segs
-                      (p/ansi-fold-cols line 40)]
+                   segs
+                   (p/ansi-fold-cols line 40)]
 
                   (expect (every? #(str/starts-with? % (sgr 32)) segs))))
             (it "leaves color reset before the cut off the continuation row"
                 ;; color closes before the wide plain run, so folds don't re-open it.
-                (let [line
-                      (str (sgr 31) "pre" (sgr 0) (apply str (repeat 100 "y")))
+                (let
+                  [line
+                   (str (sgr 31) "pre" (sgr 0) (apply str (repeat 100 "y")))
 
-                      segs
-                      (p/ansi-fold-cols line 40)]
+                   segs
+                   (p/ansi-fold-cols line 40)]
 
                   (expect (not (str/starts-with? (second segs) ESC)))))))
 
@@ -250,11 +254,12 @@
                    (let [line (str (sgr 31) (apply str (repeat 30 "x")) (sgr 0))]
                      (expect (= (strip-ansi line) (strip-ansi (p/ansi-slice-cols line 0 100))))))
                (it "a window inside a colored run RE-OPENS the color and closes it"
-                   (let [line
-                         (str (sgr 32) (apply str (repeat 40 "y")) (sgr 0))
+                   (let
+                     [line
+                      (str (sgr 32) (apply str (repeat 40 "y")) (sgr 0))
 
-                         w
-                         (p/ansi-slice-cols line 10 5)]
+                      w
+                      (p/ansi-slice-cols line 10 5)]
 
                      (expect (str/starts-with? w (sgr 32)))
                      (expect (= "yyyyy" (strip-ansi w)))
@@ -321,11 +326,12 @@
       (expect (= "Lane • ▶" (p/tab-display-label {:label "Lane" :dirty? true :state :running})))
       (expect (= "done ✓" (p/tab-display-label {:id :done :state :verified}))))
   (it "lays tabs out within the requested terminal width"
-      (let [layout (p/tab-layout [{:id :main :label "Main"} {:id :work :label "日本" :dirty? true}
-                                  {:id :err :label "Broken" :state :error}]
-                                 2
-                                 18
-                                 :work)]
+      (let
+        [layout (p/tab-layout [{:id :main :label "Main"} {:id :work :label "日本" :dirty? true}
+                               {:id :err :label "Broken" :state :error}]
+                              2
+                              18
+                              :work)]
         (expect (= [2 9 15] (mapv :left layout)))
         (expect (= [6 5 5] (mapv :width layout)))
         (expect (= [false true false] (mapv :active? layout)))

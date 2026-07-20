@@ -89,8 +89,9 @@
       (cond (< ms 1000) (str ms "ms")
             (< ms 60000)
             (String/format Locale/US "%.1fs" (into-array Object [(double (/ ms 1000.0))]))
-            :else (let [m (quot ms 60000)
-                        s (quot (long (mod ms 60000)) 1000)]
+            :else (let
+                    [m (quot ms 60000)
+                     s (quot (long (mod ms 60000)) 1000)]
 
                     (str m "m " s "s"))))))
 
@@ -136,29 +137,31 @@
                     (let [v (get tokens k)]
                       (when (number? v) v)))
                   ks))]
-    (let [cached-input
-          (or (first-number ["cached"]) 0)
+    (let
+      [cached-input
+       (or (first-number ["cached"]) 0)
 
-          cache-created
-          (or (first-number ["cache_created"]) 0)
+       cache-created
+       (or (first-number ["cache_created"]) 0)
 
-          in-n
-          (when (number? input) input)
+       in-n
+       (when (number? input) input)
 
-          out-n
-          (when (number? output) output)]
+       out-n
+       (when (number? output) output)]
 
       (when (or in-n out-n (pos? (long cached-input)) (pos? (long cache-created)))
-        (let [head
-              (str "tok " (or in-n 0) "→" (or out-n 0))
+        (let
+          [head
+           (str "tok " (or in-n 0) "→" (or out-n 0))
 
-              parts
-              (cond-> []
-                (pos? (long cached-input))
-                (conj (str "cached " cached-input))
+           parts
+           (cond-> []
+             (pos? (long cached-input))
+             (conj (str "cached " cached-input))
 
-                (pos? (long cache-created))
-                (conj (str "cache-write " cache-created)))]
+             (pos? (long cache-created))
+             (conj (str "cache-write " cache-created)))]
 
           (if (seq parts) (str head " (" (str/join ", " parts) ")") head))))))
 
@@ -183,24 +186,26 @@
           (detail [label k]
             (when-let [v (positive-cost-number k)]
               (str label " " (format-cost-number v))))]
-    (let [n (cond (number? cost) cost
-                  (and (map? cost) (number? (get cost "total_cost"))) (get cost "total_cost")
-                  :else nil)]
+    (let
+      [n (cond (number? cost) cost
+               (and (map? cost) (number? (get cost "total_cost"))) (get cost "total_cost")
+               :else nil)]
       (when (and n (pos? (double n)))
         (if (map? cost)
-          (let [details (cond-> []
-                          (positive-cost-number "input_uncached_cost")
-                          (conj (detail "in" "input_uncached_cost"))
+          (let
+            [details (cond-> []
+                       (positive-cost-number "input_uncached_cost")
+                       (conj (detail "in" "input_uncached_cost"))
 
-                          (positive-cost-number "input_cached_cost")
-                          (conj (detail "cached" "input_cached_cost"))
+                       (positive-cost-number "input_cached_cost")
+                       (conj (detail "cached" "input_cached_cost"))
 
-                          (positive-cost-number "input_cache_write_cost")
-                          (conj (detail "write" "input_cache_write_cost"))
+                       (positive-cost-number "input_cache_write_cost")
+                       (conj (detail "write" "input_cache_write_cost"))
 
-                          (positive-cost-number "output_cost")
-                          (conj (detail "out" "output_cost")))
-                total (format-cost-number n)]
+                       (positive-cost-number "output_cost")
+                       (conj (detail "out" "output_cost")))
+             total (format-cost-number n)]
 
             (if (> (count details) 1) (str total " (" (str/join ", " details) ")") total))
           (format-cost-number n))))))
@@ -249,15 +254,16 @@
    \"gpt-4o\"}`); channels sometimes lift `:model` / `:provider` to
    top-level on the result map. Returns nil when no model is known."
   [result]
-  (let [model
-        (display-model-name (or (when-let [m (:model result)]
-                                  (when (string? m) m))
-                                (when-let [m (get (:cost result) "model")]
-                                  (when (string? m) m))))
+  (let
+    [model
+     (display-model-name (or (when-let [m (:model result)]
+                               (when (string? m) m))
+                             (when-let [m (get (:cost result) "model")]
+                               (when (string? m) m))))
 
-        provider
-        (or (normalize-provider (:provider result))
-            (normalize-provider (get (:cost result) "provider")))]
+     provider
+     (or (normalize-provider (:provider result))
+         (normalize-provider (get (:cost result) "provider")))]
 
     (when model (if provider (str provider "/" model) model))))
 
@@ -273,11 +279,12 @@
   "`provider/model` when both are known, bare model / bare provider when only one
    is, nil when neither. Keywords render without the leading colon."
   [{:keys [provider model]}]
-  (let [p
-        (normalize-provider provider)
+  (let
+    [p
+     (normalize-provider provider)
 
-        m
-        (display-model-name model)]
+     m
+     (display-model-name model)]
 
     (cond (and p m) (str p "/" m)
           m m
@@ -296,22 +303,24 @@
    Integer math so the decimal mark never flips on a non-US JVM locale."
   [n]
   (when (number? n)
-    (let [n
-          (long n)
+    (let
+      [n
+       (long n)
 
-          tenths
-          (fn [scale]
-            (Math/round (/ (double n) (/ (double scale) 10.0))))
+       tenths
+       (fn [scale]
+         (Math/round (/ (double n) (/ (double scale) 10.0))))
 
-          render
-          (fn [^long t unit]
-            (let [whole
-                  (quot t 10)
+       render
+       (fn [^long t unit]
+         (let
+           [whole
+            (quot t 10)
 
-                  frac
-                  (rem t 10)]
+            frac
+            (rem t 10)]
 
-              (str whole (when (pos? frac) (str "." frac)) unit)))]
+           (str whole (when (pos? frac) (str "." frac)) unit)))]
 
       (cond (< n 1000) (str n)
             (< n 1000000) (render (tenths 1000) "k")
@@ -328,14 +337,15 @@
                     (let [v (get tokens k)]
                       (when (number? v) v)))
                   ks))]
-    (let [in
-          (num ["input"])
+    (let
+      [in
+       (num ["input"])
 
-          out
-          (num ["output"])
+       out
+       (num ["output"])
 
-          cached
-          (num ["cached"])]
+       cached
+       (num ["cached"])]
 
       (when (or (and in (pos? (long in))) (and out (pos? (long out))))
         (str (humanize-count (or in 0))
@@ -348,9 +358,10 @@
   "Humanized dollar cost — \"~$0.0070\" / \"~$1.23\". nil for zero / missing.
    Extra decimals for sub-cent turns so they don't round down to \"$0\"."
   [cost]
-  (let [n (cond (number? cost) cost
-                (and (map? cost) (number? (get cost "total_cost"))) (get cost "total_cost")
-                :else nil)]
+  (let
+    [n (cond (number? cost) cost
+             (and (map? cost) (number? (get cost "total_cost"))) (get cost "total_cost")
+             :else nil)]
     (when (and n (pos? (double n)))
       (str "~$"
            (String/format Locale/US
@@ -373,30 +384,31 @@
    can float it on its own faint row while the CLI folds it inline."
   [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
   (when llm-fallback?
-    (let [from
-          (or (model-pair-label llm-selected) "previous model")
+    (let
+      [from
+       (or (model-pair-label llm-selected) "previous model")
 
-          ev
-          (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/format-fallback}
-                                     (:event/type %))
-                         llm-routing-trace))
+       ev
+       (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/format-fallback}
+                                  (:event/type %))
+                      llm-routing-trace))
 
-          retries
-          (count (filter #(= :llm.routing/provider-retry (:event/type %)) llm-routing-trace))
+       retries
+       (count (filter #(= :llm.routing/provider-retry (:event/type %)) llm-routing-trace))
 
-          status
-          (:status ev)
+       status
+       (:status ev)
 
-          why
-          (cond (some? status) (str status)
-                (some? (:reason ev)) (name (:reason ev))
-                (seq (str (:error ev))) (str (:error ev))
-                :else nil)
+       why
+       (cond (some? status) (str status)
+             (some? (:reason ev)) (name (:reason ev))
+             (seq (str (:error ev))) (str (:error ev))
+             :else nil)
 
-          tail
-          (->> [why (when (pos? retries) (str "retried " retries "×"))]
-               (remove (fn [s]
-                         (or (nil? s) (str/blank? (str s))))))]
+       tail
+       (->> [why (when (pos? retries) (str "retried " retries "×"))]
+            (remove (fn [s]
+                      (or (nil? s) (str/blank? (str s))))))]
 
       (str "↳ from " from (when (seq tail) (str " — " (str/join ", " tail)))))))
 
@@ -416,16 +428,17 @@
    it; prefix/suffix are extra slots spliced in around the standard ones."
   ([result] (meta-summary-line result nil))
   ([{:keys [tokens cost duration-ms] :as result} {:keys [model prefix suffix]}]
-   (let [model*
-         (cond (false? model) nil
-               (string? model) model
-               :else (meta-model-label result))
+   (let
+     [model*
+      (cond (false? model) nil
+            (string? model) model
+            :else (meta-model-label result))
 
-         parts
-         (->> (concat (vec prefix)
-                      [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
-                      (vec suffix))
-              (remove nil?))]
+      parts
+      (->> (concat (vec prefix)
+                   [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
+                   (vec suffix))
+           (remove nil?))]
 
      (when (seq parts) (str/join meta-separator parts)))))
 
@@ -437,11 +450,12 @@
    numbers, just two rows. Returns \"\" when there's nothing to show."
   ([result] (format-meta-line result nil))
   ([result opts]
-   (let [main
-         (meta-summary-line result opts)
+   (let
+     [main
+      (meta-summary-line result opts)
 
-         note
-         (meta-fallback-note result)]
+      note
+      (meta-fallback-note result)]
 
      (cond (and main note) (str main meta-separator note)
            main main
@@ -487,17 +501,19 @@
     {:keys [max-chars print-length print-level]
      :as opts
      :or {max-chars MAX_RESULT_DISPLAY_CHARS print-length 64 print-level 6}}]
-   (try (binding [*print-length*
-                  print-length
+   (try (binding
+          [*print-length*
+           print-length
 
-                  *print-level*
-                  print-level]
+           *print-level*
+           print-level]
 
-          (let [bounded-print?
-                (or (contains? opts :print-length) (contains? opts :print-level))
+          (let
+            [bounded-print?
+             (or (contains? opts :print-length) (contains? opts :print-level))
 
-                s
-                (strip-sandbox-ns (value-pr-str v bounded-print?))]
+             s
+             (strip-sandbox-ns (value-pr-str v bounded-print?))]
 
             (if (> (count s) (long max-chars))
               (str (subs s 0 max-chars) " ...<+" (- (count s) (long max-chars)) " chars>")

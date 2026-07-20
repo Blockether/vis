@@ -20,23 +20,25 @@
 (defdescribe
   auto-title-two-phase-test
   (it "writes the deterministic fallback FIRST, then upgrades to the LLM title"
-      (let [sid
-            (fresh-sid)
+      (let
+        [sid
+         (fresh-sid)
 
-            title*
-            (atom "")
+         title*
+         (atom "")
 
-            writes
-            (atom [])]
+         writes
+         (atom [])]
 
-        (with-redefs [titling/set-title-with-broadcast!
-                      (fn [_ _ a t]
-                        (swap! writes conj t)
-                        (reset! a t))
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (swap! writes conj t)
+             (reset! a t))
 
-                      svar/ask!
-                      (fn [_ _]
-                        {:result {:title "REPL Architecture Deep Dive"}})]
+           svar/ask!
+           (fn [_ _]
+             {:result {:title "REPL Architecture Deep Dive"}})]
 
           @(maybe-auto-title! (env* sid title*) "I want to discuss the current approach to REPLs")
           ;; fallback landed BEFORE the model title — the tab is never untitled
@@ -50,32 +52,35 @@
       ;; degraded/rate-limited provider chain, wrote the crude fallback, and the
       ;; old guard then froze it forever. Now the fallback stays PROVISIONAL and a
       ;; later turn re-attempts the upgrade.
-      (let [sid
-            (fresh-sid)
+      (let
+        [sid
+         (fresh-sid)
 
-            title*
-            (atom "")]
+         title*
+         (atom "")]
 
         ;; turn 1 — provider chain fails → provisional fallback
-        (with-redefs [titling/set-title-with-broadcast!
-                      (fn [_ _ a t]
-                        (reset! a t))
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (reset! a t))
 
-                      svar/ask!
-                      (fn [_ _]
-                        (throw (ex-info "429 rate limited" {})))]
+           svar/ask!
+           (fn [_ _]
+             (throw (ex-info "429 rate limited" {})))]
 
           @(maybe-auto-title! (env* sid title*) "let us go over the ownership model now")
           (expect (= "let us go over the ownership model" @title*))
           (expect (true? (provisional-title? sid))))
         ;; turn 2 — providers recovered → the guard ALLOWS a retry and upgrades
-        (with-redefs [titling/set-title-with-broadcast!
-                      (fn [_ _ a t]
-                        (reset! a t))
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (reset! a t))
 
-                      svar/ask!
-                      (fn [_ _]
-                        {:result {:title "Python REPL Ownership"}})]
+           svar/ask!
+           (fn [_ _]
+             {:result {:title "Python REPL Ownership"}})]
 
           (let [f (maybe-auto-title! (env* sid title*) "and now the ownership model")]
             (expect (some? f)) ; retry was NOT skipped
@@ -83,53 +88,58 @@
             (expect (= "Python REPL Ownership" @title*))
             (expect (false? (provisional-title? sid)))))))
   (it "a real LLM title is FROZEN: a later turn does not re-title (and never calls the provider)"
-      (let [sid
-            (fresh-sid)
+      (let
+        [sid
+         (fresh-sid)
 
-            title*
-            (atom "")]
+         title*
+         (atom "")]
 
-        (with-redefs [titling/set-title-with-broadcast!
-                      (fn [_ _ a t]
-                        (reset! a t))
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (reset! a t))
 
-                      svar/ask!
-                      (fn [_ _]
-                        {:result {:title "Security Audit Setup"}})]
+           svar/ask!
+           (fn [_ _]
+             {:result {:title "Security Audit Setup"}})]
 
           @(maybe-auto-title! (env* sid title*) "please review the security audit setup for clj")
           (expect (= "Security Audit Setup" @title*)))
-        (with-redefs [titling/set-title-with-broadcast!
-                      (fn [_ _ _ _]
-                        (throw (ex-info "must not re-title" {})))
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ _ _]
+             (throw (ex-info "must not re-title" {})))
 
-                      svar/ask!
-                      (fn [_ _]
-                        (throw (ex-info "must not re-title" {})))]
+           svar/ask!
+           (fn [_ _]
+             (throw (ex-info "must not re-title" {})))]
 
           (expect (nil? (maybe-auto-title! (env* sid title*)
                                            "a totally different follow-up request")))
           (expect (= "Security Audit Setup" @title*)))))
   (it "a HUNG provider call trips the hard deadline and keeps the provisional fallback"
-      (let [sid
-            (fresh-sid)
+      (let
+        [sid
+         (fresh-sid)
 
-            title*
-            (atom "")
+         title*
+         (atom "")
 
-            blocker
-            (promise)]
+         blocker
+         (promise)]
 
-        (try (with-redefs [titling/set-title-with-broadcast!
-                           (fn [_ _ a t]
-                             (reset! a t))
+        (try (with-redefs
+               [titling/set-title-with-broadcast!
+                (fn [_ _ a t]
+                  (reset! a t))
 
-                           titling/AUTO_TITLE_HARD_DEADLINE_MS
-                           100
+                titling/AUTO_TITLE_HARD_DEADLINE_MS
+                100
 
-                           svar/ask!
-                           (fn [_ _]
-                             @blocker)]
+                svar/ask!
+                (fn [_ _]
+                  @blocker)]
 
                ; never returns
                @(maybe-auto-title! (env* sid title*) "hang test request words here for title")
@@ -142,46 +152,51 @@
     ;; the titling request, so the tab was named after "session" instead of the
     ;; task. Both the LLM prompt and the deterministic fallback must see the
     ;; STRIPPED request.
-    (let [sid
-          (fresh-sid)
+    (let
+      [sid
+       (fresh-sid)
 
-          title*
-          (atom "")
+       title*
+       (atom "")
 
-          seen
-          (atom nil)]
+       seen
+       (atom nil)]
 
-      (with-redefs [titling/set-title-with-broadcast!
-                    (fn [_ _ a t]
-                      (reset! a t))
+      (with-redefs
+        [titling/set-title-with-broadcast!
+         (fn [_ _ a t]
+           (reset! a t))
 
-                    svar/ask!
-                    (fn [_ opts]
-                      (reset! seen opts)
-                      {:result {:title "JSON Parser Build"}})]
+         svar/ask!
+         (fn [_ opts]
+           (reset! seen opts)
+           {:result {:title "JSON Parser Build"}})]
 
         @(maybe-auto-title! (env* sid title*) "/new-session build a json parser")
-        (let [user-msg (-> @seen
-                           :messages
-                           second
-                           :content)]
+        (let
+          [user-msg (-> @seen
+                        :messages
+                        second
+                        :content)]
           (expect (str/includes? user-msg "build a json parser"))
           (expect (not (str/includes? user-msg "/new-session"))))
         (expect (= "JSON Parser Build" @title*))))
     ;; provider chain down → fallback titles off the STRIPPED request too
-    (let [sid
-          (fresh-sid)
+    (let
+      [sid
+       (fresh-sid)
 
-          title*
-          (atom "")]
+       title*
+       (atom "")]
 
-      (with-redefs [titling/set-title-with-broadcast!
-                    (fn [_ _ a t]
-                      (reset! a t))
+      (with-redefs
+        [titling/set-title-with-broadcast!
+         (fn [_ _ a t]
+           (reset! a t))
 
-                    svar/ask!
-                    (fn [_ _]
-                      (throw (ex-info "429 rate limited" {})))]
+         svar/ask!
+         (fn [_ _]
+           (throw (ex-info "429 rate limited" {})))]
 
         @(maybe-auto-title! (env* sid title*) "/new-session build a json parser")
         (expect (= "build a json parser" @title*))))))

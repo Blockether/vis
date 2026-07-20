@@ -20,12 +20,13 @@
    or under home (so `/etc/x` is left alone); returns `path` unchanged
    otherwise. Nil-safe."
   ^String [path]
-  (let [path
-        (some-> path
-                str)
+  (let
+    [path
+     (some-> path
+             str)
 
-        home
-        (System/getProperty "user.home")]
+     home
+     (System/getProperty "user.home")]
 
     (cond (nil? path) path
           (and (seq home) (= path home)) "~/"

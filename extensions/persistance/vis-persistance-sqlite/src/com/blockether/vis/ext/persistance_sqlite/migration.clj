@@ -49,22 +49,23 @@
    build-generated `_index.edn`. Returns nil when no index exists (JVM/dev),
    so callers fall back to Flyway's directory scanning."
   ^ResourceProvider [locations]
-  (let [cl
-        (or (.getContextClassLoader (Thread/currentThread)) (.getClassLoader ResourceProvider))
+  (let
+    [cl
+     (or (.getContextClassLoader (Thread/currentThread)) (.getClassLoader ResourceProvider))
 
-        res
-        (vec
-          (for [loc
-                locations
+     res
+     (vec (for
+            [loc
+             locations
 
-                :let [base
-                      (strip-classpath loc)
+             :let [base
+                   (strip-classpath loc)
 
-                      idx
-                      (io/resource (str base "/_index.edn"))]
-                :when idx
-                fname
-                (edn/read-string (slurp idx))]
+                   idx
+                   (io/resource (str base "/_index.edn"))]
+             :when idx
+             fname
+             (edn/read-string (slurp idx))]
 
             (ClassPathResource. (Location. loc) (str base "/" fname) cl StandardCharsets/UTF_8)))]
 
@@ -88,25 +89,27 @@
    checksum differs are rejected: this flag-day schema has no compatibility or
    repair path."
   [^DataSource ds locations]
-  (let [locs
-        (cond (string? locations) [locations]
-              (sequential? locations) (vec locations)
-              :else (throw (ex-info "locations must be a string or coll of strings"
-                                    {:type :persistance/invalid-migration-locations
-                                     :got (type locations)})))
+  (let
+    [locs
+     (cond (string? locations) [locations]
+           (sequential? locations) (vec locations)
+           :else (throw (ex-info "locations must be a string or coll of strings"
+                                 {:type :persistance/invalid-migration-locations
+                                  :got (type locations)})))
 
-        rp
-        (index-resource-provider locs)
+     rp
+     (index-resource-provider locs)
 
-        ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
-        (cond-> (-> (org.flywaydb.core.Flyway/configure)
-                    (.dataSource ds)
-                    (.locations ^"[Ljava.lang.String;" (into-array String locs))
-                    (.baselineOnMigrate true)
-                    (.baselineVersion "0")
-                    (.mixed true))
-          rp
-          (.resourceProvider rp))]
+     ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
+     (cond->
+       (-> (org.flywaydb.core.Flyway/configure)
+           (.dataSource ds)
+           (.locations ^"[Ljava.lang.String;" (into-array String locs))
+           (.baselineOnMigrate true)
+           (.baselineVersion "0")
+           (.mixed true))
+       rp
+       (.resourceProvider rp))]
 
     (.migrate (.load cfg))
     ds))

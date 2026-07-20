@@ -7,11 +7,12 @@
 
 (defdescribe render-test
              (it "builds project ctx from runtime snapshot with no prompt labels"
-                 (let [out
-                       (render/project-context {:host base-host :git {:root "/tmp/x"}} nil nil)
+                 (let
+                   [out
+                    (render/project-context {:host base-host :git {:root "/tmp/x"}} nil nil)
 
-                       project
-                       (:project out)]
+                    project
+                    (:project out)]
 
                    (expect (= "/tmp/x" (:root project)))
                    (expect (= "/tmp/x" (get-in project [:host :cwd])))
@@ -19,19 +20,21 @@
                    (expect (not (string/includes? (pr-str out) ";; -- RUNTIME --")))
                    (expect (not (string/includes? (pr-str out) "<environment>")))))
              (it "puts project guidance under ctx data"
-                 (let [out (render/project-context
-                             {:host base-host}
-                             {:found? true :source :repo :path "AGENTS.md" :content "rules"}
-                             nil)]
+                 (let
+                   [out (render/project-context
+                          {:host base-host}
+                          {:found? true :source :repo :path "AGENTS.md" :content "rules"}
+                          nil)]
                    (expect (= {:source :repo :path "AGENTS.md" :content "rules"}
                               (get-in out [:project :guidance])))
                    (expect (not (string/includes? (pr-str out) "PROJECT-GUIDANCE")))))
              (it "puts scan warnings under ctx data"
-                 (let [warnings
-                       [{:path "x" :reason "bad"}]
+                 (let
+                   [warnings
+                    [{:path "x" :reason "bad"}]
 
-                       out
-                       (render/project-context {:host base-host} nil warnings)]
+                    out
+                    (render/project-context {:host base-host} nil warnings)]
 
                    (expect (= warnings (get-in out [:project :warnings])))
                    (expect (not (string/includes? (pr-str out) "SCAN-WARNINGS")))))

@@ -166,10 +166,11 @@
 
 (defn- usable-existing-title
   [s]
-  (let [t (some-> s
-                  str
-                  str/trim
-                  not-empty)]
+  (let
+    [t (some-> s
+               str
+               str/trim
+               not-empty)]
     (when-not (auto-title-placeholder? t) t)))
 
 (defn- strip-code-fence
@@ -187,25 +188,26 @@
 
 (defn- sanitize-auto-title
   [s]
-  (let [line
-        (->> (-> (or s "")
-                 str
-                 strip-code-fence
-                 str/split-lines)
-             (map str/trim)
-             (remove str/blank?)
-             ;; skip any stray fence markers left mid-string
-             (remove #(re-matches #"`{3,}.*" %))
-             first
-             (#(or % ""))
-             (#(-> %
-                   (str/replace #"(?i)^\s*(title|new title)\s*[:\-–—]\s*" "")
-                   (str/replace #"^[\s\"'`*_#>\-–—]+" "")
-                   (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
-                   str/trim)))
+  (let
+    [line
+     (->> (-> (or s "")
+              str
+              strip-code-fence
+              str/split-lines)
+          (map str/trim)
+          (remove str/blank?)
+          ;; skip any stray fence markers left mid-string
+          (remove #(re-matches #"`{3,}.*" %))
+          first
+          (#(or % ""))
+          (#(-> %
+                (str/replace #"(?i)^\s*(title|new title)\s*[:\-–—]\s*" "")
+                (str/replace #"^[\s\"'`*_#>\-–—]+" "")
+                (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
+                str/trim)))
 
-        clipped
-        (truncate line AUTO_TITLE_MAX_CHARS)]
+     clipped
+     (truncate line AUTO_TITLE_MAX_CHARS)]
 
     (when-not (or (str/blank? clipped) (auto-title-placeholder? clipped)) clipped)))
 
@@ -217,10 +219,11 @@
    sessions from staying `Untitled` just because the cheapest routed model was
    unavailable/unsupported."
   [user-request]
-  (let [words (->> (str/replace (str user-request) uuid-text-pattern " ")
-                   (re-seq #"[\p{L}\p{N}][\p{L}\p{N}'-]*")
-                   (take 7)
-                   (str/join " "))]
+  (let
+    [words (->> (str/replace (str user-request) uuid-text-pattern " ")
+                (re-seq #"[\p{L}\p{N}][\p{L}\p{N}'-]*")
+                (take 7)
+                (str/join " "))]
     (sanitize-auto-title words)))
 
 (def ^:private auto-title-spec
@@ -275,21 +278,22 @@
    are visible, not a silent `:debug`) when the chain fails or the deadline
    trips; the caller then keeps the deterministic fallback."
   [{:keys [router]} previous-title user-request]
-  (let [fut
-        (future (try {:ok (svar/ask! router
-                                     (rt/with-default-ask-code-idle-timeout
-                                       {:messages (auto-title-prompt previous-title user-request)
-                                        :spec auto-title-spec
-                                        :reasoning :off
-                                        :routing {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
-                                                  :optimize [:cost :speed]}
-                                        :ttft-timeout-ms AUTO_TITLE_TTFT_MS
-                                        :idle-timeout-ms AUTO_TITLE_IDLE_MS
-                                        :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))}
-                     (catch Throwable t {:error t})))
+  (let
+    [fut
+     (future (try {:ok (svar/ask! router
+                                  (rt/with-default-ask-code-idle-timeout
+                                    {:messages (auto-title-prompt previous-title user-request)
+                                     :spec auto-title-spec
+                                     :reasoning :off
+                                     :routing {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
+                                               :optimize [:cost :speed]}
+                                     :ttft-timeout-ms AUTO_TITLE_TTFT_MS
+                                     :idle-timeout-ms AUTO_TITLE_IDLE_MS
+                                     :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))}
+                  (catch Throwable t {:error t})))
 
-        outcome
-        (deref fut AUTO_TITLE_HARD_DEADLINE_MS ::deadline)]
+     outcome
+     (deref fut AUTO_TITLE_HARD_DEADLINE_MS ::deadline)]
 
     (cond (= ::deadline outcome)
           (do (future-cancel fut)

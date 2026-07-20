@@ -70,13 +70,14 @@
         (expect (not-any? #(str/ends-with? % "?") ks))))
   (it
     "the string-keyed tokens/cost/utilization maps ride the wire IDENTICAL (no re-keying anywhere)"
-    (let [m
-          {:tokens {"input" 1 "cache_created" 2}
-           :cost {"total_cost" 0.1 "model" "m"}
-           :utilization {"saturation" 9 "headroom_tokens" 10}}
+    (let
+      [m
+       {:tokens {"input" 1 "cache_created" 2}
+        :cost {"total_cost" 0.1 "model" "m"}
+        :utilization {"saturation" 9 "headroom_tokens" 10}}
 
-          c
-          (wire/canonical m)]
+       c
+       (wire/canonical m)]
 
       (expect (= (:tokens m) (get c "tokens")))
       (expect (= (:cost m) (get c "cost")))

@@ -22,27 +22,30 @@
       (expect (= {} (config/router-opts {:router nil})))
       (expect (= {} (config/router-opts {:router "string"}))))
   (it "passes through `:rate-limit` verbatim"
-      (let [block {:same-provider-delays-ms [2000 3000 6000]
-                   :fallback-after-ms 30000
-                   :respect-retry-after? true
-                   :fallback-provider? true}]
+      (let
+        [block {:same-provider-delays-ms [2000 3000 6000]
+                :fallback-after-ms 30000
+                :respect-retry-after? true
+                :fallback-provider? true}]
         (expect (= {:rate-limit block} (config/router-opts {:router {:rate-limit block}})))))
   (it "passes through `:network`, `:budget`, `:tokens`, and CB knobs"
-      (let [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
-                          :budget {:max-tokens 1000000 :max-cost 5.0}
-                          :tokens {:check-context? false}
-                          :failure-threshold 10
-                          :recovery-ms 30000}}]
+      (let
+        [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
+                       :budget {:max-tokens 1000000 :max-cost 5.0}
+                       :tokens {:check-context? false}
+                       :failure-threshold 10
+                       :recovery-ms 30000}}]
         (expect (= (:router cfg) (config/router-opts cfg)))))
   (it "drops unknown keys so future config additions don't crash make-router"
-      (let [cfg {:router {:rate-limit {:fallback-after-ms 1}
-                          :totally-made-up-key :whatever
-                          :another :nope}}]
+      (let
+        [cfg {:router
+              {:rate-limit {:fallback-after-ms 1} :totally-made-up-key :whatever :another :nope}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg)))))
   (it "ignores top-level config keys outside `:router`"
-      (let [cfg {:providers [{:id :p1}]
-                 :db-spec {:backend :sqlite}
-                 :router {:rate-limit {:fallback-after-ms 1}}}]
+      (let
+        [cfg {:providers [{:id :p1}]
+              :db-spec {:backend :sqlite}
+              :router {:rate-limit {:fallback-after-ms 1}}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg))))))
 
 (defdescribe
@@ -72,16 +75,16 @@
 (defdescribe
   svar-model-metadata-test
   (it "lets svar retain GLM-5.2's catalog-native effort style and values"
-      (let [provider
-            (config/->svar-provider
-              {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
+      (let
+        [provider
+         (config/->svar-provider {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
 
-            model
-            (-> (svar/make-router [provider])
-                :providers
-                first
-                :models
-                first)]
+         model
+         (-> (svar/make-router [provider])
+             :providers
+             first
+             :models
+             first)]
 
         (expect (= :zai-effort (:reasoning-style model)))
         (expect (= [{:type "effort" :values ["high" "max"]}] (:reasoning-options model)))))
@@ -98,22 +101,24 @@
    and any unrelated global keys (e.g. :router). Isolated to a temp config dir."
   (it
     "first-run connect persists; adding a second provider keeps both + globals"
-    (let [tmp
-          (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))
+    (let
+      [tmp
+       (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))
 
-          cfg-path
-          (str tmp "/config.edn")]
+       cfg-path
+       (str tmp "/config.edn")]
 
       (try
-        (with-redefs [config/config-dir
-                      tmp
+        (with-redefs
+          [config/config-dir
+           tmp
 
-                      config/config-path
-                      cfg-path
+           config/config-path
+           cfg-path
 
-                      ;; isolate from any real project-local .vis overlay
-                      config/project-config-path
-                      (constantly (str tmp "/none/.vis/config.edn"))]
+           ;; isolate from any real project-local .vis overlay
+           config/project-config-path
+           (constantly (str tmp "/none/.vis/config.edn"))]
 
           ;; (0) genuine first run — nothing on disk
           (expect (config/first-run?))
@@ -162,20 +167,21 @@
                                               "llm-headers" {"X-Custom-Header" "v"}}]})))))
   (it
     "parses a vis.yml into the EDN shape; EDN wins when both formats exist"
-    (let [read-yaml
-          @#'config/read-yaml-config-map
+    (let
+      [read-yaml
+       @#'config/read-yaml-config-map
 
-          read-tier
-          @#'config/read-tier-config-map
+       read-tier
+       @#'config/read-tier-config-map
 
-          dir
-          (io/file "target/config-yaml-test")
+       dir
+       (io/file "target/config-yaml-test")
 
-          yml
-          (io/file dir "vis.yml")
+       yml
+       (io/file dir "vis.yml")
 
-          edn-f
-          (io/file dir "vis.edn")]
+       edn-f
+       (io/file dir "vis.edn")]
 
       (try (.mkdirs dir)
            (spit yml
@@ -194,20 +200,24 @@
            (expect (nil? (read-yaml (.getPath yml))))
            (finally (rm-rf! dir)))))
   (it "search-overlay: nil when unset, defaults guard includes, explicit list replaces"
-      (expect (nil? (with-redefs [config/load-config-raw (fn []
-                                                           {})]
+      (expect (nil? (with-redefs
+                      [config/load-config-raw (fn []
+                                                {})]
                       (config/search-overlay))))
-      (let [overlay (with-redefs [config/load-config-raw (fn []
-                                                           {:search {:include-gitignored-paths
-                                                                     ["repositories/"]}})]
-                      (config/search-overlay))]
+      (let
+        [overlay (with-redefs
+                   [config/load-config-raw (fn []
+                                             {:search {:include-gitignored-paths
+                                                       ["repositories/"]}})]
+                   (config/search-overlay))]
         (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
         (expect (= config/default-search-always-exclude (:always-exclude overlay))))
       (expect (= ["*.log"]
-                 (:always-exclude (with-redefs [config/load-config-raw
-                                                (fn []
-                                                  {:search {:include-gitignored-paths ["r/"]
-                                                            :always-exclude ["*.log"]}})]
+                 (:always-exclude (with-redefs
+                                    [config/load-config-raw (fn []
+                                                              {:search
+                                                               {:include-gitignored-paths ["r/"]
+                                                                :always-exclude ["*.log"]}})]
                                     (config/search-overlay)))))))
 
 (defdescribe
@@ -220,26 +230,27 @@
    merge — the file Vis itself writes can never be shadowed by hand YAML)."
   (it
     "nested .vis/config.yml overrides root vis.yml; disjoint keys from every tier survive"
-    (let [dir
-          (io/file "target/config-precedence-test")
+    (let
+      [dir
+       (io/file "target/config-precedence-test")
 
-          gdir
-          (io/file dir "global")
+       gdir
+       (io/file dir "global")
 
-          gyml
-          (io/file gdir "config.yml")
+       gyml
+       (io/file gdir "config.yml")
 
-          gedn
-          (io/file gdir "config.edn")
+       gedn
+       (io/file gdir "config.edn")
 
-          root-yml
-          (io/file dir "vis.yml")
+       root-yml
+       (io/file dir "vis.yml")
 
-          nested-yml
-          (io/file dir ".vis" "config.yml")
+       nested-yml
+       (io/file dir ".vis" "config.yml")
 
-          nested-edn
-          (io/file dir ".vis" "config.edn")]
+       nested-edn
+       (io/file dir ".vis" "config.edn")]
 
       (try (.mkdirs (io/file dir ".vis"))
            (.mkdirs gdir)
@@ -251,28 +262,29 @@
                  (str "system_prompt: FROM-ROOT\n"
                       "search:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit nested-yml "system_prompt: FROM-NESTED\n")
-           (with-redefs [config/config-path
-                         (.getPath gedn)
+           (with-redefs
+             [config/config-path
+              (.getPath gedn)
 
-                         config/global-config-yaml-paths
-                         (fn []
-                           [(.getPath gyml)])
+              config/global-config-yaml-paths
+              (fn []
+                [(.getPath gyml)])
 
-                         config/project-root-config-path
-                         (fn []
-                           (.getPath (io/file dir "vis.edn")))
+              config/project-root-config-path
+              (fn []
+                (.getPath (io/file dir "vis.edn")))
 
-                         config/project-root-yaml-paths
-                         (fn []
-                           [(.getPath root-yml)])
+              config/project-root-yaml-paths
+              (fn []
+                [(.getPath root-yml)])
 
-                         config/project-config-path
-                         (fn []
-                           (.getPath (io/file dir ".vis" "config.edn")))
+              config/project-config-path
+              (fn []
+                (.getPath (io/file dir ".vis" "config.edn")))
 
-                         config/project-config-yaml-paths
-                         (fn []
-                           [(.getPath nested-yml)])]
+              config/project-config-yaml-paths
+              (fn []
+                [(.getPath nested-yml)])]
 
              (let [cfg (config/load-config-raw)]
                ;; the nested overlay wins the conflicting key
@@ -294,44 +306,46 @@
            (finally (rm-rf! dir)))))
   (it
     "global ~/.vis: hand-written YAML merges UNDER machine-written config.edn (EDN wins per key)"
-    (let [dir
-          (io/file "target/config-global-yaml-test")
+    (let
+      [dir
+       (io/file "target/config-global-yaml-test")
 
-          gyml
-          (io/file dir "config.yml")
+       gyml
+       (io/file dir "config.yml")
 
-          gedn
-          (io/file dir "config.edn")
+       gedn
+       (io/file dir "config.edn")
 
-          none
-          (fn []
-            [])]
+       none
+       (fn []
+         [])]
 
       (try (.mkdirs dir)
            (spit gyml
                  (str "system_prompt: FROM-YAML\n"
                       "search:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit gedn "{:system-prompt \"FROM-EDN\"}")
-           (with-redefs [config/config-path
-                         (.getPath gedn)
+           (with-redefs
+             [config/config-path
+              (.getPath gedn)
 
-                         config/global-config-yaml-paths
-                         (fn []
-                           [(.getPath gyml)])
+              config/global-config-yaml-paths
+              (fn []
+                [(.getPath gyml)])
 
-                         config/project-root-config-path
-                         (fn []
-                           (.getPath (io/file dir "vis.edn")))
+              config/project-root-config-path
+              (fn []
+                (.getPath (io/file dir "vis.edn")))
 
-                         config/project-root-yaml-paths
-                         none
+              config/project-root-yaml-paths
+              none
 
-                         config/project-config-path
-                         (fn []
-                           (.getPath (io/file dir "absent.edn")))
+              config/project-config-path
+              (fn []
+                (.getPath (io/file dir "absent.edn")))
 
-                         config/project-config-yaml-paths
-                         none]
+              config/project-config-yaml-paths
+              none]
 
              (let [cfg (config/load-config-raw)]
                ;; conflicting key: the machine-written EDN wins

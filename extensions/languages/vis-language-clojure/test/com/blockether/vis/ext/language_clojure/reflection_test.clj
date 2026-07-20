@@ -9,11 +9,12 @@
 (defdescribe
   compile-warnings-test
   (it "flags an unresolved interop call as a reflection warning"
-      (let [fs
-            (reflection/compile-warnings "(defn r [x] (.length x))" "<stdin>")
+      (let
+        [fs
+         (reflection/compile-warnings "(defn r [x] (.length x))" "<stdin>")
 
-            refl
-            (first (filter #(= "reflection" (get % "type")) fs))]
+         refl
+         (first (filter #(= "reflection" (get % "type")) fs))]
 
         (expect (contains? (types fs) "reflection"))
         (expect (= "warning" (get refl "level")))
@@ -23,11 +24,12 @@
         (expect (number? (get refl "col")))
         (expect (string? (get refl "message")))))
   (it "flags boxed numeric ops as a boxed-math warning"
-      (let [fs
-            (reflection/compile-warnings "(defn add [a b] (+ a b))" "<stdin>")
+      (let
+        [fs
+         (reflection/compile-warnings "(defn add [a b] (+ a b))" "<stdin>")
 
-            boxed
-            (first (filter #(= "boxed-math" (get % "type")) fs))]
+         boxed
+         (first (filter #(= "boxed-math" (get % "type")) fs))]
 
         (expect (contains? (types fs) "boxed-math"))
         (expect (= "general" (get boxed "provider")))

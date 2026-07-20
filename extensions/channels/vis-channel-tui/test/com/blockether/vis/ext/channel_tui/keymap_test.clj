@@ -74,11 +74,12 @@
                  (expect (= keymap/palette-chord (keymap/label-or-palette :providers))))
              (it "bindings is empty, so nothing collides with an emacs editing key"
                  (expect (empty? keymap/bindings))
-                 (let [reserved
-                       (conj emacs-letters \c)
+                 (let
+                   [reserved
+                    (conj emacs-letters \c)
 
-                       keys
-                       (set (map :key keymap/bindings))]
+                    keys
+                    (set (map :key keymap/bindings))]
 
                    (expect (empty? (set/intersection reserved keys))))))
 

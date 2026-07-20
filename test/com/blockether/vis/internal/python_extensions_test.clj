@@ -34,11 +34,12 @@
    `vis.state` confined to a throwaway in-memory DB, run `f` with the load
    result, then tear everything down so tests stay isolated."
   [sources f]
-  (let [ext-dir
-        (temp-dir)
+  (let
+    [ext-dir
+     (temp-dir)
 
-        store
-        (ps/db-create-connection! :memory)]
+     store
+     (ps/db-create-connection! :memory)]
 
     (doseq [[fname src] sources]
       (write-ext! ext-dir fname src))
@@ -139,22 +140,24 @@ vis.extension(
              (it "return value = success payload"
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ _]
-                                (let [bump
-                                      (symbol-fn (registered "counter") 'bump)
+                                (let
+                                  [bump
+                                   (symbol-fn (registered "counter") 'bump)
 
-                                      result
-                                      (bump 5)]
+                                   result
+                                   (bump 5)]
 
                                   (expect (extension/envelope-success? result))
                                   (expect (= 5 (get-in result [:result "count"])))))))
              (it "a raised Python exception = failure envelope with the Python message"
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ _]
-                                (let [boom
-                                      (symbol-fn (registered "counter") 'boom)
+                                (let
+                                  [boom
+                                   (symbol-fn (registered "counter") 'boom)
 
-                                      result
-                                      (boom)]
+                                   result
+                                   (boom)]
 
                                   (expect (extension/envelope-failure? result))
                                   (expect (str/includes? (get-in result [:error :message])
@@ -189,12 +192,13 @@ vis.extension(
                  (with-loaded
                    {"counter.py" counter-py}
                    (fn [_ _]
-                     (let [spec
-                           (first (:ext/slash-commands (registered "counter")))
+                     (let
+                       [spec
+                        (first (:ext/slash-commands (registered "counter")))
 
-                           res
-                           ((:slash/run-fn spec)
-                             {:channel/id :tui :command/argv ["a" "b"] :command/raw "/count a b"})]
+                        res
+                        ((:slash/run-fn spec)
+                          {:channel/id :tui :command/argv ["a" "b"] :command/raw "/count a b"})]
 
                        (expect (= "count" (:slash/name spec)))
                        (expect (= :ok (:slash/status res)))
@@ -278,11 +282,12 @@ vis.extension(
   (it "vis.extension(ctx=...) registers an :ext/ctx-fn that folds into the session bag"
       (with-loaded {"ctxer.py" ctxer-py}
                    (fn [_ _]
-                     (let [ext
-                           (registered "ctxer")
+                     (let
+                       [ext
+                        (registered "ctxer")
 
-                           contribution
-                           ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
+                        contribution
+                        ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
 
                        ;; STRING-keyed all the way down, ready to deep-merge into `session`
                        (expect (= 0 (get-in contribution ["session_env" "demo" "hits"])))
@@ -333,26 +338,28 @@ vis.extension(
     (with-loaded
       {"guard.py" guard-py}
       (fn [_ _]
-        (let [hooks
-              (:ext/op-hooks (registered "guard"))
+        (let
+          [hooks
+           (:ext/op-hooks (registered "guard"))
 
-              write-hook
-              (some #(when (= :write (:op %)) %) hooks)]
+           write-hook
+           (some #(when (= :write (:op %)) %) hooks)]
 
           (expect (= #{:write :patch} (set (map :op hooks))))
           (expect (every? #(= :around (:phase %)) hooks))
           ;; blocked: guard returns vis.block -> failure envelope, next never runs
-          (let [ran?
-                (atom false)
+          (let
+            [ran?
+             (atom false)
 
-                res
-                ((:fn write-hook)
-                  {}
-                  :write
-                  ["/x/.env" "data"]
-                  (fn [_]
-                    (reset! ran? true)
-                    :ran))]
+             res
+             ((:fn write-hook)
+               {}
+               :write
+               ["/x/.env" "data"]
+               (fn [_]
+                 (reset! ran? true)
+                 :ran))]
 
             (expect (extension/envelope-failure? res))
             (expect (str/includes? (get-in res [:error :message]) "protected"))
@@ -432,14 +439,15 @@ vis.extension(
                (expect (= ["counter"] removed)))
              (finally (pyx/remove-change-listener! ::test)))))
   (it "a later dir (project) wins over an earlier one (global) for the same extension name"
-      (let [global
-            (temp-dir)
+      (let
+        [global
+         (temp-dir)
 
-            project
-            (temp-dir)
+         project
+         (temp-dir)
 
-            store
-            (ps/db-create-connection! :memory)]
+         store
+         (ps/db-create-connection! :memory)]
 
         (write-ext! global "counter.py" counter-py)
         (write-ext! project
@@ -490,8 +498,9 @@ vis.extension(
                      (expect (= {:loaded 1 :failed 0 :changed? true} result))
                      (let [ext (registered "pkgext")]
                        (expect (some? ext))
-                       (let [add (symbol-fn ext 'add)
-                             res (add 2 3)]
+                       (let
+                         [add (symbol-fn ext 'add)
+                          res (add 2 3)]
 
                          (expect (extension/envelope-success? res))
                          (expect (= 5 (get-in res [:result "sum"])))
@@ -533,11 +542,12 @@ vis.extension(
   python-self-test-test
   (it
     "runs test_*.py / *_test.py through the pytest shim, imports the sibling package, reports pass/fail"
-    (let [ext-dir
-          (temp-dir)
+    (let
+      [ext-dir
+       (temp-dir)
 
-          store
-          (ps/db-create-connection! :memory)]
+       store
+       (ps/db-create-connection! :memory)]
 
       (write-ext! ext-dir "my_ext/mypkg/__init__.py" "VERSION = \"1.0\"\n")
       (write-ext! ext-dir "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n")
@@ -563,8 +573,9 @@ vis.extension(
                (expect (= 2 (:passed res)))
                (expect (= 1 (:failed res)))
                (expect (false? (:ok? res)))
-               (let [by-name
-                     (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))]
+               (let
+                 [by-name
+                  (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))]
                  ;; the package test resolves `from mypkg.core import add`
                  (expect (true? (get by-name "test_core.py")))
                  (expect (false? (get by-name "foo_test.py")))))
@@ -577,11 +588,12 @@ vis.extension(
 (defdescribe
   structured-counts-test
   (it "a failure whose assertion message contains '9 passed' must NOT inflate the pass count"
-      (let [ext-dir
-            (temp-dir)
+      (let
+        [ext-dir
+         (temp-dir)
 
-            store
-            (ps/db-create-connection! :memory)]
+         store
+         (ps/db-create-connection! :memory)]
 
         ;; the failure detail literally says \"9 passed\" — a stdout regex would
         ;; miscount it as nine passes; the shim's structured outcomes cannot lie
@@ -610,15 +622,16 @@ vis.extension(
                                 ;; `loader-registered?` defonce guard blocks re-runs).
                                 (reset! @#'pyx/loader-registered? false)
                                 (#'pyx/register-loader-extension!)
-                                (let [loader
-                                      (registered "python-extensions")
+                                (let
+                                  [loader
+                                   (registered "python-extensions")
 
-                                      slash
-                                      (some #(when (= "test" (:slash/name %)) %)
-                                            (:ext/slash-commands loader))
+                                   slash
+                                   (some #(when (= "test" (:slash/name %)) %)
+                                         (:ext/slash-commands loader))
 
-                                      cli
-                                      (some #(when (= "test" (:cmd/name %)) %) (:ext/cli loader))]
+                                   cli
+                                   (some #(when (= "test" (:cmd/name %)) %) (:ext/cli loader))]
 
                                   (expect (some? loader))
                                   (expect (some? slash))
@@ -633,11 +646,12 @@ vis.extension(
       (expect (str/includes? (#'runner/render-test-report {:files 0 :ok? true :results []})
                              "No Python extension tests")))
   (it "the shared /test + `vis ext test` code path runs tests and renders a report"
-      (let [ext-dir
-            (temp-dir)
+      (let
+        [ext-dir
+         (temp-dir)
 
-            store
-            (ps/db-create-connection! :memory)]
+         store
+         (ps/db-create-connection! :memory)]
 
         (write-ext! ext-dir
                     "foo_test.py"
@@ -660,19 +674,21 @@ vis.extension(
 (defdescribe
   per-test-granularity-test
   (it "reports each test's nodeid + outcome (tagged with its file), not just a per-file aggregate"
-      (let [ext-dir
-            (temp-dir)
+      (let
+        [ext-dir
+         (temp-dir)
 
-            store
-            (ps/db-create-connection! :memory)]
+         store
+         (ps/db-create-connection! :memory)]
 
         (write-ext! ext-dir
                     "foo_test.py"
                     (str "def test_alpha():\n    assert 1 + 1 == 2\n"
                          "def test_beta():\n    assert 2 + 2 == 5\n"))
         (binding [pyx/*state-env* {:db-info store}]
-          (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
-                     by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
+          (try (let
+                 [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
+                  by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
 
                  (expect (= 2 (count (:tests res))))
                  (expect (= :passed (get by-id "test_alpha")))
@@ -817,17 +833,18 @@ vis.extension(
     (with-loaded
       {"acme.py" provider-py}
       (fn [_ _]
-        (let [ext
-              (registered "provider-acme")
+        (let
+          [ext
+           (registered "provider-acme")
 
-              entries
-              (:ext/providers ext)
+           entries
+           (:ext/providers ext)
 
-              p
-              (registry/provider-by-id :acme)
+           p
+           (registry/provider-by-id :acme)
 
-              oauth
-              (registry/provider-by-id :acme-oauth)]
+           oauth
+           (registry/provider-by-id :acme-oauth)]
 
           (expect (= 2 (count entries)))
           (expect (some? p))
@@ -871,14 +888,15 @@ vis.extension(
                      ((:provider/refresh-token-fn p))))
           ;; auth-fn: host hands in a print! collector; the Python fn calls it to
           ;; emit instruction lines, and its string return coerces to a keyword.
-          (let [lines
-                (atom [])
+          (let
+            [lines
+             (atom [])
 
-                collect
-                #(swap! lines conj %)
+             collect
+             #(swap! lines conj %)
 
-                result
-                ((:provider/auth-fn oauth) collect)]
+             result
+             ((:provider/auth-fn oauth) collect)]
 
             (expect (= :ok result))
             (expect (= ["  Visit https://acme.test/device and enter code ABCD." "  Then re-run."]

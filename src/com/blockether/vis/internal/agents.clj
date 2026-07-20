@@ -51,14 +51,15 @@
    I/O failure. No size cap — the whole file rides in the system
    prompt; provider prompt caching keeps the cost amortized."
   [^java.io.File f]
-  (try (let [total
-             (.length f)
+  (try (let
+         [total
+          (.length f)
 
-             n
-             (long total)
+          n
+          (long total)
 
-             buf
-             (byte-array n)]
+          buf
+          (byte-array n)]
 
          (with-open [in (java.io.FileInputStream. f)]
            (loop [off 0]
@@ -98,11 +99,12 @@
    the stacked multi-file scan is `scan-roots` / `scan`. Exposed for
    testing against fixture roots."
   [^java.io.File root]
-  (let [agents-file
-        (java.io.File. root "AGENTS.md")
+  (let
+    [agents-file
+     (java.io.File. root "AGENTS.md")
 
-        claude-file
-        (java.io.File. root "CLAUDE.md")]
+     claude-file
+     (java.io.File. root "CLAUDE.md")]
 
     (cond (.isFile agents-file) (let [r (read-instructions-file :repo agents-file)]
                                   (if (:found? r)
@@ -127,11 +129,12 @@
    is the per-directory fallback. Returns `{:source :agents-md|:claude-md
    :file f}` or nil."
   [^java.io.File dir]
-  (let [a
-        (java.io.File. dir "AGENTS.md")
+  (let
+    [a
+     (java.io.File. dir "AGENTS.md")
 
-        c
-        (java.io.File. dir "CLAUDE.md")]
+     c
+     (java.io.File. dir "CLAUDE.md")]
 
     (cond (.isFile a) {:source :agents-md :file a}
           (.isFile c) {:source :claude-md :file c}
@@ -142,11 +145,12 @@
    inclusive — outermost first, so render order = precedence order
    (nearer files land later and positionally override)."
   [^java.io.File root]
-  (loop [^java.io.File d
-         (try (.getCanonicalFile root) (catch Throwable _ (.getAbsoluteFile root)))
+  (loop
+    [^java.io.File d
+     (try (.getCanonicalFile root) (catch Throwable _ (.getAbsoluteFile root)))
 
-         acc
-         ()]
+     acc
+     ()]
 
     (if d (recur (.getParentFile d) (cons d acc)) (vec acc))))
 
@@ -243,60 +247,63 @@
   ([^java.io.File global-dir ^java.io.File workspace-root]
    (scan-roots global-dir workspace-root nil))
   ([^java.io.File global-dir ^java.io.File workspace-root extra-roots]
-   (let [chain
-         (ancestor-chain workspace-root)
+   (let
+     [chain
+      (ancestor-chain workspace-root)
 
-         n
-         (count chain)
+      n
+      (count chain)
 
+      dirs
+      (concat (when global-dir [[:global global-dir]])
+              (map-indexed (fn [i d]
+                             [(if (= i (dec n)) :project :ancestor) d])
+                           chain)
+              (map (fn [d]
+                     ;; Canonicalize so dedup matches the (already-canonical)
+                     ;; ancestor/workspace candidate paths — a symlinked or
+                     ;; relative extra-root path would otherwise escape dedup.
+                     (let [c (try (.getCanonicalFile ^java.io.File d) (catch Throwable _ d))]
+                       [:extra-root c]))
+                   extra-roots))
+
+      ;; The global dir may coincide with an ancestor (e.g. workspace under
+      ;; ~/.vis) — drop the duplicate read; the same dedup drops an extra-root
+      ;; that coincides with the workspace root, an ancestor, or another extra.
+      reads
+      (loop
+        [ds
          dirs
-         (concat (when global-dir [[:global global-dir]])
-                 (map-indexed (fn [i d]
-                                [(if (= i (dec n)) :project :ancestor) d])
-                              chain)
-                 (map (fn [d]
-                        ;; Canonicalize so dedup matches the (already-canonical)
-                        ;; ancestor/workspace candidate paths — a symlinked or
-                        ;; relative extra-root path would otherwise escape dedup.
-                        (let [c (try (.getCanonicalFile ^java.io.File d) (catch Throwable _ d))]
-                          [:extra-root c]))
-                      extra-roots))
 
-         ;; The global dir may coincide with an ancestor (e.g. workspace under
-         ;; ~/.vis) — drop the duplicate read; the same dedup drops an extra-root
-         ;; that coincides with the workspace root, an ancestor, or another extra.
-         reads
-         (loop [ds
-                dirs
+         seen
+         #{}
 
-                seen
-                #{}
+         acc
+         []]
 
-                acc
-                []]
+        (if (empty? ds)
+          acc
+          (let
+            [[scope ^java.io.File d]
+             (first ds)
 
-           (if (empty? ds)
-             acc
-             (let [[scope ^java.io.File d]
-                   (first ds)
+             cand
+             (guidance-candidate d)
 
-                   cand
-                   (guidance-candidate d)
+             path
+             (some-> cand
+                     ^java.io.File (:file)
+                     .getAbsolutePath)]
 
-                   path
-                   (some-> cand
-                           ^java.io.File (:file)
-                           .getAbsolutePath)]
+            (if (and cand (not (contains? seen path)))
+              (recur (rest ds) (conj seen path) (conj acc (read-guidance-entry scope cand)))
+              (recur (rest ds) seen acc)))))
 
-               (if (and cand (not (contains? seen path)))
-                 (recur (rest ds) (conj seen path) (conj acc (read-guidance-entry scope cand)))
-                 (recur (rest ds) seen acc)))))
+      entries
+      (vec (keep :entry reads))
 
-         entries
-         (vec (keep :entry reads))
-
-         warnings
-         (vec (keep :warning reads))]
+      warnings
+      (vec (keep :warning reads))]
 
      {:result (if (seq entries)
                 (let [innermost (peek entries)]
@@ -361,11 +368,12 @@
 
 (defn- rescan!
   [cwd marker]
-  (let [{:keys [result warnings]}
-        (scan)
+  (let
+    [{:keys [result warnings]}
+     (scan)
 
-        v
-        {:cwd cwd :marker marker :result result :warnings warnings}]
+     v
+     {:cwd cwd :marker marker :result result :warnings warnings}]
 
     (reset! state v)
     v))
@@ -375,14 +383,15 @@
    AGENTS.md/CLAUDE.md marker changes. Common path is stat-only —
    content is re-read only when a marker changes."
   []
-  (let [cwd
-        (canonical-cwd)
+  (let
+    [cwd
+     (canonical-cwd)
 
-        marker
-        (guidance-marker)
+     marker
+     (guidance-marker)
 
-        cached
-        @state]
+     cached
+     @state]
 
     (if (and (= cwd (:cwd cached)) (= marker (:marker cached))) cached (rescan! cwd marker))))
 

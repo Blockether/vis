@@ -67,28 +67,29 @@
   "Per-kind changed-file counts `~modified +created -deleted` (only nonzero
    segments shown), or nil when the working tree is clean."
   [status]
-  (let [{:strs [modified created deleted]}
-        status
+  (let
+    [{:strs [modified created deleted]}
+     status
 
-        m
-        (long (or modified 0))
+     m
+     (long (or modified 0))
 
-        c
-        (long (or created 0))
+     c
+     (long (or created 0))
 
-        d
-        (long (or deleted 0))
+     d
+     (long (or deleted 0))
 
-        parts
-        (cond-> []
-          (pos? m)
-          (conj (str "~" m))
+     parts
+     (cond-> []
+       (pos? m)
+       (conj (str "~" m))
 
-          (pos? c)
-          (conj (str "+" c))
+       (pos? c)
+       (conj (str "+" c))
 
-          (pos? d)
-          (conj (str "-" d)))]
+       (pos? d)
+       (conj (str "-" d)))]
 
     (when (seq parts) (str/join " " parts))))
 (defn- git-status-bits
@@ -100,33 +101,34 @@
    lanterna cell grid (VS-16 emoji are wide and desync the paint). Clean
    *and* synced yields nil so the branch name stands alone — no glyph."
   [{:strs [ahead behind is_upstream] :as status}]
-  (let [ahead
-        (long (or ahead 0))
+  (let
+    [ahead
+     (long (or ahead 0))
 
-        behind
-        (long (or behind 0))
+     behind
+     (long (or behind 0))
 
-        change
-        (git-change-bits status)
+     change
+     (git-change-bits status)
 
-        sync
-        (cond-> []
-          (pos? ahead)
-          (conj (str "⇡" ahead))
+     sync
+     (cond-> []
+       (pos? ahead)
+       (conj (str "⇡" ahead))
 
-          (pos? behind)
-          (conj (str "⇣" behind)))
+       (pos? behind)
+       (conj (str "⇣" behind)))
 
-        parts
-        (cond-> []
-          change
-          (conj change)
+     parts
+     (cond-> []
+       change
+       (conj change)
 
-          (seq sync)
-          (conj (str/join " " sync))
+       (seq sync)
+       (conj (str/join " " sync))
 
-          (false? is_upstream)
-          (conj "∅"))]
+       (false? is_upstream)
+       (conj "∅"))]
 
     (when (seq parts) (str/join " " parts))))
 (defn- git-repo-label
@@ -250,17 +252,18 @@
 (defn- format-relative-reset
   [now-ms reset-ms]
   (when reset-ms
-    (let [total-seconds
-          (max 0 (quot (- (long reset-ms) (long now-ms)) 1000))
+    (let
+      [total-seconds
+       (max 0 (quot (- (long reset-ms) (long now-ms)) 1000))
 
-          days
-          (quot total-seconds 86400)
+       days
+       (quot total-seconds 86400)
 
-          hours
-          (quot (long (mod total-seconds 86400)) 3600)
+       hours
+       (quot (long (mod total-seconds 86400)) 3600)
 
-          minutes
-          (quot (long (mod total-seconds 3600)) 60)]
+       minutes
+       (quot (long (mod total-seconds 3600)) 60)]
 
       (cond (pos? days) (str days "d" hours "h")
             (pos? hours) (str hours "h" minutes "m")
@@ -269,23 +272,25 @@
 (defn- format-absolute-reset
   [now-ms reset-ms]
   (when reset-ms
-    (let [zoned
-          (.atZone (Instant/ofEpochMilli (long reset-ms)) (ZoneId/systemDefault))
+    (let
+      [zoned
+       (.atZone (Instant/ofEpochMilli (long reset-ms)) (ZoneId/systemDefault))
 
-          formatter
-          (if (and (>= (- (long reset-ms) (long now-ms)) 0)
-                   (< (- (long reset-ms) (long now-ms)) (long one-week-ms)))
-            short-reset-formatter
-            long-reset-formatter)]
+       formatter
+       (if (and (>= (- (long reset-ms) (long now-ms)) 0)
+                (< (- (long reset-ms) (long now-ms)) (long one-week-ms)))
+         short-reset-formatter
+         long-reset-formatter)]
 
       (.format ^DateTimeFormatter formatter zoned))))
 (defn- format-reset
   [now-ms reset-ms]
-  (let [relative
-        (format-relative-reset now-ms reset-ms)
+  (let
+    [relative
+     (format-relative-reset now-ms reset-ms)
 
-        absolute
-        (format-absolute-reset now-ms reset-ms)]
+     absolute
+     (format-absolute-reset now-ms reset-ms)]
 
     (cond (and relative absolute) (str "↺" relative " @ " absolute)
           relative (str "↺" relative)
@@ -297,14 +302,15 @@
    treat nil as \"loading\" — the polling thread populates it on its
    next tick."
   [db provider]
-  (let [provider-limits
-        (:provider-limits db)
+  (let
+    [provider-limits
+     (:provider-limits db)
 
-        report
-        (:report provider-limits)
+     report
+     (:report provider-limits)
 
-        report-provider
-        (or (:provider-id provider-limits) (:provider-id report))]
+     report-provider
+     (or (:provider-id provider-limits) (:provider-id report))]
 
     (when (and report (= provider report-provider)) report)))
 (defn- limits-status-text
@@ -317,14 +323,15 @@
    footer doesn't need a separate `notify-error!` / `notify-success!`
    side channel — it just reads the envelope."
   [db provider]
-  (let [provider-limits
-        (:provider-limits db)
+  (let
+    [provider-limits
+     (:provider-limits db)
 
-        report
-        (report-for-current-provider db provider)
+     report
+     (report-for-current-provider db provider)
 
-        status
-        (:status report)]
+     status
+     (:status report)]
 
     (cond
       ;; No envelope at all (first paint after launch / provider switch),
@@ -362,14 +369,15 @@
 
 (defn- compact-limit-label-parts
   [row]
-  (let [label
-        (compact-limit-label row)
+  (let
+    [label
+     (compact-limit-label row)
 
-        parts
-        (str/split label #"\s+")
+     parts
+     (str/split label #"\s+")
 
-        window
-        (last parts)]
+     window
+     (last parts)]
 
     (if (and (< 1 (count parts)) (re-matches #"[0-9]+[hd]" window))
       {:label label :prefix (str/join " " (butlast parts)) :window window}
@@ -377,13 +385,14 @@
 
 (defn- format-generic-limit-row-with-label
   [now-ms row label]
-  (let [usage
-        (compact-limit-usage row)
+  (let
+    [usage
+     (compact-limit-usage row)
 
-        reset
-        (some->> (get-in row [:window :resets-at-ms])
-                 (format-reset now-ms)
-                 compact-reset-text)]
+     reset
+     (some->> (get-in row [:window :resets-at-ms])
+              (format-reset now-ms)
+              compact-reset-text)]
 
     (str label (when usage (str " " usage)) (when reset (str " " reset)))))
 
@@ -393,17 +402,16 @@
 
 (defn- format-generic-limit-rows
   [now-ms rows]
-  (let [rows
-        (take 2 rows)
+  (let
+    [rows
+     (take 2 rows)
 
-        label-parts
-        (map compact-limit-label-parts rows)
+     label-parts
+     (map compact-limit-label-parts rows)
 
-        shared-prefix
-        (when (and (< 1 (count rows))
-                   (every? :prefix label-parts)
-                   (apply = (map :prefix label-parts)))
-          (:prefix (first label-parts)))]
+     shared-prefix
+     (when (and (< 1 (count rows)) (every? :prefix label-parts) (apply = (map :prefix label-parts)))
+       (:prefix (first label-parts)))]
 
     (if shared-prefix
       (str shared-prefix
@@ -444,18 +452,19 @@
      - nil when the provider legitimately has no quota story
        (`:unsupported` / `:unknown-provider` / `:ok` with empty rows)."
   [db provider now-ms]
-  (let [report
-        (report-for-current-provider db provider)
+  (let
+    [report
+     (report-for-current-provider db provider)
 
-        raw-rows
-        (get-in report [:dynamic :limits])
+     raw-rows
+     (get-in report [:dynamic :limits])
 
-        rows
-        (->> (or (seq (filter #(or (lfmt/generic-limit-has-signal? %)
-                                   (lfmt/account-plan-window-row? %))
-                              raw-rows))
-                 raw-rows)
-             (sort-by generic-limit-sort-key))]
+     rows
+     (->> (or (seq (filter #(or (lfmt/generic-limit-has-signal? %)
+                                (lfmt/account-plan-window-row? %))
+                           raw-rows))
+              raw-rows)
+          (sort-by generic-limit-sort-key))]
 
     (if (seq rows) (format-generic-limit-rows now-ms rows) (limits-status-text db provider))))
 ;;; ── Segment list ───────────────────────────────────────────────────────────
@@ -473,14 +482,15 @@
    cwd and mislabels the session with the ENGINE's own repo. Nil when there is
    no tab context (bare startup / tests) — callers then keep the cwd fallback."
   [db]
-  (let [tabs
-        (:tabs db)
+  (let
+    [tabs
+     (:tabs db)
 
-        active-id
-        (or (:active-tab-id db) (:id (some #(when (:active? %) %) tabs)))
+     active-id
+     (or (:active-tab-id db) (:id (some #(when (:active? %) %) tabs)))
 
-        entry
-        (or (some #(when (= (:id %) active-id) %) tabs) (first tabs))]
+     entry
+     (or (some #(when (= (:id %) active-id) %) tabs) (first tabs))]
 
     (or (:workspace/root entry) (get (:workspace entry) "root"))))
 
@@ -494,72 +504,73 @@
      4  cost
      5  keyboard shortcut hints"
   [db _now-ms]
-  (let [{:keys [settings]}
-        db
+  (let
+    [{:keys [settings]}
+     db
 
-        info
-        (chosen-model-info)
+     info
+     (chosen-model-info)
 
-        provider
-        (:provider info)
+     provider
+     (:provider info)
 
-        ;; Past life: `model` + `model-display` strings were also
-        ;; destructured here for a footer label that no longer exists.
-        ;; Resurrect via `(let [model (:name info) ...] ...)` if a
-        ;; future renderer needs them. `provider` stays — used by
-        ;; `codex-provider?` below.
-        reasoning?
-        (reasoning-effort-configurable? info)
+     ;; Past life: `model` + `model-display` strings were also
+     ;; destructured here for a footer label that no longer exists.
+     ;; Resurrect via `(let [model (:name info) ...] ...)` if a
+     ;; future renderer needs them. `provider` stays — used by
+     ;; `codex-provider?` below.
+     reasoning?
+     (reasoning-effort-configurable? info)
 
-        reasoning-level
-        (or (:reasoning-level settings) default-reasoning-level)
+     reasoning-level
+     (or (:reasoning-level settings) default-reasoning-level)
 
-        codex-provider?
-        (= :openai-codex provider)
+     codex-provider?
+     (= :openai-codex provider)
 
-        codex-verbosity
-        (or (:openai-codex-verbosity settings) default-codex-verbosity)
+     codex-verbosity
+     (or (:openai-codex-verbosity settings) default-codex-verbosity)
 
-        ws
-        (:workspace db)
+     ws
+     (:workspace db)
 
-        ws-root
-        (or (:workspace/root db) (get ws "root") (active-tab-workspace-root db))
+     ws-root
+     (or (:workspace/root db) (get ws "root") (active-tab-workspace-root db))
 
-        in-draft?
-        (some? (get ws "fork_ms"))
+     in-draft?
+     (some? (get ws "fork_ms"))
 
-        ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
-        ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
-        ;; the repo — the single source of truth every channel reads (web footer,
-        ;; TUI footer, magit). NO client-side git walk here: the TUI keeps the fact
-        ;; fresh between turns via the workspace-refresh poller
-        ;; (`start-workspace-refresh-thread!`), so the count tracks reality without
-        ;; the render thread ever shelling out to git.
-        git-status
-        (get ws "git")
+     ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
+     ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
+     ;; the repo — the single source of truth every channel reads (web footer,
+     ;; TUI footer, magit). NO client-side git walk here: the TUI keeps the fact
+     ;; fresh between turns via the workspace-refresh poller
+     ;; (`start-workspace-refresh-thread!`), so the count tracks reality without
+     ;; the render thread ever shelling out to git.
+     git-status
+     (get ws "git")
 
-        git-spans
-        (git-footer-spans (cond-> git-status
-                            in-draft?
-                            (assoc "is_draft"
-                              true "draft_root"
-                              (str ws-root))))
+     git-spans
+     (git-footer-spans (cond-> git-status
+                         in-draft?
+                         (assoc "is_draft"
+                           true "draft_root"
+                           (str ws-root))))
 
-        ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
-        ;; bracketed "resources N (C-x s)" button — no glyph (a width-1 icon read
-        ;; as noise; the word carries the meaning). Shown only when this
-        ;; session owns ≥1.
-        res-count
-        (count (try (lp/gateway-list-resources-cached (get-in db [:session :id]))
-                    (catch Throwable _ nil)))
+     ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
+     ;; bracketed "resources N (C-x s)" button — no glyph (a width-1 icon read
+     ;; as noise; the word carries the meaning). Shown only when this
+     ;; session owns ≥1.
+     res-count
+     (count (try (lp/gateway-list-resources-cached (get-in db [:session :id]))
+                 (catch Throwable _ nil)))
 
-        ;; Filesystem: the session root + any extra dirs granted via /fs or the picker.
-        ;; Surfaced in the footer (BOTH channels) so the add-directory
-        ;; affordance is discoverable here, not buried; /fs and /root manage it
-        ;; (the web twin is the clickable footer dirs button).
-        dir-count
-        (inc (count (get ws "filesystem_roots")))]
+     ;; Filesystem: the session root + any extra dirs granted via /fs or the picker.
+     ;; Surfaced in the footer (BOTH channels) so the add-directory
+     ;; affordance is discoverable here, not buried; /fs and /root manage it
+     ;; (the web twin is the clickable footer dirs button).
+     dir-count
+     (inc (count (get ws "filesystem_roots")))]
 
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -632,17 +643,18 @@
 (defn- build-usage-segments
   "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared."
   [{:keys [messages]}]
-  (let [{:keys [tokens cost]}
-        (session-usage messages)
+  (let
+    [{:keys [tokens cost]}
+     (session-usage messages)
 
-        toks
-        tokens
+     toks
+     tokens
 
-        tok-text
-        (when toks (fmt/meta-tokens toks))
+     tok-text
+     (when toks (fmt/meta-tokens toks))
 
-        cost-text
-        (fmt/meta-cost cost)]
+     cost-text
+     (fmt/meta-cost cost)]
 
     (cond-> []
       tok-text
@@ -658,21 +670,22 @@
   ;; (e.g. zai) even after the user switched the session to Claude, so the
   ;; "request usages" row reported the wrong coding plan. Fall back to the
   ;; router default only when the session has no explicit pick.
-  (let [provider
-        (or (some-> (:session-model-pref db)
-                    :provider
-                    not-empty
-                    keyword)
-            (when-let [sid (get-in db [:session :id])]
-              (some-> (lp/gateway-session-model-cached sid)
-                      :provider
-                      not-empty
-                      keyword))
-            (some-> (chosen-model-info)
-                    :provider))
+  (let
+    [provider
+     (or (some-> (:session-model-pref db)
+                 :provider
+                 not-empty
+                 keyword)
+         (when-let [sid (get-in db [:session :id])]
+           (some-> (lp/gateway-session-model-cached sid)
+                   :provider
+                   not-empty
+                   keyword))
+         (some-> (chosen-model-info)
+                 :provider))
 
-        text
-        (when provider (generic-limits-footer-text db provider now-ms))]
+     text
+     (when provider (generic-limits-footer-text db provider now-ms))]
 
     (into (cond-> []
             text
@@ -774,13 +787,14 @@
    IR output is joined with a single space so a misbehaving
    multi-block IR still fits one footer row."
   ^String [ir]
-  (let [lines
-        (layout/ast->lines ir 1024)
+  (let
+    [lines
+     (layout/ast->lines ir 1024)
 
-        line-strs
-        (mapv (fn [{:keys [runs]}]
-                (apply str (map :text runs)))
-              lines)]
+     line-strs
+     (mapv (fn [{:keys [runs]}]
+             (apply str (map :text runs)))
+           lines)]
 
     (str/join " " (remove str/blank? line-strs))))
 (defn- seg->packed
@@ -791,15 +805,16 @@
              (= row (long (or (:row seg) 0)))
              (vector? (:ast seg))
              (= :ast (first (:ast seg))))
-    (let [raw
-          (ast->footer-text (:ast seg))
+    (let
+      [raw
+       (ast->footer-text (:ast seg))
 
-          ;; Chip kinds render through `components/button!`, whose cap wants the
-          ;; label PRE-padded ` like this ` (the resources / dirs chips do the
-          ;; same). The IR walker trims trailing whitespace, so re-pad here
-          ;; centrally instead of relying on it surviving the IR round-trip.
-          text
-          (if (:kind seg) (str " " (str/trim raw) " ") raw)]
+       ;; Chip kinds render through `components/button!`, whose cap wants the
+       ;; label PRE-padded ` like this ` (the resources / dirs chips do the
+       ;; same). The IR walker trims trailing whitespace, so re-pad here
+       ;; centrally instead of relying on it surviving the IR round-trip.
+       text
+       (if (:kind seg) (str " " (str/trim raw) " ") raw)]
 
       (when (and (string? text) (not (str/blank? text)))
         {:text text
@@ -818,19 +833,21 @@
    contributions via `:contributors-disabled`; `undisableable` ids
    bypass that guard for core identity chrome."
   [slot undisableable db now-ms row]
-  (let [disabled (let [s (get-in db [:settings :contributors-disabled])]
-                   (when (set? s) s))]
-    (vec (for [{:keys [id] f :fn} (lp/channel-contributions-for :tui slot)
-               :when (and (ifn? f)
-                          (or (contains? undisableable id)
-                              (not (and disabled (contains? disabled id)))))
-               :let [out (try (f db now-ms) (catch Throwable _ nil))
-                     segs (cond (sequential? out) out
-                                (map? out) [out]
-                                :else nil)]
-               seg segs
-               :let [packed (seg->packed seg row)]
-               :when packed]
+  (let
+    [disabled (let [s (get-in db [:settings :contributors-disabled])]
+                (when (set? s) s))]
+    (vec (for
+           [{:keys [id] f :fn} (lp/channel-contributions-for :tui slot)
+            :when (and (ifn? f)
+                       (or (contains? undisableable id)
+                           (not (and disabled (contains? disabled id)))))
+            :let [out (try (f db now-ms) (catch Throwable _ nil))
+                  segs (cond (sequential? out) out
+                             (map? out) [out]
+                             :else nil)]
+            seg segs
+            :let [packed (seg->packed seg row)]
+            :when packed]
 
            packed))))
 (defn- extension-footer-segments
@@ -859,30 +876,31 @@
    padding. Used by `shrink-to-fit` to decide whether the current
    segment list fits `cols`."
   [segments separator]
-  (let [l
-        (region-spans segments :left)
+  (let
+    [l
+     (region-spans segments :left)
 
-        c
-        (region-spans segments :center)
+     c
+     (region-spans segments :center)
 
-        r
-        (region-spans segments :right)
+     r
+     (region-spans segments :right)
 
-        edge-pad
-        2
+     edge-pad
+     2
 
-        ;; one space on each end of the row
-        gap
-        2
+     ;; one space on each end of the row
+     gap
+     2
 
-        ;; minimum gap between adjacent regions
-        n-gaps
-        (cond-> 0
-          (and (seq l) (or (seq c) (seq r)))
-          inc
+     ;; minimum gap between adjacent regions
+     n-gaps
+     (cond-> 0
+       (and (seq l) (or (seq c) (seq r)))
+       inc
 
-          (and (seq c) (seq r))
-          inc)]
+       (and (seq c) (seq r))
+       inc)]
 
     (+ (long edge-pad)
        (* (long gap) (long n-gaps))
@@ -902,28 +920,30 @@
    narrow terminal. Returns the updated vector, or nil when nothing can
    give up the columns (every segment already minimal)."
   [segments ^long over]
-  (let [v
-        (vec segments)
+  (let
+    [v
+     (vec segments)
 
-        [idx seg]
-        (->> (map-indexed vector v)
-             (apply max-key
-               (fn [[_ s]]
-                 (p/display-width (:text s)))))
+     [idx seg]
+     (->> (map-indexed vector v)
+          (apply max-key
+            (fn [[_ s]]
+              (p/display-width (:text s)))))
 
-        cur
-        (p/display-width (:text seg))]
+     cur
+     (p/display-width (:text seg))]
 
     (when (> cur 1)
-      (let [budget
-            (max 1 (dec (- cur over)))
+      (let
+        [budget
+         (max 1 (dec (- cur over)))
 
-            ; leave a column for the …
-            cut
-            (str/trimr (p/truncate-cols (:text seg) budget))
+         ; leave a column for the …
+         cut
+         (str/trimr (p/truncate-cols (:text seg) budget))
 
-            text
-            (str cut "…")]
+         text
+         (str cut "…")]
 
         (when (< (p/display-width text) cur) (assoc-in v [idx :text] text))))))
 
@@ -935,16 +955,18 @@
    survivor is TRUNCATED with `…` rather than dropped - a compacted
    model/limits chip beats a blank footer."
   [segments cols]
-  (let [fit? (fn [segs sepa]
-               (<= (long (total-width segs sepa)) (long cols)))]
+  (let
+    [fit? (fn [segs sepa]
+            (<= (long (total-width segs sepa)) (long cols)))]
     (cond (fit? segments sep) [segments sep]
           (fit? segments sep-narrow) [segments sep-narrow]
           :else (loop [segs segments]
                   (cond (empty? segs) [segs sep-narrow]
                         (fit? segs sep-narrow) [segs sep-narrow]
-                        :else (let [worst-priority (apply max (map :priority segs))
-                                    victim (some #(when (= worst-priority (:priority %)) %) segs)
-                                    dropped (vec (remove #(identical? victim %) segs))]
+                        :else (let
+                                [worst-priority (apply max (map :priority segs))
+                                 victim (some #(when (= worst-priority (:priority %)) %) segs)
+                                 dropped (vec (remove #(identical? victim %) segs))]
 
                                 (if (> (long worst-priority) (long (min-priority segs)))
                                   ;; Still-droppable decoration present (a less-important
@@ -963,13 +985,14 @@
    final col after the last span."
   [g start-col row spans separator]
   (reduce (fn [c [i s]]
-            (let [c (if (zero? (long i))
-                      c
-                      (do (p/clear-styles! g)
-                          (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-                          (let [separator (separator-before s separator)]
-                            (p/put-str! g c row separator)
-                            (+ (long c) (p/display-width separator)))))]
+            (let
+              [c (if (zero? (long i))
+                   c
+                   (do (p/clear-styles! g)
+                       (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+                       (let [separator (separator-before s separator)]
+                         (p/put-str! g c row separator)
+                         (+ (long c) (p/display-width separator)))))]
               (if (:kind s)
                 ;; Real button chip via the shared `components/button!` — the SAME
                 ;; component the header right-side buttons use (filled inverted cap,
@@ -994,52 +1017,53 @@
   ;; come after. shrink-to-fit still drops by `:priority`.
   ;; Without this ordering the model paints to the right of `reasoning:` /
   ;; `verbosity:` and gets clipped on narrow terminals.
-  (let [built-in
-        (build-fn db now-ms)
+  (let
+    [built-in
+     (build-fn db now-ms)
 
-        ext-segs
-        (extension-footer-segments db now-ms (long row-idx))
+     ext-segs
+     (extension-footer-segments db now-ms (long row-idx))
 
-        all-segs
-        (into (vec ext-segs) built-in)
+     all-segs
+     (into (vec ext-segs) built-in)
 
-        [segs separator]
-        (shrink-to-fit all-segs cols)
+     [segs separator]
+     (shrink-to-fit all-segs cols)
 
-        l
-        (region-spans segs :left)
+     l
+     (region-spans segs :left)
 
-        c
-        (region-spans segs :center)
+     c
+     (region-spans segs :center)
 
-        r
-        (region-spans segs :right)
+     r
+     (region-spans segs :right)
 
-        edge-pad
-        2
+     edge-pad
+     2
 
-        l-w
-        (spans-width l separator)
+     l-w
+     (spans-width l separator)
 
-        c-w
-        (spans-width c separator)
+     c-w
+     (spans-width c separator)
 
-        r-w
-        (spans-width r separator)
+     r-w
+     (spans-width r separator)
 
-        l-col
-        edge-pad
+     l-col
+     edge-pad
 
-        r-col
-        (max (+ (long l-col) (long l-w) 2) (- (long cols) (long edge-pad) (long r-w)))
+     r-col
+     (max (+ (long l-col) (long l-w) 2) (- (long cols) (long edge-pad) (long r-w)))
 
-        ;; Center between L's right edge and R's left edge.
-        l-end
-        (+ (long l-col) (long l-w))
+     ;; Center between L's right edge and R's left edge.
+     l-end
+     (+ (long l-col) (long l-w))
 
-        c-col
-        (max (+ (long l-end) (if (seq l) 2 0))
-             (- (quot (+ (long l-end) (long r-col)) 2) (quot (long c-w) 2)))]
+     c-col
+     (max (+ (long l-end) (if (seq l) 2 0))
+          (- (quot (+ (long l-end) (long r-col)) 2) (quot (long c-w) 2)))]
 
     (when (seq l) (draw-spans! g l-col row l separator))
     (when (seq c) (draw-spans! g c-col row c separator))
@@ -1071,11 +1095,12 @@
   (p/clear-styles! g)
   (p/set-colors! g t/footer-fg t/terminal-bg)
   (p/fill-rect! g 0 echo-row cols 1)
-  (let [[segs separator]
-        (shrink-to-fit (echo-segments db) cols)
+  (let
+    [[segs separator]
+     (shrink-to-fit (echo-segments db) cols)
 
-        spans
-        (region-spans segs :center)]
+     spans
+     (region-spans segs :center)]
 
     (when (seq spans) (draw-spans! g 2 echo-row spans separator)))
   ;; Restore neutral state for whatever paints next.

@@ -40,16 +40,17 @@
   ([] (mem-backend {}))
   ([{:keys [id scheme priority offload? store fail-put?] :or {id :mem scheme "mem" priority 0}}]
    (let [store (or store (atom {}))]
-     (cond-> {:storage/id id
-              :storage/scheme scheme
-              :storage/priority priority
-              :storage/put-fn (fn [{:keys [^bytes bytes]}]
-                                (when fail-put? (throw (ex-info "boom" {})))
-                                (let [k (str scheme "://" (count @store))]
-                                  (swap! store assoc k bytes)
-                                  k))
-              :storage/get-fn (fn [uri]
-                                (get @store uri))}
+     (cond->
+       {:storage/id id
+        :storage/scheme scheme
+        :storage/priority priority
+        :storage/put-fn (fn [{:keys [^bytes bytes]}]
+                          (when fail-put? (throw (ex-info "boom" {})))
+                          (let [k (str scheme "://" (count @store))]
+                            (swap! store assoc k bytes)
+                            k))
+        :storage/get-fn (fn [uri]
+                          (get @store uri))}
        offload?
        (assoc :storage/offload? offload?)))))
 
@@ -92,11 +93,12 @@
                      (finally (clear-registry!))))
             (it "resolve-bytes dispatches on the URI scheme to the owning backend"
                 (clear-registry!)
-                (try (let [sa
-                           (atom {"a://k" (.getBytes "AAA" "UTF-8")})
+                (try (let
+                       [sa
+                        (atom {"a://k" (.getBytes "AAA" "UTF-8")})
 
-                           sb
-                           (atom {"b://k" (.getBytes "BBB" "UTF-8")})]
+                        sb
+                        (atom {"b://k" (.getBytes "BBB" "UTF-8")})]
 
                        (as/register-backend! (mem-backend {:id :a :scheme "a" :store sa}))
                        (as/register-backend! (mem-backend {:id :b :scheme "b" :store sb}))
@@ -121,17 +123,19 @@
                   (expect (true? (as/offload? b {:size 300000 :media-type "text/csv"})))
                   (expect (false? (as/offload? b {:size 300000 :media-type "image/png"})))))
             (it "backend :storage/offload? wins over the default"
-                (let [never
-                      (mem-backend {:offload? (constantly false)})
+                (let
+                  [never
+                   (mem-backend {:offload? (constantly false)})
 
-                      always
-                      (mem-backend {:offload? (constantly true)})]
+                   always
+                   (mem-backend {:offload? (constantly true)})]
 
                   (expect (false? (as/offload? never {:size 300000 :media-type "text/csv"})))
                   (expect (true? (as/offload? always {:size 1 :media-type "image/png"})))))
             (it "falls back to inline when the predicate throws"
-                (let [boom (mem-backend {:offload? (fn [_]
-                                                     (throw (ex-info "x" {})))})]
+                (let
+                  [boom (mem-backend {:offload? (fn [_]
+                                                  (throw (ex-info "x" {})))})]
                   (expect (false? (as/offload? boom {:size 300000 :media-type "text/csv"}))))))
   (describe "offload-attachment — write side"
             (it "returns the map unchanged with no backend"
@@ -159,46 +163,48 @@
                        (expect (contains? off :base64))
                        (expect (not (contains? off :storage-uri))))
                      (finally (clear-registry!)))))
-  (describe
-    "hydrate — read side"
-    (it "leaves an inline envelope (already has base64) untouched"
-        (clear-registry!)
-        (let [row {:id "r" :media-type "text/csv" :base64 (b64 "hi")}]
-          (expect (= row (as/hydrate row)))))
-    (it "leaves a row with neither base64 nor storage-uri untouched"
-        (let [row {:id "r" :media-type "text/csv"}]
-          (expect (= row (as/hydrate row)))))
-    (it "re-fetches an external row's bytes into :base64"
-        (clear-registry!)
-        (try (as/register-backend! (mem-backend))
-             (let [off
-                   (as/offload-attachment big-cold)
+  (describe "hydrate — read side"
+            (it "leaves an inline envelope (already has base64) untouched"
+                (clear-registry!)
+                (let [row {:id "r" :media-type "text/csv" :base64 (b64 "hi")}]
+                  (expect (= row (as/hydrate row)))))
+            (it "leaves a row with neither base64 nor storage-uri untouched"
+                (let [row {:id "r" :media-type "text/csv"}]
+                  (expect (= row (as/hydrate row)))))
+            (it "re-fetches an external row's bytes into :base64"
+                (clear-registry!)
+                (try
+                  (as/register-backend! (mem-backend))
+                  (let
+                    [off
+                     (as/offload-attachment big-cold)
 
-                   ; external
-                   row
-                   {:id "r" :source :tool :media-type "text/csv" :storage-uri (:storage-uri off)}
+                     ; external
+                     row
+                     {:id "r" :source :tool :media-type "text/csv" :storage-uri (:storage-uri off)}
 
-                   hyd
-                   (as/hydrate row)]
+                     hyd
+                     (as/hydrate row)]
 
-               (expect (string? (:base64 hyd)))
-               (expect (= (:base64 big-cold) (:base64 hyd)))) ; byte-exact round trip
-             (finally (clear-registry!))))
-    (it "leaves the row alone (keeps storage-uri) when no backend owns the scheme"
-        (clear-registry!)
-        (let [row {:id "r" :storage-uri "gone://x" :media-type "text/csv"}]
-          (expect (= row (as/hydrate row))))))
+                    (expect (string? (:base64 hyd)))
+                    (expect (= (:base64 big-cold) (:base64 hyd)))) ; byte-exact round trip
+                  (finally (clear-registry!))))
+            (it "leaves the row alone (keeps storage-uri) when no backend owns the scheme"
+                (clear-registry!)
+                (let [row {:id "r" :storage-uri "gone://x" :media-type "text/csv"}]
+                  (expect (= row (as/hydrate row))))))
   (describe
     "file-backend — reference local-disk implementation"
     (it "round-trips bytes through file:// PUT then GET"
-        (let [dir
-              (temp-dir)
+        (let
+          [dir
+           (temp-dir)
 
-              backend
-              (as/file-backend {:dir dir})
+           backend
+           (as/file-backend {:dir dir})
 
-              uri
-              ((:storage/put-fn backend) {:bytes (.getBytes "payload-123" "UTF-8")})]
+           uri
+           ((:storage/put-fn backend) {:bytes (.getBytes "payload-123" "UTF-8")})]
 
           (expect (= "file" (:storage/scheme backend)))
           (expect (as/scheme-of uri))
@@ -208,11 +214,12 @@
     (it "offloads + hydrates a cold artifact end-to-end via the registry"
         (clear-registry!)
         (try (as/register-backend! (as/file-backend {:dir (temp-dir)}))
-             (let [off
-                   (as/offload-attachment big-cold)
+             (let
+               [off
+                (as/offload-attachment big-cold)
 
-                   hyd
-                   (as/hydrate {:storage-uri (:storage-uri off) :media-type "text/csv"})]
+                hyd
+                (as/hydrate {:storage-uri (:storage-uri off) :media-type "text/csv"})]
 
                (expect (not (contains? off :base64)))
                (expect (= (unb64 (:base64 big-cold)) (unb64 (:base64 hyd)))))

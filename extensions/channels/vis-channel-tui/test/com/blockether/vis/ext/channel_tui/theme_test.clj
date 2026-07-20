@@ -33,14 +33,15 @@
 (defn- contrast-ratio
   "WCAG 2.x contrast ratio between two RGB triples. Symmetric, range [1, 21]."
   ^double [^TextColor$RGB a ^TextColor$RGB b]
-  (let [la
-        (relative-luminance a)
+  (let
+    [la
+     (relative-luminance a)
 
-        lb
-        (relative-luminance b)
+     lb
+     (relative-luminance b)
 
-        [hi lo]
-        (if (>= la lb) [la lb] [lb la])]
+     [hi lo]
+     (if (>= la lb) [la lb] [lb la])]
 
     (/ (+ hi 0.05) (+ lo 0.05))))
 
@@ -68,14 +69,15 @@
             ;; heading and H3 the lightest (most muted) — contrast, not hue,
             ;; carries the hierarchy.
             (it "L(H1) < L(H2) < L(H3)"
-                (let [l1
-                      (relative-luminance t/md-h1-fg)
+                (let
+                  [l1
+                   (relative-luminance t/md-h1-fg)
 
-                      l2
-                      (relative-luminance t/md-h2-fg)
+                   l2
+                   (relative-luminance t/md-h2-fg)
 
-                      l3
-                      (relative-luminance t/md-h3-fg)]
+                   l3
+                   (relative-luminance t/md-h3-fg)]
 
                   (expect (< l1 l2))
                   (expect (< l2 l3))))))
@@ -106,19 +108,19 @@
 
 (defdescribe
   adapter-coverage-test
-  (describe "TUI adapter consumes every shared theme token"
-            (it "has a public Lanterna var for every palette token and matches light theme values"
-                (try (t/apply-theme! :vis-light)
-                     (doseq [[token expected] (:palette shared-theme/vis-light)]
-                       (let [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme
-                                           (symbol (name token)))]
-                         (expect (some? v))
-                         (expect (= expected (rgb-vec @v)))))
-                     (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
-            (it "applies dark theme through the atom-backed shared theme registry"
-                (try (t/apply-theme! :vis-dark)
-                     (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
-                     (expect (= (:widths shared-theme/vis-dark) t/default-widths))
-                     (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
-                     (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
-                     (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))
+  (describe
+    "TUI adapter consumes every shared theme token"
+    (it "has a public Lanterna var for every palette token and matches light theme values"
+        (try (t/apply-theme! :vis-light)
+             (doseq [[token expected] (:palette shared-theme/vis-light)]
+               (let [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme (symbol (name token)))]
+                 (expect (some? v))
+                 (expect (= expected (rgb-vec @v)))))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
+    (it "applies dark theme through the atom-backed shared theme registry"
+        (try (t/apply-theme! :vis-dark)
+             (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
+             (expect (= (:widths shared-theme/vis-dark) t/default-widths))
+             (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
+             (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))

@@ -17,22 +17,23 @@
    stop with [[stop!]]."
   ([] (start! (default-output-file)))
   ([path]
-   (let [file
-         (io/file path)
+   (let
+     [file
+      (io/file path)
 
-         format
-         (audio-format)
+      format
+      (audio-format)
 
-         info
-         (DataLine$Info. TargetDataLine format)
+      info
+      (DataLine$Info. TargetDataLine format)
 
-         line
-         ^TargetDataLine (AudioSystem/getLine info)
+      line
+      ^TargetDataLine (AudioSystem/getLine info)
 
-         task
-         (FutureTask. (fn []
-                        (with-open [stream (AudioInputStream. line)]
-                          (AudioSystem/write stream AudioFileFormat$Type/WAVE file))))]
+      task
+      (FutureTask. (fn []
+                     (with-open [stream (AudioInputStream. line)]
+                       (AudioSystem/write stream AudioFileFormat$Type/WAVE file))))]
 
      (.open line format)
      (.start line)

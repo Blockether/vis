@@ -57,8 +57,9 @@
              (spit (io/file root "tests" "test_sample.py")
                    (str "def test_ok():\n" "    assert 1 + 1 == 2\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
-             (let [r (core/py-test-fn {:workspace/root (.getPath root)} {"runner" "graalpy"})
-                   res (:result r)]
+             (let
+               [r (core/py-test-fn {:workspace/root (.getPath root)} {"runner" "graalpy"})
+                res (:result r)]
 
                (expect (:success? r))
                (expect (= "graalpy" (get res "runner")))
@@ -80,8 +81,9 @@
       ;; with the resolved cmd — never the graalpy shape.
       (when (has-python?)
         (let [root (tmp-dir)]
-          (try (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                   {"interpreter" true}))]
+          (try (let
+                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                {"interpreter" true}))]
                  (expect (= "project" (get res "runner")))
                  (expect (vector? (get res "cmd")))
                  (expect (some #{"-m" "pytest"} (get res "cmd"))))

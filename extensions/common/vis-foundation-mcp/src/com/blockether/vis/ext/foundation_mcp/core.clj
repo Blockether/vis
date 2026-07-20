@@ -59,9 +59,10 @@
 (defn- configured-servers
   "Map of `{server-name spec}` from config; keys normalised to strings."
   []
-  (let [m (some-> (vis/load-config-raw)
-                  :mcp
-                  :servers)]
+  (let
+    [m (some-> (vis/load-config-raw)
+               :mcp
+               :servers)]
     (if (map? m)
       (into {}
             (map (fn [[k v]]
@@ -85,14 +86,15 @@
 
 (defn- add-configured-server!
   [name spec]
-  (let [server
-        (some-> name
-                str
-                str/trim
-                not-empty)
+  (let
+    [server
+     (some-> name
+             str
+             str/trim
+             not-empty)
 
-        raw
-        (or (vis/load-config-raw) {})]
+     raw
+     (or (vis/load-config-raw) {})]
 
     (when-not server (throw (ex-info "MCP server name is required" {:type :mcp/config})))
     (vis/save-config! (assoc-in raw [:mcp :servers server] spec) :mcp)
@@ -100,10 +102,11 @@
 
 (defn- add-stdio-server!
   [{:strs [name command args cwd env]}]
-  (let [cmd (some-> command
-                    str
-                    str/trim
-                    not-empty)]
+  (let
+    [cmd (some-> command
+                 str
+                 str/trim
+                 not-empty)]
     (when-not cmd
       (throw (ex-info "Command is required for a local MCP server" {:type :mcp/config})))
     (add-configured-server! name
@@ -119,24 +122,25 @@
 
 (defn- add-http-server!
   [{:strs [name url authorization token]}]
-  (let [u
-        (some-> url
-                str
-                str/trim
-                not-empty)
+  (let
+    [u
+     (some-> url
+             str
+             str/trim
+             not-empty)
 
-        ;; A bare `token` is the friendly path — sent as `Bearer <token>`.
-        ;; A full `authorization` header value (any scheme) still wins if given.
-        auth
-        (or (some-> authorization
-                    str
-                    str/trim
-                    not-empty)
-            (some-> token
-                    str
-                    str/trim
-                    not-empty
-                    (->> (str "Bearer "))))]
+     ;; A bare `token` is the friendly path — sent as `Bearer <token>`.
+     ;; A full `authorization` header value (any scheme) still wins if given.
+     auth
+     (or (some-> authorization
+                 str
+                 str/trim
+                 not-empty)
+         (some-> token
+                 str
+                 str/trim
+                 not-empty
+                 (->> (str "Bearer "))))]
 
     (when-not u (throw (ex-info "URL is required for a remote MCP server" {:type :mcp/config})))
     (add-configured-server! name
@@ -160,8 +164,9 @@
   [session server]
   (or (get-conn session server)
       (when-let [spec (get (configured-servers) server)]
-        (try (let [conn (mcp/connect server spec)
-                   tools (try (mcp/list-tools conn) (catch Throwable _ []))]
+        (try (let
+               [conn (mcp/connect server spec)
+                tools (try (mcp/list-tools conn) (catch Throwable _ []))]
 
                (swap! conns assoc-in [session server] conn)
                (resources/register! session
@@ -200,30 +205,31 @@
 
 (defn- mcp-servers-impl
   [env]
-  (let [session
-        (:session-id env)
+  (let
+    [session
+     (:session-id env)
 
-        live
-        (get @conns session)]
+     live
+     (get @conns session)]
 
     (ok :mcp/servers
-        {"servers" (mapv (fn [[nm spec]]
-                           (let [conn (get live nm)]
-                             (cond-> {"name" nm
-                                      "transport" (name (transport-of spec))
-                                      "connected" (boolean conn)}
-                               conn
-                               (assoc "tools"
-                                 (count (or (some-> (:tools conn)
-                                                    deref)
-                                            [])))
+        {"servers"
+         (mapv (fn [[nm spec]]
+                 (let [conn (get live nm)]
+                   (cond->
+                     {"name" nm "transport" (name (transport-of spec)) "connected" (boolean conn)}
+                     conn
+                     (assoc "tools"
+                       (count (or (some-> (:tools conn)
+                                          deref)
+                                  [])))
 
-                               (:command spec)
-                               (assoc "command" (:command spec))
+                     (:command spec)
+                     (assoc "command" (:command spec))
 
-                               (:url spec)
-                               (assoc "url" (:url spec)))))
-                         (configured-servers))})))
+                     (:url spec)
+                     (assoc "url" (:url spec)))))
+               (configured-servers))})))
 
 (defn- mcp-tools-impl
   [env server]
@@ -335,14 +341,15 @@
 
 (defn- render-mcp-call-result
   [r]
-  (let [blocks
-        (get r "content")
+  (let
+    [blocks
+     (get r "content")
 
-        text
-        (->> blocks
-             (keep (fn [b]
-                     (get b "text")))
-             (str/join "\n"))]
+     text
+     (->> blocks
+          (keep (fn [b]
+                  (get b "text")))
+          (str/join "\n"))]
 
     {:summary (str "`" (get r "server") "`/" (get r "tool") (when (get r "is_error") " — error"))
      :body (mcp-fence (if (seq text) text (pr-str blocks)))}))
@@ -509,11 +516,12 @@
   "`:ext/ctx-fn` — surface this session's CONNECTED MCP servers (+ tool counts) so
    the model sees what's reachable at `session[\"env\"][\"mcp\"][\"servers\"]`."
   [env]
-  (let [session
-        (:session-id env)
+  (let
+    [session
+     (:session-id env)
 
-        live
-        (get @conns session)]
+     live
+     (get @conns session)]
 
     (when (seq live)
       ;; `"session_env"` is the merge directive read STRING-KEYED by ctx_loop /
@@ -562,16 +570,18 @@
        :options-fn (fn [_env]
                      (vec (keys (configured-servers))))
        :start-fn (fn [env selected]
-                   (let [session
-                         (:session-id env)
+                   (let
+                     [session
+                      (:session-id env)
 
-                         names
-                         (if (sequential? selected) selected [selected])]
+                      names
+                      (if (sequential? selected) selected [selected])]
 
-                     (doseq [s
-                             names
+                     (doseq
+                       [s
+                        names
 
-                             :when s]
+                        :when s]
 
                        (connect-server! session (str s)))))}
       {:kind :mcp-stdio

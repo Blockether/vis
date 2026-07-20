@@ -2377,7 +2377,11 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    optionally grants filesystem access confined to the current workspace roots.
    Every session Context rides the process-wide `shared-engine`; parsing and
    extension shims live inside that same Context. Rendering is pure JVM code, so
-   normal sessions allocate no auxiliary GraalPy contexts. The 4-arity `stdin`
+   normal sessions allocate no auxiliary GraalPy contexts. Extensions
+   deliberately SHARE this one session Context (installed as guest callables, not
+   separate contexts) — so a session holds exactly one Context; the only extra is
+   a transient `fork-context!` child, created solely for `sub_loop` parallelism.
+   The 4-arity `stdin`
    (optional InputStream) is wired to the guest `sys.stdin` — used by `vis python`
    to forward the caller's real stdin; agent sandboxes leave it nil."
   ([custom-bindings] (create-python-context custom-bindings nil nil nil))

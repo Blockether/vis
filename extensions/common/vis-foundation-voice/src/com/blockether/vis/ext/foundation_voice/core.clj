@@ -60,11 +60,12 @@
   ([] (model-files (model-dir)))
   ([dir]
    ;; `/`-separated on every OS (Windows native loaders accept `/`).
-   (let [canonical-model
-         (io/file dir "model.onnx")
+   (let
+     [canonical-model
+      (io/file dir "model.onnx")
 
-         piper-model
-         (io/file dir (str (piper-voice) ".onnx"))]
+      piper-model
+      (io/file dir (str (piper-voice) ".onnx"))]
 
      {:model (paths/unixify (existing-file-path [canonical-model piper-model] piper-model))
       :tokens (paths/unixify (io/file dir "tokens.txt"))
@@ -85,23 +86,25 @@
 
 (defn- notify-progress!
   [phase label bytes-read bytes-total]
-  (let [text
-        (progress-text label bytes-read bytes-total)
+  (let
+    [text
+     (progress-text label bytes-read bytes-total)
 
-        level
-        (if (= :error phase) :error :info)
+     level
+     (if (= :error phase) :error :info)
 
-        event
-        (cond-> {:op (if (= :ready phase)
-                       :status/clear
-                       :status/set)
-                 :id :voice/piper
-                 :text text
-                 :level level
-                 :model :voice/piper
-                 :phase phase
-                 :bytes-read bytes-read
-                 :bytes-total bytes-total})]
+     event
+     (cond->
+       {:op (if (= :ready phase)
+              :status/clear
+              :status/set)
+        :id :voice/piper
+        :text text
+        :level level
+        :model :voice/piper
+        :phase phase
+        :bytes-read bytes-read
+        :bytes-total bytes-total})]
 
     (vis/publish-channel-event! :tui event)
     (vis/notify! text :level level :ttl-ms 3000)))
@@ -110,29 +113,33 @@
   ([url path] (download! url path notify-progress!))
   ([url path progress-fn]
    (.mkdirs (.getParentFile (io/file path)))
-   (let [conn
-         (.openConnection (URL. url))
+   (let
+     [conn
+      (.openConnection (URL. url))
 
-         total
-         (.getContentLengthLong conn)]
+      total
+      (.getContentLengthLong conn)]
 
-     (with-open [in
-                 (.getInputStream conn)
+     (with-open
+       [in
+        (.getInputStream conn)
 
-                 out
-                 (FileOutputStream. (io/file path))]
+        out
+        (FileOutputStream. (io/file path))]
 
        (let [buf (byte-array (* 64 1024))]
-         (loop [read-total 0
-                last-pct -1]
+         (loop
+           [read-total 0
+            last-pct -1]
 
            (let [n (.read in buf)]
              (when (pos? n)
                (.write out buf 0 n)
-               (let [read-total' (+ read-total n)
-                     pct (if (pos? total)
-                           (long (Math/floor (* 100.0 (/ (double read-total') (double total)))))
-                           -1)]
+               (let
+                 [read-total' (+ read-total n)
+                  pct (if (pos? total)
+                        (long (Math/floor (* 100.0 (/ (double read-total') (double total)))))
+                        -1)]
 
                  (when (or (neg? pct) (>= (- pct last-pct) 5) (= pct 100))
                    (progress-fn :download "Downloading Piper TTS model" read-total' total))
@@ -141,25 +148,27 @@
 
 (defn- safe-entry-name
   [entry-name]
-  (let [parts (->> (str/split entry-name #"/")
-                   (remove str/blank?)
-                   ;; Release archives contain a top-level directory. Strip it so
-                   ;; custom VIS_PIPER_MODEL_DIR targets get the files directly.
-                   rest)]
+  (let
+    [parts (->> (str/split entry-name #"/")
+                (remove str/blank?)
+                ;; Release archives contain a top-level directory. Strip it so
+                ;; custom VIS_PIPER_MODEL_DIR targets get the files directly.
+                rest)]
     (when (and (seq parts) (not-any? #(or (= % "..") (str/includes? % "\\")) parts))
       (str/join File/separator parts))))
 
 (defn- extract-tar-bz2!
   [archive-path target-dir]
   (.mkdirs (io/file target-dir))
-  (with-open [fis
-              (FileInputStream. (io/file archive-path))
+  (with-open
+    [fis
+     (FileInputStream. (io/file archive-path))
 
-              bz
-              (BZip2CompressorInputStream. fis)
+     bz
+     (BZip2CompressorInputStream. fis)
 
-              tar
-              (TarArchiveInputStream. bz)]
+     tar
+     (TarArchiveInputStream. bz)]
 
     (loop []
 
@@ -212,22 +221,23 @@
 
 (defn- tts-config
   [dir]
-  (let [{:keys [model tokens data]}
-        (model-files dir)
+  (let
+    [{:keys [model tokens data]}
+     (model-files dir)
 
-        vits-model
-        (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig" "builder")
-            (call! "setModel" model)
-            (call! "setTokens" tokens)
-            (call! "setDataDir" data)
-            (call! "build"))
+     vits-model
+     (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig" "builder")
+         (call! "setModel" model)
+         (call! "setTokens" tokens)
+         (call! "setDataDir" data)
+         (call! "build"))
 
-        model-cfg
-        (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig" "builder")
-            (call! "setVits" vits-model)
-            (call! "setNumThreads" (int (.. Runtime getRuntime availableProcessors)))
-            (call! "setDebug" false)
-            (call! "build"))]
+     model-cfg
+     (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig" "builder")
+         (call! "setVits" vits-model)
+         (call! "setNumThreads" (int (.. Runtime getRuntime availableProcessors)))
+         (call! "setDebug" false)
+         (call! "build"))]
 
     (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsConfig" "builder")
         (call! "setModel" model-cfg)
@@ -256,26 +266,27 @@
 
 (defn- answer->speech-text
   [text]
-  (let [ir-answer?
-        (and (vector? text) (= :ast (first text)))
+  (let
+    [ir-answer?
+     (and (vector? text) (= :ast (first text)))
 
-        md
-        (cond (nil? text) nil
-              ir-answer? nil
-              (and (map? text) (string? (:answer text))) (:answer text)
-              (and (map? text) (string? (:answer/text text))) (:answer/text text)
-              (string? text) text
-              :else (throw (ex-info
-                             "voice/synthesize-file! accepts Markdown answers or canonical IR only"
-                             {:type :voice/invalid-text
-                              :got-type (some-> text
-                                                class
-                                                .getName)})))
+     md
+     (cond (nil? text) nil
+           ir-answer? nil
+           (and (map? text) (string? (:answer text))) (:answer text)
+           (and (map? text) (string? (:answer/text text))) (:answer/text text)
+           (string? text) text
+           :else (throw (ex-info
+                          "voice/synthesize-file! accepts Markdown answers or canonical IR only"
+                          {:type :voice/invalid-text
+                           :got-type (some-> text
+                                             class
+                                             .getName)})))
 
-        ir
-        (cond ir-answer? (vis/->ast text)
-              (str/blank? (str md)) nil
-              :else (vis/markdown->ast md))]
+     ir
+     (cond ir-answer? (vis/->ast text)
+           (str/blank? (str md)) nil
+           :else (vis/markdown->ast md))]
 
     (letfn
       [(children->text
@@ -287,18 +298,19 @@
                (str/join sep)
                clean-speech-text)))
        (table->text [node]
-         (let [rows
-               (mapv (fn [row]
-                       {:header? (some #(= :th (speech-node-tag %)) (speech-node-children row))
-                        :cells (mapv #(children->text (speech-node-children %))
-                                     (speech-node-children row))})
-                     (speech-node-children node))
+         (let
+           [rows
+            (mapv (fn [row]
+                    {:header? (some #(= :th (speech-node-tag %)) (speech-node-children row))
+                     :cells (mapv #(children->text (speech-node-children %))
+                                  (speech-node-children row))})
+                  (speech-node-children node))
 
-               header
-               (when (:header? (first rows)) (:cells (first rows)))
+            header
+            (when (:header? (first rows)) (:cells (first rows)))
 
-               data-rows
-               (if header (subvec rows 1) rows)]
+            data-rows
+            (if header (subvec rows 1) rows)]
 
            (->> data-rows
                 (map (fn [{:keys [cells]}]
@@ -314,14 +326,15 @@
        (node->text [node]
          (cond (string? node) node
                (not (vector? node)) ""
-               :else (let [tag
-                           (speech-node-tag node)
+               :else (let
+                       [tag
+                        (speech-node-tag node)
 
-                           attrs
-                           (speech-node-attrs node)
+                        attrs
+                        (speech-node-attrs node)
 
-                           children
-                           (speech-node-children node)]
+                        children
+                        (speech-node-children node)]
 
                        (case tag
                          :ir
@@ -370,14 +383,15 @@
   - :model-dir overrides VIS_PIPER_MODEL_DIR/default-model-dir"
   [text
    {:keys [out-file speaker-id speed] model-dir-option :model-dir :or {speaker-id 0 speed 1.0}}]
-  (let [dir
-        (or model-dir-option (model-dir))
+  (let
+    [dir
+     (or model-dir-option (model-dir))
 
-        ;; Vis answers can reach this boundary as raw Markdown (CLI) or
-        ;; canonical IR (TUI, after response rendering). The
-        ;; TTS engine wants spoken prose, not Markdown syntax.
-        spoken
-        (answer->speech-text text)]
+     ;; Vis answers can reach this boundary as raw Markdown (CLI) or
+     ;; canonical IR (TUI, after response rendering). The
+     ;; TTS engine wants spoken prose, not Markdown syntax.
+     spoken
+     (answer->speech-text text)]
 
     (ensure-model! dir)
     (when (str/blank? spoken) (throw (ex-info "TTS text is blank" {:type :voice/blank-tts-text})))
@@ -385,11 +399,12 @@
       (throw (ex-info "TTS output file is required" {:type :voice/missing-output-file})))
     (let [parent (.getParentFile (io/file out-file))]
       (when parent (.mkdirs parent)))
-    (let [tts
-          (new-instance "com.k2fsa.sherpa.onnx.OfflineTts" (tts-config dir))
+    (let
+      [tts
+       (new-instance "com.k2fsa.sherpa.onnx.OfflineTts" (tts-config dir))
 
-          audio
-          (call! tts "generate" spoken (int speaker-id) (float speed))]
+       audio
+       (call! tts "generate" spoken (int speaker-id) (float speed))]
 
       (call! audio "save" (str out-file))
       {:voice (piper-voice) :model-dir dir :out-file (str (.getAbsoluteFile (io/file out-file)))})))
@@ -402,10 +417,11 @@
 
 (defn- player-argv
   [wav-file]
-  (if-let [custom (some-> (or (vis/extension-env-value player-env) (System/getenv player-env))
-                          str
-                          str/trim
-                          not-empty)]
+  (if-let
+    [custom (some-> (or (vis/extension-env-value player-env) (System/getenv player-env))
+                    str
+                    str/trim
+                    not-empty)]
     ["sh" "-c" (str custom " " (pr-str (str wav-file)))]
     (cond (executable-success? "afplay") ["afplay" (str wav-file)]
           (executable-success? "paplay") ["paplay" (str wav-file)]
@@ -482,10 +498,11 @@
   (let [{:keys [process] :as existing} @tts-worker-state]
     (if (live-process? process)
       existing
-      (let [_ @tts-worker-shutdown-hook
-            process (start-tts-worker! log-file)
-            writer (java.io.BufferedWriter. (java.io.OutputStreamWriter. (.getOutputStream
-                                                                           ^Process process)))]
+      (let
+        [_ @tts-worker-shutdown-hook
+         process (start-tts-worker! log-file)
+         writer (java.io.BufferedWriter. (java.io.OutputStreamWriter. (.getOutputStream ^Process
+                                                                                        process)))]
 
         (reset! tts-worker-state {:process process :writer writer :log-file (str log-file)})))))
 
@@ -515,32 +532,34 @@
   [answer {:keys [out-file]}]
   (when (str/blank? (str out-file))
     (throw (ex-info "TTS output file is required" {:type :voice/missing-output-file})))
-  (let [out-file
-        (io/file out-file)
+  (let
+    [out-file
+     (io/file out-file)
 
-        parent
-        (.getParentFile out-file)
+     parent
+     (.getParentFile out-file)
 
-        answer-file
-        (File/createTempFile "vis-voice-answer-" ".edn")
+     answer-file
+     (File/createTempFile "vis-voice-answer-" ".edn")
 
-        response-file
-        (File/createTempFile "vis-voice-response-" ".edn")
+     response-file
+     (File/createTempFile "vis-voice-response-" ".edn")
 
-        log-file
-        (voice-log-file)]
+     log-file
+     (voice-log-file)]
 
     (when parent (.mkdirs parent))
     (spit answer-file (pr-str answer))
     (.delete response-file)
     (try
-      (let [{:keys [process writer]}
-            (ensure-tts-worker! log-file)
+      (let
+        [{:keys [process writer]}
+         (ensure-tts-worker! log-file)
 
-            command
-            {:answer-file (str answer-file)
-             :out-file (str out-file)
-             :response-file (str response-file)}]
+         command
+         {:answer-file (str answer-file)
+          :out-file (str out-file)
+          :response-file (str response-file)}]
 
         (locking writer
           (.write ^java.io.Writer writer (pr-str command))
@@ -605,11 +624,12 @@
 
 (defn- voice-runtime-message
   []
-  (let [asr?
-        (resolved? 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
+  (let
+    [asr?
+     (resolved? 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
 
-        tts?
-        (resolved? 'com.blockether.vis.ext.foundation-voice.core/synthesize-file!)]
+     tts?
+     (resolved? 'com.blockether.vis.ext.foundation-voice.core/synthesize-file!)]
 
     {:level (if (or asr? tts?) :info :warn)
      :check-id ::runtime
@@ -629,14 +649,15 @@
 
 (defn- piper-message
   []
-  (try (let [dir
-             (model-dir)
+  (try (let
+         [dir
+          (model-dir)
 
-             files
-             (model-files dir)
+          files
+          (model-files dir)
 
-             data-dir
-             (:data files)]
+          data-dir
+          (:data files)]
 
          (if (model-installed? dir)
            {:level :info :check-id ::piper :message (str "Piper model: installed - " dir)}
@@ -684,10 +705,10 @@
    host doesn't pay the audio stack cost until the user actually
    triggers voice."
   [ctx]
-  (let [toggle (or (requiring-resolve
-                     'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
-                   (throw (ex-info "Voice input namespace did not expose toggle-recording!"
-                                   {:type :voice-input/missing-toggle})))]
+  (let
+    [toggle (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
+                (throw (ex-info "Voice input namespace did not expose toggle-recording!"
+                                {:type :voice-input/missing-toggle})))]
     (toggle ctx)
     {:slash/status :ok :slash/title "Voice recording toggled"}))
 
@@ -696,17 +717,18 @@
 (defn- voice-models-download-command
   [{piper? "piper" parakeet? "parakeet" all? "all"} residual]
   (vis/init-cli!)
-  (let [words
-        (set (map str/lower-case residual))
+  (let
+    [words
+     (set (map str/lower-case residual))
 
-        piper?
-        (or piper? all? (contains? words "piper") (contains? words "all"))
+     piper?
+     (or piper? all? (contains? words "piper") (contains? words "all"))
 
-        parakeet?
-        (or parakeet? all? (contains? words "parakeet") (contains? words "all"))
+     parakeet?
+     (or parakeet? all? (contains? words "parakeet") (contains? words "all"))
 
-        any?
-        (or piper? parakeet?)]
+     any?
+     (or piper? parakeet?)]
 
     (when (or piper? (not any?))
       (cli-out! "Downloading/checking Piper TTS model...")

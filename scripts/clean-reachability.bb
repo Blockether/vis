@@ -47,7 +47,7 @@
 (defn- all-files []
   (->> (fs/glob "." "**/META-INF/native-image/**/reachability-metadata.json")
        (map str)
-       (remove #(str/includes? % "/target/"))
+       (remove #(re-find #"(^|/)target/" %))
        sort))
 
 (let [files (if (seq *command-line-args*) *command-line-args* (all-files))

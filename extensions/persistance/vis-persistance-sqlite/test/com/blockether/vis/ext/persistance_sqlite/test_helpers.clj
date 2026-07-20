@@ -63,13 +63,14 @@
    NULL, 1:1). Tests never `apply`, so a real CoW clone of cwd would
    only be slow and litter ~/.rifts."
   [store]
-  (let [root
-        (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
-                                      "vis-test-ws"
-                                      (make-array java.nio.file.attribute.FileAttribute 0))))
+  (let
+    [root
+     (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                   "vis-test-ws"
+                                   (make-array java.nio.file.attribute.FileAttribute 0))))
 
-        id
-        (str (java.util.UUID/randomUUID))]
+     id
+     (str (java.util.UUID/randomUUID))]
 
     (:id (vis/db-workspace-insert!
            store
@@ -110,23 +111,24 @@
    Mixing the two (passing BOTH `:forms` and `:result`/`:error`) is a
    fixture bug — the `:forms` wins and `:result`/`:error` are dropped."
   [store opts]
-  (let [{:keys [forms code result error] :as opts}
-        opts
+  (let
+    [{:keys [forms code result error] :as opts}
+     opts
 
-        forms-vec
-        (cond (seq forms) (vec forms)
-              (or (contains? opts :result) (some? error))
-              [(cond-> {:scope nil :tag :observation :src (str code)}
-                 (contains? opts :result)
-                 (assoc :result result)
+     forms-vec
+     (cond (seq forms) (vec forms)
+           (or (contains? opts :result) (some? error))
+           [(cond-> {:scope nil :tag :observation :src (str code)}
+              (contains? opts :result)
+              (assoc :result result)
 
-                 (some? error)
-                 (assoc :error error))]
-              :else nil)
+              (some? error)
+              (assoc :error error))]
+           :else nil)
 
-        opts
-        (cond-> (dissoc opts :result :error)
-          forms-vec
-          (assoc :forms forms-vec))]
+     opts
+     (cond-> (dissoc opts :result :error)
+       forms-vec
+       (assoc :forms forms-vec))]
 
     (vis/db-store-iteration! store opts)))

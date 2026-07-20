@@ -110,18 +110,20 @@
 (defn- split-tools
   [s]
   (when-let [s (normalize-string s)]
-    (let [tools (->> (str/split s #",")
-                     (map str/trim)
-                     (remove str/blank?)
-                     vec)]
+    (let
+      [tools (->> (str/split s #",")
+                  (map str/trim)
+                  (remove str/blank?)
+                  vec)]
       (when (seq tools) tools))))
 
 (defn- normalize-tools
   [x]
   (cond (string? x) (split-tools x)
-        (sequential? x) (let [tools (->> x
-                                         (keep normalize-string)
-                                         vec)]
+        (sequential? x) (let
+                          [tools (->> x
+                                      (keep normalize-string)
+                                      vec)]
                           (when (seq tools) tools))
         :else nil))
 
@@ -250,38 +252,40 @@
 
 (defn- endpoint
   [{:keys [url tools api-key]}]
-  (let [uri
-        (URI/create url)
+  (let
+    [uri
+     (URI/create url)
 
-        pairs
-        (parse-query (.getRawQuery uri))
+     pairs
+     (parse-query (.getRawQuery uri))
 
-        pairs
-        (cond-> pairs
-          (and (seq tools) (not-any? #(= "tools" (first %)) pairs))
-          (upsert-query-param "tools" (str/join "," tools))
+     pairs
+     (cond-> pairs
+       (and (seq tools) (not-any? #(= "tools" (first %)) pairs))
+       (upsert-query-param "tools" (str/join "," tools))
 
-          (and (not (str/blank? api-key)) (not-any? #(= "exaApiKey" (first %)) pairs))
-          (upsert-query-param "exaApiKey" api-key))
+       (and (not (str/blank? api-key)) (not-any? #(= "exaApiKey" (first %)) pairs))
+       (upsert-query-param "exaApiKey" api-key))
 
-        query
-        (render-query pairs)]
+     query
+     (render-query pairs)]
 
     (uri-base uri query)))
 
 (defn redact-endpoint
   "Redact `exaApiKey` query param from an endpoint string."
   [endpoint]
-  (try (let [uri
-             (URI/create endpoint)
+  (try (let
+         [uri
+          (URI/create endpoint)
 
-             pairs
-             (mapv (fn [[k v]]
-                     [k (if (= k "exaApiKey") "REDACTED" v)])
-                   (parse-query (.getRawQuery uri)))
+          pairs
+          (mapv (fn [[k v]]
+                  [k (if (= k "exaApiKey") "REDACTED" v)])
+                (parse-query (.getRawQuery uri)))
 
-             query
-             (render-query pairs)]
+          query
+          (render-query pairs)]
 
          (uri-base uri query))
        (catch Throwable _ endpoint)))
@@ -350,22 +354,23 @@
 
 (defn- send-json-rpc!
   [{:keys [endpoint timeout-ms method params notification?]}]
-  (let [id
-        (when-not notification? (json-rpc-id))
+  (let
+    [id
+     (when-not notification? (json-rpc-id))
 
-        payload
-        (cond-> {:jsonrpc "2.0" :method method}
-          id
-          (assoc :id id)
+     payload
+     (cond-> {:jsonrpc "2.0" :method method}
+       id
+       (assoc :id id)
 
-          params
-          (assoc :params params))
+       params
+       (assoc :params params))
 
-        resp
-        (send-http! (json-request endpoint timeout-ms payload))
+     resp
+     (send-http! (json-request endpoint timeout-ms payload))
 
-        parsed
-        (parse-response resp id notification?)]
+     parsed
+     (parse-response resp id notification?)]
 
     (when-let [err (:error parsed)]
       (throw (ex-info (str "MCP error " (:code err) ": " (:message err))
@@ -387,11 +392,12 @@
 
 (defn- call-mcp-tool!
   [tool-name args]
-  (let [cfg
-        (effective-config)
+  (let
+    [cfg
+     (effective-config)
 
-        ep
-        (endpoint cfg)]
+     ep
+     (endpoint cfg)]
 
     (initialize! cfg ep)
     {:endpoint ep
@@ -404,22 +410,24 @@
 
 (defn- take-under-byte-cap
   [lines max-bytes]
-  (loop [out
-         []
+  (loop
+    [out
+     []
 
-         remaining
-         (seq lines)
+     remaining
+     (seq lines)
 
-         used
-         0]
+     used
+     0]
 
     (if-not remaining
       out
-      (let [line
-            (first remaining)
+      (let
+        [line
+         (first remaining)
 
-            extra
-            (+ (long (utf8-bytes line)) (if (seq out) 1 0))]
+         extra
+         (+ (long (utf8-bytes line)) (if (seq out) 1 0))]
 
         (if (> (+ used extra) (long max-bytes))
           out
@@ -428,47 +436,48 @@
 (defn truncate-text
   "Bound `text` by line and UTF-8 byte limits. Returns truncation map."
   [text {:keys [max-bytes max-lines]}]
-  (let [text
-        (str text)
+  (let
+    [text
+     (str text)
 
-        max-lines
-        (long (or max-lines default-max-lines))
+     max-lines
+     (long (or max-lines default-max-lines))
 
-        max-bytes
-        (long (or max-bytes default-max-bytes))
+     max-bytes
+     (long (or max-bytes default-max-bytes))
 
-        all-lines
-        (str/split-lines text)
+     all-lines
+     (str/split-lines text)
 
-        line-cut
-        (vec (take max-lines all-lines))
+     line-cut
+     (vec (take max-lines all-lines))
 
-        byte-cut
-        (take-under-byte-cap line-cut max-bytes)
+     byte-cut
+     (take-under-byte-cap line-cut max-bytes)
 
-        content
-        (str/join "\n" byte-cut)
+     content
+     (str/join "\n" byte-cut)
 
-        total-lines
-        (count all-lines)
+     total-lines
+     (count all-lines)
 
-        total-bytes
-        (utf8-bytes text)
+     total-bytes
+     (utf8-bytes text)
 
-        cut-lines
-        (count line-cut)
+     cut-lines
+     (count line-cut)
 
-        out-lines
-        (count byte-cut)
+     out-lines
+     (count byte-cut)
 
-        out-bytes
-        (utf8-bytes content)
+     out-bytes
+     (utf8-bytes content)
 
-        by-lines?
-        (> total-lines cut-lines)
+     by-lines?
+     (> total-lines cut-lines)
 
-        by-bytes?
-        (> cut-lines out-lines)]
+     by-bytes?
+     (> cut-lines out-lines)]
 
     {:content content
      :truncated? (or by-lines? by-bytes?)
@@ -549,45 +558,48 @@
      - Consecutive markers collapse (a line already ending in the marker
        is not doubled)."
   [excerpt]
-  (let [lines
-        (str/split-lines (or excerpt ""))
+  (let
+    [lines
+     (str/split-lines (or excerpt ""))
 
-        marker
-        " [...]"]
+     marker
+     " [...]"]
 
-    (loop [ls
-           lines
+    (loop
+      [ls
+       lines
 
-           in-fence?
-           false
+       in-fence?
+       false
 
-           out
-           []]
+       out
+       []]
 
       (if (empty? ls)
         (str/join "\n" out)
-        (let [ln
-              (first ls)
+        (let
+          [ln
+           (first ls)
 
-              fence?
-              (re-find code-fence-re ln)
+           fence?
+           (re-find code-fence-re ln)
 
-              bracket?
-              (and (not fence?) (re-matches exa-bracket-marker-re ln))
+           bracket?
+           (and (not fence?) (re-matches exa-bracket-marker-re ln))
 
-              bare?
-              (and (not fence?) (re-matches exa-bare-marker-re ln))
+           bare?
+           (and (not fence?) (re-matches exa-bare-marker-re ln))
 
-              ;; Nearest non-blank content line above, or nil when a fence
-              ;; delimiter / the start is hit first (marker abuts a fence).
-              prev
-              (when (or bracket? bare?)
-                (loop [i (dec (count out))]
-                  (when (>= i 0)
-                    (let [s (nth out i)]
-                      (cond (str/blank? s) (recur (dec i))
-                            (re-find code-fence-re s) nil
-                            :else i)))))]
+           ;; Nearest non-blank content line above, or nil when a fence
+           ;; delimiter / the start is hit first (marker abuts a fence).
+           prev
+           (when (or bracket? bare?)
+             (loop [i (dec (count out))]
+               (when (>= i 0)
+                 (let [s (nth out i)]
+                   (cond (str/blank? s) (recur (dec i))
+                         (re-find code-fence-re s) nil
+                         :else i)))))]
 
           (cond
             ;; `[...]` anywhere, or a bare ellipsis in prose → fold inline
@@ -619,27 +631,28 @@
    diff lines. The trailing ` [...]` that `normalize-exa-excerpt` folds on
    is stripped first so it doesn't hide a sentence's terminal period."
   [body-lines]
-  (let [strip
-        (fn [s]
-          (str/replace s #"\s*\[\.\.\.\]\s*$" ""))
+  (let
+    [strip
+     (fn [s]
+       (str/replace s #"\s*\[\.\.\.\]\s*$" ""))
 
-        lines
-        (map strip (remove str/blank? body-lines))
+     lines
+     (map strip (remove str/blank? body-lines))
 
-        n
-        (count lines)
+     n
+     (count lines)
 
-        bul
-        (count (filter #(re-find #"^\s*[-*]\s+\S" %) lines))
+     bul
+     (count (filter #(re-find #"^\s*[-*]\s+\S" %) lines))
 
-        hd
-        (count (filter #(re-find #"^#{1,6}\s+\S" %) lines))
+     hd
+     (count (filter #(re-find #"^#{1,6}\s+\S" %) lines))
 
-        plus
-        (count (filter #(re-find #"^\s*\+\s" %) lines))
+     plus
+     (count (filter #(re-find #"^\s*\+\s" %) lines))
 
-        sent
-        (count (filter #(and (> (count %) 55) (re-find #"\.\s*$" %)) lines))]
+     sent
+     (count (filter #(and (> (count %) 55) (re-find #"\.\s*$" %)) lines))]
 
     (and (>= n 3) (zero? plus) (or (>= sent 1) (>= bul 2)) (>= (+ bul hd sent) (* 0.6 n)))))
 
@@ -657,8 +670,9 @@
    dilute the prose ratio."
   [excerpt]
   (let [lines (vec (str/split-lines (or excerpt "")))]
-    (loop [i 0
-           open nil]
+    (loop
+      [i 0
+       open nil]
 
       (if (>= i (count lines))
         (if (and open
@@ -695,74 +709,76 @@
       :authors string or nil
       :source  :exa}"
   [^String text citation-type]
-  (let [text
-        (or text "")
+  (let
+    [text
+     (or text "")
 
-        ;; Split on the leading `Title: ` boundary (start of file OR a fresh
-        ;; entry after a blank line). Keep the prefix attached to each chunk.
-        chunks
-        (->> (str/split (str "\n" text) #"\nTitle: ")
-             rest)]
+     ;; Split on the leading `Title: ` boundary (start of file OR a fresh
+     ;; entry after a blank line). Keep the prefix attached to each chunk.
+     chunks
+     (->> (str/split (str "\n" text) #"\nTitle: ")
+          rest)]
 
     ;; drop the empty pre-first-Title slice
     (vec
-      (for [chunk
-            chunks
+      (for
+        [chunk
+         chunks
 
-            :let [lines
-                  (str/split-lines chunk)
+         :let [lines
+               (str/split-lines chunk)
 
-                  title
-                  (str/trim (or (first lines) ""))
+               title
+               (str/trim (or (first lines) ""))
 
-                  rest-lines
-                  (rest lines)
+               rest-lines
+               (rest lines)
 
-                  ;; Pull URL / Published / Author headers off the top
-                  hdr-line
-                  (fn [pfx]
-                    (some #(when (str/starts-with? % pfx) (str/trim (subs % (count pfx))))
-                          rest-lines))
+               ;; Pull URL / Published / Author headers off the top
+               hdr-line
+               (fn [pfx]
+                 (some #(when (str/starts-with? % pfx) (str/trim (subs % (count pfx)))) rest-lines))
 
-                  url
-                  (hdr-line "URL: ")
+               url
+               (hdr-line "URL: ")
 
-                  published
-                  (hdr-line "Published: ")
+               published
+               (hdr-line "Published: ")
 
-                  authors-raw
-                  (hdr-line "Author: ")
+               authors-raw
+               (hdr-line "Author: ")
 
-                  authors
-                  (when (and authors-raw (not (str/blank? authors-raw)) (not= "N/A" authors-raw))
-                    authors-raw)
+               authors
+               (when (and authors-raw (not (str/blank? authors-raw)) (not= "N/A" authors-raw))
+                 authors-raw)
 
-                  ;; Excerpt = everything from the line AFTER "Highlights:"
-                  ;; (or after the header bundle when no Highlights header)
-                  excerpt-lines
-                  (let [after-highlights (drop 1
-                                               (drop-while
-                                                 #(not (or (= % "Highlights:")
-                                                           (str/starts-with? % "Highlights:")))
-                                                 rest-lines))]
-                    (if (seq after-highlights)
-                      after-highlights
-                      ;; No Highlights line — drop the bare header lines
-                      ;; (URL / Published / Author / Code-Highlights label)
-                      ;; and keep the rest as the excerpt.
-                      (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
-                                  rest-lines)))
+               ;; Excerpt = everything from the line AFTER "Highlights:"
+               ;; (or after the header bundle when no Highlights header)
+               excerpt-lines
+               (let
+                 [after-highlights (drop 1
+                                         (drop-while #(not (or (= % "Highlights:")
+                                                               (str/starts-with? % "Highlights:")))
+                                                     rest-lines))]
+                 (if (seq after-highlights)
+                   after-highlights
+                   ;; No Highlights line — drop the bare header lines
+                   ;; (URL / Published / Author / Code-Highlights label)
+                   ;; and keep the rest as the excerpt.
+                   (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
+                               rest-lines)))
 
-                  excerpt
-                  (-> (str/trim (str/join "\n" excerpt-lines))
-                      normalize-exa-excerpt
-                      unwrap-doc-fences)]]
+               excerpt
+               (-> (str/trim (str/join "\n" excerpt-lines))
+                   normalize-exa-excerpt
+                   unwrap-doc-fences)]]
 
-        (cond-> {"type" (kw->snake citation-type)
-                 "title" title
-                 "url" (or url "")
-                 "excerpt" excerpt
-                 "source" "exa"}
+        (cond->
+          {"type" (kw->snake citation-type)
+           "title" title
+           "url" (or url "")
+           "excerpt" excerpt
+           "source" "exa"}
           published
           (assoc "published" published)
 
@@ -814,12 +830,13 @@
    STRINGS-ONLY: string keys, enum values (`op`, `source`) snake-cased so the
    map crosses the boundary already string-clean."
   [{:keys [op query citations source endpoint truncated?]}]
-  (cond-> {"op" (kw->snake op)
-           "query" (str query)
-           "citations" (vec citations)
-           "citation_count" (count citations)
-           "truncated" (boolean truncated?)
-           "source" (kw->snake source)}
+  (cond->
+    {"op" (kw->snake op)
+     "query" (str query)
+     "citations" (vec citations)
+     "citation_count" (count citations)
+     "truncated" (boolean truncated?)
+     "source" (kw->snake source)}
     endpoint
     (assoc "endpoint" endpoint)))
 
@@ -827,19 +844,21 @@
   "Wrap a successful search call in the canonical tool envelope so it
    travels through `invoke-symbol-wrapper` the same way v/* tools do."
   [{:keys [op tool query citations source endpoint truncated?]}]
-  (let [payload (search-result-payload {:op op
-                                        :query query
-                                        :citations citations
-                                        :source source
-                                        :endpoint endpoint
-                                        :truncated? truncated?})]
+  (let
+    [payload (search-result-payload {:op op
+                                     :query query
+                                     :citations citations
+                                     :source source
+                                     :endpoint endpoint
+                                     :truncated? truncated?})]
     (extension/success {:result payload
                         :op op
-                        :metadata (cond-> {:tool (str tool)
-                                           :source source
-                                           :citation-count (get payload "citation_count")
-                                           :truncated? (get payload "truncated")
-                                           :query (str query)}
+                        :metadata (cond->
+                                    {:tool (str tool)
+                                     :source source
+                                     :citation-count (get payload "citation_count")
+                                     :truncated? (get payload "truncated")
+                                     :query (str query)}
                                     endpoint
                                     (assoc :endpoint endpoint))})))
 
@@ -850,34 +869,36 @@
    `:error` map so the channel renderer paints the fail card
    from the envelope side."
   [{:keys [op tool query source endpoint citation-type ^Throwable throwable]}]
-  (let [msg
-        (or (some-> throwable
-                    ex-message)
-            "search failed")
+  (let
+    [msg
+     (or (some-> throwable
+                 ex-message)
+         "search failed")
 
-        error-entry
-        (cond-> {"type" (kw->snake citation-type)
-                 "title" (str "search failed: " query)
-                 "url" ""
-                 "excerpt" msg
-                 "source" (kw->snake source)
-                 "error" true}
-          (some-> throwable
-                  ex-data
-                  :type)
-          (assoc "error_type"
-            (kw->snake (-> throwable
-                           ex-data
-                           :type))))
+     error-entry
+     (cond->
+       {"type" (kw->snake citation-type)
+        "title" (str "search failed: " query)
+        "url" ""
+        "excerpt" msg
+        "source" (kw->snake source)
+        "error" true}
+       (some-> throwable
+               ex-data
+               :type)
+       (assoc "error_type"
+         (kw->snake (-> throwable
+                        ex-data
+                        :type))))
 
-        payload
-        (-> (search-result-payload {:op op
-                                    :query query
-                                    :citations [error-entry]
-                                    :source source
-                                    :endpoint endpoint
-                                    :truncated? false})
-            (assoc "error" true))]
+     payload
+     (-> (search-result-payload {:op op
+                                 :query query
+                                 :citations [error-entry]
+                                 :source source
+                                 :endpoint endpoint
+                                 :truncated? false})
+         (assoc "error" true))]
 
     (extension/failure
       {:result payload
@@ -902,21 +923,22 @@
    `op` is the public op kw (`:search-web` / `:search-code`).
    `tool-name` is the Exa MCP tool string (`\"web_search_exa\"` etc.)."
   [op tool-name args citation-type query]
-  (try (let [{:keys [endpoint result]}
-             (call-mcp-tool! tool-name args)
+  (try (let
+         [{:keys [endpoint result]}
+          (call-mcp-tool! tool-name args)
 
-             raw
-             (mcp-result->text result)
+          raw
+          (mcp-result->text result)
 
-             {:keys [content truncated?]}
-             (truncate-text raw (effective-limits {}))
+          {:keys [content truncated?]}
+          (truncate-text raw (effective-limits {}))
 
-             citations
-             (parse-exa-text content citation-type)
+          citations
+          (parse-exa-text content citation-type)
 
-             redacted-ep
-             (some-> endpoint
-                     redact-endpoint)]
+          redacted-ep
+          (some-> endpoint
+                  redact-endpoint)]
 
          (search-success {:op op
                           :tool tool-name
@@ -971,35 +993,36 @@
    arxiv's stable schema; no clojure.data.xml dep needed."
   [^bytes xml-bytes]
   (try
-    (let [stream
-          (ByteArrayInputStream. xml-bytes)
+    (let
+      [stream
+       (ByteArrayInputStream. xml-bytes)
 
-          parsed
-          (xml/parse stream)
+       parsed
+       (xml/parse stream)
 
-          entries
-          (filter #(= :entry (:tag %)) (:content parsed))
+       entries
+       (filter #(= :entry (:tag %)) (:content parsed))
 
-          extract
-          (fn [entry tag]
-            (some->> (:content entry)
-                     (filter #(= tag (:tag %)))
-                     first
-                     :content
-                     first
-                     (#(when (string? %) (str/trim %)))))
+       extract
+       (fn [entry tag]
+         (some->> (:content entry)
+                  (filter #(= tag (:tag %)))
+                  first
+                  :content
+                  first
+                  (#(when (string? %) (str/trim %)))))
 
-          extract-author
-          (fn [entry]
-            (some->> (:content entry)
-                     (filter #(= :author (:tag %)))
-                     first
-                     :content
-                     (filter #(= :name (:tag %)))
-                     first
-                     :content
-                     first
-                     (#(when (string? %) (str/trim %)))))]
+       extract-author
+       (fn [entry]
+         (some->> (:content entry)
+                  (filter #(= :author (:tag %)))
+                  first
+                  :content
+                  (filter #(= :name (:tag %)))
+                  first
+                  :content
+                  first
+                  (#(when (string? %) (str/trim %)))))]
 
       (mapv (fn [e]
               {"type" "paper"
@@ -1028,50 +1051,52 @@
    Gotcha: \"excerpt\" is the abstract (plain text); on failure \"citations\"[0] has \"error\": True."
   ([query] (search-papers query {}))
   ([query opts]
-   (let [max-results
-         (or (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
+   (let
+     [max-results
+      (or (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
 
-         sort-key
-         (or (get opts "sort") "relevance")
+      sort-key
+      (or (get opts "sort") "relevance")
 
-         timeout-ms
-         (or (get opts "timeout_ms") ARXIV_DEFAULT_TIMEOUT_MS)
+      timeout-ms
+      (or (get opts "timeout_ms") ARXIV_DEFAULT_TIMEOUT_MS)
 
-         url
-         (str ARXIV_API_BASE
-              "?search_query="
-              (URLEncoder/encode (str "all:" query) "UTF-8")
-              "&start=0"
-              "&max_results="
-              max-results
-              "&sortBy="
-              (case sort-key
-                "lastUpdatedDate"
-                "lastUpdatedDate"
+      url
+      (str ARXIV_API_BASE
+           "?search_query="
+           (URLEncoder/encode (str "all:" query) "UTF-8")
+           "&start=0"
+           "&max_results="
+           max-results
+           "&sortBy="
+           (case sort-key
+             "lastUpdatedDate"
+             "lastUpdatedDate"
 
-                "submittedDate"
-                "submittedDate"
+             "submittedDate"
+             "submittedDate"
 
-                "relevance"
-                "relevance"
+             "relevance"
+             "relevance"
 
-                "relevance")
-              "&sortOrder=descending")]
+             "relevance")
+           "&sortOrder=descending")]
 
-     (try (let [resp
-                (http/get url
-                          {:timeout timeout-ms :headers {"User-Agent" "vis-foundation-search/0.1"}})
+     (try (let
+            [resp
+             (http/get url
+                       {:timeout timeout-ms :headers {"User-Agent" "vis-foundation-search/0.1"}})
 
-                body
-                (:body resp)
+             body
+             (:body resp)
 
-                body-bytes
-                (cond (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
-                      (bytes? body) body
-                      :else (.getBytes (str body) StandardCharsets/UTF_8))
+             body-bytes
+             (cond (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
+                   (bytes? body) body
+                   :else (.getBytes (str body) StandardCharsets/UTF_8))
 
-                citations
-                (parse-arxiv-atom body-bytes)]
+             citations
+             (parse-arxiv-atom body-bytes)]
 
             (search-success {:op :search-papers
                              :tool "arxiv"
@@ -1107,10 +1132,11 @@
 (defn- search-cell
   "One-line, pipe-escaped, length-capped text for a GFM table cell."
   [s max-len]
-  (let [s (-> (str s)
-              (str/replace #"\s+" " ")
-              str/trim
-              (str/replace "|" "\\|"))]
+  (let
+    [s (-> (str s)
+           (str/replace #"\s+" " ")
+           str/trim
+           (str/replace "|" "\\|"))]
     (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
 
 (defn- search-host
@@ -1142,72 +1168,76 @@
    excerpt under a linked heading. A failure / empty result degrades to a
    summary-only card (its single excerpt is the error message)."
   [r]
-  (let [citations
-        (get r "citations")
+  (let
+    [citations
+     (get r "citations")
 
-        query
-        (str (get r "query"))
+     query
+     (str (get r "query"))
 
-        n
-        (count citations)
+     n
+     (count citations)
 
-        error?
-        (get r "error")
+     error?
+     (get r "error")
 
-        summary
-        (str (if error? "search failed" (str n " result" (when (not= 1 n) "s")))
-             (when (seq query) (str " · «" query "»")))]
+     summary
+     (str (if error? "search failed" (str n " result" (when (not= 1 n) "s")))
+          (when (seq query) (str " · «" query "»")))]
 
     (if (or error? (empty? citations))
       {:summary summary
        :body (some-> (first citations)
                      (get "excerpt")
                      prose-excerpt)}
-      (let [header
-            ["| # | Result | Source | Published |" "|--:|--------|--------|-----------|"]
+      (let
+        [header
+         ["| # | Result | Source | Published |" "|--:|--------|--------|-----------|"]
 
-            rows
-            (map-indexed (fn [^long i c]
-                           (str "| "
-                                (inc i)
-                                " | "
-                                (search-cell (get c "title") 70)
-                                " | "
-                                (search-cell (search-host (get c "url")) 28)
-                                " | "
-                                (search-cell (or (not-empty (str (get c "published"))) "—") 12)
-                                " |"))
-                         citations)
+         rows
+         (map-indexed (fn [^long i c]
+                        (str "| "
+                             (inc i)
+                             " | "
+                             (search-cell (get c "title") 70)
+                             " | "
+                             (search-cell (search-host (get c "url")) 28)
+                             " | "
+                             (search-cell (or (not-empty (str (get c "published"))) "—") 12)
+                             " |"))
+                      citations)
 
-            table
-            (str/join "\n" (concat header rows))
+         table
+         (str/join "\n" (concat header rows))
 
-            cards
-            (map-indexed (fn [^long i c]
-                           (let [title
-                                 (str/trim (str (get c "title")))
+         cards
+         (map-indexed (fn [^long i c]
+                        (let
+                          [title
+                           (str/trim (str (get c "title")))
 
-                                 url
-                                 (str (get c "url"))
+                           url
+                           (str (get c "url"))
 
-                                 meta
-                                 (->> [(get c "source") (get c "authors") (get c "published")]
-                                      (keep #(let [s
-                                                   (str %)]
+                           meta
+                           (->> [(get c "source") (get c "authors") (get c "published")]
+                                (keep #(let
+                                         [s
+                                          (str %)]
 
-                                               (when (seq s) s)))
-                                      (str/join " · "))
+                                         (when (seq s) s)))
+                                (str/join " · "))
 
-                                 head
-                                 (if (seq url)
-                                   (str "**" (inc i) ". [" title "](" url ")**")
-                                   (str "**" (inc i) ". " title "**"))]
+                           head
+                           (if (seq url)
+                             (str "**" (inc i) ". [" title "](" url ")**")
+                             (str "**" (inc i) ". " title "**"))]
 
-                             (str head
-                                  (when (seq meta) (str "  \n_" meta "_"))
-                                  "\n\n"
-                                  (prose-excerpt (get c "excerpt")))))
-                         citations)]
+                          (str head
+                               (when (seq meta) (str "  \n_" meta "_"))
+                               "\n\n"
+                               (prose-excerpt (get c "excerpt")))))
+                      citations)]
 
         {:summary summary :body (str table "\n\n" (str/join "\n\n---\n\n" cards))}))))
 

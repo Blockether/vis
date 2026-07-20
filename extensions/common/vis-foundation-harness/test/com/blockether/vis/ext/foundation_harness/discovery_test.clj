@@ -28,31 +28,31 @@
                    (expect (= {} meta))
                    (expect (= "# Just a doc\nhello" body)))))
 
-(defdescribe parse-agent-test
-             (it "builds an agent entry from frontmatter + body"
-                 (let [a (d/parse-agent agent-md
-                                        {:name-default "fallback" :tool :claude :path "/x.md"})]
-                   (expect (= "code-reviewer" (:name a)))
-                   (expect (= "opus" (:model a)))
-                   (expect (re-find #"Elite reviewer" (:description a)))
-                   (expect (re-find #"elite code review expert" (:body a)))
-                   (expect (= :claude (:tool a)))
-                   (expect (= "/x.md" (:path a)))))
-             (it "falls back to the filename stem when frontmatter has no name"
-                 (let [a (d/parse-agent "no frontmatter here" {:name-default "my-agent"})]
-                   (expect (= "my-agent" (:name a)))
-                   (expect (= "" (:description a)))
-                   (expect (nil? (:model a)))))
-             (it "nil when there is no usable name at all"
-                 (expect (nil? (d/parse-agent "body only" {:name-default "  "})))))
+(defdescribe
+  parse-agent-test
+  (it "builds an agent entry from frontmatter + body"
+      (let [a (d/parse-agent agent-md {:name-default "fallback" :tool :claude :path "/x.md"})]
+        (expect (= "code-reviewer" (:name a)))
+        (expect (= "opus" (:model a)))
+        (expect (re-find #"Elite reviewer" (:description a)))
+        (expect (re-find #"elite code review expert" (:body a)))
+        (expect (= :claude (:tool a)))
+        (expect (= "/x.md" (:path a)))))
+  (it "falls back to the filename stem when frontmatter has no name"
+      (let [a (d/parse-agent "no frontmatter here" {:name-default "my-agent"})]
+        (expect (= "my-agent" (:name a)))
+        (expect (= "" (:description a)))
+        (expect (nil? (:model a)))))
+  (it "nil when there is no usable name at all"
+      (expect (nil? (d/parse-agent "body only" {:name-default "  "})))))
 
 (defdescribe
   parse-skill-meta-test
   (it "builds a skill entry (no resources yet) from SKILL.md"
-      (let [s
-            (d/parse-skill-meta
-              "---\nname: setup-pre-commit\ndescription: Set up hooks.\n---\n# Setup\nsteps"
-              {:name-default "dir-name" :tool :claude :dir "/skills/x" :path "/skills/x/SKILL.md"})]
+      (let
+        [s (d/parse-skill-meta
+             "---\nname: setup-pre-commit\ndescription: Set up hooks.\n---\n# Setup\nsteps"
+             {:name-default "dir-name" :tool :claude :dir "/skills/x" :path "/skills/x/SKILL.md"})]
         (expect (= "setup-pre-commit" (:name s)))
         (expect (= "Set up hooks." (:description s)))
         (expect (re-find #"# Setup" (:body s)))
@@ -62,8 +62,8 @@
 
 (defdescribe dedup-by-name-test
              (it "keeps the FIRST occurrence of each name (precedence = order)"
-                 (let [out (d/dedup-by-name [{:name "a" :tool :p} {:name "b"}
-                                             {:name "a" :tool :u}])]
+                 (let
+                   [out (d/dedup-by-name [{:name "a" :tool :p} {:name "b"} {:name "a" :tool :u}])]
                    (expect (= ["a" "b"] (mapv :name out)))
                    (expect (= :p (:tool (first out)))))))
 
@@ -119,11 +119,12 @@
 (defdescribe
   opencode-spel-layout-discovery-test
   (it "discovers SPEL skills from .opencode/skills/<name>/SKILL.md"
-      (let [root
-            (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
+      (let
+        [root
+         (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
 
-            skill-md
-            (io/file root ".opencode" "skills" "spel" "SKILL.md")]
+         skill-md
+         (io/file root ".opencode" "skills" "spel" "SKILL.md")]
 
         (try (io/make-parents skill-md)
              (spit skill-md "---\nname: spel\ndescription: Browser automation\n---\nBODY")
@@ -131,11 +132,12 @@
                                                  root)
                               #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
                (fn []
-                 (let [skills
-                       (d/discover-skills)
+                 (let
+                   [skills
+                    (d/discover-skills)
 
-                       spel
-                       (first (filter #(= "spel" (:name %)) skills))]
+                    spel
+                    (first (filter #(= "spel" (:name %)) skills))]
 
                    (expect (= "spel" (:name spel)))
                    (expect (= :opencode (:tool spel)))

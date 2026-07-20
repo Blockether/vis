@@ -35,17 +35,18 @@
   "Compute integer widths `[left center right]` for a header `cols` wide.
    `center = cols - left - right` so rounding errors never bleed off-screen."
   [cols]
-  (let [cols
-        (max 0 (long cols))
+  (let
+    [cols
+     (max 0 (long cols))
 
-        left
-        (long (* cols (double left-slot-ratio)))
+     left
+     (long (* cols (double left-slot-ratio)))
 
-        right
-        (long (* cols (double right-slot-ratio)))
+     right
+     (long (* cols (double right-slot-ratio)))
 
-        center
-        (max 0 (- cols left right))]
+     center
+     (max 0 (- cols left right))]
 
     [left center right]))
 
@@ -79,31 +80,30 @@
    Returns `{:left-x :left-w :center-x :center-w :right-x :right-w}` -
    absolute x positions + widths a channel paints directly."
   [cols]
-  (let [cols
-        (max 0 (long cols))
+  (let
+    [cols
+     (max 0 (long cols))
 
-        gap
-        (long slot-gap-cols)
+     gap
+     (long slot-gap-cols)
 
-        left-w
-        (min (long left-slot-cols) (long (* cols (double left-slot-ratio))))
+     left-w
+     (min (long left-slot-cols) (long (* cols (double left-slot-ratio))))
 
-        right-w
-        (min (long right-slot-cols)
-             (long (* cols (double right-slot-ratio)))
-             (max 0 (- cols left-w)))
+     right-w
+     (min (long right-slot-cols) (long (* cols (double right-slot-ratio))) (max 0 (- cols left-w)))
 
-        center-w
-        (max 0 (- cols left-w right-w (* 2 gap)))
+     center-w
+     (max 0 (- cols left-w right-w (* 2 gap)))
 
-        left-x
-        0
+     left-x
+     0
 
-        center-x
-        (min cols (+ left-w gap))
+     center-x
+     (min cols (+ left-w gap))
 
-        right-x
-        (- cols right-w)]
+     right-x
+     (- cols right-w)]
 
     {:left-x left-x
      :left-w left-w
@@ -147,17 +147,18 @@
      budget, fall back to the natural fit so tiny surfaces degrade
      gracefully."
   [workspace-n width]
-  (let [width
-        (max 0 (long width))
+  (let
+    [width
+     (max 0 (long width))
 
-        natural
-        (max 1 (quot width (long tab-entry-target-width)))
+     natural
+     (max 1 (quot width (long tab-entry-target-width)))
 
-        clamped
-        (max (long min-visible-tab-entries) (min (long max-visible-tab-entries) natural))
+     clamped
+     (max (long min-visible-tab-entries) (min (long max-visible-tab-entries) natural))
 
-        cap
-        (if (< natural (long min-visible-tab-entries)) natural clamped)]
+     cap
+     (if (< natural (long min-visible-tab-entries)) natural clamped)]
 
     (min (long workspace-n) (long cap))))
 
@@ -201,8 +202,9 @@
   "Shorten a session UUID to the shared display length. Returns
    nil for blank input so channels can use truthy guards."
   [id]
-  (let [id (some-> id
-                   str)]
+  (let
+    [id (some-> id
+                str)]
     (when (seq id) (subs id 0 (min (long id-display-chars) (count id))))))
 
 (defn tab-group-root

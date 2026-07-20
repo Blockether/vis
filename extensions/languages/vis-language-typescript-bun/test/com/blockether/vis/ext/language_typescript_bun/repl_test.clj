@@ -65,14 +65,15 @@
                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it "imports a project module and reload() re-imports it cache-busted"
       (when (has-bun?)
-        (let [root
-              (tmp-dir)
+        (let
+          [root
+           (tmp-dir)
 
-              dir
-              (.getPath root)
+           dir
+           (.getPath root)
 
-              mod
-              (io/file root "answer.ts")]
+           mod
+           (io/file root "answer.ts")]
 
           (try (spit mod "export const answer = (): number => 40 + 1;\n")
                (repl/start! dir {})
@@ -93,14 +94,15 @@
   facade-test
   (it "repl_eval requires explicit repl_start and then returns the value"
       (when (has-bun?)
-        (let [root
-              (tmp-dir)
+        (let
+          [root
+           (tmp-dir)
 
-              dir
-              (.getCanonicalPath root)
+           dir
+           (.getCanonicalPath root)
 
-              env
-              {:workspace/root (.getPath root)}]
+           env
+           {:workspace/root (.getPath root)}]
 
           (try (expect (= :ts/no-repl
                           (try (core/ts-repl-eval-fn env "3 * 7")
@@ -113,14 +115,15 @@
                (finally (repl/stop! dir))))))
   (it "repl_start status/stop lifecycle ops route through the manager"
       (when (has-bun?)
-        (let [root
-              (tmp-dir)
+        (let
+          [root
+           (tmp-dir)
 
-              dir
-              (.getCanonicalPath root)
+           dir
+           (.getCanonicalPath root)
 
-              env
-              {:workspace/root (.getPath root)}]
+           env
+           {:workspace/root (.getPath root)}]
 
           (try
             (expect (:success? (core/ts-start-repl-fn env "start" nil)))
@@ -257,9 +260,9 @@
   monorepo-root-guard-test
   (it "repl_eval WITHOUT dir at a monorepo root refuses with the app-dir hint"
       (let [root (monorepo-fixture)]
-        (try (let [{:keys [type msg]} (monorepo-guard-ex #(core/ts-repl-eval-fn {:workspace/root
-                                                                                 (.getPath root)}
-                                                                                "1+1"))]
+        (try (let
+               [{:keys [type msg]}
+                (monorepo-guard-ex #(core/ts-repl-eval-fn {:workspace/root (.getPath root)} "1+1"))]
                (expect (= :ts/monorepo-root type))
                ;; suggests the api app dir + lists workspace dirs
                (expect (re-find #"apps/api" (str msg)))
@@ -267,28 +270,31 @@
              (finally (cleanup root)))))
   (it "repl_start WITHOUT dir at a monorepo root refuses the same way"
       (let [root (monorepo-fixture)]
-        (try (let [{:keys [type]}
-                   (monorepo-guard-ex
-                     #(core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {}))]
+        (try (let
+               [{:keys [type]}
+                (monorepo-guard-ex
+                  #(core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {}))]
                (expect (= :ts/monorepo-root type)))
              (finally (cleanup root)))))
   (it "an explicit dir escapes the guard (app dir works; '.' forces a root REPL)"
       (when (has-bun?)
-        (let [root
-              (monorepo-fixture)
+        (let
+          [root
+           (monorepo-fixture)
 
-              api
-              (.getCanonicalPath (io/file root "apps" "api"))]
+           api
+           (.getCanonicalPath (io/file root "apps" "api"))]
 
           (try ;; app dir: explicit start + eval succeed
             (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {"dir" "apps/api"})
-            (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)}
-                                          {"code" "1+1" "dir" "apps/api"})]
+            (let
+              [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)}
+                                       {"code" "1+1" "dir" "apps/api"})]
               (expect (= "2" (get-in r [:result "value"]))))
             ;; explicit "." at the root is allowed (deliberate root REPL)
             (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {"dir" "."})
-            (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)}
-                                          {"code" "40+2" "dir" "."})]
+            (let
+              [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)} {"code" "40+2" "dir" "."})]
               (expect (= "42" (get-in r [:result "value"]))))
             (finally (repl/stop! api) (repl/stop! (.getCanonicalPath root)) (cleanup root))))))
   (it "a plain (non-workspaces) root is untouched by the guard"

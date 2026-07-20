@@ -34,8 +34,8 @@
 (defn- field
   [m k]
   (when-let [m* (object-map m)]
-    (let [ks [k (name k) (keyword (camel-key k)) (camel-key k) (keyword (kebab-key k))
-              (kebab-key k)]]
+    (let
+      [ks [k (name k) (keyword (camel-key k)) (camel-key k) (keyword (kebab-key k)) (kebab-key k)]]
       (reduce (fn [_ k*]
                 (when (contains? m* k*) (reduced (get m* k*))))
               nil
@@ -103,19 +103,20 @@
 
 (defn- generated-window-spec
   [seconds fallback]
-  (let [seconds
-        (long seconds)
+  (let
+    [seconds
+     (long seconds)
 
-        day?
-        (zero? (long (mod seconds (* 24 60 60))))
+     day?
+     (zero? (long (mod seconds (* 24 60 60))))
 
-        hour?
-        (zero? (long (mod seconds (* 60 60))))
+     hour?
+     (zero? (long (mod seconds (* 60 60))))
 
-        [unit size suffix]
-        (cond day? [:day (quot seconds (* 24 60 60)) "d"]
-              hour? [:hour (quot seconds (* 60 60)) "h"]
-              :else [:second seconds "s"])]
+     [unit size suffix]
+     (cond day? [:day (quot seconds (* 24 60 60)) "d"]
+           hour? [:hour (quot seconds (* 60 60)) "h"]
+           :else [:second seconds "s"])]
 
     (assoc fallback
       :id (keyword (str "codex-" size suffix))
@@ -135,21 +136,23 @@
 (defn- window-row
   [now-ms {:keys [bucket-key] :as fallback} bucket]
   (when-let [window (not-empty (object-map (field bucket bucket-key)))]
-    (let [{:keys [id label unit size]} (window-spec fallback window)
-          used-percent (field window :used_percent)
-          left-percent (used->left-percent used-percent)
-          reset-ms (reset-at-ms window now-ms)]
+    (let
+      [{:keys [id label unit size]} (window-spec fallback window)
+       used-percent (field window :used_percent)
+       left-percent (used->left-percent used-percent)
+       reset-ms (reset-at-ms window now-ms)]
 
-      (cond-> {:id id
-               :label label
-               :scope :account
-               :kind :rate
-               :precision :exact
-               :source :provider-api
-               :unlimited? false
-               :window (cond-> {:kind :rolling :unit unit :size size}
-                         reset-ms
-                         (assoc :resets-at-ms reset-ms))}
+      (cond->
+        {:id id
+         :label label
+         :scope :account
+         :kind :rate
+         :precision :exact
+         :source :provider-api
+         :unlimited? false
+         :window (cond-> {:kind :rolling :unit unit :size size}
+                   reset-ms
+                   (assoc :resets-at-ms reset-ms))}
         (number? used-percent)
         (assoc :used
           (clamp-percent used-percent) :limit
@@ -160,30 +163,31 @@
 
 (defn- window-sort-seconds
   [row]
-  (let [{:keys [unit size]}
-        (:window row)
+  (let
+    [{:keys [unit size]}
+     (:window row)
 
-        seconds
-        (case unit
-          :minute
-          60
+     seconds
+     (case unit
+       :minute
+       60
 
-          :hour
-          (* 60 60)
+       :hour
+       (* 60 60)
 
-          :day
-          (* 24 60 60)
+       :day
+       (* 24 60 60)
 
-          :week
-          (* 7 24 60 60)
+       :week
+       (* 7 24 60 60)
 
-          :month
-          (* 30 24 60 60)
+       :month
+       (* 30 24 60 60)
 
-          :year
-          (* 365 24 60 60)
+       :year
+       (* 365 24 60 60)
 
-          Long/MAX_VALUE)]
+       Long/MAX_VALUE)]
 
     (* (long (or size 1)) (long seconds))))
 
@@ -210,27 +214,29 @@
   ([usage] (usage->dynamic-limits usage nil))
   ([usage model-ref] (usage->dynamic-limits usage model-ref (System/currentTimeMillis)))
   ([usage model-ref now-ms]
-   (let [bucket
-         (select-rate-limit-bucket usage model-ref)
+   (let
+     [bucket
+      (select-rate-limit-bucket usage model-ref)
 
-         rows
-         (if bucket
-           (let [actual-rows
-                 (keep #(window-row now-ms % bucket) fallback-window-specs)
+      rows
+      (if bucket
+        (let
+          [actual-rows
+           (keep #(window-row now-ms % bucket) fallback-window-specs)
 
-                 present-ids
-                 (set (map :id actual-rows))]
+           present-ids
+           (set (map :id actual-rows))]
 
-             (->> fallback-window-specs
-                  (remove #(contains? present-ids (:id %)))
-                  (map missing-window-row)
-                  (concat actual-rows)
-                  (sort-by window-sort-seconds)
-                  vec))
-           [])
+          (->> fallback-window-specs
+               (remove #(contains? present-ids (:id %)))
+               (map missing-window-row)
+               (concat actual-rows)
+               (sort-by window-sort-seconds)
+               vec))
+        [])
 
-         limited?
-         (or (true? (field bucket :limit_reached)) (false? (field bucket :allowed)))]
+      limited?
+      (or (true? (field bucket :limit_reached)) (false? (field bucket :allowed)))]
 
      (cond-> {:limits rows}
        (and bucket (empty? rows))
@@ -246,19 +252,20 @@
   "Fetch raw ChatGPT/Codex usage JSON from
    `https://chatgpt.com/backend-api/wham/usage`."
   [access-token account-id]
-  (let [response
-        (http/get usage-url
-                  {:headers {"Accept" "*/*"
-                             "Authorization" (str "Bearer " access-token)
-                             "chatgpt-account-id" account-id}
-                   :timeout 30000
-                   :throw false})
+  (let
+    [response
+     (http/get usage-url
+               {:headers {"Accept" "*/*"
+                          "Authorization" (str "Bearer " access-token)
+                          "chatgpt-account-id" account-id}
+                :timeout 30000
+                :throw false})
 
-        status
-        (:status response)
+     status
+     (:status response)
 
-        body
-        (:body response)]
+     body
+     (:body response)]
 
     (if (<= 200 status 299)
       (json/read-json body :key-fn keyword)

@@ -55,12 +55,13 @@
 
 (defn- op-connect
   [opts]
-  (let [{:strs [hostname port username password key_filename passphrase timeout_ms policy
-                look_for_keys compress]}
-        opts
+  (let
+    [{:strs [hostname port username password key_filename passphrase timeout_ms policy look_for_keys
+             compress]}
+     opts
 
-        js
-        (JSch.)]
+     js
+     (JSch.)]
 
     (when (non-empty? key_filename)
       (if (non-empty? passphrase)
@@ -70,14 +71,15 @@
                (not (non-empty? key_filename))
                (not (false? look_for_keys)))
       (add-default-keys! js))
-    (let [uname
-          (if (non-empty? username) (str username) (System/getProperty "user.name"))
+    (let
+      [uname
+       (if (non-empty? username) (str username) (System/getProperty "user.name"))
 
-          ^Session sess
-          (.getSession js uname (str hostname) (int (or port 22)))
+       ^Session sess
+       (.getSession js uname (str hostname) (int (or port 22)))
 
-          props
-          (Properties.)]
+       props
+       (Properties.)]
 
       (when (non-empty? password) (.setPassword sess (str password)))
       (.put props "StrictHostKeyChecking" (if (= policy "reject") "yes" "no"))
@@ -91,25 +93,27 @@
 
 (defn- op-exec
   [conn-h ^String command timeout-ms ^String stdin-b64]
-  (let [sess
-        (sess-of conn-h)
+  (let
+    [sess
+     (sess-of conn-h)
 
-        ^ChannelExec ch
-        (.openChannel sess "exec")
+     ^ChannelExec ch
+     (.openChannel sess "exec")
 
-        out
-        (ByteArrayOutputStream.)
+     out
+     (ByteArrayOutputStream.)
 
-        err
-        (ByteArrayOutputStream.)]
+     err
+     (ByteArrayOutputStream.)]
 
     (.setCommand ch command)
     (.setOutputStream ch out)
     (.setErrStream ch err)
     (when (non-empty? stdin-b64) (.setInputStream ch (ByteArrayInputStream. (b64dec stdin-b64))))
     (.connect ch)
-    (let [deadline (when (and timeout-ms (pos? (long timeout-ms)))
-                     (+ (System/currentTimeMillis) (long timeout-ms)))]
+    (let
+      [deadline (when (and timeout-ms (pos? (long timeout-ms)))
+                  (+ (System/currentTimeMillis) (long timeout-ms)))]
       (loop []
 
         (cond (.isClosed ch) nil
@@ -149,11 +153,12 @@
 
 (defn- op-sftp-open
   [conn-h]
-  (let [sess
-        (sess-of conn-h)
+  (let
+    [sess
+     (sess-of conn-h)
 
-        ch
-        (.openChannel sess "sftp")]
+     ch
+     (.openChannel sess "sftp")]
 
     (.connect ch)
     (reg-sftp! ch)))
@@ -169,21 +174,23 @@
 
 (defn- op-sftp-stat
   [h ^String path follow?]
-  (let [ch
-        (sftp-of h)
+  (let
+    [ch
+     (sftp-of h)
 
-        a
-        (if follow? (.stat ch path) (.lstat ch path))]
+     a
+     (if follow? (.stat ch path) (.lstat ch path))]
 
     (attrs->map path nil a)))
 
 (defn- op-sftp-get
   [h ^String remote]
-  (let [ch
-        (sftp-of h)
+  (let
+    [ch
+     (sftp-of h)
 
-        bos
-        (ByteArrayOutputStream.)]
+     bos
+     (ByteArrayOutputStream.)]
 
     (with-open [is (.get ch remote)]
       (io/copy is bos))
@@ -268,20 +275,22 @@
 
 (defn- op-key-generate
   [kind bits passphrase]
-  (let [kt
-        (key-type kind)
+  (let
+    [kt
+     (key-type kind)
 
-        size
-        (int (or bits (default-key-bits kt)))
+     size
+     (int (or bits (default-key-bits kt)))
 
-        ^KeyPair kp
-        (if (zero? size) (KeyPair/genKeyPair (JSch.) kt) (KeyPair/genKeyPair (JSch.) kt size))]
+     ^KeyPair kp
+     (if (zero? size) (KeyPair/genKeyPair (JSch.) kt) (KeyPair/genKeyPair (JSch.) kt size))]
 
-    (try (let [out
-               (ByteArrayOutputStream.)
+    (try (let
+           [out
+            (ByteArrayOutputStream.)
 
-               passb
-               (passphrase-bytes passphrase)]
+            passb
+            (passphrase-bytes passphrase)]
 
            (if (or (= kt KeyPair/ED25519) (= kt KeyPair/ED448))
              (.writeOpenSSHv1PrivateKey kp out passb)

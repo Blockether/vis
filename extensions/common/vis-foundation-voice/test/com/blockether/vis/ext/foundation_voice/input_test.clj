@@ -31,30 +31,32 @@
                         (vis/channel-contributions-for :tui :tui.slot/commands))))
   (it
     "appends Parakeet transcript without rewriting or replacing existing input"
-    (let [events
-          (atom [])
+    (let
+      [events
+       (atom [])
 
-          app-db
-          (atom {:active-tab-id :first})]
+       app-db
+       (atom {:active-tab-id :first})]
 
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-      (with-redefs [recorder/start!
-                    (fn []
-                      {:started-at-ms (System/currentTimeMillis)})
+      (with-redefs
+        [recorder/start!
+         (fn []
+           {:started-at-ms (System/currentTimeMillis)})
 
-                    recorder/stop!
-                    (fn [_]
-                      :audio-file)
+         recorder/stop!
+         (fn [_]
+           :audio-file)
 
-                    asr/transcribe-file!
-                    (fn [audio-file]
-                      (expect (= :audio-file audio-file))
-                      "Parakeet translation")
+         asr/transcribe-file!
+         (fn [audio-file]
+           (expect (= :audio-file audio-file))
+           "Parakeet translation")
 
-                    vis/publish-channel-event!
-                    (fn [channel event]
-                      (expect (= :tui channel))
-                      (swap! events conj event))]
+         vis/publish-channel-event!
+         (fn [channel event]
+           (expect (= :tui channel))
+           (swap! events conj event))]
 
         (voice/start-recording! {:app-db app-db})
         (reset! app-db {:active-tab-id :second})
@@ -99,14 +101,15 @@
   (it "appends the cleaned Parakeet transcript"
       (let [events (atom [])]
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-        (with-redefs [recorder/start! (fn []
-                                        {:started-at-ms (System/currentTimeMillis)})
-                      recorder/stop! (fn [_]
-                                       :audio-file)
-                      asr/transcribe-file! (fn [_]
-                                             "uh add add this this to to the prompt")
-                      vis/publish-channel-event! (fn [_ event]
-                                                   (swap! events conj event))]
+        (with-redefs
+          [recorder/start! (fn []
+                             {:started-at-ms (System/currentTimeMillis)})
+           recorder/stop! (fn [_]
+                            :audio-file)
+           asr/transcribe-file! (fn [_]
+                                  "uh add add this this to to the prompt")
+           vis/publish-channel-event! (fn [_ event]
+                                        (swap! events conj event))]
 
           (voice/start-recording! {})
           (voice/stop-and-transcribe! {})
@@ -120,10 +123,11 @@
   (it "starts ticker after recorder is visible in shared state"
       (let [events (atom [])]
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-        (with-redefs [recorder/start! (fn []
-                                        {:started-at-ms 1000})
-                      vis/publish-channel-event! (fn [_ event]
-                                                   (swap! events conj event))]
+        (with-redefs
+          [recorder/start! (fn []
+                             {:started-at-ms 1000})
+           vis/publish-channel-event! (fn [_ event]
+                                        (swap! events conj event))]
 
           (with-redefs-fn {#'voice/start-ticker! (fn [rec started-at-ms]
                                                    (expect (= {:started-at-ms 1000} rec))
@@ -136,21 +140,23 @@
               (expect (= :ticker (:ticker @voice/state)))
               (expect (some #(= "● Recording 00:00" (:text %)) @events)))))))
   (it "blocks new recording while previous transcription has not finished"
-      (let [starts
-            (atom 0)
+      (let
+        [starts
+         (atom 0)
 
-            events
-            (atom [])]
+         events
+         (atom [])]
 
         (reset! voice/state {:recorder nil :ticker nil :transcribing? true})
-        (with-redefs [recorder/start!
-                      (fn []
-                        (swap! starts inc)
-                        {:started-at-ms (System/currentTimeMillis)})
+        (with-redefs
+          [recorder/start!
+           (fn []
+             (swap! starts inc)
+             {:started-at-ms (System/currentTimeMillis)})
 
-                      vis/publish-channel-event!
-                      (fn [_ event]
-                        (swap! events conj event))]
+           vis/publish-channel-event!
+           (fn [_ event]
+             (swap! events conj event))]
 
           (voice/toggle-recording! {})
           (voice/start-recording! {})
@@ -178,15 +184,16 @@
     ;; publish exactly the terse `:warn` notify the user should see.
     (let [events (atom [])]
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-      (with-redefs [recorder/start! (fn []
-                                      {:started-at-ms (System/currentTimeMillis)})
-                    recorder/stop! (fn [_]
-                                     :silent.wav)
-                    asr/transcribe-file! (fn [_]
-                                           "")
-                    vis/publish-channel-event! (fn [channel event]
-                                                 (expect (= :tui channel))
-                                                 (swap! events conj event))]
+      (with-redefs
+        [recorder/start! (fn []
+                           {:started-at-ms (System/currentTimeMillis)})
+         recorder/stop! (fn [_]
+                          :silent.wav)
+         asr/transcribe-file! (fn [_]
+                                "")
+         vis/publish-channel-event! (fn [channel event]
+                                      (expect (= :tui channel))
+                                      (swap! events conj event))]
 
         (voice/start-recording! {})
         (voice/stop-and-transcribe! {})
@@ -216,14 +223,15 @@
       ;; Treat both identically so the user sees actionable feedback.
       (let [events (atom [])]
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-        (with-redefs [recorder/start! (fn []
-                                        {:started-at-ms (System/currentTimeMillis)})
-                      recorder/stop! (fn [_]
-                                       :silent.wav)
-                      asr/transcribe-file! (fn [_]
-                                             "   \t\n  ")
-                      vis/publish-channel-event! (fn [_ event]
-                                                   (swap! events conj event))]
+        (with-redefs
+          [recorder/start! (fn []
+                             {:started-at-ms (System/currentTimeMillis)})
+           recorder/stop! (fn [_]
+                            :silent.wav)
+           asr/transcribe-file! (fn [_]
+                                  "   \t\n  ")
+           vis/publish-channel-event! (fn [_ event]
+                                        (swap! events conj event))]
 
           (voice/start-recording! {})
           (voice/stop-and-transcribe! {})
@@ -239,31 +247,33 @@
           (expect (some #(= "Voice produced no audible text" (:text %)) @events)))))
   (it
     "publishes clean voice failure and logs ASR exceptions"
-    (let [events
-          (atom [])
+    (let
+      [events
+       (atom [])
 
-          logs
-          (atom [])]
+       logs
+       (atom [])]
 
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false})
-      (with-redefs [recorder/start!
-                    (fn []
-                      {:started-at-ms (System/currentTimeMillis)})
+      (with-redefs
+        [recorder/start!
+         (fn []
+           {:started-at-ms (System/currentTimeMillis)})
 
-                    recorder/stop!
-                    (fn [_]
-                      "too-short.wav")
+         recorder/stop!
+         (fn [_]
+           "too-short.wav")
 
-                    asr/transcribe-file!
-                    (fn [audio-file]
-                      (expect (= "too-short.wav" audio-file))
-                      (throw (ex-info "Voice recording too short - try again"
-                                      {:type :voice-asr/audio-too-short})))
+         asr/transcribe-file!
+         (fn [audio-file]
+           (expect (= "too-short.wav" audio-file))
+           (throw (ex-info "Voice recording too short - try again"
+                           {:type :voice-asr/audio-too-short})))
 
-                    vis/publish-channel-event!
-                    (fn [channel event]
-                      (expect (= :tui channel))
-                      (swap! events conj event))]
+         vis/publish-channel-event!
+         (fn [channel event]
+           (expect (= :tui channel))
+           (swap! events conj event))]
 
         (with-redefs-fn
           {#'voice/log-voice-asr-failed!

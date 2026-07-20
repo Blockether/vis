@@ -86,43 +86,47 @@
 (defdescribe
   dynamic-summary-test
   (it "renders the Z.ai coding plan 5h + 7d rows compactly"
-      (let [limits
-            {:dynamic {:limits [{:id :zai-coding-plan-5h :remaining 47}
-                                {:id :zai-coding-plan-7d :remaining 80}]}}
+      (let
+        [limits
+         {:dynamic {:limits [{:id :zai-coding-plan-5h :remaining 47}
+                             {:id :zai-coding-plan-7d :remaining 80}]}}
 
-            out
-            (lfmt/dynamic-summary limits)]
+         out
+         (lfmt/dynamic-summary limits)]
 
         (expect (str/includes? out "47% left"))
         (expect (str/includes? out "80% left"))
         (expect (str/includes? out " · "))))
   (it "caps to `max-rows` (default 2)"
-      (let [limits
-            {:dynamic {:limits [{:id :a :label "a" :remaining 10} {:id :b :label "b" :remaining 20}
-                                {:id :c :label "c" :remaining 30}]}}
+      (let
+        [limits
+         {:dynamic {:limits [{:id :a :label "a" :remaining 10} {:id :b :label "b" :remaining 20}
+                             {:id :c :label "c" :remaining 30}]}}
 
-            out
-            (lfmt/dynamic-summary limits)]
+         out
+         (lfmt/dynamic-summary limits)]
 
         (expect (= 1 (count (re-seq #" · " out))))))
   (it "prefers rows with signal; falls back to all when none have signal"
-      (let [limits
-            {:dynamic {:limits [{:id :a :label "a" :remaining 0} {:id :b :label "b" :remaining 0}]}}
+      (let
+        [limits
+         {:dynamic {:limits [{:id :a :label "a" :remaining 0} {:id :b :label "b" :remaining 0}]}}
 
-            out
-            (lfmt/dynamic-summary limits)]
+         out
+         (lfmt/dynamic-summary limits)]
 
         (expect (some? out))))
   (it "keeps a no-signal account plan window so a companion pair stays visible"
       ;; A provider that omits one window ships a placeholder row with no usage
       ;; signal (Codex 5h here); it must still render beside its data-bearing
       ;; companion instead of collapsing to a lone `7d`.
-      (let [limits
-            {:dynamic {:limits [{:id :codex-5h :precision :unknown}
-                                {:id :codex-7d :remaining 81 :limit 100.0}]}}
+      (let
+        [limits
+         {:dynamic {:limits [{:id :codex-5h :precision :unknown}
+                             {:id :codex-7d :remaining 81 :limit 100.0}]}}
 
-            out
-            (lfmt/dynamic-summary limits)]
+         out
+         (lfmt/dynamic-summary limits)]
 
         (expect (str/includes? out "Codex 5h"))
         (expect (str/includes? out "Codex 7d"))))

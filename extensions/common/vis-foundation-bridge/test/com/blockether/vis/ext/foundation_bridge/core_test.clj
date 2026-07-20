@@ -19,8 +19,9 @@
   [root & args]
   (let [pb (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String args))]
     (.directory pb (java.io.File. ^String root))
-    (let [proc (.start pb)
-          exit (.waitFor proc)]
+    (let
+      [proc (.start pb)
+       exit (.waitFor proc)]
 
       (expect (zero? exit))
       exit)))
@@ -64,14 +65,15 @@
     (expect (= :mutation (vis/op-tag :br/init)))
     (expect (= :mutation (vis/op-tag :br/run-evidence))))
   (it "emits concise routing only in configured workspaces"
-      (let [root
-            (temp-root "bridge-ext-prompt")
+      (let
+        [root
+         (temp-root "bridge-ext-prompt")
 
-            env
-            {:workspace/root root}
+         env
+         {:workspace/root root}
 
-            prompt-fn
-            (:ext/prompt-fn bridge/vis-extension)]
+         prompt-fn
+         (:ext/prompt-fn bridge/vis-extension)]
 
         (expect (nil? (prompt-fn env)))
         (bridge/init env)
@@ -89,25 +91,27 @@
         (expect (= [] ((:ext/protected-paths bridge/vis-extension) (protected-env root))))
         (expect (= [] (extension/active-protected-globs (protected-env root))))))
   (it "returns no protected path rules when policy enforcement is disabled"
-      (let [root
-            (temp-root "bridge-ext-protected-disabled")
+      (let
+        [root
+         (temp-root "bridge-ext-protected-disabled")
 
-            env
-            {:workspace/root root}]
+         env
+         {:workspace/root root}]
 
         (bridge/init env)
         (write-policy! root {:enforce? false :rules [{:path-pattern ".bridge/" :access "none"}]})
         (expect (= [] ((:ext/protected-paths bridge/vis-extension) (protected-env root))))))
   (it
     "maps enforced Bridge path sandbox rules to Vis protected path rules"
-    (let [root
-          (temp-root "bridge-ext-protected")
+    (let
+      [root
+       (temp-root "bridge-ext-protected")
 
-          env
-          {:workspace/root root}
+       env
+       {:workspace/root root}
 
-          hint
-          "Policy changes require human approval."]
+       hint
+       "Policy changes require human approval."]
 
       (bridge/init env)
       (write-policy!
@@ -145,17 +149,18 @@
           (extension/active-protected-globs (protected-env root))))))
   (it
     "prefixes policy patterns when the Bridge profile root is below the workspace"
-    (let [root
-          (temp-root "bridge-ext-protected-subroot")
+    (let
+      [root
+       (temp-root "bridge-ext-protected-subroot")
 
-          project-root
-          (str root "/project")
+       project-root
+       (str root "/project")
 
-          env
-          {:workspace/root root}
+       env
+       {:workspace/root root}
 
-          profile-path
-          (str root "/.bridge/profile.edn")]
+       profile-path
+       (str root "/.bridge/profile.edn")]
 
       (bridge/init env)
       (.mkdirs (java.io.File. project-root ".bridge"))
@@ -178,34 +183,35 @@
   bridge-unconfigured-workspace-test
   (it
     "can initialize an unconfigured workspace and run the CLI"
-    (let [root
-          (str (java.nio.file.Files/createTempDirectory
-                 "bridge-ext-test"
-                 (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let
+      [root
+       (str (java.nio.file.Files/createTempDirectory
+              "bridge-ext-test"
+              (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          _
-          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+       _
+       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-          env
-          {:workspace/root root}
+       env
+       {:workspace/root root}
 
-          init-result
-          (bridge/init env)
+       init-result
+       (bridge/init env)
 
-          profile-result
-          (bridge/profile env)
+       profile-result
+       (bridge/profile env)
 
-          check-result
-          (bridge/check env)
+       check-result
+       (bridge/check env)
 
-          next-result
-          (bridge/next env)
+       next-result
+       (bridge/next env)
 
-          list-result
-          (bridge/list-evidence env)
+       list-result
+       (bridge/list-evidence env)
 
-          run-result
-          (bridge/run-evidence env "unit" {"is_dry_run" true})]
+       run-result
+       (bridge/run-evidence env "unit" {"is_dry_run" true})]
 
       (expect (true? (:success? init-result)))
       (expect (= true (get-in (result-of init-result) ["configured"])))
@@ -231,16 +237,17 @@
 (defdescribe
   bridge-no-profile-error-test
   (it "returns an error when no profile is configured"
-      (let [root
-            (str (java.nio.file.Files/createTempDirectory
-                   "bridge-ext-no-profile"
-                   (make-array java.nio.file.attribute.FileAttribute 0)))
+      (let
+        [root
+         (str (java.nio.file.Files/createTempDirectory
+                "bridge-ext-no-profile"
+                (make-array java.nio.file.attribute.FileAttribute 0)))
 
-            env
-            {:workspace/root root}
+         env
+         {:workspace/root root}
 
-            run-result
-            (bridge/run-evidence env "unit" {"is_dry_run" true})]
+         run-result
+         (bridge/run-evidence env "unit" {"is_dry_run" true})]
 
         (expect (false? (:success? run-result)))
         (expect (not (str/includes? (or (get-in run-result [:error :hint]) "") "bb bridge")))
@@ -248,17 +255,17 @@
 
 (defdescribe bridge-init-idempotent-test
              (it "init is iempotent"
-                 (let [env
-                       {:workspace/root (str (java.nio.file.Files/createTempDirectory
-                                               "bridge-ext-idempotent"
-                                               (make-array java.nio.file.attribute.FileAttribute
-                                                           0)))}
+                 (let
+                   [env
+                    {:workspace/root (str (java.nio.file.Files/createTempDirectory
+                                            "bridge-ext-idempotent"
+                                            (make-array java.nio.file.attribute.FileAttribute 0)))}
 
-                       first-result
-                       (bridge/init env)
+                    first-result
+                    (bridge/init env)
 
-                       second-result
-                       (bridge/init env)]
+                    second-result
+                    (bridge/init env)]
 
                    (expect (true? (:success? first-result)))
                    (expect (= false (get-in (result-of first-result) ["already_configured"])))
@@ -273,37 +280,38 @@
   bridge-next-suggests-extension-ops-test
   (it
     "next suggests extension ops"
-    (let [root
-          (str (java.nio.file.Files/createTempDirectory
-                 "bridge-ext-next"
-                 (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let
+      [root
+       (str (java.nio.file.Files/createTempDirectory
+              "bridge-ext-next"
+              (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          _
-          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+       _
+       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-          _
-          (.mkdirs (java.io.File. root "src"))
+       _
+       (.mkdirs (java.io.File. root "src"))
 
-          _
-          (spit (str root "/src/core.clj") "(ns core)")
+       _
+       (spit (str root "/src/core.clj") "(ns core)")
 
-          env
-          {:workspace/root root}
+       env
+       {:workspace/root root}
 
-          _
-          (bridge/init env)
+       _
+       (bridge/init env)
 
-          check-result
-          (bridge/check env {"changed_files" ["src/core.clj"]})
+       check-result
+       (bridge/check env {"changed_files" ["src/core.clj"]})
 
-          next-result
-          (bridge/next env {"changed_files" ["src/core.clj"]})
+       next-result
+       (bridge/next env {"changed_files" ["src/core.clj"]})
 
-          open-obligation
-          (first (get-in (result-of check-result) ["required_obligations"]))
+       open-obligation
+       (first (get-in (result-of check-result) ["required_obligations"]))
 
-          suggestion
-          (get-in (result-of next-result) ["next_step"])]
+       suggestion
+       (get-in (result-of next-result) ["next_step"])]
 
       (expect (true? (:success? check-result)))
       (expect (= "attention-required" (get-in (result-of check-result) ["status"])))
@@ -321,43 +329,44 @@
   bridge-check-flattens-status-test
   (it
     "check returns flattened status summary"
-    (let [root
-          (str (java.nio.file.Files/createTempDirectory
-                 "bridge-ext-flatten"
-                 (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let
+      [root
+       (str (java.nio.file.Files/createTempDirectory
+              "bridge-ext-flatten"
+              (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          _
-          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+       _
+       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-          _
-          (.mkdirs (java.io.File. root "src"))
+       _
+       (.mkdirs (java.io.File. root "src"))
 
-          _
-          (spit (str root "/src/core.clj") "(ns core)")
+       _
+       (spit (str root "/src/core.clj") "(ns core)")
 
-          env
-          {:workspace/root root}
+       env
+       {:workspace/root root}
 
-          _
-          (bridge/init env)
+       _
+       (bridge/init env)
 
-          _
-          (bio/write-data (str root "/.bridge/ephemeral/evidence/unit.yaml")
-                          {:artifact "evidence-run"
-                           :evidence-id "unit"
-                           :kind "unit-tests"
-                           :role "regression"
-                           :subject "vis"
-                           :evidence-status "failed"
-                           :execution-status "execution-failed"
-                           :finished-at "2026-05-20T19:01:06.340575Z"
-                           :command "clojure -M:test"})
+       _
+       (bio/write-data (str root "/.bridge/ephemeral/evidence/unit.yaml")
+                       {:artifact "evidence-run"
+                        :evidence-id "unit"
+                        :kind "unit-tests"
+                        :role "regression"
+                        :subject "vis"
+                        :evidence-status "failed"
+                        :execution-status "execution-failed"
+                        :finished-at "2026-05-20T19:01:06.340575Z"
+                        :command "clojure -M:test"})
 
-          result
-          (bridge/check env {"changed_files" ["src/core.clj"]})
+       result
+       (bridge/check env {"changed_files" ["src/core.clj"]})
 
-          r
-          (result-of result)]
+       r
+       (result-of result)]
 
       (expect (true? (:success? result)))
       (expect (= "attention-required" (get-in r ["status"])))
@@ -374,42 +383,43 @@
   bridge-hint-hook-test
   (it
     "hinting suggests the next action"
-    (let [hint-fn
-          (get-in bridge/vis-extension [:ext/hooks 0 :fn])
+    (let
+      [hint-fn
+       (get-in bridge/vis-extension [:ext/hooks 0 :fn])
 
-          unconfigured-root
-          (str (java.nio.file.Files/createTempDirectory
-                 "bridge-ext-hint-unconfigured"
-                 (make-array java.nio.file.attribute.FileAttribute 0)))
+       unconfigured-root
+       (str (java.nio.file.Files/createTempDirectory
+              "bridge-ext-hint-unconfigured"
+              (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          configured-root
-          (str (java.nio.file.Files/createTempDirectory
-                 "bridge-ext-hint-configured"
-                 (make-array java.nio.file.attribute.FileAttribute 0)))
+       configured-root
+       (str (java.nio.file.Files/createTempDirectory
+              "bridge-ext-hint-configured"
+              (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          _
-          (spit (str configured-root "/deps.edn") "{:aliases {:test {}}}")
+       _
+       (spit (str configured-root "/deps.edn") "{:aliases {:test {}}}")
 
-          _
-          (.mkdirs (java.io.File. configured-root "src"))
+       _
+       (.mkdirs (java.io.File. configured-root "src"))
 
-          _
-          (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 1)\n")
+       _
+       (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 1)\n")
 
-          _
-          (bridge/init {:workspace/root configured-root})
+       _
+       (bridge/init {:workspace/root configured-root})
 
-          _
-          (run-in! configured-root "git" "init" "-q")
+       _
+       (run-in! configured-root "git" "init" "-q")
 
-          _
-          (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 2)\n")
+       _
+       (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 2)\n")
 
-          unconfigured-hint
-          (hint-fn {:environment {:workspace/root unconfigured-root}})
+       unconfigured-hint
+       (hint-fn {:environment {:workspace/root unconfigured-root}})
 
-          configured-hint
-          (hint-fn {:environment {:workspace/root configured-root}})]
+       configured-hint
+       (hint-fn {:environment {:workspace/root configured-root}})]
 
       ;; Unconfigured workspaces are the normal state, not actionable
       ;; verification work: the hook must stay silent instead of

@@ -254,11 +254,12 @@
   (update entry
           :forms
           (fn [forms]
-            (let [idx
-                  (long idx)
+            (let
+              [idx
+               (long idx)
 
-                  c
-                  (long (count forms))]
+               c
+               (long (count forms))]
 
               (if (and (vector? forms) (not (neg? idx)) (< idx c))
                 (into (subvec forms 0 idx) (subvec forms (inc idx)))
@@ -345,8 +346,9 @@
         :response-parse chunk))
 
     :reasoning
-    (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
-                            (normalize-thinking-text (:thinking entry)))]
+    (let
+      [next-thinking (or (normalize-thinking-text (:thinking chunk))
+                         (normalize-thinking-text (:thinking entry)))]
       (assoc entry
         :thinking next-thinking
         :activity nil))
@@ -399,11 +401,12 @@
                     (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :form-start
-    (let [entry'
-          (unhide-form-slot entry (:position chunk))
+    (let
+      [entry'
+       (unhide-form-slot entry (:position chunk))
 
-          display-idx
-          (display-form-idx entry' (:position chunk))]
+       display-idx
+       (display-form-idx entry' (:position chunk))]
 
       (assoc (assoc-form entry' display-idx (chunk->form-start chunk)) :activity nil))
 
@@ -411,53 +414,56 @@
     (let [silent? (structurally-silent-chunk? chunk)]
       (if silent?
         (assoc (hide-form-slot entry (:position chunk)) :activity nil)
-        (let [entry' (unhide-form-slot entry (:position chunk))
-              display-idx (display-form-idx entry' (:position chunk))
-              prev-form (get (:forms entry') display-idx)]
+        (let
+          [entry' (unhide-form-slot entry (:position chunk))
+           display-idx (display-form-idx entry' (:position chunk))
+           prev-form (get (:forms entry') display-idx)]
 
           (assoc (assoc-form entry' display-idx (chunk->form-result prev-form chunk))
             :activity nil))))
 
     :iteration-final
-    (let [duplicate-final?
-          (and (:done? entry) (:final entry) (:final chunk))
+    (let
+      [duplicate-final?
+       (and (:done? entry) (:final entry) (:final chunk))
 
-          base
-          (assoc entry
-            :thinking (or (normalize-thinking-text (:thinking chunk))
-                          (normalize-thinking-text (:thinking entry)))
-            :assistant-prose (or (some-> (:assistant-prose chunk)
-                                         str
-                                         str/trim
-                                         not-empty)
-                                 (:assistant-prose entry))
-            :activity nil
-            :final (:final chunk)
-            :done? (boolean (:done? chunk)))
+       base
+       (assoc entry
+         :thinking (or (normalize-thinking-text (:thinking chunk))
+                       (normalize-thinking-text (:thinking entry)))
+         :assistant-prose (or (some-> (:assistant-prose chunk)
+                                      str
+                                      str/trim
+                                      not-empty)
+                              (:assistant-prose entry))
+         :activity nil
+         :final (:final chunk)
+         :done? (boolean (:done? chunk)))
 
-          ;; Structurally-silent bookkeeping blocks (e.g. title updates)
-          ;; are hidden as chunks arrive. Other successful `:vis/silent`
-          ;; blocks stay in the timeline with `:silent? true`; channel
-          ;; settings decide whether to render them.
-          answer-idx
-          (when-not duplicate-final? (when (:final chunk) (:answer-position chunk)))
+       ;; Structurally-silent bookkeeping blocks (e.g. title updates)
+       ;; are hidden as chunks arrive. Other successful `:vis/silent`
+       ;; blocks stay in the timeline with `:silent? true`; channel
+       ;; settings decide whether to render them.
+       answer-idx
+       (when-not duplicate-final? (when (:final chunk) (:answer-position chunk)))
 
-          silent-idxs
-          (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
+       silent-idxs
+       (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
 
-          base
-          (reduce (fn [e engine-idx]
-                    (let [display-idx
-                          (display-form-idx e engine-idx)
+       base
+       (reduce (fn [e engine-idx]
+                 (let
+                   [display-idx
+                    (display-form-idx e engine-idx)
 
-                          c
-                          (long (count (:forms e)))]
+                    c
+                    (long (count (:forms e)))]
 
-                      (if (and (integer? display-idx) (< (long display-idx) c))
-                        (assoc-in e [:forms display-idx :silent?] true)
-                        e)))
-                  base
-                  (sort silent-idxs))]
+                   (if (and (integer? display-idx) (< (long display-idx) c))
+                     (assoc-in e [:forms display-idx :silent?] true)
+                     e)))
+               base
+               (sort silent-idxs))]
 
       (if (some? answer-idx) (hide-form-slot base answer-idx) base))
 
@@ -485,25 +491,26 @@
    incrementally."
   ([] (make-progress-tracker nil))
   ([{:keys [on-update]}]
-   (let [timeline
-         (atom (sorted-map))
+   (let
+     [timeline
+      (atom (sorted-map))
 
-         ;; Canonicalize every entry as it leaves the tracker: layer the
-         ;; shared block-level fields (`:scope` `:code` `:ops` `:status`
-         ;; `:duration-ms` `:error` + 0-based `:position`) on top of the
-         ;; raw per-iteration accumulation. Stored entries stay raw so the
-         ;; chunk reducer keeps its transient bookkeeping; consumers
-         ;; (renderer, parity test) see the SAME canonical shape the resume
-         ;; path produces.
-         canon
-         (fn [iteration entry]
-           (iteration/canonicalize
-             (assoc entry :position (when (integer? iteration) (max 0 (dec (long iteration)))))))
+      ;; Canonicalize every entry as it leaves the tracker: layer the
+      ;; shared block-level fields (`:scope` `:code` `:ops` `:status`
+      ;; `:duration-ms` `:error` + 0-based `:position`) on top of the
+      ;; raw per-iteration accumulation. Stored entries stay raw so the
+      ;; chunk reducer keeps its transient bookkeeping; consumers
+      ;; (renderer, parity test) see the SAME canonical shape the resume
+      ;; path produces.
+      canon
+      (fn [iteration entry]
+        (iteration/canonicalize
+          (assoc entry :position (when (integer? iteration) (max 0 (dec (long iteration)))))))
 
-         as-vec
-         #(vec (map (fn [[it entry]]
-                      (canon it entry))
-                    %))]
+      as-vec
+      #(vec (map (fn [[it entry]]
+                   (canon it entry))
+                 %))]
 
      {:on-chunk (fn [chunk]
                   ;; Every streaming chunk carries its 1-based iteration
@@ -513,10 +520,10 @@
                   ;; into a `nil` bucket: that bucket sorts BEFORE every
                   ;; real iteration and shifts live numbering by +1.
                   (when-let [iteration (:iteration chunk)]
-                    (let [tl (swap! timeline update
-                               iteration
-                               (fn [entry]
-                                 (update-entry (or entry (empty-iteration-entry iteration))
-                                               chunk)))]
+                    (let
+                      [tl (swap! timeline update
+                            iteration
+                            (fn [entry]
+                              (update-entry (or entry (empty-iteration-entry iteration)) chunk)))]
                       (when on-update (on-update (as-vec tl) chunk)))))
       :get-timeline #(as-vec @timeline)})))
