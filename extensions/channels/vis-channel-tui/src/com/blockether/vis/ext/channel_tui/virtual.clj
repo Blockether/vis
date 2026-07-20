@@ -113,14 +113,30 @@
   [message]
   (hash (dissoc message :text :prewrapped-lines :line-meta :turn-separator?)))
 
+(def ^:private settings-fingerprint-keys
+  [:show-thinking :show-iterations :show-silent :show-iteration-headers :preview/default-lines])
+
+;; One-slot identity memo. `layout` threads the SAME `settings` object into
+;; `height-key` for every message (~2x per bubble -> ~120 calls/tick), and each
+;; call re-ran `select-keys`+`hash` to the identical result — ~37% of the warm
+;; tick's allocation was this one redundant fingerprint. Cache the last
+;; (settings-identity -> fingerprint) pair: a hit is a reference compare, a miss
+;; recomputes (pure fn of the map, so a stale/raced slot only ever recomputes,
+;; never returns a wrong value). No lock: worst case two threads with different
+;; settings thrash the slot and recompute, which is exactly today's cost.
+(defonce ^:private settings-fp-cell (volatile! nil))
+
 (defn- settings-fingerprint
   "Content-derived fingerprint of the subset of settings keys that
    actually affect bubble height. Same rationale as the message
    fingerprint: identity is fragile, content is stable."
   [settings]
-  (hash (select-keys settings
-                     [:show-thinking :show-iterations :show-silent :show-iteration-headers
-                      :preview/default-lines])))
+  (let [cached (deref settings-fp-cell)]
+    (if (and cached (identical? (nth cached 0) settings))
+      (nth cached 1)
+      (let [fp (hash (select-keys settings settings-fingerprint-keys))]
+        (vreset! settings-fp-cell [settings fp])
+        fp))))
 
 (defn- height-key
   [message bubble-w settings detail-expansions session-id]
@@ -201,23 +217,25 @@
    direction: `total-h` may shrink when the real height lands, never grow,
    so the scroll anchor (and the scrollbar thumb) holds."
   ^long [s ^long w]
-  (let [^String s
-        (if (string? s) s (str (or s "")))
+  (let
+    [^String s
+     (if (string? s) s (str (or s "")))
 
-        n
-        (.length s)
+     n
+     (.length s)
 
-        w
-        (max 1 w)]
+     w
+     (max 1 w)]
 
-    (loop [i
-           0
+    (loop
+      [i
+       0
 
-           seg
-           0
+       seg
+       0
 
-           rows
-           0]
+       rows
+       0]
 
       (if (>= i n)
         (if (pos? seg) (+ rows (quot (+ seg (dec w)) w)) rows)
@@ -235,61 +253,64 @@
    Charge marker lines +5 so those pastes stay on the overshoot side.
    Single indexed pass, no regex, no split allocation."
   ^long [s ^long w]
-  (let [^String s
-        (if (string? s) s (str (or s "")))
+  (let
+    [^String s
+     (if (string? s) s (str (or s "")))
 
-        n
-        (.length s)
+     n
+     (.length s)
 
-        w
-        (max 1 w)]
+     w
+     (max 1 w)]
 
-    (loop [start
-           0
+    (loop
+      [start
+       0
 
-           rows
-           0]
+       rows
+       0]
 
       (if (>= start n)
         rows
-        (let [e
-              (.indexOf s "\n" start)
+        (let
+          [e
+           (.indexOf s "\n" start)
 
-              end
-              (if (neg? e) n e)
+           end
+           (if (neg? e) n e)
 
-              len
-              (- end start)
+           len
+           (- end start)
 
-              ;; First non-space char within the first 4 columns — markdown
-              ;; treats deeper indents as code, not as a block marker.
-              j
-              (long (loop [k start]
-                      (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k)))
-                        (recur (inc k))
-                        k)))
+           ;; First non-space char within the first 4 columns — markdown
+           ;; treats deeper indents as code, not as a block marker.
+           j
+           (long
+             (loop [k start]
+               (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k))) (recur (inc k)) k)))
 
-              marker?
-              (and (< j end)
-                   (let [c (.charAt s j)]
-                     (or (and (case c
-                                (\- \+ \* \> \#)
-                                true
+           marker?
+           (and (< j end)
+                (let [c (.charAt s j)]
+                  (or (and (case c
+                             (\- \+ \* \> \#)
+                             true
 
-                                false)
-                              (or (= (inc j) end) (= \space (.charAt s (inc j)))))
-                         ;; ordered list: digits then `.` then space/eol
-                         (and (Character/isDigit c)
-                              (let [d (long (loop [k j]
-                                              (if (and (< k end) (Character/isDigit (.charAt s k)))
-                                                (recur (inc k))
-                                                k)))]
-                                (and (< d end)
-                                     (= \. (.charAt s d))
-                                     (or (= (inc d) end) (= \space (.charAt s (inc d))))))))))
+                             false)
+                           (or (= (inc j) end) (= \space (.charAt s (inc j)))))
+                      ;; ordered list: digits then `.` then space/eol
+                      (and (Character/isDigit c)
+                           (let
+                             [d (long (loop [k j]
+                                        (if (and (< k end) (Character/isDigit (.charAt s k)))
+                                          (recur (inc k))
+                                          k)))]
+                             (and (< d end)
+                                  (= \. (.charAt s d))
+                                  (or (= (inc d) end) (= \space (.charAt s (inc d))))))))))
 
-              base
-              (max 1 (quot (+ len (dec w)) w))]
+           base
+           (max 1 (quot (+ len (dec w)) w))]
 
           (recur (inc end) (+ rows base (if marker? 5 0))))))))
 
@@ -350,22 +371,23 @@
    it."
   (^long [message ^long bubble-w] (estimated-height message bubble-w nil nil))
   (^long [message ^long bubble-w detail-expansions session-id]
-   (let [content-w
-         (max 1 (- bubble-w 4))
+   (let
+     [content-w
+      (max 1 (- bubble-w 4))
 
-         ;; Word-wrap + markdown block chrome cost more rows than a pure
-         ;; column fold; folding at 3/4 of the real width absorbs that.
-         prose-w
-         (max 1 (quot (* 3 content-w) 4))
+      ;; Word-wrap + markdown block chrome cost more rows than a pure
+      ;; column fold; folding at 3/4 of the real width absorbs that.
+      prose-w
+      (max 1 (quot (* 3 content-w) 4))
 
-         role
-         (:role message)
+      role
+      (:role message)
 
-         trace
-         (:traces message)
+      trace
+      (:traces message)
 
-         text
-         (:text message)]
+      text
+      (:text message)]
 
      (cond
        (= role :user)
@@ -374,131 +396,133 @@
        ;; walker-inserted blank rows that per-line math can't see.
        (long (+ 6 (prose-rows-est text prose-w)))
        (and (= role :assistant) trace)
-       (let [n-iter
-             (long (count trace))
+       (let
+         [n-iter
+          (long (count trace))
 
-             ;; The painter folds code/results at `fill-w` (≈ bubble-w - 6);
-             ;; estimate against a slightly narrower width so rounding lands
-             ;; on the overshoot side.
-             fold-w
-             (max 1 (- bubble-w 8))
+          ;; The painter folds code/results at `fill-w` (≈ bubble-w - 6);
+          ;; estimate against a slightly narrower width so rounding lands
+          ;; on the overshoot side.
+          fold-w
+          (max 1 (- bubble-w 8))
 
-             expanded?
-             (any-details-expanded? message detail-expansions session-id)
+          expanded?
+          (any-details-expanded? message detail-expansions session-id)
 
-             ;; Collapsed-default caps: preview rows + the `+N more` row.
-             peek
-             (long ast/reasoning-preview-line-limit)
+          ;; Collapsed-default caps: preview rows + the `+N more` row.
+          peek
+          (long ast/reasoning-preview-line-limit)
 
-             ;; A collapse only fires when it hides ≥ reasoning-collapse-min-hidden
-             ;; rows; below that the section renders in full. Cap at the
-             ;; largest height a collapsed-or-inline section can paint.
-             cap
-             (+ peek (long ast/reasoning-collapse-min-hidden))
+          ;; A collapse only fires when it hides ≥ reasoning-collapse-min-hidden
+          ;; rows; below that the section renders in full. Cap at the
+          ;; largest height a collapsed-or-inline section can paint.
+          cap
+          (+ peek (long ast/reasoning-collapse-min-hidden))
 
-             section-rows
-             (fn ^long [s]
-               (let [full (prose-rows-est s fold-w)]
-                 (cond (zero? full) 0
-                       expanded? (+ full 3)
-                       :else (+ (min full cap) 3))))
+          section-rows
+          (fn ^long [s]
+            (let [full (prose-rows-est s fold-w)]
+              (cond (zero? full) 0
+                    expanded? (+ full 3)
+                    :else (+ (min full cap) 3))))
 
-             form-rows
-             (long
-               (reduce
-                 (fn [^long acc it]
-                   (+ acc
-                      (long
-                        (reduce
-                          (fn [^long a f]
-                            (let [c
-                                  (:code f)
+          form-rows
+          (long
+            (reduce
+              (fn [^long acc it]
+                (+ acc
+                   (long
+                     (reduce
+                       (fn [^long a f]
+                         (let
+                           [c
+                            (:code f)
 
-                                  cr
-                                  (long (if (and (string? c) (not (str/blank? c)))
-                                          (+ (wrapped-rows-est c fold-w) 2)
-                                          0))
+                            cr
+                            (long (if (and (string? c) (not (str/blank? c)))
+                                    (+ (wrapped-rows-est c fold-w) 2)
+                                    0))
 
-                                  rr
-                                  #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
-                                  (long (section-rows (or (:result-render f) (:result f))))
+                            rr
+                            #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                            (long (section-rows (or (:result-render f) (:result f))))
 
-                                  cardr
-                                  (long (reduce (fn [^long x card]
-                                                  (+ x
-                                                     1
-                                                     #_{:clj-kondo/ignore
-                                                        [:redundant-primitive-coercion]}
-                                                     (long (section-rows (:body card)))))
-                                                0
-                                                (:cards f)))
+                            cardr
+                            (long (reduce (fn [^long x card]
+                                            (+ x
+                                               1
+                                               #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                                               (long (section-rows (:body card)))))
+                                          0
+                                          (:cards f)))
 
-                                  comr
-                                  (long (let [cm (:comment f)]
-                                          (if (and (string? cm) (not (str/blank? cm)))
-                                            (+ (wrapped-rows-est cm fold-w) 2)
-                                            0)))]
+                            comr
+                            (long (let [cm (:comment f)]
+                                    (if (and (string? cm) (not (str/blank? cm)))
+                                      (+ (wrapped-rows-est cm fold-w) 2)
+                                      0)))]
 
-                              (+ a
-                                 cr
-                                 rr
-                                 cardr
-                                 comr
-                                 ;; Error band: pads + caret rows + the headline
-                                 ;; WRAPPED at fill-w — a long provider/exception
-                                 ;; message paints multiple rows, a flat charge
-                                 ;; undershoots. PROVIDER errors additionally paint
-                                 ;; explanation + next-step + facts + two 600-char
-                                 ;; raw trims, all uncollapsed — bound those by the
-                                 ;; trim budget instead of reproducing perr here.
-                                 (long (if-let [err (:error f)]
-                                         (let [data (:data err)
-                                               provider? (and (map? data)
-                                                              (or (:status data)
-                                                                  (:body data)
-                                                                  (:request-id data)
-                                                                  (:request_id data)))]
+                           (+ a
+                              cr
+                              rr
+                              cardr
+                              comr
+                              ;; Error band: pads + caret rows + the headline
+                              ;; WRAPPED at fill-w — a long provider/exception
+                              ;; message paints multiple rows, a flat charge
+                              ;; undershoots. PROVIDER errors additionally paint
+                              ;; explanation + next-step + facts + two 600-char
+                              ;; raw trims, all uncollapsed — bound those by the
+                              ;; trim budget instead of reproducing perr here.
+                              (long
+                                (if-let [err (:error f)]
+                                  (let
+                                    [data (:data err)
+                                     provider? (and (map? data)
+                                                    (or (:status data)
+                                                        (:body data)
+                                                        (:request-id data)
+                                                        (:request_id data)))]
 
-                                           (+ 4
-                                              (prose-rows-est (str (or (:message err) err)) fold-w)
-                                              (if provider?
-                                                (+ 12 (quot (+ 1200 (dec fold-w)) fold-w))
-                                                0)))
-                                         0)))))
-                          0
-                          (:forms it)))))
-                 0
-                 trace))
+                                    (+ 4
+                                       (prose-rows-est (str (or (:message err) err)) fold-w)
+                                       (if provider? (+ 12 (quot (+ 1200 (dec fold-w)) fold-w)) 0)))
+                                  0)))))
+                       0
+                       (:forms it)))))
+              0
+              trace))
 
-             ;; ▸ THINKING accordion: blank + band-top + header + band-gap
-             ;; + peek/full + bottom edge ≈ content + 5 chrome rows. The LIVE
-             ;; `:content-stream` merges into the same band while no form has
-             ;; landed yet — size them together under the same collapse cap.
-             think-rows
-             (long (reduce (fn [^long acc it]
-                             (+ acc
-                                (long (let [live
-                                            (when (empty? (:forms it)) (:content-stream it))
+          ;; ▸ THINKING accordion: blank + band-top + header + band-gap
+          ;; + peek/full + bottom edge ≈ content + 5 chrome rows. The LIVE
+          ;; `:content-stream` merges into the same band while no form has
+          ;; landed yet — size them together under the same collapse cap.
+          think-rows
+          (long (reduce (fn [^long acc it]
+                          (+ acc
+                             (long (let
+                                     [live
+                                      (when (empty? (:forms it)) (:content-stream it))
 
-                                            full
-                                            (+ (prose-rows-est (:thinking it) fold-w)
-                                               (prose-rows-est live fold-w))]
+                                      full
+                                      (+ (prose-rows-est (:thinking it) fold-w)
+                                         (prose-rows-est live fold-w))]
 
-                                        (cond (zero? full) 0
-                                              expanded? (+ full 5)
-                                              :else (+ (min full cap) 5))))))
-                           0
-                           trace))
+                                     (cond (zero? full) 0
+                                           expanded? (+ full 5)
+                                           :else (+ (min full cap) 5))))))
+                        0
+                        trace))
 
-             ;; Per-iteration `:assistant-prose` paints as its OWN full block
-             ;; (never collapsed) between thinking and code+result.
-             prose-rows
-             (long (reduce (fn [^long acc it]
-                             (+ acc
-                                (long (let [r (prose-rows-est (:assistant-prose it) fold-w)]
-                                        (if (pos? r) (+ r 2) 0)))))
-                           0
-                           trace))]
+          ;; Per-iteration `:assistant-prose` paints as its OWN full block
+          ;; (never collapsed) between thinking and code+result.
+          prose-rows
+          (long (reduce (fn [^long acc it]
+                          (+ acc
+                             (long (let [r (prose-rows-est (:assistant-prose it) fold-w)]
+                                     (if (pos? r) (+ r 2) 0)))))
+                        0
+                        trace))]
 
          (long (+ 5          ;; label + footer + note + gap
                   n-iter     ;; iteration headers
@@ -603,38 +627,43 @@
    Non-error messages, cancellation notices, and runs with mixed
    signatures pass through untouched."
   [messages]
-  (let [v
-        (vec messages)
+  (let
+    [v
+     (vec messages)
 
-        n
-        (long (count v))]
+     n
+     (long (count v))]
 
-    (loop [acc
-           (transient [])
+    (loop
+      [acc
+       (transient [])
 
-           i
-           (long 0)]
+       i
+       (long 0)]
 
       (if (>= i n)
         (persistent! acc)
-        (let [head
-              (nth v i)
+        (let
+          [head
+           (nth v i)
 
-              sig
-              (message-error-signature head)]
+           sig
+           (message-error-signature head)]
 
           (if (nil? sig)
             (recur (conj! acc head) (unchecked-inc i))
-            (let [run-end (long (loop [j (unchecked-inc i)]
-                                  (if (and (< j n) (= sig (message-error-signature (nth v j))))
-                                    (recur (unchecked-inc j))
-                                    j)))]
+            (let
+              [run-end (long (loop [j (unchecked-inc i)]
+                               (if (and (< j n) (= sig (message-error-signature (nth v j))))
+                                 (recur (unchecked-inc j))
+                                 j)))]
               (if (= run-end (unchecked-inc i))
                 (recur (conj! acc head) (unchecked-inc i))
-                (let [merged-iters (vec (mapcat :traces (subvec v i run-end)))
-                      merged (-> head
-                                 (assoc :traces merged-iters)
-                                 (assoc ::squashed-run-count (unchecked-subtract run-end i)))]
+                (let
+                  [merged-iters (vec (mapcat :traces (subvec v i run-end)))
+                   merged (-> head
+                              (assoc :traces merged-iters)
+                              (assoc ::squashed-run-count (unchecked-subtract run-end i)))]
 
                   (recur (conj! acc merged) run-end))))))))))
 
@@ -672,53 +701,55 @@
   ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
   ([message ^long bubble-w settings
     {:keys [session-id detail-expansions tail-lines window-start window-num window-total-h]}]
-   (let [show-timestamps?
-         (boolean (get settings :show-timestamps false))
+   (let
+     [show-timestamps?
+      (boolean (get settings :show-timestamps false))
 
-         strip-ts
-         (fn [m]
-           (cond-> m
-             (not show-timestamps?)
-             (dissoc :timestamp)))
+      strip-ts
+      (fn [m]
+        (cond-> m
+          (not show-timestamps?)
+          (dissoc :timestamp)))
 
-         ;; Mid-window fast path parses the message's Markdown projection only
-         ;; for the visible window; no renderer tree is stored on the message.
-         windowed?
-         (and window-start
-              window-num
-              (not (:traces message))
-              (#{:assistant :user} (:role message))
-              (not (str/blank? (:text message))))]
+      ;; Mid-window fast path parses the message's Markdown projection only
+      ;; for the visible window; no renderer tree is stored on the message.
+      windowed?
+      (and window-start
+           window-num
+           (not (:traces message))
+           (#{:assistant :user} (:role message))
+           (not (str/blank? (:text message))))]
 
      (cond windowed?
-           (let [ast
-                 (ast/markdown->ast (:text message))
+           (let
+             [ast
+              (ast/markdown->ast (:text message))
 
-                 content-w
-                 (max 10 (- bubble-w 4))
+              content-w
+              (max 10 (- bubble-w 4))
 
-                 window-lines
-                 (layout/ast->lines-window ast content-w (long window-start) (long window-num))
+              window-lines
+              (layout/ast->lines-window ast content-w (long window-start) (long window-num))
 
-                 ;; Render through the entries adapter for parity with
-                 ;; the non-windowed path: produce sentinel-prefixed
-                 ;; strings the bubble painter expects. We bypass
-                 ;; format-answer-markdown-data's cache because window
-                 ;; opts shift each frame; not worth keying.
-                 entry-strs
-                 (layout/lines->sentinel-strings window-lines {:mode :answer})
+              ;; Render through the entries adapter for parity with
+              ;; the non-windowed path: produce sentinel-prefixed
+              ;; strings the bubble painter expects. We bypass
+              ;; format-answer-markdown-data's cache because window
+              ;; opts shift each frame; not worth keying.
+              entry-strs
+              (layout/lines->sentinel-strings window-lines {:mode :answer})
 
-                 ;; The painter consumes `:prewrapped-lines` as a vec of
-                 ;; sentinel-strings (one per content row) for the
-                 ;; clip-lines-preserving-markers pass. Each entry is
-                 ;; just the string; line-meta starts as nil per row.
-                 prewrapped
-                 (mapv (fn [^String s]
-                         s)
-                       entry-strs)
+              ;; The painter consumes `:prewrapped-lines` as a vec of
+              ;; sentinel-strings (one per content row) for the
+              ;; clip-lines-preserving-markers pass. Each entry is
+              ;; just the string; line-meta starts as nil per row.
+              prewrapped
+              (mapv (fn [^String s]
+                      s)
+                    entry-strs)
 
-                 text-display
-                 (str/join "\n" entry-strs)]
+              text-display
+              (str/join "\n" entry-strs)]
 
              (-> message
                  (assoc :text text-display
@@ -730,43 +761,46 @@
                                                              (long window-start))))})
                  strip-ts))
            (and (= :assistant (:role message)) (:traces message))
-           (let [{:keys [text lines line-meta]} (render/format-answer-with-thinking-data
-                                                  (:text message)
-                                                  (:traces message)
-                                                  bubble-w
-                                                  settings
-                                                  (:confidence message)
-                                                  (= :cancelled (:status message))
-                                                  (cond-> {:session-id session-id
-                                                           :session-turn-id (turn-identity message)
-                                                           :detail-expansions detail-expansions}
-                                                    tail-lines
-                                                    (assoc :tail-lines tail-lines)))]
+           (let
+             [{:keys [text lines line-meta]} (render/format-answer-with-thinking-data
+                                               (:text message)
+                                               (:traces message)
+                                               bubble-w
+                                               settings
+                                               (:confidence message)
+                                               (= :cancelled (:status message))
+                                               (cond->
+                                                 {:session-id session-id
+                                                  :session-turn-id (turn-identity message)
+                                                  :detail-expansions detail-expansions}
+                                                 tail-lines
+                                                 (assoc :tail-lines tail-lines)))]
              (-> message
                  (assoc :text text
                         :prewrapped-lines lines
                         :line-meta line-meta)
                  strip-ts))
-           (#{:assistant :user} (:role message))
-           (let [ast
-                 (ast/markdown->ast (or (:text message) ""))
+           (#{:assistant :user} (:role message)) (let
+                                                   [ast
+                                                    (ast/markdown->ast (or (:text message) ""))
 
-                 {:keys [text lines line-meta]}
-                 (render/format-answer-markdown-data ast
-                                                     bubble-w
-                                                     (cond-> {:session-id session-id
-                                                              :session-turn-id (turn-identity
-                                                                                 message)
-                                                              :detail-expansions detail-expansions
-                                                              :section (:role message)}
-                                                       tail-lines
-                                                       (assoc :tail-lines tail-lines)))]
+                                                    {:keys [text lines line-meta]}
+                                                    (render/format-answer-markdown-data
+                                                      ast
+                                                      bubble-w
+                                                      (cond->
+                                                        {:session-id session-id
+                                                         :session-turn-id (turn-identity message)
+                                                         :detail-expansions detail-expansions
+                                                         :section (:role message)}
+                                                        tail-lines
+                                                        (assoc :tail-lines tail-lines)))]
 
-             (-> message
-                 (assoc :text text
-                        :prewrapped-lines lines
-                        :line-meta line-meta)
-                 strip-ts))
+                                                   (-> message
+                                                       (assoc :text text
+                                                              :prewrapped-lines lines
+                                                              :line-meta line-meta)
+                                                       strip-ts))
            :else (strip-ts message)))))
 
 (defn- project-message-cached
@@ -844,359 +878,361 @@
   [messages bubble-w settings scroll inner-h
    {:keys [progress loading? progress-extra] :or {progress nil loading? false}} &
    [{:keys [session-id detail-expansions prev-offsets]}]]
-  (let [bubble-w
-        (long bubble-w)
+  (let
+    [bubble-w
+     (long bubble-w)
 
-        inner-h
-        (long inner-h)
+     inner-h
+     (long inner-h)
 
-        ;; Captured BEFORE the anchoring rebind of `scroll` below so
-        ;; the return map can tell auto-bottom (nil, never persisted)
-        ;; apart from a concrete offset (persisted back so the input
-        ;; thread's next wheel math runs against the anchored value).
-        scroll-given?
-        (some? scroll)
+     ;; Captured BEFORE the anchoring rebind of `scroll` below so
+     ;; the return map can tell auto-bottom (nil, never persisted)
+     ;; apart from a concrete offset (persisted back so the input
+     ;; thread's next wheel math runs against the anchored value).
+     scroll-given?
+     (some? scroll)
 
-        detail-expansions
-        detail-expansions
+     detail-expansions
+     detail-expansions
 
-        ;; Pre-pass: squash maximal runs of consecutive assistant
-        ;; messages that are made up entirely of the same provider
-        ;; error. The downstream iteration collapser then renders the
-        ;; merged bubble as one `ERROR x N` row instead of N separate
-        ;; identical bubbles.
-        messages
-        (squash-cross-message-errors messages)
+     ;; Pre-pass: squash maximal runs of consecutive assistant
+     ;; messages that are made up entirely of the same provider
+     ;; error. The downstream iteration collapser then renders the
+     ;; merged bubble as one `ERROR x N` row instead of N separate
+     ;; identical bubbles.
+     messages
+     (squash-cross-message-errors messages)
 
-        n
-        (long (count messages))
+     n
+     (long (count messages))
 
-        ;; Pass 1 ── sticky-real height if we've measured this
-        ;; message before, otherwise the cheap estimate. Identity-
-        ;; keyed cache means once a message has been visible (or
-        ;; touched by `pre-warm!`) we keep its real height forever
-        ;; - no more `total-h` jitter on scroll, no more
-        ;; click-to-position landing in the wrong row.
-        est
-        (mapv (fn [idx m]
-                (or (height-cache-get m bubble-w settings detail-expansions session-id)
-                    (estimated-height-cached messages
-                                             settings
-                                             bubble-w
-                                             idx
-                                             m
-                                             detail-expansions
-                                             session-id)))
-              (range n)
-              messages)
+     ;; Pass 1 ── sticky-real height if we've measured this
+     ;; message before, otherwise the cheap estimate. Identity-
+     ;; keyed cache means once a message has been visible (or
+     ;; touched by `pre-warm!`) we keep its real height forever
+     ;; - no more `total-h` jitter on scroll, no more
+     ;; click-to-position landing in the wrong row.
+     est
+     (mapv
+       (fn [idx m]
+         (or
+           (height-cache-get m bubble-w settings detail-expansions session-id)
+           (estimated-height-cached messages settings bubble-w idx m detail-expansions session-id)))
+       (range n)
+       messages)
 
-        est-off
-        (vec (reductions + 0 (map long est)))
+     est-off
+     (vec (reductions + 0 (map long est)))
 
-        est-tot
-        (long (peek est-off))
+     est-tot
+     (long (peek est-off))
 
-        ;; ── Scroll anchoring ──────────────────────────────────────
-        ;; `scroll` is an ABSOLUTE row offset. Off-screen heights are
-        ;; estimates until a bubble is measured (visible) or warmed;
-        ;; trace-bubble estimates systematically OVER-shoot, so as the
-        ;; user scrolls UP into never-measured bubbles `total-h`
-        ;; shrinks by a large amount and a fixed `scroll` suddenly
-        ;; points at a different turn — the viewport (and scrollbar
-        ;; thumb) lurch, worst near the top of a long reopened session
-        ;; where the most unmeasured content gets corrected at once.
-        ;;
-        ;; Fix: pin the scroll to the message that was at the top of
-        ;; the viewport last frame. Given the PREVIOUS frame's
-        ;; cumulative `offsets`, find that anchor message and shift
-        ;; `scroll` by however much the content ABOVE it changed height
-        ;; between frames (`est-off[anchor] - prev-off[anchor]`). The
-        ;; anchor message then stays visually put regardless of how the
-        ;; off-screen estimate ↔ real corrections move `total-h`.
-        ;;
-        ;; nil scroll = auto-bottom: never anchored (always tracks the
-        ;; latest message). Guarded on offsets-vec shape so an append
-        ;; (n changed) skips anchoring and falls through to the raw
-        ;; value rather than mis-indexing.
-        anchored
-        (when (and (some? scroll)
-                   (pos? n)
-                   (vector? prev-offsets)
-                   (= (long (count prev-offsets)) (inc n)))
-          (let [s
-                (long scroll)
+     ;; ── Scroll anchoring ──────────────────────────────────────
+     ;; `scroll` is an ABSOLUTE row offset. Off-screen heights are
+     ;; estimates until a bubble is measured (visible) or warmed;
+     ;; trace-bubble estimates systematically OVER-shoot, so as the
+     ;; user scrolls UP into never-measured bubbles `total-h`
+     ;; shrinks by a large amount and a fixed `scroll` suddenly
+     ;; points at a different turn — the viewport (and scrollbar
+     ;; thumb) lurch, worst near the top of a long reopened session
+     ;; where the most unmeasured content gets corrected at once.
+     ;;
+     ;; Fix: pin the scroll to the message that was at the top of
+     ;; the viewport last frame. Given the PREVIOUS frame's
+     ;; cumulative `offsets`, find that anchor message and shift
+     ;; `scroll` by however much the content ABOVE it changed height
+     ;; between frames (`est-off[anchor] - prev-off[anchor]`). The
+     ;; anchor message then stays visually put regardless of how the
+     ;; off-screen estimate ↔ real corrections move `total-h`.
+     ;;
+     ;; nil scroll = auto-bottom: never anchored (always tracks the
+     ;; latest message). Guarded on offsets-vec shape so an append
+     ;; (n changed) skips anchoring and falls through to the raw
+     ;; value rather than mis-indexing.
+     anchored
+     (when
+       (and (some? scroll) (pos? n) (vector? prev-offsets) (= (long (count prev-offsets)) (inc n)))
+       (let
+         [s
+          (long scroll)
 
-                idx
-                (long (loop [i 0]
-                        (cond (>= i (dec n)) (dec n)
-                              (> (long (nth prev-offsets (inc i))) s) i
-                              :else (recur (inc i)))))
+          idx
+          (long (loop [i 0]
+                  (cond (>= i (dec n)) (dec n)
+                        (> (long (nth prev-offsets (inc i))) s) i
+                        :else (recur (inc i)))))
 
-                delta
-                (- (long (nth est-off idx)) (long (nth prev-offsets idx)))]
+          delta
+          (- (long (nth est-off idx)) (long (nth prev-offsets idx)))]
 
-            (max 0 (+ s delta))))
+         (max 0 (+ s delta))))
 
-        scroll
-        (if (some? anchored) anchored scroll)
+     scroll
+     (if (some? anchored) anchored scroll)
 
-        scroll-1
-        (long (or scroll (max 0 (- est-tot inner-h))))
+     scroll-1
+     (long (or scroll (max 0 (- est-tot inner-h))))
 
-        eff-1
-        (long (min scroll-1 (max 0 (- est-tot inner-h))))
+     eff-1
+     (long (min scroll-1 (max 0 (- est-tot inner-h))))
 
-        ;; Pass 2 ── project + REAL height for candidates only.
-        ;; Loading bubble gets live progress only if it is already visible.
-        loading-last-idx
-        (when (and loading? (pos? n) (= :assistant (:role (peek messages)))) (long (dec n)))
+     ;; Pass 2 ── project + REAL height for candidates only.
+     ;; Loading bubble gets live progress only if it is already visible.
+     loading-last-idx
+     (when (and loading? (pos? n) (= :assistant (:role (peek messages)))) (long (dec n)))
 
-        ;; Per-message projection extracted so pass-2 AND the recovery
-        ;; pass-3 (below) can reuse the same logic. `eff` is the
-        ;; effective scroll currently in play; it only matters for the
-        ;; bottom-locked tail-walker shortcut on the live bubble.
-        project-idx!
-        (fn [^long i ^long eff]
-          (let [m
-                (nth messages i)
+     ;; Per-message projection extracted so pass-2 AND the recovery
+     ;; pass-3 (below) can reuse the same logic. `eff` is the
+     ;; effective scroll currently in play; it only matters for the
+     ;; bottom-locked tail-walker shortcut on the live bubble.
+     project-idx!
+     (fn [^long i ^long eff]
+       (let
+         [m
+          (nth messages i)
 
-                loading-bubble?
-                (= i loading-last-idx)
+          loading-bubble?
+          (= i loading-last-idx)
 
-                pm
-                (if loading-bubble?
-                  (let [{:keys [text lines line-meta]} (render/progress->lines-data
-                                                         progress
-                                                         bubble-w
-                                                         settings
-                                                         (assoc progress-extra
-                                                           :session-id session-id
-                                                           ;; Live progress bubble must use the
-                                                           ;; same turn key the completed answer
-                                                           ;; will use a moment later; otherwise
-                                                           ;; the REASONING / <details> toggle
-                                                           ;; node-ids change at the live -> done
-                                                           ;; flip and the user's expansion state
-                                                           ;; resets to its default. See
-                                                           ;; `turn-identity` for the precedence.
-                                                           :session-turn-id (turn-identity m)
-                                                           :detail-expansions detail-expansions))]
-                    (assoc m
-                      :text text
-                      :prewrapped-lines lines
-                      :line-meta line-meta))
-                  ;; Three projection paths for the LAST bubble:
-                  ;;   1. Bottom-locked (auto-scroll OR scroll
-                  ;;      clamped to max): tail-walker (A4/A6).
-                  ;;   2. Genuine mid-scroll: full render — the
-                  ;;      old `window-start` window-walker hook is
-                  ;;      kept nil (item-window scrolling never
-                  ;;      activated in practice and confused the
-                  ;;      live-streaming visibility set).
-                  ;;   3. Anything else (older scrollback bubble,
-                  ;;      etc.): full render.
-                  (let [last?
-                        (= i (long (dec n)))
+          pm
+          (if loading-bubble?
+            (let
+              [{:keys [text lines line-meta]} (render/progress->lines-data
+                                                progress
+                                                bubble-w
+                                                settings
+                                                (assoc progress-extra
+                                                  :session-id session-id
+                                                  ;; Live progress bubble must use the
+                                                  ;; same turn key the completed answer
+                                                  ;; will use a moment later; otherwise
+                                                  ;; the REASONING / <details> toggle
+                                                  ;; node-ids change at the live -> done
+                                                  ;; flip and the user's expansion state
+                                                  ;; resets to its default. See
+                                                  ;; `turn-identity` for the precedence.
+                                                  :session-turn-id (turn-identity m)
+                                                  :detail-expansions detail-expansions))]
+              (assoc m
+                :text text
+                :prewrapped-lines lines
+                :line-meta line-meta))
+            ;; Three projection paths for the LAST bubble:
+            ;;   1. Bottom-locked (auto-scroll OR scroll
+            ;;      clamped to max): tail-walker (A4/A6).
+            ;;   2. Genuine mid-scroll: full render — the
+            ;;      old `window-start` window-walker hook is
+            ;;      kept nil (item-window scrolling never
+            ;;      activated in practice and confused the
+            ;;      live-streaming visibility set).
+            ;;   3. Anything else (older scrollback bubble,
+            ;;      etc.): full render.
+            (let
+              [last?
+               (= i (long (dec n)))
 
-                        max-scroll
-                        (max 0 (- est-tot inner-h))
+               max-scroll
+               (max 0 (- est-tot inner-h))
 
-                        bottom-locked?
-                        (and last? (= eff max-scroll))
+               bottom-locked?
+               (and last? (= eff max-scroll))
 
-                        tail-n
-                        (when bottom-locked? (long (* 2 inner-h)))]
+               tail-n
+               (when bottom-locked? (long (* 2 inner-h)))]
 
-                    (if last?
-                      (project-message m
-                                       bubble-w
-                                       settings
-                                       (cond-> {:session-id session-id
-                                                :detail-expansions detail-expansions}
-                                         tail-n
-                                         (assoc :tail-lines tail-n)))
-                      (project-message-cached m bubble-w settings detail-expansions session-id))))
+              (if last?
+                (project-message m
+                                 bubble-w
+                                 settings
+                                 (cond->
+                                   {:session-id session-id :detail-expansions detail-expansions}
+                                   tail-n
+                                   (assoc :tail-lines tail-n)))
+                (project-message-cached m bubble-w settings detail-expansions session-id))))
 
-                pm
-                (with-turn-separator pm messages settings i)
+          pm
+          (with-turn-separator pm messages settings i)
 
-                window-total-h
-                (some-> pm
-                        :lines-window
-                        :total-h
-                        long)
+          window-total-h
+          (some-> pm
+                  :lines-window
+                  :total-h
+                  long)
 
-                real-h
-                (long (or window-total-h (render/bubble-height pm bubble-w)))]
+          real-h
+          (long (or window-total-h (render/bubble-height pm bubble-w)))]
 
-            ;; Pin the real height in the sticky cache for the raw
-            ;; message identity. Skip live progress and windowed
-            ;; slices: neither is a full stable bubble measurement.
-            (when (and (not loading-bubble?) (nil? window-total-h))
-              (height-cache-put! m bubble-w settings detail-expansions session-id real-h))
-            {:idx i :projected pm :height real-h}))
+         ;; Pin the real height in the sticky cache for the raw
+         ;; message identity. Skip live progress and windowed
+         ;; slices: neither is a full stable bubble measurement.
+         (when (and (not loading-bubble?) (nil? window-total-h))
+           (height-cache-put! m bubble-w settings detail-expansions session-id real-h))
+         {:idx i :projected pm :height real-h}))
 
-        result
-        (if (nil? scroll)
-          ;; ── Auto-bottom: stable real-tail back-walk ──────────────────
-          ;; Pin the visible tail from REAL heights, walking UP from the
-          ;; last message until `inner-h` rows are covered (plus the one
-          ;; partially-visible message that crosses the top edge). The
-          ;; painted `:top`s are differences of real tail heights — the
-          ;; estimate terms for everything above cancel out — so the tail
-          ;; sits rock-still frame-to-frame even while a fast-growing live
-          ;; bubble's cheap estimate undershoots by 10–100×. That kills the
-          ;; eff lurch (the old eff-1→eff-2 two-phase correction) that made
-          ;; the view flicker right as a running op flips to success/error.
-          ;; `total-h'` still folds in estimates for the off-screen messages
-          ;; ABOVE — but those only drive the scrollbar thumb, never the
-          ;; pinned tail.
-          (let [tail
-                (loop [i
-                       (dec n)
+     result
+     (if (nil? scroll)
+       ;; ── Auto-bottom: stable real-tail back-walk ──────────────────
+       ;; Pin the visible tail from REAL heights, walking UP from the
+       ;; last message until `inner-h` rows are covered (plus the one
+       ;; partially-visible message that crosses the top edge). The
+       ;; painted `:top`s are differences of real tail heights — the
+       ;; estimate terms for everything above cancel out — so the tail
+       ;; sits rock-still frame-to-frame even while a fast-growing live
+       ;; bubble's cheap estimate undershoots by 10–100×. That kills the
+       ;; eff lurch (the old eff-1→eff-2 two-phase correction) that made
+       ;; the view flicker right as a running op flips to success/error.
+       ;; `total-h'` still folds in estimates for the off-screen messages
+       ;; ABOVE — but those only drive the scrollbar thumb, never the
+       ;; pinned tail.
+       (let
+         [tail
+          (loop
+            [i
+             (dec n)
 
-                       acc-h
-                       0
+             acc-h
+             0
 
-                       acc
-                       []]
+             acc
+             []]
 
-                  (if (neg? i)
-                    acc
-                    (let [pj
-                          (project-idx! i eff-1)
+            (if (neg? i)
+              acc
+              (let
+                [pj
+                 (project-idx! i eff-1)
 
-                          acc'
-                          (cons pj acc)
+                 acc'
+                 (cons pj acc)
 
-                          acc-h'
-                          (+ acc-h (long (:height pj)))]
+                 acc-h'
+                 (+ acc-h (long (:height pj)))]
 
-                      (if (>= acc-h' inner-h) acc' (recur (dec i) acc-h' acc')))))
+                (if (>= acc-h' inner-h) acc' (recur (dec i) acc-h' acc')))))
 
-                heights'
-                (reduce (fn [hs {:keys [^long idx ^long height]}]
-                          (assoc-vec hs idx height 0))
-                        est
-                        tail)
+          heights'
+          (reduce (fn [hs {:keys [^long idx ^long height]}]
+                    (assoc-vec hs idx height 0))
+                  est
+                  tail)
 
-                offsets'
-                (vec (reductions + 0 (map long heights')))
+          offsets'
+          (vec (reductions + 0 (map long heights')))
 
-                total-h'
-                (long (peek offsets'))
+          total-h'
+          (long (peek offsets'))
 
-                eff
-                (long (max 0 (- total-h' inner-h)))
+          eff
+          (long (max 0 (- total-h' inner-h)))
 
-                visible-set
-                (mapv (fn [{:keys [^long idx ^long height projected]}]
-                        {:idx idx
-                         :height height
-                         :projected projected
-                         :top (- (long (nth offsets' idx)) eff)})
-                      tail)]
+          visible-set
+          (mapv
+            (fn [{:keys [^long idx ^long height projected]}]
+              {:idx idx :height height :projected projected :top (- (long (nth offsets' idx)) eff)})
+            tail)]
 
-            {:total-h total-h'
-             :eff-scroll eff
-             :heights heights'
-             :offsets offsets'
-             :visible visible-set})
-          ;; ── Explicit scroll: estimate-anchored multi-pass ────────────
-          (let [;; Pass 1b ── candidate visible idxs from estimates. ONLY the
-                ;; explicit-scroll path needs them; auto-bottom uses the real-
-                ;; tail back-walk and discarded these, so computing them in the
-                ;; outer let made every live/auto-bottom tick pay an O(n)
-                ;; `filterv`. Scoped here → skipped on the hot streaming path.
-                cand-idxs
-                (filterv (fn [^long i]
-                           (let [top
-                                 (- (long (nth est-off i)) eff-1)
+         {:total-h total-h'
+          :eff-scroll eff
+          :heights heights'
+          :offsets offsets'
+          :visible visible-set})
+       ;; ── Explicit scroll: estimate-anchored multi-pass ────────────
+       (let
+         [;; Pass 1b ── candidate visible idxs from estimates. ONLY the
+          ;; explicit-scroll path needs them; auto-bottom uses the real-
+          ;; tail back-walk and discarded these, so computing them in the
+          ;; outer let made every live/auto-bottom tick pay an O(n)
+          ;; `filterv`. Scoped here → skipped on the hot streaming path.
+          cand-idxs
+          (filterv (fn [^long i]
+                     (let
+                       [top
+                        (- (long (nth est-off i)) eff-1)
 
-                                 h
-                                 (long (nth est i))]
+                        h
+                        (long (nth est i))]
 
-                             (visible? top h inner-h)))
-                  (range n))
+                       (visible? top h inner-h)))
+            (range n))
 
-                projected
-                (mapv #(project-idx! % eff-1) cand-idxs)
+          projected
+          (mapv #(project-idx! % eff-1) cand-idxs)
 
-                ;; Refine heights vec with real measurements.
-                heights'
-                (reduce (fn [hs {:keys [^long idx ^long height]}]
-                          (assoc-vec hs idx height 0))
-                        est
-                        projected)
+          ;; Refine heights vec with real measurements.
+          heights'
+          (reduce (fn [hs {:keys [^long idx ^long height]}]
+                    (assoc-vec hs idx height 0))
+                  est
+                  projected)
 
-                offsets'
-                (vec (reductions + 0 (map long heights')))
+          offsets'
+          (vec (reductions + 0 (map long heights')))
 
-                total-h'
-                (long (peek offsets'))
+          total-h'
+          (long (peek offsets'))
 
-                ;; Re-clamp against the REAL `total-h'`, not the pass-1
-                ;; `eff-1`. When estimates undershoot the real total,
-                ;; max-scroll grows in pass-2 - piping `eff-1` through `min`
-                ;; here would pin the user above the true bottom.
-                eff-2
-                (long (max 0 (min (long scroll) (max 0 (- total-h' inner-h)))))
+          ;; Re-clamp against the REAL `total-h'`, not the pass-1
+          ;; `eff-1`. When estimates undershoot the real total,
+          ;; max-scroll grows in pass-2 - piping `eff-1` through `min`
+          ;; here would pin the user above the true bottom.
+          eff-2
+          (long (max 0 (min (long scroll) (max 0 (- total-h' inner-h)))))
 
-                ;; Pass 3 ── recovery for messages visible at the refined
-                ;; `eff-2` but missed at the cheap `eff-1`. A stable bubble
-                ;; whose interval intersects the viewport at `eff-2` but not
-                ;; `eff-1` would otherwise never project → blink out.
-                projected-by-idx
-                (into {} (map (juxt :idx identity) projected))
+          ;; Pass 3 ── recovery for messages visible at the refined
+          ;; `eff-2` but missed at the cheap `eff-1`. A stable bubble
+          ;; whose interval intersects the viewport at `eff-2` but not
+          ;; `eff-1` would otherwise never project → blink out.
+          projected-by-idx
+          (into {} (map (juxt :idx identity) projected))
 
-                missing-idxs
-                (vec (for [^long i
-                           (range n)
+          missing-idxs
+          (vec (for
+                 [^long i
+                  (range n)
 
-                           :let [top
-                                 (- (long (nth offsets' i)) eff-2)
+                  :let [top
+                        (- (long (nth offsets' i)) eff-2)
 
-                                 height
-                                 (long (nth heights' i))]
-                           :when (and (visible? top height inner-h)
-                                      (not (contains? projected-by-idx i)))]
+                        height
+                        (long (nth heights' i))]
+                  :when (and (visible? top height inner-h) (not (contains? projected-by-idx i)))]
 
-                       i))
+                 i))
 
-                extra-projected
-                (mapv #(project-idx! % eff-2) missing-idxs)
+          extra-projected
+          (mapv #(project-idx! % eff-2) missing-idxs)
 
-                projected-all
-                (into projected extra-projected)
+          projected-all
+          (into projected extra-projected)
 
-                heights''
-                (reduce (fn [hs {:keys [^long idx ^long height]}]
-                          (assoc-vec hs idx height 0))
-                        heights'
-                        extra-projected)
+          heights''
+          (reduce (fn [hs {:keys [^long idx ^long height]}]
+                    (assoc-vec hs idx height 0))
+                  heights'
+                  extra-projected)
 
-                offsets''
-                (if (seq extra-projected) (vec (reductions + 0 (map long heights''))) offsets')
+          offsets''
+          (if (seq extra-projected) (vec (reductions + 0 (map long heights''))) offsets')
 
-                total-h''
-                (long (peek offsets''))
+          total-h''
+          (long (peek offsets''))
 
-                eff-3
-                (long (max 0 (min (long scroll) (max 0 (- total-h'' inner-h)))))
+          eff-3
+          (long (max 0 (min (long scroll) (max 0 (- total-h'' inner-h)))))
 
-                visible-set
-                (mapv (fn [{:keys [^long idx ^long height projected]}]
-                        {:idx idx
-                         :height height
-                         :projected projected
-                         :top (- (long (nth offsets'' idx)) eff-3)})
-                      projected-all)]
+          visible-set
+          (mapv (fn [{:keys [^long idx ^long height projected]}]
+                  {:idx idx
+                   :height height
+                   :projected projected
+                   :top (- (long (nth offsets'' idx)) eff-3)})
+                projected-all)]
 
-            {:total-h total-h''
-             :eff-scroll eff-3
-             :heights heights''
-             :offsets offsets''
-             :visible visible-set}))]
+         {:total-h total-h''
+          :eff-scroll eff-3
+          :heights heights''
+          :offsets offsets''
+          :visible visible-set}))]
 
     {:total-h (:total-h result)
      :eff-scroll (:eff-scroll result)
@@ -1244,20 +1280,21 @@
   ;; `chrome+lines+1` while `estimated-height` can undershoot
   ;; by 1 for short prompts. Skipping users means total-h drifts the
   ;; first time they scroll into view.
-  (let [m
-        (nth messages idx)
+  (let
+    [m
+     (nth messages idx)
 
-        pm
-        (project-message m
-                         bubble-w
-                         settings
-                         {:session-id session-id :detail-expansions detail-expansions})
+     pm
+     (project-message m
+                      bubble-w
+                      settings
+                      {:session-id session-id :detail-expansions detail-expansions})
 
-        pm
-        (with-turn-separator pm messages settings idx)
+     pm
+     (with-turn-separator pm messages settings idx)
 
-        h
-        (long (render/bubble-height pm bubble-w))]
+     h
+     (long (render/bubble-height pm bubble-w))]
 
     (height-cache-put! m bubble-w settings detail-expansions session-id h)
     h))
@@ -1279,32 +1316,34 @@
    Returns the number of warmed messages. Safe on empty input."
   ([messages bubble-w settings] (pre-warm-recent! messages bubble-w settings nil))
   ([messages bubble-w settings {:keys [session-id detail-expansions] :as opts}]
-   (let [tail-count*
-         (long (or (:count opts) 16))
+   (let
+     [tail-count*
+      (long (or (:count opts) 16))
 
-         tail-count
-         (if (neg? tail-count*) 0 tail-count*)
+      tail-count
+      (if (neg? tail-count*) 0 tail-count*)
 
-         budget-ms
-         (long (if (contains? opts :budget-ms) (or (:budget-ms opts) 0) 120))
+      budget-ms
+      (long (if (contains? opts :budget-ms) (or (:budget-ms opts) 0) 120))
 
-         n
-         (long (count messages))
+      n
+      (long (count messages))
 
-         bubble-w
-         (long bubble-w)
+      bubble-w
+      (long bubble-w)
 
-         start-idx
-         (long (max 0 (- n tail-count)))
+      start-idx
+      (long (max 0 (- n tail-count)))
 
-         deadline-ns
-         (when-not (neg? budget-ms) (+ (System/nanoTime) (* 1000000 budget-ms)))]
+      deadline-ns
+      (when-not (neg? budget-ms) (+ (System/nanoTime) (* 1000000 budget-ms)))]
 
-     (loop [i
-            (dec n)
+     (loop
+       [i
+        (dec n)
 
-            warmed
-            0]
+        warmed
+        0]
 
        (if (or (< i start-idx) (and (some? deadline-ns) (>= (System/nanoTime) (long deadline-ns))))
          warmed
@@ -1341,45 +1380,43 @@
   ^Thread [messages bubble-w settings & [{:keys [session-id detail-expansions on-warm]}]]
   (let [n (long (count messages))]
     (when (pos? n)
-      (let [bubble-w (long bubble-w)
-            warm-bump-every 8
-            on-warm (when (fn? on-warm) on-warm)
-            fire-warm! (fn []
-                         (when on-warm (try (on-warm) (catch Throwable _ nil))))
-            t (Thread.
-                ^Runnable
-                (fn []
-                  (try (loop [i (dec n)
-                              since-bump 0]
+      (let
+        [bubble-w (long bubble-w)
+         warm-bump-every 8
+         on-warm (when (fn? on-warm) on-warm)
+         fire-warm! (fn []
+                      (when on-warm (try (on-warm) (catch Throwable _ nil))))
+         t
+         (Thread.
+           ^Runnable
+           (fn []
+             (try
+               (loop
+                 [i (dec n)
+                  since-bump 0]
 
-                         (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
-                           (warm-message-height! messages
-                                                 i
-                                                 bubble-w
-                                                 settings
-                                                 session-id
-                                                 detail-expansions)
-                           (if (>= (inc since-bump) warm-bump-every)
-                             (do (fire-warm!) (recur (dec i) 0))
-                             (recur (dec i) (inc since-bump)))))
-                       ;; Final settle: ensure the LAST batch (< warm-bump-every
-                       ;; bubbles) also triggers one re-layout so total-h reaches
-                       ;; its terminal value. Skipped on interrupt below.
-                       (fire-warm!)
-                       (catch InterruptedException _
-                         ;; Cooperative cancellation - nothing to do.
-                         nil)
-                       (catch Throwable t
-                         ;; Pre-warming must NEVER bring the TUI down.
-                         ;; Swallow + lose silently; the next layout
-                         ;; pass will pay the un-warmed cost itself.
-                         (try (require 'taoensso.telemere)
-                              ((resolve 'taoensso.telemere/log!)
-                                :warn
-                                (str "vis-channel-tui pre-warm threw: "
-                                     (or (ex-message t) (str t))))
-                              (catch Throwable _ nil)))))
-                "vis-channel-tui-prewarm")]
+                 (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
+                   (warm-message-height! messages i bubble-w settings session-id detail-expansions)
+                   (if (>= (inc since-bump) warm-bump-every)
+                     (do (fire-warm!) (recur (dec i) 0))
+                     (recur (dec i) (inc since-bump)))))
+               ;; Final settle: ensure the LAST batch (< warm-bump-every
+               ;; bubbles) also triggers one re-layout so total-h reaches
+               ;; its terminal value. Skipped on interrupt below.
+               (fire-warm!)
+               (catch InterruptedException _
+                 ;; Cooperative cancellation - nothing to do.
+                 nil)
+               (catch Throwable t
+                 ;; Pre-warming must NEVER bring the TUI down.
+                 ;; Swallow + lose silently; the next layout
+                 ;; pass will pay the un-warmed cost itself.
+                 (try (require 'taoensso.telemere)
+                      ((resolve 'taoensso.telemere/log!)
+                        :warn
+                        (str "vis-channel-tui pre-warm threw: " (or (ex-message t) (str t))))
+                      (catch Throwable _ nil)))))
+           "vis-channel-tui-prewarm")]
 
         (.setDaemon t true)
         (.setPriority t (max Thread/MIN_PRIORITY (dec Thread/NORM_PRIORITY)))

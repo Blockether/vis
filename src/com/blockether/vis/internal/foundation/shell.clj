@@ -1323,22 +1323,8 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
   (if (toggles/enabled? :shell/enabled)
     (str/join
       "\n"
-      ["Shell layer ENABLED. To run any command / build / test, call shell_run(...) — it returns a dict {exit, stdout, stderr, ...}. The callable is `shell_run`, NOT `shell` (plain `shell(...)` does not exist). Python subprocess.run / subprocess.Popen / os.system ALSO work (bridged to this tool — Popen runs in the BACKGROUND like shell_bg), but shell_run / shell_bg are cleaner — no exception dance."
-       "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
-       "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
-       "  r[\"stdout\"] always; r.get(\"exit\") / r.get(\"stderr\") / r.get(\"timed_out\") — optional keys ship only when meaningful; non-zero exit is DATA: read it, don't treat it as a tool failure."
-       "  NARROW for convenience, not out of fear: shell_run / shell_logs hand back the WHOLE output, so you're never forced to shrink it — narrow it whichever way is handy, a python_execution comprehension (e.g. [l for l in r[\"stdout\"].splitlines() if \"FAIL\" in l]) OR a shell locator (`| grep` / `rg`). The only real sins: pasting the raw dump straight back, or assuming you can't see the rest."
-       "  Long-running / never-exits-on-its-own process (a server, file watcher, `tail -f`, a REPL/nREPL, any `--watch`/`serve`/`dev`)? It MUST go to shell_bg — session RESOURCES, no timeout:"
-       "  ANTI-PATTERN: do NOT background it inside shell_run with `nohup … &` / trailing `&` / `disown` — that orphans the process (untracked, no captured logs, not stoppable, and shell_run still blocks on the pipe). shell_bg(id, cmd) is the ONLY correct way to background."
-       "  (Clojure nREPL specifically: prefer managed repl_start(\"clojure\") over shell_bg. Use shell_bg only for a bespoke launcher.)"
-       "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see resources)"
-       "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
-       "  shell_logs(id, 2000) hands you the whole retained buffer (lines are [seq, text] pairs) — same deal: narrow in python or grep, e.g. [t for _, t in shell_logs(id, 2000)[\"lines\"] if re.search(pat, t)]."
-       "  shell_send(\"dev-server\", \"y\")                       # type into its stdin: interactive prompts, REPLs, y/N (enter submits)"
-       "  Human must finish it (browser OAuth)? Tell the user: `vis ext shell attach <id>` joins the LIVE terminal in their own shell (Ctrl-] detaches, child keeps running). The shell_bg result carries the ready `attach` command."
-       "  resource_stop(\"dev-server\")                         # the ONE stop path (also discards logs)"
-       "  Prefer cat/ls/rg/patch/write for file work — shell_run never replaces them."
-       "  Commands run inside the workspace root only."])
+      ["Shell enabled. Use `shell_run` for commands that exit; `shell_bg` for servers, watchers, or interactive/long-running processes; `shell_logs` to inspect them; `resource_stop` to stop them."
+       "Never hide background work with `&`, `nohup`, or `disown`. Prefer file/editing tools for file work. Use `doc(name)` for exact contracts."])
     ""))
 
 (defn shell-attach-command

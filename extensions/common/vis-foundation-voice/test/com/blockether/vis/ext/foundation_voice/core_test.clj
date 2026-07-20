@@ -189,8 +189,9 @@
         (expect (re-find #"canonical final answer as plain text" prompt))
         (expect (re-find #"saved to the session database" prompt))
         (expect (re-find #"manager update" prompt))
-        (expect (re-find #"do not include extra trails" prompt))
-        (expect (re-find #"do not read code aloud" prompt))))
+        (expect (re-find #"No tables" prompt))
+        (expect (re-find #"code blocks" prompt))
+        (expect (< (count prompt) 500))))
   (it "mounts voice model commands under vis extensions voice"
       (let [cli (-> voice/voice-extension
                     :ext/cli

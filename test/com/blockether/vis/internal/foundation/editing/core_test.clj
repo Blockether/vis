@@ -351,16 +351,14 @@
       (expect (string/includes? @editing/editing-prompt "ls"))
       (expect (string/includes? @editing/editing-prompt "cat"))
       nil)
-  (it "uses one compact Python-first five-step editing workflow"
+  (it "uses one compact routing table and leaves contracts in doc"
       (let [prompt (editing/available-editing-prompt)]
-        (doseq [step ["1. EXECUTE" "2. LOCATE + INSPECT" "3. EDIT THE MATCHING SCENARIO"
-                      "4. RECOVER FROM REFUSAL" "5. VERIFY"]]
-          (expect (string/includes? prompt step)))
-        (expect (string/includes? prompt "One simple operation → call its native tool directly"))
-        (expect (string/includes? prompt "Two or more calls"))
-        (expect (string/includes? prompt "use python_execution"))
-        (expect (string/includes? prompt "| Scenario | Route |"))
-        (expect (< (count prompt) 3000)))))
+        (expect (string/includes? prompt "EDITING ROUTES"))
+        (expect (string/includes? prompt "| Target | Route |"))
+        (expect (string/includes? prompt "doc(name)"))
+        (expect (not (string/includes? prompt "1. EXECUTE")))
+        (expect (not (string/includes? prompt "5. VERIFY")))
+        (expect (< (count prompt) 1000)))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
     ;; The classification table + presentation map live in

@@ -177,8 +177,9 @@
     "  `session[\"resources\"][\"repls\"][language][dir]` (`\".\"` is root):\n"
     "  `up` → reuse; absent/down/failed → start; `starting` → recheck;\n"
     "  `unresponsive` → restart.\n"
-    "- Keep managed REPLs across turns; host teardown stops them. External REPLs\n"
-    "  are user-owned: attach/detach, never kill.\n\n"
+    "- Reuse managed REPLs while work is active. After the requested work is verified,\n"
+    "  stop each managed REPL you started with `repl_stop(id)`. External REPLs are\n"
+    "  user-owned: attach/detach, never kill.\n\n"
     "## 3. Inspect\n"
     "- Inspect repository work; answer knowledge directly.\n"
     "- For bugs, reproduce before editing when feasible. Prefer a live REPL; else the\n"
@@ -401,14 +402,10 @@
               (str "Project rules from "
                    (if multi?
                      (str (count files)
-                          " stacked guidance files — "
-                          "user-global first, then each ancestor directory, "
-                          "then the workspace root, then any added folders. NEARER (later) files "
-                          "override earlier ones on conflict.")
+                          " stacked guidance files, broadest first; "
+                          "later/nearer files override earlier ones.")
                      (str (agents/origin-label (first files)) " (" (:path (first files)) ")."))
-                   " These are PROJECT-OWNED instructions; honor them "
-                   "alongside CORE rules. On conflict with CORE engine\n"
-                   "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")
+                   " Honor them with CORE rules; on conflict, CORE wins.")
 
               body
               (str/join

@@ -603,20 +603,12 @@
    (vis/symbol #'list-evidence {:before-fn inject-env :tag :observation :arglists '([] [opts])})
    (vis/symbol #'run-evidence {:before-fn inject-env :tag :mutation :arglists '([id] [id opts])})])
 
-(def bridge-prompt
-  (str/join
-    " "
-    ["`br_*` Bridge verification tools:" "use `br_init()` to bootstrap Bridge in a new repo,"
-     "use `br_check()` first when asked for Bridge status,"
-     "use `br_next()` to inspect the immediate next action,"
-     "use `br_list_evidence()` to inspect configured evidence commands,"
-     "and use `br_run_evidence(id, opts?)` only when the configured command should actually run."
-     "`br_run_evidence(id, {\"is_dry_run\": True})` previews the execution plan without writing a receipt."
-     "When answering status questions, summarize the returned map instead of pasting it raw; if a result is large, slice / shape it in python_execution rather than dumping it back."
-     "Prefer `counts`, `required_obligations`, `evidence_receipts`, and `next_action` when they are present."
-     "Call out `status`, `issue_count`, open or failed obligations, and any evidence receipts that are already present."
-     "Keep policy obligations and runnable evidence ids distinct: for example `unit-tests` is not the same thing as the runnable `unit` command."
-     "Prefer the `br_next` suggestions over shell commands because they stay inside the Vis tool surface."]))
+(defn bridge-prompt
+  [env]
+  (when (:configured? (profile-discovery (workspace-root env) {}))
+    (str "Bridge configured. Use `br_check()` for status, `br_next()` for the next "
+         "action, and `br_run_evidence(...)` only when verification is in scope. "
+         "Summarize selected fields; never dump the result. Use `doc(name)` for contracts.")))
 
 (def bridge-hooks
   [{:id :vis.bridge/next

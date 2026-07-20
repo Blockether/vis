@@ -338,16 +338,8 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
 (def git-symbols [git-symbol])
 
 (def ^:private prompt-text
-  (str "git tool — ONE function, a direct proxy to the host `git` binary:\n"
-       "  git([\"status\", \"--short\"])   git([\"log\", \"--oneline\", \"-5\"])\n"
-       "  git([\"add\", \"-A\"])           git([\"commit\", \"-m\", \"message with spaces\"])\n"
-       "Pass args as a LIST of literal tokens (each element is one argument — the\n"
-       "safe way for commit messages / paths with spaces); a bare string is\n"
-       "quote-aware split for convenience. It runs in the workspace root and\n"
-       "returns {\"cmd\", \"stdout\", \"duration_ms\"} plus \"exit\"/\"stderr\"/\"timed_out\"\n"
-       "when meaningful. A non-zero \"exit\" is DATA to read, not a tool error.\n"
-       "Read-only VCS facts (branch/dirty/ahead-behind) already ride in\n"
-       "session[\"workspace\"] — read there before shelling out to probe."))
+  (str "Read VCS state from `session[\"workspace\"]`; call `git(...)` only when "
+       "that state lacks the needed fact or to act. Use `doc(\"git\")` for the contract."))
 
 (def vis-extension
   (vis/extension

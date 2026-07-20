@@ -5617,7 +5617,7 @@
                                               "Restrict to these paths (default whole project)."}}
                         :required ["name"]}
                :tag :observation
-                :on-error-fn (tool-failure-on-error :struct_occurrences :dir nil)}))
+               :on-error-fn (tool-failure-on-error :struct_occurrences :dir nil)}))
 
 (defn- symbol-rename-tool
   "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
@@ -5711,7 +5711,7 @@
                            "new_name" {:type "string" :description "New identifier / namespace."}}
               :required ["name" "new_name"]}
      :tag :mutation
-                :on-error-fn (tool-failure-on-error :struct_rename :dir nil)}))
+     :on-error-fn (tool-failure-on-error :struct_rename :dir nil)}))
 
 (def create-dirs-symbol
   (vis/symbol
@@ -5834,31 +5834,6 @@
    sexpr-symbol occurrences-symbol symbol-rename-symbol create-dirs-symbol copy-symbol move-symbol
    delete-symbol delete-if-exists-symbol file-exists-symbol])
 
-(defn- project-languages-line
-  "One compact `Project languages: PRIMARY x · also y, z` line from the cached
-   scan, or nil when nothing was detected. Orients the model on what the repo IS."
-  []
-  (try (let [langs
-             (get-in (environment/snapshot) [:languages :languages])
-
-             primary
-             (some-> (first langs)
-                     :language
-                     str
-                     not-empty)
-
-             others
-             (->> (rest langs)
-                  (keep (comp not-empty str :language))
-                  (take 5))]
-
-         (when primary
-           (str "Project languages: PRIMARY "
-                primary
-                (when (seq others) (str " · also " (str/join ", " others)))
-                ".")))
-       (catch Throwable _ nil)))
-
 (defn available-editing-prompt
   "The editing extension's model-facing prompt. When the project contains NO
    structurally-supported code (`structural-supported?` false — e.g. a docs/config
@@ -5866,43 +5841,23 @@
    their tool names + strategy are OMITTED here too — the prompt stays consistent
    with what's actually callable, and the model is steered to anchor-based `patch`."
   []
-  (let [struct?
-        (structural-supported? nil)
-
-        lang-line
-        (project-languages-line)]
-
+  (let [struct? (structural-supported? nil)]
     (str/join
       "\n"
       (concat
-        (keep identity
-              [lang-line
-               "EDITING WORKFLOW — follow these 5 steps; step 4 applies only after refusal."])
-        ["1. EXECUTE"
-         "   One simple operation → call its native tool directly. Two or more calls, filtering, or chaining → use python_execution; editing tools are bare async functions there. Example: a, b = await gather(cat(P1), cat(P2)); print only needed evidence. Use doc(name) for exact contracts. Canonical path only."
-         "" "2. LOCATE + INSPECT"
-         "   Unknown path → find_files. Exact symbol/text/error → rg. Known directory → ls. Known file → cat; its anchors map provides patch handles. Batch independent reads in python_execution."]
+        ["EDITING ROUTES — use `doc(name)` for exact contracts."
+         (if struct?
+           "Locate with `find_files`, `rg`, `ls`, or `cat`; supported code starts with `struct_index`. Canonical path only."
+           "Locate with `find_files`, `rg`, `ls`, or `cat`. Canonical path only.") ""
+         "| Target | Route |" "|---|---|"]
         (if struct?
-          ["   Supported code → struct_index before cat; read only the target definition. Nested node → struct_node. Uses or rename impact → struct_occurrences."
-           "" "3. EDIT THE MATCHING SCENARIO" "   | Scenario | Route |" "   |---|---|"
-           "   | Named definition | struct_patch |"
-           "   | Nested node | struct_node → struct_patch |"
-           "   | Repo-wide rename | struct_occurrences → struct_rename |"
-           "   | Text or unsupported structure | patch |"
-           "   | New file or deliberate full rewrite | write |"]
-          ["" "3. EDIT THE MATCHING SCENARIO" "   | Scenario | Route |" "   |---|---|"
-           "   | Existing text | patch |" "   | New file or deliberate full rewrite | write |"])
-        [""]
-        (if struct?
-          ["4. RECOVER FROM REFUSAL"
-           "   Ambiguous target → add kind. Unnamed target → struct_node. Unsupported node → patch. Stale anchor → reread. Never retry unchanged."
-           "   patch is ANCHOR-ONLY and atomic: fresh lineno:hash from cat/rg/struct_index → from_anchor; add to_anchor for a span. Anchors go STALE after ANY write or patch."]
-          ["4. RECOVER FROM REFUSAL"
-           "   Unsupported structure → patch. Stale anchor → reread. Never retry unchanged."
-           "   patch is ANCHOR-ONLY and atomic: fresh lineno:hash from cat/rg → from_anchor; add to_anchor for a span. Anchors go STALE after ANY write or patch."])
-        ["   Never rebuild a file from cat output; it may truncate." "" "5. VERIFY"
-         "   A diff proves only text changed. Rerun the original reproduction with repl_eval, or the smallest run_tests target when no project REPL exists. Read the result."
-         "" "INVARIANT: paths stay inside the workspace root."]))))
+          ["| Named definition | `struct_patch` |"
+           "| Nested node | `struct_node` → `struct_patch` |"
+           "| Repo-wide rename | `struct_occurrences` → `struct_rename` |"
+           "| Text or unsupported structure | `patch` |" "| New file or full rewrite | `write` |"]
+          ["| Existing text | `patch` |" "| New file or full rewrite | `write` |"])
+        [""
+         "`patch` is ANCHOR-ONLY: fresh `lineno:hash` → `from_anchor`; anchors go STALE after ANY write. Never rebuild from truncated `cat` output."]))))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. A `delay` so the language/env

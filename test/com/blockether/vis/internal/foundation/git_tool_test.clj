@@ -6,6 +6,16 @@
 (def ^:private render #'gt/render-git-result)
 (def ^:private verbose-add #'gt/verbose-add-tokens)
 
+(defdescribe git-prompt-test
+             (it "routes from session state and leaves the contract in doc"
+                 (let [prompt ((:ext/prompt-fn gt/vis-extension) {})]
+                   (expect (str/includes? prompt "session[\"workspace\"]"))
+                   (expect (str/includes? prompt "doc(\"git\")"))
+                   (expect (not (str/includes? prompt "git([\"status\"")))
+                   (expect (< (count prompt) 250))))
+             (it "keeps exact argument mechanics in the symbol documentation"
+                 (expect (str/includes? (:ext.symbol/doc gt/git-symbol) "LIST of literal tokens"))))
+
 (defdescribe verbose-add-tokens-test
              ;; `git add` is silent, so a bare `add` gets --verbose appended for the
              ;; SUBPROCESS run — git then lists each staged path — while the echoed

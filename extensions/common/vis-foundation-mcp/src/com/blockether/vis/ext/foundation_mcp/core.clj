@@ -32,7 +32,7 @@
 (defn- now-ms [] (System/currentTimeMillis))
 
 ;; ---------------------------------------------------------------------------
-;; Toggle (extension-owned, OFF by default)
+;; Toggle (extension-owned, ON by default)
 ;; ---------------------------------------------------------------------------
 
 (def ^:private disabled-hint
@@ -511,26 +511,6 @@
                                                                    []))})
                                              live)}}})))
 
-(def ^:private prompt-text
-  (str
-    "MCP servers available. Connect to Model Context Protocol servers (declared in\n"
-    "~/.vis/config.edn under :mcp :servers) and call their tools.\n" "\n"
-    "These are NATIVE tools. As a DIRECT tool call their names take a DOUBLE\n"
-    "underscore (mcp__servers / mcp__tools / mcp__call / mcp__connect / mcp__disconnect):\n"
-    "  mcp__servers()                  — configured servers + connection status + tool counts\n"
-    "  mcp__tools(server)              — a server's tools (name/description/input_schema); auto-connects\n"
-    "  mcp__call(server, tool, args)   — call a tool; args is a dict matching its input_schema; auto-connects\n"
-    "  mcp__connect(server) / mcp__disconnect(server) — manage the connection explicitly\n"
-    "\n" "INSIDE python_execution the sandbox bindings are the SINGLE-underscore snake\n"
-    "names, and you MUST await them (the double-underscore names do NOT exist there):\n"
-    "  await mcp_servers()   ·   await mcp_tools(server)   ·   await mcp_call(server, tool, {...})\n"
-    "  await mcp_connect(server)   ·   await mcp_disconnect(server)\n"
-    "(apropos(\"mcp\") lists them; doc(\"mcp_call\") shows the full signature.)\n"
-    "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
-    "Connected servers + tool counts also ride in session[\"env\"][\"mcp\"][\"servers\"].\n"
-    "Workflow: servers to see what's there → tools(server) to learn a tool's input_schema →\n"
-    "call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"].\n"))
-
 (defn- activation-fn
   "Active when at least one MCP server is configured."
   [_env]
@@ -543,6 +523,14 @@
   []
   (toggles/enabled? :mcp/enabled))
 
+(def ^:private prompt-text
+  (str "MCP enabled. Direct calls use `mcp__...`; inside `python_execution`, use "
+       "awaited `mcp_...` bindings. Route: `mcp_servers()` → `mcp_tools(server)` → "
+       "`mcp_call(server, tool, args)`. Connection status is in "
+       "`session[\"env\"][\"mcp\"][\"servers\"]`. Use `doc(name)` for contracts."))
+
+(defn- mcp-prompt [_env] (when (mcp-enabled?) prompt-text))
+
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-mcp"
@@ -554,8 +542,7 @@
      :ext/license "Apache-2.0"
      :ext/activation-fn activation-fn
      :ext/engine {:ext.engine/alias 'mcp :ext.engine/symbols mcp-symbols}
-     :ext/prompt-fn (fn [_env]
-                      prompt-text)
+     :ext/prompt-fn mcp-prompt
      :ext/ctx-fn contribute
      :ext/startable-resources
      [{:kind :mcp-configured

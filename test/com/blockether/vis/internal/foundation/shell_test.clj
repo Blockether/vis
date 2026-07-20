@@ -342,7 +342,10 @@
                                   (let [p (shell/shell-prompt {})]
                                     (expect (str/includes? p "shell_run"))
                                     (expect (str/includes? p "shell_bg"))
-                                    (expect (str/includes? p "resource_stop")))))))
+                                    (expect (str/includes? p "resource_stop"))
+                                    (expect (str/includes? p "doc(name)"))
+                                    (expect (not (str/includes? p "npm run build")))
+                                    (expect (< (count p) 500)))))))
 
 (defdescribe shell-extension-shape-test
              (it "is a registered aliased extension exposing run / bg / logs symbols"

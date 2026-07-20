@@ -556,18 +556,9 @@
   (when (true? (get-in env [:turn/features :voice-response?]))
     (str
       "<voice_response_mode>\n"
-      "The user may receive your final answer through text-to-speech audio.\n\n"
-      "Still produce the canonical final answer as plain text. This text is saved to the session database.\n\n"
-      "Optimize the final answer for spoken delivery:\n"
-      "- speak like a manager update, not a developer handoff;\n"
-      "- be concise, direct, and outcome-focused;\n"
-      "- say what went wrong and what changed, but skip implementation details unless explicitly requested;\n"
-      "- do not include extra trails, info refs, verification logs, stack traces, diffs, or code blocks;\n"
-      "- do not read code aloud; summarize code changes in plain business language;\n"
-      "- avoid huge tables unless explicitly requested;\n"
-      "- when code/files changed, summarize what changed and name files clearly;\n"
-      "- do not mention that you are producing audio;\n"
-      "- do not emit SSML unless the user explicitly asks.\n" "</voice_response_mode>")))
+      "The final answer will be spoken. Still return canonical plain text; it is saved to the session database.\n"
+      "Speak like a concise manager update: outcome first, short paragraphs. No tables, code blocks, logs, refs, diffs, stack traces, or implementation detail unless requested. Name changed files naturally. Do not mention audio or emit SSML.\n"
+      "</voice_response_mode>")))
 
 (defn speak-answer-async!
   "Synthesize and play `answer` after the caller has persisted the text answer.

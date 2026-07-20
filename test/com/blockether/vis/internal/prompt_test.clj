@@ -87,8 +87,10 @@
                  (expect (str/includes? text "absent/down/failed → start"))
                  (expect (str/includes? text "`starting` → recheck"))
                  (expect (str/includes? text "`unresponsive` → restart"))
-                 (expect (str/includes? text "host teardown stops them"))
+                 (expect (str/includes? text "After the requested work is verified"))
+                 (expect (str/includes? text "`repl_stop(id)`"))
                  (expect (str/includes? text "attach/detach, never kill"))
+                 (expect (not (str/includes? text "Keep managed REPLs across turns")))
                  (expect (str/includes? text "MUST route supported code edits structurally"))
                  (doseq [tool ["`struct_index`" "`struct_patch`" "`struct_node`"
                                "`struct_occurrences`" "`struct_rename`"]]
@@ -149,6 +151,9 @@
           (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
           (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
           (expect (str/includes? text "/tmp/repo/AGENTS.md"))
+          (expect (str/includes? text "CORE wins"))
+          (doseq [stale-term ["CTX shape" "DONE pipeline" "SANDBOX"]]
+            (expect (not (str/includes? text stale-term))))
           ;; Send order: SYSTEM-PROMPT first, then PROJECT-INSTRUCTIONS.
           (expect (< (str/index-of text "SYSTEM-PROMPT")
                      (str/index-of text "PROJECT-INSTRUCTIONS"))))))

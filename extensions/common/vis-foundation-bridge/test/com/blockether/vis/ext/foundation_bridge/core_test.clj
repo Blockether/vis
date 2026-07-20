@@ -45,31 +45,42 @@
   bridge-extension-test
   (it
     "configures the extension"
-    (let [prompt-text ((get-in bridge/vis-extension [:ext/prompt-fn]) {})]
-      (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
-      (expect (= '#{init profile check next list-evidence run-evidence}
-                 (set (map :ext.symbol/symbol
-                           (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
-      (expect (str/includes? prompt-text "use `br_check()` first"))
-      (expect (str/includes? prompt-text "summarize the returned map instead of pasting it raw"))
-      (expect (str/includes? prompt-text "counts"))
-      (expect (str/includes? prompt-text "required_obligations"))
-      (expect (str/includes? prompt-text
-                             "Keep policy obligations and runnable evidence ids distinct"))
-      (expect (fn? (:ext/protected-paths bridge/vis-extension)))
-      (expect
-        (=
-          [{:id :vis.bridge/next
-            :doc
-            "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
-            :phase :turn.iteration/start
-            :lifetime :turn
-            :fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])}]
-          (get-in bridge/vis-extension [:ext/hooks])))
-      (expect (= :observation (vis/op-tag :br/check)))
-      (expect (= :observation (vis/op-tag :br/next)))
-      (expect (= :mutation (vis/op-tag :br/init)))
-      (expect (= :mutation (vis/op-tag :br/run-evidence))))))
+    (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
+    (expect (= '#{init profile check next list-evidence run-evidence}
+               (set (map :ext.symbol/symbol
+                         (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
+    (expect (fn? (:ext/protected-paths bridge/vis-extension)))
+    (expect
+      (=
+        [{:id :vis.bridge/next
+          :doc
+          "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
+          :phase :turn.iteration/start
+          :lifetime :turn
+          :fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])}]
+        (get-in bridge/vis-extension [:ext/hooks])))
+    (expect (= :observation (vis/op-tag :br/check)))
+    (expect (= :observation (vis/op-tag :br/next)))
+    (expect (= :mutation (vis/op-tag :br/init)))
+    (expect (= :mutation (vis/op-tag :br/run-evidence))))
+  (it "emits concise routing only in configured workspaces"
+      (let [root
+            (temp-root "bridge-ext-prompt")
+
+            env
+            {:workspace/root root}
+
+            prompt-fn
+            (:ext/prompt-fn bridge/vis-extension)]
+
+        (expect (nil? (prompt-fn env)))
+        (bridge/init env)
+        (let [prompt (prompt-fn env)]
+          (expect (str/includes? prompt "br_check"))
+          (expect (str/includes? prompt "br_next"))
+          (expect (str/includes? prompt "doc(name)"))
+          (expect (not (str/includes? prompt "required_obligations")))
+          (expect (< (count prompt) 400))))))
 
 (defdescribe
   bridge-protected-paths-test
@@ -413,4 +424,3 @@
       (expect (not (str/includes? (:title configured-hint) "task_set")))
       (expect (not (str/includes? (:title configured-hint) "br_run_evidence")))
       (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
-

@@ -2588,27 +2588,35 @@
                             (assoc :forms-vec (vec gist-forms)))]))
                      trailer-iters)))))
 
-(defn- error->wire
-  "Model-facing projection of an INTERNAL error envelope at its ONE wire
-   crossing (`form-output`): keyword keys fold to the snake strings the model
-   reads (namespace folded with `_`, kebab -> snake, trailing `?`/`!`
-   stripped), keyword/symbol values become their name strings. The internal
-   envelope itself stays idiomatic ex-info shape everywhere else (persisted
-   forms, ctx-engine projections, channel display) — this is a wire
-   constructor at the seam, same pattern as the git extension's."
-  [e]
-  (cond (map? e) (into {}
-                       (map (fn [[k v]]
-                              [(if (keyword? k)
-                                 (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
-                                     (str/replace "-" "_")
-                                     (str/replace #"[?!]$" ""))
-                                 (str k)) (error->wire v)]))
-                       e)
-        (keyword? e) (name e)
-        (symbol? e) (str e)
-        (or (vector? e) (sequential? e) (set? e)) (mapv error->wire e)
-        :else e))
+(defn- error->display
+  "LLM-legible rendering of a form `:error` for the model wire. The human
+   `:message` (which may already carry a multi-line babashka-style source
+   excerpt with a caret) is shown with REAL newlines — NEVER an escaped
+   one-line Python/JSON literal, which turns a caret excerpt into an
+   unreadable `\n`-wall the model can't parse. The failure phase rides in the
+   header (`✗ runtime error:` / `syntax` / `host`); the precise line/col are
+   already visible under the caret, so no redundant `:data` blob is emitted. A
+   `:hint` not already folded into the message is appended on its own line.
+   Falls back to the plain value for a non-map error."
+  [error]
+  (if-not (map? error)
+    (str "✗ error: " error)
+    (let [msg
+          (or (:message error)
+              (some-> (:type error)
+                      name)
+              "error")
+
+          phase
+          (some-> (get-in error [:data :phase])
+                  (#(if (keyword? %) (name %) (str %))))
+
+          hint
+          (:hint error)]
+
+      (cond-> (str "✗ " (when phase (str phase " ")) "error: " msg)
+        (and hint (not (str/includes? (str msg) (str hint))))
+        (str "\nhint: " hint)))))
 
 (defn- patch-file-summary?
   "True when `m` is a patch/write/struct_patch PER-FILE summary — the
@@ -2720,11 +2728,20 @@
       ;; must still read as a TIMEOUT — a distinct ⧖ headline, not the raw
       ;; :vis/native-tool-timeout error string. Sits FIRST so a timeout always wins
       ;; its own display regardless of any partial stdout/error also present.
-      (:timeout? result*)
-      (let [err (:error result*)
-            ms (some-> err :data :timeout-ms)]
-        {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
-         :body (some-> (:message err) str not-empty clip (->> (str "\n")))})
+      (:timeout? result*) (let [err
+                                (:error result*)
+
+                                ms
+                                (some-> err
+                                        :data
+                                        :timeout-ms)]
+
+                            {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
+                             :body (some-> (:message err)
+                                           str
+                                           not-empty
+                                           clip
+                                           (->> (str "\n")))})
       ;; renderer returned a canonical {:summary :body} card …
       (map? custom) (->card custom)
       ;; … or a legacy bare string (body only, no summary)
@@ -2818,13 +2835,13 @@
         ;; (rendered), `:stdout` = what python_execution print()ed. An `:error`
         ;; replaces the return. So no tool-family branch is needed — surface
         ;; whichever is present. The ERROR envelope is the one internal
-        ;; keyword-keyed shape rendered here — `error->wire` is its wire
-        ;; constructor at this single crossing (results/ctx are string-keyed
-        ;; at the source and need none).
+        ;; keyword-keyed shape rendered here — `error->display` renders it as
+        ;; clean, LLM-legible text with REAL newlines (source excerpt + caret
+        ;; kept readable, never an escaped one-line literal).
         form-output
         (fn [f]
           (cond (:summary? f) nil
-                (:error f) (str "⚠ error: " (env/ctx->python-str (error->wire (:error f))))
+                (:error f) (error->display (:error f))
                 (some? (:result f)) (clip-wire (env/ctx->python-str (strip-echo-diffs (:result f))))
                 (not (str/blank? (str (:stdout f)))) (clip-wire (:stdout f))
                 :else nil))
