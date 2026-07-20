@@ -106,6 +106,30 @@
                         (str "look at '" (.getAbsolutePath f) "' please"))]
 
                   (expect (= 1 (count (:attached res))))))
+            (it "resolves a path trailed by sentence punctuation"
+                (let [dir
+                      (temp-dir)
+
+                      f
+                      (write-file dir "shot.png" tiny-png-bytes)
+
+                      res
+                      (attachments/collect-user-images
+                        (str "see this: " (.getAbsolutePath f) ". thanks"))]
+
+                  (expect (= 1 (count (:attached res))))))
+            (it "resolves a path wrapped in parentheses"
+                (let [dir
+                      (temp-dir)
+
+                      f
+                      (write-file dir "shot.png" tiny-png-bytes)
+
+                      res
+                      (attachments/collect-user-images
+                        (str "look (" (.getAbsolutePath f) ")"))]
+
+                  (expect (= 1 (count (:attached res))))))
             (it "resolves a relative path against :workspace-root"
                 (let [dir
                       (temp-dir)

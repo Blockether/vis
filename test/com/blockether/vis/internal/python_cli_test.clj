@@ -6,6 +6,7 @@
    ns (context creation is expensive) and captures the real-terminal
    output by rebinding `config/original-stdout`."
   (:require [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.main]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -17,11 +18,12 @@
   "Run one Python block through the CLI helper, capturing the terminal
    output. Returns {:exit code :out captured-stdout}."
   [ctx code]
-  (let [baos
-        (java.io.ByteArrayOutputStream.)
+  (let
+    [baos
+     (java.io.ByteArrayOutputStream.)
 
-        ps
-        (java.io.PrintStream. baos true "UTF-8")]
+     ps
+     (java.io.PrintStream. baos true "UTF-8")]
 
     (with-redefs [config/original-stdout ps]
       (let [exit (run-python-source! ctx code)]
@@ -48,46 +50,51 @@
           (expect (= 0 exit))
           (expect (re-find #"carry 8" out))))
     (it "numpy shim computes"
-        (let [{:keys [exit out]}
-              (run-src ctx "import numpy as np\nprint('np', int(np.arange(5).sum()))")]
+        (let
+          [{:keys [exit out]} (run-src ctx
+                                       "import numpy as np\nprint('np', int(np.arange(5).sum()))")]
           (expect (= 0 exit))
           (expect (re-find #"np 10" out))))
     (it "pandas shim computes"
-        (let [{:keys [exit out]}
-              (run-src ctx
-                       (str "import pandas as pd\n"
-                            "print('pd', int(pd.DataFrame({'a': [1, 2, 3]})['a'].sum()))"))]
+        (let
+          [{:keys [exit out]}
+           (run-src ctx
+                    (str "import pandas as pd\n"
+                         "print('pd', int(pd.DataFrame({'a': [1, 2, 3]})['a'].sum()))"))]
           (expect (= 0 exit))
           (expect (re-find #"pd 6" out))))
     (it "sqlite3 shim roundtrips"
-        (let [{:keys [exit out]}
-              (run-src ctx
-                       (str "import sqlite3\n"
-                            "c = sqlite3.connect(':memory:')\n"
-                            "c.execute('create table t(n int)')\n"
-                            "c.executemany('insert into t values (?)', [(3,), (4,)])\n"
-                            "print('sql', c.execute('select sum(n) from t').fetchone()[0])"))]
+        (let
+          [{:keys [exit out]}
+           (run-src ctx
+                    (str "import sqlite3\n"
+                         "c = sqlite3.connect(':memory:')\n" "c.execute('create table t(n int)')\n"
+                         "c.executemany('insert into t values (?)', [(3,), (4,)])\n"
+                         "print('sql', c.execute('select sum(n) from t').fetchone()[0])"))]
           (expect (= 0 exit))
           (expect (re-find #"sql 7" out))))
     (it "yaml shim parses"
-        (let [{:keys [exit out]} (run-src ctx
-                                          (str "import yaml\n"
-                                               "d = yaml.safe_load('a: 1\\nb: [2, 3]')\n"
-                                               "print('yaml', d['a'], d['b'][1])"))]
+        (let
+          [{:keys [exit out]} (run-src ctx
+                                       (str "import yaml\n"
+                                            "d = yaml.safe_load('a: 1\\nb: [2, 3]')\n"
+                                            "print('yaml', d['a'], d['b'][1])"))]
           (expect (= 0 exit))
           (expect (re-find #"yaml 1 3" out))))
     (it "http-client shims import clean"
-        (let [{:keys [exit out]} (run-src ctx
-                                          (str "import requests, httpx, bs4, toml, tabulate\n"
-                                               "print('imports ok')"))]
+        (let
+          [{:keys [exit out]} (run-src ctx
+                                       (str "import requests, httpx, bs4, toml, tabulate\n"
+                                            "print('imports ok')"))]
           (expect (= 0 exit))
           (expect (re-find #"imports ok" out))))
     (it "a no-network context blocks socket name resolution"
-        (let [{:keys [exit out]} (run-src ctx
-                                          (str "import socket\n" "try:\n"
-                                               "    socket.gethostbyname('example.com')\n"
-                                               "    print('resolved')\n"
-                                               "except Exception:\n" "    print('blocked')"))]
+        (let
+          [{:keys [exit out]} (run-src ctx
+                                       (str "import socket\n" "try:\n"
+                                            "    socket.gethostbyname('example.com')\n"
+                                            "    print('resolved')\n"
+                                            "except Exception:\n" "    print('blocked')"))]
           (expect (= 0 exit))
           (expect (re-find #"blocked" out))))
     (it "a network-enabled context builds without error"
@@ -98,33 +105,33 @@
 (def ^:private python-cli-env-overrides->map
   #'com.blockether.vis.internal.main/python-cli-env-overrides->map)
 
-(defdescribe parse-python-cli-args-test
-             (it "-c forwards trailing args as sys.argv after the '-c' marker"
-                 (let [p (parse-python-cli-args ["-c" "code" "a" "b"])]
-                   (expect (= :code (:mode p)))
-                   (expect (= "code" (:code p)))
-                   (expect (= ["-c" "a" "b"] (:argv p)))))
-             (it "a FILE selector keeps the filename as argv[0]"
-                 (let [p (parse-python-cli-args ["script.py" "x" "--flag"])]
-                   (expect (= :file (:mode p)))
-                   (expect (= "script.py" (:file p)))
-                   (expect (= ["script.py" "x" "--flag"] (:argv p)))))
-             (it "leading --no-network / --no-env / --env are consumed, not argv"
-                 (let [p (parse-python-cli-args ["--no-network" "--no-env" "--env" "FOO=bar" "-c"
-                                                 "c" "z"])]
-                   (expect (false? (:network? p)))
-                   (expect (false? (:inherit-env? p)))
-                   (expect (= ["FOO=bar"] (:env-overrides p)))
-                   (expect (= ["-c" "z"] (:argv p)))))
-             (it "-- ends option parsing so a flag-named script arg survives"
-                 (let [p (parse-python-cli-args ["--" "-" "--no-network"])]
-                   (expect (= :stdin (:mode p)))
-                   (expect (= ["-" "--no-network"] (:argv p)))))
-             (it "defaults: network + env inherited, interactive with no selector"
-                 (let [p (parse-python-cli-args [])]
-                   (expect (= :interactive (:mode p)))
-                   (expect (true? (:network? p)))
-                   (expect (true? (:inherit-env? p))))))
+(defdescribe
+  parse-python-cli-args-test
+  (it "-c forwards trailing args as sys.argv after the '-c' marker"
+      (let [p (parse-python-cli-args ["-c" "code" "a" "b"])]
+        (expect (= :code (:mode p)))
+        (expect (= "code" (:code p)))
+        (expect (= ["-c" "a" "b"] (:argv p)))))
+  (it "a FILE selector keeps the filename as argv[0]"
+      (let [p (parse-python-cli-args ["script.py" "x" "--flag"])]
+        (expect (= :file (:mode p)))
+        (expect (= "script.py" (:file p)))
+        (expect (= ["script.py" "x" "--flag"] (:argv p)))))
+  (it "leading --no-network / --no-env / --env are consumed, not argv"
+      (let [p (parse-python-cli-args ["--no-network" "--no-env" "--env" "FOO=bar" "-c" "c" "z"])]
+        (expect (false? (:network? p)))
+        (expect (false? (:inherit-env? p)))
+        (expect (= ["FOO=bar"] (:env-overrides p)))
+        (expect (= ["-c" "z"] (:argv p)))))
+  (it "-- ends option parsing so a flag-named script arg survives"
+      (let [p (parse-python-cli-args ["--" "-" "--no-network"])]
+        (expect (= :stdin (:mode p)))
+        (expect (= ["-" "--no-network"] (:argv p)))))
+  (it "defaults: network + env inherited, interactive with no selector"
+      (let [p (parse-python-cli-args [])]
+        (expect (= :interactive (:mode p)))
+        (expect (true? (:network? p)))
+        (expect (true? (:inherit-env? p))))))
 
 (defdescribe python-cli-env-overrides-test
              (it "parses K=V, bare K (empty), and keeps later = in the value"
@@ -134,20 +141,37 @@
 (defdescribe
   python-cli-runtime-test
   (it "argv is forwarded into sys.argv"
-      (let [ctx
-            (python-cli-context {:network? false :argv ["-c" "alpha" "beta"]})
+      (let
+        [ctx
+         (python-cli-context {:network? false :argv ["-c" "alpha" "beta"]})
 
-            {:keys [exit out]}
-            (run-src ctx "import sys\nprint('argv', sys.argv[0], sys.argv[1], sys.argv[2])")]
+         {:keys [exit out]}
+         (run-src ctx "import sys\nprint('argv', sys.argv[0], sys.argv[1], sys.argv[2])")]
 
         (expect (= 0 exit))
         (expect (re-find #"argv -c alpha beta" out))))
   (it "env is merged into os.environ"
-      (let [ctx
-            (python-cli-context {:network? false :env {"VIS_TEST_KEY" "vis-test-val"}})
+      (let
+        [ctx
+         (python-cli-context {:network? false :env {"VIS_TEST_KEY" "vis-test-val"}})
 
-            {:keys [exit out]}
-            (run-src ctx "import os\nprint('env', os.environ.get('VIS_TEST_KEY'))")]
+         {:keys [exit out]}
+         (run-src ctx "import os\nprint('env', os.environ.get('VIS_TEST_KEY'))")]
 
         (expect (= 0 exit))
-        (expect (re-find #"env vis-test-val" out)))))
+        (expect (re-find #"env vis-test-val" out))))
+  (it "stdin stream is wired to the guest sys.stdin (no hang with -c)"
+      (let
+        [in
+         (java.io.ByteArrayInputStream. (.getBytes "piped-payload\n" "UTF-8"))
+
+         {:keys [python-context]}
+         (env/create-python-context {} nil {:enabled? false} in)]
+
+        (try (let
+               [{:keys [stdout error]} (env/run-python-block
+                                         python-context
+                                         "import sys\nprint('stdin', sys.stdin.read().strip())")]
+               (expect (nil? error))
+               (expect (re-find #"stdin piped-payload" (str stdout))))
+             (finally (.close ^org.graalvm.polyglot.Context python-context))))))

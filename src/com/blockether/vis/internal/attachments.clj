@@ -88,8 +88,9 @@
   (loop [offset (long (count png-signature))]
     (if (> (+ offset 8) (alength b))
       false
-      (let [chunk-length (u32-be b offset)
-            type-offset (+ offset 4)]
+      (let
+        [chunk-length (u32-be b offset)
+         type-offset (+ offset 4)]
 
         (cond (ascii-at? b type-offset "acTL") true
               (ascii-at? b type-offset "IDAT") false
@@ -101,21 +102,23 @@
 (defn- bmp?
   [^bytes b]
   (and (>= (alength b) 30)
-       (let [declared-size
-             (u32-le b 2)
+       (let
+         [declared-size
+          (u32-le b 2)
 
-             pixel-data-offset
-             (u32-le b 10)
+          pixel-data-offset
+          (u32-le b 10)
 
-             dib-header-size
-             (u32-le b 14)]
+          dib-header-size
+          (u32-le b 14)]
 
          (and (or (zero? declared-size) (>= declared-size 26))
               (>= pixel-data-offset (+ 14 dib-header-size))
               (or (zero? declared-size) (< pixel-data-offset declared-size))
-              (let [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
-                                       (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
-                                       :else [nil nil])]
+              (let
+                [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
+                                    (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
+                                    :else [nil nil])]
                 (and (= 1 planes) (contains? #{1 4 8 16 24 32} bpp)))))))
 
 (defn detect-image-mime
@@ -136,8 +139,9 @@
   "Read the file head and sniff its MIME type. nil on any read failure."
   [^File f]
   (try (with-open [raf (RandomAccessFile. f "r")]
-         (let [n (int (min (.length raf) (long sniff-bytes)))
-               buf (byte-array n)]
+         (let
+           [n (int (min (.length raf) (long sniff-bytes)))
+            buf (byte-array n)]
 
            (.readFully raf buf)
            (detect-image-mime buf)))
@@ -183,15 +187,38 @@
     (try (.getPath (java.net.URI. s)) (catch Throwable _ (subs s (count "file://"))))
     s))
 
+(defn- strip-edge-punct
+  "Drop sentence / enclosure punctuation clinging to an UNQUOTED path token:
+   trailing `.,;:!?` and closing `)]}>'\"`, plus a matching LEADING opener
+   `([{<'\"`. Prose routinely wraps or trails a pasted path (`(foo.png)`,
+   `foo.png.`); without this the end-anchored extension match in
+   `resolve-candidate` misses and the image never attaches / never reaches the
+   vision model. Quoted spans are verbatim and skip this."
+  [^String s]
+  (-> s
+      (str/replace #"^[(\[{<'\"]+" "")
+      (str/replace #"[.,;:!?)\]}>'\"]+$" "")))
+
 (defn- path-candidates
   "Raw path-shaped candidates from user text, drop-pattern aware:
-   quoted spans first (verbatim content), then escape-honoring tokens.
-   Order preserved; duplicates collapse later on the canonical path."
+   quoted spans first (verbatim content), then escape-honoring tokens —
+   each also yielding an edge-punctuation-trimmed variant so a path
+   followed by sentence punctuation still resolves. Order preserved;
+   duplicates collapse later on the canonical path."
   [text]
   (concat (keep (fn [[_ single double*]]
                   (or single double*))
                 (re-seq quoted-span-pattern text))
-          (map unescape-token (re-seq escaped-token-pattern text))))
+          (mapcat (fn [tok]
+                    (let
+                      [tok
+                       (unescape-token tok)
+
+                       trimmed
+                       (strip-edge-punct tok)]
+
+                      (if (= tok trimmed) [tok] [tok trimmed])))
+                  (re-seq escaped-token-pattern text))))
 
 (defn- expand-home
   [s]
@@ -204,15 +231,16 @@
    extension, or nil. Relative candidates resolve against
    `workspace-root` (falling back to cwd)."
   ^File [candidate workspace-root]
-  (let [^String s (-> candidate
-                      str/trim
-                      strip-file-url
-                      expand-home)]
+  (let
+    [^String s (-> candidate
+                   str/trim
+                   strip-file-url
+                   expand-home)]
     (when (and (seq s) (re-find image-extension-pattern s))
-      (let [f (File. s)
-            f (if (.isAbsolute f)
-                f
-                (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
+      (let
+        [f (File. s)
+         f
+         (if (.isAbsolute f) f (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
 
         (when (and (.isFile f) (.canRead f)) f)))))
 
@@ -346,26 +374,27 @@
    (reduce
      (fn [acc att]
        (try
-         (let [base64
-               (or (:base64 att) (get att "base64"))
+         (let
+           [base64
+            (or (:base64 att) (get att "base64"))
 
-               filename
-               (or (:filename att) (get att "filename"))
+            filename
+            (or (:filename att) (get att "filename"))
 
-               ^String payload
-               (strip-data-url-prefix (str base64))
+            ^String payload
+            (strip-data-url-prefix (str base64))
 
-               data
-               (.decode (Base64/getDecoder) payload)
+            data
+            (.decode (Base64/getDecoder) payload)
 
-               size
-               (alength data)
+            size
+            (alength data)
 
-               label
-               (or (not-empty (str filename)) "image")
+            label
+            (or (not-empty (str filename)) "image")
 
-               mime
-               (detect-image-mime data)]
+            mime
+            (detect-image-mime data)]
 
            (cond (nil? mime)
                  (update acc :skipped conj {:path label :reason "not a supported still image"})

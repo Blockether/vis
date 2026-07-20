@@ -4474,8 +4474,8 @@
 (defn- render-index-result
   "struct_index → `{:summary :body}`: a path headline (defs · language · lines)
    over a GFM TABLE of every definition — nesting shown by a `·` indent, the row
-   the same lens as `struct_occurrences` (name/signature · visibility+kind · span
-   anchors · doc gist). `r` is the wire result `{:skeleton :definitions :imports
+   columns Def (name) · Arity (signature) · Kind (visibility+kind) · Anchor (span
+   anchors) · Doc (gist). `r` is the wire result `{:skeleton :definitions :imports
    :language :line_count :path}`. With no definitions it falls back to the raw
    anchored skeleton fence (imports-only files), and to a bare no-structure
    summary when nothing was indexed."
@@ -4504,8 +4504,8 @@
                      (when lang (str " · " lang))
                      (when lc (str " · " lc " line" (when (not= 1 (long lc)) "s"))))
        :body (let [header
-                   ["| Def | Kind | Span | Doc |"
-                    "|-----|------|------|-----|"]
+                   ["| Def | Arity | Kind | Anchor | Doc |"
+                    "|-----|-------|------|--------|-----|"]
 
                    rows
                    (for [d defs]
@@ -4518,9 +4518,6 @@
 
                            sig
                            (some-> (get d "signature") kw->str not-empty)
-
-                           defc
-                           (if sig (str nm "  " sig) nm)
 
                            vis
                            (some-> (get d "visibility") kw->str not-empty)
@@ -4537,10 +4534,11 @@
                            (str (kw->str (get d "anchor"))
                                 ".." (kw->str (get d "end_anchor")))]
 
-                       (str "| " (idx-cell defc 48)
+                       (str "| " (idx-cell nm 40)
+                            " | " (idx-cell (or sig "—") 22)
                             " | " (idx-cell kindc 16)
                             " | " (idx-cell span 20)
-                            " | " (idx-cell (or (get d "doc") "—") 70)
+                            " | " (idx-cell (or (get d "doc") "—") 60)
                             " |")))]
 
                (str "\n" (str/join "\n" (concat header rows))))}

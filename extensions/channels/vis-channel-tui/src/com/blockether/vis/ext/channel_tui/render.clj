@@ -3873,7 +3873,12 @@
   [entries]
   (let
     [blank?
-     #(str/blank? (strip-paint-markers-line (:line %)))
+     ;; Image-reservation rows (`image-disclosure-entries`) are blank-lined but
+     ;; carry `:kind :image`/`:image-pad` meta — they PRE-ALLOCATE the picture's
+     ;; cell box and must survive, or the box collapses and the image overpaints
+     ;; the rows below it. Treat only genuine (meta-less) blank rows as padding.
+     #(and (str/blank? (strip-paint-markers-line (:line %)))
+           (not (#{:image :image-pad} (:kind (:meta %)))))
 
      pad
      (or (first (filter blank? entries)) {:line (str result-marker "") :meta nil})

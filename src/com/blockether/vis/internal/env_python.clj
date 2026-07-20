@@ -2083,7 +2083,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    Shared by `create-python-context` (the main session sandbox) and `fork-context!`
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
-  [custom-bindings roots-fn network-opts]
+  [custom-bindings roots-fn network-opts stdin]
   (let
     [stdout-baos
      (java.io.ByteArrayOutputStream.)
@@ -2130,32 +2130,39 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
        IOAccess/NONE)
 
      ctx
-     (-> (Context/newBuilder (into-array String ["python"]))
-         ;; Build on the shared Engine — THE thing that makes concurrent
-         ;; child forks safe (see `shared-engine`).
-         (.engine ^Engine @shared-engine)
-         ;; deny-by-default for the DANGEROUS capabilities — no host access,
-         ;; native off. Filesystem is `io-access` above (confined to roots, or
-         ;; NONE). THREADS are allowed, though: the
-         ;; model's Python legitimately spins them up (importlib's import
-         ;; machinery, `threading`, libs that allocate locks via `_thread`),
-         ;; and denying it surfaced an opaque `SecurityException: Operation
-         ;; is not allowed for:` mid-run. Guest threads share the context
-         ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
-         ;; a cheap capability, not a sandbox hole.
-         (.allowAllAccess false)
-         (.allowIO io-access)
-         (.allowCreateThread true)
-         (.allowNativeAccess false)
-         (.allowPolyglotAccess PolyglotAccess/NONE)
-         ;; Capture Python stdout so `run-python-block` can surface a form's
-         ;; printed output to the model (see `ctx->stdout`). `.out` is
-         ;; independent of IOAccess (which governs the filesystem).
-         (.out stdout-baos)
-         ;; Optional GraalPy background cycle-detector tuning (native-ext RSS);
-         ;; a no-op unless a VIS_PY_GC_* env var is set.
-         (apply-py-gc-options!)
-         (.build))
+     (->
+       (Context/newBuilder (into-array String ["python"]))
+       ;; Build on the shared Engine — THE thing that makes concurrent
+       ;; child forks safe (see `shared-engine`).
+       (.engine ^Engine @shared-engine)
+       ;; deny-by-default for the DANGEROUS capabilities — no host access,
+       ;; native off. Filesystem is `io-access` above (confined to roots, or
+       ;; NONE). THREADS are allowed, though: the
+       ;; model's Python legitimately spins them up (importlib's import
+       ;; machinery, `threading`, libs that allocate locks via `_thread`),
+       ;; and denying it surfaced an opaque `SecurityException: Operation
+       ;; is not allowed for:` mid-run. Guest threads share the context
+       ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
+       ;; a cheap capability, not a sandbox hole.
+       (.allowAllAccess false)
+       (.allowIO io-access)
+       (.allowCreateThread true)
+       (.allowNativeAccess false)
+       (.allowPolyglotAccess PolyglotAccess/NONE)
+       ;; Capture Python stdout so `run-python-block` can surface a form's
+       ;; printed output to the model (see `ctx->stdout`). `.out` is
+       ;; independent of IOAccess (which governs the filesystem).
+       (.out stdout-baos)
+       ;; `vis python` (CLI) wires the human's REAL stdin so guest `sys.stdin`
+       ;; works alongside `-c`/FILE (real-python semantics). Agent sandboxes
+       ;; pass nil here and keep the default (no host stdin) — unchanged.
+       (cond->
+         stdin
+         (.in ^java.io.InputStream stdin))
+       ;; Optional GraalPy background cycle-detector tuning (native-ext RSS);
+       ;; a no-op unless a VIS_PY_GC_* env var is set.
+       (apply-py-gc-options!)
+       (.build))
 
      _
      (.put ctx->stdout ctx stdout-baos)
@@ -2370,16 +2377,20 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    optionally grants filesystem access confined to the current workspace roots.
    Every session Context rides the process-wide `shared-engine`; parsing and
    extension shims live inside that same Context. Rendering is pure JVM code, so
-   normal sessions allocate no auxiliary GraalPy contexts."
-  ([custom-bindings] (create-python-context custom-bindings nil nil))
-  ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil))
+   normal sessions allocate no auxiliary GraalPy contexts. The 4-arity `stdin`
+   (optional InputStream) is wired to the guest `sys.stdin` — used by `vis python`
+   to forward the caller's real stdin; agent sandboxes leave it nil."
+  ([custom-bindings] (create-python-context custom-bindings nil nil nil))
+  ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil nil))
   ([custom-bindings roots-fn network-opts]
+   (create-python-context custom-bindings roots-fn network-opts nil))
+  ([custom-bindings roots-fn network-opts stdin]
    @graalvm-runtime-checked
    ;; Build/force the one process-wide Engine before the session Context. Child
    ;; sub-loops create their own restrictive Context only when true parallel
    ;; Python execution is requested; all contexts share this Engine's code cache.
    (try @shared-engine (catch Throwable _ nil))
-   (build-agent-context custom-bindings roots-fn network-opts)))
+   (build-agent-context custom-bindings roots-fn network-opts stdin)))
 
 (defn fork-context!
   "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
@@ -2394,7 +2405,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
   ([custom-bindings] (fork-context! custom-bindings nil nil))
   ([custom-bindings roots-fn] (fork-context! custom-bindings roots-fn nil))
   ([custom-bindings roots-fn network-opts]
-   (build-agent-context custom-bindings roots-fn network-opts)))
+   (build-agent-context custom-bindings roots-fn network-opts nil)))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share

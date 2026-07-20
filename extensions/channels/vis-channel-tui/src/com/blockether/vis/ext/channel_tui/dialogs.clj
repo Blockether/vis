@@ -3028,14 +3028,15 @@
                            (:detached? model) "detached HEAD"
                            :else (:branch model)))))
 
-            ;; FULLSCREEN: fill the whole terminal (the shared chrome centers a
-            ;; box clamped to cols-4 × rows-4, so this maxes the magit buffer to
-            ;; the biggest footprint the dialog frame allows).
+            ;; FULLSCREEN overlay that still spares the app's 2-row footer:
+            ;; center in `term-rows - 1` so the box border AND its drop shadow
+            ;; stay ABOVE the persistent footer (model/limits chips) instead of
+            ;; the shadow bleeding onto the footer's top row and hiding it.
             content-w
             (max (footer-content-width cols magit-hints) (- cols 4))
 
             bounds
-            (draw-dialog-chrome! g cols term-rows title content-w (max 1 (- term-rows 4)))
+            (draw-dialog-chrome! g cols (dec term-rows) title content-w (max 1 (- term-rows 5)))
 
             {:keys [left inner-w]}
             bounds

@@ -29,12 +29,12 @@
   [x]
   (if (string? x)
     x
-    (.toString
-     ^StringBuilder
-     (reduce (fn [^StringBuilder sb tc]
-               (.append sb (.getCharacterString ^com.googlecode.lanterna.TextCharacter tc)))
-             (StringBuilder.)
-             x))))
+    (.toString ^StringBuilder
+               (reduce (fn [^StringBuilder sb tc]
+                         (.append sb
+                                  (.getCharacterString ^com.googlecode.lanterna.TextCharacter tc)))
+                       (StringBuilder.)
+                       x))))
 
 (defn- put->styled-runs
   "Expand a `putString` 3rd argument into the styled RUNS it paints, so recording
@@ -52,8 +52,10 @@
                           (set (.getModifiers tc))]))
          (mapv (fn [cells]
                  (let [^com.googlecode.lanterna.TextCharacter c0 (first cells)]
-                   [(apply str (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) cells))
-                    {:fg (.getForegroundColor c0) :bg (.getBackgroundColor c0)
+                   [(apply str
+                      (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) cells))
+                    {:fg (.getForegroundColor c0)
+                     :bg (.getBackgroundColor c0)
                      :sgr (set (.getModifiers c0))}]))))))
 
 (defdescribe result-summary-color-test
@@ -1647,63 +1649,64 @@
           ;; (NOT bold) is what the caller sees on exit.
           (expect (= #{com.googlecode.lanterna.SGR/ITALIC} @active))))))
 
-(defdescribe
-  paint-ansi-line-inline-sentinel-test
-  ;; Tool render-fns return Markdown. Inline code spans in that Markdown
-  ;; become private-use sentinels before result painting. The result painter
-  ;; must consume them; otherwise Lanterna renders glyphs like  / .
-  (it
-    "consumes inline code sentinels instead of painting PUA glyphs"
-    (let
-      [paint-ansi-line!
-       @#'render/paint-ansi-line!
+(defdescribe paint-ansi-line-inline-sentinel-test
+             ;; Tool render-fns return Markdown. Inline code spans in that Markdown
+             ;; become private-use sentinels before result painting. The result painter
+             ;; must consume them; otherwise Lanterna renders glyphs like  / .
+             (it
+               "consumes inline code sentinels instead of painting PUA glyphs"
+               (let
+                 [paint-ansi-line!
+                  @#'render/paint-ansi-line!
 
-       captured
-       (atom [])
+                  captured
+                  (atom [])
 
-       active
-       (atom #{})
+                  active
+                  (atom #{})
 
-       fg
-       (atom nil)
+                  fg
+                  (atom nil)
 
-       bg
-       (atom nil)
+                  bg
+                  (atom nil)
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [c] (reset! fg c) this)
-         (setBackgroundColor [c] (reset! bg c) this)
-         (putString
-           ([col row text] (swap! captured conj [(put-text text) {:fg @fg :bg @bg :sgr @active}]) this)))
+                  graphics
+                  (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                    (clearModifiers [] (reset! active #{}) this)
+                    (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                      (swap! active into (seq arr))
+                      this)
+                    (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                      (apply swap! active disj (seq arr))
+                      this)
+                    (getActiveModifiers []
+                      (if (empty? @active)
+                        (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                        (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                    (setForegroundColor [c] (reset! fg c) this)
+                    (setBackgroundColor [c] (reset! bg c) this)
+                    (putString
+                      ([col row text]
+                       (swap! captured conj [(put-text text) {:fg @fg :bg @bg :sgr @active}])
+                       this)))
 
-       line
-       (str "Searched " p/INLINE_CODE_ON
-            "[\"extensions\"]" p/INLINE_CODE_OFF
-            " with " p/INLINE_CODE_ON
-            "{:any [\"circling\"]}" p/INLINE_CODE_OFF
-            ". Use " p/INLINE_CODE_ON
-            "v/preview" p/INLINE_CODE_OFF)
+                  line
+                  (str "Searched " p/INLINE_CODE_ON
+                       "[\"extensions\"]" p/INLINE_CODE_OFF
+                       " with " p/INLINE_CODE_ON
+                       "{:any [\"circling\"]}" p/INLINE_CODE_OFF
+                       ". Use " p/INLINE_CODE_ON
+                       "v/preview" p/INLINE_CODE_OFF)
 
-       visible
-       "Searched [\"extensions\"] with {:any [\"circling\"]}. Use v/preview"]
+                  visible
+                  "Searched [\"extensions\"] with {:any [\"circling\"]}. Use v/preview"]
 
-      (paint-ansi-line! graphics 0 0 line t/code-result-fg t/code-ok-bg)
-      (let [painted (apply str (map first @captured))]
-        (expect (= visible painted))
-        (expect (not (str/includes? painted p/INLINE_CODE_ON)))
-        (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
+                 (paint-ansi-line! graphics 0 0 line t/code-result-fg t/code-ok-bg)
+                 (let [painted (apply str (map first @captured))]
+                   (expect (= visible painted))
+                   (expect (not (str/includes? painted p/INLINE_CODE_ON)))
+                   (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
 (defdescribe code-pad-payload-paint-test
              ;; MARKER_CODE_*_PAD can carry optional payload text. Regression: pad
@@ -1869,8 +1872,8 @@
                      bot (:thumb-top-rel (g 1000 5 995))]
 
                     (expect (= 0 top))
-                    (expect (= 4 bot)))))) ;; track-h(5) - thumb-h(1) = 4
-)
+                    (expect (= 4 bot))))))) ;; track-h(5) - thumb-h(1) = 4
+
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Loose-bullet coalesce - multi-paragraph list items render as one bullet
@@ -3395,6 +3398,28 @@
       ;; Sections are separated by exactly ONE blank row, each **LABEL** glued to
       ;; its own content, and the body ends with ONE trailing pad row.
       (expect (= ["  RESULT" "  2" "" "  STDOUT" "  hi" ""] (vec (drop 2 texts)))))))
+
+(defdescribe tool-card-image-reservation-test
+             ;; A `vis-image` fence inside an op-card RESULT (e.g. `vis_attach`'s stdout)
+             ;; reserves a blank-lined cell box for the picture. The op-card body compaction
+             ;; strips fence padding, but MUST NOT strip those reserved rows — else the box
+             ;; collapses and the image overpaints the rows below it.
+             (it "graphical terminal: reserved image box survives op-card body compaction"
+                 (with-redefs [timg/images-protocol (constantly :kitty)]
+                   (let
+                     [entries (tool-card-entries
+                                {:label "RESULT"
+                                 :color-role :tool-color/shell
+                                 :body (str "````vis-image\n[Image: shot.png 1578×444, 45.7 KB]\n"
+                                            "/tmp/shot.png\nimage/png\n1578x444\n45.7 KB\n````")}
+                                {:fill-w 76 :session-id nil :detail-expansions {} :node-id "n1"})
+                      img-rows (filter #(#{:image :image-pad} (:kind (:meta %))) entries)
+                      img (:img (:meta (first img-rows)))]
+
+                     (expect (pos? (long (:rows img))))
+                     ;; every reserved row (paint + pads) is present after compaction
+                     (expect (= (long (:rows img)) (count img-rows)))
+                     (expect (every? #(= "/tmp/shot.png" (:path (:img (:meta %)))) img-rows))))))
 
 (defdescribe
   iteration-merge-flush-test
