@@ -71,6 +71,26 @@
             (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
         (expect (= "explicit model-facing desc" (:description schema)))))
+  (it "doc text combines compact semantics with schema parameters exactly once"
+      (let [sym
+            (extension/symbol #'flat-native-tool
+                              {:tag :observation
+                               :native-tool? true
+                               :name "flat_tool"
+                               :description "Compact routing and result semantics."
+                               :schema {:type "object"
+                                        :properties {"query" {:oneOf [{:type "string"}
+                                                                      {:type "array"
+                                                                       :items {:type "string"}}]
+                                                              :description "Exact query input."}}
+                                        :required ["query"]}})
+
+            doc
+            (extension/symbol-doc-text sym)]
+
+        (expect (= 1 (count (re-seq #"Compact routing" doc))))
+        (expect (= 1 (count (re-seq #"`query`" doc))))
+        (expect (re-find #"string\|array<string>, required" doc))))
   (it ":native-tool? true WITHOUT a :schema is rejected at build time"
       (expect (try (extension/symbol #'flat-native-tool
                                      {:tag :observation :native-tool? true :name "no_schema_tool"})

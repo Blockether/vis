@@ -437,17 +437,28 @@
   "Portable fallback (no cider-nrepl): read `*e` in-session and hand back a
    readable `{\"error_message\" \"error_data\" \"trace\"}` map — demunged user
    frames, JVM/nREPL plumbing filtered out. STRING keys so the parsed map merges
-   cleanly into the string-keyed eval result (crosses the strings-only boundary)."
+   cleanly into the string-keyed eval result (crosses the strings-only boundary).
+   Walks the WHOLE cause chain: a compile error's `*e` is a `CompilerException`
+   wrapper whose bland `Syntax error compiling at …` message + all-`Compiler.java`
+   frames hide the real fault (`Unable to resolve symbol …`) in its cause — so the
+   headline threads every cause (`← caused by`) and the trace comes from the ROOT —
+   but ONLY its USER frames: an all-plumbing root (a compile error's stack is pure
+   `clojure.lang.Compiler`/`Util`) yields an EMPTY trace, since the headline +
+   `error_data` line/column already carry the real fault and its location."
   (str
-    "(when-let [e *e]" "  {\"error_message\" (str (.getSimpleName (class e))"
-    "                       (let [m (.getMessage e)] (when (seq (str m)) (str \": \" m))))"
-    "   \"error_data\" (when (instance? clojure.lang.IExceptionInfo e) (pr-str (ex-data e)))"
-    "   \"trace\" (let [fs (map (fn [^StackTraceElement el]"
-    "                          [(.getClassName el) (.getFileName el) (.getLineNumber el)])"
-    "                        (.getStackTrace e))"
-    "                fmt (fn [xs] (->> xs (map (fn [[c f l]] (str (clojure.lang.Compiler/demunge c) \"  (\" f \":\" l \")\"))) distinct vec))"
-    "                usr (remove (fn [[c _ _]] (re-find #\"^(java\\.|jdk\\.|sun\\.|nrepl\\.|clojure\\.lang\\.|clojure\\.main|clojure\\.core)\" c)) fs)]"
-    "            (vec (take 16 (fmt (if (seq usr) usr fs)))))})"))
+    "(when-let [e *e]"
+    "  (let [causes (take-while some? (iterate (fn [^Throwable t] (.getCause t)) e))"
+    "        head (fn [^Throwable t] (str (.getSimpleName (class t)) (let [m (.getMessage t)] (when (seq (str m)) (str \": \" m)))))"
+    "        root (last causes)"
+    "        de (some (fn [t] (when (and (instance? clojure.lang.IExceptionInfo t) (seq (ex-data t))) t)) causes)"
+    "        fs (map (fn [^StackTraceElement el]"
+    "                  [(.getClassName el) (.getFileName el) (.getLineNumber el)])"
+    "                (.getStackTrace ^Throwable root))"
+    "        fmt (fn [xs] (->> xs (map (fn [[c f l]] (str (clojure.lang.Compiler/demunge c) \"  (\" f \":\" l \")\"))) distinct vec))"
+    "        usr (remove (fn [[c _ _]] (re-find #\"^(java\\.|jdk\\.|sun\\.|nrepl\\.|clojure\\.lang\\.|clojure\\.main|clojure\\.core)\" c)) fs)]"
+    "    {\"error_message\" (clojure.string/join \"\\n  ← caused by \" (map head causes))"
+    "     \"error_data\" (when de (pr-str (ex-data de)))"
+    "     \"trace\" (vec (take 16 (fmt usr)))}))"))
 
 (defn- drain-to-done!
   "Realize the tail of an in-flight response seq up to ITS `done`, bounded by

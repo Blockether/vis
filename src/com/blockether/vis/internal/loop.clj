@@ -2419,24 +2419,36 @@
 
         current-turn
         (fn []
-          (let [v (some-> ctx-atom deref (get "session_turn"))]
+          (let [v (some-> ctx-atom
+                          deref
+                          (get "session_turn"))]
             (cond (integer? v) (long v)
                   (string? v) (parse-long (str/trim v))
                   :else nil)))
 
         scope-turn
         (fn [scope]
-          (or (some-> (ctx-engine/scope-key scope) first)
+          (or (some-> (ctx-engine/scope-key scope)
+                      first)
               (ctx-engine/turn-key scope)))
 
         selected-turns
         (fn [intent]
-          (let [ctx (some-> ctx-atom deref)
-                universe (get ctx "engine_iter_universe")
-                resolved (first (ctx-engine/expand-through [intent] (or universe [])))
-                refs (concat (get resolved "scopes")
-                             (get intent "scopes")
-                             (keep #(get intent %) ["through" "since" "from" "to"]))]
+          (let [ctx
+                (some-> ctx-atom
+                        deref)
+
+                universe
+                (get ctx "engine_iter_universe")
+
+                resolved
+                (first (ctx-engine/expand-through [intent] (or universe [])))
+
+                refs
+                (concat (get resolved "scopes")
+                        (get intent "scopes")
+                        (keep #(get intent %) ["through" "since" "from" "to"]))]
+
             (into #{} (keep scope-turn) refs)))
 
         record!
@@ -2510,23 +2522,21 @@
      (fn session-fold [scopes & [gist]]
        (if-let [[base label] (target scopes)]
          (let [turn (current-turn)
-               blocked-turns (when turn
-                               (into (sorted-set)
-                                     (filter #(>= (long %) turn))
-                                     (selected-turns base)))]
+               blocked-turns
+               (when turn (into (sorted-set) (filter #(>= (long %) turn)) (selected-turns base)))]
+
            (when-not turn
              (throw (ex-info "session_fold cannot prove the current turn; folding is blocked."
                              {:type :vis/session-fold-turn-unknown})))
            (when (seq blocked-turns)
-             (throw
-               (ex-info
-                 (str "session_fold blocked: every target tN must satisfy "
-                      "N < session[\"turn\"]. Do not retry during this turn, even after "
-                      "verification. Retry only at the next turn's start, after understanding "
-                      "its intent and before new work.")
-                 {:type :vis/session-fold-active-turn
-                  :current-turn turn
-                  :blocked-turns blocked-turns})))
+             (throw (ex-info
+                      (str "session_fold blocked: every target tN must satisfy "
+                           "N < session[\"turn\"]. Do not retry during this turn, even after "
+                           "verification. Retry only at the next turn's start, after understanding "
+                           "its intent and before new work.")
+                      {:type :vis/session-fold-active-turn
+                       :current-turn turn
+                       :blocked-turns blocked-turns})))
            (let [g (some-> gist
                            str
                            str/trim
@@ -3229,22 +3239,20 @@
    built from `caps` so fs/network claims match what the sandbox can actually do."
   [caps]
   {:name "python_execution"
-   :description (str
-                  "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER / "
-                  "CHAIN tool results in one shot — its RETURN is the text it print()s (the "
-                  "last-expression value is NOT returned, so print() what you want back). State "
-                  "(vars, imports, defs) persists across calls AND turns. Active engine-bound "
-                  "native tools are bare snake_case functions here; explicitly native-only tools "
-                  "and python_execution itself are exceptions. Action tools are async: `await` "
-                  "them, and use `await gather(a, b)` for independent calls. `apropos` and `doc` "
-                  "are synchronous. Prefer this surface for multi-tool or structural work; use a "
-                  "direct native call for one simple operation."
-                  (when-let [cap (python-execution-capability-line caps)]
-                    (str "\n" cap)))
+   :description
+   (str "Use the persistent Python sandbox to batch, filter, transform, or chain work "
+        "without returning intermediate data. State persists across calls and turns. "
+        "Print only the needed result; final expressions are not returned. Engine-bound "
+        "native tools are bare snake_case functions (native-only tools are absent): "
+        "await action tools, gather independent calls, and call apropos/doc synchronously. "
+        "Use a direct native call for one simple operation."
+        (when-let [cap (python-execution-capability-line caps)]
+          (str "\n" cap)))
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
-            :required ["code"]}})
+            :required ["code"]
+            :additionalProperties false}})
 
 (defn- session-fold-tool
   "Engine-level `session_fold` native-tool schema — the context-compaction verb
@@ -3255,14 +3263,11 @@
    ctx-atom closure is reused — no separate Clojure handler."
   []
   {:name "session_fold"
-   :description (str "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must "
-                     "satisfy `N < session[\"turn\"]`. Never call for current/future turns, even "
-                     "after verification; retry only at the next turn's start, after understanding "
-                     "intent and before new work. Fold completed prior-turn steps off the wire into "
-                     "one optional gist. The gist keeps what was established and why it is done; "
-                     "omit it to drop the steps. Broader folds supersede narrower ones. Folding is "
-                     "wire-only and reversible; native results remain in `ntr[...]`. Also callable "
-                     "inside python_execution as `session_fold(target, gist)`.")
+   :description (str "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
+                     "`N < session[\"turn\"]`. Never call for current/future turns, even after "
+                     "verification; retry only at the next turn's start before new work. Fold only "
+                     "completed prior-turn wire steps, preserving a durable takeaway when useful. "
+                     "The operation is reversible and leaves native results in `ntr[...]`.")
    :schema
    {:type "object"
     :properties
@@ -3279,7 +3284,8 @@
                   "RATIONALE for the fold: what the steps established and why they are done, "
                   "anchored (e.g. \"http timeout @ http.py:52\"). OMIT to drop the steps "
                   "with no summary line.")}}
-    :required ["target"]}})
+    :required ["target"]
+    :additionalProperties false}})
 
 (defn- apropos-tool
   "Engine-level native schema for the sandbox's existing `apropos(query)`
@@ -3287,14 +3293,12 @@
    direct and `python_execution` surfaces always list the same live bindings."
   []
   {:name "apropos"
-   :description (str "List available Python sandbox tools as a compact "
-                     "markdown `| tool | gist |` table. Omit `query` to list all tools. "
-                     "The same tools are also callable inside python_execution via "
-                     "`apropos(query)`, which returns a `{name: gist}` dict for filtering; "
-                     "use `doc` for one tool's full contract.")
+   :description
+   "Discover live Python sandbox capabilities as compact name/gist results; use `doc` for one exact contract. The in-Python form returns a filterable dict."
    :schema {:type "object"
             :properties {"query" {:type "string"
-                                  :description "Optional substring used to filter tool names."}}}})
+                                  :description "Optional substring used to filter tool names."}}
+            :additionalProperties false}})
 
 (defn- doc-tool
   "Engine-level native schema for the sandbox's existing `doc(name)` function.
@@ -3302,12 +3306,12 @@
    stays sourced from the live sandbox registry rather than a copied table."
   []
   {:name "doc"
-   :description (str "Show one Python sandbox tool's exact callable contract, "
-                     "including arguments, result shape, and mechanics. This is "
-                     "the same `doc(name)` function available inside python_execution.")
+   :description
+   "Read one live Python sandbox capability's authoritative contract before guessing its call or result shape."
    :schema {:type "object"
             :properties {"name" {:type "string" :description "Exact tool name from apropos."}}
-            :required ["name"]}})
+            :required ["name"]
+            :additionalProperties false}})
 
 (def ^:private engine-native-tool-call-shapes
   {"apropos" {:py-name "__vis_apropos_table__" :opt-pos ["query"]}
@@ -5332,8 +5336,7 @@
        (if (str/blank? (str sticky-md))
          "You have NOT produced any answer yet.\n\n"
          (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
-       "DECIDE NOW:\n"
-       "1. FINISH — reply with the best answer as plain prose; no tool call.\n"
+       "DECIDE NOW:\n" "1. FINISH — reply with the best answer as plain prose; no tool call.\n"
        "2. ONE TOOL — only if one named missing fact blocks the answer, call exactly "
        "one NEW tool that can obtain it. Never repeat a prior call.\n"
        "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"

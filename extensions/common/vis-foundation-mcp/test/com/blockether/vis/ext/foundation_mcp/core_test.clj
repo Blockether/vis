@@ -1,20 +1,23 @@
 (ns com.blockether.vis.ext.foundation-mcp.core-test
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.foundation-mcp.core :as mcp]
-            [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe mcp-prompt-test
-             (it "emits concise routing only while MCP is enabled"
-                 (let [prompt-fn (:ext/prompt-fn mcp/vis-extension)]
-                   (with-redefs [toggles/enabled? (constantly false)]
-                     (expect (nil? (prompt-fn {}))))
-                   (with-redefs [toggles/enabled? (constantly true)]
-                     (let [prompt (prompt-fn {})]
-                       (expect (str/includes? prompt "mcp__..."))
-                       (expect (str/includes? prompt "python_execution"))
-                       (expect (str/includes? prompt "mcp_servers"))
-                       (expect (str/includes? prompt "doc(name)"))
-                       (expect (str/includes? prompt "session[\"env\"][\"mcp\"][\"servers\"]"))
-                       (expect (not (str/includes? prompt "input_schema")))
-                       (expect (< (count prompt) 500)))))))
+(defdescribe mcp-native-contract-test
+             (it "keeps native/Python alias routing in each compact description"
+                 (let [symbols (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])]
+                   (doseq [s symbols]
+                     (let [description (:ext.symbol/description s)]
+                       (expect (str/includes? description "In `python_execution`"))
+                       (expect (< (count description) 350))))))
+             (it "closes the dispatcher schemas while leaving MCP tool args open"
+                 (let [symbols
+                       (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])
+
+                       call
+                       (first (filter #(= "mcp__call" (:ext.symbol/name %)) symbols))]
+
+                   (doseq [s symbols]
+                     (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))
+                   (expect (= "object"
+                              (get-in call [:ext.symbol/schema :properties "args" :type]))))))

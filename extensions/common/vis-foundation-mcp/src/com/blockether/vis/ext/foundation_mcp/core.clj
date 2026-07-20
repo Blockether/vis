@@ -357,8 +357,9 @@
   {:summary (str "disconnected `" (get r "server") "` — " (get r "result"))})
 
 ;; ---------------------------------------------------------------------------
-;; Public, doc-bearing vars (model-facing surface). Under alias `mcp` they bind
-;; as mcp__servers / mcp__tools / mcp__call / mcp__connect / mcp__disconnect.
+;; Public vars retain developer examples and fallback docs. Native symbols below
+;; own compact model-facing semantics and exact schemas. Under alias `mcp` the
+;; Python names use one underscore; direct native names use two.
 ;; ---------------------------------------------------------------------------
 
 (def
@@ -410,39 +411,47 @@
 ;; Python identifier (verbs bind positionally under the wire name), and dodges
 ;; the reservation. Do NOT revert to a single underscore.
 (def ^:private mcp-symbols
-  [(vis/symbol #'mcp-servers
-               {:symbol 'servers
-                :name "mcp__servers"
-                :native-tool? true
-                :render render-mcp-servers-result
-                ;; mcp verbs bind positionally under the wire name: mcp__servers(),
-                ;; mcp__tools(server), mcp__call(server, tool, args?), mcp_(dis)connect(server).
-                :call {:pos []}
-                :color-role :tool-color/meta
-                :schema {:type "object" :properties {} :required []}
-                :before-fn (mcp-gate-before-fn :mcp/servers)
-                :tag :observation
-                :on-error-fn (mcp-on-error :mcp/servers)})
-   (vis/symbol #'mcp-tools
-               {:symbol 'tools
-                :name "mcp__tools"
-                :native-tool? true
-                :render render-mcp-tools-result
-                :call {:pos ["server"]}
-                :color-role :tool-color/meta
-                :schema {:type "object"
-                         :properties {"server" {:type "string"
-                                                :description
-                                                "Configured MCP server name (auto-connects)."}}
-                         :required ["server"]}
-                :before-fn (mcp-gate-before-fn :mcp/tools)
-                :tag :observation
-                :on-error-fn (mcp-on-error :mcp/tools)})
+  [(vis/symbol
+     #'mcp-servers
+     {:symbol 'servers
+      :name "mcp__servers"
+      :native-tool? true
+      :description
+      "List configured MCP servers and connection state before choosing one. In `python_execution`, call `await mcp_servers()`."
+      :render render-mcp-servers-result
+      ;; mcp verbs bind positionally under the wire name: mcp__servers(),
+      ;; mcp__tools(server), mcp__call(server, tool, args?), mcp_(dis)connect(server).
+      :call {:pos []}
+      :color-role :tool-color/meta
+      :schema {:type "object" :properties {} :required [] :additionalProperties false}
+      :before-fn (mcp-gate-before-fn :mcp/servers)
+      :tag :observation
+      :on-error-fn (mcp-on-error :mcp/servers)})
+   (vis/symbol
+     #'mcp-tools
+     {:symbol 'tools
+      :name "mcp__tools"
+      :native-tool? true
+      :description
+      "Discover one MCP server's live tools and input schemas before calling them; auto-connects when needed. In `python_execution`, call `await mcp_tools(...)`."
+      :render render-mcp-tools-result
+      :call {:pos ["server"]}
+      :color-role :tool-color/meta
+      :schema {:type "object"
+               :properties {"server" {:type "string"
+                                      :description "Configured MCP server name (auto-connects)."}}
+               :required ["server"]
+               :additionalProperties false}
+      :before-fn (mcp-gate-before-fn :mcp/tools)
+      :tag :observation
+      :on-error-fn (mcp-on-error :mcp/tools)})
    (vis/symbol
      #'mcp-call
      {:symbol 'call
       :name "mcp__call"
       :native-tool? true
+      :description
+      "Invoke a discovered MCP tool with arguments matching its returned input schema; auto-connects when needed. In `python_execution`, call `await mcp_call(...)`."
       :render render-mcp-call-result
       :call {:pos ["server" "tool"] :opt-pos ["args"]}
       :color-role :tool-color/shell
@@ -452,42 +461,49 @@
                 "tool" {:type "string" :description "Tool name on that server (see mcp__tools)."}
                 "args" {:type "object"
                         :description "Args matching the tool's input_schema; omit or {} for none."}}
-               :required ["server" "tool"]}
+               :required ["server" "tool"]
+               :additionalProperties false}
       :before-fn (mcp-gate-before-fn :mcp/call)
       :tag :mutation
       :on-error-fn (mcp-on-error :mcp/call)})
-   (vis/symbol #'mcp-connect
-               {:symbol 'connect
-                :name "mcp__connect"
-                :native-tool? true
-                :render render-mcp-connect-result
-                :call {:pos ["server"]}
-                :color-role :tool-color/create
-                :schema {:type "object"
-                         :properties
-                         {"server" {:type "string"
-                                    :description
-                                    "Configured MCP server to connect + register as a resource."}}
-                         :required ["server"]}
-                :before-fn (mcp-gate-before-fn :mcp/connect)
-                :tag :mutation
-                :on-error-fn (mcp-on-error :mcp/connect)})
-   (vis/symbol #'mcp-disconnect
-               {:symbol 'disconnect
-                :name "mcp__disconnect"
-                :native-tool? true
-                :render render-mcp-disconnect-result
-                :call {:pos ["server"]}
-                :color-role :tool-color/delete
-                :schema {:type "object"
-                         :properties {"server"
-                                      {:type "string"
-                                       :description
-                                       "Connected MCP server to disconnect (stops its resource)."}}
-                         :required ["server"]}
-                :before-fn (mcp-gate-before-fn :mcp/disconnect)
-                :tag :mutation
-                :on-error-fn (mcp-on-error :mcp/disconnect)})])
+   (vis/symbol
+     #'mcp-connect
+     {:symbol 'connect
+      :name "mcp__connect"
+      :native-tool? true
+      :description
+      "Explicitly connect a configured MCP server as a session resource; normally unnecessary because discovery and calls auto-connect. In `python_execution`, call `await mcp_connect(...)`."
+      :render render-mcp-connect-result
+      :call {:pos ["server"]}
+      :color-role :tool-color/create
+      :schema {:type "object"
+               :properties {"server" {:type "string"
+                                      :description
+                                      "Configured MCP server to connect + register as a resource."}}
+               :required ["server"]
+               :additionalProperties false}
+      :before-fn (mcp-gate-before-fn :mcp/connect)
+      :tag :mutation
+      :on-error-fn (mcp-on-error :mcp/connect)})
+   (vis/symbol
+     #'mcp-disconnect
+     {:symbol 'disconnect
+      :name "mcp__disconnect"
+      :native-tool? true
+      :description
+      "Disconnect an MCP server and stop its session resource, including an owned stdio process. In `python_execution`, call `await mcp_disconnect(...)`."
+      :render render-mcp-disconnect-result
+      :call {:pos ["server"]}
+      :color-role :tool-color/delete
+      :schema {:type "object"
+               :properties {"server" {:type "string"
+                                      :description
+                                      "Connected MCP server to disconnect (stops its resource)."}}
+               :required ["server"]
+               :additionalProperties false}
+      :before-fn (mcp-gate-before-fn :mcp/disconnect)
+      :tag :mutation
+      :on-error-fn (mcp-on-error :mcp/disconnect)})])
 
 (defn- contribute
   "`:ext/ctx-fn` — surface this session's CONNECTED MCP servers (+ tool counts) so
@@ -523,14 +539,6 @@
   []
   (toggles/enabled? :mcp/enabled))
 
-(def ^:private prompt-text
-  (str "MCP enabled. Direct calls use `mcp__...`; inside `python_execution`, use "
-       "awaited `mcp_...` bindings. Route: `mcp_servers()` → `mcp_tools(server)` → "
-       "`mcp_call(server, tool, args)`. Connection status is in "
-       "`session[\"env\"][\"mcp\"][\"servers\"]`. Use `doc(name)` for contracts."))
-
-(defn- mcp-prompt [_env] (when (mcp-enabled?) prompt-text))
-
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-mcp"
@@ -542,7 +550,6 @@
      :ext/license "Apache-2.0"
      :ext/activation-fn activation-fn
      :ext/engine {:ext.engine/alias 'mcp :ext.engine/symbols mcp-symbols}
-     :ext/prompt-fn mcp-prompt
      :ext/ctx-fn contribute
      :ext/startable-resources
      [{:kind :mcp-configured

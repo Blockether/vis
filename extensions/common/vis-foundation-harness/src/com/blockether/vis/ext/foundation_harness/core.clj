@@ -136,24 +136,26 @@
 (def skill-symbol
   ;; STRONG flat native-tool form: everything on the SYMBOL. `:native-tool? true`
   ;; (the source of "is a native tool"), `:engine-bound? false` (NOT a Python verb).
-  ;; The schema description defaults to skill-tool's docstring — ONE source, so the
-  ;; schema and the doc can't diverge.
-  (vis/symbol #'skill-tool
-              {:symbol 'skill
-               :engine-bound? false
-               :active-fn (fn [_env]
-                            (toggles/enabled? :vis/harness-skills))
-               :tag :observation
-               :native-tool? true
-               :name "skill"
-               :schema {:type "object"
-                        :properties {"name" {:type "string"
-                                             :description
-                                             "Skill name from the HARNESS SKILLS list."}}
-                        :required ["name"]}
-               :handler skill-tool
-               :render render-skill
-               :color-role :tool-color/meta}))
+  ;; Compact semantics live in :description; exact inputs live in :schema.
+  (vis/symbol
+    #'skill-tool
+    {:symbol 'skill
+     :engine-bound? false
+     :active-fn (fn [_env]
+                  (toggles/enabled? :vis/harness-skills))
+     :tag :observation
+     :native-tool? true
+     :name "skill"
+     :description
+     "Load one advertised harness skill on demand. Loading is session-idempotent, so repeated calls acknowledge without resending the instructions."
+     :schema {:type "object"
+              :properties {"name" {:type "string"
+                                   :description "Skill name from the HARNESS SKILLS list."}}
+              :required ["name"]
+              :additionalProperties false}
+     :handler skill-tool
+     :render render-skill
+     :color-role :tool-color/meta}))
 
 ;; =============================================================================
 ;; /skill:<name> — user-invokable skill templates (pi-style)

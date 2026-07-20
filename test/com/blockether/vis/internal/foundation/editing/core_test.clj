@@ -339,26 +339,28 @@
         (expect (string? doc))
         (expect (not (string/blank? doc)))
         (expect (or (vector? arglists) (seq? arglists)))))
-  (it "exposes a non-blank prompt fragment"
+  (it "emits no duplicated editing prompt fragment"
       (expect (string? @editing/editing-prompt))
-      (expect (not (string/blank? @editing/editing-prompt))))
+      (expect (string/blank? @editing/editing-prompt)))
   (it "editing prompt has no v/preview references (tool retired)"
       (expect (not (string/includes? @editing/editing-prompt "v/preview")))
       (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %) @editing/editing-symbols))))
-  (it "pushes search/read/path discovery to the structured v tool surface"
-      (expect (string/includes? @editing/editing-prompt "find"))
-      (expect (string/includes? @editing/editing-prompt "rg"))
-      (expect (string/includes? @editing/editing-prompt "ls"))
-      (expect (string/includes? @editing/editing-prompt "cat"))
-      nil)
-  (it "uses one compact routing table and leaves contracts in doc"
-      (let [prompt (editing/available-editing-prompt)]
-        (expect (string/includes? prompt "EDITING ROUTES"))
-        (expect (string/includes? prompt "| Target | Route |"))
-        (expect (string/includes? prompt "doc(name)"))
-        (expect (not (string/includes? prompt "1. EXECUTE")))
-        (expect (not (string/includes? prompt "5. VERIFY")))
-        (expect (< (count prompt) 1000)))))
+  (it "keeps routing in compact native descriptions and inputs in schemas"
+      (doseq [s
+              @editing/editing-symbols
+
+              :when (:ext.symbol/native-tool? s)]
+
+        (let [description
+              (:ext.symbol/description s)
+
+              schema
+              (:ext.symbol/schema s)]
+
+          (expect (not (string/blank? description)))
+          (expect (< (count description) 500))
+          (expect (= "object" (:type schema)))
+          (expect (false? (:additionalProperties schema)))))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
     ;; The classification table + presentation map live in
@@ -2424,24 +2426,44 @@
     (it "still rejects an edit with no locator (generic from_anchor error)"
         (expect (throws? clojure.lang.ExceptionInfo #(coerce [{"path" "p.txt" "replace" "x"}]))))))
 
-(defdescribe editing-prompt-no-stale-api-test
-             (let [prompt (editing/available-editing-prompt)]
-               (it "teaches patch as ANCHOR-ONLY via from_anchor"
-                   (expect (string/includes? prompt "ANCHOR-ONLY"))
-                   (expect (string/includes? prompt "from_anchor")))
-               (it "does NOT present the removed search/replace patch examples"
-                   (expect (not (string/includes? prompt "edits\": [{\"search")))
-                   (expect (not (string/includes? prompt "\"nth\": \"all"))))
-               (it "does NOT teach reusing stale anchors as facts"
-                   (expect (not (string/includes? prompt "Re-patch by from_anchor")))
-                   (expect (string/includes? prompt "STALE after ANY write")))
-               (it "describes cat's result as `anchors`, not a `lines` key"
-                   (expect (string/includes? prompt "anchors"))
-                   (expect (not (string/includes? prompt "cat(P)[\"lines\"]")))
-                   (expect (not (string/includes? prompt "[[lineno, text]"))))
-               (it "teaches anchored edits via cat's lineno:hash → from_anchor"
-                   (expect (string/includes? prompt "lineno:hash"))
-                   (expect (string/includes? prompt "from_anchor")))))
+(defdescribe editing-native-contract-no-stale-api-test
+             (let [patch-description
+                   (:ext.symbol/description editing/patch-symbol)
+
+                   patch-schema
+                   (:ext.symbol/schema editing/patch-symbol)
+
+                   cat-description
+                   (:ext.symbol/description editing/cat-symbol)]
+
+               (it "keeps anchor lifecycle policy in the native descriptions"
+                   (expect (string/includes? patch-description "fresh anchors"))
+                   (expect (string/includes? patch-description "stales all anchors"))
+                   (expect (string/includes? cat-description "invalidates returned anchors")))
+               (it "keeps exact patch fields only in the JSON Schema"
+                   (expect (not (string/includes? patch-description "from_anchor")))
+                   (expect (contains? (get-in patch-schema [:properties "edits" :items :properties])
+                                      "from_anchor")))
+               (it "does not advertise retired search/replace inputs"
+                   (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
+                     (expect (not (contains? fields "search")))
+                     (expect (not (contains? fields "nth")))))))
+
+(defdescribe editing-native-schema-shape-test
+             (it "matches rg's real scalar-or-list query contract"
+                 (let [query (get-in editing/rg-symbol [:ext.symbol/schema :properties "query"])]
+                   (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
+             (it "rejects ambiguous cat selectors at the native boundary"
+                 (let [schema (:ext.symbol/schema editing/cat-symbol)]
+                   (expect (= 2 (:maxProperties schema)))
+                   (expect (= 2 (get-in schema [:properties "range" :minItems])))
+                   (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
+             (it "requires a patch path either once or on every edit"
+                 (let [schema (:ext.symbol/schema editing/patch-symbol)]
+                   (expect (= 2 (count (:oneOf schema))))
+                   (expect (= ["path"] (get-in schema [:oneOf 0 :required])))
+                   (expect (= ["path"]
+                              (get-in schema [:oneOf 1 :properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test

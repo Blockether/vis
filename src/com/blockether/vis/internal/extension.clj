@@ -861,9 +861,10 @@
 
    A symbol IS a native tool IFF it declares `:native-tool? true` (which REQUIRES
    `:schema`). Every field is FLAT on the symbol — no legacy `:native-tool` map.
-   `:description` defaults to the symbol's `:doc` so the schema description and the
-   docstring are ONE source. `:name` is the `:name` wire-name override else the
-   symbol name (so `exists?` advertises `file_exists`). `:active?` is the
+   `:description` is the compact routing/semantics contract; it defaults to the
+   symbol's `:doc`. Input mechanics belong in `:schema`, and `doc(name)` appends
+   those schema parameters exactly once. `:name` is the `:name` wire-name override
+   else the symbol name (so `exists?` advertises `file_exists`). `:active?` is the
    `:active-fn` against `env` (default true). `env` may be nil."
   ([active-extensions] (native-tools-for active-extensions nil))
   ([active-extensions env]
@@ -1133,7 +1134,8 @@
        ;; STRONG flat native-tool spec — the SINGLE source of truth. `:native-tool?`
        ;; marks the symbol as a native tool (advertised in `:tools`; REQUIRES
        ;; `:schema`). name/handler/description live flat; wire name defaults to the
-       ;; symbol name, description defaults to `:doc`.
+       ;; symbol name. Keep `:description` compact and semantic; its JSON Schema owns
+       ;; input details and `doc(name)` renders both without copied parameter prose.
        (contains? opts :native-tool?)
        (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
 
@@ -3132,18 +3134,20 @@
       (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
 (defn- json-schema-type-str
-  "Compact type string for one JSON-schema property node, e.g. `array<string>`."
+  "Compact type string for one JSON-schema node, including `oneOf`/`anyOf`
+   unions such as `string|array<string>`."
   [prop]
-  (let
-    [t
-     (:type prop)
-
-     items
-     (get-in prop [:items :type])]
-
-    (cond (and (= t "array") items) (str "array<" items ">")
-          (some? t) (str t)
-          :else "any")))
+  (letfn [(render [node]
+            (let [t (:type node)
+                  alternatives (or (:oneOf node) (:anyOf node))]
+              (cond (seq alternatives) (->> alternatives
+                                             (map render)
+                                             distinct
+                                             (str/join "|"))
+                    (= t "array") (str "array<" (render (or (:items node) {})) ">")
+                    (some? t) (str t)
+                    :else "any")))]
+    (render prop)))
 
 (defn- schema->param-doc
   "Render a native tool's input `:ext.symbol/schema` (a JSON-schema map) into a

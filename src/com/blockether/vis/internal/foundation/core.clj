@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.foundation.core
-  (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -13,13 +12,10 @@
             [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- combined-prompt
-  "Render only dynamic capability routing and the editing workflow. Stable
-   state, introspection, and self-doc routing live once in CORE."
+  "Render only the dynamic language capability matrix. Native descriptions own
+   tool routing; CORE owns cross-tool policy."
   [env]
-  (str/join "\n\n"
-            (remove str/blank?
-              [(language-surface/prompt env) ; nil when no language pack is active
-               (editing/available-editing-prompt)])))
+  (or (language-surface/prompt env) ""))
 
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
 ;; INLINE on the (vis/symbol ...) opts map; register-extension! walks

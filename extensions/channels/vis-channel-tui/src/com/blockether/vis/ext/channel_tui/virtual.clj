@@ -923,7 +923,7 @@
    the end (defensive - we never expect that in practice)."
   [v ^long i x pad]
   (let [n (long (count v))]
-    (cond (< i n) (assoc v i x)
+    (cond (< i n) (if (== (long (nth v i)) (long x)) v (assoc v i x))
           (= i n) (conj v x)
           :else (recur (conj v pad) i x pad))))
 
@@ -1290,7 +1290,10 @@
                   tail)
 
           offsets'
-          (cumulative-offsets heights')
+          ;; Steady state: every visible bubble was already measured, so the
+          ;; reduce above skipped all assocs and `heights'` is IDENTICAL to
+          ;; `est` — reuse the pass-1 offsets instead of rebuilding them.
+          (if (identical? heights' est) est-off (cumulative-offsets heights'))
 
           total-h'
           (long (peek offsets'))
@@ -1332,7 +1335,7 @@
                   projected)
 
           offsets'
-          (cumulative-offsets heights')
+          (if (identical? heights' est) est-off (cumulative-offsets heights'))
 
           total-h'
           (long (peek offsets'))

@@ -51,97 +51,75 @@
                    (expect (not (str/includes? (text-for :web) marker)))
                    (expect (not (str/includes? (text-for nil) marker))))))
 
-(defdescribe prompt-core-test
-             (it "documents engine-owned forms as bare, not extension tools"
-                 ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.
-                 ;; Engine fns are emitted without namespace qualification.
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "bare snake_case"))
-                   (expect (str/includes? text "never import/qualify"))
-                   (expect (not (str/includes? text "Session titles are host-generated")))))
-             (it "carries Epistemic + Identity stance so the model probes the project first"
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "Epistemic stance"))
-                   (expect (str/includes? text "runtime > source > docs > assumption"))
-                   (expect (str/includes? text "Identity"))
-                   (expect (str/includes? text "host project"))
-                   ;; Identity must be project-agnostic: it has to work in any repo.
-                   (expect (not (str/includes? text "the Vis PROJECT")))))
-             (it "teaches anchored editing: cat's lineno:hash passed straight to patch from_anchor"
-                 ;; Native `patch` takes the `lineno:hash` the model sees in cat output
-                 ;; directly as `from_anchor` — the old hunk/anchor Python helpers are gone.
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "lineno:hash"))
-                   (expect (str/includes? text "from_anchor"))
-                   (expect (not (str/includes? text "\n+    ")))))
-             (it
-               "keeps the core compact, numbered, and Python structural-first"
-               (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt
-                                               'CORE_SYSTEM_PROMPT))]
-                 (expect (< (count text) 5000))
-                 (doseq [step ["## 1. Identity" "## 2. Execution surfaces" "## 3. Inspect"
-                               "## 4. Act" "## 5. Use tools" "## 6. Edit" "## 7. Verify"
-                               "## 8. Manage context" "## 9. Style and finish"]]
-                   (expect (str/includes? text step)))
-                 (expect (str/includes? text "persistent sandbox action layer"))
-                 (expect (str/includes? text "cannot import project packages"))
-                 (expect (str/includes? text "absent/down/failed → start"))
-                 (expect (str/includes? text "`starting` → recheck"))
-                 (expect (str/includes? text "`unresponsive` → restart"))
-                 (expect (str/includes? text "After the requested work is verified"))
-                 (expect (str/includes? text "`repl_stop(id)`"))
-                 (expect (str/includes? text "attach/detach, never kill"))
-                 (expect (not (str/includes? text "Keep managed REPLs across turns")))
-                 (expect (str/includes? text "MUST route supported code edits structurally"))
-                 (doseq [tool ["`struct_index`" "`struct_patch`" "`struct_node`"
-                               "`struct_occurrences`" "`struct_rename`"]]
-                   (expect (str/includes? text tool)))
-                 (expect (str/includes? text "`apropos(query)`"))
-                 (expect (str/includes? text "`doc(name)`"))
-                 (expect (str/includes? text "native-only"))
-                 (expect (str/includes? text "Step N of M complete"))
-                 (expect (str/includes? text "location → cause → fix"))
-                 (expect (str/includes? text "MUST OBEY"))
-                 (expect (str/includes? text "≤120 words"))
-                 (expect (str/includes? text "≤3 bullets"))
-                 (expect (str/includes? text "essential evidence"))
-                 (expect (str/includes? text "brief rationale"))
-                 (expect (str/includes? text "material consequences"))
-                 (expect (str/includes? text "canonical decision"))
-                 (expect (str/includes? text "With 2+ options"))
-                 (expect (str/includes? text "MUST use"))
-                 (expect (str/includes? text "table is ground truth"))
-                 (expect (str/includes? text "Maximum 5 rows"))
-                 (expect (str/includes? text "`session[\"resources\"][\"repls\"][language][dir]`"))
-                 (expect (str/includes? text "`language_tools`"))
-                 (expect (str/includes? text "never use `ctx` or `context`"))
-                 (expect (str/includes? text "`sessions()` → `session_state(id)`"))
-                 (expect (str/includes? text "`await session_state()`"))
-                 (expect (str/includes? text "`['transcript']['turns']`"))
-                 (expect (str/includes? text "`session_report_html(id)`"))
-                 (expect (str/includes? text "`await vis_docs()`"))
-                 (expect (str/includes? text "`N < session[\"turn\"]`"))
-                 (expect (str/includes? text "do not call/retry this turn"))
-                 (expect (str/includes? text "even after verification"))
-                 (expect (str/includes? text "never a menu"))
-                 (expect (str/includes? text "reproduce before editing"))
-                 (expect (str/includes? text "Prefer a live REPL"))
-                 (expect (str/includes? text "rerun the same reproduction"))
-                 (expect (str/includes? text "inspect relevant dependencies/config"))
-                 (expect (str/includes? text "benchmark"))
-                 (expect (str/includes? text "Compare identical"))
-                 (expect (str/includes? text "If ambiguity could materially change the result"))
-                 (expect (str/includes? text "correct or redirect you"))
-                 (expect (not (str/includes? text "ambiguous, large, or risky")))))
-             (it "advertises concise Python guidance and every auto-imported name"
-                 (let [text (#'prompt/sandbox-shims-prompt-block)]
-                   (expect (< (count text) 1000))
-                   (expect (not (str/includes? text "Not supported:")))
-                   (expect (str/includes? text "Auto-imported by `python_execution`"))
-                   (expect (str/includes? text "Preinstalled shims"))
-                   (expect (str/includes? text "doc(name)"))
-                   (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
-                     (expect (str/includes? text (str "`" name "`")))))))
+(defdescribe
+  prompt-core-test
+  (it "makes live native contracts authoritative"
+      (let [text (prompt/build-system-prompt {})]
+        (expect (str/includes? text "Native descriptions and JSON Schemas are authoritative"))
+        (expect (str/includes? text "hard preconditions"))
+        (expect (str/includes? text "bare snake_case"))
+        (expect (str/includes? text "`apropos(query)`"))
+        (expect (str/includes? text "`doc(name)`"))
+        (expect (not (str/includes? text "Session titles are host-generated")))))
+  (it "carries Epistemic + Identity stance so the model probes the project first"
+      (let [text (prompt/build-system-prompt {})]
+        (expect (str/includes? text "Epistemic stance"))
+        (expect (str/includes? text "runtime > source > docs > assumption"))
+        (expect (str/includes? text "Identity"))
+        (expect (str/includes? text "host project"))
+        ;; Identity must be project-agnostic: it has to work in any repo.
+        (expect (not (str/includes? text "the Vis PROJECT")))))
+  (it
+    "keeps CORE compact and cross-tool while native contracts own mechanics"
+    (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
+      (expect (< (count text) 4000))
+      (doseq [step ["## 1. Identity" "## 2. Tool contracts" "## 3. Inspect" "## 4. Act"
+                    "## 5. Edit + verify" "## 6. Manage context" "## 7. Style and finish"]]
+        (expect (str/includes? text step)))
+      (expect (str/includes? text "cannot import project packages"))
+      (expect (str/includes? text "structural tools for supported code"))
+      (doseq [tool ["`struct_index`" "`struct_patch`" "`struct_node`" "`struct_occurrences`"
+                    "`struct_rename`"]]
+        (expect (not (str/includes? text tool))))
+      (doseq [duplicated ["absent/down/failed → start" "`repl_stop(id)`" "`N < session[\"turn\"]`"
+                          "from_anchor"]]
+        (expect (not (str/includes? text duplicated))))
+      (expect (str/includes? text "native-only"))
+      (expect (str/includes? text "Step N of M complete"))
+      (expect (str/includes? text "location → cause → fix"))
+      (expect (str/includes? text "MUST OBEY"))
+      (expect (str/includes? text "≤120 words"))
+      (expect (str/includes? text "≤3 bullets"))
+      (expect (str/includes? text "essential evidence"))
+      (expect (str/includes? text "brief rationale"))
+      (expect (str/includes? text "material consequences"))
+      (expect (str/includes? text "canonical decision"))
+      (expect (str/includes? text "With 2+ options"))
+      (expect (str/includes? text "MUST use"))
+      (expect (str/includes? text "table is ground truth"))
+      (expect (str/includes? text "Maximum 5 rows"))
+      (expect (str/includes? text "never use `ctx` or `context`"))
+      (expect (str/includes? text "`sessions`/`session_state`"))
+      (expect (str/includes? text "`await vis_docs()`"))
+      (expect (str/includes? text "never a menu"))
+      (expect (str/includes? text "reproduce before editing"))
+      (expect (str/includes? text "Prefer a live REPL"))
+      (expect (str/includes? text "rerun the same reproduction"))
+      (expect (str/includes? text "inspect relevant dependencies/config"))
+      (expect (str/includes? text "benchmark"))
+      (expect (str/includes? text "Compare identical"))
+      (expect (str/includes? text "If ambiguity could materially change the result"))
+      (expect (str/includes? text "correct or redirect you"))
+      (expect (not (str/includes? text "ambiguous, large, or risky")))))
+  (it "advertises concise Python guidance and every auto-imported name"
+      (let [text (#'prompt/sandbox-shims-prompt-block)]
+        (expect (< (count text) 1000))
+        (expect (not (str/includes? text "Not supported:")))
+        (expect (str/includes? text "Auto-imported by `python_execution`"))
+        (expect (str/includes? text "Preinstalled shims"))
+        (expect (str/includes? text "doc(name)"))
+        (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
+          (expect (str/includes? text (str "`" name "`")))))))
 
 (defdescribe
   project-instructions-hoist-test

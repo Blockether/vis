@@ -6,15 +6,18 @@
 (def ^:private render #'gt/render-git-result)
 (def ^:private verbose-add #'gt/verbose-add-tokens)
 
-(defdescribe git-prompt-test
-             (it "routes from session state and leaves the contract in doc"
-                 (let [prompt ((:ext/prompt-fn gt/vis-extension) {})]
-                   (expect (str/includes? prompt "session[\"workspace\"]"))
-                   (expect (str/includes? prompt "doc(\"git\")"))
-                   (expect (not (str/includes? prompt "git([\"status\"")))
-                   (expect (< (count prompt) 250))))
-             (it "keeps exact argument mechanics in the symbol documentation"
-                 (expect (str/includes? (:ext.symbol/doc gt/git-symbol) "LIST of literal tokens"))))
+(defdescribe git-native-contract-test
+             (it "routes from session state in the native description"
+                 (let [description (:ext.symbol/description gt/git-symbol)]
+                   (expect (str/includes? description "session[\"workspace\"]"))
+                   (expect (str/includes? description "non-zero exit"))
+                   (expect (not (str/includes? description "[\"status\"")))
+                   (expect (< (count description) 300))))
+             (it "keeps exact arguments in a closed JSON Schema"
+                 (let [schema (:ext.symbol/schema gt/git-symbol)]
+                   (expect (= ["args"] (:required schema)))
+                   (expect (false? (:additionalProperties schema)))
+                   (expect (= "array" (get-in schema [:properties "args" :type]))))))
 
 (defdescribe verbose-add-tokens-test
              ;; `git add` is silent, so a bare `add` gets --verbose appended for the

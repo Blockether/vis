@@ -334,18 +334,24 @@
       (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
       (expect (str/includes? (:body logs) "**LOGS**")))))
 
-(defdescribe shell-prompt-test
-             (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"
-                 (toggles/reset-to-default! :shell/enabled)
-                 (expect (= "" (shell/shell-prompt {})))
-                 (with-shell-on (fn []
-                                  (let [p (shell/shell-prompt {})]
-                                    (expect (str/includes? p "shell_run"))
-                                    (expect (str/includes? p "shell_bg"))
-                                    (expect (str/includes? p "resource_stop"))
-                                    (expect (str/includes? p "doc(name)"))
-                                    (expect (not (str/includes? p "npm run build")))
-                                    (expect (< (count p) 500)))))))
+(defdescribe shell-native-contract-test
+             (it "routes lifecycle through compact native descriptions"
+                 (let [run
+                       (:ext.symbol/description shell/shell-run-symbol)
+
+                       bg
+                       (:ext.symbol/description shell/shell-bg-symbol)
+
+                       logs
+                       (:ext.symbol/description shell/shell-logs-symbol)]
+
+                   (expect (str/includes? run "command that should exit"))
+                   (expect (str/includes? bg "resource_stop"))
+                   (expect (str/includes? logs "succeeded, failed, or still runs"))
+                   (expect (every? #(< (count %) 350) [run bg logs]))))
+             (it "closes every native shell input schema"
+                 (doseq [s shell/shell-symbols]
+                   (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
 
 (defdescribe shell-extension-shape-test
              (it "is a registered aliased extension exposing run / bg / logs symbols"

@@ -4168,9 +4168,9 @@
 ;; -----------------------------------------------------------------------------
 ;; Symbol declarations.
 ;;
-;; Each underlying `xxx-tool` defn carries the canonical docstring + arglists
-;; on its var. `vis/symbol` reads them straight from the var meta - the
-;; Python sandbox sees the same text the prompt-listing renders.
+;; Underlying `xxx-tool` defs retain developer docs + arglists. Each native
+;; symbol supplies compact routing/semantics in `:description`; exact inputs
+;; live only in its schema and are appended once by `doc(name)`.
 ;; `:symbol` overrides the var name (`cat-tool` -> `cat`) for the model-facing
 ;; surface; everything else (examples, error hook, result spec)
 ;; lives in opts because it has nothing to do with the function's signature.
@@ -4885,22 +4885,15 @@
      :native-tool? true
      :active-fn structural-supported?
      :description
-     (str
-       "Structural INDEX of a CODE file via tree-sitter (Maki-style): a "
-       "`file · language · N lines` header, an anchored `imports:` section (the "
-       "file's require/import deps), then every definition (kind, visibility, name, "
-       "signature, doc-gist) with its start..end anchors, nested by structure — "
-       "WITHOUT reading the bodies. Read it BEFORE `cat` to jump straight to the "
-       "range you need — then `cat` that def's anchors, "
-       "cat(path, {anchor: [start_anchor, end_anchor]}), to read that ONE def's source — and to patch a "
-       "whole def straight from its anchors. Returns a structured `definitions` list "
-       "(each row the SAME shape as an `struct_occurrences` definition: name/kind/visibility/"
-       "signature/doc/anchor/end_anchor + nesting depth) plus an `imports` list, beside the human `skeleton`.")
+     (str "Inspect supported source structurally before reading bodies. Returns imports plus a "
+          "nested definition skeleton with signatures, doc gists, and fresh start/end anchors; "
+          "use those anchors to read one definition or its name/kind with `struct_patch`.")
      :render render-index-result
      :color-role :tool-color/read
      :schema {:type "object"
               :properties {"path" {:type "string" :description "Path to a source file."}}
-              :required ["path"]}
+              :required ["path"]
+              :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
@@ -4912,13 +4905,9 @@
      :native-tool? true
      ;; cat(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
-     :description (str
-                    "Read a file and get back its content as anchored lines "
-                    "(`lineno:hash` keys you can patch against). Optional slice: `range` "
-                    "[start,end] (1-based, inclusive), `ranges` [[s,e],…] for several windows, "
-                    "`anchor` A (one line) or [A1,A2] (inclusive span) by lineno:hash, or `tail` "
-                    "N (last N lines). Read GENEROUSLY — the whole region you'll touch — not "
-                    "tiny slices you then re-read.")
+     :description
+     (str "Read one sufficient file region as patch-ready `lineno:hash` anchored lines. "
+          "For supported code, use `struct_index` first; every write invalidates returned anchors.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema
@@ -4927,16 +4916,23 @@
       {"path" {:type "string"
                :description "File path (relative to a filesystem root or absolute under one)."}
        "range" {:type "array"
-                :items {:type "integer"}
+                :items {:type "integer" :minimum 1}
+                :minItems 2
+                :maxItems 2
                 :description "Optional [start,end] line range (1-based, inclusive)."}
        "ranges" {:type "array"
-                 :items {:type "array" :items {:type "integer"}}
+                 :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
+                 :minItems 1
                  :description "Optional several [[s,e],…] windows in one call."}
        "anchor"
-       {:description
+       {:oneOf [{:type "string"} {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]
+        :description
         "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
-       "tail" {:type "integer" :description "Optional: read the last N lines (omit N → 2000)."}}
-      :required ["path"]}
+       "tail"
+       {:type "integer" :minimum 1 :description "Optional: read the last N lines (omit N → 2000)."}}
+      :required ["path"]
+      :additionalProperties false
+      :maxProperties 2}
      :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
@@ -4947,11 +4943,9 @@
     {:symbol 'find_files
      :native-tool? true
      :description
-     (str "Typo-tolerant FUZZY file/path discovery (searches file NAMES/paths, not "
-          "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
-          "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
-          "the likely ones. Scope with `paths`. By default .gitignored files are invisible; "
-          "pass is_respect_gitignore=False to discover files inside gitignored dirs.")
+     (str
+       "Fuzzy file/path-name discovery for vague names, concepts, or unfamiliar modules. "
+       "Searches paths, not content; use `rg` for exact text, then inspect the best-ranked file.")
      :render render-find-result
      :color-role :tool-color/search
      :schema
@@ -4968,7 +4962,8 @@
        {:type "boolean"
         :description
         "Honor .gitignore (default true). Set FALSE to discover files inside gitignored dirs (e.g. vendored / corporate repos the project ignores)."}}
-      :required ["query"]}
+      :required ["query"]
+      :additionalProperties false}
      :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :find_files :dir nil)}))
@@ -4979,28 +4974,19 @@
     {:symbol 'rg
      :native-tool? true
      :description
-     (str
-       "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
-       "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
-       "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
-       "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
-       "(each a FILE searched as that one file, or a DIRECTORY walked as a tree, like "
-       "ripgrep; a missing path climbs to its nearest existing dir, reported in missing_paths, never an error) and `include` globs; "
-       "`context` N adds surrounding lines; `is_files_only` "
-       "returns just the files that contain a match. No regex / no AND — filter the "
-       "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
-       "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold. "
-       "By default .gitignored files are skipped; pass is_respect_gitignore=False to reach them.")
+     (str "Smart-case literal content search; use `find_files` for path names. Multiple terms are "
+          "OR, not AND; filter complex matches in `python_execution`. After one no-hit, widen once "
+          "to a real stem or inspect a likely file instead of guessing synonyms.")
      :render render-rg-result
      :color-role :tool-color/search
      :schema
      {:type "object"
       :properties
       {"query"
-       {:type "array"
-        :items {:type "string"}
+       {:oneOf [{:type "string" :minLength 1}
+                {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
         :description
-        "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase. OR helps only when a term is REAL — a list of guessed synonyms just multiplies zero."}
+        "Term or terms to find as smart-case literal OR matches; comma-separated strings are split into terms."}
        "paths" {:type "array"
                 :items {:type "string"}
                 :description "Restrict to these paths (default the whole tree)."}
@@ -5017,7 +5003,8 @@
        {:type "boolean"
         :description
         "Honor .gitignore (default true). Set FALSE to search inside gitignored dirs (e.g. vendored / corporate repos the project ignores)."}}
-      :required ["query"]}
+      :required ["query"]
+      :additionalProperties false}
      :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :rg :dir nil)}))
@@ -5034,14 +5021,11 @@
              (if-let [p (get input "path")]
                {:args [{"path" p "edits" (get input "edits")}]}
                {:args [(get input "edits")]}))
-     :description (str
-                    "Apply anchored edits. Each edit anchors to a `from_anchor` "
-                    "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
-                    "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
-                    "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
-                    "SINGLE FILE: set top-level `path` and give each edit just "
-                    "{from_anchor, replace[, to_anchor]} (they inherit the path). "
-                    "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
+     :description
+     (str "Surgically edit text or unsupported code using fresh anchors from `cat`, `rg`, or "
+          "`struct_index`. The batch is atomic and every write stales all anchors. On failure, "
+          "follow its cause, refresh the target and anchor, retry once, then reassess; prefer "
+          "`struct_patch` for supported code.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -5052,17 +5036,27 @@
                "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
        "edits"
        {:type "array"
+        :minItems 1
         :description
         "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
-        :items {:type "object"
-                :properties
-                {"path" {:type "string"
-                         :description "File path (omit when top-level `path` is set)."}
-                 "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
-                 "to_anchor" {:type "string" :description "Optional end anchor for a span."}
-                 "replace" {:type "string" :description "Replacement text."}}
-                :required ["from_anchor" "replace"]}}}
-      :required ["edits"]}
+        :items
+        {:type "object"
+         :properties
+         {"path" {:type "string" :description "File path (omit when top-level `path` is set)."}
+          "from_anchor" {:type "string" :minLength 1 :description "lineno:hash from a fresh read."}
+          "to_anchor"
+          {:type "string" :minLength 1 :description "Optional inclusive end anchor for a span."}
+          "replace" {:type "string" :description "Replacement text; empty deletes."}
+          "expected_mtime"
+          {:type "integer" :minimum 0 :description "Optional file-mtime staleness guard."}
+          "expected_size"
+          {:type "integer" :minimum 0 :description "Optional file-size staleness guard."}}
+         :required ["from_anchor" "replace"]
+         :additionalProperties false}}}
+      :required ["edits"]
+      :additionalProperties false
+      :oneOf [{:required ["path"]}
+              {:not {:required ["path"]} :properties {"edits" {:items {:required ["path"]}}}}]}
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
@@ -5074,10 +5068,9 @@
               {:symbol 'write
                :native-tool? true
                :description
-               (str "Write a whole file — create or overwrite (per-file shape is patch's: "
-                    "[{`path`, `op`: add|update, `changed`, `diff`}]). Overwrites the ENTIRE "
-                    "file, so use patch/struct_patch for surgical edits. REFUSED on a file with "
-                    "uncommitted changes unless `allow_dirty`. For NEW files and clean overwrites.")
+               (str "Create a new file or intentionally replace an entire clean file. Refuses "
+                    "uncommitted targets unless explicitly allowed; use `patch` or `struct_patch` "
+                    "for surgical changes.")
                :render render-patch-result
                :color-role :tool-color/edit
                :schema
@@ -5094,7 +5087,8 @@
                  "expected_mtime" {:type "integer"
                                    :description
                                    "Staleness guard: only write if the file's mtime matches this."}}
-                :required ["path" "content"]}
+                :required ["path" "content"]
+                :additionalProperties false}
                :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :write :file nil)}))
@@ -5265,14 +5259,9 @@
      :native-tool? true
      :active-fn structural-supported?
      :description
-     (str "Structural edit via tree-sitter (every language): locate a node by NAME "
-          "(`target`) or by a zipper PATH (`at`/`nav` from struct_node), then edit — the file "
-          "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
-          "for code. ops by name: replace | insert_before | insert_after | append | "
-          "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
-          "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
-          "replace | insert_before | insert_after | append_child | prepend_child. "
-          "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
+     (str "Preferred syntax-safe editor for supported code. Locate a named definition from "
+          "`struct_index` or a nested path from `struct_node`; the file is re-parsed and any "
+          "syntax-breaking write is refused.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -5281,8 +5270,10 @@
       {"path" {:type "string" :description "File to edit."}
        "op"
        {:type "string"
+        :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
+               "replace_node" "rename" "move_before" "move_after" "append_child" "prepend_child"]
         :description
-        "replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename|move_before|move_after (by name) or replace|delete|insert_before|insert_after|append_child|prepend_child (by path). delete drops the located node. Default replace."}
+        "Edit operation; name-based and path-based operations use only their applicable subset."}
        "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
        "code" {:type "string"
                :description "Replacement/insertion source (or the new name for rename)."}
@@ -5295,12 +5286,13 @@
         "Dual use: for move_before/move_after the def NAME to relocate next to; otherwise a `lineno:hash` anchor (from struct_index/struct_occurrences/cat) that enters the zipper at the node starting on that line (compose with `nav`)."}
        "at"
        {:type "array"
-        :items {:type "integer"}
+        :items {:type "integer" :minimum 0}
         :description
         "Named-child index path from struct_node(path) (path-based ops). Or use `anchor` to enter by a lineno:hash row instead."}
        "nav" {:type "array"
               :description "Relative zipper moves applied after `at` (strings or maps)."}}
-      :required ["path"]}
+      :required ["path" "op"]
+      :additionalProperties false}
      :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
@@ -5407,13 +5399,9 @@
      ;; struct_node(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
      :active-fn structural-supported?
-     :description (str
-                    "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
-                    "PATH = named-child indices from the file root. Returns {`path`,`kind`,`line`,"
-                    "`end_line`,`text`,`sexp`,`children`,`can`} — `can` shows which moves remain. "
-                    "nav moves: down|d|b up|u|t left|l right|r first last next|n prev|p {child:i} "
-                    "{find:\"text\"} {find_kind:\"if_statement\"}. Get a PATH here, then edit it "
-                    "with struct_patch({path, op, at}).")
+     :description
+     (str "Inspect or navigate a nested tree-sitter node when a named definition is too coarse. "
+          "Returns the node, its children, available moves, and a path accepted by `struct_patch`.")
      :render render-sexpr-result
      :color-role :tool-color/read
      :schema
@@ -5421,7 +5409,7 @@
       :properties
       {"path" {:type "string" :description "Source file to navigate."}
        "at" {:type "array"
-             :items {:type "integer"}
+             :items {:type "integer" :minimum 0}
              :description "Absolute named-child index path to jump to."}
        "nav" {:type "array"
               :description "Relative cursor moves (strings or {find/child/find_kind} maps)."}
@@ -5429,7 +5417,8 @@
        {:type "string"
         :description
         "A `lineno:hash` anchor (from struct_index/struct_occurrences/cat) to enter the zipper at the node starting on that line — one hop from a listed row to its cursor; `nav` composes on top. Alternative to `at`."}}
-      :required ["path"]}
+      :required ["path"]
+      :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_node :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_node :file nil)}))
@@ -5568,13 +5557,9 @@
                :native-tool? true
                :active-fn structural-supported?
                :description
-               (str "Trace one identifier across the project via tree-sitter: every OCCURRENCE, "
-                    "with the DEFINITION(s) MARKED (`is_definition`, kind, visibility, signature, "
-                    "doc, and span `anchor`..`end_anchor`). Uses carry just location + a patch "
-                    "anchor. ONE call = both 'where defined' (filter is_definition) and 'where "
-                    "used'. Real identifier boundaries (not strings/comments/substrings); "
-                    "syntactic, so >1 definition means an ambiguous name (each has its path + "
-                    "signature). Scope with `paths`. Not truncated — filter in Python.")
+               (str "Trace a real identifier across supported project code before renaming or "
+                    "assessing blast radius. Returns every syntactic use plus marked definitions "
+                    "and patch-ready anchors; filter the complete result in `python_execution`.")
                :render render-occurrences-result
                :color-role :tool-color/search
                :schema {:type "object"
@@ -5583,7 +5568,8 @@
                                               :items {:type "string"}
                                               :description
                                               "Restrict to these paths (default whole project)."}}
-                        :required ["name"]}
+                        :required ["name"]
+                        :additionalProperties false}
                :tag :observation
                :on-error-fn (tool-failure-on-error :struct_occurrences :dir nil)}))
 
@@ -5666,18 +5652,17 @@
      :call {:pos ["name" "new_name"]}
      :active-fn structural-supported?
      :description
-     (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
-          "tree-sitter — at real identifier boundaries (never a string/comment/larger "
-          "token), re-parsed per file so a syntax-breaking rename is refused. For a "
-          "Clojure NAMESPACE it's the cross-file ns rename (ns form + :require/:use + "
-          "qualified usages; then move the defining file). Run `struct_occurrences(name)` first "
-          "to preview the blast radius.")
+     (str
+       "Rename one identifier across supported project code at syntactic boundaries, with "
+       "each changed file re-parsed. Run `struct_occurrences` first to confirm the blast radius; "
+       "Clojure namespace renames still require moving the defining file.")
      :render render-symbol-rename-result
      :color-role :tool-color/edit
      :schema {:type "object"
               :properties {"name" {:type "string" :description "Current identifier / namespace."}
                            "new_name" {:type "string" :description "New identifier / namespace."}}
-              :required ["name" "new_name"]}
+              :required ["name" "new_name"]
+              :additionalProperties false}
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_rename :dir nil)}))
 
@@ -5689,12 +5674,13 @@
      :call {:pos ["path"]}
      :name "create_dirs"
      :description
-     "Ensure a directory exists (creating parents), confined to filesystem roots. Returns {`path`, `created`, `already_existed`}."
+     "Create a confined directory and any missing parents; reports whether anything changed."
      :render render-create-dirs-result
      :color-role :tool-color/edit
      :schema {:type "object"
               :properties {"path" {:type "string" :description "Directory path to create."}}
-              :required ["path"]}
+              :required ["path"]
+              :additionalProperties false}
      :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
@@ -5707,7 +5693,7 @@
      ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
      :call {:pos ["src" "dest"] :rest :opt}
      :description
-     "Copy a file or directory from `src` to `dest` (confined to filesystem roots). Without is_overwrite an existing dest fails."
+     "Copy a confined file or directory. Existing destinations fail unless overwrite is explicitly enabled."
      :render render-copy-result
      :color-role :tool-color/move
      :schema {:type "object"
@@ -5716,28 +5702,29 @@
                            "is_overwrite" {:type "boolean"
                                            :description
                                            "Overwrite an existing dest (default false)."}}
-              :required ["src" "dest"]}
+              :required ["src" "dest"]
+              :additionalProperties false}
      :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :copy :path nil)}))
 
 (def move-symbol
-  (vis/symbol
-    #'move-tool
-    {:symbol 'move
-     :native-tool? true
-     :call {:pos ["src" "dest"]}
-     :description
-     "Move/rename a file or directory from `src` to `dest` (confined to filesystem roots)."
-     :render render-move-result
-     :color-role :tool-color/move
-     :schema {:type "object"
-              :properties {"src" {:type "string" :description "Source path."}
-                           "dest" {:type "string" :description "Destination path."}}
-              :required ["src" "dest"]}
-     :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :move :path nil)}))
+  (vis/symbol #'move-tool
+              {:symbol 'move
+               :native-tool? true
+               :call {:pos ["src" "dest"]}
+               :description
+               "Move or rename a confined file or directory without reconstructing its contents."
+               :render render-move-result
+               :color-role :tool-color/move
+               :schema {:type "object"
+                        :properties {"src" {:type "string" :description "Source path."}
+                                     "dest" {:type "string" :description "Destination path."}}
+                        :required ["src" "dest"]
+                        :additionalProperties false}
+               :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
+               :tag :mutation
+               :on-error-fn (tool-failure-on-error :move :path nil)}))
 
 (def delete-symbol
   (vis/symbol
@@ -5746,7 +5733,7 @@
      :native-tool? true
      :call {:pos ["path"] :rest :opt}
      :description
-     "Delete a file or directory at `path` (confined to filesystem roots). Pass {is_missing_ok: True} to no-op instead of erroring when the path is absent (folds in the old delete_if_exists)."
+     "Destructively delete one confined file or directory only with explicit user intent; can safely no-op when the target is already absent."
      :render render-delete-result
      :color-role :tool-color/delete
      :schema {:type "object"
@@ -5756,7 +5743,8 @@
                {:type "boolean"
                 :description
                 "No-op instead of raising when the path does not exist (default false)."}}
-              :required ["path"]}
+              :required ["path"]
+              :additionalProperties false}
      :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :delete :path nil)}))
@@ -5785,13 +5773,13 @@
                :native-tool? true
                :name "file_exists"
                :call {:pos ["path"]}
-               :description
-               "Check whether a file or directory `path` exists (confined to the filesystem roots)."
+               :description "Check whether a confined file or directory exists without reading it."
                :render render-exists-result
                :color-role :tool-color/read
                :schema {:type "object"
                         :properties {"path" {:type "string" :description "Path to check."}}
-                        :required ["path"]}
+                        :required ["path"]
+                        :additionalProperties false}
                :before-fn (path-protected-before-fn :file-exists :path :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :file-exists :path nil)}))
@@ -5803,29 +5791,11 @@
    delete-symbol delete-if-exists-symbol file-exists-symbol])
 
 (defn available-editing-prompt
-  "The editing extension's model-facing prompt. When the project contains NO
-   structurally-supported code (`structural-supported?` false — e.g. a docs/config
-   repo), the tree-sitter STRUCTURAL editors are neither advertised nor bound, so
-   their tool names + strategy are OMITTED here too — the prompt stays consistent
-   with what's actually callable, and the model is steered to anchor-based `patch`."
+  "No separate editing prompt: active native descriptions own routing and their
+   JSON Schemas own inputs. Structural tools are already omitted by their
+   activation gate when unsupported, so repeating that matrix would waste tokens."
   []
-  (let [struct? (structural-supported? nil)]
-    (str/join
-      "\n"
-      (concat
-        ["EDITING ROUTES — use `doc(name)` for exact contracts."
-         (if struct?
-           "Locate with `find_files`, `rg`, `ls`, or `cat`; supported code starts with `struct_index`. Canonical path only."
-           "Locate with `find_files`, `rg`, `ls`, or `cat`. Canonical path only.") ""
-         "| Target | Route |" "|---|---|"]
-        (if struct?
-          ["| Named definition | `struct_patch` |"
-           "| Nested node | `struct_node` → `struct_patch` |"
-           "| Repo-wide rename | `struct_occurrences` → `struct_rename` |"
-           "| Text or unsupported structure | `patch` |" "| New file or full rewrite | `write` |"]
-          ["| Existing text | `patch` |" "| New file or full rewrite | `write` |"])
-        [""
-         "`patch` is ANCHOR-ONLY: fresh `lineno:hash` → `from_anchor`; anchors go STALE after ANY write. Never rebuild from truncated `cat` output."]))))
+  "")
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. A `delay` so the language/env
@@ -5836,6 +5806,6 @@
   (delay (available-editing-symbols)))
 
 (def editing-prompt
-  "Default editing prompt for docs/tests. A `delay` for the same reason as
-   `editing-symbols` above — deref with `@editing-prompt`."
+  "Compatibility view of the now-empty editing prompt. Native tool contracts
+   replaced this duplicated prompt fragment."
   (delay (available-editing-prompt)))

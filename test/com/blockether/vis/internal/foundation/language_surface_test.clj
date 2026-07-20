@@ -71,9 +71,23 @@
       (expect (= ["start" "restart"]
                  (get-in language-surface/start-repl-symbol
                          [:ext.symbol/schema :properties "op" :enum])))
+      (let [start
+            (:ext.symbol/description language-surface/start-repl-symbol)
+
+            stop
+            (:ext.symbol/description language-surface/repl-stop-symbol)]
+
+        (expect (str/includes? start "[language][dir]"))
+        (expect (str/includes? start "absent/down/failed"))
+        (expect (str/includes? start "after verified work"))
+        (expect (str/includes? stop "managed REPL you started"))
+        (expect (str/includes? stop "never killed")))
       (expect (not (str/includes? (get-in language-surface/repl-eval-symbol
                                           [:ext.symbol/schema :properties "dir" :description])
                                   "auto-start"))))
+  (it "keeps every native language input schema closed"
+      (doseq [s language-surface/symbols]
+        (expect (false? (get-in s [:ext.symbol/schema :additionalProperties])))))
   (it "accepts language-first calls for repl eval"
       (let [seen
             (atom nil)

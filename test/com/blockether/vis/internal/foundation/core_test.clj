@@ -18,7 +18,7 @@
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
-  (it "keeps only dynamic language routing and editing in the foundation prompt"
+  (it "keeps only dynamic language routing in the foundation prompt"
       (with-redefs [agents/instructions (fn []
                                           {:found? false})]
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
@@ -29,16 +29,15 @@
           (expect (not (str/includes? prompt "RUNTIME")))
           (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
           (expect (not (str/includes? prompt "SCAN-WARNINGS")))
-          ;; Editing prompt is now compact: canonical path only, no strategy symbol.
-          (expect (str/includes? prompt "rg"))
-          (expect (str/includes? prompt "ls"))
-          (expect (str/includes? prompt "Canonical path only"))
+          ;; Editing routes live in native descriptions; this fragment is language-only.
+          (expect (or (str/blank? prompt) (str/includes? prompt "LANGUAGE TOOLS")))
+          (expect (not (str/includes? prompt "EDITING ROUTES")))
+          (expect (not (str/includes? prompt "Canonical path only")))
           (expect (not (str/includes? prompt "v/strategy")))
           (expect (not (str/includes? prompt "clojure.repl/doc")))
           (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
           (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-          ;; Cap prevents removed contracts from drifting back in.
-          (expect (< (count prompt) 4000)))))
+          (expect (< (count prompt) 1000)))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
       ;; `internal.env-digest` — it's core functionality, not extension-

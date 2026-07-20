@@ -811,6 +811,8 @@
     #'format-code
     {:symbol 'format_code
      :native-tool? true
+     :description
+     "Format code or project files through the active language pack. In-place forms mutate files and return compact change summaries, not reconstructed source."
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
@@ -821,6 +823,7 @@
       :properties
       {"language"
        {:type "string"
+        :minLength 1
         :description
         "Language pack (e.g. \"clojure\"); pass it first — inferred from the file/workspace only when omitted."}
        "code" {:type "string"
@@ -828,14 +831,17 @@
                "Source to format (returns a lean changed? + char-delta ack, not the text)."}
        "path"
        {:type "string"
+        :minLength 1
         :description
         "Format this ONE file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code. A directory is walked RECURSIVELY for source files."}
        "paths"
        {:type "array"
-        :items {:type "string"}
+        :items {:type "string" :minLength 1}
+        :minItems 1
         :description
         "Format MANY paths IN PLACE (returns a per-file changed roll-up). A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with code/path; OMIT all to format the workspace's default source paths recursively."}}
-      :required []}
+      :required []
+      :additionalProperties false}
      :before-fn inject-env
      :tag :mutation}))
 
@@ -844,6 +850,8 @@
     #'lint-code
     {:symbol 'lint_code
      :native-tool? true
+     :description
+     "Run the active language pack's linter on source or project files. Returns findings and severity counts without changing files."
      :render render-lint-result
      :color-role :tool-color/read
      :schema
@@ -851,17 +859,20 @@
       :properties
       {"language"
        {:type "string"
+        :minLength 1
         :description
         "Language pack (e.g. \"clojure\"); pass it first — inferred from the file/workspace only when omitted."}
        "code" {:type "string"
                :description
                "Source to lint (returns findings). Mutually exclusive with path/paths."}
-       "path" {:type "string" :description "Lint this file on disk."}
+       "path" {:type "string" :minLength 1 :description "Lint this file on disk."}
        "paths" {:type "array"
-                :items {:type "string"}
+                :items {:type "string" :minLength 1}
+                :minItems 1
                 :description
                 "Lint these files/dirs. OMIT all to lint the workspace's default source paths."}}
-      :required []}
+      :required []
+      :additionalProperties false}
      :before-fn inject-env
      :tag :observation}))
 
@@ -870,6 +881,8 @@
     #'run-tests
     {:symbol 'run_tests
      :native-tool? true
+     :description
+     "Run project tests through the active language pack. Prefer the smallest target that proves the change; use the full suite only when its broader coverage is relevant."
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -881,16 +894,17 @@
      {:type "object"
       :properties
       {"language" {:type "string"
+                   :minLength 1
                    :description
                    "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
        "namespaces"
        {:type "array"
-        :items {:type "string"}
+        :items {:type "string" :minLength 1}
         :description
         "Test namespaces/modules to run (e.g. [\"my.app.core-test\"]). OMIT (or pass []) to run every *_test namespace in the workspace."}
        "paths"
        {:type "array"
-        :items {:type "string"}
+        :items {:type "string" :minLength 1}
         :description
         "Dirs/files to discover *_test namespaces under. OMIT (or pass []) to default to the workspace root; an explicit non-empty path that yields no tests is an error."}
        "only" {:type "array"
@@ -906,7 +920,8 @@
         "Directory to run the test command in (e.g. a monorepo app dir). Defaults to the workspace root."}
        "filter" {:type "string"
                  :description "Test-name filter, for packs that support it (e.g. `bun test -t`)."}}
-      :required ["language"]}
+      :required ["language"]
+      :additionalProperties false}
      :before-fn inject-env
      :tag :mutation}))
 
@@ -915,6 +930,10 @@
     #'repl-eval
     {:symbol 'repl_eval
      :native-tool? true
+     :description (str
+                    "Evaluate code in an `up` project REPL; prefer this for bug reproduction and "
+                    "verification. Inspect `session[\"resources\"][\"repls\"]` first and use "
+                    "`repl_start` for any required lifecycle change.")
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -928,50 +947,65 @@
      {:type "object"
       :properties
       {"language" {:type "string"
+                   :minLength 1
                    :description
                    "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
-       "code" {:type "string" :description "Source to evaluate in the language REPL."}
-       "id" {:type "string" :description "Target a specific registered REPL resource by id."}
+       "code" {:type "string" :minLength 1 :description "Source to evaluate in the language REPL."}
+       "id" {:type "string"
+             :minLength 1
+             :description "Target a specific registered REPL resource by id."}
        "dir"
        {:type "string"
         :description
         "Directory of the already-running REPL (e.g. \"apps/api\"); selects that dir's project config. Defaults to the workspace root."}
-       "timeout_ms" {:type "integer" :description "Eval timeout in milliseconds (default 30000)."}}
-      :required ["language" "code"]}
+       "timeout_ms"
+       {:type "integer" :minimum 1 :description "Eval timeout in milliseconds (default 30000)."}}
+      :required ["language" "code"]
+      :additionalProperties false}
      :before-fn inject-env
      :tag :mutation}))
 
 (def start-repl-symbol
-  (vis/symbol #'start-repl
-              {:symbol 'repl_start
-               :native-tool? true
-               :call {:lead-opt "language" :rest :always}
-               :render render-repl-start-result
-               :color-role :tool-color/shell
-               :schema
-               {:type "object"
-                :properties
-                {"language"
-                 {:type "string"
-                  :description
-                  "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
-                 "op" {:type "string"
-                       :enum ["start" "restart"]
-                       :description "Lifecycle operation (default \"start\")."}
-                 "id" {:type "string" :description "Optional lifecycle resource id."}
-                 "dir" {:type "string" :description "Directory to start the REPL in."}
-                 "aliases" {:type "array"
-                            :items {:type "string"}
-                            :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
-                :required ["language"]}
-               :before-fn inject-env
-               :tag :mutation}))
+  (vis/symbol
+    #'start-repl
+    {:symbol 'repl_start
+     :native-tool? true
+     :description
+     (str "Start or restart a managed project REPL only after inspecting "
+          "`session[\"resources\"][\"repls\"][language][dir]` (`.` is root): reuse "
+          "`up`, start absent/down/failed, recheck `starting`, and restart `unresponsive`. "
+          "Keep its returned resource id; after verified work, stop managed REPLs you "
+          "started with `repl_stop`.")
+     :call {:lead-opt "language" :rest :always}
+     :render render-repl-start-result
+     :color-role :tool-color/shell
+     :schema {:type "object"
+              :properties
+              {"language"
+               {:type "string"
+                :minLength 1
+                :description
+                "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+               "op" {:type "string"
+                     :enum ["start" "restart"]
+                     :description "Lifecycle operation (default \"start\")."}
+               "id" {:type "string" :minLength 1 :description "Optional lifecycle resource id."}
+               "dir" {:type "string" :minLength 1 :description "Directory to start the REPL in."}
+               "aliases" {:type "array"
+                          :items {:type "string"}
+                          :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
+              :required ["language"]
+              :additionalProperties false}
+     :before-fn inject-env
+     :tag :mutation}))
 
 (def connect-repl-symbol
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
      :native-tool? true
+     :description
+     "Attach an external REPL the user already runs. Vis registers it for evaluation but never owns or kills its process; stopping the resource only detaches."
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
@@ -979,34 +1013,43 @@
      {:type "object"
       :properties
       {"language" {:type "string"
+                   :minLength 1
                    :description
                    "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
        "port" {:type "integer"
+               :minimum 1
+               :maximum 65535
                :description "Port of the ALREADY-RUNNING external REPL to attach to."}
        "host" {:type "string" :description "Its host (default localhost)."}
        "dir"
        {:type "string"
         :description
         "Project dir this REPL serves (default the workspace root) — the attachment is keyed and addressed by it."}}
-      :required ["language" "port"]}
+      :required ["language" "port"]
+      :additionalProperties false}
      :before-fn inject-env
      :tag :mutation}))
 
 (def repl-stop-symbol
-  (vis/symbol #'repl-stop
-              {:symbol 'repl_stop
-               :native-tool? true
-               ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
-               ;; :call: its fn takes the whole input dict, so the generic form fits.)
-               :call {:pos ["id"]}
-               :render render-repl-stop-result
-               :color-role :tool-color/delete
-               :schema {:type "object"
-                        :properties {"id" {:type "string"
-                                           :description "Session resource id of the REPL to stop."}}
-                        :required ["id"]}
-               :before-fn inject-env
-               :tag :mutation}))
+  (vis/symbol
+    #'repl-stop
+    {:symbol 'repl_stop
+     :native-tool? true
+     :description
+     "After verification, stop a managed REPL you started by its exact resource id. An external REPL resource is detached; its process is never killed."
+     ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
+     ;; :call: its fn takes the whole input dict, so the generic form fits.)
+     :call {:pos ["id"]}
+     :render render-repl-stop-result
+     :color-role :tool-color/delete
+     :schema {:type "object"
+              :properties {"id" {:type "string"
+                                 :minLength 1
+                                 :description "Session resource id of the REPL to stop."}}
+              :required ["id"]
+              :additionalProperties false}
+     :before-fn inject-env
+     :tag :mutation}))
 
 (def symbols
   [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol connect-repl-symbol

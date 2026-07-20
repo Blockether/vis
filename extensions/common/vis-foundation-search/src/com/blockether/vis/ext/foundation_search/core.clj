@@ -1220,21 +1220,21 @@
      :name "search_web"
      :color-role :tool-color/search
      :render render-search-result
-     :description (str "Live WEB search via Exa. `query` is a natural-language query; returns "
-                       "ranked citations, each with a markdown `excerpt`. Use for current events, "
-                       "external docs, and general research the local repo can't answer.")
-     :schema {:type "object"
-              :properties
-              {"query" {:type "string" :description "Natural-language web search query."}
-               "num_results" {:type "integer" :description "Max results to return."}
-               "type" {:type "string"
-                       :description "Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
-               "livecrawl" {:type "string"
-                            :description
-                            "Live-crawl mode, e.g. \"preferred\", \"always\", \"never\"."}
-               "context_max_characters" {:type "integer"
-                                         :description "Cap on context characters per result."}}
-              :required ["query"]}
+     :description
+     "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."
+     :schema
+     {:type "object"
+      :properties
+      {"query" {:type "string" :minLength 1 :description "Natural-language web search query."}
+       "num_results" {:type "integer" :minimum 1 :description "Max results to return."}
+       "type" {:type "string"
+               :description "Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
+       "livecrawl" {:type "string"
+                    :description "Live-crawl mode, e.g. \"preferred\", \"always\", \"never\"."}
+       "context_max_characters"
+       {:type "integer" :minimum 1 :description "Cap on context characters per result."}}
+      :required ["query"]
+      :additionalProperties false}
      :handler (fn [_env input]
                 (search-web (str (get input "query")) (dissoc input "query")))}))
 
@@ -1246,41 +1246,43 @@
      :name "search_code"
      :color-role :tool-color/search
      :render render-search-result
-     :description (str "Live CODE/docs search via Exa (github repos, clojuredocs, readthedocs, API "
-                       "refs). `query` is natural language; narrow with \"site:github.com X\" or "
-                       "\"<repo> X\". Returns ranked citations with markdown excerpts.")
+     :description
+     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Returns ranked citations with excerpts."
      :schema {:type "object"
               :properties
-              {"query" {:type "string" :description "Natural-language code/docs search query."}
+              {"query"
+               {:type "string" :minLength 1 :description "Natural-language code/docs search query."}
                "tokens_num" {:type "integer"
+                             :minimum 1
                              :description "Approximate token budget for the returned context."}}
-              :required ["query"]}
+              :required ["query"]
+              :additionalProperties false}
      :handler (fn [_env input]
                 (search-code (str (get input "query")) (dissoc input "query")))}))
 
 (def papers-symbol
-  (vis/symbol #'search-papers
-              {:tag :observation
-               :native-tool? true
-               :name "search_papers"
-               :color-role :tool-color/search
-               :render render-search-result
-               :description
-               (str "arXiv paper search. `query` is natural language; returns citations whose "
-                    "`excerpt` is the abstract. Sort by relevance (default), lastUpdatedDate, or "
-                    "submittedDate.")
-               :schema
-               {:type "object"
-                :properties
-                {"query" {:type "string" :description "Natural-language paper search query."}
-                 "max_results" {:type "integer" :description "Max papers to return (default 10)."}
-                 "sort" {:type "string"
-                         :description
-                         "relevance | lastUpdatedDate | submittedDate (default relevance)."}
-                 "timeout_ms" {:type "integer" :description "HTTP timeout in milliseconds."}}
-                :required ["query"]}
-               :handler (fn [_env input]
-                          (search-papers (str (get input "query")) (dissoc input "query")))}))
+  (vis/symbol
+    #'search-papers
+    {:tag :observation
+     :native-tool? true
+     :name "search_papers"
+     :color-role :tool-color/search
+     :render render-search-result
+     :description
+     "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."
+     :schema
+     {:type "object"
+      :properties
+      {"query" {:type "string" :minLength 1 :description "Natural-language paper search query."}
+       "max_results" {:type "integer" :minimum 1 :description "Max papers to return (default 10)."}
+       "sort" {:type "string"
+               :enum ["relevance" "lastUpdatedDate" "submittedDate"]
+               :description "relevance | lastUpdatedDate | submittedDate (default relevance)."}
+       "timeout_ms" {:type "integer" :minimum 1 :description "HTTP timeout in milliseconds."}}
+      :required ["query"]
+      :additionalProperties false}
+     :handler (fn [_env input]
+                (search-papers (str (get input "query")) (dissoc input "query")))}))
 
 (def search-symbols [web-symbol code-symbol papers-symbol])
 ;; `:tag :observation` carried INLINE on each `vis/symbol` opts map

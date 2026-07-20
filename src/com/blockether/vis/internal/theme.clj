@@ -138,6 +138,10 @@
    ;; a distinct blue band so paths read as clickable headers, not blended ink.
    :result-path-bg [219 234 254]
    :result-path-fg [23 45 130]
+   ;; Matched search-term highlight in rg/cat result rows (SGR 7 reverse-video).
+   ;; A highlight must POP: NOT warning-fg, whose light-theme ink is a dark olive
+   ;; that reads muddy. Violet is unmistakable and clears 6:1 on the result band.
+   :result-highlight-fg [124 40 180]
    :code-block-fg [30 30 30]
    :code-success-fg [40 160 60]
    :code-error-fg [220 50 50]
@@ -248,6 +252,8 @@
    :result-bg [20 26 36]
    :result-path-bg [37 51 84]
    :result-path-fg [147 197 253]
+   ;; Search-term highlight (SGR 7). See light palette — light lavender pops on dark.
+   :result-highlight-fg [216 180 254]
    :code-block-fg [226 232 240]
    :code-success-fg [74 222 128]
    :code-error-fg [248 113 113]
@@ -531,6 +537,7 @@
    ;; restores the clickable-header read.
    :result-path-bg [213 227 245]
    :result-path-fg [24 84 130]
+   :result-highlight-fg [124 40 180]
    :code-block-fg [88 110 117]
    :code-success-fg [133 153 0]
    :code-error-fg [220 50 47]
@@ -630,6 +637,7 @@
    :result-bg [9 49 52]
    :result-path-bg [17 62 71]
    :result-path-fg [38 139 210]
+   :result-highlight-fg [216 180 254]
    :code-block-fg [147 161 161]
    :code-success-fg [133 153 0]
    :code-error-fg [220 50 47]

@@ -87,6 +87,7 @@
 ;; targets): a distinct band so paths read as headers, not blended result ink.
 (def result-path-bg (rgb :result-path-bg))
 (def result-path-fg (rgb :result-path-fg))
+(def result-highlight-fg (rgb :result-highlight-fg))
 (def code-block-fg (rgb :code-block-fg))
 (def code-success-fg (rgb :code-success-fg))
 (def code-error-fg (rgb :code-error-fg))
@@ -235,6 +236,7 @@
    :result-bg #'result-bg
    :result-path-bg #'result-path-bg
    :result-path-fg #'result-path-fg
+   :result-highlight-fg #'result-highlight-fg
    :tool-color-read #'tool-color-read
    :tool-color-search #'tool-color-search
    :tool-color-preview #'tool-color-preview

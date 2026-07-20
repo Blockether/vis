@@ -1399,7 +1399,7 @@
   [code current-fg base-fg]
   (case code
     7
-    t/warning-fg
+    t/result-highlight-fg
 
     0
     base-fg

@@ -894,10 +894,9 @@
                   :throwable (when-not interrupted? err)})})))
 
 ;; =============================================================================
-;; Public, doc-bearing vars — `:doc`/`:arglists` are the model-facing surface
-;; (read by `vis/symbol` straight off the var); the injected `env` first arg
-;; is hidden from both. Under alias `shell` they bind as `shell_run` /
-;; `shell_bg` / `shell_logs`.
+;; Public, doc-bearing vars retain developer examples and fallback docs. Native
+;; symbols below provide compact model-facing semantics; their schemas provide
+;; exact inputs. The injected `env` first arg is hidden from both.
 ;; =============================================================================
 
 (def
@@ -1236,96 +1235,111 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
     {:symbol 'run
      :native-tool? true
      :name "shell_run"
+     :description
+     (str "Run a bounded command that should exit. Use file/editing tools for file work and "
+          "`shell_bg` for servers, watchers, interactive programs, or other long-running work; "
+          "non-zero exit is result data to inspect.")
      ;; shell_run(cmd, {opts}) — cmd positional, the rest an options dict.
      :call {:pos ["cmd"] :rest :opt}
      :render render-shell-run-result
      :color-role :tool-color/shell
-     :schema
-     {:type "object"
-      :properties
-      {"cmd" {:type "string" :description "Command line, run via bash -lc in the workspace root."}
-       "timeout_secs" {:type "integer" :description "Sync timeout seconds (default 120, max 600)."}
-       "cwd" {:type "string" :description "Relative directory inside the workspace to run in."}}
-      :required ["cmd"]}
+     :schema {:type "object"
+              :properties
+              {"cmd" {:type "string"
+                      :minLength 1
+                      :description "Command line, run via bash -lc in the workspace root."}
+               "timeout_secs" {:type "integer"
+                               :minimum 1
+                               :maximum 600
+                               :description "Sync timeout seconds (default 120, max 600)."}
+               "cwd" {:type "string"
+                      :description "Relative directory inside the workspace to run in."}}
+              :required ["cmd"]
+              :additionalProperties false}
      :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
      :on-error-fn (shell-on-error :shell/run)}))
 
 (def shell-bg-symbol
-  (vis/symbol #'shell-bg
-              {:symbol 'bg
-               :native-tool? true
-               :name "shell_bg"
-               ;; shell_bg(id, cmd) — both positional.
-               :call {:pos ["id" "cmd"]}
-               :render render-shell-bg-result
-               :color-role :tool-color/shell
-               :schema {:type "object"
-                        :properties
-                        {"id" {:type "string"
-                               :description
-                               "Unique resource id among RUNNING shells; read logs / stop by it."}
-                         "cmd" {:type "string"
-                                :description
-                                "Background command (bash -lc, workspace root); no timeout."}}
-                        :required ["id" "cmd"]}
-               :before-fn (shell-gate-before-fn :shell/bg)
-               :tag :mutation
-               :on-error-fn (shell-on-error :shell/bg)}))
+  (vis/symbol
+    #'shell-bg
+    {:symbol 'bg
+     :native-tool? true
+     :name "shell_bg"
+     :description (str "Start a long-running or interactive command as a session resource. Never "
+                       "hide background work with shell operators; inspect it with `shell_logs`, "
+                       "interact with `shell_send`, and stop it through `resource_stop`.")
+     ;; shell_bg(id, cmd) — both positional.
+     :call {:pos ["id" "cmd"]}
+     :render render-shell-bg-result
+     :color-role :tool-color/shell
+     :schema {:type "object"
+              :properties {"id" {:type "string"
+                                 :minLength 1
+                                 :description
+                                 "Unique resource id among RUNNING shells; read logs / stop by it."}
+                           "cmd" {:type "string"
+                                  :minLength 1
+                                  :description
+                                  "Background command (bash -lc, workspace root); no timeout."}}
+              :required ["id" "cmd"]
+              :additionalProperties false}
+     :before-fn (shell-gate-before-fn :shell/bg)
+     :tag :mutation
+     :on-error-fn (shell-on-error :shell/bg)}))
 
 (def shell-logs-symbol
-  (vis/symbol #'shell-logs
-              {:symbol 'logs
-               :native-tool? true
-               :name "shell_logs"
-               ;; shell_logs(id, n?) — id positional, optional trailing n.
-               :call {:pos ["id"] :opt-pos ["n"]}
-               :render render-shell-logs-result
-               :color-role :tool-color/shell
-               :schema {:type "object"
-                        :properties
-                        {"id" {:type "string" :description "The background shell's resource id."}
-                         "n" {:type "integer"
-                              :description "Tail the last n lines (default 200, max 2000)."}}
-                        :required ["id"]}
-               :before-fn (shell-gate-before-fn :shell/logs)
-               :tag :observation
-               :on-error-fn (shell-on-error :shell/logs)}))
+  (vis/symbol
+    #'shell-logs
+    {:symbol 'logs
+     :native-tool? true
+     :name "shell_logs"
+     :description
+     "Read the retained output and lifecycle state of a `shell_bg` resource; use it before deciding whether background work succeeded, failed, or still runs."
+     ;; shell_logs(id, n?) — id positional, optional trailing n.
+     :call {:pos ["id"] :opt-pos ["n"]}
+     :render render-shell-logs-result
+     :color-role :tool-color/shell
+     :schema {:type "object"
+              :properties
+              {"id" {:type "string" :minLength 1 :description "The background shell's resource id."}
+               "n" {:type "integer"
+                    :minimum 1
+                    :maximum 2000
+                    :description "Tail the last n lines (default 200, max 2000)."}}
+              :required ["id"]
+              :additionalProperties false}
+     :before-fn (shell-gate-before-fn :shell/logs)
+     :tag :observation
+     :on-error-fn (shell-on-error :shell/logs)}))
 
 (def shell-send-symbol
-  (vis/symbol #'shell-send
-              {:symbol 'send
-               :native-tool? true
-               :name "shell_send"
-               ;; shell_send(id, text, {opts}) — id + text positional, rest an options dict.
-               :call {:pos ["id" "text"] :rest :opt}
-               :render render-shell-send-result
-               :color-role :tool-color/shell
-               :schema {:type "object"
-                        :properties
-                        {"id" {:type "string" :description "The background shell's resource id."}
-                         "text" {:type "string" :description "Text written to the shell's stdin."}
-                         "enter" {:type "boolean"
-                                  :description
-                                  "Append a newline to SUBMIT the line (default true)."}}
-                        :required ["id" "text"]}
-               :before-fn (shell-gate-before-fn :shell/send)
-               :tag :mutation
-               :on-error-fn (shell-on-error :shell/send)}))
+  (vis/symbol
+    #'shell-send
+    {:symbol 'send
+     :native-tool? true
+     :name "shell_send"
+     :description (str
+                    "Send input to a running interactive `shell_bg` resource, then read its "
+                    "response with `shell_logs`. Human-only browser or device authentication must "
+                    "be handed off through the resource's attach command.")
+     ;; shell_send(id, text, {opts}) — id + text positional, rest an options dict.
+     :call {:pos ["id" "text"] :rest :opt}
+     :render render-shell-send-result
+     :color-role :tool-color/shell
+     :schema {:type "object"
+              :properties
+              {"id" {:type "string" :minLength 1 :description "The background shell's resource id."}
+               "text" {:type "string" :description "Text written to the shell's stdin."}
+               "enter" {:type "boolean"
+                        :description "Append a newline to SUBMIT the line (default true)."}}
+              :required ["id" "text"]
+              :additionalProperties false}
+     :before-fn (shell-gate-before-fn :shell/send)
+     :tag :mutation
+     :on-error-fn (shell-on-error :shell/send)}))
 
 (def shell-symbols [shell-run-symbol shell-bg-symbol shell-logs-symbol shell-send-symbol])
-
-(defn shell-prompt
-  "Prompt fragment advertising the shell surface — ONLY while the toggle is
-   ON (a blank string is filtered out of the extensions prompt block), so a
-   disabled layer costs zero prompt tokens and the model never sees it."
-  [_env]
-  (if (toggles/enabled? :shell/enabled)
-    (str/join
-      "\n"
-      ["Shell enabled. Use `shell_run` for commands that exit; `shell_bg` for servers, watchers, or interactive/long-running processes; `shell_logs` to inspect them; `resource_stop` to stop them."
-       "Never hide background work with `&`, `nohup`, or `disown`. Prefer file/editing tools for file work. Use `doc(name)` for exact contracts."])
-    ""))
 
 (defn shell-attach-command
   "`vis ext shell attach <id>` — the human-side passthrough: join a live
@@ -1383,7 +1397,6 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
      :ext/activation-fn (fn [_env]
                           (toggles/enabled? :shell/enabled))
      :ext/engine {:ext.engine/alias 'shell :ext.engine/symbols shell-symbols}
-     :ext/prompt-fn shell-prompt
      :ext/cli shell-cli}))
 
 (vis/register-extension! vis-extension)

@@ -88,11 +88,13 @@
           (expect (nil? (:ext.symbol/native-tool entry)))
           (expect (fn? (:ext.symbol/render entry)))
           (expect (= :tool-color/meta (:ext.symbol/color-role entry)))))
-    (it "renderer/colour resolve through the maps; schema description = the docstring (ONE source)"
+    (it "renderer/colour resolve; native description stays compact and schema owns inputs"
         (expect (fn? (get (extension/native-tool-renderers exts) "skill")))
         (expect (= :tool-color/meta (get (extension/native-tool-color-roles exts) "skill")))
         (let [schema (first (filter #(= "skill" (:name %)) (extension/native-tool-schemas exts)))]
-          (expect (= (:doc (meta #'core/skill-tool)) (:description schema)))))
+          (expect (str/includes? (:description schema) "session-idempotent"))
+          (expect (not (str/includes? (:description schema) "SKILLS block")))
+          (expect (false? (get-in schema [:schema :additionalProperties])))))
     (it "the handler runs the load-once logic"
         (with-redefs [d/skill-by-name
                       (fn [_]

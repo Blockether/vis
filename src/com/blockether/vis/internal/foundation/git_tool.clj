@@ -320,6 +320,10 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
     {:symbol 'git
      :native-tool? true
      :name "git"
+     :description
+     (str "Run the host Git binary only to act or when `session[\"workspace\"]` lacks a needed "
+          "VCS fact. Arguments stay literal, and a non-zero exit is result data to inspect rather "
+          "than a tool-transport failure.")
      :call {:pos ["args"]}
      :render render-git-result
      :color-role :tool-color/shell
@@ -331,15 +335,13 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
       {"args"
        {:type "array"
         :items {:type "string"}
+        :minItems 1
         :description
         "git arguments as a list of literal tokens, e.g. [\"status\", \"--short\"] or [\"commit\", \"-m\", \"a message\"]."}}
-      :required ["args"]}}))
+      :required ["args"]
+      :additionalProperties false}}))
 
 (def git-symbols [git-symbol])
-
-(def ^:private prompt-text
-  (str "Read VCS state from `session[\"workspace\"]`; call `git(...)` only when "
-       "that state lacks the needed fact or to act. Use `doc(\"git\")` for the contract."))
 
 (def vis-extension
   (vis/extension
@@ -353,8 +355,6 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
      :ext/activation-fn (fn [_env]
                           (git/in-repository? (git/cwd-file)))
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols git-symbols}
-     :ext/prompt-fn (fn [_env]
-                      prompt-text)
      :ext/kind "foundation"}))
 
 (vis/register-extension! vis-extension)
