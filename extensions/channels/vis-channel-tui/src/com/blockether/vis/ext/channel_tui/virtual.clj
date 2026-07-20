@@ -164,15 +164,49 @@
         (vreset! settings-fp-cell [settings fp])
         fp))))
 
+;; Identity memo for the assembled height-cache KEY vector. `height-key` runs
+;; twice per visible message per tick (get + put) plus once per off-screen
+;; message in pass-1's O(n) sweep, and each call boxed a fresh 4-element vector
+;; (~72B) — ~5KB of pure key-construction garbage per 60-message layout, on
+;; EVERY live + scroll tick. The key is a pure fn of (message content, bubble-w,
+;; settings subset, expansion state); within a layout call the last three are
+;; constant across all messages and frame-to-frame, so a stable message object
+;; assembles its key once and every later tick is a lookup.
+;;
+;; Correctness: the memo is keyed by object IDENTITY but the cached vector still
+;; embeds the CONTENT fingerprint, so a rebuilt message (new identity, same
+;; content) is a memo MISS that recomputes the SAME key vector -> maps to the
+;; SAME height-cache entry, preserving the anti-scroll-jump invariant. A context
+;; change (resize / settings / expansion toggle / session) is detected by the
+;; guard compare below and forces a rebuild, so a stale slot can only ever
+;; recompute, never return a wrong key. Locked like `message-fp-memo`.
+(defonce ^:private ^IdentityHashMap height-key-memo (IdentityHashMap. 256))
+
 (defn- height-key
   [message bubble-w settings detail-expansions session-id]
-  [(message-content-fingerprint message) (long bubble-w) (settings-fingerprint settings)
-   ;; This message's OWN expand/collapse state. Without it a height measured
-   ;; while a block was expanded (or collapsed) leaked across the toggle —
-   ;; the layout then used a stale height, total-h was wrong, and the scroll
-   ;; jumped on the next expand. Scoped to the message's turn so toggling one
-   ;; disclosure doesn't bust every other message's cached height.
-   (render/message-detail-expansions-key session-id message detail-expansions)])
+  (let
+    [sfp
+     (settings-fingerprint settings)
+
+     ;; This message's OWN expand/collapse state. Without it a height measured
+     ;; while a block was expanded (or collapsed) leaked across the toggle —
+     ;; the layout then used a stale height, total-h was wrong, and the scroll
+     ;; jumped on the next expand. Scoped to the message's turn so toggling one
+     ;; disclosure doesn't bust every other message's cached height.
+     dek
+     (render/message-detail-expansions-key session-id message detail-expansions)]
+
+    (locking height-key-memo
+      (let [cached (.get height-key-memo message)]
+        (if (and cached
+                 (== (long (nth cached 1)) (long bubble-w))
+                 (= (nth cached 2) sfp)
+                 (= (nth cached 3) dek))
+          cached
+          (let [k [(message-content-fingerprint message) (long bubble-w) sfp dek]]
+            (when (> (.size height-key-memo) 4096) (.clear height-key-memo))
+            (.put height-key-memo message k)
+            k))))))
 
 (defn- height-cache-get
   "Peek the sticky height cache. Returns a long or nil."
