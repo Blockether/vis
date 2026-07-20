@@ -2520,9 +2520,10 @@
            (when (seq blocked-turns)
              (throw
                (ex-info
-                 (str "session_fold accepts only completed prior-turn scopes. "
-                      "Current/future turn scopes must stay live through verification; "
-                      "retry at the start of the next turn.")
+                 (str "session_fold blocked: every target tN must satisfy "
+                      "N < session[\"turn\"]. Do not retry during this turn, even after "
+                      "verification. Retry only at the next turn's start, after understanding "
+                      "its intent and before new work.")
                  {:type :vis/session-fold-active-turn
                   :current-turn turn
                   :blocked-turns blocked-turns})))
@@ -3254,18 +3255,14 @@
    ctx-atom closure is reused — no separate Clojure handler."
   []
   {:name "session_fold"
-   :description (str "Compact COMPLETED PRIOR-TURN steps out of the conversation: fold "
-                     "the named steps (each tagged `# tN/iN` in its result) off the wire, "
-                     "replaced by ONE optional gist line. `target` selects what to fold; "
-                     "`gist` is the single takeaway kept in their place — its RATIONALE: what "
-                     "the steps ESTABLISHED and why they are safe to drop — OMIT it to drop the "
-                     "steps outright. Folds are idempotent and superseding: a broader re-fold "
-                     "replaces a finer one (one breadcrumb, never a stack). Folding is WIRE-ONLY: "
-                     "it NEVER deletes from the DB, so it is always reversible — a folded native "
-                     "tool result stays fetchable by its id via `ntr[...]` (this turn or a past "
-                     "turn). Current and future turn scopes are rejected so live reproduction, "
-                     "anchors, edits, and verification cannot disappear. Same verb is callable inside python_execution as "
-                     "`session_fold(target, gist)`.")
+   :description (str "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must "
+                     "satisfy `N < session[\"turn\"]`. Never call for current/future turns, even "
+                     "after verification; retry only at the next turn's start, after understanding "
+                     "intent and before new work. Fold completed prior-turn steps off the wire into "
+                     "one optional gist. The gist keeps what was established and why it is done; "
+                     "omit it to drop the steps. Broader folds supersede narrower ones. Folding is "
+                     "wire-only and reversible; native results remain in `ntr[...]`. Also callable "
+                     "inside python_execution as `session_fold(target, gist)`.")
    :schema
    {:type "object"
     :properties

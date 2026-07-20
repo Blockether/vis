@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.ctx-renderer :as cr]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.loop :as lp]
+            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
@@ -193,7 +194,9 @@
         (doseq [target [["t2/i1"] ["t2"] {"through" "t2/i1"} ["t3/i1"]]]
           (let [ex (try (sf target "unsafe") nil (catch clojure.lang.ExceptionInfo e e))]
             (expect (= :vis/session-fold-active-turn (:type (ex-data ex))))
-            (expect (= 2 (:current-turn (ex-data ex))))))
+            (expect (= 2 (:current-turn (ex-data ex))))
+            (expect (str/includes? (ex-message ex) "N < session[\"turn\"]"))
+            (expect (str/includes? (ex-message ex) "Do not retry during this turn"))))
         (expect (nil? (get @ca "session_summaries")))))
   (it "allows completed prior turns after the new turn has started"
       (let [ca
@@ -385,7 +388,9 @@
   (it "the native schema advertises session_fold with a target property"
       (let [t (session-fold-tool)]
         (expect (= "session_fold" (:name t)))
-        (expect (string? (:description t)))
+        (expect (str/starts-with? (:description t) "HARD PRECONDITION"))
+        (expect (str/includes? (:description t) "N < session[\"turn\"]"))
+        (expect (str/includes? (:description t) "even after verification"))
         (expect (contains? (:properties (:schema t)) "target"))
         (expect (= ["target"] (:required (:schema t))))))
   (it "native dispatch synthesizes a POSITIONAL call for a list target + gist"

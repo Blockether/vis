@@ -3,7 +3,9 @@
    server that vanishes mid-run surfaces as a structured result the model can act
    on, never a raw connect exception that eats the turn."
   (:require [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
+            [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
+            [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private run-via-repl @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-repl)
@@ -175,3 +177,44 @@
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "returns an empty map when there is nothing to group"
       (expect (= {} (tr/group-faults-by-dir [] [])))))
+
+(defdescribe
+  clj-test-fn-dir-root-test
+  "An explicit `dir` arg roots the run — and thus nREPL selection — at THAT
+   project, so tests in a sibling / added-folder project run against their own
+   nREPL classpath instead of booting the workspace-root REPL (regression:
+   run_tests silently dropped `dir`, FileNotFoundException on the wrong REPL)."
+  (it "boots/selects the nREPL at the dir arg, not the workspace root"
+      (let [seen-root (atom nil)]
+        (with-redefs
+          [extension/run-outside-tool-wall (fn [_env thunk]
+                                             (thunk))
+           repl-manager/ensure-repl-for-dir! (fn [_sid root]
+                                               (reset! seen-root root)
+                                               {:port 12345})
+           com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
+           (fn [root _nses _sel _port]
+             {"mode" "repl" "ns" "x.y-test" "root" root})]
+
+          (let
+            [r (:result (tr/clj-test-fn {:workspace/root "/ws" :session-id "sid"}
+                                        {"dir" "/some/proj" "namespaces" ["x.y-test"]}))]
+            (expect (= "/some/proj" @seen-root))
+            (expect (= "/some/proj" (get r "root")))))))
+  (it "falls back to the workspace root when no dir arg is given"
+      (let [seen-root (atom nil)]
+        (with-redefs
+          [extension/run-outside-tool-wall (fn [_env thunk]
+                                             (thunk))
+           repl-manager/ensure-repl-for-dir! (fn [_sid root]
+                                               (reset! seen-root root)
+                                               {:port 12345})
+           com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
+           (fn [root _nses _sel _port]
+             {"mode" "repl" "ns" "x.y-test" "root" root})]
+
+          (let
+            [r (:result (tr/clj-test-fn {:workspace/root "/ws" :session-id "sid"}
+                                        {"namespaces" ["x.y-test"]}))]
+            (expect (= "/ws" @seen-root))
+            (expect (= "/ws" (get r "root"))))))))

@@ -879,10 +879,22 @@
    across the language / framework / tool / mode axes."
   ([env arg]
    (let
-     [root
-      (or (:workspace/root env)
-          (throw (ex-info "clj_test fired without :workspace/root in env"
-                          {:type :clj/no-workspace})))
+     [;; An explicit `dir` (the run_tests `dir` param) roots the run — and thus
+      ;; nREPL selection — at THAT project instead of the workspace root, so a
+      ;; SIBLING / added-folder project runs against its OWN nREPL classpath
+      ;; rather than booting the workspace-root REPL (whose classpath lacks it).
+      req-dir
+      (when (map? arg) (get arg "dir"))
+
+      root
+      (let
+        [wsroot (or (:workspace/root env)
+                    (throw (ex-info "clj_test fired without :workspace/root in env"
+                                    {:type :clj/no-workspace})))]
+        (if (str/blank? (str req-dir))
+          wsroot
+          (let [f (io/file (str req-dir))]
+            (.getPath (if (.isAbsolute f) f (io/file wsroot (str req-dir)))))))
 
       paths
       (when (map? arg) (or (get arg "paths") (get arg "path")))
