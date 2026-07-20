@@ -1230,6 +1230,111 @@
                    (expect (empty? suffix)))))
 
 (defdescribe
+  large-write-replay-compaction-test
+  (let [payload
+        (apply str (repeat 9000 "x"))
+
+        id
+        "write-big-1"
+
+        tc
+        {:id id :name "write" :input {"path" "src/generated.clj" "content" payload}}
+
+        policies
+        {"write"
+         {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}}
+
+        target
+        {:provider :lmstudio :model "google/gemma-4-12b-qat"}
+
+        entry
+        (fn [form]
+          [1
+           {:assistant-message
+            {:role "assistant"
+             :content [{:type "thinking" :thinking "large write" :thinking-signature "sig"}
+                       {:type "tool_use" :id id :name "write" :input (:input tc)}]}
+            :llm-provider (:provider target)
+            :llm-model (:model target)
+            :preserved-thinking/replay? true
+            :tool-calls [tc]
+            :forms-vec [(assoc form
+                          :scope "t1/i1/f1"
+                          :svar/tool-call-id id)]}])]
+
+    (it "replaces a successful oversized write protocol pair with a hashed textual receipt"
+        (let [suffix
+              (conversation-suffix
+                [(entry {:result [{"path" "src/generated.clj" "op" "update" "changed" true}]})]
+                target
+                policies)
+
+              wire
+              (pr-str suffix)]
+
+          (expect (= ["assistant" "user"] (mapv :role suffix)))
+          (expect (str/includes? (get-in suffix [0 :content 0 :text]) "sha256="))
+          (expect (str/includes? (get-in suffix [0 :content 0 :text]) "9000 chars"))
+          (expect (not (str/includes? wire payload)))
+          (expect (not (str/includes? wire "tool_use")))))
+    (it "keeps a dirty oversized write retryable without replaying its content"
+        (let [suffix
+              (conversation-suffix [(entry {:error {:type :editing/write-failed
+                                                    :data {:reason :dirty}}})]
+                                   target
+                                   policies)
+
+              wire
+              (pr-str suffix)]
+
+          (expect (not (str/includes? wire payload)))
+          (expect (str/includes? wire "retry_native"))
+          (expect (str/includes? wire id))))
+    (it "keeps an unrelated failure verbatim because no safe retry reference exists"
+        (let [suffix (conversation-suffix [(entry {:error {:type :editing/write-failed
+                                                           :data {:reason :stale}}})]
+                                          target
+                                          policies)]
+          (expect (str/includes? (pr-str suffix) payload))))))
+
+(defdescribe
+  retry-native-resolution-test
+  (let [resolve-retry
+        @#'lp/resolve-native-retry
+
+        id
+        "write-dirty-1"
+
+        content
+        "exact payload"
+
+        tc
+        {:id id :name "write" :input {"path" "x.clj" "content" content}}
+
+        policies
+        {"write"
+         {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}}
+
+        prior
+        [[1
+          {:tool-calls [tc]
+           :forms-vec [{:svar/tool-call-id id
+                        :error {:type :editing/write-failed :data {:reason :dirty}}}]}]]]
+
+    (it "reuses the exact prior path/content and changes only allow_dirty"
+        (let [resolved (:tool-call (resolve-retry prior policies {"tool_call_id" id}))]
+          (expect (= "write" (:name resolved)))
+          (expect (= content (get-in resolved [:input "content"])))
+          (expect (true? (get-in resolved [:input "allow_dirty"])))))
+    (it "rejects a non-dirty target"
+        (let [clean-prior (assoc-in prior [0 1 :forms-vec 0 :error :data :reason] :stale)]
+          (expect (str/includes? (:error (resolve-retry clean-prior policies {"tool_call_id" id}))
+                                 "is not retryable"))))
+    (it "rejects an unknown id without guessing"
+        (expect (str/includes? (:error (resolve-retry prior policies {"tool_call_id" "missing"}))
+                               "cannot find")))))
+
+(defdescribe
   conversation-suffix-image-replay-test
   ;; Generated figures (matplotlib plt.show()) an iteration's tool call
   ;; produced are persisted as :attachments and replayed to the model as
@@ -2737,38 +2842,46 @@
           "mcp__connect" {:pos ["server"]}
           "mcp__disconnect" {:pos ["server"]}}))
 
-(defdescribe native-introspection-tools-test
-             (it "advertises apropos and doc as native tools before the execution tools"
-                 (let
-                   [tools
-                    (@#'lp/native-tools [] nil nil)
+(defdescribe
+  native-introspection-tools-test
+  (it "advertises apropos and doc as native tools before the execution tools"
+      (let [editing-ext
+            {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
 
-                    by-name
-                    (into {} (map (juxt :name identity)) tools)]
+            tools
+            (@#'lp/native-tools [editing-ext] nil nil)
 
-                   (expect (= ["apropos" "doc" "session_fold" "python_execution"]
-                              (mapv :name tools)))
-                   (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
-                   (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
-                   (let [python-description (get-in by-name ["python_execution" :description])]
-                     (doseq [fact ["cannot import project packages" "ntr[tool_id]"
-                                   "bare snake_case" "errors surface"]]
-                       (expect (str/includes? python-description fact))))
-                   (expect (str/includes? (get-in by-name ["session_fold" :description])
-                                          "understand its intent"))))
-             (it "dispatches native discovery through the existing Python functions"
-                 (let
-                   [shapes
-                    (var-get #'lp/engine-native-tool-call-shapes)
+            by-name
+            (into {} (map (juxt :name identity)) tools)]
 
-                    synth
-                    (fn [name input]
-                      (@#'lp/tool-call->python-source shapes {:name name :input input}))]
+        (expect (= ["apropos" "doc" "retry_native" "session_fold" "python_execution"]
+                   (->> tools
+                        (mapv :name)
+                        (take-last 5)
+                        vec)))
+        (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
+        (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
+        (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
+        (let [python-description (get-in by-name ["python_execution" :description])]
+          (doseq [fact ["cannot import project packages" "ntr[tool_id]" "bare snake_case"
+                        "errors surface"]]
+            (expect (str/includes? python-description fact))))
+        (expect (str/includes? (get-in by-name ["session_fold" :description])
+                               "understand its intent"))))
+  (it "does not advertise retry_native when no active tool owns a replay policy"
+      (expect (= ["apropos" "doc" "session_fold" "python_execution"]
+                 (mapv :name (@#'lp/native-tools [] nil nil)))))
+  (it "dispatches native discovery through the existing Python functions"
+      (let [shapes
+            (var-get #'lp/engine-native-tool-call-shapes)
 
-                   (expect (= "__vis_apropos_table__()" (synth "apropos" {})))
-                   (expect (= "__vis_apropos_table__(\"struct\")"
-                              (synth "apropos" {"query" "struct"})))
-                   (expect (= "doc(\"struct_patch\")" (synth "doc" {"name" "struct_patch"}))))))
+            synth
+            (fn [name input]
+              (@#'lp/tool-call->python-source shapes {:name name :input input}))]
+
+        (expect (= "__vis_apropos_table__()" (synth "apropos" {})))
+        (expect (= "__vis_apropos_table__(\"struct\")" (synth "apropos" {"query" "struct"})))
+        (expect (= "doc(\"struct_patch\")" (synth "doc" {"name" "struct_patch"}))))))
 
 (defdescribe
   tool-call->python-source-test

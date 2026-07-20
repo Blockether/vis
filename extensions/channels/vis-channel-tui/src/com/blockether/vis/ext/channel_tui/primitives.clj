@@ -643,6 +643,107 @@
 
 ;;; ── Inline-styled line painter ─────────────────────────────────────────────
 
+(defn- build-styled-cells
+  "Resolve a sentinel-carrying `line` into ONE fully-styled `TextCharacter[]`.
+   Inline sentinels toggle SGR/code state but occupy no columns, so the
+   concatenated per-run `fromString` cells are EXACTLY what the per-run
+   `putString` walk paints (proven byte-identical). `inherited` is the SGR set
+   active on `g` at entry; inline toggles stack on top of it. Built once per
+   unique styled line, then cached by `blit-styled-line!`."
+  ^"[Lcom.googlecode.lanterna.TextCharacter;"
+  [^String line ^TextColor base-fg ^TextColor base-bg ^TextColor code-fg ^TextColor code-bg
+   ^java.util.EnumSet inherited]
+  (let
+    [len
+     (.length line)
+
+     inline
+     (java.util.EnumSet/noneOf SGR)
+
+     code?
+     (boolean-array 1 false)
+
+     ^java.util.ArrayList out
+     (java.util.ArrayList. len)
+
+     emit!
+     (fn [^String seg]
+       (when (pos? (.length seg))
+         (let
+           [^"[Lcom.googlecode.lanterna.TextCharacter;" arr
+            (if (aget code? 0)
+              (TextCharacter/fromString seg code-fg code-bg no-mods)
+              (let [eff ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
+                (.addAll eff inline)
+                (TextCharacter/fromString seg base-fg base-bg eff)))
+
+            n
+            (alength arr)]
+
+           (loop [i 0]
+             (when (< i n) (.add out (aget arr i)) (recur (inc i)))))))]
+
+    (loop
+      [i
+       0
+
+       run-start
+       0]
+
+      (if (>= i len)
+        (emit! (subs line run-start i))
+        (let [c (int (.charAt line i))]
+          (if (and (>= c INLINE_SENTINEL_LO) (<= c INLINE_SENTINEL_HI))
+            (let [gs (subs line i (inc i))]
+              (emit! (subs line run-start i))
+              (cond (= gs INLINE_BOLD_ON) (.add inline SGR/BOLD)
+                    (= gs INLINE_BOLD_OFF) (.remove inline SGR/BOLD)
+                    (= gs INLINE_ITALIC_ON) (.add inline SGR/ITALIC)
+                    (= gs INLINE_ITALIC_OFF) (.remove inline SGR/ITALIC)
+                    (= gs INLINE_STRIKE_ON) (.add inline SGR/CROSSED_OUT)
+                    (= gs INLINE_STRIKE_OFF) (.remove inline SGR/CROSSED_OUT)
+                    (= gs INLINE_CODE_ON) (aset code? 0 true)
+                    (= gs INLINE_CODE_OFF) (aset code? 0 false)
+                    (= gs INLINE_LINK_ON) (.add inline SGR/UNDERLINE)
+                    (= gs INLINE_LINK_OFF) (.remove inline SGR/UNDERLINE))
+              (recur (inc i) (inc i)))
+            (recur (inc i) run-start)))))
+    (.toArray out
+              ^"[Lcom.googlecode.lanterna.TextCharacter;" (make-array TextCharacter (.size out)))))
+
+(defn blit-styled-line!
+  "Paint a sentinel-carrying `line` at (x,y), caching its fully-resolved
+   `TextCharacter[]` across frames and painting it via the fork's pre-segmented
+   `putString` overload (0 alloc on a hit). Byte-identical to the per-run
+   `putString` walk. Leaves g's SGR/color state untouched (each cell carries its
+   own style), so the `inherited` set active at entry is preserved for the
+   wrapping `styled` form -- no explicit restore needed. Shares `line-cell-cache`
+   with `blit-line!` via a `:sty`-tagged key (distinct shape, never collides)."
+  [^TextGraphics g x y ^String line ^TextColor base-fg ^TextColor base-bg ^TextColor code-fg
+   ^TextColor code-bg ^java.util.EnumSet inherited]
+  (let
+    [iempty?
+     (.isEmpty inherited)
+
+     k
+     (if iempty?
+       [:sty line base-fg base-bg code-fg code-bg]
+       [:sty line base-fg base-bg code-fg code-bg inherited])
+
+     ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
+     (.get line-cell-cache k)]
+
+    (if cached
+      (.putString g (int x) (int y) cached)
+      (let [arr (build-styled-cells line base-fg base-bg code-fg code-bg inherited)]
+        (.put line-cell-cache
+              (if iempty?
+                k
+                [:sty line base-fg base-bg code-fg code-bg (java.util.EnumSet/copyOf inherited)])
+              arr)
+        (.putString g (int x) (int y) arr)))
+    g))
+
 (defn paint-styled-line!
   "Paint a single line at (x, y) honouring inline span sentinels.
 
@@ -703,81 +804,23 @@
           ;; the inherited (wrapping-`styled`) set still active on it.
           (not has-sentinel?)
           (blit-line! g (int x) (int y) line base-fg base-bg (.getActiveModifiers g))
-          ;; Slow path: split the line at inline sentinels and paint each text
-          ;; run with putString. Sentinels are single private-use chars
-          ;; ([E110,E119]) that never combine into a grapheme cluster, so a
-          ;; raw-char split yields exactly the same runs as a grapheme walk —
-          ;; but WITHOUT the redundant `fromString(line)` segmentation the
-          ;; per-run `putString` already performs (halves styled-line alloc).
-          ;; `inline` is the set of toggles activated by sentinels seen so far;
-          ;; effective SGR set per run is `inherited ∪ inline`.
-          :else (let
-                  [;; Capture pre-existing modifiers so inline toggles can stack on
-                   ;; top of them and we can restore exactly at exit.
-                   inherited
-                   ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
-
-                   inline
-                   (java.util.EnumSet/noneOf SGR)
-
-                   col
-                   (int-array 1 0)
-
-                   code?
-                   (boolean-array 1 false)
-
-                   flush-run!
-                   (fn [^String seg]
-                     (when (pos? (.length seg))
-                       (.clearModifiers g)
-                       (if (aget code? 0)
-                         ;; Code span: hard-override fg/bg; modifiers cleared so
-                         ;; code reads as a flat zone.
-                         (do (.setForegroundColor g code-fg) (.setBackgroundColor g code-bg))
-                         ;; Plain span: base colors + (inherited ∪ inline) SGR.
-                         (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
-                           (.addAll effective inline)
-                           (.setForegroundColor g base-fg)
-                           (.setBackgroundColor g base-bg)
-                           (when-not (.isEmpty effective)
-                             (.enableModifiers g (into-array SGR effective)))))
-                       (.putString g (+ (int x) (aget col 0)) (int y) seg)
-                       (aset col 0 (int (+ (aget col 0) (display-width seg))))))]
-
-                  (loop
-                    [i
-                     0
-
-                     run-start
-                     0]
-
-                    (if (>= i len)
-                      (flush-run! (subs line run-start i))
-                      (let [c (int (.charAt line i))]
-                        (if (and (>= c INLINE_SENTINEL_LO) (<= c INLINE_SENTINEL_HI))
-                          (let [gs (subs line i (inc i))]
-                            (flush-run! (subs line run-start i))
-                            (cond (= gs INLINE_BOLD_ON) (.add inline SGR/BOLD)
-                                  (= gs INLINE_BOLD_OFF) (.remove inline SGR/BOLD)
-                                  (= gs INLINE_ITALIC_ON) (.add inline SGR/ITALIC)
-                                  (= gs INLINE_ITALIC_OFF) (.remove inline SGR/ITALIC)
-                                  (= gs INLINE_STRIKE_ON) (.add inline SGR/CROSSED_OUT)
-                                  (= gs INLINE_STRIKE_OFF) (.remove inline SGR/CROSSED_OUT)
-                                  (= gs INLINE_CODE_ON) (aset code? 0 true)
-                                  (= gs INLINE_CODE_OFF) (aset code? 0 false)
-                                  (= gs INLINE_LINK_ON) (.add inline SGR/UNDERLINE)
-                                  (= gs INLINE_LINK_OFF) (.remove inline SGR/UNDERLINE))
-                            (recur (inc i) (inc i)))
-                          (recur (inc i) run-start)))))
-                  ;; Restore the inherited modifier set exactly so the wrapping
-                  ;; `styled` form's cleanup sees the state it expects. Without this,
-                  ;; an unbalanced sentinel (e.g. line ending mid-bold) could leak
-                  ;; BOLD into the next paint call.
-                  (.clearModifiers g)
-                  (.setForegroundColor g base-fg)
-                  (.setBackgroundColor g base-bg)
-                  (when-not (.isEmpty inherited)
-                    (.enableModifiers g (into-array SGR inherited)))))))
+          ;; Slow path: `line` carries inline sentinels. Resolve it to ONE
+          ;; fully-styled TextCharacter[] and blit it via the fork's
+          ;; pre-segmented putString -- cached across frames (0 alloc on a hit),
+          ;; byte-identical to the per-run putString walk. g's SGR/color state
+          ;; is left untouched (each cell carries its own style), so the
+          ;; inherited set active at entry is preserved for the wrapping
+          ;; `styled` form -- no explicit restore needed. The base fg/bg set
+          ;; above already match old exit state.
+          :else (blit-styled-line! g
+                                   (int x)
+                                   (int y)
+                                   line
+                                   base-fg
+                                   base-bg
+                                   code-fg
+                                   code-bg
+                                   (.getActiveModifiers g)))))
 
 ;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 

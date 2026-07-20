@@ -29,7 +29,12 @@
   [x]
   (if (string? x)
     x
-    (apply str (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) x))))
+    (.toString
+     ^StringBuilder
+     (reduce (fn [^StringBuilder sb tc]
+               (.append sb (.getCharacterString ^com.googlecode.lanterna.TextCharacter tc)))
+             (StringBuilder.)
+             x))))
 
 (defdescribe result-summary-color-test
              (it "keeps native-tool headlines flush on the quiet result band"

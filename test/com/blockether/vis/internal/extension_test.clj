@@ -28,6 +28,9 @@
                                :name "flat_tool"
                                :description "Compact routing and result semantics."
                                :schema {:type "object" :properties {"x" {:type "string"}}}
+                               :replay {:elide-args {"x" 1024}
+                                        :retry-on #{:too-large}
+                                        :retry-overrides {"force" true}}
                                :handler (fn [_env _in]
                                           {:ok true})
                                :render a-render
@@ -42,6 +45,8 @@
         (expect (some? schema))
         (expect (= "Compact routing and result semantics." (:description schema)))
         (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
+        (expect (= {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
+                   (get (extension/native-tool-replay-policies [ext]) "flat_tool")))
         (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
         (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
         (expect (= :tool-color/meta (get (extension/native-tool-color-roles [ext]) "flat_tool")))))

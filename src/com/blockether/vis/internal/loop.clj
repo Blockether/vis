@@ -2701,6 +2701,36 @@
         :else result))
 
 
+(defn- nested-reason?
+  "True when a nested tool error carries one of `reasons`."
+  [x reasons]
+  (let [wanted
+        (into #{} (map #(if (keyword? %) (name %) (str %))) reasons)
+
+        match?
+        #(contains? wanted (if (keyword? %) (name %) (str %)))]
+
+    (cond (map? x) (or (match? (:reason x))
+                       (match? (get x "reason"))
+                       (some #(nested-reason? % reasons) (vals x)))
+          (sequential? x) (boolean (some #(nested-reason? % reasons) x))
+          :else false)))
+
+(defn- own-tool-forms
+  [iter-record tool-call]
+  (let [forms (or (:forms-vec iter-record)
+                  (mapcat (fn [b]
+                            (or (seq (:forms b)) [b]))
+                          (:blocks iter-record)))]
+    (filterv #(= (:id tool-call) (:svar/tool-call-id %)) forms)))
+
+(defn- retryable-tool-call?
+  [iter-record tool-call replay-policy]
+  (let [reasons (:retry-on replay-policy)]
+    (and (seq reasons)
+         (some #(nested-reason? (:error %) reasons) (own-tool-forms iter-record tool-call)))))
+
+
 (def ^:private MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
    many chars in the tool result — a universal backstop for a runaway print()
@@ -2821,7 +2851,7 @@
    OWN forms' output (forms are grouped by `:svar/tool-call-id`) — the maki
    model, where one call may be python_execution and others direct file tools.
    Falls back to a plain text user message when no tool calls are recorded."
-  [iter-record]
+  [iter-record & [replay-policies]]
   (let [;; ONE scope source: the `forms-vec` (each `{:scope :result …}`).
         ;; Falls back to scoped `:blocks` forms.
         forms
@@ -2933,31 +2963,40 @@
 
         call-content
         (fn [idx tc]
-          (let [own
-                (cond-> (vec (get forms-by-id (:id tc)))
-                  (zero? (long idx))
-                  (into (or orphan-forms [])))
+          (let
+            [own
+             (cond-> (vec (get forms-by-id (:id tc)))
+               (zero? (long idx))
+               (into (or orphan-forms [])))
 
-                lines
-                (keep form-output own)
+             lines
+             (keep form-output own)
 
-                iscope
-                (some #(iter-of-scope (:scope %)) own)
+             iscope
+             (some #(iter-of-scope (:scope %)) own)
 
-                header
-                (when (and iscope (seq lines)) (str "# " iscope))
+             header
+             (when (and iscope (seq lines)) (str "# " iscope))
 
-                handle
-                (when (seq lines) (result-handle tc own))
+             handle
+             (when (seq lines) (result-handle tc own))
 
-                body-ls
-                (concat (when (zero? (long idx)) summary-lines)
-                        (when header [header])
-                        (when handle [handle])
-                        lines)
+             retry-hint
+             (when (retryable-tool-call? iter-record tc (get replay-policies (:name tc)))
+               (str
+                 "# retry exact arguments without resending them: retry_native({\"tool_call_id\": "
+                 (pr-str (str (:id tc)))
+                 "})"))
 
-                body
-                (when (seq body-ls) (str/join "\n" body-ls))]
+             body-ls
+             (concat (when (zero? (long idx)) summary-lines)
+                     (when header [header])
+                     (when handle [handle])
+                     lines
+                     (when retry-hint [retry-hint]))
+
+             body
+             (when (seq body-ls) (str/join "\n" body-ls))]
 
             (str/join "\n\n" (remove str/blank? [body (when (zero? (long idx)) ctx-diff)]))))
 
@@ -3025,6 +3064,107 @@
            tool-calls))}
       ;; Legacy text fallback (no tool calls on this record).
       (not (str/blank? fallback-content)) {:role "user" :content fallback-content})))
+
+(defn- successful-tool-call?
+  [iter-record tool-call]
+  (let [own (own-tool-forms iter-record tool-call)]
+    (and (seq own) (not-any? :error own))))
+
+(defn- oversized-arg-receipts
+  [tool-call replay-policy]
+  (let [input (:input tool-call)]
+    (into []
+          (keep (fn [[arg threshold]]
+                  (let [payload (or (get input arg) (get input (keyword arg)))]
+                    (when (and (string? payload) (> (count payload) (long threshold)))
+                      {:arg arg :chars (count payload) :sha256 (extension/sha256-hex payload)}))))
+          (:elide-args replay-policy))))
+
+(defn- compactable-native-call
+  "Return context-compaction data for one policy-owned native call. Mixed tool
+   batches stay verbatim so provider call/result pairing remains untouched."
+  [iter-record replay-policies]
+  (let [calls
+        (vec (:tool-calls iter-record))
+
+        tc
+        (first calls)
+
+        policy
+        (get replay-policies (:name tc))
+
+        elided
+        (oversized-arg-receipts tc policy)]
+
+    (when (and (= 1 (count calls))
+               (seq elided)
+               (or (successful-tool-call? iter-record tc)
+                   (retryable-tool-call? iter-record tc policy)))
+      {:tool-call tc :policy policy :elided elided})))
+
+(defn- plain-tool-results
+  "Turn a canonical tool_result message into ordinary text after its assistant
+   tool_use is intentionally removed from replay."
+  [results]
+  (when results
+    (if (string? (:content results))
+      (:content results)
+      (->> (:content results)
+           (map (fn [{:keys [tool_use_id content]}]
+                  (str "# result " tool_use_id "\n" content)))
+           (str/join "\n\n")))))
+
+(defn- compacted-native-replay
+  "Provider-safe replay for one completed oversized native call. Use ordinary
+   assistant/user text instead of mutating a provider-native tool_use block;
+   signed thinking and function-call item ids therefore cannot be invalidated."
+  [iter-record replay-policies {:keys [tool-call policy elided]}]
+  (let [input
+        (:input tool-call)
+
+        elided-keys
+        (into #{}
+              (mapcat (fn [{:keys [arg]}]
+                        [arg (keyword arg)]))
+              elided)
+
+        visible-input
+        (apply dissoc input elided-keys)
+
+        elided-text
+        (->> elided
+             (map (fn [{:keys [arg chars sha256]}]
+                    (str arg "=" chars " chars sha256=" sha256)))
+             (str/join ", "))
+
+        id
+        (str (:id tool-call))
+
+        retryable?
+        (retryable-tool-call? iter-record tool-call policy)
+
+        receipt
+        (str (:name tool-call)
+             "(args="
+             (pr-str visible-input)
+             ", omitted="
+             "["
+             elided-text
+             "]"
+             ", tool_call_id=" (pr-str id)
+             ")" (if retryable?
+                   (str "\nRetry the exact stored arguments with "
+                        "retry_native({\"tool_call_id\": "
+                        (pr-str id)
+                        "}).")
+                   "\nTool completed; exact original arguments remain stored by Vis."))
+
+        results
+        (plain-tool-results (iteration-results-message iter-record replay-policies))]
+
+    (cond-> [{:role "assistant" :content [{:type "text" :text receipt}]}]
+      (not (str/blank? results))
+      (conj {:role "user" :content results}))))
 
 (defn- strip-assistant-thinking
   "Cross-provider/model-SAFE version of a canonical assistant replay: drop
@@ -3104,7 +3244,7 @@
 
    Compatible entries route through `preserved-thinking-replay-messages`
    so the oversized-chain telemetry stays."
-  [trailer-iters target]
+  [trailer-iters target & [replay-policies]]
   (let [iters
         (vec (or trailer-iters []))
 
@@ -3121,13 +3261,16 @@
       (mapcat
         (fn [[pos iter-rec :as entry]]
           (let [results
-                (iteration-results-message iter-rec)
+                (iteration-results-message iter-rec replay-policies)
 
                 ;; Image artifacts this iteration produced, as their OWN user
                 ;; message appended AFTER the results (keeps tool_use/tool_result
                 ;; adjacency intact). nil for text targets or image-less iters.
                 img
                 (when vision? (iteration-image-message iter-rec))
+
+                compacted-call
+                (compactable-native-call iter-rec replay-policies)
 
                 +img
                 (fn [msgs]
@@ -3154,6 +3297,11 @@
               ;; emit it now — the standalone `img` message (no thinking, no
               ;; results).
               (false? (:preserved-thinking/replay? iter-rec)) (if img [img] [])
+              ;; Policy-owned large arguments: replace the completed native
+              ;; protocol pair with ordinary text. Signed/provider-owned blocks
+              ;; remain immutable; retryable failures reuse stored args by id.
+              compacted-call (+img
+                               (compacted-native-replay iter-rec replay-policies compacted-call))
               ;; Same provider+model, valid signature → verbatim replay
               ;; with the full thinking chain.
               (contains? compatible pos)
@@ -3252,6 +3400,17 @@
             :required ["code"]
             :additionalProperties false}})
 
+(defn- retry-native-tool
+  []
+  {:name "retry_native"
+   :description
+   "Retry a policy-approved failed native call by id, reusing its exact stored arguments."
+   :schema {:type "object"
+            :properties {"tool_call_id" {:type "string"
+                                         :description "Id shown by a retryable tool result."}}
+            :required ["tool_call_id"]
+            :additionalProperties false}})
+
 (defn- session-fold-tool
   "Engine-level `session_fold` native-tool schema — the context-compaction verb
    advertised as a first-class tool_use. It is ALSO callable bare / inside
@@ -3319,16 +3478,17 @@
 (defn- native-tools
   "The native tool surface advertised to the model: the file tools declared via
    each extension's `vis/symbol` `:native-tool` opt (single source of truth —
-   schema lives WITH the symbol), plus native `apropos` / `doc`, context folding,
-   and `python_execution`. Order: extension tools, discovery tools, session_fold,
-   python_execution. `caps` (`:sandbox-caps` from the env) tailors the latter's
-   fs/network line."
+   schema lives WITH the symbol), plus native discovery, reference retry, context
+  folding, and `python_execution`. `caps` (`:sandbox-caps` from the env) tailors
+  the latter's fs/network line."
   [active-extensions caps env]
-  (conj (extension/native-tool-schemas active-extensions env)
-        (apropos-tool)
-        (doc-tool)
-        (session-fold-tool)
-        (python-execution-tool caps)))
+  (let [base (conj (extension/native-tool-schemas active-extensions env) (apropos-tool) (doc-tool))]
+    (cond-> base
+      (seq (extension/native-tool-replay-policies active-extensions env))
+      (conj (retry-native-tool))
+
+      true
+      (conj (session-fold-tool) (python-execution-tool caps)))))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -3385,6 +3545,45 @@
                   (or (vector? x) (seq? x) (set? x)) (mapv walk x)
                   :else x))]
     (walk (or input {}))))
+
+(defn- resolve-native-retry
+  "Resolve retry_native from extension replay policy plus one prior tool call."
+  [previous-iterations replay-policies input]
+  (let [id
+        (some-> (normalize-tool-input input)
+                (get "tool_call_id")
+                str)
+
+        match
+        (when-not (str/blank? id)
+          (some (fn [[_ iter-record]]
+                  (when-let [tc (some #(when (= id (str (:id %))) %) (:tool-calls iter-record))]
+                    [iter-record tc]))
+                (reverse (vec previous-iterations))))
+
+        iter-record
+        (first match)
+
+        tool-call
+        (second match)
+
+        policy
+        (get replay-policies (:name tool-call))]
+
+    (cond (str/blank? id) {:error
+                           "retry_native requires tool_call_id from a retryable tool result."}
+          (nil? match)
+          {:error (str "retry_native cannot find tool call " (pr-str id) " in this live turn.")}
+          (nil? policy) {:error (str "retry_native target " (pr-str id) " has no replay policy.")}
+          (not (retryable-tool-call? iter-record tool-call policy))
+          {:error (str "retry_native target " (pr-str id) " is not retryable for this failure.")}
+          :else {:tool-call {:name (:name tool-call)
+                             :input (merge (normalize-tool-input (:input tool-call))
+                                           (:retry-overrides policy))}})))
+
+(def ^:private engine-native-tool-resolvers
+  {"retry_native" (fn [{:keys [previous-iterations replay-policies]} input]
+                    (resolve-native-retry previous-iterations replay-policies input))})
 
 (defn- synth-call
   "Synthesize `py-name(args…)` from a native tool's `:call` SHAPE map + the tool
@@ -3919,37 +4118,51 @@
           ;; DIRECTLY in Clojure (no synthesized Python). All others synthesize a
           ;; bare call into their bound fn and run through GraalPy as before.
           native-handlers (extension/native-tool-handlers active-extensions environment)
+          replay-policies (extension/native-tool-replay-policies active-extensions environment)
           ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
           ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
           call-shapes (merge (extension/native-tool-call-shapes active-extensions environment)
                              engine-native-tool-call-shapes)
-          blocks (if answer-md
-                   []
-                   (mapv (fn [tc]
-                           (if-let [h (get native-handlers (:name tc))]
-                             ;; a `:handler` native tool: dispatched in Clojure,
-                             ;; never runs as Python. `:source` is the synthesized
-                             ;; call for DISPLAY/persist/validation only (blocks
-                             ;; require a string `:code`; a nil here failed
-                             ;; `validate-iteration-blocks!` and errored the whole
-                             ;; iteration on every handler-tool call) — execution
-                             ;; branches on `:vis/native-handler` before `:source`
-                             ;; is ever evaluated.
-                             {:lang "native"
-                              :source (tool-call->python-source call-shapes tc)
-                              :svar/tool-call-id (:id tc)
-                              :vis/tool-name (:name tc)
-                              :vis/native-handler h
-                              :vis/native-input (normalize-tool-input (:input tc))}
-                             {:lang "python"
-                              ;; Native file tool → synthesized bare call into its
-                              ;; bound fn; python_execution → the model's own code.
-                              :source (tool-call->python-source call-shapes tc)
-                              :svar/tool-call-id (:id tc)
-                              ;; Carry the tool name so the render layer can paint a
-                              ;; native tool nicely vs. python_execution stdout.
-                              :vis/tool-name (:name tc)}))
-                         tool-calls))
+          blocks
+          (if answer-md
+            []
+            (mapv
+              (fn [tc]
+                (let [resolver (get engine-native-tool-resolvers (:name tc))
+                      call-resolution (when resolver
+                                        (resolver {:previous-iterations (:previous-iterations
+                                                                          answer-validation-context)
+                                                   :replay-policies replay-policies}
+                                                  (:input tc)))
+                      effective-tc (or (:tool-call call-resolution) tc)
+                      resolution-error (:error call-resolution)
+                      effective-name (:name effective-tc)]
+
+                  (if-let [h (when-not resolution-error (get native-handlers effective-name))]
+                    ;; a `:handler` native tool: dispatched in Clojure,
+                    ;; never runs as Python. `:source` is the synthesized
+                    ;; call for DISPLAY/persist/validation only (blocks
+                    ;; require a string `:code`; a nil here failed
+                    ;; `validate-iteration-blocks!` and errored the whole
+                    ;; iteration on every handler-tool call) — execution
+                    ;; branches on `:vis/native-handler` before `:source`
+                    ;; is ever evaluated.
+                    {:lang "native"
+                     :source (tool-call->python-source call-shapes effective-tc)
+                     :svar/tool-call-id (:id tc)
+                     :vis/tool-name effective-name
+                     :vis/native-handler h
+                     :vis/native-input (normalize-tool-input (:input effective-tc))}
+                    {:lang "python"
+                     ;; Engine-native call resolvers may substitute a
+                     ;; policy-approved stored call before synthesis.
+                     ;; Invalid refs use the ordinary tool error path.
+                     :source (if resolution-error
+                               (str "raise ValueError(" (py-literal resolution-error) ")")
+                               (tool-call->python-source call-shapes effective-tc))
+                     :svar/tool-call-id (:id tc)
+                     :vis/tool-name effective-name})))
+              tool-calls))
           preflight-start-ns (System/nanoTime)
           preflight-result (if answer-md
                              {:code-entries [] :normalized-code "" :raw-fence-preflight-error nil}
@@ -5960,7 +6173,9 @@
                                                                 (some-> (:ctx-atom environment)
                                                                         deref
                                                                         (get "session_summaries")))
-                                               (replay-context pre-resolved-model))
+                                               (replay-context pre-resolved-model)
+                                               (extension/native-tool-replay-policies active-exts
+                                                                                      environment))
                     provider-messages (into (vec messages) conversation-suffix-msgs)
                     effective-messages provider-messages
                     resolved-model pre-resolved-model

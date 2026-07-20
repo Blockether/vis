@@ -423,6 +423,28 @@
 (s/def :ext.symbol/render fn?)
 ;; The op-card BADGE colour role for this symbol's result (`:tool-color/search`…).
 (s/def :ext.symbol/color-role keyword?)
+;; Optional agent-context policy for large native arguments. `:elide-args` maps
+;; string input keys to replay thresholds. A failed call is retryable by id only
+;; when its nested error carries one of `:retry-on`; `:retry-overrides` is merged
+;; onto the original input before the engine re-executes it.
+(s/def :ext.symbol/replay
+  (s/and map?
+         #(let [{:keys [elide-args retry-on retry-overrides]}
+                %]
+
+            (and (map? elide-args)
+                 (seq elide-args)
+                 (every? (fn [[k n]]
+                           (and (string? k) (pos-int? n)))
+                         elide-args)
+                 (or (nil? retry-on)
+                     (and (set? retry-on)
+                          (seq retry-on)
+                          (every? (fn [reason]
+                                    (or (keyword? reason) (string? reason)))
+                                  retry-on)))
+                 (or (nil? retry-overrides)
+                     (and (map? retry-overrides) (every? string? (keys retry-overrides))))))))
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
           :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
@@ -430,7 +452,7 @@
                 :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
                 :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
                 :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/render
-                :ext.symbol/color-role]))
+                :ext.symbol/color-role :ext.symbol/replay]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
 (s/def ::symbol-entry
@@ -853,7 +875,7 @@
 (defn native-tools-for
   "Every native tool on `active-extensions`' symbols — ONE walk, the single source
    the schemas / handlers / renderers / colours all project from, NORMALIZED to
-   `{:name :description :schema :handler :render :color-role :active?}`.
+  `{:name :description :schema :handler :render :color-role :replay :active?}`.
 
    A symbol IS a native tool IFF it declares `:native-tool? true` (which REQUIRES
    `:schema`). Every field is FLAT on the symbol — no legacy `:native-tool` map.
@@ -874,10 +896,20 @@
                    :schema (:ext.symbol/schema e)
                    :handler (:ext.symbol/handler e)
                    :call (:ext.symbol/call e)
+                   :replay (:ext.symbol/replay e)
                    :render (:ext.symbol/render e)
                    :color-role (:ext.symbol/color-role e)
                    :active? (symbol-active? e env)})))
         vec)))
+
+(defn native-tool-replay-policies
+  "Map active native wire-name → extension-declared context replay policy."
+  ([active-extensions] (native-tool-replay-policies active-extensions nil))
+  ([active-extensions env]
+   (into {}
+         (keep (fn [t]
+                 (when (and (:active? t) (:replay t)) [(:name t) (:replay t)]))
+               (native-tools-for active-extensions env)))))
 
 (defn native-tool-schemas
   "The model-facing `:tools` surface: `{:name :description :schema}` for every
@@ -1150,6 +1182,9 @@
 
           (:description opts)
           (assoc :ext.symbol/description (:description opts))
+
+          (:replay opts)
+          (assoc :ext.symbol/replay (:replay opts))
 
           ;; :render / :color-role — the op-card renderer the symbol owns, shared by the
           ;; native tool_result card AND a Python-path surfaced value.

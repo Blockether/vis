@@ -107,6 +107,7 @@ Native tools declare `:native-tool? true`. Keep each fact in one place:
 | --- | --- | --- |
 | `:description` | Compact routing, preconditions, side effects, and result semantics | Parameter inventories, types, defaults, or required fields |
 | `:schema` | Exact input names, types, constraints, defaults, and field descriptions | Workflow prose already in `:description` |
+| `:replay` | Optional large-argument elision thresholds and approved retry reasons/overrides | Provider serialization or tool-specific loop logic |
 | Function docstring | Developer implementation notes | Native model contract |
 | `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Native descriptions or schemas |
 
@@ -127,6 +128,8 @@ Native tools declare `:native-tool? true`. Keep each fact in one place:
 ```
 
 Both `:description` and `:schema` are mandatory. Close the top-level schema with `:additionalProperties false` unless unknown keys are intentional. `doc(name)` renders the compact description plus schema-derived parameters exactly once; it never substitutes the implementation docstring. `vis/render-prompt` also skips native symbols, preventing a prompt fragment from duplicating their provider contract.
+
+For a tool with a large replay-only argument, declare the policy on its symbol: `:replay {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}`. Vis keeps the original call for execution and forensics, but replaces a completed oversized call with a hashed textual receipt. A matching failed call can be retried by id without resending its arguments. svar remains a faithful provider codec and never elides arguments itself.
 
 ## Sandbox shims and autoloads
 

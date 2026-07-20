@@ -5063,34 +5063,36 @@
 (def write-symbol
   ;; write reuses the patch channel renderer because its `:result`
   ;; shape is the same single-file summary (just always 1-file long).
-  (vis/symbol #'write-tool
-              {:symbol 'write
-               :native-tool? true
-               :description
-               (str "Create a new file or intentionally replace an entire clean file. Refuses "
+  (vis/symbol
+    #'write-tool
+    {:symbol 'write
+     :native-tool? true
+     :description (str
+                    "Create a new file or intentionally replace an entire clean file. Refuses "
                     "uncommitted targets unless explicitly allowed; use `patch` or `struct_patch` "
                     "for surgical changes.")
-               :render render-patch-result
-               :color-role :tool-color/edit
-               :schema
-               {:type "object"
-                :properties
-                {"path" {:type "string" :description "File path to create or overwrite."}
-                 "content" {:type "string" :description "Full file content."}
-                 "is_overwrite"
-                 {:type "boolean"
-                  :description
-                  "Overwrite an existing file (default true); false = fail if it exists."}
-                 "allow_dirty" {:type "boolean"
-                                :description "Allow writing a file with uncommitted git changes."}
-                 "expected_mtime" {:type "integer"
-                                   :description
-                                   "Staleness guard: only write if the file's mtime matches this."}}
-                :required ["path" "content"]
-                :additionalProperties false}
-               :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
-               :tag :mutation
-               :on-error-fn (tool-failure-on-error :write :file nil)}))
+     :replay
+     {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}
+     :render render-patch-result
+     :color-role :tool-color/edit
+     :schema {:type "object"
+              :properties
+              {"path" {:type "string" :description "File path to create or overwrite."}
+               "content" {:type "string" :description "Full file content."}
+               "is_overwrite"
+               {:type "boolean"
+                :description
+                "Overwrite an existing file (default true); false = fail if it exists."}
+               "allow_dirty" {:type "boolean"
+                              :description "Allow writing a file with uncommitted git changes."}
+               "expected_mtime" {:type "integer"
+                                 :description
+                                 "Staleness guard: only write if the file's mtime matches this."}}
+              :required ["path" "content"]
+              :additionalProperties false}
+     :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
+     :tag :mutation
+     :on-error-fn (tool-failure-on-error :write :file nil)}))
 
 (def ^:private struct-op->kw
   "Bounded snake_case op string (as the model writes it) → the internal kebab
