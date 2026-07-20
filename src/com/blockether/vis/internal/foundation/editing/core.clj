@@ -4459,20 +4459,98 @@
                  ;; WHY it found nothing.
                  hint (str "\n" hint))}))
 
+(defn- idx-cell
+  "One-line, pipe-escaped, length-capped text for a GFM table cell (the TUI
+   table painter draws cells as plain text, so no inline markdown here)."
+  [s max-len]
+  (let [s (-> (str s)
+              (str/replace #"\s+" " ")
+              str/trim
+              (str/replace "|" "\\|"))]
+    (if (> (count s) (long max-len))
+      (str (subs s 0 (max 0 (dec (long max-len)))) "…")
+      s)))
+
 (defn- render-index-result
-  "struct_index → `{:summary :body}`: a path headline (like cat) + the skeleton
-   string (already anchored/nested). `r` is `{:skeleton str :language str :path str}`
-   or a no-structure shape."
+  "struct_index → `{:summary :body}`: a path headline (defs · language · lines)
+   over a GFM TABLE of every definition — nesting shown by a `·` indent, the row
+   the same lens as `struct_occurrences` (name/signature · visibility+kind · span
+   anchors · doc gist). `r` is the wire result `{:skeleton :definitions :imports
+   :language :line_count :path}`. With no definitions it falls back to the raw
+   anchored skeleton fence (imports-only files), and to a bare no-structure
+   summary when nothing was indexed."
   [r]
-  (let [loc (some-> (get r "path")
-                    disp-path
-                    not-empty
-                    (#(str "`" % "`")))]
-    (if-let [sk (some-> (get r "skeleton")
-                        kw->str
-                        not-empty)]
-      {:summary (or loc "struct_index") :body (str "\n```\n" sk "\n```")}
-      {:summary (str (or loc "struct_index") " · no structural index")})))
+  (let [loc
+        (some-> (get r "path")
+                disp-path
+                not-empty
+                (#(str "`" % "`")))
+
+        defs
+        (get r "definitions")
+
+        lang
+        (some-> (get r "language") kw->str not-empty)
+
+        lc
+        (get r "line_count")
+
+        n
+        (count defs)]
+
+    (if (seq defs)
+      {:summary (str (or loc "struct_index")
+                     " · " n " def" (when (not= 1 n) "s")
+                     (when lang (str " · " lang))
+                     (when lc (str " · " lc " line" (when (not= 1 (long lc)) "s"))))
+       :body (let [header
+                   ["| Def | Kind | Span | Doc |"
+                    "|-----|------|------|-----|"]
+
+                   rows
+                   (for [d defs]
+                     (let [depth
+                           (long (or (get d "depth") 0))
+
+                           nm
+                           (str (apply str (repeat depth "· "))
+                                (kw->str (get d "name")))
+
+                           sig
+                           (some-> (get d "signature") kw->str not-empty)
+
+                           defc
+                           (if sig (str nm "  " sig) nm)
+
+                           vis
+                           (some-> (get d "visibility") kw->str not-empty)
+
+                           kind
+                           (kw->str (get d "kind"))
+
+                           kindc
+                           (if (and vis (not= vis "public"))
+                             (str vis " " kind)
+                             kind)
+
+                           span
+                           (str (kw->str (get d "anchor"))
+                                ".." (kw->str (get d "end_anchor")))]
+
+                       (str "| " (idx-cell defc 48)
+                            " | " (idx-cell kindc 16)
+                            " | " (idx-cell span 20)
+                            " | " (idx-cell (or (get d "doc") "—") 70)
+                            " |")))]
+
+               (str "\n" (str/join "\n" (concat header rows))))}
+
+      (if-let [sk
+               (some-> (get r "skeleton")
+                       kw->str
+                       not-empty)]
+        {:summary (or loc "struct_index") :body (str "\n```\n" sk "\n```")}
+        {:summary (str (or loc "struct_index") " · no structural index")}))))
 
 (defn- render-occurrences-result
   "struct_occurrences → `{:summary :body}`: a `N · K defs in M files of `name` · <scope>`

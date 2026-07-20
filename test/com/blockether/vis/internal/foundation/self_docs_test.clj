@@ -18,8 +18,9 @@
              (it "lists every manifest page as a lean slug/title/section/blurb entry"
                  (let [result (vis-docs-tool)]
                    (expect (extension/envelope-success? result))
-                   (let [pages (get (result-of result) "pages")
-                         slugs (set (map #(get % "slug") pages))]
+                   (let
+                     [pages (get (result-of result) "pages")
+                      slugs (set (map #(get % "slug") pages))]
 
                      ;; the pages the prompt fragment advertises must exist
                      (expect (contains? slugs "index"))
@@ -43,19 +44,21 @@
 
 (defdescribe vis-docs-blurb-test
              (it "surfaces the manifest blurb verbatim for each declared page"
-                 (let [manifest
-                       (into {}
-                             (for [{:keys [slug blurb]}
-                                   (:pages (docs/collect))
+                 (let
+                   [manifest
+                    (into {}
+                          (for
+                            [{:keys [slug blurb]}
+                             (:pages (docs/collect))
 
-                                   :when blurb]
+                             :when blurb]
 
-                               [slug blurb]))
+                            [slug blurb]))
 
-                       listed
-                       (into {}
-                             (map (juxt #(get % "slug") #(get % "blurb")))
-                             (get (result-of (vis-docs-tool)) "pages"))]
+                    listed
+                    (into {}
+                          (map (juxt #(get % "slug") #(get % "blurb")))
+                          (get (result-of (vis-docs-tool)) "pages"))]
 
                    ;; the manifest declares blurbs to surface
                    (expect (seq manifest))
@@ -65,33 +68,55 @@
              (it "tool docs teach that the listing carries a blurb"
                  (expect (str/includes? (:doc (meta #'self-docs/vis-docs-tool)) "blurb"))))
 
-(defdescribe vis-docs-fetch-test
-             (it "returns a page's full markdown by slug"
-                 (let [result (vis-docs-tool "extending")]
-                   (expect (extension/envelope-success? result))
-                   (let [{slug "slug" title "title" content "content"} (result-of result)]
-                     (expect (= "extending" slug))
-                     (expect (string? title))
-                     ;; the extension-authoring guide teaches the real API
-                     (expect (str/includes? content "vis/extension"))
-                     (expect (str/includes? content "register-extension!"))
-                     (expect (str/includes? content "META-INF/vis-extension/vis.edn")))))
-             (it "every manifest page resolves to non-blank markdown"
-                 (doseq [{:keys [slug]} (:pages (docs/collect))]
-                   (let [result (vis-docs-tool slug)]
-                     (expect (extension/envelope-success? result))
-                     (expect (not (str/blank? (get (result-of result) "content"))))))))
+(defdescribe
+  vis-docs-fetch-test
+  (it "returns a page's full markdown by slug"
+      (let [result (vis-docs-tool "extending")]
+        (expect (extension/envelope-success? result))
+        (let
+          [{slug "slug" title "title" content "content"} (first (get (result-of result) "pages"))]
+          (expect (= "extending" slug))
+          (expect (string? title))
+          ;; the extension-authoring guide teaches the real API
+          (expect (str/includes? content "vis/extension"))
+          (expect (str/includes? content "register-extension!"))
+          (expect (str/includes? content "META-INF/vis-extension/vis.edn")))))
+  (it "every manifest page resolves to non-blank markdown"
+      (doseq [{:keys [slug]} (:pages (docs/collect))]
+        (let [result (vis-docs-tool slug)]
+          (expect (extension/envelope-success? result))
+          (expect (not (str/blank? (get (first (get (result-of result) "pages")) "content")))))))
+  (it "both arities return the SAME {\"pages\": [...]} shape"
+      (let
+        [listing
+         (result-of (vis-docs-tool))
+
+         fetched
+         (result-of (vis-docs-tool "extending"))]
+
+        ;; identical top-level shape: a "pages" vector for both arities
+        (expect (vector? (get listing "pages")))
+        (expect (vector? (get fetched "pages")))
+        ;; a single fetch is a one-element list whose page carries the content
+        (expect (= 1 (count (get fetched "pages"))))
+        (expect (string? (get (first (get fetched "pages")) "content")))))
+  (it "tool docs teach how to read the fetched page body"
+      (let [doc (:doc (meta #'self-docs/vis-docs-tool))]
+        ;; both arities share the {"pages": [...]} shape; the body read path is spelled out
+        (expect (str/includes? doc "[\"pages\"][0][\"content\"]")))))
 
 (defdescribe vis-docs-forgiving-slug-test
              (it "resolves the same page across map/kwargs, trailing .md, whitespace, and case"
-                 (let [canonical (result-of (vis-docs-tool "extending"))]
+                 (let [canonical (first (get (result-of (vis-docs-tool "extending")) "pages"))]
                    (expect (extension/envelope-success? (vis-docs-tool "extending")))
                    ;; every one of these shapes must land on the SAME page
-                   (doseq [variant ["extending.md" "  extending  " "Extending" "EXTENDING.MD"
-                                    {"slug" "extending.md"} {:slug "Extending"}]]
+                   (doseq
+                     [variant ["extending.md" "  extending  " "Extending" "EXTENDING.MD"
+                               {"slug" "extending.md"} {:slug "Extending"}]]
                      (let [result (vis-docs-tool variant)]
                        (expect (extension/envelope-success? result))
-                       (expect (= (get canonical "slug") (get (result-of result) "slug"))))))))
+                       (expect (= (get canonical "slug")
+                                  (get (first (get (result-of result) "pages")) "slug"))))))))
 
 (defdescribe vis-docs-blank-slug-test
              (it "treats a blank/absent slug (\"\", {}, whitespace) as the no-arg page list"

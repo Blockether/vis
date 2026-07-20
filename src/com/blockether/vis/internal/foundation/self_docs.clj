@@ -51,16 +51,18 @@
 
 (defn- vis-docs-tool
   "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\", \"blurb\"}, ...]} — list vis's own embedded doc pages, each with a one-line blurb of what it covers.
-await vis_docs(slug)  -> {\"slug\", \"title\", \"section\", \"content\"} — one page's full markdown.
-Slug matching is forgiving: the map/kwargs shape, a trailing `.md`, surrounding whitespace, and case are all tolerated (`vis_docs(\"extending.md\")` == `vis_docs(\"Extending\")` == `vis_docs({\"slug\": \"extending\"})`).
+
+await vis_docs(slug)  -> {\"pages\": [{\"slug\", \"title\", \"section\", \"content\"}]} — the matched page's full markdown under \"content\", read as `vis_docs(slug)[\"pages\"][0][\"content\"]`.
+Both arities return the same `{\"pages\": [...]}` shape. Slug matching tolerates a trailing `.md`, whitespace, case, and the `{\"slug\": ...}` map form.
 Vis's OWN documentation (features, configuration, extending vis). Use ONLY for questions about vis itself, never for the host project."
   ([] (extension/success {:result {"pages" (listing (pages))}}))
   ([slug]
-   (let [ps
-         (pages)
+   (let
+     [ps
+      (pages)
 
-         want
-         (normalize-slug slug)]
+      want
+      (normalize-slug slug)]
 
      (cond
        ;; blank/absent slug (nil, "", {}, whitespace-only) == the no-arg
@@ -68,9 +70,10 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
        (str/blank? want) (extension/success {:result {"pages" (listing ps)}})
        :else (if-let [page (some #(when (= want (normalize-slug (:slug %))) %) ps)]
                (extension/success
-                 {:result (cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
-                            (:section page)
-                            (assoc "section" (:section page)))})
+                 {:result {"pages"
+                           [(cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
+                              (:section page)
+                              (assoc "section" (:section page)))]}})
                (extension/failure {:result nil
                                    :error {:message (str "Unknown vis docs slug " (pr-str want) ".")
                                            :hint (str
@@ -82,30 +85,34 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
   "One-line, pipe-escaped, length-capped text for a GFM table cell (the TUI
    table painter draws cells as plain text, so no inline markdown here)."
   [s max-len]
-  (let [s (-> (str s)
-              (str/replace #"\s+" " ")
-              str/trim
-              (str/replace "|" "\\|"))]
+  (let
+    [s (-> (str s)
+           (str/replace #"\s+" " ")
+           str/trim
+           (str/replace "|" "\\|"))]
     (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
 
 (defn- render-vis-docs
-  "Op-card renderer for `vis_docs`. The page LISTING (no-arg / blank slug)
-   paints a GFM table — slug · section · title · blurb — the channels draw as
-   a boxed grid; a single fetched page shows a titled headline over the page's
-   full markdown body."
+  "Op-card renderer for `vis_docs`. Both arities share the `{\"pages\": [...]}`
+   shape. A single fetched page (a one-element list whose page carries
+   `content`) shows a titled headline over the page's full markdown body; any
+   other listing paints a GFM table — slug · section · title · blurb — the
+   channels draw as a boxed grid."
   [r]
-  (cond (get r "pages")
-        (let [ps
-              (get r "pages")
+  (when-let [ps (get r "pages")]
+    (if (and (= 1 (count ps)) (get (first ps) "content"))
+      (let
+        [p (first ps)
+         title (not-empty (str (get p "title")))
+         section (not-empty (str (get p "section")))
+         slug (str (get p "slug"))]
 
-              n
-              (count ps)
-
-              header
-              ["| Slug | Section | Title | Blurb |" "|------|---------|-------|-------|"]
-
-              rows
-              (map (fn [p]
+        {:summary (str (or title slug) (when section (str " · " section)))
+         :body (str (get p "content"))})
+      (let
+        [n (count ps)
+         header ["| Slug | Section | Title | Blurb |" "|------|---------|-------|-------|"]
+         rows (map (fn [p]
                      (str "| "
                           (docs-cell (get p "slug") 28)
                           " | "
@@ -117,20 +124,8 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
                           " |"))
                    ps)]
 
-          {:summary (str n " vis docs page" (when (not= 1 n) "s"))
-           :body (str/join "\n" (concat header rows))})
-        (get r "content") (let [title
-                                (not-empty (str (get r "title")))
-
-                                section
-                                (not-empty (str (get r "section")))
-
-                                slug
-                                (str (get r "slug"))]
-
-                            {:summary (str (or title slug) (when section (str " · " section)))
-                             :body (str (get r "content"))})
-        :else nil))
+        {:summary (str n " vis docs page" (when (not= 1 n) "s"))
+         :body (str/join "\n" (concat header rows))}))))
 
 (def vis-docs-symbol
   (vis/symbol #'vis-docs-tool {:symbol 'vis-docs :tag :observation :render render-vis-docs}))

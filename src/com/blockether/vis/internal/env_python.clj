@@ -2775,12 +2775,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
 ;; ── Per-block eval instrumentation (memory-leak observability) ──────────────
 ;; Every python_execution block is compiled to a FRESH GraalPython code unit
 ;; (`exec(compile(mod,'<prog>','exec'), g)` inside `__vis_run_async__`), and
-;; BytecodeDSL keeps the source AST attached to each unit. A suspected leak
-;; retains one unit per block for the life of the JVM, so heap climbs
-;; monotonically with block count. This counter + periodic heap SAMPLE makes
-;; that growth visible in the logs: watch `heap-used-mb` (and the per-block
-;; delta) rise in lock-step with `blocks`. Cheap — Runtime totals only, no heap
-;; histogram. Cadence via VIS_PY_BLOCK_LOG_EVERY (default 25; 0 disables).
+;; BytecodeDSL attaches the source AST to each compiled unit, so a per-block
+;; leak would show as the OLD-GEN FLOOR rising across full GCs. This counter +
+;; periodic sample makes that visible: watch `old` (old-gen used) and `gc` climb
+;; together in lock-step with `blocks`. Transient `heap-used` SAWTOOTHS and is
+;; NOT a leak signal on its own. Cheap — JMX pool totals, no heap histogram.
+;; Cadence via VIS_PY_BLOCK_LOG_EVERY (default 25; 0 disables).
 (defonce ^:private py-block-count (atom 0))
 (defonce ^:private py-block-prev-heap (atom 0))
 (defonce ^:private py-block-prev-n (atom 0))
@@ -2791,6 +2791,26 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
   ^long []
   (let [raw (System/getenv "VIS_PY_BLOCK_LOG_EVERY")]
     (if (str/blank? raw) 25 (try (max 0 (Long/parseLong (str/trim raw))) (catch Exception _ 25)))))
+
+(defn- old-gen-used
+  "Live bytes in the tenured/old generation — the leak-truthful floor (rises
+   across full GCs only when objects are genuinely retained). 0 if no old pool."
+  ^long []
+  (reduce (fn [^long acc ^java.lang.management.MemoryPoolMXBean p]
+            (let [nm (.getName p)]
+              (if (and nm (re-find #"(?i)old|tenured" nm)) (+ acc (.getUsed (.getUsage p))) acc)))
+          0
+          (java.lang.management.ManagementFactory/getMemoryPoolMXBeans)))
+
+(defn- gc-count
+  "Total GC collections across all collectors (so the reader can tell a rising
+   old-gen floor apart from pre-GC churn)."
+  ^long []
+  (reduce (fn [^long acc ^java.lang.management.GarbageCollectorMXBean g]
+            (let [c (.getCollectionCount g)]
+              (if (neg? c) acc (+ acc c))))
+          0
+          (java.lang.management.ManagementFactory/getGarbageCollectorMXBeans)))
 
 (defn- log-block-eval!
   "Count one executed block and emit a heap sample: an immediate baseline on the
@@ -2812,6 +2832,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
 
          used
          (- (.totalMemory rt) (.freeMemory rt))
+
+         oldb
+         (old-gen-used)
+
+         gcs
+         (gc-count)
 
          max-m
          (.maxMemory rt)
@@ -2838,14 +2864,17 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         (reset! py-block-prev-heap used)
         (reset! py-block-prev-n n)
         (let
-          [msg (format
-                 "python-block-eval blocks=%d heap=%dMB/%dMB Δ=%+dMB (~%+dKB/block over last %d)"
-                 n
-                 (mb used)
-                 (mb max-m)
-                 (mb delta)
-                 per-blk-kb
-                 window)]
+          [msg
+           (format
+             "python-block-eval blocks=%d heap=%dMB/%dMB old=%dMB gc=%d Δ=%+dMB (~%+dKB/block over last %d)"
+             n
+             (mb used)
+             (mb max-m)
+             (mb oldb)
+             gcs
+             (mb delta)
+             per-blk-kb
+             window)]
           ;; Direct file append: the gateway's telemere handler is async :dropping and
           ;; emits no internal.* file lines, so bypass it for the leak trace — this line
           ;; is guaranteed visible in ~/.vis/vis-pyblock.log even while the JVM is pegged.
@@ -2861,7 +2890,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                             :heap-max-mb (mb max-m)
                             :heap-delta-mb (mb delta)
                             :approx-kb-per-block per-blk-kb
-                            :sample-window window}}
+                            :sample-window window
+                            :old-gen-mb (mb oldb)
+                            :gc-count gcs}}
                     msg))))))
 
 

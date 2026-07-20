@@ -619,6 +619,7 @@
           header
           {:kind :section
            :area area
+           :members rows
            :collapsible? true
            :collapsed? (not open?)
            :text (str title " (" (count rows) ")")}]
@@ -842,10 +843,15 @@
    (`:root`), so a multi-root buffer never bleeds one repo's files into
    another's section."
   [rows section-idx]
-  (let [{:keys [area root]} (nth rows section-idx)]
-    (->> (subvec (vec rows) (inc (long section-idx)))
-         (take-while #(not (contains? #{:section :repo} (:kind %))))
-         (filterv #(and (= :file (:kind %)) (= area (:area %)) (= root (:root %)))))))
+  (let [{:keys [area root members]} (nth rows section-idx)]
+    (if (seq members)
+      ;; header carries its member file rows verbatim, so section-wide
+      ;; stage/unstage works even while the section is COLLAPSED (no file
+      ;; rows are rendered to scan). Re-tag with the header's root.
+      (mapv #(assoc % :root root) members)
+      (->> (subvec (vec rows) (inc (long section-idx)))
+           (take-while #(not (contains? #{:section :repo} (:kind %))))
+           (filterv #(and (= :file (:kind %)) (= area (:area %)) (= root (:root %))))))))
 
 ;; =============================================================================
 ;; Multi-root workspaces (trunk + extra filesystem roots, drafts)
