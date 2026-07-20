@@ -491,7 +491,7 @@
 
 (defn- contribute
   "`:ext/ctx-fn` — surface this session's CONNECTED MCP servers (+ tool counts) so
-   the model sees what's reachable at `ctx[\"env\"][\"mcp\"][\"servers\"]`."
+   the model sees what's reachable at `session[\"env\"][\"mcp\"][\"servers\"]`."
   [env]
   (let [session
         (:session-id env)
@@ -527,7 +527,7 @@
     "  await mcp_connect(server)   ·   await mcp_disconnect(server)\n"
     "(apropos(\"mcp\") lists them; doc(\"mcp_call\") shows the full signature.)\n"
     "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
-    "Connected servers + tool counts also ride in ctx under ctx[\"env\"][\"mcp\"][\"servers\"].\n"
+    "Connected servers + tool counts also ride in session[\"env\"][\"mcp\"][\"servers\"].\n"
     "Workflow: servers to see what's there → tools(server) to learn a tool's input_schema →\n"
     "call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"].\n"))
 

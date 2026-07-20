@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.foundation.environment.core-test
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.environment.core :as env-core]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -62,17 +61,6 @@
                    (expect (not (contains? syms 'scan-warnings)))
                    (expect (not (contains? syms 'reload-instructions!)))
                    (expect (not (contains? syms 'reload-extensions!)))))
-             (it "renders a prompt fragment pointing at the snake_case ctx workspace key"
-                 (let [prompt (env-core/environment-prompt {})]
-                   (expect (string? prompt))
-                   (expect (str/includes? prompt "workspace"))
-                   (expect (not (str/includes? prompt (str "v/" "snapshot"))))
-                   (expect (not (str/includes? prompt (str "v/" "git"))))
-                   (expect (not (str/includes? prompt "v/load-skill")))
-                   (expect (not (str/includes? prompt "reload-skills")))
-                   (expect (not (str/includes? prompt "reload-instructions!")))
-                   (expect (not (str/includes? prompt "v/reload-extensions!")))
-                   (expect (not (str/includes? prompt "`md/`")))))
              (it "provides foundation environment info through ctx"
                  (let [ctx (env-core/environment-ctx {})]
                    (expect (contains? ctx :project))

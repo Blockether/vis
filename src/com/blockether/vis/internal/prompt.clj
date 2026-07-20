@@ -166,7 +166,8 @@
   (str
     "You are vis, an autonomous coding agent. Complete the task.\n\n"
     "## 1. Identity + Epistemic stance\n"
-    "- Work on the host project unless asked about vis. Discover language/layout.\n"
+    "- Work on the host project unless asked about vis. For vis itself, inspect\n"
+    "  `await vis_docs()` and the relevant page instead of guessing. Discover language/layout.\n"
     "- Trust order: runtime > source > docs > assumption. Inspect before guessing;\n"
     "  never fabricate tool output.\n\n"
     "## 2. Execution surfaces\n"
@@ -217,11 +218,15 @@
     "  cover obvious boundaries. A diff is not proof; read output before finishing.\n"
     "- If verification is impossible, state exactly why.\n\n"
     "## 8. Manage context\n"
-    "- `session` is read-only identity/workspace/runtime/tool state. Errors surface\n"
-    "  without `print()`.\n"
+    "- `session` is the only runtime-state object: `id`, `turn`, `scope`, `utilization`,\n"
+    "  `workspace`, `env`, `language_tools`, `routing`, `resources`, `symbols`. It is\n"
+    "  read-only; never use `ctx` or `context`. Errors surface without `print()`.\n"
+    "- This conversation: use `session` and the on-wire transcript. Another:\n"
+    "  `sessions()` → `session_state(id)`; filter/slice in Python. Use\n"
+    "  `session_report_html(id)` only when a full HTML report is requested.\n"
     "- Fold spent steps with `session_fold(target, gist)`; DB history remains. Keep\n"
     "  durable findings and `path:line` anchors. Recover results with `ntr[...]` and\n"
-    "  past turns with `session_state(id)`.\n\n"
+    "  past tool results through their stored variables.\n\n"
     "## 9. Style and finish — MUST OBEY\n"
     "- Start answer/action. Defaults: ≤120 words, ≤3 bullets, ≤5 numbered items.\n"
     "  No preamble, filler, recap, or pleasantries.\n"
@@ -603,9 +608,10 @@
   (str "NON-INTERACTIVE ONE-SHOT RUN — no human is watching and nothing can "
        "be approved mid-run.\n"
        "- NEVER stop to wait for approval or input — there is no one to answer.\n"
-       "- When the work is big, risky, or the ask is ambiguous, do NOT ask: make "
-       "the most reasonable assumption, STATE it in one line, and EXECUTE end-to-"
-       "end to a finished prose answer. Drive the work to completion in this single run. \n"))
+       "- For ordinary ambiguity, state one reasonable assumption and complete the work.\n"
+       "- MUST NOT perform destructive or irreversible work that requires confirmation. "
+       "Use a safe reversible path; if none exists, finish with the exact blocked action "
+       "and required confirmation.\n"))
 
 (defn assemble-stable-prompt-messages
   "Assemble provider-prefix messages.

@@ -304,11 +304,11 @@
 (def model-facing-keys
   "EXACT set of `session_*` keys the model is meant to see. This is the
    SINGLE definition of 'model-facing'; `session-view` selects on it so engine
-   bookkeeping cannot leak into the rendered `<context>` or bound `context`
+   bookkeeping cannot leak into the rendered `<context>` or bound `session`
    dict. `\"session_utilization\"` is derived (from `\"engine_utilization\"`),
    so it is folded in by `session-view` rather than listed here."
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_env" "session_routing"
-   "session_resources" "session_symbols"])
+   "session_language_tools" "session_resources" "session_symbols"])
 
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or
@@ -663,9 +663,9 @@
    `session_*` view.
 
    Both consumers derive from this, so the rendered `<context>` block and the
-   Python `context` dict are the same map by construction:
+   Python `session` dict are the same map by construction:
      - `ctx-renderer/render-ctx` serializes this view
-     - `ctx-loop/session-snapshot` binds this view as read-only `context`
+     - `ctx-loop/session-snapshot` binds this view as read-only `session`
 
    Keeps ONLY `model-facing-keys` (so engine bookkeeping never leaks) and
    projects `\"engine_utilization\"` → `\"session_utilization\"`. The second

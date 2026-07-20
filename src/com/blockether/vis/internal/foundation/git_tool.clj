@@ -346,8 +346,8 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
        "quote-aware split for convenience. It runs in the workspace root and\n"
        "returns {\"cmd\", \"stdout\", \"duration_ms\"} plus \"exit\"/\"stderr\"/\"timed_out\"\n"
        "when meaningful. A non-zero \"exit\" is DATA to read, not a tool error.\n"
-       "Read-only VCS facts (branch/dirty/ahead-behind) already ride in context\n"
-       "under context[\"workspace\"] — read there before shelling out to probe."))
+       "Read-only VCS facts (branch/dirty/ahead-behind) already ride in\n"
+       "session[\"workspace\"] — read there before shelling out to probe."))
 
 (def vis-extension
   (vis/extension

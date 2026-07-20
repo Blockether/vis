@@ -18,12 +18,14 @@
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
-  (it "keeps the unified prompt compact with environment owned by ctx"
+  (it "keeps only dynamic language routing and editing in the foundation prompt"
       (with-redefs [agents/instructions (fn []
                                           {:found? false})]
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-          (expect (str/includes? prompt "Env strategy"))
-          ;; Runtime/project facts belong in ctx, not prompt labels.
+          ;; Stable state/introspection/self-doc contracts belong in CORE or tool docs.
+          (expect (not (str/includes? prompt "Env strategy")))
+          (expect (not (str/includes? prompt "Cross-conversation introspection")))
+          (expect (not (str/includes? prompt "Vis self-docs")))
           (expect (not (str/includes? prompt "RUNTIME")))
           (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
           (expect (not (str/includes? prompt "SCAN-WARNINGS")))
@@ -35,14 +37,8 @@
           (expect (not (str/includes? prompt "clojure.repl/doc")))
           (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
           (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-          ;; Cap guards against strategy prose drifting back into the prompt.
-          ;; (~5.1k after patch-atomicity/anchor mechanics; grew to ~8.9k when the
-          ;; editing prompt gained the FULL structural-editing vocabulary — the
-          ;; struct_patch by-name/by-path ops, the sexpr clojure.zip zipper moves
-          ;; (down/up/left/right/next/prev/find/find_kind), append/prepend_child,
-          ;; and the STRATEGY decision tree, and reaches ~10k once the FULL
-          ;; extension surface is registered. Headroom kept; drift still guarded.)
-          (expect (< (count prompt) 12000)))))
+          ;; Cap prevents removed contracts from drifting back in.
+          (expect (< (count prompt) 4000)))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
       ;; `internal.env-digest` — it's core functionality, not extension-

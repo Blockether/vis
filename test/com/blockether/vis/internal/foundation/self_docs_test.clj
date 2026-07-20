@@ -62,8 +62,8 @@
                    ;; and every one shows up unchanged in the lean listing
                    (doseq [[slug blurb] manifest]
                      (expect (= blurb (get listed slug))))))
-             (it "prompt fragment teaches that the listing carries a blurb"
-                 (expect (str/includes? self-docs/prompt "blurb"))))
+             (it "tool docs teach that the listing carries a blurb"
+                 (expect (str/includes? (:doc (meta #'self-docs/vis-docs-tool)) "blurb"))))
 
 (defdescribe vis-docs-fetch-test
              (it "returns a page's full markdown by slug"
@@ -115,8 +115,7 @@
              (it "registers as an observation tool named vis-docs"
                  (expect (= 'vis-docs (:ext.symbol/symbol self-docs/vis-docs-symbol)))
                  (expect (= :observation (:ext.symbol/tag self-docs/vis-docs-symbol))))
-             (it "prompt fragment only advertises slugs that exist"
-                 (let [slugs (set (map :slug (:pages (docs/collect))))]
-                   (doseq [advertised ["extending" "python-extensions" "configuration" "index"]]
-                     (expect (contains? slugs advertised))
-                     (expect (str/includes? self-docs/prompt advertised))))))
+             (it "tool docs route only vis questions to embedded docs"
+                 (let [doc (:doc (meta #'self-docs/vis-docs-tool))]
+                   (expect (str/includes? doc "Vis's OWN documentation"))
+                   (expect (str/includes? doc "never for the host project")))))

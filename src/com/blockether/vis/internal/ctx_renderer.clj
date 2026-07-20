@@ -13,7 +13,7 @@
 ;; =============================================================================
 
 ;; Context rendering is intentionally narrow: stable session identity,
-;; workspace/env/routing/resources/symbols, and utilization. Tool outputs are
+;; workspace/env/language_tools/routing/resources/symbols, and utilization. Tool outputs are
 ;; rendered as append-only `r["tN/iN/fN"] = …` assignments by the loop, not here.
 
 ;; =============================================================================
@@ -73,6 +73,9 @@
      (get view "session_env")
      (assoc "env" (get view "session_env"))
 
+     (not-empty (get view "session_language_tools"))
+     (assoc "language_tools" (get view "session_language_tools"))
+
      (not-empty (get view "session_routing"))
      (assoc "routing" (get view "session_routing"))
 
@@ -87,7 +90,7 @@
    once in the (cached) system prompt and re-emitted per iteration ONLY when
    they change. The per-iteration churn (`\"id\"` `\"turn\"` `\"scope\"`
    `\"utilization\"`) is internal bookkeeping and never model-facing."
-  ["workspace" "env" "routing" "resources" "symbols"])
+  ["workspace" "env" "language_tools" "routing" "resources" "symbols"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.
@@ -108,8 +111,8 @@
       (update-in ["env" "host"] dissoc "clock"))))
 
 (defn render-ctx-static
-  "Render the standing session context (workspace / env / routing / resources /
-   symbols) as a FENCED PYTHON block that binds `session` to its initial value —
+  "Render the standing session context (workspace / env / language_tools /
+   routing / resources / symbols) as a FENCED PYTHON block that binds `session` to its initial value —
    embedded once in the system prompt. The same `session` dict is live in the
    sandbox; mid-session changes arrive as `session[...] = …` / `del session[...]` delta
    lines (`render-ctx-delta`), so the embed and the deltas are one coherent
@@ -230,4 +233,3 @@
   (cond (string? v) v
         (map? v) (env/ctx->python-str (dissoc v "op"))
         :else (env/ctx->python-str v)))
-

@@ -27,6 +27,7 @@
   {"session_id" "s1"
    "session_workspace" {"root" "/repo" "sandbox" false "vcs_kind" "git"}
    "session_env" {"host" {"os" "macos"} "project" {"kind" "single"}}
+   "session_language_tools" {"clojure" ["repl_eval" "repl_start"]}
    "session_routing" {"model" "gpt-5.5"}})
 
 ;; A realistic cross-turn state change: the user added a filesystem root.
@@ -65,7 +66,11 @@
         (expect (< (count delta) (quot (count (cr/render-ctx-static {:ctx changed-ctx})) 2)))))
   (it "no state change ⇒ no delta (frozen prefix stays warm)"
       (let [m0 (cr/ctx-static-map {:ctx base-ctx})]
-        (expect (nil? (cr/render-ctx-delta m0 m0))))))
+        (expect (nil? (cr/render-ctx-delta m0 m0)))))
+  (it "projects language capabilities under canonical session language_tools"
+      (let [m (cr/ctx-static-map {:ctx base-ctx})]
+        (expect (= ["repl_eval" "repl_start"] (get-in m ["language_tools" "clojure"])))
+        (expect (not (contains? m "session_language_tools"))))))
 
 (defdescribe
   freeze-semantics-test

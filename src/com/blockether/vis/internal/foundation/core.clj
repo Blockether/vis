@@ -13,13 +13,12 @@
             [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- combined-prompt
-  "Stitch foundation-owned tool strategy prompt text. Structured runtime
-   and project guidance flow through `ctx`, not prompt labels."
+  "Render only dynamic capability routing and the editing workflow. Stable
+   state, introspection, and self-doc routing live once in CORE."
   [env]
   (str/join "\n\n"
             (remove str/blank?
-              [(environment/environment-prompt env) introspection/introspection-prompt
-               self-docs/prompt (language-surface/prompt env) ; nil when no language pack is active
+              [(language-surface/prompt env) ; nil when no language pack is active
                (editing/available-editing-prompt)])))
 
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
@@ -89,7 +88,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel (bare Python functions): session_state/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl_start/repl_stop), file I/O (cat/find/rg/ls/patch/write/copy/move/delete/delete_if_exists/file_exists), CTX workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
+     "Foundation kernel (bare Python functions): session_state/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl_start/repl_stop), file I/O (cat/find_files/rg/patch/write/copy/move/delete/delete_if_exists/file_exists), session workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"

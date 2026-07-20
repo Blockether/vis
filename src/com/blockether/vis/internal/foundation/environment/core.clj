@@ -10,7 +10,7 @@
      * monorepo / multi-package shape detection (polylith, workspace,
        submodules) by counting per-ecosystem manifests.
 
-   Model-facing VCS/workspace truth lives in `:session/workspace` CTX.
+   Model-facing VCS/workspace truth lives in `session[\"workspace\"]`.
    Remaining helpers cover coarse project shape (`languages`,
    `monorepo`, `repositories`) and cache invalidation (`refresh!`).
 
@@ -225,10 +225,6 @@ Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from 
   [repositories-symbol languages-symbol monorepo-symbol refresh!-symbol
    main-agent-instructions-symbol])
 
-(def ^:private FN_INDEX
-  "One-line strategy for the environment fns."
-  "Env strategy: read workspace/VCS facts from the `workspace` key of `<context>`; use the focused env helpers only for coarse project shape. Project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change.")
-
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project
    guidance, and extension-load warnings live under `(:project ctx)`."
@@ -238,14 +234,6 @@ Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from 
          (tel/log! {:level :error :id ::environment-ctx-failed :data {:error (ex-message t)}})
          {})))
 
-(defn environment-prompt
-  [_environment]
-  (try FN_INDEX
-       (catch Throwable t
-         (tel/log! {:level :error :id ::prompt-render-failed :data {:error (ex-message t)}})
-         "")))
-
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,
-;; not here — this namespace only exposes the symbol vec + prompt
-;; fragment for the aggregator to assemble.
+;; not here — this namespace only exposes symbols and structured context.

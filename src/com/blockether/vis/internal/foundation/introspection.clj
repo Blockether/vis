@@ -840,9 +840,9 @@
     "await session_state(session_id)  # investigate ANOTHER conversation
 Returns {\"session\" (identity + per-turn rollup), \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"transcript\", ...}. The rich one is `transcript`: `[\"totals\"]` (turns/iterations/tokens/cost) and `[\"turns\"]` = [{id, user_request, answer, status, iteration_count, tokens, cost_usd, iterations:[{position, status, blocks:[code/result]}]}] — iterate it in python_execution to gather answers, grep code, or diff cost; slice, don't dump.
 Pick keys; the whole dict stays bound. No-arg defaults to the current session, but for
-THIS conversation the live `session` bag (session[\"turn\"|\"scope\"|\"utilization\"|\"context\"])
-already has it and your transcript is already on the wire — reach here mainly for OTHER
-sessions (use sessions() for the index)."
+THIS conversation the live `session` bag already has turn, scope, utilization,
+workspace, and tool state; your transcript is on the wire. Reach here mainly for
+OTHER sessions (use sessions() for the index)."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)
@@ -876,14 +876,6 @@ session_state(id) to investigate that conversation."
 
 (def all-symbols [session-state-symbol session-report-html-symbol sessions-symbol])
 
-(def introspection-prompt
-  "Cross-conversation introspection: sessions() lists every past conversation (id, title, turn_count, created_at, modified_at, newest-first — modified_at is the latest turn's time) — pass a channel keyword to filter. Take an id from there into session_state(id).
-
-session_state(id) returns ONE dict — pick the keys you need, the whole map stays bound: `session` (identity + per-turn rollup: user_request, outcome, iteration_count, status, cost), `current_turn` (the live/last turn), `failures` (classified provider/tool errors + raw_preview), `diagnosis` (what went wrong + suggested fix), `session_forks` / `turn_retries` (retry + fork lineage), and `transcript` — the FULL payload: `transcript[\"totals\"]` (turns/iterations/tokens/cost), `transcript[\"turns\"]` = [{id, user_request, status, provider, model, iteration_count, failure_count, tokens, cost_usd, answer, iterations:[{id, position, status, duration_ms, blocks:[code/result]}]}], plus `transcript[\"timeline\"]` / `transcript[\"dialog\"]` / `transcript[\"calls\"]` for flattened views. GATHER by iterating those in python_execution — e.g. pull every turn's `answer`, grep code blocks for a symbol, or diff token/cost across turns — never dump the whole dict; slice to what you asked.
-
-For THIS conversation prefer the live `session` bag (session[\"turn\"|\"scope\"|\"utilization\"]) and your on-wire transcript; session_state() on your own id just duplicates them. Reach cross-session mainly for OTHER conversations. Want it as a standalone HTML report? session_report_html(id) renders the same data.")
-
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,
-;; not here - this namespace only exposes the symbol vec + prompt
-;; fragment for the aggregator to assemble.
+;; not here - this namespace only exposes doc-bearing symbols.

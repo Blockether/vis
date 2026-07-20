@@ -44,6 +44,8 @@
                    ;; :cli (headless one-shot — no approver) gets the override
                    (expect (str/includes? (text-for :cli) marker))
                    (expect (str/includes? (text-for :cli) "NEVER stop to wait for approval"))
+                   (expect (str/includes? (text-for :cli) "MUST NOT perform destructive"))
+                   (expect (not (str/includes? (text-for :cli) "big, risky")))
                    ;; interactive / card-bearing channels keep the approval flow
                    (expect (not (str/includes? (text-for :tui) marker)))
                    (expect (not (str/includes? (text-for :web) marker)))
@@ -108,6 +110,11 @@
                  (expect (str/includes? text "table is ground truth"))
                  (expect (str/includes? text "Maximum 5 rows"))
                  (expect (str/includes? text "`session[\"resources\"][\"repls\"][language][dir]`"))
+                 (expect (str/includes? text "`language_tools`"))
+                 (expect (str/includes? text "never use `ctx` or `context`"))
+                 (expect (str/includes? text "`sessions()` → `session_state(id)`"))
+                 (expect (str/includes? text "`session_report_html(id)`"))
+                 (expect (str/includes? text "`await vis_docs()`"))
                  (expect (str/includes? text "never a menu"))
                  (expect (str/includes? text "reproduce before editing"))
                  (expect (str/includes? text "Prefer a live REPL"))
