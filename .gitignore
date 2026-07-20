@@ -61,9 +61,9 @@ packages/vis-benchmark/swebench-harness/
 # scopes this to the repo root, so extension `*/docs/` dirs stay tracked.
 /docs/
 
-# verify.sh transient output (run logs)
-.verification/
 jobs/
+# Legacy local verification logs may still exist after removing verify.sh.
+.verification/
 dev/benches/4clojure/autoresearch/
 dev/benches/4clojure/.prompt_sizes.cache.json
 dev/benches/4clojure/.system_prompt_chars.cache.json

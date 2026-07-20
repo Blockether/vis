@@ -32,7 +32,7 @@
   ;; runtime (requiring-resolve) triggers a namespace load — i.e. defining a
   ;; class at runtime — which GraalVM native-image forbids ("Classes cannot be
   ;; defined at runtime"). doctor does not depend on this ns, so there is no
-  ;; load cycle. See native-image notes in AGENTS.md.
+  ;; load cycle; native-image cannot define that class at runtime.
   (doctor/doctor-fn env))
 
 (defn- fallback-workspace

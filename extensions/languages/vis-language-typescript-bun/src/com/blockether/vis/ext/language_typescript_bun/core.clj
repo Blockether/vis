@@ -196,8 +196,8 @@
 
 (defn ts-repl-eval-fn
   "repl_eval handler for TypeScript/Bun. Accepts a code string or
-   `{code, dir, timeout_ms}`. AUTO-STARTS a REPL for the dir if none is running,
-   then evaluates (globals persist across calls; top-level await works;
+   `{code, dir, timeout_ms}`. Requires a running REPL for the dir, then evaluates
+   (globals persist across calls; top-level await works;
    `reload(path)` re-imports a project module cache-busted)."
   [env arg]
   (let [root
@@ -216,13 +216,16 @@
         (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
-      ;; AUTO-START guard: no explicit dir + monorepo root -> actionable error
-      ;; instead of a misconfigured root REPL (wrong tsconfig/cwd).
+      ;; Preserve the more specific monorepo error when the caller omitted dir.
       (when-not (and (map? arg) (get arg "dir"))
         (when-let [hint (monorepo-root-hint root dir)]
           (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
-      (let [r (repl/start! dir {})]
-        (register-repl-resource! (:session-id env) dir r nil)))
+      (throw (ex-info (str "TypeScript REPL is not up for "
+                           dir
+                           "; call repl_start(\"typescript\", {\"dir\": "
+                           (pr-str dir)
+                           "}) first")
+                      {:type :ts/no-repl :dir dir})))
     ;; Carry the evaluated code back on the result (string key) so the shared
     ;; repl_eval op-card can surface the FORM section.
     (let [res (repl/eval! dir code tmo)]

@@ -300,7 +300,7 @@
 ;; =============================================================================
 ;; Notifications
 ;;
-;; Cross-channel ephemeral signals - \"copied\", \"verify.sh passed\",
+;; Cross-channel ephemeral signals - \"copied\", \"tests passed\",
 ;; \"provider switched\". Any extension or channel can push via
 ;; `notify!`; the TUI banner / CLI agent each
 ;; subscribe with `watch!` and surface entries in their own visual

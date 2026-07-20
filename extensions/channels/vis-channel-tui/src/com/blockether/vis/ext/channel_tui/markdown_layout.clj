@@ -656,7 +656,12 @@
                                                           (into [{:text indent :style #{} :node li}]
                                                                 rs)))
                                                 (= :code (:block-tag l))
-                                                (assoc-in [:meta :list-nested-code?] true)))
+                                                (assoc-in [:meta :list-nested-code?] true)
+
+                                                (= :code (:block-tag l))
+                                                (update-in [:meta :list-indent]
+                                                           (fnil + 0)
+                                                           (count indent))))
                                             inner)
 
                                       prefixed

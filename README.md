@@ -38,8 +38,8 @@ Use `vis --jvm ...` to skip native and force the JVM path. The JVM path needs a 
 ## Build / develop
 
 ```bash
-vis native          # builds target/vis(.exe) and target/vis.jar
-./verify.sh --quick
+vis native                       # builds target/vis(.exe) and target/vis.jar
+clojure -M:format check
+clojure -M:lint src extensions test build.clj
+clojure -M:test
 ```
-
-Contributor rules: [AGENTS.md](AGENTS.md).

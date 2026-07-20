@@ -147,8 +147,8 @@
 ;; ─── Canonicalization (canon-*) ─────────────────────────────────────────
 ;; Mutual recursion across blocks/inlines (canon-block <-> canon-block-rebuild
 ;; <-> canon-li-children <-> canon-block; canon-inline-children <-> canon-
-;; inline-node). Per AGENTS.md `declare` is allowed for genuine mutual
-;; recursion that no reordering can resolve.
+;; inline-node). `declare` is required because reordering cannot remove this
+;; genuine mutual recursion.
 (declare ^:private canon-block ^:private canon-block-rebuild ^:private canon-inline-children)
 
 (defn- text-flatten

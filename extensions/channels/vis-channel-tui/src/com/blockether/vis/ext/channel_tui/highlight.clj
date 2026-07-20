@@ -120,17 +120,112 @@
    rather than tracking LRU — fences are small and churn fast."
   (atom {}))
 
+(def ^:dynamic *live?*
+  "Bound true by the renderer while laying out a LIVE / streaming bubble. When set
+   (and the kill switch below is on) `highlight` takes the incremental streaming
+   path — a memoized settled prefix + a standalone last line — instead of
+   re-parsing the whole growing fence every tick. Finalized bubbles render with
+   this false, so their colouring is byte-identical to a full parse."
+  false)
+
+(def ^:private incremental-live?
+  "Kill switch for the streaming incremental path (default ON). Set
+   VIS_STREAM_INCREMENTAL_HL=0/false/no/off to force a full parse even while live."
+  (delay (not (contains? #{"0" "false" "no" "off"}
+                         (some-> (System/getenv "VIS_STREAM_INCREMENTAL_HL")
+                                 str/trim
+                                 str/lower-case)))))
+
+(def ^:private stream-memo
+  "One settled-prefix slot per grammar for the live streaming path:
+   grammar → {:prefix P :colored C}. While only the growing last line changes, the
+   settled prefix P is constant, so its expensive parse is reused across ticks and
+   only the short trailing line is (re)highlighted. Tiny + self-superseding: a new
+   settled line replaces the slot, so memory stays O(#grammars)."
+  (atom {}))
+
+(defn- highlight*
+  "Raw native parse + colorize; nil on any failure (fail-open)."
+  [grammar ^String source]
+  (try (Highlighter/highlightAnsi source grammar @theme-map) (catch Throwable _ nil)))
+
+(defn- exact-highlight
+  "Full-source colorize behind the wholesale [grammar source] cache. Output is
+   identical to a bare native parse — used for finalized fences and every scroll."
+  [grammar ^String source]
+  (let [key [grammar source]]
+    (if (contains? @cache key)
+      (get @cache key)
+      (let [v (highlight* grammar source)]
+        (when (> (count @cache) 512) (reset! cache {}))
+        (swap! cache assoc key v)
+        v))))
+
+(defn- last-nonblank-index
+  "Index of the last non-empty line in `lines`, or -1 when all are empty. Used to
+   peel the still-being-typed trailing line off the settled prefix."
+  [lines]
+  (loop [i (dec (count lines))]
+    (cond (neg? i) -1
+          (pos? (count ^String (nth lines i))) i
+          :else (recur (dec i)))))
+
+(defn- live-highlight
+  "Streaming colorize. Split the source (the markdown parser newline-normalises it,
+   so it ends in a newline) into a SETTLED prefix — every line up to the last
+   non-empty one — plus that trailing, still-typed line. The prefix is parsed IN
+   CONTEXT and memoized per grammar, so while only the last line grows it is reused
+   with NO re-parse; the short trailing line is highlighted on its own. The lone
+   approximation is that trailing line (and the settled line whose form it closes),
+   which is genuinely incomplete mid-stream and self-heals once the fence finalizes
+   and `exact-highlight` runs. Split/concat is lossless, so a single-line source or
+   one without a trailing newline still reconstructs verbatim."
+  [grammar ^String source]
+  (let
+    [lines
+     (str/split source #"\n" -1)
+
+     idx
+     (last-nonblank-index lines)]
+
+    (if (<= idx 0)
+      ;; nothing settled ahead of the growing line — just parse it whole.
+      (highlight* grammar source)
+      (let
+        [prefix
+         (str (str/join "\n" (subvec lines 0 idx)) "\n")
+
+         tail
+         (str/join "\n" (subvec lines idx))
+
+         m
+         (get @stream-memo grammar)
+
+         cprefix
+         (if (= (:prefix m) prefix)
+           (:colored m)
+           (let [c (or (highlight* grammar prefix) prefix)]
+             (swap! stream-memo assoc grammar {:prefix prefix :colored c})
+             c))
+
+         ctail
+         (if (pos? (count tail)) (or (highlight* grammar tail) tail) tail)]
+
+        (str cprefix ctail)))))
+
 (defn highlight
   "ANSI-colorize `source` as tree-sitter `grammar`, returning the colored string
    (same newline structure as the input, ready to `str/split-lines`), or nil
    when the grammar is unknown / the native lib is unavailable / parsing fails.
-   Callers treat nil as \"render plain\"."
+   Callers treat nil as \"render plain\".
+
+   While a bubble streams (`*live?*` bound true) the growing fence is colorized
+   incrementally — the settled prefix is memoized and only the last, still-typed
+   line is re-parsed per tick — instead of re-parsing the whole growing fence every
+   tick. Finalized bubbles use the exact full-source path, so their colouring is
+   byte-identical to a full parse."
   [grammar ^String source]
   (when (and grammar (seq source) @native-ready?)
-    (let [key [grammar source]]
-      (if (contains? @cache key)
-        (get @cache key)
-        (let [v (try (Highlighter/highlightAnsi source grammar @theme-map) (catch Throwable _ nil))]
-          (when (> (count @cache) 512) (reset! cache {}))
-          (swap! cache assoc key v)
-          v)))))
+    (if (and *live?* @incremental-live?)
+      (live-highlight grammar source)
+      (exact-highlight grammar source))))

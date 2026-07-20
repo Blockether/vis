@@ -105,8 +105,8 @@
       (let [p ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))]
         (expect (str/includes? p "LANGUAGE TOOLS"))
         (expect (str/includes? p "python : repl_eval"))
-        ;; CERTAIN wording: you MUST use repl_eval to run/verify project code
-        (expect (str/includes? p "MUST use repl_eval"))))
+        ;; Stable workflow lives in CORE; this dynamic block is capabilities only.
+        (expect (not (str/includes? p "session[\"resources\"]")))))
   (it "ACTIVATION-SENSITIVE: a pack's verbs appear only when its pack is active"
       (let [with-py
             ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))

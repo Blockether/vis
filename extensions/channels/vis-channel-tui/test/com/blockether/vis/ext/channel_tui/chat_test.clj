@@ -483,8 +483,9 @@
                    (g->c {"type" "activity" "activity" "tool" "op" "shell_run" "iteration" 2}))))
     (it "a shell-run activity projects to :shell-run with its command"
         (expect
-          (= {:phase :shell-run :iteration 1 :cmd "./verify.sh"}
-             (g->c {"type" "activity" "activity" "shell-run" "cmd" "./verify.sh" "iteration" 1}))))
+          (= {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}
+             (g->c
+               {"type" "activity" "activity" "shell-run" "cmd" "clojure -M:test" "iteration" 1}))))
     (it "a provider-call activity projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
                    (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))))

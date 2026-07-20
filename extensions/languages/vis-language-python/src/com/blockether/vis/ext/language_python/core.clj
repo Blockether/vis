@@ -125,8 +125,8 @@
 
 (defn py-repl-eval-fn
   "repl_eval handler for Python. Accepts a code string or
-   `{code, dir, timeout_ms}`. AUTO-STARTS a REPL for the dir if none is running,
-   then evaluates (globals persist across calls)."
+   `{code, dir, timeout_ms}`. Requires a running REPL for the dir, then evaluates
+   with globals persistent across calls."
   [env arg]
   (let [root
         (env-root env)
@@ -144,8 +144,12 @@
         (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
-      (let [r (repl/start! dir {})]
-        (register-repl-resource! (:session-id env) dir r nil)))
+      (throw (ex-info (str "Python REPL is not up for "
+                           dir
+                           "; call repl_start(\"python\", {\"dir\": "
+                           (pr-str dir)
+                           "}) first")
+                      {:type :py/no-repl :dir dir})))
     ;; Carry the evaluated code back on the result (string key) so the shared
     ;; repl_eval op-card can surface the FORM section — the render fn sees only
     ;; the result map, not the call args.

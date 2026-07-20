@@ -11,7 +11,7 @@
         These power the multi-line paste flow added so a clipboard
         payload with embedded newlines doesn't fire mid-paste sends.
 
-   The hard rule (AGENTS.md): every namespace ships with a test
+   Every namespace ships with a test
    file. This is that file."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.input :as input]

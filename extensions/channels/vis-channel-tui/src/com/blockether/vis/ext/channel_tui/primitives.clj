@@ -268,12 +268,11 @@
    the next col (`col + STATUS_WIDTH`) so the caller can place the label right
    after. The reusable mark behind settings rows + resource rows."
   [g col row glyph fg bg]
-  (let
-    [col
-     (long col)
+  (let [col
+        (long col)
 
-     row
-     (long row)]
+        row
+        (long row)]
 
     (set-colors! g fg bg)
     (put-str! g col row glyph)
@@ -285,27 +284,26 @@
   "Draw a single-line bordered box at (left, top) of size wxh.
    Draws corners, edges. Does NOT fill interior."
   [g left top w h]
-  (let
-    [left
-     (long left)
+  (let [left
+        (long left)
 
-     top
-     (long top)
+        top
+        (long top)
 
-     w
-     (long w)
+        w
+        (long w)
 
-     h
-     (long h)
+        h
+        (long h)
 
-     right
-     (+ left w -1)
+        right
+        (+ left w -1)
 
-     bottom
-     (+ top h -1)
+        bottom
+        (+ top h -1)
 
-     inner
-     (- w 2)]
+        inner
+        (- w 2)]
 
     ;; Corners
     (set-char! g left top BOX_TL)
@@ -324,18 +322,17 @@
 (defn draw-separator!
   "Draw a horizontal separator with T-junctions at left/right edges."
   [g left right row]
-  (let
-    [left
-     (long left)
+  (let [left
+        (long left)
 
-     right
-     (long right)
+        right
+        (long right)
 
-     row
-     (long row)
+        row
+        (long row)
 
-     inner
-     (- right left 1)]
+        inner
+        (- right left 1)]
 
     (set-char! g left row BOX_T_R)
     (set-char! g right row BOX_T_L)
@@ -436,22 +433,11 @@
    right edge once paint re-expanded them. Expanding up front makes
    measure == fold == paint and leaves `putString` no tabs to re-expand.
 
-   Column tracking is by char count (ASCII tool output); nil/empty → \"\"."
+   Column tracking is by char count (ASCII tool output); nil/empty → \"\".
+   Tab-free input is returned unchanged (same instance). Backed by the
+   lanterna fork's `TerminalTextUtils/expandTabs` (>= 3.1.5-vis.30)."
   ^String [s]
-  (let [^String s (str (or s ""))]
-    (if (neg? (.indexOf s (int \tab)))
-      s
-      (let
-        [sb (StringBuilder.)
-         n (.length s)]
-
-        (dotimes [i n]
-          (let [c (.charAt s i)]
-            (if (= c \tab)
-              (dotimes [_ (- (long tab-width) (rem (.length sb) (long tab-width)))]
-                (.append sb \space))
-              (.append sb c))))
-        (.toString sb)))))
+  (TerminalTextUtils/expandTabs (str (or s "")) (int tab-width)))
 
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
@@ -619,17 +605,16 @@
    **bold** / *italic* / ~~strike~~ / `code` mid-line without
    replacing the marker-prefix-per-line architecture above."
   [^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
-  (let
-    [;; Capture pre-existing modifiers so inline toggles can stack
-     ;; on top of them and we can restore exactly at exit.
-     inherited
-     ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
+  (let [;; Capture pre-existing modifiers so inline toggles can stack
+        ;; on top of them and we can restore exactly at exit.
+        inherited
+        ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
 
-     cells
-     (TextCharacter/fromString line)
+        cells
+        (TextCharacter/fromString line)
 
-     n
-     (alength cells)]
+        n
+        (alength cells)]
 
     (.setForegroundColor g base-fg)
     (.setBackgroundColor g base-bg)
@@ -646,65 +631,63 @@
           ;; style transitions. `inline` is the set of toggles activated
           ;; by sentinels we've seen so far; effective SGR set per flush
           ;; is `inherited ∪ inline`.
-          :else (let
-                  [sb
-                   (StringBuilder.)
+          :else
+          (let [sb
+                (StringBuilder.)
 
-                   inline
-                   (java.util.EnumSet/noneOf SGR)
+                inline
+                (java.util.EnumSet/noneOf SGR)
 
-                   col
-                   (int-array 1 0)
+                col
+                (int-array 1 0)
 
-                   code?
-                   (boolean-array 1 false)
+                code?
+                (boolean-array 1 false)
 
-                   flush!
-                   (fn []
-                     (when (pos? (.length sb))
-                       (let [seg (.toString sb)]
-                         (.clearModifiers g)
-                         (if (aget code? 0)
-                           ;; Code span: hard-override fg/bg; modifiers
-                           ;; cleared so code reads as a flat zone.
-                           (do (.setForegroundColor g code-fg) (.setBackgroundColor g code-bg))
-                           ;; Plain span: base colors + (inherited ∪ inline) SGR.
-                           (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
-                             (.addAll effective inline)
-                             (.setForegroundColor g base-fg)
-                             (.setBackgroundColor g base-bg)
-                             (when-not (.isEmpty effective)
-                               (.enableModifiers g (into-array SGR effective)))))
-                         (.putString g (+ (int x) (aget col 0)) (int y) seg)
-                         (aset col 0 (int (+ (aget col 0) (display-width seg))))
-                         (.setLength sb 0))))]
+                flush!
+                (fn []
+                  (when (pos? (.length sb))
+                    (let [seg (.toString sb)]
+                      (.clearModifiers g)
+                      (if (aget code? 0)
+                        ;; Code span: hard-override fg/bg; modifiers
+                        ;; cleared so code reads as a flat zone.
+                        (do (.setForegroundColor g code-fg) (.setBackgroundColor g code-bg))
+                        ;; Plain span: base colors + (inherited ∪ inline) SGR.
+                        (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
+                          (.addAll effective inline)
+                          (.setForegroundColor g base-fg)
+                          (.setBackgroundColor g base-bg)
+                          (when-not (.isEmpty effective)
+                            (.enableModifiers g (into-array SGR effective)))))
+                      (.putString g (+ (int x) (aget col 0)) (int y) seg)
+                      (aset col 0 (int (+ (aget col 0) (display-width seg))))
+                      (.setLength sb 0))))]
 
-                  (dotimes [i n]
-                    (let
-                      [tc ^TextCharacter (aget cells i)
-                       gs ^String (.getCharacterString tc)]
+            (dotimes [i n]
+              (let [tc ^TextCharacter (aget cells i)
+                    gs ^String (.getCharacterString tc)]
 
-                      (cond (= gs INLINE_BOLD_ON) (do (flush!) (.add inline SGR/BOLD))
-                            (= gs INLINE_BOLD_OFF) (do (flush!) (.remove inline SGR/BOLD))
-                            (= gs INLINE_ITALIC_ON) (do (flush!) (.add inline SGR/ITALIC))
-                            (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove inline SGR/ITALIC))
-                            (= gs INLINE_STRIKE_ON) (do (flush!) (.add inline SGR/CROSSED_OUT))
-                            (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
-                            (= gs INLINE_CODE_ON) (do (flush!) (aset code? 0 true))
-                            (= gs INLINE_CODE_OFF) (do (flush!) (aset code? 0 false))
-                            (= gs INLINE_LINK_ON) (do (flush!) (.add inline SGR/UNDERLINE))
-                            (= gs INLINE_LINK_OFF) (do (flush!) (.remove inline SGR/UNDERLINE))
-                            :else (.append sb gs))))
-                  (flush!)
-                  ;; Restore the inherited modifier set exactly so the wrapping
-                  ;; `styled` form's cleanup sees the state it expects. Without
-                  ;; this, an unbalanced sentinel (e.g. line ending mid-bold)
-                  ;; could leak BOLD into the next paint call.
-                  (.clearModifiers g)
-                  (.setForegroundColor g base-fg)
-                  (.setBackgroundColor g base-bg)
-                  (when-not (.isEmpty inherited)
-                    (.enableModifiers g (into-array SGR inherited)))))))
+                (cond (= gs INLINE_BOLD_ON) (do (flush!) (.add inline SGR/BOLD))
+                      (= gs INLINE_BOLD_OFF) (do (flush!) (.remove inline SGR/BOLD))
+                      (= gs INLINE_ITALIC_ON) (do (flush!) (.add inline SGR/ITALIC))
+                      (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove inline SGR/ITALIC))
+                      (= gs INLINE_STRIKE_ON) (do (flush!) (.add inline SGR/CROSSED_OUT))
+                      (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
+                      (= gs INLINE_CODE_ON) (do (flush!) (aset code? 0 true))
+                      (= gs INLINE_CODE_OFF) (do (flush!) (aset code? 0 false))
+                      (= gs INLINE_LINK_ON) (do (flush!) (.add inline SGR/UNDERLINE))
+                      (= gs INLINE_LINK_OFF) (do (flush!) (.remove inline SGR/UNDERLINE))
+                      :else (.append sb gs))))
+            (flush!)
+            ;; Restore the inherited modifier set exactly so the wrapping
+            ;; `styled` form's cleanup sees the state it expects. Without
+            ;; this, an unbalanced sentinel (e.g. line ending mid-bold)
+            ;; could leak BOLD into the next paint call.
+            (.clearModifiers g)
+            (.setForegroundColor g base-fg)
+            (.setBackgroundColor g base-bg)
+            (when-not (.isEmpty inherited) (.enableModifiers g (into-array SGR inherited)))))))
 
 ;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 
@@ -861,67 +844,63 @@
    zero width; draw helpers skip those safely."
   ([tabs left width active-id] (tab-layout tabs left width active-id {}))
   ([tabs left width active-id {:keys [gap]}]
-   (let
-     [tabs
-      (vec tabs)
+   (let [tabs
+         (vec tabs)
 
-      n
-      (count tabs)
+         n
+         (count tabs)
 
-      left
-      (long left)
+         left
+         (long left)
 
-      width
-      (max 0 (long width))
+         width
+         (max 0 (long width))
 
-      gap
-      (max 0 (long (or gap tab-default-gap)))]
+         gap
+         (max 0 (long (or gap tab-default-gap)))]
 
      (if (or (zero? n) (zero? width))
        []
-       (let
-         [gap
-          (if (>= width (+ n (* gap (dec n)))) gap 0)
+       (let [gap
+             (if (>= width (+ n (* gap (dec n)))) gap 0)
 
-          gap-total
-          (* gap (dec n))
+             gap-total
+             (* gap (dec n))
 
-          content-w
-          (max 0 (- width gap-total))
+             content-w
+             (max 0 (- width gap-total))
 
-          base
-          (quot content-w n)
+             base
+             (quot content-w n)
 
-          extra
-          (rem content-w n)]
+             extra
+             (rem content-w n)]
 
-         (loop
-           [idx
-            0
+         (loop [idx
+                0
 
-            x
-            left
+                x
+                left
 
-            out
-            []]
+                out
+                []]
 
            (if (= idx n)
              out
-             (let
-               [w
-                (+ base (if (< idx extra) 1 0))
+             (let [w
+                   (+ base (if (< idx extra) 1 0))
 
-                tab
-                (nth tabs idx)
+                   tab
+                   (nth tabs idx)
 
-                text
-                (truncate-cols (tab-display-label tab) w)
+                   text
+                   (truncate-cols (tab-display-label tab) w)
 
-                active?
-                (if (some? active-id) (= (:id tab) active-id) (true? (:active? tab)))
+                   active?
+                   (if (some? active-id) (= (:id tab) active-id) (true? (:active? tab)))
 
-                next-x
-                (+ x w (if (= idx (dec n)) 0 gap))]
+                   next-x
+                   (+ x w (if (= idx (dec n)) 0 gap))]
 
                (recur (inc idx)
                       next-x
@@ -957,9 +936,8 @@
   (let [layout (tab-layout tabs left width active-id {:gap gap})]
     (set-colors! g (or fg inactive-fg active-fg) (or bg inactive-bg active-bg))
     (fill-rect! g left row width 1)
-    (doseq
-      [{:keys [left width active? text]} layout
-       :when (pos? (long width))]
+    (doseq [{:keys [left width active? text]} layout
+            :when (pos? (long width))]
 
       (clear-styles! g)
       (if active?

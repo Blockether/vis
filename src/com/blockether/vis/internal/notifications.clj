@@ -3,7 +3,7 @@
 
    A single in-memory pub-sub the host runtime, every extension, and
    every channel can use to surface a transient signal - \"copied to
-   clipboard\", \"verify.sh passed\", \"provider switched\" - without
+   clipboard\", \"tests passed\", \"provider switched\" - without
    embedding it in the answer body or polluting Telemere logs.
 
    Surface (re-exported on `com.blockether.vis.core`):

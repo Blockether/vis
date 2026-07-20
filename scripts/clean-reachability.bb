@@ -9,7 +9,7 @@
 ;;   * `…$fn__<N>` anonymous-fn classes        — the gensym <N> changes every
 ;;                                               compile, so pinning it is stale
 ;;
-;; Run AFTER regenerating with the agent (see AGENTS.md "GraalVM native-image"):
+;; Run AFTER regenerating with the native-image tracing agent:
 ;;   bb scripts/clean-reachability.bb            # clean every metadata file
 ;;   bb scripts/clean-reachability.bb <file ...> # clean specific files
 ;;

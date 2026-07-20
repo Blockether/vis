@@ -64,7 +64,16 @@
                      (language-surface/start-repl env "restart" {"dir" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
                    (:result (language-surface/start-repl env {"aliases" ["dev"]}))))
+        (expect (= {:op "restart" :opts {"dir" "ext"}}
+                   (:result (language-surface/start-repl env {"op" "restart" "dir" "ext"}))))
         (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
+  (it "advertises explicit lifecycle op and no repl_eval auto-start"
+      (expect (= ["start" "restart"]
+                 (get-in language-surface/start-repl-symbol
+                         [:ext.symbol/schema :properties "op" :enum])))
+      (expect (not (str/includes? (get-in language-surface/repl-eval-symbol
+                                          [:ext.symbol/schema :properties "dir" :description])
+                                  "auto-start"))))
   (it "accepts language-first calls for repl eval"
       (let [seen
             (atom nil)
@@ -197,11 +206,9 @@
 
         (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl_start"))
         (expect (str/includes? m "python : repl_eval · repl_start"))
-        (expect (str/includes? m "session[\"resources\"][\"repls\"][language][dir]"))
-        (expect (str/includes? m "Keep managed REPLs alive across turns"))
-        (expect (str/includes? m "host stops them when the session closes"))
-        (expect (str/includes? m "Never kill an externally attached REPL; detach only"))
-        (expect (not (str/includes? m "session[\"env\"][\"languages\"]")))))
+        (expect (str/includes? m "clojure reload after disk edits"))
+        (expect (not (str/includes? m "session[\"resources\"]")))
+        (expect (not (str/includes? m "Keep managed REPLs alive")))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"
       (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))
 

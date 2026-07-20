@@ -1330,7 +1330,7 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
        "  NARROW for convenience, not out of fear: shell_run / shell_logs hand back the WHOLE output, so you're never forced to shrink it — narrow it whichever way is handy, a python_execution comprehension (e.g. [l for l in r[\"stdout\"].splitlines() if \"FAIL\" in l]) OR a shell locator (`| grep` / `rg`). The only real sins: pasting the raw dump straight back, or assuming you can't see the rest."
        "  Long-running / never-exits-on-its-own process (a server, file watcher, `tail -f`, a REPL/nREPL, any `--watch`/`serve`/`dev`)? It MUST go to shell_bg — session RESOURCES, no timeout:"
        "  ANTI-PATTERN: do NOT background it inside shell_run with `nohup … &` / trailing `&` / `disown` — that orphans the process (untracked, no captured logs, not stoppable, and shell_run still blocks on the pipe). shell_bg(id, cmd) is the ONLY correct way to background."
-       "  (Clojure nREPL specifically: prefer the managed repl_start(\"clojure\") over a raw shell_bg — it registers the port + .nrepl-port for you. Use shell_bg only for a bespoke launcher.)"
+       "  (Clojure nREPL specifically: prefer managed repl_start(\"clojure\") over shell_bg. Use shell_bg only for a bespoke launcher.)"
        "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see resources)"
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
        "  shell_logs(id, 2000) hands you the whole retained buffer (lines are [seq, text] pairs) — same deal: narrow in python or grep, e.g. [t for _, t in shell_logs(id, 2000)[\"lines\"] if re.search(pat, t)]."

@@ -78,15 +78,23 @@
 ;; ── language-facade wiring ───────────────────────────────────────────────────
 (defdescribe
   facade-test
-  (it "repl_eval auto-starts a REPL for the dir and returns the value"
+  (it "repl_eval requires explicit repl_start and then returns the value"
       (when (has-python?)
         (let [root
               (tmp-dir)
 
               dir
-              (.getCanonicalPath root)]
+              (.getCanonicalPath root)
 
-          (try (let [r (core/py-repl-eval-fn {:workspace/root (.getPath root)} "3 * 7")]
+              env
+              {:workspace/root (.getPath root)}]
+
+          (try (expect (= :py/no-repl
+                          (try (core/py-repl-eval-fn env "3 * 7")
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+               (core/py-start-repl-fn env "start" nil)
+               (let [r (core/py-repl-eval-fn env "3 * 7")]
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))

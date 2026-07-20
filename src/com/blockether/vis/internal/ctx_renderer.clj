@@ -223,5 +223,11 @@
    as an ordered `{\"ln:hash\" text}` map — the key IS the `patch from_anchor`
    — so editing resolves straight off this structured data."
   ^String [_src v]
-  (env/ctx->python-str (if (map? v) (dissoc v "op") v)))
+  ;; A bare STRING result is prose/markdown (doc(name), apropos's table, self-docs):
+  ;; render it VERBATIM so newlines, headers, and pipe-tables display as written —
+  ;; a Python string literal would escape `\n`/`\t` and collapse it to one line.
+  ;; Structured values (maps/vectors) stay canonical Python literals.
+  (cond (string? v) v
+        (map? v) (env/ctx->python-str (dissoc v "op"))
+        :else (env/ctx->python-str v)))
 

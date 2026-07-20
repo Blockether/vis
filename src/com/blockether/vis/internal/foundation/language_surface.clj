@@ -95,16 +95,12 @@
        python  : repl_eval · repl_start"
   [env]
   (when-let [data (capability-data env)]
-    (str
-      "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
-      (str/join "\n"
-                (for [[lang tools] data]
-                  (str "  " lang " : " (str/join " · " tools))))
-      "\n  → FIRST read `session[\"resources\"][\"repls\"][language][dir]` (`dir` is `\".\"` at workspace root). Reuse status `up`; otherwise call repl_start(language, {\"dir\": dir}) before project execution. This session path is REPL ground truth.\n"
-      "  → Use repl_eval(language, code) for project code/dependencies; use python_execution for stdlib scratch work. Globals persist.\n"
-      "  → Disk edits do not reload live source. Reload it before repeating the same eval/test (Clojure: `(require 'my.ns :reload)`).\n"
-      "  → Keep managed REPLs alive across turns; the host stops them when the session closes. Stop only on user request, when unhealthy, or to restart. Never kill an externally attached REPL; detach only.\n"
-      "  → Use run_tests(language) for project tests and format_code for hand-written source. Always pass language first except path-based format_code/lint_code.")))
+    (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
+         (str/join "\n"
+                   (for [[lang tools] data]
+                     (str "  " lang " : " (str/join " · " tools))))
+         (when (contains? data "clojure")
+           "\n  clojure reload after disk edits: `(require 'my.ns :reload)`."))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
@@ -260,8 +256,8 @@
         (cond (nil? arg) {:language language :id nil :op "start" :opts {}}
               (map? arg) {:language (or language (opts-language arg))
                           :id (or (get arg "id") (get arg "repl_id"))
-                          :op "start"
-                          :opts arg}
+                          :op (or (get arg "op") "start")
+                          :opts (dissoc arg "op")}
               :else {:language language :id nil :op arg :opts nil}))
 
       2
@@ -283,7 +279,7 @@
           {:type :language-surface/bad-args
            :got args
            :examples ["repl_start('clojure')"
-                      "repl_start('clojure', {'id': 'main', 'aliases': ['dev']})"
+                      "repl_start('clojure', {'op': 'restart', 'dir': 'extensions/foo'})"
                       "repl_start('clojure', 'status')"
                       "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
 
@@ -779,12 +775,15 @@
     (if (map? result) (assoc result :ms (- (System/currentTimeMillis) start)) result)))
 
 (defn repl-eval
-  "Evaluate code in a language REPL. FIRST check `session[\"resources\"][\"repls\"][language][dir]`; call repl_start when it is not up. ALWAYS pass the language FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id` or `dir` to target a subdirectory REPL; defaults to workspace root."
+  "Evaluate code in an already-running project REPL. ALWAYS pass the language
+   FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id`, `dir`,
+   and `timeout_ms`; `dir` defaults to the workspace root."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start/manage a language REPL resource after checking session resources. ALWAYS pass the language FIRST — repl_start(language, opts); opts may include `id`, `dir`, and language-specific options."
+  "Start or restart a language REPL resource. ALWAYS pass the language FIRST —
+   repl_start(language, {op, dir, id, ...}); `op` defaults to `start`."
   [env & args]
   (dispatch-start-repl! env args))
 
@@ -936,37 +935,37 @@
        "dir"
        {:type "string"
         :description
-        "Directory to run the REPL in (e.g. a monorepo app dir like \"apps/api\") — the REPL auto-starts there and picks up THAT dir's config (tsconfig/package.json). Defaults to the workspace root."}
+        "Directory of the already-running REPL (e.g. \"apps/api\"); selects that dir's project config. Defaults to the workspace root."}
        "timeout_ms" {:type "integer" :description "Eval timeout in milliseconds (default 30000)."}}
       :required ["language" "code"]}
      :before-fn inject-env
      :tag :mutation}))
 
 (def start-repl-symbol
-  (vis/symbol
-    #'start-repl
-    {:symbol 'repl_start
-     :native-tool? true
-     :call {:lead-opt "language" :rest :always}
-     :render render-repl-start-result
-     :color-role :tool-color/shell
-     :schema
-     {:type "object"
-      :properties
-      {"language" {:type "string"
-                   :description
-                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
-       "id" {:type "string" :description "Resource id for the REPL (default per language)."}
-       "dir" {:type "string" :description "Directory to start the REPL in."}
-       "aliases" {:type "array"
-                  :items {:type "string"}
-                  :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}
-       "host" {:type "string"
-               :description "External nREPL host for op \"connect\" (default localhost)."}
-       "port" {:type "integer" :description "External nREPL port — required by op \"connect\"."}}
-      :required ["language"]}
-     :before-fn inject-env
-     :tag :mutation}))
+  (vis/symbol #'start-repl
+              {:symbol 'repl_start
+               :native-tool? true
+               :call {:lead-opt "language" :rest :always}
+               :render render-repl-start-result
+               :color-role :tool-color/shell
+               :schema
+               {:type "object"
+                :properties
+                {"language"
+                 {:type "string"
+                  :description
+                  "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+                 "op" {:type "string"
+                       :enum ["start" "restart"]
+                       :description "Lifecycle operation (default \"start\")."}
+                 "id" {:type "string" :description "Optional lifecycle resource id."}
+                 "dir" {:type "string" :description "Directory to start the REPL in."}
+                 "aliases" {:type "array"
+                            :items {:type "string"}
+                            :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
+                :required ["language"]}
+               :before-fn inject-env
+               :tag :mutation}))
 
 (def connect-repl-symbol
   (vis/symbol
@@ -1019,8 +1018,4 @@
    or single-language workspace carries nothing extra. Each verb's own docstring
    holds its args/return; `language` is explicit only when several packs match."
   [env]
-  (when-let [matrix (capability-matrix env)]
-    (str
-      matrix
-      "\n"
-      "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_connect · repl_stop")))
+  (capability-matrix env))

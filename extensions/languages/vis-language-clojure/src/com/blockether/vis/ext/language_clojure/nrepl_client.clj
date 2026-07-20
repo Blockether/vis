@@ -67,9 +67,10 @@
    message."
   [host port timeout-ms]
   (try
-    (let [sock (doto (Socket.)
-                 (.connect (InetSocketAddress. ^String (or host "localhost") (int port))
-                           (int (max 1 (long (or timeout-ms 1000))))))]
+    (let
+      [sock (doto (Socket.)
+              (.connect (InetSocketAddress. ^String (or host "localhost") (int port))
+                        (int (max 1 (long (or timeout-ms 1000))))))]
       (transport/bencode sock))
     (catch Throwable t
       (throw
@@ -90,11 +91,12 @@
    CLOSING the socket so the server promptly reaps the session's executor
    thread — nothing is left to leak. The next call re-dials and re-clones."
   [host port]
-  (let [k
-        (key-of host port)
+  (let
+    [k
+     (key-of host port)
 
-        conn
-        (get-in @connections [k :conn])]
+     conn
+     (get-in @connections [k :conn])]
 
     (swap! connections dissoc k)
     (when conn (try (.close ^java.io.Closeable conn) (catch Throwable _ nil)))))
@@ -162,29 +164,30 @@
    Stops on first :status containing done, after deadline, or on terminal errors
    that nREPL reports on *err* without a final done message."
   [responses deadline]
-  (loop [rs
-         responses
+  (loop
+    [rs
+     responses
 
-         values
-         []
+     values
+     []
 
-         out-acc
-         (StringBuilder.)
+     out-acc
+     (StringBuilder.)
 
-         err-acc
-         (StringBuilder.)
+     err-acc
+     (StringBuilder.)
 
-         ns*
-         nil
+     ns*
+     nil
 
-         status
-         #{}
+     status
+     #{}
 
-         ex
-         nil
+     ex
+     nil
 
-         root-ex
-         nil]
+     root-ex
+     nil]
 
     (cond
       (> (System/currentTimeMillis) (long deadline)) {"timed_out" true
@@ -217,65 +220,67 @@
       ;; Read both shapes so we don't silently lose value / status / out
       ;; depending on transport wiring. (This `mg` reads the nREPL WIRE, not
       ;; the strings-only Clojure->Python boundary — leave it dual-shape.)
-      (let [msg
-            (first rs)
+      (let
+        [msg
+         (first rs)
 
-            mg
-            (fn [k]
-              (or (get msg k) (get msg (keyword k))))
+         mg
+         (fn [k]
+           (or (get msg k) (get msg (keyword k))))
 
-            v
-            (mg "value")
+         v
+         (mg "value")
 
-            o
-            (mg "out")
+         o
+         (mg "out")
 
-            e
-            (mg "err")
+         e
+         (mg "err")
 
-            n
-            (mg "ns")
+         n
+         (mg "ns")
 
-            s
-            (mg "status")
+         s
+         (mg "status")
 
-            ex2
-            (mg "ex")
+         ex2
+         (mg "ex")
 
-            rx2
-            (mg "root-ex")]
+         rx2
+         (mg "root-ex")]
 
         (when o (.append out-acc ^String o))
         (when e (.append err-acc ^String e))
-        (let [new-status
-              (into status
-                    (cond (nil? s) []
-                          (string? s) [s]
-                          (coll? s) (map str s)
-                          :else [(str s)]))
+        (let
+          [new-status
+           (into status
+                 (cond (nil? s) []
+                       (string? s) [s]
+                       (coll? s) (map str s)
+                       :else [(str s)]))
 
-              done?
-              (contains? new-status "done")
+           done?
+           (contains? new-status "done")
 
-              terminal-error?
-              (terminal-error-output? (.toString err-acc))
+           terminal-error?
+           (terminal-error-output? (.toString err-acc))
 
-              eval-error?
-              (contains? new-status "eval-error")
+           eval-error?
+           (contains? new-status "eval-error")
 
-              values'
-              (cond-> values
-                v
-                (conj v))
+           values'
+           (cond-> values
+             v
+             (conj v))
 
-              ns''
-              (or n ns*)
+           ns''
+           (or n ns*)
 
-              ex''
-              (or ex2 ex)
+           ex''
+           (or ex2 ex)
 
-              rx''
-              (or rx2 root-ex)]
+           rx''
+           (or rx2 root-ex)]
 
           (if (or done? terminal-error? eval-error?)
             ;; Drain no further. Once "done" arrived the eval is complete; and the
@@ -330,8 +335,9 @@
    default), keep the rest in order, cap the depth."
   [frames limit]
   (->> frames
-       (remove #(let [fl
-                      (frame-flags %)]
+       (remove #(let
+                  [fl
+                   (frame-flags %)]
 
                   (or (fl "dup") (fl "tooling"))))
        (map cider-frame->line)
@@ -340,11 +346,12 @@
 
 (defn- simple-class
   [cls]
-  (let [s
-        (str cls)
+  (let
+    [s
+     (str cls)
 
-        i
-        (.lastIndexOf s ".")]
+     i
+     (.lastIndexOf s ".")]
 
     (if (neg? i) s (subs s (inc i)))))
 
@@ -358,14 +365,15 @@
    The root (innermost) cause carries the real throw site + message; earlier
    causes are threaded into the headline as a `← caused by` chain."
   [causes]
-  (let [causes
-        (vec causes)
+  (let
+    [causes
+     (vec causes)
 
-        root
-        (or (last (filter #(seq (sget % "stacktrace")) causes)) (last causes))
+     root
+     (or (last (filter #(seq (sget % "stacktrace")) causes)) (last causes))
 
-        heads
-        (map #(cause->headline {:class (sget % "class") :message (sget % "message")}) causes)]
+     heads
+     (map #(cause->headline {:class (sget % "class") :message (sget % "message")}) causes)]
 
     {"error_message" (str/join "\n  ← caused by " heads)
      "error_data" (some-> (sget root "data")
@@ -376,34 +384,36 @@
   "Drive an op on `session` to `done`, returning `{:status #{..} :msgs [..]}`.
    Bails on the deadline; never blocks past it."
   [session op deadline]
-  (loop [rs
-         (session {:op op})
+  (loop
+    [rs
+     (session {:op op})
 
-         msgs
-         []
+     msgs
+     []
 
-         status
-         #{}]
+     status
+     #{}]
 
     (if (or (empty? rs) (> (System/currentTimeMillis) (long deadline)))
       {:status status :msgs msgs}
-      (let [msg
-            (first rs)
+      (let
+        [msg
+         (first rs)
 
-            s
-            (sget msg "status")
+         s
+         (sget msg "status")
 
-            st
-            (into status
-                  (cond (nil? s) []
-                        (string? s) [s]
-                        (coll? s) (map str s)
-                        :else [(str s)]))
+         st
+         (into status
+               (cond (nil? s) []
+                     (string? s) [s]
+                     (coll? s) (map str s)
+                     :else [(str s)]))
 
-            msgs'
-            (cond-> msgs
-              (sget msg "class")
-              (conj msg))]
+         msgs'
+         (cond-> msgs
+           (sget msg "class")
+           (conj msg))]
 
         (if (contains? st "done") {:status st :msgs msgs'} (recur (next rs) msgs' st))))))
 
@@ -432,11 +442,12 @@
   (loop [rs responses]
     (cond (> (System/currentTimeMillis) (long deadline)) false
           (empty? rs) true
-          :else (let [s (sget (first rs) "status")
-                      st (cond (nil? s) #{}
-                               (string? s) #{s}
-                               (coll? s) (set (map str s))
-                               :else #{(str s)})]
+          :else (let
+                  [s (sget (first rs) "status")
+                   st (cond (nil? s) #{}
+                            (string? s) #{s}
+                            (coll? s) (set (map str s))
+                            :else #{(str s)})]
 
                   (if (contains? st "done") true (recur (next rs)))))))
 
@@ -456,13 +467,102 @@
                          (when (and (seq msgs) (not (contains? status "unknown-op")))
                            (stacktrace->result msgs))))
                      ["stacktrace" "analyze-last-stacktrace"])
-               (let [r (combine (session {:op "eval" :code e-fetch-code}) deadline)
-                     v (get r "value")]
+               (let
+                 [r (combine (session {:op "eval" :code e-fetch-code}) deadline)
+                  v (get r "value")]
 
                  (when (and (string? v) (not= "nil" v))
                    (let [m (try (edn/read-string v) (catch Throwable _ nil))]
                      (when (map? m) (not-empty m)))))))
          (catch Throwable _ nil))))
+
+(defn- error-location
+  "Best-effort [line column] (1-based) of the failing form WITHIN the evaluated
+   `code`, recovered from a combined eval-error map. Prefers the compiler
+   `error_data` position (`:clojure.error/line`/`:column`), then the `err`
+   headline's `(REPL:L[:C])`, then the top NO_SOURCE_FILE trace frame. Returns
+   nil when the failure carries no in-code position (e.g. deep in library code)."
+  [combined]
+  (or (let
+        [ed
+         (get combined "error_data")
+
+         m
+         (when (string? ed) (try (edn/read-string ed) (catch Throwable _ nil)))
+
+         l
+         (and (map? m) (:clojure.error/line m))]
+
+        (when (integer? l) [l (:clojure.error/column m)]))
+      (let [[_ l c] (re-find #"\(REPL:(\d+)(?::(\d+))?\)" (str (get combined "err")))]
+        (when l [(Long/parseLong l) (when c (Long/parseLong c))]))
+      (some (fn [frame]
+              (when-let [[_ l] (re-find #"NO_SOURCE_FILE:(\d+)" (str frame))]
+                [(Long/parseLong l) nil]))
+            (get combined "trace"))))
+
+(defn- error-headline
+  "The human message line for the caret: clojure.main's `err` message line (the
+   one AFTER the `Execution/Syntax error …` header), falling back to the tail of
+   `error_message` (`SimpleClass: msg` → `msg`)."
+  [combined]
+  (let [ls (remove str/blank? (str/split-lines (str (get combined "err"))))]
+    (or (second ls)
+        (let
+          [em (str (get combined "error_message"))
+           i (str/index-of em ": ")]
+
+          (if i (subs em (+ i 2)) em)))))
+
+(defn- render-context
+  "babashka-style source Context: a ±2-line window of `code` around `line`, each
+   row numbered, with a `^--- <message>` caret under the failing position
+   (`column` when known, else the line's first non-blank char). nil when `line`
+   is outside `code`."
+  [code line column message]
+  (let
+    [lines
+     (vec (str/split-lines code))
+
+     n
+     (count lines)]
+
+    (when (and (integer? line) (pos? line) (<= line n))
+      (let
+        [lo
+         (max 1 (- line 2))
+
+         hi
+         (min n (+ line 2))
+
+         pad
+         (count (str hi))
+
+         src
+         (nth lines (dec line))
+
+         col
+         (or (when (and (integer? column) (pos? column)) column)
+             (inc (count (take-while #(Character/isWhitespace ^char %) src))))
+
+         rows
+         (mapcat (fn [i]
+                   (let [row (str (format (str "%" pad "d") i) ": " (nth lines (dec i)))]
+                     (if (= i line)
+                       [row (str (apply str (repeat (+ pad 2 (dec col)) \space)) "^--- " message)]
+                       [row])))
+                 (range lo (inc hi)))]
+
+        (str/join "\n" rows)))))
+
+(defn- error-context
+  "babashka-style `context` string for an eval error: the failing source line(s)
+   from `code` with a caret at the reported position. nil when no in-code
+   location is recoverable, so the base result is untouched."
+  [combined code]
+  (when (string? code)
+    (when-let [[line column] (error-location combined)]
+      (render-context code line column (error-headline combined)))))
 
 (defn- interrupt!
   "Best-effort `interrupt` op on `session` so a TIMED-OUT eval's server-side
@@ -509,52 +609,63 @@
     (throw (ex-info "eval! requires a positive :port" {:type :clj/nrepl-bad-args :port port})))
   (when-not (string? code)
     (throw (ex-info "eval! requires a :code string" {:type :clj/nrepl-bad-args :code code})))
-  (let [start
-        (System/currentTimeMillis)
+  (let
+    [start
+     (System/currentTimeMillis)
 
-        deadline
-        (+ start (long timeout-ms))]
+     deadline
+     (+ start (long timeout-ms))]
 
     (letfn
       [(attempt []
-         (let [conn
-               (connection-for host port timeout-ms)
+         (let
+           [conn
+            (connection-for host port timeout-ms)
 
-               client
-               (nrepl/client conn timeout-ms)
+            client
+            (nrepl/client conn timeout-ms)
 
-               session
-               (nrepl/client-session client :session (session-id-for client host port))
+            session
+            (nrepl/client-session client :session (session-id-for client host port))
 
-               req
-               (cond-> {:op "eval" :code code}
-                 (string? ns)
-                 (assoc :ns ns)
+            req
+            (cond-> {:op "eval" :code code}
+              (string? ns)
+              (assoc :ns ns)
 
-                 pretty?
-                 (assoc :nrepl.middleware.print/print
-                   "nrepl.util.print/pprint" :nrepl.middleware.print/options
-                   {:right-margin print-margin}))
+              pretty?
+              (assoc :nrepl.middleware.print/print
+                "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                {:right-margin print-margin}))
 
-               responses
-               (session req)
+            responses
+            (session req)
 
-               combined
-               (combine responses deadline)
+            combined
+            (combine responses deadline)
 
-               combined
-               (if (eval-error? combined)
+            combined
+            (if (eval-error? combined)
+              (let
+                [enriched
                  (merge combined (fetch-stacktrace! session responses))
-                 combined)
 
-               elapsed
-               (- (System/currentTimeMillis) start)
+                 ctx
+                 (error-context enriched code)]
 
-               res
-               (assoc combined
-                 "ms" elapsed
-                 "port" (int port)
-                 "host" host)]
+                (cond-> enriched
+                  ctx
+                  (assoc "context" ctx)))
+              combined)
+
+            elapsed
+            (- (System/currentTimeMillis) start)
+
+            res
+            (assoc combined
+              "ms" elapsed
+              "port" (int port)
+              "host" host)]
 
            ;; A timed-out eval leaves a possibly-desynced keep-alive socket
            ;; (background reader parked, late messages pending). Evict it so the
@@ -604,20 +715,21 @@
    when no recognisable version is present."
   [versions]
   (when (map? versions)
-    (let [vget
-          (fn [k]
-            (or (get versions k) (get versions (name k))))
+    (let
+      [vget
+       (fn [k]
+         (or (get versions k) (get versions (name k))))
 
-          vstr
-          (fn [m]
-            (when (map? m) (or (get m :version-string) (get m "version-string"))))
+       vstr
+       (fn [m]
+         (when (map? m) (or (get m :version-string) (get m "version-string"))))
 
-          out
-          (into {}
-                (keep (fn [k]
-                        (when-let [s (vstr (vget k))]
-                          [k s])))
-                [:clojure :clojurescript :nrepl :java])]
+       out
+       (into {}
+             (keep (fn [k]
+                     (when-let [s (vstr (vget k))]
+                       [k s])))
+             [:clojure :clojurescript :nrepl :java])]
 
       (not-empty out))))
 
@@ -627,14 +739,15 @@
    piggieback, self-hosted) surface a clojurescript version or cljs/shadow
    ops. Returns `:cljs`, `:clj`, or `:unknown`."
   [versions ops]
-  (let [opset
-        (set (map name
-                  (cond (map? ops) (keys ops)
-                        (coll? ops) ops
-                        :else nil)))
+  (let
+    [opset
+     (set (map name
+               (cond (map? ops) (keys ops)
+                     (coll? ops) ops
+                     :else nil)))
 
-        cljs-op?
-        (boolean (some #(re-find #"(?i)cljs|shadow|piggieback" %) opset))]
+     cljs-op?
+     (boolean (some #(re-find #"(?i)cljs|shadow|piggieback" %) opset))]
 
     (cond (:clojurescript versions) :cljs
           cljs-op? :cljs
@@ -646,19 +759,19 @@
    `(System/getProperty \"user.dir\")` eval. Returns a path string or nil
    (e.g. a non-JVM cljs runtime where `System` is undefined). Never throws."
   [host port timeout-ms]
-  (try (let [r
-             (eval! {:host host
-                     :port port
-                     :code "(System/getProperty \"user.dir\")"
-                     :timeout-ms timeout-ms})
+  (try
+    (let
+      [r
+       (eval!
+         {:host host :port port :code "(System/getProperty \"user.dir\")" :timeout-ms timeout-ms})
 
-             v
-             (get r "value")]
+       v
+       (get r "value")]
 
-         (when (string? v)
-           (let [parsed (try (edn/read-string v) (catch Throwable _ nil))]
-             (when (and (string? parsed) (seq parsed)) parsed))))
-       (catch Throwable _ nil)))
+      (when (string? v)
+        (let [parsed (try (edn/read-string v) (catch Throwable _ nil))]
+          (when (and (string? parsed) (seq parsed)) parsed))))
+    (catch Throwable _ nil)))
 
 (defn probe!
   "Best-effort liveness probe for the nREPL at `host:port`. Sends a single
@@ -682,65 +795,67 @@
   (if-not (pos? (long (or port 0)))
     {:status :down}
     (try
-      (let [conn
-            (connection-for host port timeout-ms)
+      (let
+        [conn
+         (connection-for host port timeout-ms)
 
-            client
-            (nrepl/client conn timeout-ms)
+         client
+         (nrepl/client conn timeout-ms)
 
-            deadline
-            (+ (System/currentTimeMillis) (long timeout-ms))
+         deadline
+         (+ (System/currentTimeMillis) (long timeout-ms))
 
-            responses
-            (nrepl/message client {:op "describe"})
+         responses
+         (nrepl/message client {:op "describe"})
 
-            up
-            (fn [versions ops]
-              (cond-> {:status :up
-                       :versions (or versions {})
-                       :dialect (detect-dialect (or versions {}) ops)}
-                true
-                (as-> m (if-let [cwd (server-cwd host port timeout-ms)]
-                          (assoc m :cwd cwd)
-                          m))))]
+         up
+         (fn [versions ops]
+           (cond->
+             {:status :up :versions (or versions {}) :dialect (detect-dialect (or versions {}) ops)}
+             true
+             (as-> m (if-let [cwd (server-cwd host port timeout-ms)]
+                       (assoc m :cwd cwd)
+                       m))))]
 
-        (loop [rs
-               responses
+        (loop
+          [rs
+           responses
 
-               versions
-               nil
+           versions
+           nil
 
-               ops
-               nil
+           ops
+           nil
 
-               done?
-               false]
+           done?
+           false]
 
           (cond done? (up versions ops)
                 (empty? rs) (if versions (up versions ops) {:status :unresponsive})
                 (> (System/currentTimeMillis) deadline)
                 (if versions (up versions ops) {:status :unresponsive})
-                :else (let [msg
-                            (first rs)
+                :else (let
+                        [msg
+                         (first rs)
 
-                            mg
-                            (fn [k]
-                              (or (get msg k) (get msg (keyword k))))
+                         mg
+                         (fn [k]
+                           (or (get msg k) (get msg (keyword k))))
 
-                            v
-                            (describe-versions (mg "versions"))
+                         v
+                         (describe-versions (mg "versions"))
 
-                            o
-                            (mg "ops")
+                         o
+                         (mg "ops")
 
-                            s
-                            (mg "status")
+                         s
+                         (mg "status")
 
-                            st
-                            (cond (nil? s) #{}
-                                  (string? s) #{s}
-                                  (coll? s) (set (map str s))
-                                  :else #{(str s)})]
+                         st
+                         (cond (nil? s) #{}
+                               (string? s) #{s}
+                               (coll? s) (set (map str s))
+                               :else #{(str s)})]
 
                         (recur (next rs) (or v versions) (or o ops) (contains? st "done"))))))
       (catch clojure.lang.ExceptionInfo e
@@ -776,30 +891,32 @@
   [{:keys [host port timeout-ms] :or {host "localhost" timeout-ms 2000}}]
   (if-not (pos? (long (or port 0)))
     {:status :down :form health-form}
-    (let [start
-          (System/currentTimeMillis)
+    (let
+      [start
+       (System/currentTimeMillis)
 
-          deadline
-          (+ start (long timeout-ms))]
+       deadline
+       (+ start (long timeout-ms))]
 
       (try
-        (let [conn
-              (connection-for host port timeout-ms)
+        (let
+          [conn
+           (connection-for host port timeout-ms)
 
-              client
-              (nrepl/client conn timeout-ms)
+           client
+           (nrepl/client conn timeout-ms)
 
-              session
-              (nrepl/client-session client :session (health-session-id-for client host port))
+           session
+           (nrepl/client-session client :session (health-session-id-for client host port))
 
-              responses
-              (session {:op "eval" :code health-form})
+           responses
+           (session {:op "eval" :code health-form})
 
-              combined
-              (combine responses deadline)
+           combined
+           (combine responses deadline)
 
-              ms
-              (- (System/currentTimeMillis) start)]
+           ms
+           (- (System/currentTimeMillis) start)]
 
           (cond
             (get combined "timed_out")

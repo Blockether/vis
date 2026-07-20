@@ -91,15 +91,23 @@
 ;; ── language-facade wiring ───────────────────────────────────────────────────
 (defdescribe
   facade-test
-  (it "repl_eval auto-starts a REPL for the dir and returns the value"
+  (it "repl_eval requires explicit repl_start and then returns the value"
       (when (has-bun?)
         (let [root
               (tmp-dir)
 
               dir
-              (.getCanonicalPath root)]
+              (.getCanonicalPath root)
 
-          (try (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)} "3 * 7")]
+              env
+              {:workspace/root (.getPath root)}]
+
+          (try (expect (= :ts/no-repl
+                          (try (core/ts-repl-eval-fn env "3 * 7")
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+               (core/ts-start-repl-fn env "start" nil)
+               (let [r (core/ts-repl-eval-fn env "3 * 7")]
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
@@ -272,11 +280,13 @@
               api
               (.getCanonicalPath (io/file root "apps" "api"))]
 
-          (try ;; app dir: auto-start + eval succeed
+          (try ;; app dir: explicit start + eval succeed
+            (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {"dir" "apps/api"})
             (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)}
                                           {"code" "1+1" "dir" "apps/api"})]
               (expect (= "2" (get-in r [:result "value"]))))
             ;; explicit "." at the root is allowed (deliberate root REPL)
+            (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {"dir" "."})
             (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)}
                                           {"code" "40+2" "dir" "."})]
               (expect (= "42" (get-in r [:result "value"]))))
@@ -285,6 +295,7 @@
       (when (has-bun?)
         (let [root (tmp-dir)]
           (try (spit (io/file root "package.json") "{\"name\": \"solo\"}")
+               (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" nil)
                (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)} "2+3")]
                  (expect (= "5" (get-in r [:result "value"]))))
                (finally (repl/stop! (.getCanonicalPath root)) (cleanup root)))))))

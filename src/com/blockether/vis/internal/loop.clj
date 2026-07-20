@@ -2715,6 +2715,16 @@
             (when (or summary body) {:summary summary :body body})))]
 
     (cond
+      ;; The outer wall-clock BACKSTOP fired (the tool's own timeout did not return
+      ;; its structured result first): there is no :result to render, but the card
+      ;; must still read as a TIMEOUT — a distinct ⧖ headline, not the raw
+      ;; :vis/native-tool-timeout error string. Sits FIRST so a timeout always wins
+      ;; its own display regardless of any partial stdout/error also present.
+      (:timeout? result*)
+      (let [err (:error result*)
+            ms (some-> err :data :timeout-ms)]
+        {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
+         :body (some-> (:message err) str not-empty clip (->> (str "\n")))})
       ;; renderer returned a canonical {:summary :body} card …
       (map? custom) (->card custom)
       ;; … or a legacy bare string (body only, no summary)
@@ -3347,9 +3357,10 @@
   []
   {:name "apropos"
    :description (str "List available Python sandbox tools as a compact "
-                     "{name: one-line gist} map. Omit `query` to list all tools. "
-                     "This is the same `apropos(query)` function available inside "
-                     "python_execution; use `doc` for one tool's full contract.")
+                     "markdown `| tool | gist |` table. Omit `query` to list all tools. "
+                     "The same tools are also callable inside python_execution via "
+                     "`apropos(query)`, which returns a `{name: gist}` dict for filtering; "
+                     "use `doc` for one tool's full contract.")
    :schema {:type "object"
             :properties {"query" {:type "string"
                                   :description "Optional substring used to filter tool names."}}}})
@@ -3368,7 +3379,7 @@
             :required ["name"]}})
 
 (def ^:private engine-native-tool-call-shapes
-  {"apropos" {:opt-pos ["query"]}
+  {"apropos" {:py-name "__vis_apropos_table__" :opt-pos ["query"]}
    "doc" {:pos ["name"]}
    "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
@@ -5312,7 +5323,7 @@
 ;; aliases`, `extension-namespace-bindings`, `require-extension-
 ;; alias!`) into a separate ns (e.g. `internal/extension_environment.clj`).
 ;; Tracked as the proper file-split task (sister of
-;; `extension-info` declare in extension.clj). See AGENTS.md S2.
+;; `extension-info` declare in extension.clj).
 (declare sync-active-extension-symbols!)
 
 (def ^:private FRESH_ITER_CARRY

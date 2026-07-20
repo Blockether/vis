@@ -261,4 +261,4 @@ Vis uses [lazytest](https://github.com/NoahTheDuke/lazytest); test tool function
       (expect (= "Oslo" (:city (:result result)))))))
 ```
 
-Before shipping: `cljfmt` clean, `clj-kondo` clean, `./verify.sh --quick` green when developing inside the Vis repo.
+Before shipping, run `clojure -M:format check`, `clojure -M:lint src extensions test build.clj`, and the relevant tests.

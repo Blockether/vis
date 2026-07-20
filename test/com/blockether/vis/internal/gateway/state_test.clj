@@ -88,8 +88,8 @@
   (it "provider-call and shell-run project to ephemeral activity events"
       (expect (= ["activity" false {:activity "provider-call" :iteration 1}]
                  (#'state/chunk->event {:phase :provider-call :iteration 1})))
-      (expect (= ["activity" false {:activity "shell-run" :iteration 1 :cmd "./verify.sh"}]
-                 (#'state/chunk->event {:phase :shell-run :iteration 1 :cmd "./verify.sh"}))))
+      (expect (= ["activity" false {:activity "shell-run" :iteration 1 :cmd "clojure -M:test"}]
+                 (#'state/chunk->event {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}))))
   (it "response-parse :done does NOT emit an activity event (the parse finished)"
       (let [[type] (#'state/chunk->event {:phase :response-parse :iteration 1 :status :done})]
         (expect (not= "activity" type)))))

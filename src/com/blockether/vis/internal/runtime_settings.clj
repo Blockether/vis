@@ -27,9 +27,11 @@
   1000)
 
 (defn native-tool-timeout-ms
-  "Return the outer wall-clock deadline for a native handler. An explicit
-   `timeout_ms` gets a short grace period; otherwise the 30-second fallback.
-   Capped at `MAX_EVAL_TIMEOUT_MS`."
+  "Return the outer wall-clock deadline for a native handler. Always sits a short
+   grace period ABOVE the tool's own budget — an explicit `timeout_ms`, otherwise
+   the 30-second fallback — so a tool whose internal timeout equals the fallback
+   (e.g. repl_eval's 30s default) still gets to produce its STRUCTURED timeout
+   result before the wall fires. Capped at `MAX_EVAL_TIMEOUT_MS`."
   [input]
   (let [requested
         (when (map? input)
@@ -39,9 +41,13 @@
         (when (and (number? requested) (pos? (long requested))) (long requested))
 
         base
-        (long (if requested
-                (+ (long requested) (long native-tool-timeout-grace-ms))
-                NATIVE_TOOL_TIMEOUT_MS))]
+        ;; ALWAYS add the grace: the wall is a BACKSTOP, never a co-deadline. If it
+        ;; equalled the tool's own timeout the two would race and the wall's raw
+        ;; :vis/native-tool-timeout error would clobber the tool's nice structured
+        ;; timeout result (repl_eval's `⧖ timed out after Nms` card degraded to a
+        ;; bare message string exactly because default == default here).
+        (+ (long (if requested (long requested) NATIVE_TOOL_TIMEOUT_MS))
+           (long native-tool-timeout-grace-ms))]
 
     (long (min (long MAX_EVAL_TIMEOUT_MS) base))))
 
