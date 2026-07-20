@@ -866,22 +866,22 @@
 
 (defn- render-html-list
   [tag children {:keys [start] :as opts}]
-  (let [n (atom (or start 1))]
+  ;; Ordered markers are a pure function of the item index (start + i), so no
+  ;; mutable counter is needed — a side-effecting `swap!` inside a lazy `map`
+  ;; was both a latent realization hazard and needless CAS traffic.
+  (let [ordered? (= tag :ol)
+        s0 (long (or start 1))]
     (apply str
-      (map (fn [li]
-             (let [marker (if (= tag :ul)
-                            "• "
-                            (let [m (str @n ". ")]
-                              (swap! n inc)
-                              m))
-                   ;; Loose CommonMark lists wrap each item's content in a
-                   ;; <p>, whose trailing "\n\n" would stack on the list's
-                   ;; own per-item "\n" and triple-space the bullets. Strip
-                   ;; the item's trailing newlines (same as render-plain-list).
-                   inner (str/replace (render-html-children (node-children li) opts) #"\n+$" "")]
-
-               (str marker inner "\n")))
-           children))))
+      (map-indexed
+        (fn [i li]
+          (let [marker (if ordered? (str (+ s0 (long i)) ". ") "• ")
+                ;; Loose CommonMark lists wrap each item's content in a
+                ;; <p>, whose trailing "\n\n" would stack on the list's
+                ;; own per-item "\n" and triple-space the bullets. Strip
+                ;; the item's trailing newlines (same as render-plain-list).
+                inner (str/replace (render-html-children (node-children li) opts) #"\n+$" "")]
+            (str marker inner "\n")))
+        children))))
 
 (defn- render-html-table
   [node opts]
@@ -1061,29 +1061,15 @@
 
 (defn- render-md-list
   [tag children {:keys [start] :as opts}]
-  (let [n
-        (atom (or start 1))
-
-        ordered?
-        (= tag :ol)]
-
+  (let [ordered? (= tag :ol)
+        s0 (long (or start 1))]
     (apply str
-      (map (fn [li]
-             (let [marker
-                   (if ordered?
-                     (let [m (str @n ". ")]
-                       (swap! n inc)
-                       m)
-                     "- ")
-
-                   inner
-                   (render-md-children (node-children li) opts)
-
-                   inner
-                   (str/replace inner #"\n+$" "")]
-
-               (str marker inner "\n")))
-           children))))
+      (map-indexed
+        (fn [i li]
+          (let [marker (if ordered? (str (+ s0 (long i)) ". ") "- ")
+                inner (str/replace (render-md-children (node-children li) opts) #"\n+$" "")]
+            (str marker inner "\n")))
+        children))))
 
 (defn- render-md-table
   [node opts]
@@ -1260,26 +1246,15 @@
 
 (defn- render-plain-list
   [tag children {:keys [start] :as opts}]
-  (let [n
-        (atom (or start 1))
-
-        ordered?
-        (= tag :ol)]
-
+  (let [ordered? (= tag :ol)
+        s0 (long (or start 1))]
     (apply str
-      (map (fn [li]
-             (let [marker
-                   (if ordered?
-                     (let [m (str @n ". ")]
-                       (swap! n inc)
-                       m)
-                     "• ")
-
-                   inner
-                   (str/replace (render-plain-children (node-children li) opts) #"\n+$" "")]
-
-               (str marker inner "\n")))
-           children))))
+      (map-indexed
+        (fn [i li]
+          (let [marker (if ordered? (str (+ s0 (long i)) ". ") "• ")
+                inner (str/replace (render-plain-children (node-children li) opts) #"\n+$" "")]
+            (str marker inner "\n")))
+        children))))
 
 (defn- render-plain-table
   [node opts]
