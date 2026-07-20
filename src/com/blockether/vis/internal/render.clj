@@ -867,21 +867,27 @@
 (defn- render-html-list
   [tag children {:keys [start] :as opts}]
   ;; Ordered markers are a pure function of the item index (start + i), so no
-  ;; mutable counter is needed — a side-effecting `swap!` inside a lazy `map`
-  ;; was both a latent realization hazard and needless CAS traffic.
+  ;; mutable counter is needed. A single StringBuilder appends the marker
+  ;; (ordinal written straight in via `.append(long)` — no intermediate String),
+  ;; the item body, and the per-item "\n" in one pass, avoiding the N throwaway
+  ;; `(str marker inner "\n")` concatenations plus the outer `apply str`.
   (let [ordered? (= tag :ol)
-        s0 (long (or start 1))]
-    (apply str
-      (map-indexed
-        (fn [i li]
-          (let [marker (if ordered? (str (+ s0 (long i)) ". ") "• ")
-                ;; Loose CommonMark lists wrap each item's content in a
-                ;; <p>, whose trailing "\n\n" would stack on the list's
-                ;; own per-item "\n" and triple-space the bullets. Strip
-                ;; the item's trailing newlines (same as render-plain-list).
-                inner (str/replace (render-html-children (node-children li) opts) #"\n+$" "")]
-            (str marker inner "\n")))
-        children))))
+        s0 (long (or start 1))
+        sb (StringBuilder.)]
+    (loop [i 0, cs (seq children)]
+      (if cs
+        (let [li (first cs)
+              ;; Loose CommonMark lists wrap each item's content in a <p>, whose
+              ;; trailing "\n\n" would stack on the list's own per-item "\n" and
+              ;; triple-space the bullets. Strip the item's trailing newlines.
+              inner (str/replace (render-html-children (node-children li) opts) #"\n+$" "")]
+          (if ordered?
+            (-> sb (.append (+ s0 (long i))) (.append ". "))
+            (.append sb "• "))
+          (.append sb ^String inner)
+          (.append sb "\n")
+          (recur (inc i) (next cs)))
+        (.toString sb)))))
 
 (defn- render-html-table
   [node opts]
@@ -1061,15 +1067,22 @@
 
 (defn- render-md-list
   [tag children {:keys [start] :as opts}]
+  ;; Single StringBuilder pass; ordinal appended via `.append(long)`, no
+  ;; intermediate marker/item strings (see render-html-list).
   (let [ordered? (= tag :ol)
-        s0 (long (or start 1))]
-    (apply str
-      (map-indexed
-        (fn [i li]
-          (let [marker (if ordered? (str (+ s0 (long i)) ". ") "- ")
-                inner (str/replace (render-md-children (node-children li) opts) #"\n+$" "")]
-            (str marker inner "\n")))
-        children))))
+        s0 (long (or start 1))
+        sb (StringBuilder.)]
+    (loop [i 0, cs (seq children)]
+      (if cs
+        (let [li (first cs)
+              inner (str/replace (render-md-children (node-children li) opts) #"\n+$" "")]
+          (if ordered?
+            (-> sb (.append (+ s0 (long i))) (.append ". "))
+            (.append sb "- "))
+          (.append sb ^String inner)
+          (.append sb "\n")
+          (recur (inc i) (next cs)))
+        (.toString sb)))))
 
 (defn- render-md-table
   [node opts]
@@ -1246,15 +1259,22 @@
 
 (defn- render-plain-list
   [tag children {:keys [start] :as opts}]
+  ;; Single StringBuilder pass; ordinal appended via `.append(long)`, no
+  ;; intermediate marker/item strings (see render-html-list).
   (let [ordered? (= tag :ol)
-        s0 (long (or start 1))]
-    (apply str
-      (map-indexed
-        (fn [i li]
-          (let [marker (if ordered? (str (+ s0 (long i)) ". ") "• ")
-                inner (str/replace (render-plain-children (node-children li) opts) #"\n+$" "")]
-            (str marker inner "\n")))
-        children))))
+        s0 (long (or start 1))
+        sb (StringBuilder.)]
+    (loop [i 0, cs (seq children)]
+      (if cs
+        (let [li (first cs)
+              inner (str/replace (render-plain-children (node-children li) opts) #"\n+$" "")]
+          (if ordered?
+            (-> sb (.append (+ s0 (long i))) (.append ". "))
+            (.append sb "• "))
+          (.append sb ^String inner)
+          (.append sb "\n")
+          (recur (inc i) (next cs)))
+        (.toString sb)))))
 
 (defn- render-plain-table
   [node opts]
