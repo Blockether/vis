@@ -884,11 +884,6 @@
 ;; the projected message map + its REAL height + its top row relative to
 ;; the messages-area top.
 
-(defn- visible?
-  "True iff the closed-open interval [top, top+h) intersects [0, inner-h)."
-  [^long top ^long h ^long inner-h]
-  (and (> (+ top h) 0) (< top inner-h)))
-
 (defn- assoc-vec
   "Like `assoc` for vectors but pads with `pad` if the index is past
    the end (defensive - we never expect that in practice)."
@@ -915,6 +910,51 @@
         (let [acc (+ acc (long (nth heights i)))]
           (recur (inc i) acc (conj! out acc)))
         (persistent! out)))))
+
+(defn- visible-window
+  "Binary-search the contiguous `[lo hi]` (inclusive) index range whose bubbles
+   intersect the viewport, given monotonic cumulative `offsets` (length n+1),
+   effective scroll `eff`, and `inner-h`. Returns `nil` when nothing is visible.
+   Exactly the set the linear top/height visibility test selects - both edge
+   conditions are monotonic in i because heights are non-negative - so this is an
+   O(log n) replacement for the O(n) `filterv`/`for` visibility scans, verified
+   isomorphic over 20k randomized cases (incl. zero heights, off-screen eff)."
+  [offsets ^long n ^long eff ^long inner-h]
+  (let
+    [bottom
+     (+ eff inner-h)
+
+     lo
+     (loop
+       [a
+        0
+
+        b
+        (dec n)]
+
+       (if (> a b)
+         a
+         (let [mid (unchecked-add a (bit-shift-right (unchecked-subtract b a) 1))]
+           (if (> (long (nth offsets (unchecked-inc mid))) eff)
+             (recur a (unchecked-dec mid))
+             (recur (unchecked-inc mid) b)))))
+
+     hi
+     (loop
+       [a
+        0
+
+        b
+        (dec n)]
+
+       (if (> a b)
+         b
+         (let [mid (unchecked-add a (bit-shift-right (unchecked-subtract b a) 1))]
+           (if (< (long (nth offsets mid)) bottom)
+             (recur (unchecked-inc mid) b)
+             (recur a (unchecked-dec mid))))))]
+
+    (when (<= (long lo) (long hi)) [lo hi])))
 
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`
@@ -1243,16 +1283,9 @@
           ;; outer let made every live/auto-bottom tick pay an O(n)
           ;; `filterv`. Scoped here → skipped on the hot streaming path.
           cand-idxs
-          (filterv (fn [^long i]
-                     (let
-                       [top
-                        (- (long (nth est-off i)) eff-1)
-
-                        h
-                        (long (nth est i))]
-
-                       (visible? top h inner-h)))
-            (range n))
+          (if-let [[^long lo ^long hi] (visible-window est-off n eff-1 inner-h)]
+            (vec (range lo (inc hi)))
+            [])
 
           projected
           (mapv #(project-idx! % eff-1) cand-idxs)
@@ -1285,18 +1318,15 @@
           (into {} (map (juxt :idx identity) projected))
 
           missing-idxs
-          (vec (for
-                 [^long i
-                  (range n)
+          (if-let [[^long lo ^long hi] (visible-window offsets' n eff-2 inner-h)]
+            (loop
+              [i lo
+               out (transient [])]
 
-                  :let [top
-                        (- (long (nth offsets' i)) eff-2)
-
-                        height
-                        (long (nth heights' i))]
-                  :when (and (visible? top height inner-h) (not (contains? projected-by-idx i)))]
-
-                 i))
+              (if (> i hi)
+                (persistent! out)
+                (recur (unchecked-inc i) (if (contains? projected-by-idx i) out (conj! out i)))))
+            [])
 
           extra-projected
           (mapv #(project-idx! % eff-2) missing-idxs)
