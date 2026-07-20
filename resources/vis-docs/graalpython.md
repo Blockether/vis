@@ -4,7 +4,7 @@ The agent's actions are **code**, and that code runs in an embedded Python inter
 
 ## In-process, not a subprocess
 
-GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares the process with the Clojure core. Tools are exposed to the sandbox as ordinary async functions — `cat`, `index`, `struct_patch`, `rg`, `find_files` — so the model composes them in code: filter, map, summarize, pipe one tool's output into another, all without any of it touching the prompt.
+GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares the process with the Clojure core. Tools are exposed to the sandbox as ordinary async functions — `cat`, `struct_index`, `struct_patch`, `rg`, `find_files` — while `apropos` and `doc` synchronously inspect the live surface. The model can compose, filter, and summarize many results in vars, then print only the useful slice into context.
 
 ## Sandboxed by design
 
@@ -14,7 +14,7 @@ The Context is **deny-by-default**: no host-class access, native access off, pol
 
 Vis runs Python in **two different places**, and they deliberately do not see the same modules. Reaching for the wrong one is the usual source of a confusing `ModuleNotFoundError`, so the split is worth naming:
 
-- **The sandbox surface — `python_execution`.** The in-process GraalPy Context described above. It is **hermetic**: the Python standard library plus the shims Vis bundles (a stdlib-only `pytest`, `paramiko`, `tomllib`, and friends), and **none of your project's installed packages**. This is the action layer — where the model composes tools, filters output, and runs pure-logic compute. There is no `pip install` here; if a block imports `requests` or `numpy` it fails, by design, because the sandbox has no site-packages and no network.
+- **The sandbox surface — `python_execution`.** The in-process GraalPy Context described above. It is **hermetic**: the Python standard library plus Vis's advertised compatibility shims, and **none of the host project's installed packages**. This is the action layer for composing tools, filtering output, and pure-logic compute. There is no `pip install`; inspect the live capabilities with `apropos` / `doc` instead of assuming a module is available.
 
 - **The project surface — `repl_start("python")` + `repl_eval("python")`.** `repl_start` spawns a **real interpreter subprocess** — your project's `uv` / `poetry` / `.venv` / `python3`, chosen the way you'd run it yourself — and `repl_eval` evaluates in that already-running process. It sees the project's actual installed dependencies and site-packages. It is *not* the sandbox: none of the Vis shims are present, IO and network are whatever that interpreter normally has, and it is meant for exercising real project code against real deps.
 

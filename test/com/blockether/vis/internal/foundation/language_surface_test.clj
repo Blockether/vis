@@ -255,6 +255,42 @@
           (expect (str/starts-with? summary "✗"))
           (expect (str/includes? summary "9 failed"))
           (expect (str/includes? body "9 failures"))))
+    (it "renders structured failures as an expectation-vs-reality table"
+        (let
+          [{:keys [body]} (render {"ns" "foo-test"
+                                   "pass" 1
+                                   "total" 3
+                                   "fail" 2
+                                   "failures" [{"ns" "foo-test"
+                                                "test" "a"
+                                                "message" "Expectation failed"
+                                                "file" "test/foo_test.clj"
+                                                "line" 12
+                                                "expected" "(= 1 x)"
+                                                "actual" "2"}]
+                                   "output" "digest"})]
+          ;; a clean expectation failure drops the redundant "Expectation failed"
+          ;; message and reads purely as expected vs actual
+          (expect (str/includes? body "| test | at | expected | actual |"))
+          (expect (not (str/includes? body "Expectation failed")))
+          (expect (str/includes? body "foo-test/a"))
+          (expect (str/includes? body "test/foo_test.clj:12"))
+          ;; structured failures win over the raw output fallback
+          (expect (not (str/includes? body "digest")))))
+    (it "keeps a message column when a fault has no expected/actual pair"
+        (let
+          [{:keys [body]} (render {"ns" "foo-test"
+                                   "pass" 0
+                                   "total" 1
+                                   "fail" 1
+                                   "failures" [{"ns" "foo-test"
+                                                "test" "boom"
+                                                "message" "NullPointerException: null"
+                                                "file" "test/foo_test.clj"
+                                                "line" 7}]
+                                   "output" "digest"})]
+          (expect (str/includes? body "| test | at | message |"))
+          (expect (str/includes? body "NullPointerException: null"))))
     (it "surfaces the error text when the run could not produce a result"
         (let [{:keys [summary body]} (render {"error" "could not parse test result"})]
           (expect (str/starts-with? summary "✗"))
@@ -279,7 +315,7 @@
                                                       "log" "/tmp/vis-nrepl.log"
                                                       "cmd" ["clojure" "-M:vis/nrepl-launch"]
                                                       "log_tail" ["boom" "stack"]})]
-                     (expect (str/starts-with? summary "✗ REPL nrepl:/repo failed :5555"))
+                     (expect (str/starts-with? summary "✗ nrepl:/repo failed :5555"))
                      (expect (str/includes? body "MESSAGE\nlauncher died"))
                      (expect (str/includes? body "EXIT\n42"))
                      (expect (str/includes? body "LOG\n/tmp/vis-nrepl.log"))
@@ -437,9 +473,8 @@
              "findings" [{"file" "src/foo.clj" "row" 3 "col" 5 "level" "error" "message" "boom"}]})]
           (expect (str/includes? summary "`src/foo.clj`"))
           (expect (str/includes? summary "1 error"))
-          (expect (str/includes? body "src/foo.clj"))
-          (expect (str/includes? body "  3:5 error: boom"))))
-    (it "findings across many files GROUP under one path header each, path never repeated"
+          (expect (str/includes? body "| src/foo.clj | 3:5 | error | boom |"))))
+    (it "findings across many files each render as their own table row"
         (let
           [{:keys [body]}
            (@render
@@ -451,9 +486,7 @@
              "findings" [{"file" "src/a.clj" "row" 1 "col" 1 "level" "error" "message" "one"}
                          {"file" "src/a.clj" "row" 9 "col" 2 "level" "error" "message" "two"}
                          {"file" "src/b.clj" "row" 4 "col" 3 "level" "error" "message" "three"}]})]
-          ;; each path header appears EXACTLY once, findings indented beneath it
-          (expect (= 1 (count (re-seq #"(?m)^src/a\.clj$" body))))
-          (expect (= 1 (count (re-seq #"(?m)^src/b\.clj$" body))))
-          (expect (str/includes? body "  1:1 error: one"))
-          (expect (str/includes? body "  9:2 error: two"))
-          (expect (str/includes? body "  4:3 error: three"))))))
+          ;; every finding is its own table row (file column repeated per row)
+          (expect (str/includes? body "| src/a.clj | 1:1 | error | one |"))
+          (expect (str/includes? body "| src/a.clj | 9:2 | error | two |"))
+          (expect (str/includes? body "| src/b.clj | 4:3 | error | three |"))))))

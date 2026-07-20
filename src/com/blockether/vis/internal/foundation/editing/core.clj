@@ -5098,9 +5098,9 @@
        await struct_patch({\"path\": P, \"op\": \"move_after\", \"target\": \"helper\", \"anchor\": \"dep\"})
      `kind` (function/class/method/…) disambiguates same-named defs; `replace_node`
      swaps the UNIQUE sub-expr equal to `match` (scope with `target`).
-   ops (by PATH/`at`): replace | insert_before | insert_after | append_child |
-     prepend_child (append/prepend = inside the node, after last / before first
-     child; delete = replace with \"\"). `at` is the named-child index path from
+   ops (by PATH/`at`/node anchor): replace | replace_node (alias) | insert_before |
+     insert_after | append_child | prepend_child (append/prepend = inside the node,
+     after last / before first child; delete = replace with \"\"). `at` is the
      struct_node(path); `nav` adds relative moves — the full clojure.zip vocabulary:
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
      {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_node(...) first,
@@ -5117,17 +5117,22 @@
          (throw (ex-info (str "struct_patch: unknown op " (pr-str (get args "op")))
                          {:type :ext.foundation.editing/struct-unknown-op :op (get args "op")})))
 
+     path-locator?
+     (or (contains? args "at")
+         ;; For moves, `anchor` is a definition NAME rather than a node handle.
+         (and (contains? args "anchor") (not (#{:move-before :move-after} raw-op))))
+
      ;; LENIENCY — do the obvious thing instead of erroring:
      ;;  • `delete` (by name OR path) = replace the located node with "" (there was
      ;;    no name-based delete op, so a model wanting to drop a dead def was stuck).
-     ;;  • `replace_node` given a `target` but no `match` is really a name-based
-     ;;    `replace` (the two are easy to confuse) — redirect instead of failing
-     ;;    with "replaceNode requires both match and code".
+     ;;  • `replace_node` with a PATH/anchor reuses the zipper's node-addressed
+     ;;    `replace`; with a target but no match it is the name-based `replace`.
      delete?
      (= raw-op :delete)
 
      op
      (cond delete? :replace
+           (and path-locator? (= raw-op :replace-node)) :replace
            (and (= raw-op :replace-node)
                 (str/blank? (str (get args "match")))
                 (not (str/blank? (str (get args "target")))))
@@ -5138,10 +5143,7 @@
      (if delete? "" (get args "code"))
 
      new-content
-     (if (or (contains? args "at")
-             ;; anchor entry: a `lineno:hash` row handle → node path. Excludes
-             ;; move_before/move_after, whose `anchor` is a def NAME, not a hashline.
-             (and (contains? args "anchor") (not (#{:move-before :move-after} op))))
+     (if path-locator?
        ;; PATH-based (the zipper): locate by named-child index path + moves.
        (let
          [lang
@@ -5249,7 +5251,8 @@
                :description "Replacement/insertion source (or the new name for rename)."}
        "kind" {:type "string"
                :description "function/class/method/… — disambiguates same-named defs."}
-       "match" {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
+       "match" {:type "string"
+                :description "For match-based replace_node: the unique sub-expr text to swap."}
        "anchor"
        {:type "string"
         :description

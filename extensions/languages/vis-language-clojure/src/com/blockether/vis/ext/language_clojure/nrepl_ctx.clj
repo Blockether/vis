@@ -108,7 +108,7 @@
      (or (:status probe) :unknown)
 
      detail
-     (cond-> {"dir" dir "port" port "managed" (not external?)}
+     (cond-> {"dir" (repl-manager/home-relativize dir) "port" port "managed" (not external?)}
        external?
        (assoc "host"
          (or host "localhost") "external"

@@ -1321,8 +1321,11 @@
           ;; tail back-walk and discarded these, so computing them in the
           ;; outer let made every live/auto-bottom tick pay an O(n)
           ;; `filterv`. Scoped here → skipped on the hot streaming path.
+          vis-window
+          (visible-window est-off n eff-1 inner-h)
+
           cand-idxs
-          (if-let [[^long lo ^long hi] (visible-window est-off n eff-1 inner-h)]
+          (if-let [[^long lo ^long hi] vis-window]
             (vec (range lo (inc hi)))
             [])
 
@@ -1342,12 +1345,41 @@
           total-h'
           (long (peek offsets'))
 
+          ;; ── In-frame anchor: kill the mid-scroll jump ─────────────
+          ;; Pass-1's `:prev-offsets` anchor only compensates for OFF-SCREEN
+          ;; height corrections (content above the viewport top, which stays
+          ;; on estimates frame-to-frame). But a never-measured bubble
+          ;; entering the top of the viewport is measured HERE, this frame,
+          ;; in pass-2. Trace estimates OVER-shoot, so the instant that
+          ;; clipped top bubble resolves to its (smaller) real height,
+          ;; everything below it lurches UP — the visible "jump in the middle
+          ;; of the scroll". Fix: pin the first FULLY-visible message's top.
+          ;; Shift the target scroll by however much content ABOVE that
+          ;; message changed height in this frame's projection, so its top
+          ;; row (and all content below) stays put across the correction.
+          ;; Costs nothing on the steady-state hot path: when every visible
+          ;; bubble was already measured, `offsets'` is identical to `est-off`
+          ;; and the shift is 0.
+          ;; Reuse the pass-1b binary-search window (no extra O(n) scan): its
+          ;; `lo` is the topmost message intersecting the viewport, clipped
+          ;; when `est-off[lo] < eff-1`. Anchor on the first FULLY-visible
+          ;; message (`lo` when top-aligned, else `lo+1`) so a shrinking
+          ;; clipped top bubble is absorbed into its own off-screen portion
+          ;; instead of yanking the rows below it.
+          anchor-idx
+          (long (if-let [[^long lo _] vis-window]
+                  (if (>= (long (nth est-off lo)) eff-1) lo (min (dec n) (inc lo)))
+                  0))
+
+          anchor-shift'
+          (- (long (nth offsets' anchor-idx)) (long (nth est-off anchor-idx)))
+
           ;; Re-clamp against the REAL `total-h'`, not the pass-1
           ;; `eff-1`. When estimates undershoot the real total,
           ;; max-scroll grows in pass-2 - piping `eff-1` through `min`
           ;; here would pin the user above the true bottom.
           eff-2
-          (long (max 0 (min (long scroll) (max 0 (- total-h' inner-h)))))
+          (long (max 0 (min (+ (long scroll) anchor-shift') (max 0 (- total-h' inner-h)))))
 
           ;; Pass 3 ── recovery for messages visible at the refined
           ;; `eff-2` but missed at the cheap `eff-1`. A stable bubble
@@ -1385,8 +1417,14 @@
           total-h''
           (long (peek offsets''))
 
+          ;; Same anchor, now against the fully-recovered `offsets''`, so the
+          ;; pinned message's top is exact even after pass-3 fills bubbles
+          ;; that the shifted viewport newly intersects.
+          anchor-shift''
+          (- (long (nth offsets'' anchor-idx)) (long (nth est-off anchor-idx)))
+
           eff-3
-          (long (max 0 (min (long scroll) (max 0 (- total-h'' inner-h)))))
+          (long (max 0 (min (+ (long scroll) anchor-shift'') (max 0 (- total-h'' inner-h)))))
 
           visible-set
           (mapv (fn [{:keys [^long idx ^long height projected]}]

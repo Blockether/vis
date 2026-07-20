@@ -9,7 +9,15 @@
             [com.blockether.vis.core :as vis])
   (:import [com.jcraft.jsch ChannelExec ChannelSftp JSch KeyPair Session SftpATTRS]
            [java.io ByteArrayInputStream ByteArrayOutputStream File]
-           [java.util Base64 Properties]))
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [java.util Base64 Properties]
+           [org.apache.sshd.common.util.net SshdSocketAddress]
+           [org.apache.sshd.server SshServer]
+           [org.apache.sshd.server.auth.password PasswordAuthenticator]
+           [org.apache.sshd.server.forward ForwardingFilter]
+           [org.apache.sshd.server.keyprovider SimpleGeneratorHostKeyProvider]
+           [org.graalvm.polyglot Value]))
 
 ;; Host-side registries: handle (long) -> JSch Session / ChannelSftp.
 
@@ -20,6 +28,12 @@
 (defonce ^:private sftp-registry (atom {}))
 
 (defonce ^:private sftp-counter (atom 0))
+
+;; Host-side registry: handle (long) -> running Apache MINA SSHD server.
+
+(defonce ^:private server-registry (atom {}))
+
+(defonce ^:private server-counter (atom 0))
 
 (defn- reg-sess!
   [^Session s]
@@ -316,6 +330,79 @@
          (keypair->map kp private-b64)
          (finally (.dispose kp)))))
 
+(defn- reg-server!
+  [entry]
+  (let [h (swap! server-counter inc)]
+    (swap! server-registry assoc h entry)
+    h))
+
+(defn- guest->clj
+  "Coerce a polyglot return `Value` (or a plain value) to a Clojure scalar."
+  [r]
+  (if (instance? Value r)
+    (cond (.isNull r) nil
+          (.isBoolean r) (.asBoolean r)
+          (.isNumber r) (.asInt r)
+          (.isString r) (.asString r)
+          :else (.as r Object))
+    r))
+
+(defn- guest-call
+  "Invoke guest callable `f` (a polyglot `Value`) or a Clojure IFn with `args`,
+   coercing the result to a Clojure scalar. Safe from a non-guest (MINA acceptor)
+   thread: the session Context is built with `allowCreateThread` and GraalPy
+   permits concurrent access (see `env-python`)."
+  [f args]
+  (guest->clj (cond (instance? Value f) (.execute ^Value f (object-array args))
+                    (ifn? f) (apply f args)
+                    :else nil)))
+
+(defn- op-server-start
+  "Start an Apache MINA SSHD server on an ephemeral loopback port; returns
+   `{\"handle\" H \"port\" P}`. The paramiko shim's `Transport.start_server` relays
+   the pre-accepted client socket to `127.0.0.1:P`, so MINA terminates SSH while
+   auth and reverse-forward decisions delegate to the guest `ServerInterface`:
+   `auth-pw-fn` (-> paramiko AUTH_* int; 0 == success) and `forward-fn` (-> truthy
+   to allow a `tcpip-forward` request). A fresh host key is generated per server."
+  [auth-pw-fn forward-fn]
+  (let
+    [hostkey
+     (.resolve (Files/createTempDirectory "vis-sshd-hostkey" (make-array FileAttribute 0))
+               "hostkey.ser")
+
+     server
+     (doto (SshServer/setUpDefaultServer)
+       (.setHost "127.0.0.1")
+       (.setPort 0)
+       (.setKeyPairProvider (SimpleGeneratorHostKeyProvider. hostkey))
+       (.setPasswordAuthenticator (reify
+                                    PasswordAuthenticator
+                                      (authenticate [_ u p _session]
+                                        (try (= 0 (guest-call auth-pw-fn [u p]))
+                                             (catch Throwable _ false)))))
+       (.setForwardingFilter (reify
+                               ForwardingFilter
+                                 (canForwardAgent [_ _session _request-type] false)
+                                 (canForwardX11 [_ _session _request-type] false)
+                                 (canListen [_ address _session]
+                                   (try (boolean (guest-call
+                                                   forward-fn
+                                                   [(.getHostName ^SshdSocketAddress address)
+                                                    (.getPort ^SshdSocketAddress address)]))
+                                        (catch Throwable _ false)))
+                                 (canConnect [_ _type _address _session] true))))]
+
+    (.start server)
+    {"handle" (reg-server! {:server server :hostkey hostkey}) "port" (.getPort server)}))
+
+(defn- op-server-stop
+  "Stop and deregister the MINA server bound to handle `h`; returns nil."
+  [h]
+  (when-let [entry (get @server-registry (long h))]
+    (try (.stop ^SshServer (:server entry) true) (catch Throwable _ nil))
+    (swap! server-registry dissoc (long h)))
+  nil)
+
 (defn- paramiko-bridge-bindings
   "Host callables (pure-Java JSch) the paramiko shim delegates to."
   []
@@ -356,7 +443,11 @@
    "__vis_key_generate__" (fn [kind bits passphrase]
                             (ssh-envelope #(op-key-generate kind bits passphrase)))
    "__vis_key_load__" (fn [private-b64 passphrase]
-                        (ssh-envelope #(op-key-load private-b64 passphrase)))})
+                        (ssh-envelope #(op-key-load private-b64 passphrase)))
+   "__vis_server_start__" (fn [auth-pw forward]
+                            (ssh-envelope #(op-server-start auth-pw forward)))
+   "__vis_server_stop__" (fn [h]
+                           (ssh-envelope #(op-server-stop h)))})
 
 ;; Python preamble: publishes a paramiko-compatible module into sys.modules.
 
@@ -383,6 +474,8 @@
     _sftp_close = __vis_sftp_close__
     _key_generate = __vis_key_generate__
     _key_load = __vis_key_load__
+    _server_start = __vis_server_start__
+    _server_stop = __vis_server_stop__
     _NLB = bytes([10])
 
     def _b64d(s):
@@ -973,6 +1066,8 @@
             self._server_keys = []
             self._subsystem_handlers = {}
             self._server_started = False
+            self._server_handle = None
+            self._relay = None
 
         def is_active(self):
             if self._server_started:
@@ -1002,6 +1097,39 @@
 
         def start_server(self, event=None, server=None):
             self._server = server if server is not None else ServerInterface()
+            srv = self._server
+            sock = self._sock
+            if sock is not None and hasattr(sock, 'recv') and hasattr(sock, 'sendall'):
+                import socket as _socketmod, threading as _threadingmod
+                def _auth_pw(u, p):
+                    try:
+                        return srv.check_auth_password(u, p)
+                    except Exception:
+                        return AUTH_FAILED
+                def _forward(addr, port):
+                    try:
+                        return bool(srv.check_port_forward_request(addr, port))
+                    except Exception:
+                        return False
+                info = _call(_server_start, _auth_pw, _forward)
+                self._server_handle = info.get('handle')
+                relay = _socketmod.create_connection(('127.0.0.1', int(info.get('port'))))
+                self._relay = relay
+                def _pump(a, b):
+                    try:
+                        while True:
+                            d = a.recv(4096)
+                            if not d:
+                                break
+                            b.sendall(d)
+                    except Exception:
+                        pass
+                    try:
+                        b.shutdown(_socketmod.SHUT_WR)
+                    except Exception:
+                        pass
+                _threadingmod.Thread(target=_pump, args=(sock, relay), daemon=True).start()
+                _threadingmod.Thread(target=_pump, args=(relay, sock), daemon=True).start()
             self._server_started = True
             if event is not None and hasattr(event, 'set'):
                 event.set()
@@ -1028,6 +1156,18 @@
 
         def close(self):
             self._server_started = False
+            if getattr(self, '_server_handle', None) is not None:
+                try:
+                    _call(_server_stop, self._server_handle)
+                except Exception:
+                    pass
+                self._server_handle = None
+            if getattr(self, '_relay', None) is not None:
+                try:
+                    self._relay.close()
+                except Exception:
+                    pass
+                self._relay = None
             if self._sess is not None:
                 try:
                     _call(_close, self._sess)
@@ -1363,6 +1503,441 @@
                 with open(filename, 'r+') as f:
                     f.truncate(attr.st_size)
 
+    import struct as _struct, io as _io, fnmatch as _fnmatch, shlex as _shlex
+
+    _zero_byte = bytes([0])
+    _one_byte = bytes([1])
+    _max_byte = bytes([255])
+
+    def _u(s, encoding='utf8'):
+        if isinstance(s, bytes):
+            return s.decode(encoding)
+        return s
+
+    def _asbytes(s):
+        if isinstance(s, bytes):
+            return s
+        if isinstance(s, str):
+            return s.encode('utf-8')
+        if hasattr(s, 'asbytes'):
+            return s.asbytes()
+        raise Exception('Unknown type for ' + repr(s))
+
+    def _inflate_long(s, always_positive=False):
+        out = 0
+        negative = 0
+        if not always_positive and len(s) > 0 and s[0] >= 0x80:
+            negative = 1
+        if len(s) % 4:
+            filler = _zero_byte
+            if negative:
+                filler = _max_byte
+            s = filler * (4 - len(s) % 4) + s
+        for i in range(0, len(s), 4):
+            out = (out << 32) + _struct.unpack('>I', s[i:i + 4])[0]
+        if negative:
+            out -= (1 << (8 * len(s)))
+        return out
+
+    def _deflate_long(n, add_sign_padding=True):
+        s = bytes()
+        n = int(n)
+        while (n != 0) and (n != -1):
+            s = _struct.pack('>I', n & 0xffffffff) + s
+            n >>= 32
+        for i in enumerate(s):
+            if (n == 0) and (i[1] != 0):
+                break
+            if (n == -1) and (i[1] != 255):
+                break
+        else:
+            i = (0,)
+            if n == 0:
+                s = _zero_byte
+            else:
+                s = _max_byte
+        s = s[i[0]:]
+        if add_sign_padding:
+            if (n == 0) and (len(s) and s[0] >= 0x80):
+                s = _zero_byte + s
+            if (n == -1) and (len(s) and s[0] < 0x80):
+                s = _max_byte + s
+        return s
+
+    class Message(object):
+        big_int = 0xff000000
+        def __init__(self, content=None):
+            if content is not None:
+                self.packet = _io.BytesIO(bytes(content))
+            else:
+                self.packet = _io.BytesIO()
+        def __bytes__(self):
+            return self.asbytes()
+        def __repr__(self):
+            return 'paramiko.Message(' + repr(self.packet.getvalue()) + ')'
+        def asbytes(self):
+            return self.packet.getvalue()
+        def rewind(self):
+            self.packet.seek(0)
+        def get_remainder(self):
+            position = self.packet.tell()
+            remainder = self.packet.read()
+            self.packet.seek(position)
+            return remainder
+        def get_so_far(self):
+            position = self.packet.tell()
+            self.rewind()
+            return self.packet.read(position)
+        def get_bytes(self, n):
+            b = self.packet.read(n)
+            max_pad_size = 1 << 20
+            if len(b) < n < max_pad_size:
+                return b + _zero_byte * (n - len(b))
+            return b
+        def get_byte(self):
+            return self.get_bytes(1)
+        def get_boolean(self):
+            b = self.get_bytes(1)
+            return b != _zero_byte
+        def get_adaptive_int(self):
+            byte = self.get_bytes(1)
+            if byte == _max_byte:
+                return _inflate_long(self.get_binary())
+            byte += self.get_bytes(3)
+            return _struct.unpack('>I', byte)[0]
+        def get_int(self):
+            return _struct.unpack('>I', self.get_bytes(4))[0]
+        def get_int64(self):
+            return _struct.unpack('>Q', self.get_bytes(8))[0]
+        def get_mpint(self):
+            return _inflate_long(self.get_binary())
+        def get_string(self):
+            return self.get_bytes(self.get_int())
+        def get_text(self):
+            return _u(self.get_string())
+        def get_binary(self):
+            return self.get_bytes(self.get_int())
+        def get_list(self):
+            return self.get_text().split(',')
+        def add_bytes(self, b):
+            self.packet.write(b)
+            return self
+        def add_byte(self, b):
+            self.packet.write(b)
+            return self
+        def add_boolean(self, b):
+            if b:
+                self.packet.write(_one_byte)
+            else:
+                self.packet.write(_zero_byte)
+            return self
+        def add_int(self, n):
+            self.packet.write(_struct.pack('>I', n))
+            return self
+        def add_adaptive_int(self, n):
+            if n >= Message.big_int:
+                self.packet.write(_max_byte)
+                self.add_string(_deflate_long(n))
+            else:
+                self.packet.write(_struct.pack('>I', n))
+            return self
+        def add_int64(self, n):
+            self.packet.write(_struct.pack('>Q', n))
+            return self
+        def add_mpint(self, z):
+            self.add_string(_deflate_long(z))
+            return self
+        def add_string(self, s):
+            s = _asbytes(s)
+            self.add_int(len(s))
+            self.packet.write(s)
+            return self
+        def add_list(self, l):
+            self.add_string(','.join(l))
+            return self
+        def _add(self, i):
+            if type(i) is bool:
+                return self.add_boolean(i)
+            elif isinstance(i, int):
+                return self.add_adaptive_int(i)
+            elif type(i) is list:
+                return self.add_list(i)
+            else:
+                return self.add_string(i)
+        def add(self, *seq):
+            for item in seq:
+                self._add(item)
+
+    class Channel(_Channel):
+        pass
+
+    class ChannelFile(_ChannelFile):
+        pass
+
+    class ChannelStderrFile(_ChannelFile):
+        pass
+
+    class ChannelStdinFile(_ChannelStdinFile):
+        pass
+
+    class BufferedFile(object):
+        SEEK_SET = 0
+        SEEK_CUR = 1
+        SEEK_END = 2
+        def __init__(self):
+            self._closed = False
+        def close(self):
+            self._closed = True
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            self.close()
+            return False
+
+    class SFTPError(SSHException):
+        pass
+
+    class CouldNotCanonicalize(SSHException):
+        pass
+
+    class IncompatiblePeer(SSHException):
+        pass
+
+    class MessageOrderError(SSHException):
+        pass
+
+    class UnknownKeyType(Exception):
+        def __init__(self, key_type=None, key_bytes=None):
+            super().__init__('Unknown key type ' + str(key_type))
+            self.key_type = key_type
+            self.key_bytes = key_bytes
+
+    class PublicBlob(object):
+        def __init__(self, type_, blob, comment=None):
+            self.key_type = type_
+            self.key_blob = bytes(blob)
+            self.comment = comment
+        @classmethod
+        def from_string(cls, s):
+            fields = s.split(None, 2)
+            if len(fields) < 2:
+                raise ValueError('Not enough fields for public blob: ' + repr(s))
+            kind = fields[0]
+            blob = base64.b64decode(fields[1])
+            comment = fields[2].strip() if len(fields) > 2 else None
+            return cls(kind, blob, comment)
+        @classmethod
+        def from_file(cls, filename):
+            with open(filename) as f:
+                return cls.from_string(f.read())
+        def __str__(self):
+            ret = self.key_type + ' ' + _b64e(self.key_blob)
+            if self.comment:
+                ret += ' ' + self.comment
+            return ret
+        def __eq__(self, other):
+            return (isinstance(other, PublicBlob)
+                    and self.key_type == other.key_type
+                    and self.key_blob == other.key_blob)
+        def __hash__(self):
+            return hash((self.key_type, self.key_blob))
+
+    class SecurityOptions(object):
+        def __init__(self, transport=None):
+            self._transport = transport
+            self._ciphers = ()
+            self._digests = ()
+            self._kex = ()
+            self._key_types = ()
+            self._compression = ()
+        def __repr__(self):
+            return '<paramiko.SecurityOptions for vis shim>'
+        def _set(self, name, value):
+            setattr(self, '_' + name, tuple(value))
+        ciphers = property(lambda self: self._ciphers, lambda self, v: self._set('ciphers', v))
+        digests = property(lambda self: self._digests, lambda self, v: self._set('digests', v))
+        kex = property(lambda self: self._kex, lambda self, v: self._set('kex', v))
+        key_types = property(lambda self: self._key_types, lambda self, v: self._set('key_types', v))
+        compression = property(lambda self: self._compression, lambda self, v: self._set('compression', v))
+
+    class AgentKey(PKey):
+        def __init__(self, agent=None, blob=b'', comment='', **kw):
+            super().__init__()
+            self.agent = agent
+            self.blob = bytes(blob)
+            self.public_blob = None
+            self.comment = comment
+            self._name = 'ssh-agent-key'
+        def asbytes(self):
+            return self.blob
+        def get_name(self):
+            return self._name
+        def sign_ssh_data(self, data, algorithm=None):
+            raise SSHException('paramiko shim: SSH agent signing is unsupported in the sandbox')
+
+    class Agent(object):
+        def __init__(self):
+            self._keys = ()
+        def get_keys(self):
+            return self._keys
+        def keys(self):
+            return self._keys
+        def close(self):
+            return None
+
+    class ProxyCommand(object):
+        def __init__(self, command_line):
+            self.cmd = command_line
+            self.timeout = None
+            self.closed = False
+        def send(self, content):
+            raise ProxyCommandFailure(self.cmd, 'ProxyCommand is unsupported in the vis sandbox')
+        def recv(self, size):
+            raise ProxyCommandFailure(self.cmd, 'ProxyCommand is unsupported in the vis sandbox')
+        def close(self):
+            self.closed = True
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+    SSH_PORT = 22
+
+    class SSHConfigDict(dict):
+        def as_bool(self, key):
+            val = self.get(key)
+            if val is None:
+                return False
+            if isinstance(val, bool):
+                return val
+            return str(val).lower() in ('1', 'true', 'yes')
+        def as_int(self, key):
+            return int(self.get(key))
+
+    class SSHConfig(object):
+        def __init__(self):
+            self._config = []
+        @classmethod
+        def from_text(cls, text):
+            obj = cls()
+            obj.parse(_io.StringIO(text))
+            return obj
+        @classmethod
+        def from_path(cls, path):
+            with open(path) as fl:
+                return cls.from_file(fl)
+        @classmethod
+        def from_file(cls, flo):
+            obj = cls()
+            obj.parse(flo)
+            return obj
+        def parse(self, file_obj):
+            cur = {'host': ['*'], 'config': {}}
+            self._config = [cur]
+            for raw in file_obj:
+                line = raw.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line and (' ' not in line.split('=', 1)[0].strip()):
+                    key, value = line.split('=', 1)
+                else:
+                    parts = line.split(None, 1)
+                    key = parts[0]
+                    value = parts[1] if len(parts) > 1 else ''
+                key = key.strip().lower()
+                value = value.strip()
+                for q in (chr(34), chr(39)):
+                    if len(value) >= 2 and value.startswith(q) and value.endswith(q):
+                        value = value[1:-1]
+                        break
+                if key == 'host':
+                    cur = {'host': self._get_hosts(value), 'config': {}}
+                    self._config.append(cur)
+                elif key == 'match':
+                    cur = {'match': value, 'config': {}}
+                    self._config.append(cur)
+                else:
+                    if key in ('identityfile', 'localforward', 'remoteforward',
+                               'dynamicforward', 'certificatefile'):
+                        cur['config'].setdefault(key, []).append(value)
+                    elif key not in cur['config']:
+                        cur['config'][key] = value
+            return self._config
+        def lookup(self, hostname):
+            options = SSHConfigDict()
+            for entry in self._config:
+                if 'host' not in entry:
+                    continue
+                if not self._pattern_matches(entry['host'], hostname):
+                    continue
+                for key, value in entry['config'].items():
+                    if key in ('identityfile', 'certificatefile'):
+                        vals = value if isinstance(value, list) else [value]
+                        options.setdefault(key, []).extend(vals)
+                    elif key not in options:
+                        options[key] = list(value) if isinstance(value, list) else value
+            return self._expand_variables(options, hostname)
+        def _pattern_matches(self, patterns, target):
+            if isinstance(patterns, str):
+                patterns = [patterns]
+            match = False
+            for pattern in patterns:
+                neg = pattern.startswith('!')
+                pat = pattern[1:] if neg else pattern
+                if _fnmatch.fnmatch(target, pat):
+                    if neg:
+                        return False
+                    match = True
+            return match
+        def _get_hosts(self, host):
+            try:
+                return _shlex.split(host)
+            except ValueError:
+                raise ConfigParseError('Unparsable host ' + host)
+        def _safe_user(self):
+            try:
+                import getpass
+                return getpass.getuser()
+            except Exception:
+                return os.environ.get('USER') or ''
+        def _safe_host(self):
+            try:
+                import socket as _s
+                return _s.gethostname()
+            except Exception:
+                return ''
+        def _expand_variables(self, config, hostname):
+            if 'hostname' in config:
+                config['hostname'] = config['hostname'].replace('%h', hostname)
+            else:
+                config['hostname'] = hostname
+            port = config['port'] if 'port' in config else str(SSH_PORT)
+            user = self._safe_user()
+            fqdn = self._safe_host()
+            repl = {
+                '%h': config.get('hostname', hostname),
+                '%p': str(port),
+                '%r': config.get('user', user),
+                '%l': fqdn.split('.')[0] if fqdn else '',
+                '%u': user,
+                '%%': '%',
+            }
+            for key in list(config.keys()):
+                val = config[key]
+                if isinstance(val, list):
+                    config[key] = [self._sub_tokens(v, repl) for v in val]
+                elif isinstance(val, str):
+                    config[key] = self._sub_tokens(val, repl)
+            return config
+        def _sub_tokens(self, s, repl):
+            for k, v in repl.items():
+                s = s.replace(k, v)
+            return s
+        def get_hostnames(self):
+            hosts = set()
+            for entry in self._config:
+                if 'host' in entry:
+                    hosts.update(entry['host'])
+            return hosts
+
     def util_log_to_file(*a, **k):
         return None
 
@@ -1371,7 +1946,30 @@
     mod.__version__ = '3.5.0-vis'
     mod.__path__ = []
     mod.SSHClient = SSHClient
-    mod.SSHConfig = None
+    mod.SSHConfig = SSHConfig
+    mod.SSHConfigDict = SSHConfigDict
+    mod.SecurityOptions = SecurityOptions
+    mod.Channel = Channel
+    mod.ChannelFile = ChannelFile
+    mod.ChannelStderrFile = ChannelStderrFile
+    mod.ChannelStdinFile = ChannelStdinFile
+    mod.BufferedFile = BufferedFile
+    mod.Message = Message
+    mod.SFTP = SFTPClient
+    mod.SFTPError = SFTPError
+    mod.CouldNotCanonicalize = CouldNotCanonicalize
+    mod.IncompatiblePeer = IncompatiblePeer
+    mod.MessageOrderError = MessageOrderError
+    mod.PublicBlob = PublicBlob
+    mod.UnknownKeyType = UnknownKeyType
+    mod.Agent = Agent
+    mod.AgentKey = AgentKey
+    mod.ProxyCommand = ProxyCommand
+    mod.io_sleep = 0.01
+    mod.key_classes = [DSSKey, RSAKey, Ed25519Key, ECDSAKey]
+    mod.__version_info__ = (3, 5, 0)
+    mod.__author__ = 'Jeff Forcier <jeff@bitprophet.org>'
+    mod.__license__ = 'GNU Lesser General Public License (LGPL)'
     mod.Transport = Transport
     mod.SFTPClient = SFTPClient
     mod.SFTPFile = SFTPFile
@@ -1432,7 +2030,8 @@
     _exc = types.ModuleType('paramiko.ssh_exception')
     for _n in ('SSHException', 'AuthenticationException', 'PasswordRequiredException',
                'BadAuthenticationType', 'BadHostKeyException', 'ChannelException',
-               'ProxyCommandFailure', 'ConfigParseError', 'NoValidConnectionsError'):
+               'ProxyCommandFailure', 'ConfigParseError', 'NoValidConnectionsError',
+               'CouldNotCanonicalize', 'IncompatiblePeer', 'MessageOrderError'):
         setattr(_exc, _n, getattr(mod, _n))
     mod.ssh_exception = _exc
 
@@ -1458,10 +2057,13 @@
 
     _trans = types.ModuleType('paramiko.transport')
     _trans.Transport = Transport
+    _trans.SecurityOptions = SecurityOptions
     mod.transport = _trans
 
     _pkey = types.ModuleType('paramiko.pkey')
     _pkey.PKey = PKey
+    _pkey.PublicBlob = PublicBlob
+    _pkey.UnknownKeyType = UnknownKeyType
     mod.pkey = _pkey
 
     _rsa = types.ModuleType('paramiko.rsakey')
@@ -1498,6 +2100,7 @@
                 'SFTP_FLAG_TRUNC', 'SFTP_FLAG_EXCL'):
         setattr(_sftpm, _cn, getattr(mod, _cn))
     mod.sftp = _sftpm
+    _sftpm.SFTPError = SFTPError
 
     _sftpsrv = types.ModuleType('paramiko.sftp_server')
     _sftpsrv.SFTPServer = SFTPServer
@@ -1511,10 +2114,34 @@
     _sftph.SFTPHandle = SFTPHandle
     mod.sftp_handle = _sftph
 
+    _channelmod = types.ModuleType('paramiko.channel')
+    _channelmod.Channel = Channel
+    _channelmod.ChannelFile = ChannelFile
+    _channelmod.ChannelStderrFile = ChannelStderrFile
+    _channelmod.ChannelStdinFile = ChannelStdinFile
+    mod.channel = _channelmod
+    _msgmod = types.ModuleType('paramiko.message')
+    _msgmod.Message = Message
+    mod.message = _msgmod
+    _configmod = types.ModuleType('paramiko.config')
+    _configmod.SSHConfig = SSHConfig
+    _configmod.SSHConfigDict = SSHConfigDict
+    mod.config = _configmod
+    _agentmod = types.ModuleType('paramiko.agent')
+    _agentmod.Agent = Agent
+    _agentmod.AgentKey = AgentKey
+    mod.agent = _agentmod
+    _filemod = types.ModuleType('paramiko.file')
+    _filemod.BufferedFile = BufferedFile
+    mod.file = _filemod
+    _proxymod = types.ModuleType('paramiko.proxy')
+    _proxymod.ProxyCommand = ProxyCommand
+    mod.proxy = _proxymod
     sys.modules['paramiko'] = mod
     for _sub in ('util', 'ssh_exception', 'client', 'sftp_client', 'sftp_file',
                  'sftp_attr', 'transport', 'pkey', 'rsakey', 'ed25519key', 'ecdsakey',
-                 'server', 'common', 'sftp', 'sftp_server', 'sftp_si', 'sftp_handle'):
+                 'server', 'common', 'sftp', 'sftp_server', 'sftp_si', 'sftp_handle',
+                 'channel', 'message', 'config', 'agent', 'file', 'proxy'):
         sys.modules['paramiko.' + _sub] = getattr(mod, _sub)
 
     try:
@@ -1539,7 +2166,7 @@ del __vis_install_paramiko__
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/description
-       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. Low-level Transport server mode stores server keys, subsystem handlers, and starts/stops cleanly inside the shim; full SSH packet serving remains limited by the client-oriented JSch backend. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
+       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. Transport server mode over a real client socket is backed by an Apache MINA SSHD server: `Transport(sock).start_server()` serves reverse (`tcpip-forward`) port-forwarding, delegating password auth and forward approval to the Python `ServerInterface` (`check_auth_password`/`check_port_forward_request`); it degrades to a passive stub when given a non-socket. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
        :shim/bindings paramiko-bridge-bindings
        :shim/preamble paramiko-shim-src}]}))
 

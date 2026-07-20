@@ -227,7 +227,16 @@
              (finally (rm/stop! sid dir)))))))
 
 (defdescribe id-of-test
-             (it "derives a stable nrepl:<dir> id" (expect (= "nrepl:/x/y" (rm/id-of "/x/y")))))
+             (it "derives a stable nrepl:<dir> id for a path outside home"
+                 (expect (= "nrepl:/x/y" (rm/id-of "/x/y"))))
+             (it "canonicalizes so `.`/`..`/trailing-slash spellings of ONE dir collapse to ONE id"
+                 (let [home (System/getProperty "user.home")]
+                   (expect (= (rm/id-of home) (rm/id-of (str home "/"))))
+                   (expect (= (rm/id-of home) (rm/id-of (str home "/x/.."))))))
+             (it "homogenizes the user-home prefix to ~"
+                 (let [home (System/getProperty "user.home")]
+                   (expect (= "nrepl:~" (rm/id-of home)))
+                   (expect (= "nrepl:~/vis" (rm/id-of (str home "/vis")))))))
 
 (defdescribe
   resolve-target-ownership-test

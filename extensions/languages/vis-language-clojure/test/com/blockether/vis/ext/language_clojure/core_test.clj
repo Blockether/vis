@@ -227,6 +227,29 @@
                  (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file sub "probe.clj"))))))
              (finally (cleanup dir))))))
 
+(defdescribe
+  relativize-path-home-test
+  (it
+    "homogenizes a leading user-home to ~ for paths outside root (and the root itself), never a raw /Users/…"
+    (let
+      [rp
+       #'com.blockether.vis.ext.language-clojure.core/relativize-path
+
+       home
+       (System/getProperty "user.home")
+
+       root
+       (io/file (str home "/vis"))]
+
+      ;; under root -> workspace-relative
+      (expect (= "src/foo.clj" (rp root (str home "/vis/src/foo.clj"))))
+      ;; outside root but under home -> ~ prefix, not a machine-absolute path
+      (expect (= "~/other/foo.clj" (rp root (str home "/other/foo.clj"))))
+      ;; the root itself relativizes to "" -> home-homogenized absolute, not blank
+      (expect (= "~/vis" (rp root (str home "/vis"))))
+      ;; sentinels pass through untouched
+      (expect (= "<stdin>" (rp root "<stdin>"))))))
+
 
 (defdescribe
   single-relative-path-lint-test

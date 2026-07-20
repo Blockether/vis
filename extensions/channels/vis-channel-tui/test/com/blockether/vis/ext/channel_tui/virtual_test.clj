@@ -1028,7 +1028,82 @@
          frame2
          (virtual/layout msgs2 bubble-w settings 10 20 {} {:prev-offsets (:offsets frame1)})]
 
-        (expect (some? (:eff-scroll frame2))))))
+        (expect (some? (:eff-scroll frame2)))))
+  ;; Regression: the mid-scroll JUMP. Scrolling UP into never-measured
+  ;; overshooting bubbles, each resolves to its (smaller) real height in
+  ;; the SAME frame it enters the top of the viewport. The `:prev-offsets`
+  ;; anchor only covers OFF-SCREEN corrections, so without the in-frame
+  ;; anchor the content below the just-measured bubble lurched UP. Faithful
+  ;; sim: each frame's committed offset is last frame's `:anchored-scroll`,
+  ;; then the user wheels up `step`. A tracked message's screen row must
+  ;; advance by EXACTLY `step` every frame — never jump — even as `total-h`
+  ;; shrinks under it.
+  (it
+    "scrolling up never jumps a visible message as estimates resolve"
+    (virtual/invalidate-heights!)
+    (render/invalidate-cache!)
+    (let
+      [overshoot
+       (fn [i]
+         (-> (trace-assistant-msg 1 1 (str "ok " i))
+             (assoc-in [:traces 0 :forms 0 :result-render]
+                       (str/join "\n" (map #(str "line " % " out " i) (range 80))))))
+
+       msgs
+       (vec (map overshoot (range 40)))
+
+       inner-h
+       24
+
+       step
+       3
+
+       track
+       16
+
+       screen-top
+       (fn [ly]
+         (- (long (nth (:offsets ly) track)) (long (:eff-scroll ly))))
+
+       frames
+       (loop
+         [base
+          400
+
+          prev
+          nil
+
+          out
+          []
+
+          k
+          0]
+
+         (if (>= k 18)
+           out
+           (let
+             [scroll
+              (max 0 (- (long base) step))
+
+              ly
+              (virtual/layout msgs
+                              bubble-w
+                              settings
+                              scroll
+                              inner-h
+                              {}
+                              (when prev {:prev-offsets prev}))]
+
+             (recur (:eff-scroll ly) (:offsets ly) (conj out (screen-top ly)) (inc k)))))
+
+       deltas
+       (map - (rest frames) frames)]
+
+      ;; total-h actually shrinks across the sweep (bubbles get measured),
+      ;; so this is a live estimate->real correction, not a no-op.
+      (expect (every? (fn [d]
+                        (= d step))
+                      deltas)))))
 
 (defdescribe
   turn-separator-test

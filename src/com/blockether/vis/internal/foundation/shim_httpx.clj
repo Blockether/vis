@@ -12,7 +12,9 @@
    `.content`, `.json()`, `.headers`, `.url`, `.is_success/.is_error/.is_redirect`,
    `.raise_for_status()`), `Headers`, `URL`, `Timeout`, and the `httpx` exception
    tree (`HTTPError`, `RequestError`, `HTTPStatusError`, `TimeoutException`,
-   `ConnectError`). Async (`AsyncClient`) is intentionally omitted."
+   `ConnectError`). Async is supported too: an `AsyncClient` whose `request/get/
+   post/put/patch/delete/head/options` are awaitable coroutines (with `aclose` and
+   `async with` support) over the same sync core."
   (:require [com.blockether.vis.core :as vis]))
 
 (def ^:private httpx-compat-shim-src
@@ -225,6 +227,42 @@ def __vis_install_httpx__():
             self.close()
             return False
 
+    class AsyncClient:
+        def __init__(self, base_url='', headers=None, params=None, timeout=None,
+                     follow_redirects=True, auth=None, cookies=None, **_ignored):
+            self._client = Client(base_url=base_url, headers=headers, params=params,
+                                  timeout=timeout, follow_redirects=follow_redirects,
+                                  auth=auth, cookies=cookies)
+        @property
+        def base_url(self):
+            return self._client.base_url
+        @property
+        def headers(self):
+            return self._client.headers
+        async def request(self, method, url, **kw):
+            return self._client.request(method, url, **kw)
+        async def get(self, url, **kw):
+            return self._client.request('GET', url, **kw)
+        async def post(self, url, **kw):
+            return self._client.request('POST', url, **kw)
+        async def put(self, url, **kw):
+            return self._client.request('PUT', url, **kw)
+        async def patch(self, url, **kw):
+            return self._client.request('PATCH', url, **kw)
+        async def delete(self, url, **kw):
+            return self._client.request('DELETE', url, **kw)
+        async def head(self, url, **kw):
+            return self._client.request('HEAD', url, **kw)
+        async def options(self, url, **kw):
+            return self._client.request('OPTIONS', url, **kw)
+        async def aclose(self):
+            return None
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            await self.aclose()
+            return False
+
     def _mod_request(method, url, **kw):
         return _dispatch(method, url, kw)
     def _get(url, **kw):
@@ -243,11 +281,12 @@ def __vis_install_httpx__():
         return _dispatch('OPTIONS', url, kw)
 
     mod = _types.ModuleType('httpx')
-    mod.__doc__ = 'vis sandbox httpx-compat shim (thin sync wrapper over the requests shim).'
+    mod.__doc__ = 'vis sandbox httpx-compat shim (sync + async wrapper over the requests shim).'
     mod.Response = Response
     mod.Headers = Headers
     mod.URL = URL
     mod.Client = Client
+    mod.AsyncClient = AsyncClient
     mod.Timeout = Timeout
     mod.HTTPError = HTTPError
     mod.RequestError = RequestError
@@ -282,7 +321,7 @@ del __vis_install_httpx__
   (vis/extension
     {:ext/name "foundation-shim-httpx"
      :ext/description
-     "Sandbox shim: an `httpx`-compatible module (import httpx / httpx.get / httpx.Client) implemented as a thin sync wrapper over the requests shim. No pip, no native wheel, no host bridge."
+     "Sandbox shim: an `httpx`-compatible module (import httpx / httpx.get / httpx.Client / await httpx.AsyncClient) implemented as a thin sync+async wrapper over the requests shim. No pip, no native wheel, no host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -291,7 +330,7 @@ del __vis_install_httpx__
      :ext/sandbox-shims
      [{:shim/name "httpx"
        :shim/description
-       "httpx-compatible `httpx` (get/post/Client/Response/raise_for_status) wrapping the requests shim. Not supported: async `AsyncClient` and HTTP/2 (sync API only)."
+       "httpx-compatible `httpx` (get/post/Client/AsyncClient/Response/raise_for_status) wrapping the requests shim. `AsyncClient` coroutines run the sync core under the hood. Not supported: HTTP/2 and true concurrent async I/O."
        :shim/preamble httpx-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

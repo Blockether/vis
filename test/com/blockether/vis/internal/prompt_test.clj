@@ -55,70 +55,35 @@
 
 (defdescribe
   prompt-core-test
-  (it "makes live native contracts authoritative"
+  (it "keeps live native contracts authoritative"
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "Native descriptions and JSON Schemas are authoritative"))
         (expect (str/includes? text "hard preconditions"))
         (expect (not (str/includes? text "Session titles are host-generated")))))
-  (it "carries Epistemic + Identity stance so the model probes the project first"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "Epistemic stance"))
-        (expect (str/includes? text "runtime > source > docs > assumption"))
-        (expect (str/includes? text "Identity"))
-        (expect (str/includes? text "host project"))
-        ;; Identity must be project-agnostic: it has to work in any repo.
-        (expect (not (str/includes? text "the Vis PROJECT")))))
-  (it
-    "keeps CORE compact and cross-tool while native contracts own mechanics"
-    (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 4000))
-      (doseq
-        [step ["## 1. Identity" "## 2. Tool contracts" "## 3. Inspect" "## 4. Act"
-               "## 5. Edit + verify" "## 6. Manage context" "## 7. Style and finish"]]
-        (expect (str/includes? text step)))
-      (doseq
-        [tool ["`struct_index`" "`struct_patch`" "`struct_node`" "`struct_occurrences`"
-               "`struct_rename`" "`python_execution`" "`apropos(query)`" "`doc(name)`"
-               "`repl_eval`"]]
-        (expect (not (str/includes? text tool))))
-      (doseq
-        [duplicated ["absent/down/failed → start" "`repl_stop(id)`" "`N < session[\"turn\"]`"
-                     "from_anchor"]]
-        (expect (not (str/includes? text duplicated))))
-      (expect (str/includes? text "Step N of M complete"))
-      (expect (str/includes? text "location → cause → fix"))
-      (expect (str/includes? text "MUST OBEY"))
-      (expect (str/includes? text "≤120 words"))
-      (expect (str/includes? text "≤3 bullets"))
-      (expect (str/includes? text "short plain sentences"))
-      (expect (str/includes? text "minimal formatting"))
-      (expect (str/includes? text "For 2+ steps"))
-      (expect (str/includes? text "one bounded action each"))
-      (expect (str/includes? text "essential evidence"))
-      (expect (str/includes? text "brief rationale"))
-      (expect (str/includes? text "material consequences"))
-      (expect (str/includes? text "canonical decision"))
-      (expect (str/includes? text "With 2+ options"))
-      (expect (str/includes? text "MUST use"))
-      (expect (str/includes? text "table is ground truth"))
-      (expect (str/includes? text "Maximum 5 rows"))
-      (expect (str/includes? text "never use `ctx` or `context`"))
-      (expect (str/includes? text "`sessions`/`session_state`"))
-      (expect (str/includes? text "Debug from evidence"))
-      (expect (str/includes? text "`await vis_docs()`"))
-      (expect (str/includes? text "never a menu"))
-      (expect (str/includes? text "reproduce before editing"))
-      (expect (str/includes? text "rerun the same reproduction"))
-      (expect (str/includes? text "inspect relevant dependencies/config"))
-      (expect (str/includes? text "inspect dependencies before using or adding them"))
-      (expect (str/includes? text "benchmark"))
-      (expect (str/includes? text "Compare identical"))
-      (expect (str/includes? text "If ambiguity could materially change the result"))
-      (expect (str/includes? text "correct or redirect you"))
-      (expect (str/includes? text "Do not commit, push, publish"))
-      (expect (str/includes? text "Never expose or log secrets"))
-      (expect (not (str/includes? text "One reply = one tool call")))
-      (expect (not (str/includes? text "ambiguous, large, or risky")))))
+  (it "keeps the core compact while preserving its cross-tool contract"
+      (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
+        (expect (< (count text) 2200))
+        (doseq [heading ["## Contract" "## Work" "## Output"]]
+          (expect (str/includes? text heading)))
+        (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`" "`repl_eval`"]]
+          (expect (not (str/includes? text tool))))
+        (doseq
+          [required
+           ["Hybrid:" "`python_execution`" "batch/filter/transform chains"
+            "direct native tools for single operations" "host project" "`await vis_docs()`"
+            "runtime > source > docs > assumptions" "Introspect before guessing" "`apropos`/`doc`"
+            "`struct_index` before code bodies" "prefer `struct_patch` for supported code"
+            "reproduce before editing" "rerun the same check"
+            "inspect dependencies before adding them" "compare identical workloads"
+            "smallest relevant check" "Never expose or log secrets" "Do not commit, push, publish"
+            "use `session_fold` on completed prior-turn wire steps" "keep a useful gist"
+            "`ntr`, `session_state`, or `sessions`" "never call it lost"
+            "Lead with the answer or next action" "short plain sentences" "≤120 words" "≤3 bullets"
+            "numbered bounded actions" "Show wins" "Step N/M complete. Next: ..."
+            "location → cause → fix" "end with one action under 2 minutes" "never a menu"]]
+          (expect (str/includes? text required)))
+        (expect (not (str/includes? text "Complete tasks autonomously")))
+        (expect (not (str/includes? text "canonical decision table")))))
   (it "advertises concise Python guidance and every auto-imported name"
       (let [text (#'prompt/sandbox-shims-prompt-block)]
         (expect (< (count text) 1000))

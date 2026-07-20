@@ -104,3 +104,25 @@ _rq.request = _fake
                                            "except httpx.HTTPStatusError as e:\n"
                                            "    raised = (e.response.status_code == 404)\n"
                                            "ok and raised")))))))
+
+(defdescribe
+  httpx-async-client-test
+  (it "AsyncClient exposes awaitable verbs that drive the sync core"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str fake
+                                "import httpx\n"
+                                "c = httpx.AsyncClient(base_url='http://svc')\n"
+                                "coro = c.get('/a', params={'q': '1'})\n"
+                                "assert hasattr(coro, 'send')\n" "val = None\n"
+                                "try:\n" "    coro.send(None)\n"
+                                "except StopIteration as e:\n" "    val = e.value\n"
+                                "val.status_code == 200 and val.json()['params'] == {'q': '1'} "
+                                "and val.json()['url'] == 'http://svc/a'"))))))
+  (it "publishes AsyncClient on the httpx module"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str fake
+                                "import httpx\n"
+                                "httpx.AsyncClient is not None "
+                                "and isinstance(httpx.AsyncClient(), httpx.AsyncClient)")))))))

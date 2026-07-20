@@ -319,6 +319,73 @@
                        (expect (string? ctx))
                        (expect (re-find #"3: .*\(dothing \(->R\)\)" ctx))
                        (expect (re-find #"\^--- .*No implementation of method" ctx))))))
+  (it
+    "points the caret at a nil primitive cast whose helpful-NPE names an internal param (the int-cast trap)"
+    (with-server
+      (fn [port]
+        (let
+          [r
+           ;; The JDK "helpful NPE" for a nil primitive cast reads
+           ;; `…Character.charValue() because "x" is null` — `x` is the
+           ;; compiler's OWN unboxing param, not anything in user code, so the
+           ;; raw message is misleading. The Context must point at the real
+           ;; `(int nil)` form instead.
+           (nc/eval! {:port port
+                      :code "(let [a 1\n      b 2\n      c (int nil)]\n  (+ a b c))"
+                      :timeout-ms 5000})
+
+           ctx
+           (str (get r "context"))
+
+           lines
+           (clojure.string/split-lines ctx)
+
+           src-row
+           (some #(when (clojure.string/starts-with? % "3: ") %) lines)
+
+           caret-row
+           (some #(when (clojure.string/includes? % "^---") %) lines)]
+
+          (expect (contains? (get r "status") "eval-error"))
+          (expect (string? (get r "context")))
+          ;; the caret lands on line 3 under the `c` binding whose init is the
+          ;; nil cast (the compiler attributes the cast to the binding symbol),
+          ;; NOT under the JDK helpful-NPE's internal `x` param
+          (expect (= (clojure.string/index-of src-row "c (int")
+                     (clojure.string/index-of caret-row "^")))
+          ;; the misleading JVM message still rides along on the caret
+          (expect (re-find #"\^--- .*charValue" ctx))))))
+  (it "points the caret at a single-line primitive cast of nil"
+      (with-server (fn [port]
+                     (let
+                       [r
+                        (nc/eval! {:port port :code "(int nil)" :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       (expect (re-find #"1: .*\(int nil\)" ctx))
+                       (expect (re-find #"\^--- .*charValue" ctx))))))
+  (it "points the caret at the outer cast when a void-returning call feeds (int …)"
+      (with-server (fn [port]
+                     ;; the turn-1 SSH trap: a void JNI-ish call returns nil, the
+                     ;; enclosing (int …) then unboxes it → helpful-NPE. The Context
+                     ;; must land on the OUTER cast that actually saw nil.
+                     (let
+                       [r
+                        (nc/eval! {:port port
+                                   :code "(defn vr [& _] nil)\n(let [x (int (vr 1 2))]\n  x)"
+                                   :timeout-ms 5000})
+
+                        ctx
+                        (get r "context")]
+
+                       (expect (contains? (get r "status") "eval-error"))
+                       (expect (string? ctx))
+                       (expect (re-find #"2: .*\(int \(vr" ctx))
+                       (expect (re-find #"\^--- .*charValue" ctx))))))
   (it "leaves a clean eval untouched — no Context on success"
       (with-server (fn [port]
                      (let [r (nc/eval! {:port port :code "(+ 1 2 3)" :timeout-ms 5000})]

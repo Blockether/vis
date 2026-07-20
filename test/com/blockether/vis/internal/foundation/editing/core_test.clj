@@ -2540,6 +2540,24 @@
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(- y 2)"))))
+    (it "replace_node reuses node-addressing semantics when an anchor locates the node"
+        (let
+          [path
+           (write-temp! "anchor-zipper/replace-node.clj"
+                        "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
+
+           anchor
+           (patch/line-anchor 3 "(defn bar [y]")
+
+           r
+           (struct-patch {"path" path
+                          "op" "replace_node"
+                          "anchor" anchor
+                          "match" "(defn bar [y]\n  (* y 2))"
+                          "code" "(defn bar [y]\n  (+ y 2))"})]
+
+          (expect (:success? r))
+          (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
     (it "stale anchors are refused before zipper navigation"
         (let
           [path

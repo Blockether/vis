@@ -2839,7 +2839,7 @@
    The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
    nothing to show; the summary is the proper op-card title (NOT a first-line
    slice of the body)."
-  [result* tool-name renderers]
+  [result* tool-name renderers & [input]]
   (let
     [clip
      (fn [^String s]
@@ -2896,21 +2896,53 @@
       ;; must still read as a TIMEOUT — a distinct ⧖ headline, not the raw
       ;; :vis/native-tool-timeout error string. Sits FIRST so a timeout always wins
       ;; its own display regardless of any partial stdout/error also present.
-      (:timeout? result*) (let
-                            [err
-                             (:error result*)
+      (:timeout? result*)
+      (let
+        [err
+         (:error result*)
 
-                             ms
-                             (some-> err
-                                     :data
-                                     :timeout-ms)]
+         ms
+         (some-> err
+                 :data
+                 :timeout-ms)
 
-                            {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
-                             :body (some-> (:message err)
-                                           str
-                                           not-empty
-                                           clip
-                                           (->> (str "\n")))})
+         ;; The evaluated FORM/prompt that blew the wall — so a
+         ;; timeout card shows WHAT timed out, not just that it did.
+         code
+         (some-> (or (get input "code") (get input :code))
+                 str
+                 str/trim
+                 not-empty)
+
+         lang
+         (if (= tool-name "python_execution") "python" "clojure")
+
+         msg
+         (some-> (:message err)
+                 str
+                 not-empty)
+
+         ;; Prefer the tool's OWN renderer so a backstop timeout reads
+         ;; EXACTLY like an in-band one (form-chip preview + labeled FORM /
+         ;; TIMEOUT sections), not a bare fence. Synthesize the timeout
+         ;; result shape the renderer expects; fall back to a hand-built
+         ;; FORM/TIMEOUT card when no renderer exists (e.g. python_execution).
+         rf
+         (when (and code tool-name) (get renderers tool-name))
+
+         rendered
+         (when rf (try (rf {"code" code "timed_out" true "ms" ms}) (catch Throwable _ nil)))]
+
+        (if-let [card (and (map? rendered) (->card rendered))]
+          card
+          (let
+            [detail (->> [(when code (str "**FORM**\n```" lang "\n" (clip code) "\n```"))
+                          (when msg (str "**TIMEOUT**\n```\n" msg "\n```"))]
+                         (remove nil?)
+                         (str/join "\n\n")
+                         not-empty)]
+            {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
+             :body (when detail (str "\n" detail))})))
       ;; renderer returned a canonical {:summary :body} card …
       (map? custom) (->card custom)
       ;; … or a legacy bare string (body only, no summary)
@@ -4483,7 +4515,10 @@
               ;; so a DB-restored / post-turn trace shows the SAME card the live
               ;; stream did, instead of pr-str'ing the raw result map. `:summary`
               ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
-              result-card (tool-result-display result* (:vis/tool-name entry) native-renderers)
+              result-card (tool-result-display result*
+                                               (:vis/tool-name entry)
+                                               native-renderers
+                                               (:vis/native-input entry))
               ;; TOOL RESULTS the model print()ed (each carrying :op) → one op-card
               ;; each, rendered loop-side via the SAME symbol renderer a native call
               ;; uses (channels paint pre-rendered strings; they have no renderer). Each
@@ -4565,7 +4600,12 @@
                   ;; Native tool identity for the result BADGE (label + color), so the
                   ;; LIVE gateway stream paints the same op-card the DB-restored trace does.
                   :vis/tool-name (:vis/tool-name entry)
-                  :tool-color-role (get native-color-roles (:vis/tool-name entry))
+                  ;; A TIMEOUT overrides the tool's own badge colour with the error
+                  ;; role so the card paints RED — differentiated at a glance from a
+                  ;; normal REPL/shell result, while keeping its beautiful shape.
+                  :tool-color-role (if (:timeout? result*)
+                                     :tool-color/error
+                                     (get native-color-roles (:vis/tool-name entry)))
                   ;; Raw stdout kept for model-context consumers.
                   :stdout (:stdout result*)
                   :error (:error result*)
@@ -4582,7 +4622,9 @@
               :render-segments render-segments
               :svar/tool-call-id (:svar/tool-call-id entry)
               :vis/tool-name (:vis/tool-name entry)
-              :tool-color-role (get native-color-roles (:vis/tool-name entry))}))
+              :tool-color-role (if (:timeout? result*)
+                                 :tool-color/error
+                                 (get native-color-roles (:vis/tool-name entry)))}))
          (range)
          code-entries)
        form-sources (mapv :block executed)

@@ -91,7 +91,8 @@
    failure instead of burning another JVM boot per eval."
   [session-id dir]
   (let [now (System/currentTimeMillis)]
-    (>= (count (filter #(< (- now (long %)) (long crash-window-ms)) (get @crash-times [session-id dir])))
+    (>= (count (filter #(< (- now (long %)) (long crash-window-ms))
+                       (get @crash-times [session-id dir])))
         (long max-crashes-in-window))))
 
 ;; ── Idle reaping ────────────────────────────────────────────────────────────
@@ -138,7 +139,7 @@
 ;; Kept in sync with the nrepl/nrepl version pinned in this extension's deps.edn.
 ;; Injected via `-Sdeps` so the launcher works even in target projects that don't
 ;; declare nREPL themselves.
-(def nrepl-version "1.3.0")
+(def nrepl-version "1.7.0")
 
 ;; How long `start!` waits for OUR port to answer. The deadline only matters
 ;; while the launcher is STILL ALIVE — a dead launcher short-circuits to a
@@ -155,7 +156,8 @@
   (boolean (and (not (:external? info))
                 (proc-alive? info)
                 (:started-at info)
-                (< (- (System/currentTimeMillis) (long (:started-at info))) (long start-deadline-ms)))))
+                (< (- (System/currentTimeMillis) (long (:started-at info)))
+                   (long start-deadline-ms)))))
 
 (defn- health-probe-ms
   "How long to wait for a recorded REPL to answer a describe before judging it
@@ -171,7 +173,27 @@
    aliases are silently ignored by tools.deps, so this is safe everywhere."
   [:dev :test])
 
-(defn id-of "Stable session-resource id for the REPL rooted at `dir`." [dir] (str "nrepl:" dir))
+(defn home-relativize
+  "Collapse a leading user-home prefix to `~`, so a REPL id reads `~/vis` instead
+   of the noisy machine-absolute `/Users/you/vis`. Paths outside home (and blanks)
+   pass through unchanged."
+  [^String dir]
+  (let [home (System/getProperty "user.home")]
+    (cond (str/blank? (str dir)) (str dir)
+          (nil? home) dir
+          (= dir home) "~"
+          (str/starts-with? dir (str home java.io.File/separator)) (str "~" (subs dir (count home)))
+          :else dir)))
+
+(defn id-of
+  "Stable session-resource id for the REPL rooted at `dir`. The dir is CANONICALIZED
+   first — so `..`, a trailing slash, and symlinks all collapse to ONE id per
+   physical dir (no `nrepl:.../vis` vs `nrepl:.../vis/..` near-duplicates spawning
+   twin REPLs) — then its home prefix is homogenized to `~`, so a REPL always
+   addresses as `nrepl:~/vis`."
+  [dir]
+  (let [canon (try (.getCanonicalPath (io/file (str dir))) (catch Throwable _ (str dir)))]
+    (str "nrepl:" (home-relativize canon))))
 
 (defn- as-keywords [aliases] (mapv #(if (keyword? %) % (keyword (name %))) aliases))
 

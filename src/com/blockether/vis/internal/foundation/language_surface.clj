@@ -367,6 +367,32 @@
 
 (defn- fence [label s] (when (seq (str s)) (str (when label (str label ":\n")) "```\n" s "\n```")))
 
+(defn- md-cell
+  "Sanitize a value for ONE markdown table cell: escape `\\`/`|` and collapse every
+   whitespace run (incl. newlines) to a single space, so a multi-line form or a value
+   carrying a pipe can never break the row's column structure."
+  [s]
+  (-> (str s)
+      (str/replace "\\" "\\\\")
+      (str/replace "|" "\\|")
+      (str/replace #"\s+" " ")
+      str/trim))
+
+(defn- md-table
+  "A GitHub-flavored markdown table from `headers` (column labels) and `rows` (each a
+   same-arity seq of cells). nil when there are no rows, so an empty result drops out
+   of the card body; the TUI renders the markdown as a boxed grid."
+  [headers rows]
+  (when (seq rows)
+    (let
+      [line (fn [cells]
+              (str "| " (str/join " | " cells) " |"))]
+      (str/join "\n"
+                (concat [(line headers) (line (repeat (count headers) "---"))]
+                        (map (fn [row]
+                               (line (map md-cell row)))
+                             rows))))))
+
 (defn- render-format-result
   "format_code → `` `path` (changed) `` when writing a file (the FORMAT_CODE
    badge already names the tool), a per-file roll-up when several `paths` were
@@ -407,13 +433,24 @@
         {:summary (str "`" path "` " label)}
         {:summary label}))))
 
+(defn- findings->table
+  "Lint `findings` → a markdown table the LINT_CODE card renders as a boxed grid:
+   one row per finding with its `file`, `row:col`, `level`, and `message` (the
+   provider tag appended when a finding names one). nil when there are no findings."
+  [findings]
+  (md-table ["file" "at" "level" "message"]
+            (for [f findings]
+              [(str (get f "file")) (str (get f "row") ":" (get f "col")) (str (get f "level"))
+               (str (get f "message")
+                    (when-let [p (get f "provider")]
+                      (str " [" p "]")))])))
+
 (defn- render-lint-result
   "lint_code → `` `path` — clean `` / `N targets — E errors, W warnings` headline
    (the LINT_CODE badge already names the tool, and the headline names the linted
    target(s) — the file/dir path(s) when given, else `snippet` for a stdin lint or
-   `N files` for a bare workspace lint); the findings GROUPED BY FILE — each linted
-   file path appears ONCE as a header with its findings (`  row:col level: message`)
-   indented beneath it, so a path is never repeated line after line — in the body."
+   `N files` for a bare workspace lint); the findings as a `file / row:col / level /
+   message` markdown table (rendered as a boxed grid) in the body."
   [r]
   (let
     [errors
@@ -430,23 +467,6 @@
 
      clean?
      (and (zero? errors) (zero? warnings) (zero? infos))
-
-     lines
-     (let [grouped (group-by #(get % "file") findings)]
-       (mapcat (fn [file]
-                 (cons file
-                       (for [f (get grouped file)]
-                         (str "  "
-                              (get f "row")
-                              ":"
-                              (get f "col")
-                              " "
-                              (get f "level")
-                              ": "
-                              (get f "message")
-                              (when-let [p (get f "provider")]
-                                (str " [" p "]"))))))
-               (distinct (map #(get % "file") findings))))
 
      targets
      (get r "targets")
@@ -475,7 +495,67 @@
                                        " warning"
                                        (when (not= 1 warnings) "s")
                                        (when (pos? infos) (str ", " infos " info")))))))
-     :body (when (seq lines) (fence nil (str/join "\n" lines)))}))
+     :body (when (seq findings) (findings->table findings))}))
+
+(defn- failures->table
+  "Structured test `failures` → a markdown table the RUN_TESTS card renders as a
+   boxed grid centred on the expectation-vs-reality comparison: one row per fault
+   with `ns/test` and its `file:line`, then `expected`/`actual` columns whenever a
+   fault carries them. The generic `message` (e.g. lazytest's `Expectation failed`)
+   only earns its own column when some fault leans on it as its SOLE signal — an
+   error or plain assertion with no expected/actual pair — so a clean expectation
+   failure reads purely as expected vs actual. nil when there are no faults, so a
+   passing run stays body-less."
+  [fails]
+  (let
+    [keep?
+     (fn [x]
+       (and x (not (str/blank? (str x))) (not= "nil" (str x))))
+
+     exp?
+     (boolean (some #(keep? (get % "expected")) fails))
+
+     act?
+     (boolean (some #(keep? (get % "actual")) fails))
+
+     ;; The message is worth a column only when some fault has NO expected/actual
+     ;; pair, so it is that row's only signal (a thrown error, a bare assertion).
+     msg?
+     (boolean (some #(and (keep? (get % "message"))
+                          (not (keep? (get % "expected")))
+                          (not (keep? (get % "actual"))))
+                    fails))
+
+     headers
+     (cond-> ["test" "at"]
+       msg?
+       (conj "message")
+
+       exp?
+       (conj "expected")
+
+       act?
+       (conj "actual"))
+
+     rows
+     (for [f fails]
+       (let
+         [nm (str (get f "ns") (when (keep? (get f "test")) (str "/" (get f "test"))))
+          at (if (keep? (get f "file"))
+               (str (get f "file") (when (keep? (get f "line")) (str ":" (get f "line"))))
+               "")]
+
+         (cond-> [nm at]
+           msg?
+           (conj (str (get f "message")))
+
+           exp?
+           (conj (str (get f "expected")))
+
+           act?
+           (conj (str (get f "actual"))))))]
+
+    (md-table headers rows)))
 
 (defn- render-test-result
   "run_tests → `<ns> — pass/total (Nms)` headline (the RUN_TESTS badge already
@@ -535,7 +615,11 @@
                    (when-let [ms (get r "ms")]
                      (str " (" ms "ms)"))
                    (when (get r "note") (str " · " (get r "note"))))
-     :body (when-not ok (fence nil detail))}))
+     :body (when-not ok
+             (or (some-> (get r "failures")
+                         seq
+                         failures->table)
+                 (fence nil detail)))}))
 
 (defn- short-error
   "First line of an error headline, trimmed to its class before the `:` — e.g.
@@ -715,7 +799,7 @@
        (or (= "failed" status) (= "failed" (get r "result")))
 
        prefix
-       (if failed? "✗ REPL " "REPL ")
+       (if failed? "✗ " "")
 
        summary
        (str prefix
@@ -747,9 +831,9 @@
       {:summary summary :body (when (seq body) (str "\n" body))})))
 
 (defn- render-repl-stop-result
-  "repl_stop → `stopped REPL <id>`."
+  "repl_stop → `stopped <id>`."
   [r]
-  {:summary (str "stopped REPL"
+  {:summary (str "stopped"
                  (when-let [id (get r "id")]
                    (str " " id)))})
 

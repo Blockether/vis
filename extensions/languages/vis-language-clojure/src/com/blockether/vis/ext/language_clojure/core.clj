@@ -524,17 +524,21 @@
 (defn- relativize-path
   "Rewrite an absolute path to one relative to workspace `root` so tool output
    reads `src/foo.clj` instead of the noisy machine-absolute `/Users/…/src/foo.clj`.
-   Paths that aren't under root, and non-path sentinels like `<stdin>`, pass
-   through unchanged."
+   Paths outside root (and the root itself) collapse their user-home prefix to
+   `~`; non-path sentinels like `<stdin>` pass through unchanged."
   [^java.io.File root file]
   (let [s (str file)]
     (if (and root (seq s) (not= s "<stdin>"))
       (try (let
              [rp (.toPath (.getCanonicalFile root))
-              fp (.toPath (.getCanonicalFile (io/file s)))]
+              fp (.toPath (.getCanonicalFile (io/file s)))
+              rel (when (.startsWith fp rp) (str (.relativize rp fp)))]
 
-             (if (.startsWith fp rp) (str (.relativize rp fp)) s))
-           (catch Throwable _ s))
+             ;; Under root -> `src/foo.clj`. Otherwise (outside root, or the root
+             ;; itself, whose relativization is "") fall back to a home-homogenized
+             ;; absolute path so output reads `~/vis` — never a raw `/Users/you/…`.
+             (if (seq rel) rel (repl-manager/home-relativize (str fp))))
+           (catch Throwable _ (repl-manager/home-relativize s)))
       s)))
 
 ;; Only true Clojure SOURCE dialects — the same set the canonical

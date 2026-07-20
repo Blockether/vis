@@ -9,8 +9,10 @@
    `env-python/build-agent-context` installs into every sandbox Context (main +
    every `sub_loop` fork).
 
-   It is NOT real pytest: there is no pluggy/plugin system, no `conftest.py`
-   file discovery, no CLI, and no import-time assertion rewrite. Instead it
+   It is NOT real pytest: there is no pluggy/plugin system, no CLI, and no
+   import-time assertion rewrite. It DOES do `conftest.py` fixture discovery
+   (walked from the test file's dir up to the fs root, outer→inner) in disk
+   mode. Instead it
    implements the subset that matters in an inline sandbox where the model
    writes tests + `pytest.main()` in ONE block:
 
@@ -23,10 +25,13 @@
        different mechanism,
      - `pytest.raises` / `warns` / `approx` / `fail` / `skip` / `xfail` /
        `importorskip`, `@pytest.fixture` (function/module/session scope,
-       yield-teardown, autouse, recursive injection), `@pytest.mark.parametrize`
-       / `skip` / `skipif` / `xfail` (+ arbitrary marks), `pytest.param`,
+       yield-teardown, autouse, recursive injection, parametrized fixtures via
+       `params`/`ids` with `request.param`), `@pytest.mark.parametrize`
+       / `skip` / `skipif` / `xfail` / `usefixtures` (+ arbitrary marks), `pytest.param`,
        builtin fixtures `request` / `monkeypatch` / `capsys` / `capfd` /
-       `tmp_path`, and a `pytest.main()` runner that prints progress + failure
+       `tmp_path` / `tmp_path_factory` / `tmpdir` / `tmpdir_factory` /
+       `caplog` / `recwarn` / `pytester` / `testdir`, `conftest.py` fixture discovery,
+       and a `pytest.main()` runner that prints progress + failure
        reports + a summary line and returns an exit code.
 
    Unlike `shim-yaml`/`shim-matplotlib` there are NO `:shim/bindings`: the shim
@@ -59,8 +64,8 @@
 # pytest-compatible module implemented entirely on the stdlib (ast/inspect/
 # linecache/traceback), so a model writing a full Python extension can write
 # `def test_*` + `pytest.main()` inline and get real pass/fail reporting with
-# assert introspection. No pluggy, no conftest discovery, no CLI, no import
-# rewrite. Published into sys.modules so `import pytest` works, and stapled onto
+# assert introspection. No pluggy, no CLI, no import rewrite (conftest.py
+# fixtures ARE discovered in disk mode). Published into sys.modules so `import pytest` works, and stapled onto
 # builtins so pytest.raises(...) needs no import (mirrors json/os/requests).
 
 def __vis_install_pytest_compat__():
@@ -293,11 +298,18 @@ def __vis_install_pytest_compat__():
         return wrap
 
     class FixtureRequest:
-        def __init__(self, manager, nodeid):
+        def __init__(self, manager, nodeid, func=None, cls=None, module=None):
             self._manager = manager
             self.nodeid = nodeid
             self.param = None
             self._finalizers = []
+            self._fixparams = {}
+            self.function = func
+            self.cls = cls
+            self.module = module
+            self.instance = None
+            self.fixturename = None
+            self.scope = 'function'
 
         def getfixturevalue(self, name):
             return self._manager.resolve(name, self)
@@ -466,16 +478,378 @@ def __vis_install_pytest_compat__():
         return mp, mp.undo
 
     def _bi_capsys(request):
-        cap = CaptureFixture()
+        cap = CaptureFixture(fd=False)
         cap._start()
         return cap, cap._stop
 
-    # NB: no tmp_path / capfd — this sandbox has NO real filesystem, so
-    # tempfile/os writes raise an uncatchable host SecurityException. Only
-    # sys-level, FS-free builtin fixtures are offered.
+    def _bi_capfd(request):
+        # File-descriptor capture. The pure-Python shim has no true fd-level
+        # redirection, so capfd behaves like capsys (sys.stdout/err swap) —
+        # sufficient for tests that only read back via readouterr().
+        cap = CaptureFixture(fd=True)
+        cap._start()
+        return cap, cap._stop
+    def _bi_tmp_path(request):
+        # Real temp dir via tempfile. In the pure-compute model sandbox the FS
+        # is locked down and mkdtemp raises — caught by resolve()/the runner so
+        # only tests that ASK for tmp_path fail there; under the project test
+        # runner (`vis python <tests>`) the FS is real and this works.
+        import tempfile as _tf, shutil as _sh, pathlib as _pl
+        d = _tf.mkdtemp(prefix='vis-pytest-')
+        def _td():
+            try:
+                _sh.rmtree(d, ignore_errors=True)
+            except Exception:
+                pass
+        return _pl.Path(d), _td
+
+    class TmpPathFactory:
+        def __init__(self):
+            import tempfile as _tf, pathlib as _pl
+            self._base = _pl.Path(_tf.mkdtemp(prefix='vis-pytest-factory-'))
+            self._n = 0
+
+        def mktemp(self, basename, numbered=True):
+            import pathlib as _pl
+            name = str(basename)
+            if numbered:
+                p = self._base / (name + str(self._n))
+                self._n += 1
+            else:
+                p = self._base / name
+            p.mkdir(parents=True, exist_ok=True)
+            return _pl.Path(p)
+
+        def getbasetemp(self):
+            return self._base
+
+        def _cleanup(self):
+            import shutil as _sh
+            try:
+                _sh.rmtree(self._base, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _bi_tmp_path_factory(request):
+        f = TmpPathFactory()
+        return f, f._cleanup
+
+    def _bi_tmpdir(request):
+        # legacy py.path-like: return the Path (str() works everywhere tests need)
+        p, td = _bi_tmp_path(request)
+        return p, td
+
+    def _bi_tmpdir_factory(request):
+        return _bi_tmp_path_factory(request)
+
+    class LogCaptureFixture:
+        def __init__(self):
+            self.records = []
+            self._handler = None
+            self._root = None
+            self._old_level = None
+
+        def _start(self):
+            import logging
+            fixture = self
+            class _H(logging.Handler):
+                def emit(self, record):
+                    try:
+                        record.message = record.getMessage()
+                    except Exception:
+                        record.message = record.msg
+                    fixture.records.append(record)
+            self._handler = _H()
+            self._root = logging.getLogger()
+            self._old_level = self._root.level
+            self._root.addHandler(self._handler)
+            if self._root.level > logging.WARNING or self._root.level == 0:
+                self._root.setLevel(logging.WARNING)
+
+        def _stop(self):
+            import logging
+            if self._handler is not None:
+                logging.getLogger().removeHandler(self._handler)
+            if self._old_level is not None:
+                logging.getLogger().setLevel(self._old_level)
+
+        def set_level(self, level, logger=None):
+            import logging
+            logging.getLogger(logger).setLevel(level)
+            self._root.setLevel(level)
+
+        @property
+        def messages(self):
+            return [r.getMessage() for r in self.records]
+
+        @property
+        def text(self):
+            return '\\n'.join(r.getMessage() for r in self.records)
+
+        @property
+        def record_tuples(self):
+            return [(r.name, r.levelno, r.getMessage()) for r in self.records]
+
+        def clear(self):
+            self.records = []
+
+        def at_level(self, level, logger=None):
+            import logging
+            fixture = self
+            target = logging.getLogger(logger)
+            class _Ctx:
+                def __enter__(self):
+                    self._old = target.level
+                    self._oldroot = fixture._root.level if fixture._root is not None else logging.WARNING
+                    target.setLevel(level)
+                    if fixture._root is not None:
+                        fixture._root.setLevel(level)
+                    return fixture
+                def __exit__(self, *a):
+                    target.setLevel(self._old)
+                    if fixture._root is not None:
+                        fixture._root.setLevel(self._oldroot)
+                    return False
+            return _Ctx()
+
+    def _bi_caplog(request):
+        lc = LogCaptureFixture()
+        lc._start()
+        return lc, lc._stop
+
+    def _bi_recwarn(request):
+        cm = _warnings.catch_warnings(record=True)
+        rec = cm.__enter__()
+        _warnings.simplefilter('always')
+        class _RecWarn:
+            def __iter__(self): return iter(rec)
+            def __len__(self): return len(rec)
+            def __getitem__(self, i): return rec[i]
+            def pop(self, cls=Warning):
+                for i, w in enumerate(rec):
+                    if issubclass(w.category, cls):
+                        return rec.pop(i)
+                raise AssertionError('no warning of type ' + _name_of(cls))
+            @property
+            def list(self): return rec
+            def clear(self): rec.clear()
+        def _td():
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:
+                pass
+        return _RecWarn(), _td
+
+
+    class LineMatcher:
+        def __init__(self, lines):
+            self.lines = list(lines)
+        def __str__(self):
+            return _NL.join(self.lines)
+        def str(self):
+            return _NL.join(self.lines)
+        def _match(self, patterns, matchfn, label):
+            if isinstance(patterns, str):
+                patterns = patterns.split(_NL)
+            start = 0
+            for pat in patterns:
+                hit = -1
+                i = start
+                while i < len(self.lines):
+                    if matchfn(self.lines[i], pat):
+                        hit = i
+                        break
+                    i += 1
+                if hit < 0:
+                    raise AssertionError(label + ': pattern not found: ' + repr(pat) + _NL + 'in output:' + _NL + _NL.join(self.lines))
+                start = hit + 1
+        def fnmatch_lines(self, patterns):
+            import fnmatch as _fn
+            self._match(patterns, lambda l, p: _fn.fnmatch(l, p), 'fnmatch_lines')
+        def re_match_lines(self, patterns):
+            import re as _re
+            self._match(patterns, lambda l, p: _re.match(p, l) is not None, 're_match_lines')
+        def fnmatch_lines_random(self, patterns):
+            import fnmatch as _fn
+            if isinstance(patterns, str):
+                patterns = [patterns]
+            for pat in patterns:
+                if not any(_fn.fnmatch(l, pat) for l in self.lines):
+                    raise AssertionError('fnmatch_lines_random: not found: ' + repr(pat))
+        def no_fnmatch_line(self, pat):
+            import fnmatch as _fn
+            for l in self.lines:
+                if _fn.fnmatch(l, pat):
+                    raise AssertionError('no_fnmatch_line: unexpectedly matched: ' + repr(pat))
+        def get_lines_after(self, pat):
+            import fnmatch as _fn
+            for i, l in enumerate(self.lines):
+                if _fn.fnmatch(l, pat):
+                    return self.lines[i + 1:]
+            raise AssertionError('get_lines_after: not found: ' + repr(pat))
+
+    class RunResult:
+        _OUTMAP = {'passed': 'passed', 'failed': 'failed', 'error': 'errors', 'skipped': 'skipped', 'xfailed': 'xfailed', 'xpassed': 'xpassed'}
+        def __init__(self, ret, out, err, rep, deselected=0):
+            self.ret = ret
+            self.returncode = ret
+            self.outlines = out.split(_NL)
+            self.errlines = err.split(_NL) if err else []
+            self.stdout = LineMatcher(self.outlines)
+            self.stderr = LineMatcher(self.errlines)
+            self._rep = list(rep)
+            self._deselected = deselected
+        def parseoutcomes(self):
+            d = {}
+            for item in self._rep:
+                k = self._OUTMAP.get(item[1], item[1])
+                d[k] = d.get(k, 0) + 1
+            if getattr(self, '_deselected', 0):
+                d['deselected'] = self._deselected
+            return d
+        def count_outcomes(self):
+            return self.parseoutcomes()
+        def assert_outcomes(self, passed=0, skipped=0, failed=0, errors=0, xpassed=0, xfailed=0, warnings=None, deselected=None):
+            d = self.parseoutcomes()
+            got = {'passed': d.get('passed', 0), 'skipped': d.get('skipped', 0), 'failed': d.get('failed', 0), 'errors': d.get('errors', 0), 'xpassed': d.get('xpassed', 0), 'xfailed': d.get('xfailed', 0)}
+            exp = {'passed': passed, 'skipped': skipped, 'failed': failed, 'errors': errors, 'xpassed': xpassed, 'xfailed': xfailed}
+            if deselected is not None:
+                got['deselected'] = d.get('deselected', 0)
+                exp['deselected'] = deselected
+            if got != exp:
+                raise AssertionError('assert_outcomes mismatch: got ' + repr(got) + ' expected ' + repr(exp))
+
+    class Pytester:
+        def __init__(self, request):
+            import tempfile as _tf, pathlib as _pl
+            self._base = _pl.Path(_tf.mkdtemp(prefix='vis-pytester-'))
+            self.path = self._base
+            self._request = request
+            fn = getattr(request, 'function', None)
+            nm = getattr(fn, '__name__', None) or 'test_file'
+            self._basename = nm
+            self._extrapath = []
+        @property
+        def tmpdir(self):
+            return self.path
+        def _write(self, name, content, ext):
+            import textwrap as _tw
+            fn = name
+            if ext and not fn.endswith(ext):
+                fn = fn + ext
+            p = self.path / fn
+            p.parent.mkdir(parents=True, exist_ok=True)
+            text = content
+            if isinstance(text, str):
+                text = _tw.dedent(text)
+                while text.startswith(_NL):
+                    text = text[len(_NL):]
+            p.write_text(text)
+            return p
+        def _makefiles(self, ext, args, kwargs):
+            ret = None
+            if args:
+                base = self._basename
+                if ext == '.py' and not base.startswith('test'):
+                    base = 'test_' + base
+                content = _NL.join(str(a) for a in args)
+                ret = self._write(base, content, ext)
+            for name in kwargs:
+                p = self._write(name, kwargs[name], ext)
+                if ret is None:
+                    ret = p
+            return ret
+        def makepyfile(self, *args, **kwargs):
+            return self._makefiles('.py', args, kwargs)
+        def makefile(self, ext, *args, **kwargs):
+            return self._makefiles(ext, args, kwargs)
+        def makeconftest(self, source):
+            return self._write('conftest', source, '.py')
+        def maketxtfile(self, *args, **kwargs):
+            return self._makefiles('.txt', args, kwargs)
+        def mkdir(self, name):
+            p = self.path / name
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        def mkpydir(self, name):
+            p = self.mkdir(name)
+            (p / '__init__.py').write_text('')
+            return p
+        def syspathinsert(self, path=None):
+            import sys as _sys
+            p = str(path if path is not None else self.path)
+            _sys.path.insert(0, p)
+            self._extrapath.append(p)
+        def chdir(self):
+            import os as _os
+            _os.chdir(str(self.path))
+        def runpytest(self, *args):
+            import io as _io, sys as _sys
+            callargs = []
+            _args = [str(a) for a in args]
+            _j = 0
+            while _j < len(_args):
+                a = _args[_j]
+                if a in ('-v', '-vv', '-vvv', '--verbose', '-x', '--exitfirst'):
+                    callargs.append(a)
+                elif a in ('-k', '--maxfail'):
+                    callargs.append(a)
+                    if _j + 1 < len(_args):
+                        _j += 1
+                        callargs.append(_args[_j])
+                elif a.startswith('-k') or a.startswith('--maxfail='):
+                    callargs.append(a)
+                elif not a.startswith('-'):
+                    base = a.split('::')[0]
+                    cand = self.path / base
+                    if cand.exists():
+                        callargs.append(str(cand))
+                _j += 1
+            if not any(not c.startswith('-') for c in callargs):
+                callargs.append(str(self.path))
+            buf = _io.StringIO()
+            old_out = _sys.stdout
+            _sys.stdout = buf
+            try:
+                ret = main(callargs)
+            finally:
+                _sys.stdout = old_out
+            return RunResult(ret, buf.getvalue(), '', list(getattr(mod, '_vis_last_report', [])), getattr(mod, '_vis_last_deselected', 0))
+        runpytest_inprocess = runpytest
+        runpytest_subprocess = runpytest
+        def inline_run(self, *args):
+            return self.runpytest(*args)
+        def _cleanup(self):
+            import shutil as _sh, sys as _sys
+            for p in self._extrapath:
+                try:
+                    _sys.path.remove(p)
+                except Exception:
+                    pass
+            try:
+                _sh.rmtree(str(self._base), ignore_errors=True)
+            except Exception:
+                pass
+
+    def _bi_pytester(request):
+        pt = Pytester(request)
+        return pt, pt._cleanup
+
+    def _bi_testdir(request):
+        return _bi_pytester(request)
+
     _BUILTIN_FIXTURES = {
+        'pytester': _bi_pytester,
+        'testdir': _bi_testdir,
         'monkeypatch': _bi_monkeypatch,
         'capsys': _bi_capsys,
+        'tmp_path': _bi_tmp_path,
+        'tmp_path_factory': _bi_tmp_path_factory,
+        'tmpdir': _bi_tmpdir,
+        'tmpdir_factory': _bi_tmpdir_factory,
+        'capfd': _bi_capfd,
+        'caplog': _bi_caplog,
+        'recwarn': _bi_recwarn,
     }
 
     class FixtureManager:
@@ -512,21 +886,29 @@ def __vis_install_pytest_compat__():
             for pname in inspect.signature(info.func).parameters:
                 if self.has(pname):
                     kwargs[pname] = self.resolve(pname, request)
-            result = info.func(**kwargs)
-            if inspect.isgenerator(result):
-                gen = result
-                val = next(gen)
-                self.active[scope].append(('gen', gen))
+            _prev = (request.param, request.fixturename, request.scope)
+            request.fixturename = name
+            request.scope = scope
+            if name in getattr(request, '_fixparams', {}):
+                request.param = request._fixparams[name]
+            try:
+                result = info.func(**kwargs)
+                if inspect.isgenerator(result):
+                    gen = result
+                    val = next(gen)
+                    self.active[scope].append(('gen', gen))
+                    if scope in ('module', 'session'):
+                        self.cache[key] = val
+                    if scope == 'function':
+                        self._per_test[name] = val
+                    return val
                 if scope in ('module', 'session'):
-                    self.cache[key] = val
+                    self.cache[key] = result
                 if scope == 'function':
-                    self._per_test[name] = val
-                return val
-            if scope in ('module', 'session'):
-                self.cache[key] = result
-            if scope == 'function':
-                self._per_test[name] = result
-            return result
+                    self._per_test[name] = result
+                return result
+            finally:
+                request.param, request.fixturename, request.scope = _prev
 
         def teardown(self, scope):
             items = self.active.get(scope, [])
@@ -608,6 +990,7 @@ def __vis_install_pytest_compat__():
 
     def _expand_params(marks):
         psets = None
+        indirect_names = set()
         for m in marks:
             if m.name != 'parametrize':
                 continue
@@ -617,7 +1000,14 @@ def __vis_install_pytest_compat__():
                 names = [a.strip() for a in argnames.split(',') if a.strip()]
             else:
                 names = list(argnames)
+            ind = m.kwargs.get('indirect', False)
+            if ind is True:
+                indirect_names.update(names)
+            elif ind:
+                for _n in ind:
+                    indirect_names.add(_n)
             ids = m.kwargs.get('ids')
+            ids_fn = ids if callable(ids) else None
             cur = []
             for i, val in enumerate(argvalues):
                 casemarks = []
@@ -631,10 +1021,10 @@ def __vis_install_pytest_compat__():
                     val = val.values if len(names) > 1 else val.values[0]
                 if len(names) == 1:
                     kw = {names[0]: val}
-                    idpart = caseid or (ids[i] if ids else _param_id(val))
+                    idpart = caseid or (str(ids_fn(val)) if ids_fn else (ids[i] if ids else _param_id(val)))
                 else:
                     kw = dict(zip(names, val))
-                    idpart = caseid or (ids[i] if ids else '-'.join(_param_id(x) for x in val))
+                    idpart = caseid or (('-'.join(str(ids_fn(x)) for x in val)) if ids_fn else (ids[i] if ids else '-'.join(_param_id(x) for x in val)))
                 cur.append((idpart, kw, casemarks))
             if psets is None:
                 psets = cur
@@ -647,8 +1037,60 @@ def __vis_install_pytest_compat__():
                         combined.append((id2 + '-' + id1, merged, mk1 + mk2))
                 psets = combined
         if psets is None:
-            return [('', {}, [])]
-        return psets
+            return [('', {}, [], {})]
+        out = []
+        for _pid, _kw, _cm in psets:
+            _dir = {k: v for k, v in _kw.items() if k not in indirect_names}
+            _ind = {k: v for k, v in _kw.items() if k in indirect_names}
+            out.append((_pid, _dir, _cm, _ind))
+        return out
+
+    def _kexpr_match(expr, nodeid):
+        hay = nodeid.lower()
+        toks = expr.replace('(', ' ( ').replace(')', ' ) ').split()
+        if not toks:
+            return True
+        pos = [0]
+        def _peek():
+            return toks[pos[0]] if pos[0] < len(toks) else None
+        def _next():
+            t = toks[pos[0]]
+            pos[0] += 1
+            return t
+        def _p_or():
+            v = _p_and()
+            while _peek() == 'or':
+                _next()
+                v = _p_and() or v
+            return v
+        def _p_and():
+            v = _p_not()
+            while _peek() == 'and':
+                _next()
+                r = _p_not()
+                v = v and r
+            return v
+        def _p_not():
+            if _peek() == 'not':
+                _next()
+                return not _p_not()
+            return _p_atom()
+        def _p_atom():
+            t = _peek()
+            if t == '(':
+                _next()
+                v = _p_or()
+                if _peek() == ')':
+                    _next()
+                return v
+            if t is None:
+                return True
+            _next()
+            return t.lower() in hay
+        try:
+            return bool(_p_or())
+        except Exception:
+            return expr.lower() in hay
 
     # ---- assert introspection ----------------------------------------------
     def _register_src(src):
@@ -812,10 +1254,11 @@ def __vis_install_pytest_compat__():
 
     _CHAR = {'passed': '.', 'failed': 'F', 'error': 'E', 'skipped': 's', 'xfailed': 'x', 'xpassed': 'X'}
 
-    def _run_one(nodeid, func, cls, pkwargs, marks, fm, src):
+    def _run_one(nodeid, func, cls, pkwargs, marks, fm, src, fixparams=None):
         r = _Result(nodeid)
         skip_reason = _NOTSET
         xfail_mark = None
+        usefix = []
         for m in marks:
             if m.name == 'skip':
                 skip_reason = m.kwargs.get('reason', '') or (m.args[0] if m.args else '')
@@ -825,17 +1268,25 @@ def __vis_install_pytest_compat__():
                     skip_reason = m.kwargs.get('reason', 'condition true')
             elif m.name == 'xfail':
                 xfail_mark = m
+            elif m.name == 'usefixtures':
+                for _uf in m.args:
+                    usefix.append(_uf)
         if skip_reason is not _NOTSET:
             r.outcome = 'skipped'
             r.longrepr = 'SKIPPED ' + nodeid + ((': ' + str(skip_reason)) if skip_reason else '')
             return r
         fm.begin_test()
-        request = FixtureRequest(fm, nodeid)
+        request = FixtureRequest(fm, nodeid, func, cls, None)
+        if fixparams:
+            request._fixparams = dict(fixparams)
         callargs = dict(pkwargs)
         try:
             for info in fm.fixtures.values():
                 if info.autouse:
                     fm.resolve(info.name, request)
+            for _uf in usefix:
+                if fm.has(_uf):
+                    fm.resolve(_uf, request)
             for pname in inspect.signature(func).parameters:
                 if pname in callargs or pname == 'self':
                     continue
@@ -900,7 +1351,7 @@ def __vis_install_pytest_compat__():
             fm.teardown('function')
         return r
 
-    def _summary(results, write, elapsed):
+    def _summary(results, write, elapsed, deselected=0):
         counts = {}
         for r in results:
             counts[r.outcome] = counts.get(r.outcome, 0) + 1
@@ -923,6 +1374,8 @@ def __vis_install_pytest_compat__():
         for k in order:
             if counts.get(k):
                 parts.append(str(counts[k]) + ' ' + label[k])
+        if deselected:
+            parts.append(str(deselected) + ' deselected')
         tail = (', '.join(parts) if parts else 'no tests ran') + ' in ' + ('%.2f' % elapsed) + 's'
         line = ' ' + tail + ' '
         pad = max(0, (62 - len(line)) // 2)
@@ -955,6 +1408,39 @@ def __vis_install_pytest_compat__():
         exec(compile(source, path, 'exec'), g)
         return g, source
 
+    _CONFTEST_CACHE = {}
+
+    def _conftest_chain(path):
+        # pytest-style conftest.py collection: walk from the test file's dir UP
+        # to the filesystem root, gathering every conftest.py, then apply them
+        # OUTERMOST-first so a nearer conftest overrides a farther one. Each
+        # conftest is exec'd once (cached by abspath) into its own namespace and
+        # its fixtures merged. Returns the merged {name: FixtureInfo} dict.
+        import os
+        start = os.path.dirname(os.path.abspath(path))
+        dirs = []
+        d = start
+        while True:
+            dirs.append(d)
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+        merged = {}
+        for d in reversed(dirs):  # outermost (root) first
+            cf = os.path.join(d, 'conftest.py')
+            if not os.path.isfile(cf):
+                continue
+            cf = os.path.abspath(cf)
+            if cf not in _CONFTEST_CACHE:
+                try:
+                    g, _src = _load_file(cf)
+                    _CONFTEST_CACHE[cf] = _fixtures_of(g, None)
+                except Exception:
+                    _CONFTEST_CACHE[cf] = {}
+            merged.update(_CONFTEST_CACHE[cf])
+        return merged
+
     def _fixtures_of(ns, allow):
         fixtures = {}
         for nm, obj in list(ns.items()):
@@ -965,36 +1451,121 @@ def __vis_install_pytest_compat__():
 
     def _group_from_file(path):
         g, source = _load_file(path)
-        fm = FixtureManager(_fixtures_of(g, None))
+        # Merge conftest.py fixtures (outer→inner), then let file-local fixtures
+        # override — matching pytest's conftest resolution order.
+        merged = dict(_conftest_chain(path))
+        merged.update(_fixtures_of(g, None))
+        fm = FixtureManager(merged)
         items = [(kind, path + '::' + nodeid, func, cls, ln)
                  for (kind, nodeid, func, cls, ln) in _collect(g, None)]
         return (items, fm, source)
 
-    def _run_group(tests, fm, src, results, write, verbose):
-        for kind, nodeid, func, cls, _ln in tests:
-            base_marks = list(getattr(func, _MARKS_ATTR, []))
-            for pid, pkwargs, casemarks in _expand_params(base_marks):
-                full_id = nodeid + (('[' + pid + ']') if pid else '')
-                r = _run_one(full_id, func, cls, pkwargs, base_marks + casemarks, fm, src)
-                results.append(r)
-                if verbose:
-                    write(full_id + ' ' + r.outcome.upper() + _NL)
+    def _fixture_param_cases(func, fm):
+        seen = {}
+        order = []
+        def visit(fname):
+            if fname in seen:
+                return
+            info = fm.fixtures.get(fname)
+            if info is None:
+                return
+            seen[fname] = True
+            for pname in inspect.signature(info.func).parameters:
+                if pname != 'request' and pname in fm.fixtures:
+                    visit(pname)
+            if info.params is not None:
+                order.append(info)
+        for pname in inspect.signature(func).parameters:
+            if pname == 'self':
+                continue
+            if pname in fm.fixtures:
+                visit(pname)
+        cases = [('', {})]
+        for info in order:
+            newcases = []
+            plist = list(info.params)
+            pids = info.ids
+            for i, pv in enumerate(plist):
+                if pids and i < len(pids):
+                    thisid = str(pids[i])
                 else:
-                    write(_CHAR.get(r.outcome, '?'))
-        fm.teardown('module')
-        fm.teardown('session')
+                    thisid = _param_id(pv)
+                for cid, cmap in cases:
+                    m2 = dict(cmap)
+                    m2[info.name] = pv
+                    nid = (cid + '-' + thisid) if cid else thisid
+                    newcases.append((nid, m2))
+            cases = newcases
+        return cases
+
+    def _run_group(tests, fm, src, results, write, verbose, ctl):
+        try:
+            for kind, nodeid, func, cls, _ln in tests:
+                if ctl['stop']:
+                    break
+                base_marks = list(getattr(func, _MARKS_ATTR, []))
+                fcases = _fixture_param_cases(func, fm)
+                for fid, fmap in fcases:
+                    if ctl['stop']:
+                        break
+                    for pid, pkwargs, casemarks, indkw in _expand_params(base_marks):
+                        combo = '-'.join(x for x in (fid, pid) if x)
+                        full_id = nodeid + (('[' + combo + ']') if combo else '')
+                        if ctl['kexpr'] is not None and not _kexpr_match(ctl['kexpr'], full_id):
+                            ctl['deselected'] += 1
+                            continue
+                        r = _run_one(full_id, func, cls, pkwargs, base_marks + casemarks, fm, src, dict(fmap, **indkw))
+                        results.append(r)
+                        if verbose:
+                            write(full_id + ' ' + r.outcome.upper() + _NL)
+                        else:
+                            write(_CHAR.get(r.outcome, '?'))
+                        if r.outcome in ('failed', 'error'):
+                            ctl['nfail'] += 1
+                            if ctl['maxfail'] and ctl['nfail'] >= ctl['maxfail']:
+                                ctl['stop'] = True
+                                break
+        finally:
+            fm.teardown('module')
+            fm.teardown('session')
 
     def main(args=None, ns=None):
         verbose = False
         paths = []
+        kexpr = None
+        maxfail = 0
         if args:
             if isinstance(args, str):
                 args = [args]
-            for a in args:
+            args = [str(a) for a in args]
+            _i = 0
+            while _i < len(args):
+                a = args[_i]
                 if a in ('-v', '--verbose', '-vv', '-vvv'):
                     verbose = True
-                elif isinstance(a, str) and not a.startswith('-'):
+                elif a in ('-x', '--exitfirst'):
+                    maxfail = 1
+                elif a == '-k':
+                    _i += 1
+                    if _i < len(args):
+                        kexpr = args[_i]
+                elif a.startswith('-k'):
+                    kexpr = a[2:].lstrip('=')
+                elif a == '--maxfail':
+                    _i += 1
+                    if _i < len(args):
+                        try:
+                            maxfail = int(args[_i])
+                        except ValueError:
+                            pass
+                elif a.startswith('--maxfail='):
+                    try:
+                        maxfail = int(a.split('=', 1)[1])
+                    except ValueError:
+                        pass
+                elif not a.startswith('-'):
                     paths.append(a)
+                _i += 1
         if ns is None:
             ns = sys._getframe(1).f_globals
         groups = []
@@ -1019,8 +1590,11 @@ def __vis_install_pytest_compat__():
         write(_NL + 'vis-pytest: collected ' + str(total) + ' item' + ('' if total == 1 else 's') + _NL + _NL)
         results = []
         t_start = time.time()
+        ctl = {'kexpr': kexpr, 'maxfail': maxfail, 'nfail': 0, 'deselected': 0, 'stop': False}
         for tests, fm, src in groups:
-            _run_group(tests, fm, src, results, write, verbose)
+            if ctl['stop']:
+                break
+            _run_group(tests, fm, src, results, write, verbose, ctl)
         for fpath, _e in load_errors:
             r = _Result(fpath)
             r.outcome = 'error'
@@ -1028,7 +1602,8 @@ def __vis_install_pytest_compat__():
             results.append(r)
             write(_CHAR.get('error', 'E'))
         elapsed = time.time() - t_start
-        rc = _summary(results, write, elapsed)
+        rc = _summary(results, write, elapsed, ctl['deselected'])
+        mod._vis_last_deselected = ctl['deselected']
         sys.stdout.write(''.join(_buf))
         sys.stdout.flush()
         # Publish the PER-TEST records (nodeid, outcome, longrepr) as the ONE
@@ -1061,6 +1636,9 @@ def __vis_install_pytest_compat__():
     mod.XFailed = XFailed
     mod.UsageError = UsageError
     mod.MonkeyPatch = MonkeyPatch
+    mod.Pytester = Pytester
+    mod.RunResult = RunResult
+    mod.LineMatcher = LineMatcher
     mod.__all__ = ['raises', 'warns', 'approx', 'fixture', 'mark', 'param', 'fail', 'skip', 'xfail', 'exit', 'importorskip', 'main']
 
     sys.modules['pytest'] = mod
@@ -1090,7 +1668,7 @@ del __vis_install_pytest_compat__
      :ext/sandbox-shims
      [{:shim/name "pytest"
        :shim/description
-       "pytest-compatible `pytest` on the stdlib — collection, assert introspection, fixtures, parametrize, marks, raises/approx, `pytest.main()`. `pytest.main([paths])` discovers test_*.py / *_test.py under dirs/files on disk (assert introspection included), or with no args runs the current block's tests. Not supported: conftest.py, plugins/CLI options, and import-time assertion rewrite."
+       "pytest-compatible `pytest` on the stdlib — collection, assert introspection, fixtures (`monkeypatch`/`capsys`/`capfd`/`tmp_path`/`tmp_path_factory`/`tmpdir`/`tmpdir_factory`/`caplog`/`recwarn`/`request`/`pytester`/`testdir`), `conftest.py` fixture discovery, parametrize, marks, raises/warns/approx, `pytest.main()`. The `pytester`/`testdir` fixture (makepyfile/makeconftest/runpytest → RunResult.assert_outcomes/stdout.fnmatch_lines) drives nested runs, so pytest's own acceptance-test style works. `pytest.main([paths])` discovers test_*.py / *_test.py under dirs/files on disk (assert introspection + conftest.py fixtures included), or with no args runs the current block's tests. Not supported: plugins/CLI options and import-time assertion rewrite."
        :shim/preamble pytest-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

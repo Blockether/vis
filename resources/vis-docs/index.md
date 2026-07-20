@@ -52,7 +52,7 @@ That second gear is where context utilization drops on advanced tasks: the raw
 tool output lives in Python vars, never in the window, and the model decides
 what surfaces.
 
-Native contracts have one source: the tool description owns routing and semantics; its JSON Schema owns exact inputs. Implementation docstrings do not enter that surface. See [Clojure extensions](extending.md#native-tool-contracts).
+Native contracts have one source: tool descriptions own routing and semantics; JSON Schemas own exact inputs. The agent discovers the live surface with `apropos` → `doc`, then follows `struct_index` → `struct_node` → `struct_patch` for supported code. See [Token optimization](token-optimization.md) and [Clojure extensions](extending.md#native-tool-contracts).
 
 ```text
         NATIVE TOOL                    PYTHON SANDBOX
