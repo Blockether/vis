@@ -42,8 +42,8 @@ cost:
 - **Native tools** — call a tool directly and its result comes straight back.
   Simple, low-latency, ideal for a quick read or a single edit on a small task.
 
-- **The Python sandbox** — *every* native tool is also a callable inside an
-  embedded GraalPython runtime. The agent writes Python that runs many tools,
+- **The Python sandbox** — engine-bound native tools are also callables inside
+  an embedded GraalPython runtime; native-only handlers are the exception. The agent writes Python that runs many tools,
   filters and chains their output, and `print()`s only the slice worth keeping.
   Ten file reads, one search, and a transform can happen in a single step — and
   the context only ever sees what the agent chose to print.
@@ -51,6 +51,8 @@ cost:
 That second gear is where context utilization drops on advanced tasks: the raw
 tool output lives in Python vars, never in the window, and the model decides
 what surfaces.
+
+Native contracts have one source: the tool description owns routing and semantics; its JSON Schema owns exact inputs. Implementation docstrings do not enter that surface. See [Clojure extensions](extending.md#native-tool-contracts).
 
 ```text
         NATIVE TOOL                    PYTHON SANDBOX

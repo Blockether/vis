@@ -57,9 +57,6 @@
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "Native descriptions and JSON Schemas are authoritative"))
         (expect (str/includes? text "hard preconditions"))
-        (expect (str/includes? text "bare snake_case"))
-        (expect (str/includes? text "`apropos(query)`"))
-        (expect (str/includes? text "`doc(name)`"))
         (expect (not (str/includes? text "Session titles are host-generated")))))
   (it "carries Epistemic + Identity stance so the model probes the project first"
       (let [text (prompt/build-system-prompt {})]
@@ -76,15 +73,13 @@
       (doseq [step ["## 1. Identity" "## 2. Tool contracts" "## 3. Inspect" "## 4. Act"
                     "## 5. Edit + verify" "## 6. Manage context" "## 7. Style and finish"]]
         (expect (str/includes? text step)))
-      (expect (str/includes? text "cannot import project packages"))
-      (expect (str/includes? text "structural tools for supported code"))
       (doseq [tool ["`struct_index`" "`struct_patch`" "`struct_node`" "`struct_occurrences`"
-                    "`struct_rename`"]]
+                    "`struct_rename`" "`python_execution`" "`apropos(query)`" "`doc(name)`"
+                    "`repl_eval`"]]
         (expect (not (str/includes? text tool))))
       (doseq [duplicated ["absent/down/failed → start" "`repl_stop(id)`" "`N < session[\"turn\"]`"
                           "from_anchor"]]
         (expect (not (str/includes? text duplicated))))
-      (expect (str/includes? text "native-only"))
       (expect (str/includes? text "Step N of M complete"))
       (expect (str/includes? text "location → cause → fix"))
       (expect (str/includes? text "MUST OBEY"))
@@ -103,13 +98,16 @@
       (expect (str/includes? text "`await vis_docs()`"))
       (expect (str/includes? text "never a menu"))
       (expect (str/includes? text "reproduce before editing"))
-      (expect (str/includes? text "Prefer a live REPL"))
       (expect (str/includes? text "rerun the same reproduction"))
       (expect (str/includes? text "inspect relevant dependencies/config"))
+      (expect (str/includes? text "inspect dependencies before using or adding them"))
       (expect (str/includes? text "benchmark"))
       (expect (str/includes? text "Compare identical"))
       (expect (str/includes? text "If ambiguity could materially change the result"))
       (expect (str/includes? text "correct or redirect you"))
+      (expect (str/includes? text "Do not commit, push, publish"))
+      (expect (str/includes? text "Never expose or log secrets"))
+      (expect (not (str/includes? text "One reply = one tool call")))
       (expect (not (str/includes? text "ambiguous, large, or risky")))))
   (it "advertises concise Python guidance and every auto-imported name"
       (let [text (#'prompt/sandbox-shims-prompt-block)]

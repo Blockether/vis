@@ -9,8 +9,8 @@ Clojure extensions are libraries that register tools, providers, channels, langu
 An extension does three things:
 
 1. **Declares itself** in a spec map built with `vis/extension` and registered at namespace load with `vis/register-extension!`.
-2. **Exposes tools** — ordinary Clojure functions that surface as bare async Python functions in the model's sandbox (`git_diff(...)`, `weather_lookup(...)`).
-3. **Teaches the model** about them through a short prompt fragment, injected only while the extension is active.
+2. **Exposes tools** — ordinary Clojure functions that can surface as Python functions, provider-native tools, or both.
+3. **Publishes one contract per surface** — native description + JSON Schema for native tools; docstrings for Python-only symbols; prompt fragments only for dynamic routing or catalogs.
 
 ## How extensions load
 
@@ -64,7 +64,7 @@ my-extension/
 | `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"git"`, `"language"`, `"channel"`, `"provider"`, … |
 | `:ext/activation-fn` | `(fn [env] -> boolean)`, called **once per turn**. Falsy hides every symbol and the prompt fragment for that turn. Defaults to always-on. |
 | `:ext/engine` | `{:ext.engine/alias 'weather :ext.engine/symbols [...]}` — the sandbox surface (below). |
-| `:ext/prompt-fn` | `(fn [env] -> string)` — the model-facing usage text for your tools. |
+| `:ext/prompt-fn` | `(fn [env] -> string)` — optional dynamic routing/capability text; never a copy of native tool contracts. |
 | `:ext/ctx-fn` | `(fn [env] -> map)` — structured per-turn context contributed into the model's `session` dict. |
 | `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
 | `:ext/slash-commands` | Vec of slash-command specs (below). |
@@ -73,7 +73,7 @@ my-extension/
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 
-## Tools: sandbox symbols
+## Tools: symbols
 
 A tool is a Clojure `defn` wrapped with `vis/symbol` and listed under `:ext.engine/symbols`:
 
@@ -90,7 +90,7 @@ Returns {\"city\", \"summary\"} — current conditions for a city."
 
 The rules:
 
-- **Pass the var** (`#'lookup-fn`), never a bare fn — the docstring and arglists come from var metadata and become the model's `doc("weather_lookup")` text. Write the docstring in the `await name(args)` + return-shape style shown above; it's the only manual the model gets.
+- **Pass the var** (`#'lookup-fn`), never a bare fn. For Python-only symbols, its docstring and arglists become `doc("weather_lookup")`. Native tools use the separate contract below.
 - **Naming.** The Python name is `<alias>_<symbol>` in snake_case: alias `'weather` + symbol `'lookup` → `weather_lookup`. Kebab-case folds to snake_case, and a trailing `?`/`!` is stripped (`refresh!` → `refresh`).
 - **`:tag` is required**: `:observation` for pure reads, `:mutation` for anything that writes.
 - **Arguments** arrive as plain values; a Python dict of options becomes a Clojure map with keyword keys (`weather_lookup("Oslo", {"units": "metric"})` → `[city {:units "metric"}]`). Use multiple arities for optional args.
@@ -98,6 +98,35 @@ The rules:
 - Envelope constructors live in `com.blockether.vis.internal.extension` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
 
 Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:render` + `:color-role` (custom TUI result card), `:hidden?` (bind but don't advertise).
+
+## Native tool contracts
+
+Native tools declare `:native-tool? true`. Keep each fact in one place:
+
+| Owner | Contains | Must not contain |
+| --- | --- | --- |
+| `:description` | Compact routing, preconditions, side effects, and result semantics | Parameter inventories, types, defaults, or required fields |
+| `:schema` | Exact input names, types, constraints, defaults, and field descriptions | Workflow prose already in `:description` |
+| Function docstring | Developer implementation notes | Native model contract |
+| `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Native descriptions or schemas |
+
+```clojure
+(vis/symbol
+  #'lookup-fn
+  {:symbol 'lookup
+   :name "weather_lookup"
+   :native-tool? true
+   :tag :observation
+   :description "Read live weather when current conditions are required."
+   :call {:pos ["city"]}
+   :schema {:type "object"
+            :properties {"city" {:type "string" :minLength 1
+                                  :description "City to look up."}}
+            :required ["city"]
+            :additionalProperties false}})
+```
+
+Both `:description` and `:schema` are mandatory. Close the top-level schema with `:additionalProperties false` unless unknown keys are intentional. `doc(name)` renders the compact description plus schema-derived parameters exactly once; it never substitutes the implementation docstring. `vis/render-prompt` also skips native symbols, preventing a prompt fragment from duplicating their provider contract.
 
 ## Sandbox shims and autoloads
 
@@ -139,16 +168,13 @@ drop-in Python extensions contribute tools/prompts/slash/hooks instead.
 
 ## The prompt fragment
 
-`:ext/prompt-fn` returns the text that teaches the model your surface. It rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Keep it dense and imperative — signatures, return shapes, one-line semantics:
+`:ext/prompt-fn` rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Use it only for facts unavailable from native descriptions and schemas—for example, a dynamic capability matrix or a catalog that changes per turn.
 
 ```
-weather_ surface active. Bare async Python functions:
-  weather_lookup(city)  or  weather_lookup(city, {"units": ..})
-    -> {city, summary}
-doc("weather_lookup") for full opts.
+Weather service configured for this workspace; live lookups are available.
 ```
 
-Follow the house style: snake_case call forms, `->` return shapes, no prose paragraphs. The foundation-git extension's prompt is the canonical example.
+Fixed native extensions usually need no prompt fragment. Do not repeat signatures, fields, defaults, or return contracts here.
 
 ## Activation
 
@@ -201,18 +227,24 @@ Every `vis-docs/vis-docs.edn` on the classpath is discovered — no central regi
    [com.blockether.vis.internal.extension :as extension]))
 
 (defn- lookup-fn
-  "await weather_lookup(city)
-Returns {\"city\", \"summary\"} — current conditions for a city."
+  "Implementation for a current-conditions lookup."
   [city]
   (extension/success {:result {:city (str city) :summary "sunny, 21°C"}}))
 
 (def ^:private symbols
-  [(vis/symbol #'lookup-fn {:symbol 'lookup :tag :observation})])
-
-(def ^:private prompt-text
-  (str "weather_ surface active. Bare async Python functions:\n"
-       "  weather_lookup(city) -> {city, summary}\n"
-       "doc(\"weather_lookup\") for details."))
+  [(vis/symbol
+     #'lookup-fn
+     {:symbol 'lookup
+      :name "weather_lookup"
+      :native-tool? true
+      :tag :observation
+      :description "Read live weather when current conditions are required."
+      :call {:pos ["city"]}
+      :schema {:type "object"
+               :properties {"city" {:type "string" :minLength 1
+                                     :description "City to look up."}}
+               :required ["city"]
+               :additionalProperties false}})])
 
 (def vis-extension
   (vis/extension
@@ -221,8 +253,7 @@ Returns {\"city\", \"summary\"} — current conditions for a city."
     :ext/version     "0.1.0"
     :ext/kind        "integration"
     :ext/engine      {:ext.engine/alias 'weather
-                      :ext.engine/symbols symbols}
-    :ext/prompt-fn   (fn [_env] prompt-text)}))
+                      :ext.engine/symbols symbols}}))
 
 (vis/register-extension! vis-extension)
 ```

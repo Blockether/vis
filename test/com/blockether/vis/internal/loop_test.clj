@@ -2749,7 +2749,13 @@
                    (expect (= ["apropos" "doc" "session_fold" "python_execution"]
                               (mapv :name tools)))
                    (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
-                   (expect (= ["name"] (get-in by-name ["doc" :schema :required])))))
+                   (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
+                   (let [python-description (get-in by-name ["python_execution" :description])]
+                     (doseq [fact ["cannot import project packages" "ntr[tool_id]"
+                                   "bare snake_case" "errors surface"]]
+                       (expect (str/includes? python-description fact))))
+                   (expect (str/includes? (get-in by-name ["session_fold" :description])
+                                          "understand its intent"))))
              (it "dispatches native discovery through the existing Python functions"
                  (let
                    [shapes

@@ -2460,10 +2460,10 @@
                    (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
              (it "requires a patch path either once or on every edit"
                  (let [schema (:ext.symbol/schema editing/patch-symbol)]
-                   (expect (= 2 (count (:oneOf schema))))
-                   (expect (= ["path"] (get-in schema [:oneOf 0 :required])))
+                   (expect (= 2 (count (:anyOf schema))))
+                   (expect (= ["path"] (get-in schema [:anyOf 0 :required])))
                    (expect (= ["path"]
-                              (get-in schema [:oneOf 1 :properties "edits" :items :required]))))))
+                              (get-in schema [:anyOf 1 :properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test

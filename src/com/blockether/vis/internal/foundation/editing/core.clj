@@ -5055,8 +5055,7 @@
          :additionalProperties false}}}
       :required ["edits"]
       :additionalProperties false
-      :oneOf [{:required ["path"]}
-              {:properties {"edits" {:items {:required ["path"]}}}}]}
+      :anyOf [{:required ["path"]} {:properties {"edits" {:items {:required ["path"]}}}}]}
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))

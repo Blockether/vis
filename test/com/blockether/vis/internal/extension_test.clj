@@ -26,6 +26,7 @@
                               {:tag :observation
                                :native-tool? true
                                :name "flat_tool"
+                               :description "Compact routing and result semantics."
                                :schema {:type "object" :properties {"x" {:type "string"}}}
                                :handler (fn [_env _in]
                                           {:ok true})
@@ -39,9 +40,7 @@
             (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
         (expect (some? schema))
-        ;; description defaults to the symbol's :doc — ONE source, no schema/doc divergence
-        (expect (= "A native tool declared the STRONG way — schema/name/handler on the SYMBOL."
-                   (:description schema)))
+        (expect (= "Compact routing and result semantics." (:description schema)))
         (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
         (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
         (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
@@ -55,7 +54,7 @@
 
         (expect (empty? (extension/native-tool-schemas [ext])))
         (expect (empty? (extension/native-tool-handlers [ext])))))
-  (it "an explicit :description overrides the :doc default"
+  (it "a native description remains separate from the implementation docstring"
       (let [sym
             (extension/symbol #'flat-native-tool
                               {:tag :observation
@@ -71,6 +70,14 @@
             (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
         (expect (= "explicit model-facing desc" (:description schema)))))
+  (it ":native-tool? true WITHOUT a compact :description is rejected at build time"
+      (expect (try (extension/symbol #'flat-native-tool
+                                     {:tag :observation
+                                      :native-tool? true
+                                      :name "no_description_tool"
+                                      :schema {:type "object"}})
+                   false
+                   (catch Throwable _ true))))
   (it "doc text combines compact semantics with schema parameters exactly once"
       (let [sym
             (extension/symbol #'flat-native-tool
@@ -89,8 +96,26 @@
             (extension/symbol-doc-text sym)]
 
         (expect (= 1 (count (re-seq #"Compact routing" doc))))
+        (expect (not (re-find #"A native tool declared the STRONG way" doc)))
         (expect (= 1 (count (re-seq #"`query`" doc))))
         (expect (re-find #"string\|array<string>, required" doc))))
+  (it "generic extension prompts omit native tools and their implementation docstrings"
+      (let [native
+            (extension/symbol #'flat-native-tool
+                              {:tag :observation
+                               :native-tool? true
+                               :description "Native routing only."
+                               :schema {:type "object" :properties {}}})
+
+            python-only
+            (extension/symbol #'flat-native-tool {:tag :observation})
+
+            prompt
+            (extension/render-prompt {:heading "TOOLS" :symbols [native python-only]})]
+
+        (expect (re-find #"TOOLS" prompt))
+        (expect (re-find #"A native tool declared the STRONG way" prompt))
+        (expect (not (re-find #"Native routing only" prompt)))))
   (it ":native-tool? true WITHOUT a :schema is rejected at build time"
       (expect (try (extension/symbol #'flat-native-tool
                                      {:tag :observation :native-tool? true :name "no_schema_tool"})

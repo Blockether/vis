@@ -3205,29 +3205,28 @@
    nil (no env wired) ⇒ no line (don't assert capabilities we can't confirm)."
   [caps]
   (when caps
-    (let
-      [net
-       (:network caps)
+    (let [net
+          (:network caps)
 
-       net-on?
-       (boolean (:enabled? net))
+          net-on?
+          (boolean (:enabled? net))
 
-       allowed
-       (seq (remove #(= "*" (str %)) (:allowed-domains net)))
+          allowed
+          (seq (remove #(= "*" (str %)) (:allowed-domains net)))
 
-       star?
-       (some #(= "*" (str %)) (:allowed-domains net))
+          star?
+          (some #(= "*" (str %)) (:allowed-domains net))
 
-       fs-part
-       (if (:fs? caps)
-         "Filesystem: REAL access (open/read/write, os.walk, glob), CONFINED to the filesystem roots (outside ⇒ PermissionError) — still prefer cat/rg/patch for plain reads/edits."
-         "Filesystem: none (no workspace) — read/edit via the cat/rg/patch tools.")
+          fs-part
+          (if (:fs? caps)
+            "FS: real and root-confined; prefer native file tools."
+            "FS: unavailable; use native file tools.")
 
-       net-part
-       (cond (not net-on?) "Network: off."
-             allowed (str "Network: on, reachable hosts: " (str/join ", " allowed) ".")
-             star? "Network: on (any host except blocked defaults)."
-             :else "Network: on.")]
+          net-part
+          (cond (not net-on?) "Network: off."
+                allowed (str "Network: on, reachable hosts: " (str/join ", " allowed) ".")
+                star? "Network: on (any host except blocked defaults)."
+                :else "Network: on.")]
 
       (str fs-part " " net-part))))
 
@@ -3240,14 +3239,13 @@
   [caps]
   {:name "python_execution"
    :description
-   (str "Use the persistent Python sandbox to batch, filter, transform, or chain work "
-        "without returning intermediate data. State persists across calls and turns. "
-        "Print only the needed result; final expressions are not returned. Engine-bound "
-        "native tools are bare snake_case functions (native-only tools are absent): "
-        "await action tools, gather independent calls, and call apropos/doc synchronously. "
-        "Use a direct native call for one simple operation."
+   (str "Python for batch/filter/transform chains. State persists but cannot import project "
+        "packages; use project REPLs. Print results; expressions are ignored; errors surface. "
+        "Direct native results: `ntr[tool_id]`; Python stays in variables. Engine-bound natives "
+        "are bare snake_case; native-only ones are absent. Await actions, gather independent "
+        "calls, call apropos/doc synchronously. Use direct natives for simple work."
         (when-let [cap (python-execution-capability-line caps)]
-          (str "\n" cap)))
+          (str " " cap)))
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
@@ -3265,8 +3263,9 @@
   {:name "session_fold"
    :description (str "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
                      "`N < session[\"turn\"]`. Never call for current/future turns, even after "
-                     "verification; retry only at the next turn's start before new work. Fold only "
-                     "completed prior-turn wire steps, preserving a durable takeaway when useful. "
+                     "verification. At the next turn's start, understand its intent, then retry "
+                     "before new work. Fold only completed prior-turn wire steps, preserving a "
+                     "durable takeaway when useful. "
                      "The operation is reversible and leaves native results in `ntr[...]`.")
    :schema
    {:type "object"
@@ -3280,10 +3279,9 @@
                     "newest.")}
      "gist" {:type "string"
              :description
-             (str "Optional one-line takeaway kept in place of the folded steps — the "
-                  "RATIONALE for the fold: what the steps established and why they are done, "
-                  "anchored (e.g. \"http timeout @ http.py:52\"). OMIT to drop the steps "
-                  "with no summary line.")}}
+             (str "Optional one-line durable takeaway: finding, rationale/consequence, and "
+                  "useful path:line, symbol/test, or anchor. Refresh any preserved anchor before "
+                  "editing. Omit when the folded steps need no summary.")}}
     :required ["target"]
     :additionalProperties false}})
 

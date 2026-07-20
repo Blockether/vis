@@ -441,24 +441,29 @@
    Walks the WHOLE cause chain: a compile error's `*e` is a `CompilerException`
    wrapper whose bland `Syntax error compiling at …` message + all-`Compiler.java`
    frames hide the real fault (`Unable to resolve symbol …`) in its cause — so the
-   headline threads every cause (`← caused by`) and the trace comes from the ROOT —
-   but ONLY its USER frames: an all-plumbing root (a compile error's stack is pure
-   `clojure.lang.Compiler`/`Util`) yields an EMPTY trace, since the headline +
-   `error_data` line/column already carry the real fault and its location."
+   headline threads every cause (`← caused by`) and the trace comes from the ROOT.
+   A COMPILE error (phase `:read-source`/`:macroexpansion`/`:compile-syntax-check`/…)
+   is headline-only: its `(line:col)` message + `← caused by` already name the fault
+   and its location, so both `trace` AND `error_data` are dropped (the lone
+   `user/eval…` frame + `#:clojure.error{…}` phase map are pure noise). A RUNTIME
+   error keeps its USER frames + `ex-data` (an all-plumbing root yields an empty
+   trace)."
   (str
     "(when-let [e *e]"
     "  (let [causes (take-while some? (iterate (fn [^Throwable t] (.getCause t)) e))"
     "        head (fn [^Throwable t] (str (.getSimpleName (class t)) (let [m (.getMessage t)] (when (seq (str m)) (str \": \" m)))))"
     "        root (last causes)"
     "        de (some (fn [t] (when (and (instance? clojure.lang.IExceptionInfo t) (seq (ex-data t))) t)) causes)"
+    "        edata (when de (ex-data de))"
+    "        compile? (contains? #{:read-source :macro-syntax-check :macroexpansion :compile-syntax-check :compilation} (:clojure.error/phase edata))"
     "        fs (map (fn [^StackTraceElement el]"
     "                  [(.getClassName el) (.getFileName el) (.getLineNumber el)])"
     "                (.getStackTrace ^Throwable root))"
     "        fmt (fn [xs] (->> xs (map (fn [[c f l]] (str (clojure.lang.Compiler/demunge c) \"  (\" f \":\" l \")\"))) distinct vec))"
     "        usr (remove (fn [[c _ _]] (re-find #\"^(java\\.|jdk\\.|sun\\.|nrepl\\.|clojure\\.lang\\.|clojure\\.main|clojure\\.core)\" c)) fs)]"
     "    {\"error_message\" (clojure.string/join \"\\n  ← caused by \" (map head causes))"
-    "     \"error_data\" (when de (pr-str (ex-data de)))"
-    "     \"trace\" (vec (take 16 (fmt usr)))}))"))
+    "     \"error_data\" (when (and edata (not compile?)) (pr-str edata))"
+    "     \"trace\" (if compile? [] (vec (take 16 (fmt usr))))}))"))
 
 (defn- drain-to-done!
   "Realize the tail of an in-flight response seq up to ITS `done`, bounded by

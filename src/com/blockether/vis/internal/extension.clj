@@ -415,7 +415,8 @@
 (s/def :ext.symbol/name non-blank-string?)
 ;; Direct Clojure executor `(fn [env input] -> result)`; absent ⇒ synthesized-Python path.
 (s/def :ext.symbol/handler fn?)
-;; Model-facing schema description OVERRIDE; absent ⇒ defaults to `:doc` (ONE source).
+;; Compact model-facing routing/semantics. REQUIRED when `:native-tool?`; the
+;; implementation docstring is developer documentation and never substitutes for it.
 (s/def :ext.symbol/description non-blank-string?)
 ;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
 ;; shared by every surface (native tool_result card + a Python-path surfaced value).
@@ -856,11 +857,12 @@
 
    A symbol IS a native tool IFF it declares `:native-tool? true` (which REQUIRES
    `:schema`). Every field is FLAT on the symbol — no legacy `:native-tool` map.
-   `:description` is the compact routing/semantics contract; it defaults to the
-   symbol's `:doc`. Input mechanics belong in `:schema`, and `doc(name)` appends
-   those schema parameters exactly once. `:name` is the `:name` wire-name override
-   else the symbol name (so `exists?` advertises `file_exists`). `:active?` is the
-   `:active-fn` against `env` (default true). `env` may be nil."
+   `:description` is the required compact routing/semantics contract. Implementation
+   docstrings never enter the native surface. Input mechanics belong in `:schema`,
+   and `doc(name)` appends those schema parameters exactly once. `:name` is the
+   `:name` wire-name override else the symbol name (so `exists?` advertises
+   `file_exists`). `:active?` is the `:active-fn` against `env` (default true).
+   `env` may be nil."
   ([active-extensions] (native-tools-for active-extensions nil))
   ([active-extensions env]
    (->> (or active-extensions [])
@@ -868,7 +870,7 @@
         (keep (fn [e]
                 (when (:ext.symbol/native-tool? e)
                   {:name (or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
-                   :description (or (:ext.symbol/description e) (:ext.symbol/doc e))
+                   :description (:ext.symbol/description e)
                    :schema (:ext.symbol/schema e)
                    :handler (:ext.symbol/handler e)
                    :call (:ext.symbol/call e)
@@ -1187,6 +1189,13 @@
                                " declares :native-tool? but no :schema — "
                                "every native tool MUST have a :schema.")
                           {:type :extension/native-tool-missing-schema :symbol sym}))
+    (when (and (:ext.symbol/native-tool? entry) (not (:ext.symbol/description entry)))
+      (anomaly/incorrect! (str "Native tool "
+                               sym
+                               " declares :native-tool? but no :description — "
+                               "native routing/semantics MUST be explicit and compact; "
+                               "implementation docstrings never substitute for it.")
+                          {:type :extension/native-tool-missing-description :symbol sym}))
     (validate-symbol-entry! entry)))
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
@@ -1390,7 +1399,11 @@
 
       (str/join "\n" collapsed))))
 (defn render-prompt
-  "Render canonical :ext/prompt-fn text from symbol docstrings + arglists.
+  "Render canonical `:ext/prompt-fn` text for Python-only symbols.
+
+   Native symbols are omitted: their compact description and JSON Schema already
+   ride the provider tool surface, and repeating implementation docs here creates
+   two conflicting contracts.
 
    Accepts an extension map or any map with:
    - :ext/description      or :heading
@@ -1405,7 +1418,7 @@
         (ext-alias-symbol opts)
 
         symbols
-        (or (:symbols opts) (ext-symbols opts))
+        (remove :ext.symbol/native-tool? (or (:symbols opts) (ext-symbols opts)))
 
         heading
         (or heading (:ext/description opts) "Extension tools")
@@ -3124,18 +3137,20 @@
       (when (seq lines) (str "**params:**\n" (str/join "\n" lines))))))
 
 (defn symbol-doc-text
-  "Model-facing doc text for ONE symbol ENTRY: the curated
-   `:ext.symbol/description` (the prose the prompt catalog renders) or, failing
-   that, the tool var's `:ext.symbol/doc` docstring, plus a rendered `params:`
-   block from its `:ext.symbol/schema`. Returns nil when the entry carries no
-   usable prose. The SINGLE source of truth for both `sandbox-symbol-docs` (the
+  "Model-facing doc text for ONE symbol ENTRY: a native tool's required compact
+   `:ext.symbol/description`, or a non-native symbol's implementation docstring,
+   plus one generated `params:` block from `:ext.symbol/schema`. Native
+   implementation docstrings never enter model context. Returns nil when the entry
+   carries no usable prose. The SINGLE source of truth for `sandbox-symbol-docs` (the
    eager built-in seed) AND the per-binding `__vis_docs__` seeding that ALIASED
    extensions do at bind time (see `loop/sync-active-extension-symbols!`), so
    `doc(name)` / `apropos(pat)` read the same text no matter which path bound
    the symbol."
   [entry]
   (let [prose
-        (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
+        (if (:ext.symbol/native-tool? entry)
+          (:ext.symbol/description entry)
+          (or (:ext.symbol/description entry) (:ext.symbol/doc entry)))
 
         params
         (schema->param-doc (:ext.symbol/schema entry))
