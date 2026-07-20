@@ -53,7 +53,8 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.internal.render :as ast])
-  (:import [java.util LinkedHashMap]))
+  (:import [java.util LinkedHashMap]
+           [java.util.concurrent.atomic AtomicLong]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -173,13 +174,16 @@
   (proxy [LinkedHashMap] [128 0.75 true]
     (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 512))))
 
+(defonce ^:private ^AtomicLong estimate-cache-gen (AtomicLong.))
+(defonce ^:private ^AtomicLong projection-cache-gen (AtomicLong.))
+
 (defn invalidate-heights!
   "Drop the sticky height cache AND the estimate memo. Tests + whole-cache
    busts (registry-toggle resync) call this."
   []
   (locking height-cache (.clear height-cache))
-  (locking estimate-cache (.clear estimate-cache))
-  (locking projection-cache (.clear projection-cache)))
+  (render/clear-cache! estimate-cache estimate-cache-gen)
+  (render/clear-cache! projection-cache projection-cache-gen))
 
 (defn height-cache-size
   "Current sticky-height entry count (handy for tests / diagnostics)."
@@ -517,17 +521,16 @@
    a real measurement always outranks the memoized estimate. NOTE: >4 args,
    so no primitive hints (same Clojure cap `layout` documents)."
   [messages settings bubble-w idx message detail-expansions session-id]
-  (let [k (height-key message bubble-w settings detail-expansions session-id)]
-    (or (locking estimate-cache (.get estimate-cache k))
-        (let [h (estimated-height-with-turn-separator messages
-                                                      settings
-                                                      bubble-w
-                                                      idx
-                                                      message
-                                                      detail-expansions
-                                                      session-id)]
-          (locking estimate-cache (.put estimate-cache k h))
-          h))))
+  (render/with-cache estimate-cache
+                     estimate-cache-gen
+                     (height-key message bubble-w settings detail-expansions session-id)
+                     (estimated-height-with-turn-separator messages
+                                                           settings
+                                                           bubble-w
+                                                           idx
+                                                           message
+                                                           detail-expansions
+                                                           session-id)))
 
 (defn- with-turn-separator [message _messages _settings _idx] (dissoc message :turn-separator?))
 
@@ -771,13 +774,14 @@
    like `height-cache-get`. Callers MUST NOT route the live / last bubble or
    a windowed (`:tail-lines`) slice through here - those change every tick."
   [message bubble-w settings detail-expansions session-id]
-  (let [k (height-key message bubble-w settings detail-expansions session-id)]
-    (or (locking projection-cache (.get projection-cache k))
-        (let [pm (project-message message bubble-w settings
-                                  {:session-id session-id
-                                   :detail-expansions detail-expansions})]
-          (locking projection-cache (.put projection-cache k pm))
-          pm))))
+  (render/with-cache projection-cache
+                     projection-cache-gen
+                     (height-key message bubble-w settings detail-expansions session-id)
+                     (project-message message
+                                      bubble-w
+                                      settings
+                                      {:session-id session-id
+                                       :detail-expansions detail-expansions})))
 
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;

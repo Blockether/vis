@@ -58,7 +58,7 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "bare snake_case"))
                    (expect (str/includes? text "never import/qualify"))
-                   (expect (str/includes? text "Session titles are host-generated"))))
+                   (expect (not (str/includes? text "Session titles are host-generated")))))
              (it "carries Epistemic + Identity stance so the model probes the project first"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Epistemic stance"))
