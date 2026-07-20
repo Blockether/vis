@@ -16,8 +16,7 @@
    contain non-ASCII. Plain `count`/`subs` are still allowed for ASCII
    internals (box-drawing strings we authored, single-glyph keystroke
    labels, etc.) where the answer is identical and the call is a hot path."
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TextCharacter
-            TerminalTextUtils]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
 ;;; ── Numeric ─────────────────────────────────────────────────────────────────
@@ -609,11 +608,9 @@
    replacing the marker-prefix-per-line architecture above."
   [^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
   (let
-    [;; Capture pre-existing modifiers so inline toggles can stack
-     ;; on top of them and we can restore exactly at exit.
-     inherited
-     ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
-
+    [;; NOTE: the pre-existing SGR modifier set (`inherited`) is captured lazily
+     ;; inside the :else slow branch — the plain fast path never reads it, so the
+     ;; common no-markup line avoids a per-line EnumSet copy of the active SGRs.
      len
      (.length line)
 
@@ -636,19 +633,19 @@
           ;; whatever style the wrapping `styled` block enabled. No
           ;; grapheme array is materialised for the plain-line case.
           (not has-sentinel?) (.putString g (int x) (int y) line)
-          ;; Slow path: walk graphemes, buffer text segments, flush on
-          ;; style transitions. `inline` is the set of toggles activated
-          ;; by sentinels we've seen so far; effective SGR set per flush
-          ;; is `inherited ∪ inline`.
+          ;; Slow path: split the line at inline sentinels and paint each text
+          ;; run with putString. Sentinels are single private-use chars
+          ;; ([E110,E119]) that never combine into a grapheme cluster, so a
+          ;; raw-char split yields exactly the same runs as a grapheme walk —
+          ;; but WITHOUT the redundant `fromString(line)` segmentation the
+          ;; per-run `putString` already performs (halves styled-line alloc).
+          ;; `inline` is the set of toggles activated by sentinels seen so far;
+          ;; effective SGR set per run is `inherited ∪ inline`.
           :else (let
-                  [cells
-                   (TextCharacter/fromString line)
-
-                   n
-                   (alength cells)
-
-                   sb
-                   (StringBuilder.)
+                  [;; Capture pre-existing modifiers so inline toggles can stack on
+                   ;; top of them and we can restore exactly at exit.
+                   inherited
+                   ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
 
                    inline
                    (java.util.EnumSet/noneOf SGR)
@@ -659,47 +656,53 @@
                    code?
                    (boolean-array 1 false)
 
-                   flush!
-                   (fn []
-                     (when (pos? (.length sb))
-                       (let [seg (.toString sb)]
-                         (.clearModifiers g)
-                         (if (aget code? 0)
-                           ;; Code span: hard-override fg/bg; modifiers
-                           ;; cleared so code reads as a flat zone.
-                           (do (.setForegroundColor g code-fg) (.setBackgroundColor g code-bg))
-                           ;; Plain span: base colors + (inherited ∪ inline) SGR.
-                           (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
-                             (.addAll effective inline)
-                             (.setForegroundColor g base-fg)
-                             (.setBackgroundColor g base-bg)
-                             (when-not (.isEmpty effective)
-                               (.enableModifiers g (into-array SGR effective)))))
-                         (.putString g (+ (int x) (aget col 0)) (int y) seg)
-                         (aset col 0 (int (+ (aget col 0) (display-width seg))))
-                         (.setLength sb 0))))]
+                   flush-run!
+                   (fn [^String seg]
+                     (when (pos? (.length seg))
+                       (.clearModifiers g)
+                       (if (aget code? 0)
+                         ;; Code span: hard-override fg/bg; modifiers cleared so
+                         ;; code reads as a flat zone.
+                         (do (.setForegroundColor g code-fg) (.setBackgroundColor g code-bg))
+                         ;; Plain span: base colors + (inherited ∪ inline) SGR.
+                         (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
+                           (.addAll effective inline)
+                           (.setForegroundColor g base-fg)
+                           (.setBackgroundColor g base-bg)
+                           (when-not (.isEmpty effective)
+                             (.enableModifiers g (into-array SGR effective)))))
+                       (.putString g (+ (int x) (aget col 0)) (int y) seg)
+                       (aset col 0 (int (+ (aget col 0) (display-width seg))))))]
 
-                  (dotimes [i n]
-                    (let
-                      [tc ^TextCharacter (aget cells i)
-                       gs ^String (.getCharacterString tc)]
+                  (loop
+                    [i
+                     0
 
-                      (cond (= gs INLINE_BOLD_ON) (do (flush!) (.add inline SGR/BOLD))
-                            (= gs INLINE_BOLD_OFF) (do (flush!) (.remove inline SGR/BOLD))
-                            (= gs INLINE_ITALIC_ON) (do (flush!) (.add inline SGR/ITALIC))
-                            (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove inline SGR/ITALIC))
-                            (= gs INLINE_STRIKE_ON) (do (flush!) (.add inline SGR/CROSSED_OUT))
-                            (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
-                            (= gs INLINE_CODE_ON) (do (flush!) (aset code? 0 true))
-                            (= gs INLINE_CODE_OFF) (do (flush!) (aset code? 0 false))
-                            (= gs INLINE_LINK_ON) (do (flush!) (.add inline SGR/UNDERLINE))
-                            (= gs INLINE_LINK_OFF) (do (flush!) (.remove inline SGR/UNDERLINE))
-                            :else (.append sb gs))))
-                  (flush!)
+                     run-start
+                     0]
+
+                    (if (>= i len)
+                      (flush-run! (subs line run-start i))
+                      (let [c (int (.charAt line i))]
+                        (if (and (>= c INLINE_SENTINEL_LO) (<= c INLINE_SENTINEL_HI))
+                          (let [gs (subs line i (inc i))]
+                            (flush-run! (subs line run-start i))
+                            (cond (= gs INLINE_BOLD_ON) (.add inline SGR/BOLD)
+                                  (= gs INLINE_BOLD_OFF) (.remove inline SGR/BOLD)
+                                  (= gs INLINE_ITALIC_ON) (.add inline SGR/ITALIC)
+                                  (= gs INLINE_ITALIC_OFF) (.remove inline SGR/ITALIC)
+                                  (= gs INLINE_STRIKE_ON) (.add inline SGR/CROSSED_OUT)
+                                  (= gs INLINE_STRIKE_OFF) (.remove inline SGR/CROSSED_OUT)
+                                  (= gs INLINE_CODE_ON) (aset code? 0 true)
+                                  (= gs INLINE_CODE_OFF) (aset code? 0 false)
+                                  (= gs INLINE_LINK_ON) (.add inline SGR/UNDERLINE)
+                                  (= gs INLINE_LINK_OFF) (.remove inline SGR/UNDERLINE))
+                            (recur (inc i) (inc i)))
+                          (recur (inc i) run-start)))))
                   ;; Restore the inherited modifier set exactly so the wrapping
-                  ;; `styled` form's cleanup sees the state it expects. Without
-                  ;; this, an unbalanced sentinel (e.g. line ending mid-bold)
-                  ;; could leak BOLD into the next paint call.
+                  ;; `styled` form's cleanup sees the state it expects. Without this,
+                  ;; an unbalanced sentinel (e.g. line ending mid-bold) could leak
+                  ;; BOLD into the next paint call.
                   (.clearModifiers g)
                   (.setForegroundColor g base-fg)
                   (.setBackgroundColor g base-bg)
