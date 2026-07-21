@@ -2774,23 +2774,24 @@
   (doseq [entry entries]
     (attachment-storage/register-backend! entry)))
 
-(def ^:private EXT_PARENT ["ext"])
+(def ^:private EXT_PARENT ["extension"])
 
 (defn- mount-under-ext
-  "Auto-place an `:ext/cli` entry under the `vis ext` parent.
+  "Auto-place an `:ext/cli` entry under the `vis extension` parent.
 
-   Authors who want nested placement (e.g. `vis ext git status`)
-   can pass `:cmd/parent [\"ext\" \"git\"]` and the dispatcher
-   respects it AS LONG AS the first element is `\"ext\"`. Any
-   other parent is rejected."
+   Authors who want nested placement (e.g. `vis extension git status`)
+   can pass `:cmd/parent [\"extension\" \"git\"]` and the dispatcher
+   respects it. The legacy `\"ext\"` first element is accepted and
+   canonicalized to `\"extension\"`. Any other parent is rejected."
   [{:cmd/keys [parent name] :as entry}]
   (cond (or (nil? parent) (= [] parent)) (assoc entry :cmd/parent EXT_PARENT)
-        (= "ext" (first parent)) entry
+        (#{"ext" "extension"} (first parent)) (assoc entry
+                                                :cmd/parent (into ["extension"] (rest parent)))
         :else (throw (ex-info (str ":ext/cli entry '"
                                    name
                                    "' has :cmd/parent "
                                    (pr-str parent)
-                                   " -- extension-owned CLI mounts only under [\"ext\" ...].")
+                                   " -- extension-owned CLI mounts only under [\"extension\" ...].")
                               {:type :ext/cli-bad-parent :entry entry}))))
 
 (defn register-extension!

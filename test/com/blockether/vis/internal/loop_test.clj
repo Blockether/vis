@@ -1915,6 +1915,24 @@
           (expect (= tis (apply-summaries tis [])))))))
 
 (defdescribe
+  printed-cards-result-render-test
+  (let
+    [render
+     (var-get #'lp/printed-cards-result-render)
+
+     stdout-card
+     {:body "```\n{'files': []}\n```"}]
+
+    (it "retains stdout when every printed card is summary-only"
+        (expect (= (:body stdout-card)
+                   (render [{:result-summary "0 matching files" :result-render nil}] stdout-card))))
+    (it "lets a non-empty printed-card body replace stdout"
+        (expect (nil? (render [{:result-summary "1 matching file" :result-render "```\na.clj\n```"}]
+                              stdout-card))))
+    (it "keeps the normal stdout body when there are no printed cards"
+        (expect (= (:body stdout-card) (render nil stdout-card))))))
+
+(defdescribe
   native-tool-result-pairing-test
   "REARCHITECTURE (same DB schema): an iteration is a LIST of tool-calls, one of
    which may be `python_execution`. Each tool_use gets its OWN tool_result,

@@ -13,7 +13,7 @@ Tailscale.
 When you run a client such as:
 
 ```sh
-vis channels tui
+vis tui
 ```
 
 the client looks up the gateway registered for the current database
@@ -43,7 +43,7 @@ To run it detached yourself, background it explicitly:
 nohup vis gateway start --host 0.0.0.0 --require-token > ~/.vis/gateway.out 2>&1 &
 
 # or let a client auto-spawn the managed background daemon for you
-vis channels tui
+vis tui
 ```
 
 Inspect and control the daemon:
@@ -121,7 +121,7 @@ It reads the gateway registered for the current DB and prints the same QR that
   because `127.0.0.1` is phone-local, and prints the exact restart to run:
   `vis gateway stop` then `vis gateway start --host 0.0.0.0 --require-token --pair`.
 
-So: if you only ever ran `vis channels tui`, the daemon behind it is loopback
+So: if you only ever ran `vis tui`, the daemon behind it is loopback
 and cannot be paired as-is — stop it and restart the gateway reachable (above).
 Once it is bound to `0.0.0.0` (or a Tailscale host), `vis gateway pair` prints
 the QR on demand any time.

@@ -19,12 +19,13 @@
    Built-in commands registered here:
      vis providers          - provider inspection, auth, and limits
      vis sessions      - list persisted sessions
-     vis ext list           - list registered extensions
+     vis extension list     - list registered extensions
+     vis tui                - interactive terminal UI (alias for `channels tui`)
      vis channels <name>    - auto-mounted via the channel registry
 
    `vis doctor` is host-owned. Extensions plug diagnostics into it
    with `:ext/doctor-fn`; extension-owned CLI commands stay under
-   `vis ext`."
+   `vis extension`."
   (:refer-clojure :exclude [agent run!])
   (:require [babashka.process :as process]
             [charred.api :as json]
@@ -813,8 +814,6 @@
 
 (defn result->json [result] (json/write-json-str (json-safe result)))
 
-(defn result->edn [result] (pr-str result))
-
 ;; =============================================================================
 ;; Built-in CLI commands
 ;; =============================================================================
@@ -896,10 +895,6 @@
                           (str "\n" (trace-indent trace))))
         (some? err) (trace-pr-str err)
         :else nil))
-
-(defn- print-full-trace-edn-frame!
-  [event payload]
-  (stdout! (trace-value-str {:event event :payload payload})))
 
 (defn- print-full-trace-json-frame!
   [event payload]
@@ -1544,9 +1539,6 @@
           "--json"
           (recur more (assoc opts :json? true) prompt-parts)
 
-          "--edn"
-          (recur more (assoc opts :edn? true) prompt-parts)
-
           "--code"
           (recur more (assoc opts :code? true) prompt-parts)
 
@@ -1558,9 +1550,6 @@
 
           ("--full-trace-stream" "--trace")
           (recur more (assoc opts :full-trace-stream? true) prompt-parts)
-
-          ("--full-trace-edn-stream" "--trace-stream")
-          (recur more (assoc opts :full-trace-edn-stream? true) prompt-parts)
 
           ("--full-trace-json-stream" "--full-trace-json-stream-raw")
           (recur more (assoc opts :full-trace-json-stream? true) prompt-parts)
@@ -1606,7 +1595,6 @@
   (stdout! "")
   (stdout! "Flags:")
   (stdout! "  --json            Print result as a single JSON envelope.")
-  (stdout! "  --edn             Print result as EDN.")
   (stdout! "  --code            Print only [:code] block contents from the")
   (stdout! "                    parsed Markdown. Concatenated in source order;")
   (stdout! "                    no fences, no language tags. Pipes cleanly")
@@ -1624,8 +1612,6 @@
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
   (stdout! "                    happening, then print the answer.")
-  (stdout! "  --full-trace-edn-stream")
-  (stdout! "                    Stream raw EDN trace frames (:trace-chunk, :result).")
   (stdout! "  --full-trace-json-stream")
   (stdout! "                    Stream raw JSON trace frames, one object per line.")
   (stdout! "  --debug           Enable verbose debug logging.")
@@ -1766,8 +1752,8 @@
   [_parsed residual]
   (config/init-cli!)
   (let
-    [{:keys [prompt json? edn? code? raw? full-trace-stream? full-trace-edn-stream?
-             full-trace-json-stream? help? agent-name db toggles]
+    [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name db
+             toggles]
       :as opts}
      (parse-run-args residual)]
     (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
@@ -1777,22 +1763,18 @@
     ;; explicit --raw stays raw. The trace-stream flags own their own
     ;; output path and are unaffected.
     (let
-      [structured-output?
-       (or json? edn? code? full-trace-stream? full-trace-edn-stream? full-trace-json-stream?)
+      [structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
        effective-raw? (or raw? (and (not structured-output?) (not (trace-terminal?))))
        agent-def (agent {:name (or agent-name "cli")})
        trace-on-chunk (cond full-trace-json-stream? #(print-full-trace-json-frame! :trace-chunk %)
-                            full-trace-edn-stream? #(print-full-trace-edn-frame! :trace-chunk %)
                             full-trace-stream? (make-pretty-trace-printer))
        run-opts (cond->
                   (dissoc opts
                     :prompt
                     :json?
-                    :edn?
                     :code?
                     :raw?
                     :full-trace-stream?
-                    :full-trace-edn-stream?
                     :full-trace-json-stream?
                     :compact?
                     :agent-name
@@ -1813,7 +1795,6 @@
                                   :cost :confidence :status :error :type :eval])]
 
       (cond full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
-            full-trace-edn-stream? (print-full-trace-edn-frame! :result trace-result)
             full-trace-stream?
             (do (tel/log! {:level :info :id ::cli-trace :data trace-result} "CLI trace result")
                 (stdout! (str "\n"
@@ -1829,7 +1810,6 @@
                     (stdout! "\nStack trace:")
                     (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))))
             json? (stdout! (result->json result))
-            edn? (stdout! (result->edn result))
             code?
             (let
               [blocks (->> (result-content result)
@@ -3230,10 +3210,10 @@
           :cmd/doc "Run cross-extension diagnostics."
           :cmd/usage "vis doctor"
           :cmd/run-fn cli-doctor!}
-         {:cmd/name "ext"
+         {:cmd/name "extension"
           :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-          :cmd/usage "vis ext <list|scaffold|...> [args...]"
-          :cmd/subcommands #(registry/registered-under ["ext"])}
+          :cmd/usage "vis extension <list|scaffold|...> [args...]"
+          :cmd/subcommands #(registry/registered-under ["extension"])}
          {:cmd/name "update"
           :cmd/doc "Update the source checkout used by this Vis installation."
           :cmd/usage "vis update"
@@ -3473,18 +3453,18 @@
 
 (doseq
   [spec [{:cmd/name "list"
-          :cmd/parent ["ext"]
+          :cmd/parent ["extension"]
           :cmd/internal? true
           :cmd/doc "List every registered extension with metadata."
-          :cmd/usage "vis ext list"
+          :cmd/usage "vis extension list"
           :cmd/run-fn cli-extensions!}
          {:cmd/name "scaffold"
-          :cmd/parent ["ext"]
+          :cmd/parent ["extension"]
           :cmd/internal? true
           :cmd/doc "Create a user extension project scaffold."
-          :cmd/usage "vis ext scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-          :cmd/examples ["vis ext scaffold my-tools"
-                         "vis ext scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
+          :cmd/usage "vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+          :cmd/examples ["vis extension scaffold my-tools"
+                         "vis extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
           :cmd/run-fn cli-extensions-scaffold!}]]
   (registry/register-cmd! spec))
 
@@ -3622,12 +3602,10 @@
     "  vis --full-trace-json-stream --db :memory \"debug startup\"\n" "  vis providers status\n"
     "  vis sessions search sqlite\n" "\n"
     "ONE-SHOT FLAGS\n" "  --json                       Print result as JSON.\n"
-    "  --edn                        Print result as EDN.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
     "  --toggles NAME=VAL[,..]      Set registered toggles for this run only (e.g. shell/enabled=true).\n"
     "  --full-trace-stream          Stream pretty human trace.\n"
-    "  --full-trace-edn-stream      Stream raw EDN trace frames.\n"
     "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
     "  --provider PROVIDER          Override provider.\n"
     "  --model MODEL                Override model or use provider/model.\n"
@@ -3737,7 +3715,7 @@
    subtree MUST trigger full extension discovery before the renderer
    reads `(registered-under [\"ext\"])`."
   [args]
-  (= "ext" (first (vec args))))
+  (contains? #{"ext" "extension"} (first (vec args))))
 
 (defn- discover-fast-help-deps!
   [args]
@@ -3866,6 +3844,19 @@
     (into ["channels" "tui" canon] (rest args))
     (vec args)))
 
+(defn- rewrite-tui-shortcut
+  "Rewrite a leading `tui` into `channels tui` so the terminal UI is a
+   first-class top-level command (`vis tui`) that boots the channels TUI.
+   Only fires when `tui` is the FIRST token, so it never shadows a prompt."
+  [args]
+  (if (= "tui" (first args)) (into ["channels" "tui"] (rest args)) (vec args)))
+
+(defn- rewrite-ext-alias
+  "Back-compat: rewrite a leading `ext` into the canonical `extension`
+   command so existing `vis ext ...` invocations keep working."
+  [args]
+  (if (= "ext" (first args)) (into ["extension"] (rest args)) (vec args)))
+
 (defn- startup-measure?
   [args]
   (or (some measure-arg? args)
@@ -3948,7 +3939,11 @@
      (startup-measure? raw-args)
 
      args
-     (rewrite-session-shortcuts (strip-global-args raw-args))]
+     (-> raw-args
+         strip-global-args
+         rewrite-session-shortcuts
+         rewrite-tui-shortcut
+         rewrite-ext-alias)]
 
     (when measure? (System/setProperty "vis.measure" "1"))
     ;; Opt-in JFR profiling (VIS_JFR set by `bin/vis --jfr`). Role-tagged so a

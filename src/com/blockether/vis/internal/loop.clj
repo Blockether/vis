@@ -2923,6 +2923,13 @@
    blow the request."
   65536)
 
+(defn- printed-cards-result-render
+  "Keep python stdout as a fallback when printed op-cards have headlines only.
+   Cards with any body remain the canonical human display; summary-only cards do
+   not suppress the sole non-empty result surface."
+  [cards result-card]
+  (if (and (seq cards) (some :result-render cards)) nil (:body result-card)))
+
 (defn- tool-result-display
   "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —
    the ONE surface both the TUI and web render, so they're unified:
@@ -4660,12 +4667,12 @@
                                                                   not-empty)
                                            :tool-color-role (:color-role t)})))
                                     (:printed-results result*)))
-              ;; Cards REPLACE the raw stdout body for display ONLY when the block printed
-              ;; nothing but tool results — otherwise (mixed text + results, or any plain
-              ;; print) show the full stdout so NO printed text is ever lost.
+              ;; Printed cards replace raw stdout only when at least one carries a body.
+              ;; Summary-only cards otherwise suppress the sole non-empty result surface,
+              ;; so retain stdout as a fallback. Mixed text always keeps stdout too.
               only-results? (:only-printed-results? result*)
               cards (when (and only-results? (seq printed-cards)) printed-cards)
-              result-render (if cards nil (:body result-card))
+              result-render (printed-cards-result-render cards result-card)
               result-summary (if cards
                                (str (count cards) " printed result" (when (> (count cards) 1) "s"))
                                (:summary result-card))]

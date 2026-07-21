@@ -209,7 +209,7 @@
 ;; command-names from the root, EXCLUDING the root itself and the
 ;; command's own `:cmd/name`. Examples:
 ;;   []                  - top-level (`vis <name>`)
-;;   ["ext"]             - nested under `vis ext`
+;;   ["extension"]       - nested under `vis extension`
 ;;   ["channels"]        - nested under `vis channels`
 ;;   ["foo" "bar"]       - nested as `vis foo bar <name>`
 ;; Used by the CLI dispatcher's auto-mount via `registered-under`.
@@ -412,9 +412,9 @@
    `:cmd/subcommands` slot - typically as a 0-arg fn so newly
    registered children appear immediately:
 
-       {:cmd/name \"ext\"
+       {:cmd/name \"extension\"
         :cmd/doc  \"Run an extension command.\"
-        :cmd/subcommands #(registered-under [\"ext\"])}"
+        :cmd/subcommands #(registered-under [\"extension\"])}"
   [parent-path]
   (let [k (vec parent-path)]
     (vec (filter #(= k (or (:cmd/parent %) [])) @command-registry))))
