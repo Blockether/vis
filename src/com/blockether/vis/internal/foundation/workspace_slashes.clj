@@ -100,9 +100,10 @@
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
-      (workspace/draft? current) (err (str "Already in draft '"
-                                           (workspace/display-label current)
-                                           "' — /draft apply or /draft abandon it first"))
+      (workspace/draft? current)
+      (err (str "Already in draft '"
+                (workspace/display-label current)
+                "' — /draft apply, /draft stash, or /draft abandon it first"))
       ;; A draft MUST be named — an unlabeled draft is anonymous and
       ;; indistinguishable in the tab strip / draft list. The TUI prompts for
       ;; the label (see the `:slash/prompt-arg` on this spec); other channels
@@ -114,7 +115,10 @@
            :slash/data {:capability-matrix (workspace/workspace-capability-matrix
                                              (or (:root current) (workspace/trunk-root)))})
       :else
-      (let [draft (workspace/create! db {:session-state-id state-id :label label :blank? blank?})]
+      (let
+        [draft (workspace/create!
+                 db
+                 {:session-state-id state-id :label label :from current :blank? blank?})]
         {:slash/status :ok
          :slash/title (str (if blank? "Blank draft '" "Draft '")
                            (workspace/display-label draft)

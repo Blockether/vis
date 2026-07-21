@@ -1251,6 +1251,24 @@
                   {:mode :dialog}))}
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- transcript-html-handler
+  "Render a session's transcript as a STANDALONE HTML document — the canonical
+   `transcript->html` every surface (CLI, web, file export) renders through, the
+   HTML sibling of `transcript-md-handler`. `:dialog` when `?mode=dialog`, else
+   the full forensic report. `transcript` is resolved dynamically to avoid a
+   load-time require cycle (core -> gateway.server -> transcript -> core)."
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [mode (if (= "dialog" (get-in request [:query-params "mode"])) :dialog :full)]
+      {:status 200
+       :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (str ((requiring-resolve
+                     'com.blockether.vis.internal.foundation.transcript/transcript-html)
+                    (lp/db-info)
+                    sid
+                    {:mode mode}))})
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- turn-trace-handler
   [request]
   (if (path-sid request)
@@ -1839,6 +1857,7 @@
         ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
         ["/sessions/:sid/transcript" {:get transcript-handler}]
         ["/sessions/:sid/transcript.md" {:get transcript-md-handler}]
+        ["/sessions/:sid/transcript.html" {:get transcript-html-handler}]
         ["/sessions/:sid/resources" {:get resources-handler}]
         ["/sessions/:sid/resources/startables" {:get startables-handler}]
         ["/sessions/:sid/resources/start" {:post resource-start-handler}]

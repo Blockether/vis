@@ -380,6 +380,53 @@
              (finally (delete-tree! a) (delete-tree! ext))))))
 
 (defdescribe
+  draft-follows-current-root-test
+  (it
+    "/draft new forks the session's current /root, not the process launch directory"
+    (let
+      [launch-root
+       (temp-dir "vis-draft-launch-root")
+
+       current-root
+       (temp-dir "vis-draft-current-root")]
+
+      (try (spit (io/file launch-root "launch-only.txt") "launch\n")
+           (spit (io/file current-root "current-only.txt") "current\n")
+           (if-not (workspace/isolated-workspaces-supported? current-root)
+             (expect (not (workspace/isolated-workspaces-supported? current-root)))
+             (with-cwd
+               launch-root
+               (fn []
+                 (with-store
+                   (fn [store]
+                     (let
+                       [trunk
+                        (workspace/create-trunk-at! store launch-root)
+
+                        state-id
+                        (pin-session! store (:id trunk))
+
+                        env
+                        (env-with store)]
+
+                       (dispatch! env store state-id (str "/root " current-root))
+                       (let
+                         [out
+                          (dispatch! env store state-id "/draft new moved-root")
+
+                          draft
+                          (workspace/for-session store state-id)]
+
+                         (try (expect (= :ok (get-in out [:result :slash/status])))
+                              (expect (= (workspace/normalize-root current-root)
+                                         (:repo-root draft)))
+                              (expect (.exists (io/file (:root draft) "current-only.txt")))
+                              (expect (not (.exists (io/file (:root draft) "launch-only.txt"))))
+                              (finally (try (workspace/abandon! store {:workspace-id (:id draft)})
+                                            (catch Throwable _ nil)))))))))))
+           (finally (delete-tree! launch-root) (delete-tree! current-root))))))
+
+(defdescribe
   fs-confinement-sync-test
   (it
     "/fs add resets the live sandbox confinement pointer in the SAME turn"

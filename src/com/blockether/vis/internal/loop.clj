@@ -16,7 +16,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
-            [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
@@ -8561,6 +8561,12 @@
    A sub_loop CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
    disposing the child must NOT close it, or the parent loses its DB mid-turn."
   [environment]
+  ;; Stop this session's egress proxy if one was ever started (delay realized).
+  (when-let [d (:egress-proxy-delay environment)]
+    (when (realized? d)
+      (try (when-let [stop! (:stop! @d)]
+             (stop!))
+           (catch Throwable _ nil))))
   (when-let [python-context (:python-context environment)]
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
@@ -9356,13 +9362,51 @@
       :rules (:rules net-cfg)}
 
      ;; OS jail (real containment for shell children) — opt-in via vis.yml
-     ;; `:shell {:jail true}`. When on, every shell/subprocess spawn is confined
-     ;; to the LIVE session roots and, when :network/enabled is off, denied all
-     ;; sockets. nil (default) leaves the executors unwrapped = today's behavior.
-     _
-     (process-jail/set-active-policy!
-       (when (and sandbox-roots-fn (get-in (config/load-config-raw) [:shell :jail]))
-         {:roots-fn sandbox-roots-fn :net-enabled? (:enabled? network-opts)}))
+     ;; `:shell {:jail true}` (or a map with :allow-write/:allow-read/:deny-write/
+     ;; :deny-read/:network). A PER-SESSION policy VALUE (never a global singleton),
+     ;; carried on the env and read FRESH per spawn, so it tracks the LIVE session
+     ;; roots and the current vis.yml (editing config + `/reload` needs no restart).
+     ;; nil (default: no `:shell :jail`) leaves the executors unwrapped = today's
+     ;; behavior. Filesystem model mirrors sandbox-runtime (write allow-only,
+     ;; deny-write/deny-read carve-outs win); shell-child network is on/off here
+     ;; (domain/verb fidelity is the interpreter method-guard + future proxy).
+     ;; Per-session loopback egress proxy (see internal.egress-proxy), started LAZILY
+     ;; the first time a jailed shell child needs restricted network. A `delay` so it's
+     ;; created at most once per session, thread-safe, and never started when the
+     ;; session runs no shell egress. Its policy-fn re-reads vis.yml `:network` per
+     ;; connection, so `/reload` + config edits take effect with no restart. Stopped
+     ;; in `dispose-environment!`.
+     egress-proxy-delay
+     (delay (egress/start! {:policy-fn (fn []
+                                         (egress/compile-policy (get (config/load-config-raw)
+                                                                     :network)))}))
+
+     jail-policy-fn
+     (when sandbox-roots-fn
+       (fn []
+         (let [jail (get-in (config/load-config-raw) [:shell :jail])]
+           (when jail
+             (let
+               [m (if (map? jail) jail {})
+                net-on? (if (contains? m :network)
+                          (boolean (:network m))
+                          (toggles/enabled? :network/enabled))
+                ;; Wall the child to the loopback egress proxy (net-off-except-proxy)
+                ;; when network is ON, it isn't opted out (`:proxy false`), and there
+                ;; are real domain/verb restrictions to enforce — else allow-all direct
+                ;; egress (no proxy). One config, both enforcement points.
+                proxy? (and net-on?
+                            (not (false? (:proxy m)))
+                            (some? (egress/compile-policy (get (config/load-config-raw) :network))))
+                proxy-port (when proxy? (:port @egress-proxy-delay))]
+
+               {:roots-fn sandbox-roots-fn
+                :net-enabled? net-on?
+                :allow-write (:allow-write m)
+                :allow-read (:allow-read m)
+                :deny-write (:deny-write m)
+                :deny-read (:deny-read m)
+                :proxy-port proxy-port})))))
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
@@ -9391,7 +9435,13 @@
         ;; routing digest → rendered into ctx as `routing`
         ;; (current model + available, for sub_loop model choice).
         :routing routing-digest
-        :db-info db-info}
+        :db-info db-info
+        ;; Per-session OS-jail policy fn (nil unless vis.yml `:shell :jail`).
+        ;; Shell/subprocess executors consult it per spawn; see process-jail.
+        :jail-policy-fn jail-policy-fn
+        ;; Per-session egress-proxy handle (a delay; realized only if a jailed
+        ;; shell child needed restricted network). dispose-environment! stops it.
+        :egress-proxy-delay egress-proxy-delay}
        ;; Workspace info attached at env-build time so the extension
        ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
        ;; root the very first time it fires.

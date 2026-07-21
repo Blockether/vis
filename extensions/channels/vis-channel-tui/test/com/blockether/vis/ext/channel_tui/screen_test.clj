@@ -5,7 +5,8 @@
    `--session-id` / `--resume` argument parser, where a silent
    accept of unknown flags previously masked typos like
    `--sessions-id`."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -80,6 +81,8 @@
 (def ^:private latest-modified-first (deref #'screen/latest-modified-first))
 
 (def ^:private session-sort-key (deref #'screen/session-sort-key))
+
+(def ^:private apply-draft-picker-choice! (deref #'screen/apply-draft-picker-choice!))
 
 (def ^:private pre-resolve-session-id! (deref #'screen/pre-resolve-session-id!))
 
@@ -401,6 +404,52 @@
                    (activate-tab-entry-hit! #(swap! refreshes conj %)
                                             {:kind :workspace-entry :index 1})
                    (expect (= [false] @refreshes)))))
+
+(defdescribe
+  draft-picker-gateway-test
+  (it "keeps the selected current location as a no-op"
+      (let [calls (atom [])]
+        (with-redefs
+          [vis/gateway-stash-draft! (fn [& xs]
+                                      (swap! calls conj xs))
+           vis/gateway-resume-draft! (fn [& xs]
+                                       (swap! calls conj xs))]
+
+          (expect (= {:changed? false :message "Already on feature-a"}
+                     (apply-draft-picker-choice!
+                       "sid"
+                       {:action :draft :label "feature-a" :current? true})))
+          (expect (empty? @calls)))))
+  (it "routes trunk and draft switches through the canonical gateway APIs"
+      (let
+        [calls
+         (atom [])
+
+         trunk
+         {"root" "/repo"}
+
+         draft
+         {"root" "/draft/feature-b"}]
+
+        (with-redefs
+          [vis/gateway-stash-draft!
+           (fn [sid]
+             (swap! calls conj [:stash sid])
+             trunk)
+
+           vis/gateway-resume-draft!
+           (fn [sid wid]
+             (swap! calls conj [:resume sid wid])
+             draft)]
+
+          (expect (= trunk
+                     (:workspace (apply-draft-picker-choice! "sid"
+                                                             {:action :trunk :label "Trunk"}))))
+          (expect (= draft
+                     (:workspace (apply-draft-picker-choice!
+                                   "sid"
+                                   {:action :draft :workspace-id "ws-b" :label "feature-b"}))))
+          (expect (= [[:stash "sid"] [:resume "sid" "ws-b"]] @calls))))))
 
 (defdescribe terminal-interrupt-test
              (it "configures Lanterna to trap Ctrl+C instead of exiting inside pollInput"
@@ -766,15 +815,15 @@
 
        all-lines
        (fn [from to]
-         (clojure.string/join "\n"
-                              (for
-                                [b
-                                 (range from to)
+         (str/join "\n"
+                   (for
+                     [b
+                      (range from to)
 
-                                 l
-                                 (range lines-per)]
+                      l
+                      (range lines-per)]
 
-                                (format "B%02d-L%d" b l))))]
+                     (format "B%02d-L%d" b l))))]
 
       ;; Full-document drag from top to bottom copies all 300 content lines.
       (expect (= (all-lines 0 n-bubbles)

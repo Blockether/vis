@@ -3658,6 +3658,25 @@
   [session-id]
   (try (vis/gateway-session-workspace session-id) (catch Throwable _ nil)))
 
+(defn- apply-draft-picker-choice!
+  "Execute one TUI draft-picker choice through the canonical gateway API.
+   Selecting the current location is a safe no-op. Selecting trunk stashes the
+   current draft; selecting another draft lets the gateway stash-then-resume
+   as one gateway operation. Returns workspace + user-facing result data for the screen loop."
+  [sid {:keys [action current? workspace-id label]}]
+  (cond current? {:changed? false :message (str "Already on " label)}
+        (= action :trunk) {:changed? true
+                           :message "Stashed draft — switched to trunk"
+                           :workspace (vis/gateway-stash-draft! sid)}
+        (= action :draft) (do (when-not workspace-id
+                                (throw (ex-info "Draft picker row has no workspace id"
+                                                {:type :draft-picker/invalid-row})))
+                              {:changed? true
+                               :message (str "Switched to draft '" label "'")
+                               :workspace (vis/gateway-resume-draft! sid workspace-id)})
+        :else (throw (ex-info "Unknown draft picker action"
+                              {:type :draft-picker/invalid-action :action action}))))
+
 (defn- abbrev-home
   "Shorten an absolute path by replacing the user's home dir with `~`."
   [^String p]
@@ -4831,6 +4850,61 @@
                                                             :repaint-bg
                                                             (fn []
                                                               (repaint-chat-frame! screen))))))
+              ;; Canonical gateway draft picker (C-x e + palette "Switch Draft…").
+              ;; It is intentionally mutation-safe: the current location is selected
+              ;; first (Enter is a no-op), trunk stashes, and another draft performs
+              ;; the gateway's non-destructive stash-then-resume switch. Never switch
+              ;; roots under an in-flight turn.
+              show-drafts!
+              (fn show-drafts! []
+                (let [db @state/app-db]
+                  (cond
+                    (or (:loading? db) (seq (:pending-sends db)))
+                    (vis/notify!
+                      "Wait for the running or queued turn to finish before switching drafts"
+                      :level :warn
+                      :ttl-ms status-error-ttl-ms)
+                    (:dialog-open? db) nil
+                    :else
+                    (if-let [sid (current-session-id)]
+                      (try
+                        (state/dispatch [:close-overlays])
+                        (when (get-in @state/app-db [:search :active?])
+                          (state/dispatch [:search-clear]))
+                        (let [drafts (vis/gateway-list-drafts sid)]
+                          (when-let [choice (with-dialog-lock #(dlg/draft-picker! screen drafts))]
+                            ;; A queued or externally-started turn can become active
+                            ;; while the modal is open. Check again immediately before
+                            ;; changing the daemon-owned workspace.
+                            (let [db-now @state/app-db]
+                              (if (or (:loading? db-now) (seq (:pending-sends db-now)))
+                                (vis/notify!
+                                  "A turn started while the picker was open; draft switch cancelled"
+                                  :level :warn
+                                  :ttl-ms status-error-ttl-ms)
+                                (let
+                                  [{:keys [changed? message workspace]}
+                                   (apply-draft-picker-choice! sid choice)]
+                                  (when changed?
+                                    (state/dispatch [:set-workspace workspace])
+                                    (state/dispatch [:bump-render-version]))
+                                  (vis/notify! message
+                                               :level (if changed? :success :info)
+                                               :ttl-ms copy-success-ttl-ms))))))
+                        (catch Throwable t
+                          ;; Gateway resume is stash-then-resume. If target validation
+                          ;; loses a race, re-read the authoritative location so the
+                          ;; footer never keeps painting a stale draft root.
+                          (try (when-let [workspace (vis/gateway-session-workspace sid)]
+                                 (state/dispatch [:set-workspace workspace])
+                                 (state/dispatch [:bump-render-version]))
+                               (catch Throwable _ nil))
+                          (vis/notify! (str "Could not switch draft: " (or (ex-message t) (str t)))
+                                       :level :error
+                                       :ttl-ms status-error-ttl-ms)))
+                      (vis/notify! "No current session for draft switching"
+                                   :level :warn
+                                   :ttl-ms status-error-ttl-ms)))))
               show-sessions!
               (fn show-sessions! []
                 (when-not (:dialog-open? @state/app-db)
@@ -6130,6 +6204,9 @@
                                   :show-sessions
                                   (show-sessions!)
 
+                                  :open-drafts
+                                  (show-drafts!)
+
                                   :switch-project
                                   (switch-project!)
 
@@ -6288,6 +6365,9 @@
 
                          :open-resources
                          (do (open-resources!) (recur))
+
+                         :open-drafts
+                         (do (show-drafts!) (recur))
 
                          :open-magit
                          (do (open-magit!) (recur))

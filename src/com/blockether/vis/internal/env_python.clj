@@ -2154,9 +2154,8 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    none. A method value `*` means any verb. Keyword or string hosts/methods/access
    are all accepted; a lone method value is treated as a one-element list. Entries
    whose host is blank, or that carry neither a method nor an allow-rule, are
-   dropped; an empty result yields `[]` (⇒ no guard installed). Legacy `:method-policy`
-   and `:rules` for the same host are merged (methods union, allow concatenated)."
-  [{:keys [method-policy rules]}]
+   dropped; an empty result yields `[]` (⇒ no guard installed)."
+  [{:keys [rules]}]
   (letfn
     [(nm [x]
        (some-> (if (keyword? x) (name x) (str x))
@@ -2202,12 +2201,6 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                        (update :allow into al))))))]
     (let
       [acc
-       (reduce (fn [m [host methods]]
-                 (add m (host-key host) (methods-of methods) []))
-               {}
-               method-policy)
-
-       acc
        (reduce (fn [m r]
                  (add m
                       (host-key (:host r))

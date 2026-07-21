@@ -924,6 +924,40 @@
       (expect (str/includes? inactive-label "│     0 │"))
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
+  (it "draft picker puts the current location first and keeps trunk as stash"
+      (let
+        [parked
+         {"workspace_id" "ws-parked" "label" "feature-b" "is_current" false}
+
+         current
+         {"workspace_id" "ws-current" "label" "feature-a" "is_current" true}
+
+         in-draft
+         (dlg/draft-picker-items [parked current])
+
+         on-trunk
+         (dlg/draft-picker-items [parked])]
+
+        (expect (= [:draft :trunk :draft] (mapv :action in-draft)))
+        (expect (= ["feature-a" "Trunk" "feature-b"] (mapv :label in-draft)))
+        (expect (:current? (first in-draft)))
+        (expect (= "stash current" (:hint (second in-draft))))
+        (expect (= :trunk (:action (first on-trunk))))
+        (expect (:current? (first on-trunk)))
+        (expect (str/includes? (:hint (first on-trunk)) "/draft new"))))
+  (it "draft picker filters interactively and returns the stable workspace id"
+      (let
+        [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+         (virtual-screen)
+
+         drafts
+         [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}
+          {"workspace_id" "ws-b" "label" "feature-b" "is_current" false}]]
+
+        (try (.addInput terminal (KeyStroke. (Character/valueOf \b) false false false))
+             (.addInput terminal (KeyStroke. KeyType/Enter))
+             (expect (= "ws-b" (:workspace-id (dlg/draft-picker! screen drafts))))
+             (finally (.stopScreen screen)))))
   (it "command palette exposes the frequent app verbs, providers distinct from settings"
       (let
         [palette-commands
@@ -942,7 +976,7 @@
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids
                         [:cycle-model :cycle-reasoning :search-open :open-resources :show-sessions
-                         :open-dirs :pick-file :new-session :fork-session]))))
+                         :open-drafts :open-dirs :pick-file :new-session :fork-session]))))
   (it "command palette filters by a typed query (searchable)"
       ;; The palette is searchable: the filter is a case-insensitive substring
       ;; match on :label, the spine `searchable-select!` applies.

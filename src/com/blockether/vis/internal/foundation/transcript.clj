@@ -1250,4 +1250,15 @@
                  "<script>window.Prism&&Prism.highlightAll&&Prism.highlightAll();</script>\n"))
           "</body>\n</html>\n"))))
 
+(defn transcript-html
+  "Render the session as a STANDALONE HTML document. Single transformation over
+   `transcript`'s data — the HTML sibling of `transcript-md`. Returns a string;
+   returns `\"Session not found: <id>\\n\"` (no throw) on a missing id so shell
+   pipelines stay clean."
+  ([db-info session-id] (transcript-html db-info session-id {:mode :full}))
+  ([db-info session-id opts]
+   (if-let [data (transcript db-info session-id)]
+     (transcript->html data opts)
+     (str "Session not found: " session-id "\n"))))
+
 

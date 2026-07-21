@@ -88,7 +88,7 @@
    {:action :cycle-verbosity :key \l :label "length"} {:action :search-open :key \f :label "search"}
    {:action :pick-file :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
-   {:action :open-dirs :key \d :label "filesystem"}
+   {:action :open-dirs :key \d :label "filesystem"} {:action :open-drafts :key \e :label "drafts"}
    {:action :open-resources :key \s :label "backgrounds"}
    {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
    {:action :show-sessions :key \b :label "switch session"}

@@ -51,7 +51,6 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.progress :as progress]
             [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel]))
 
@@ -2091,11 +2090,11 @@
 
 (defn- export-html-str
   "Standalone, vis-light-styled HTML transcript for a session — the canonical
-   `transcript/transcript->html` render (summary card + turn-by-turn forensic
-   body, all CSS inlined). No web extension required."
+   `transcript/transcript-html` render (DB lookup + summary card + turn-by-turn
+   forensic body, all CSS inlined), the SAME renderer every other surface (web,
+   slash, gateway) uses. No web extension required."
   [db sid]
-  ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
-    ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
+  ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript-html) db sid))
 
 (defn- cinema-export-fn
   "Resolve the headless session-cinema exporter from the channel-tui extension,
@@ -2187,7 +2186,10 @@
                   "Cinema export (--mp4) needs the channel-tui extension, which is not installed.")
                 (shutdown-agents)
                 (System/exit 2))))
-          :else (write-stdout! (render/session->markdown d (:id session))))
+          :else (write-stdout! ((requiring-resolve
+                                  'com.blockether.vis.internal.foundation.transcript/transcript-md)
+                                 d
+                                 (:id session))))
     (shutdown-agents)))
 
 (defn- cli-delete-session!

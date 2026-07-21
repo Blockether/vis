@@ -324,16 +324,28 @@
   []
   (if (windows?*) (or (find-git-bash) "bash") "bash"))
 
+(defn- jail-policy
+  "The live per-session jail policy VALUE (or nil) carried by `env`. Built by the
+   loop from vis.yml `:shell :jail` + the session roots; read fresh here so it
+   reflects the current config/roots at spawn time. nil ⇒ argv unwrapped."
+  [env]
+  (when-let [f (:jail-policy-fn env)]
+    (try (f) (catch Throwable _ nil))))
+
 (defn- spawn!
-  ^Process [cmd ^File dir merge-err?]
+  ^Process [cmd ^File dir merge-err? policy]
   (let
     [^java.util.List args
-     (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
+     (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)] policy)
 
      pb
      (ProcessBuilder. args)]
 
     (.directory pb dir)
+    ;; Route the child's HTTP clients at the loopback egress proxy when the jail
+    ;; policy walls it to proxy-only egress (net-off-except-loopback).
+    (let [pe (process-jail/proxy-env policy)]
+      (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe)))
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
 
@@ -363,21 +375,26 @@
    pipe (browser-auth prompts, password `read`, REPLs) actually run. Returns the
    pty HANDLE MAP (`:pid :in :send :wait :alive? :destroy`) that the pump /
    kill-tree! / wait path below consume. stdout+stderr share the one PTY stream
-   (a real terminal has no separate error channel), so no merge-err? knob."
-  [cmd ^File dir]
+   (a real terminal has no separate error channel), so no merge-err? knob.
+   `policy` is the live per-session jail policy value (or nil) applied to the
+   spawned argv, so the OS jail confines the interactive child too."
+  [cmd ^File dir policy]
   (if (windows?*)
     ;; pty is POSIX-only (openpty/posix_spawnp). On native Windows fall back to
     ;; a plain merged-output ProcessBuilder wrapped in the same handle shape —
     ;; no real TTY (isatty() false, no shell_send interactivity, no attach
     ;; bridge), but shell_bg still runs/captures/stops cleanly instead of
     ;; throwing. (ConPTY could restore a real TTY here later.)
-    (process->handle (spawn! cmd dir true))
-    (pty/spawn!
-      {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
-       :dir (.getPath dir)
-       :env (doto (HashMap. ^java.util.Map (System/getenv)) (.put "TERM" "xterm-256color"))
-       :cols 120
-       :rows 40})))
+    (process->handle (spawn! cmd dir true policy))
+    (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
+                                                   (str cmd)]
+                                                  policy)
+                 :dir (.getPath dir)
+                 :env (doto (HashMap. ^java.util.Map (System/getenv))
+                        (.put "TERM" "xterm-256color")
+                        (.putAll ^java.util.Map (process-jail/proxy-env policy)))
+                 :cols 120
+                 :rows 40})))
 
 (defn- kill-tree!
   "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
@@ -444,7 +461,7 @@
 
 (defn- shell-run-impl
   ([env cmd] (shell-run-impl env cmd nil))
-  ([_env cmd opts]
+  ([env cmd opts]
    (let [cmd (str cmd)]
      (when (str/blank? cmd)
        (throw (ex-info "shell_run needs a non-blank command string." {:type ::blank-command})))
@@ -453,7 +470,7 @@
         cwd-opt? (not (str/blank? (str (or (get opts "cwd") ""))))
         dir (resolve-cwd opts)
         t0 (now-ms)
-        p (spawn! cmd dir false)
+        p (spawn! cmd dir false (jail-policy env))
         empty-tail {:text "" :truncated false}
         ;; Separate reader futures per stream — avoids the classic full-pipe
         ;; deadlock on chatty commands. `read-capped` bounds memory to the
@@ -651,7 +668,7 @@
        (resolve-cwd nil)
 
        p
-       (pty-spawn! cmd dir)
+       (pty-spawn! cmd dir (jail-policy env))
 
        buffer
        (atom {:lines [] :next-seq 1 :dropped 0})

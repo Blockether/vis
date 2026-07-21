@@ -82,7 +82,7 @@
           "`repl_start`" "after verification, stop only those you" "External REPLs are"
           "`find_files`" "`rg`" "`struct_index` for code structure" "batch" "independent reads"
           "Inspect dependencies before adding them" "benchmark/profile identical workloads"
-          "`struct_index`/`struct_patch`" "refresh anchors via `cat`/`struct_index`"
+          "`struct_index`/`struct_patch`" "any write or `format` STALES anchors" "before editing again" "edits/patches and their spent reads fold"
           "Create no unrequested" "without asking permission or offering optional"
           "Never expose or log secrets" "commit, push, publish" "Before every `session_fold`"
           "read `session[\"turn\"]`" "`N < session[\"turn\"]`" "never target current/future turns"

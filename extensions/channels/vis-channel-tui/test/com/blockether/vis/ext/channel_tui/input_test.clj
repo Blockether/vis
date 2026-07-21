@@ -151,6 +151,7 @@
         (expect (= :toggle-voice-recording
                    (:action (input/handle-key (char-key (Character. \v)) armed))))
         (expect (= :open-dirs (:action (input/handle-key (char-key (Character. \d)) armed))))
+        (expect (= :open-drafts (:action (input/handle-key (char-key (Character. \e)) armed))))
         (expect (= :open-resources (:action (input/handle-key (char-key (Character. \s)) armed))))
         (expect (= :toggle-help (:action (input/handle-key (char-key (Character. \h)) armed))))
         ;; WITHOUT the prefix the same Ctrl letters are Emacs keys / abort — NOT verbs:

@@ -1,8 +1,9 @@
 (ns com.blockether.vis.internal.process-jail-test
   "The OS process jail: the SBPL compiler is asserted as pure data, and — on a
    macOS host that can actually enforce Seatbelt — a real wrapped `bash` proves
-   containment end to end (workspace RW allowed; outside-read, write-outside and
-   network all denied)."
+   containment end to end (workspace RW allowed; outside-read, write-outside,
+   deny-write carve-outs, and network all denied). The policy is a PER-SESSION
+   VALUE threaded into `wrap-argv`, never a process-global singleton."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -30,12 +31,56 @@
 
       (is (str/includes? p (str "(subpath \"" real "\")"))
           "rule must template the canonical path, not the raw /tmp path")
-      (.delete dir))))
+      (.delete dir)))
+  (testing "deny-write / deny-read emit deny rules AFTER the allows (last-match-wins)"
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-fs-" (System/nanoTime)))
+         (.mkdirs))
+
+       sub
+       (doto (io/file dir "protected") (.mkdirs))
+
+       realsub
+       (.getCanonicalPath sub)
+
+       p
+       (pj/macos-profile {:rw [(.getPath dir)] :deny-write [(.getPath sub)] :net-enabled? false})
+
+       allow-idx
+       (str/index-of p (str "(subpath \"" (.getCanonicalPath dir) "\")"))
+
+       deny-idx
+       (str/last-index-of p (str "(deny file-write*(subpath \"" realsub "\")"))]
+
+      (is (str/includes? p (str "(deny file-write*(subpath \"" realsub "\")")))
+      (is (and allow-idx deny-idx (< allow-idx deny-idx))
+          "the deny-write carve-out must come after the RW allow so it wins")
+      (io/delete-file sub true)
+      (io/delete-file dir true))))
+
+(deftest compile-policy-resolves-live-roots
+  (testing "session roots-fn + tmp become the RW set, allow-read → :ro"
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-cp-" (System/nanoTime)))
+         (.mkdirs))
+
+       resolved
+       (pj/compile-policy
+         {:roots-fn (constantly [(.getPath dir)]) :net-enabled? true :allow-read []})
+
+       canon
+       (.getCanonicalPath dir)]
+
+      (is (contains? (set (:rw resolved)) canon) "workspace root is writable")
+      (is (some #(str/includes? % "tmp") (:rw resolved)) "tmp dirs are always writable")
+      (is (true? (:net-enabled? resolved)))
+      (io/delete-file dir true))))
 
 (deftest wrap-argv-is-off-by-default
-  (testing "no active policy => argv passes through untouched"
-    (pj/set-active-policy! nil)
-    (is (= ["bash" "-lc" "echo hi"] (pj/wrap-argv ["bash" "-lc" "echo hi"])))))
+  (testing "nil policy => argv passes through untouched"
+    (is (= ["bash" "-lc" "echo hi"] (pj/wrap-argv ["bash" "-lc" "echo hi"] nil)))))
 
 (defn- run-jailed
   [argv]
@@ -64,6 +109,9 @@
        (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-ws-" (System/nanoTime)))
          (.mkdirs))
 
+       protected
+       (doto (io/file ws "protected") (.mkdirs))
+
        secret
        (io/file home (str ".vis-jail-secret-" (System/nanoTime) ".txt"))
 
@@ -71,40 +119,55 @@
        (io/file home (str ".vis-jail-escape-" (System/nanoTime) ".txt"))
 
        wsc
-       (.getCanonicalPath ws)]
+       (.getCanonicalPath ws)
+
+       protc
+       (.getCanonicalPath protected)
+
+       policy
+       {:roots-fn (constantly [(.getPath ws)])
+        :net-enabled? false
+        :deny-write [(.getPath protected)]}]
 
       (spit (io/file ws "inside.txt") "workspace-ok")
       (spit secret "TOP-SECRET")
-      (pj/set-active-policy! {:roots-fn (constantly [(.getPath ws)]) :net-enabled? false})
       (try (testing "reads + writes inside the workspace succeed"
              (let
                [r (run-jailed
                     (pj/wrap-argv
                       ["bash" "--noprofile" "--norc" "-lc"
-                       (str "cat " wsc "/inside.txt" " && echo x > " wsc "/w.txt && echo WROTE")]))]
+                       (str "cat " wsc "/inside.txt" " && echo x > " wsc "/w.txt && echo WROTE")]
+                      policy))]
                (is (zero? (:exit r)))
                (is (str/includes? (:out r) "workspace-ok"))
                (is (str/includes? (:out r) "WROTE"))))
+           (testing "a deny-write subtree INSIDE the workspace is protected (carve-out wins)"
+             (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
+                                        (str "echo nope > " protc "/blocked.txt 2>&1")]
+                                       policy))
+             (is (not (.exists (io/file protected "blocked.txt")))))
            (testing "reading a secret OUTSIDE every root ($HOME) is denied"
              (let
                [r (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
-                                             (str "cat " (.getCanonicalPath secret) " 2>&1")]))]
+                                             (str "cat " (.getCanonicalPath secret) " 2>&1")]
+                                            policy))]
                (is (not (str/includes? (:out r) "TOP-SECRET")))))
            (testing "writing outside every root ($HOME) is denied"
-             (run-jailed (pj/wrap-argv
-                           ["bash" "--noprofile" "--norc" "-lc"
-                            (str "echo escaped > " (.getCanonicalPath escape) " 2>&1")]))
+             (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
+                                        (str "echo escaped > " (.getCanonicalPath escape) " 2>&1")]
+                                       policy))
              (is (not (.exists escape))))
            (testing "network is denied when the policy is net-off"
              (let
                [r (run-jailed
                     (pj/wrap-argv
                       ["bash" "--noprofile" "--norc" "-lc"
-                       "curl -sS --max-time 4 https://example.com -o /dev/null && echo GOTNET"]))]
+                       "curl -sS --max-time 4 https://example.com -o /dev/null && echo GOTNET"]
+                      policy))]
                (is (not (str/includes? (:out r) "GOTNET")))))
-           (finally (pj/set-active-policy! nil)
-                    (io/delete-file (io/file ws "inside.txt") true)
+           (finally (io/delete-file (io/file ws "inside.txt") true)
                     (io/delete-file (io/file ws "w.txt") true)
+                    (io/delete-file protected true)
                     (io/delete-file ws true)
                     (io/delete-file secret true)
                     (io/delete-file escape true))))))

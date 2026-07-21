@@ -125,6 +125,7 @@
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]
              [gateway-transcript-md gateway-client/transcript-md]
+             [gateway-transcript-html gateway-client/transcript-html]
              [gateway-turn-trace gateway-client/turn-trace]
              [gateway-reconcile-running-turns! gateway-client/reconcile-running-turns!]
              [gateway-context-snapshot gateway-client/context-snapshot]
@@ -158,7 +159,10 @@
              [gateway-session-workspace gateway-client/session-workspace-info]
              [gateway-add-filesystem-root! gateway-client/add-filesystem-root!]
              [gateway-remove-filesystem-root! gateway-client/remove-filesystem-root!]
-             [gateway-change-root! gateway-client/change-root!])
+             [gateway-change-root! gateway-client/change-root!]
+             [gateway-list-drafts gateway-client/list-drafts]
+             [gateway-stash-draft! gateway-client/stash-draft!]
+             [gateway-resume-draft! gateway-client/resume-draft!])
 
 ;; =============================================================================
 ;; Cancellation

@@ -510,15 +510,21 @@
       {:id :network/enabled
        :label "Network access (Python sandbox)"
        :description
-       (str "Let the Python sandbox open sockets (urllib/requests/socket). "
-            "ALWAYS ON — the sandbox always has host socket access. "
-            "Host policy in config.edn :network is a best-effort GUARDRAIL for "
-            "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
-            "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
-            "cloud-metadata SSRF defaults, and :rules [{:host \"api.example.com\" "
-            ":access :read-only :allow [{:method :POST :path \"/v1/**\"}]}] to allow "
-            "per-host HTTP verbs + paths (preset :read-only = GET/HEAD/OPTIONS; unlisted "
-            "hosts unrestricted). Legacy :method-policy {\"host\" [\"GET\"]} still works.")
+       (str
+         "Let the Python sandbox open sockets (urllib/requests/socket). "
+         "ALWAYS ON — the sandbox always has host socket access. "
+         "Host policy in config.edn :network is a best-effort GUARDRAIL for "
+         "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
+         "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
+         "cloud-metadata SSRF defaults, and :rules [{:host \"api.example.com\" "
+         ":access :read-only :allow [{:method :POST :path \"/v1/**\"}]}] to allow "
+         "per-host HTTP verbs + paths (preset :read-only = GET/HEAD/OPTIONS; unlisted "
+         "hosts unrestricted). Legacy :method-policy {\"host\" [\"GET\"]} still works. "
+         "When the OS jail is on (:shell {:jail true}) these SAME domain+verb rules are "
+         "enforced for SHELL children (curl/wget/scripts): the jail walls the child to a "
+         "loopback egress proxy (net-off-except-proxy) that applies them — real "
+         "containment, not a hint. HTTPS gets host allow/deny (verb needs future MITM); "
+         "plain HTTP gets full verb+path. Opt out per session with :shell {:jail {:proxy false}}.")
        ;; A host capability, not a display concern. ON by default and out of the
        ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
        :default true

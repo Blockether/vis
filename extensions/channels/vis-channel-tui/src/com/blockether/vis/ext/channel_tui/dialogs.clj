@@ -6318,13 +6318,59 @@
                                     (recur))
                 (recur)))))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
+
+(defn draft-picker-items
+  "Turn the gateway's canonical draft rows into picker items. The current
+   location is always first, so pressing Enter without moving is a safe no-op.
+   Trunk remains available as an explicit non-destructive `stash` destination."
+  [drafts]
+  (let
+    [drafts
+     (vec drafts)
+
+     current
+     (filterv #(true? (get % "is_current")) drafts)
+
+     parked
+     (filterv #(not (true? (get % "is_current"))) drafts)
+
+     row
+     (fn [draft current?]
+       {:action :draft
+        :workspace-id (get draft "workspace_id")
+        :label (or (not-empty (get draft "label")) "Untitled draft")
+        :hint (if current? "● current" "parked")
+        :current? current?})
+
+     trunk
+     {:action :trunk
+      :label "Trunk"
+      :hint (if (seq current) "stash current" "● current · create with /draft new")
+      :current? (empty? current)}]
+
+    (if (seq current)
+      (into (mapv #(row % true) current) (cons trunk (map #(row % false) parked)))
+      (into [trunk] (map #(row % false) parked)))))
+
+(defn draft-picker!
+  "Searchable TUI picker over the gateway-owned draft list. Returns a full item:
+   `:trunk` means stash the current draft and return to real files; `:draft`
+   carries the stable `:workspace-id` to resume. The current location is marked
+   and selected first."
+  [^TerminalScreen screen drafts]
+  (list-dialog!
+    screen
+    "Draft workspaces"
+    (draft-picker-items drafts)
+    {:filter? true :placeholder "Type to filter drafts…" :enter-label "switch" :height :content}))
+
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
    action the screen's `run-command!` executes. Quit is intentionally NOT here
    — use Ctrl+C to quit.
 
    The palette is THE discoverable entry point for every app verb: opened with
-   Ctrl+P (reliable on every terminal, unlike Alt/Option chords on macOS) and
+   C-x p (reliable on every terminal, unlike Alt/Option chords on macOS) and
    filtered by typing. Mirrors the web command palette so both channels expose
    the same command set."
   ;; Whole-session Markdown copy lives in the header as an icon. Workspace ops
@@ -6334,11 +6380,12 @@
    {:id :cycle-reasoning :label "Cycle Reasoning Effort"}
    {:id :cycle-verbosity :label "Cycle Answer Length"} {:id :search-open :label "Search in Session"}
    {:id :open-resources :label "Backgrounds"} {:id :show-sessions :label "Switch Session"}
-   {:id :open-magit :label "Git Status (Magit)"} {:id :open-dirs :label "Filesystem Permissions"}
-   {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
-   {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
-   {:id :close-tab :label "Close Tab"} {:id :providers :label "Configure Providers"}
-   {:id :settings :label "Settings"} {:id :toggle-all-details :label "Fold / Unfold All"}
+   {:id :open-drafts :label "Switch Draft…"} {:id :open-magit :label "Git Status (Magit)"}
+   {:id :open-dirs :label "Filesystem Permissions"} {:id :pick-file :label "Attach File"}
+   {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
+   {:id :fork-session :label "Fork Session"} {:id :close-tab :label "Close Tab"}
+   {:id :providers :label "Configure Providers"} {:id :settings :label "Settings"}
+   {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
 

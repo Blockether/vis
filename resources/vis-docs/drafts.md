@@ -109,8 +109,9 @@ The important invariants are:
 5. Applied and abandoned drafts are no longer active and disappear from
    `/draft list`.
 
-The TUI header shows `<label> (DRAFT)` while the current workspace is isolated.
-Bare `/draft` reports the same state and the current changed-file count.
+The TUI footer marks an isolated workspace as `DRAFT`; the session navigator shows
+its label in the Draft column. `C-x e` opens the dedicated draft picker. Bare
+`/draft` reports the same state and the current changed-file count.
 
 ## Starting a draft
 
@@ -146,10 +147,11 @@ retry.
 Once entered, file tools, searches, shell commands, and the agent's cwd resolve
 to the draft root. Relative paths cannot silently fall back to trunk.
 
-A workspace can also have extra filesystem roots added with `/fs add`. Creating
-a draft isolates those roots as part of the same workspace. Applying the draft
-lands each root back into its own real directory; abandoning it discards all of
-its isolated roots.
+Extra filesystem roots are workspace-specific. `/draft new` forks the current
+primary root; it does not automatically copy roots previously added on trunk.
+Add an extra root again with `/fs add <path>` while inside the draft to isolate
+it there. Apply then lands that isolated root into its real directory, while
+abandon discards its clone.
 
 Use bare `/draft` at any time to check whether the session is on trunk or in a
 draft.
@@ -198,6 +200,25 @@ the current one. Applied and abandoned drafts are intentionally absent.
 lists the available choices. The slash command refuses to resume while the
 session is already inside a draft; stash, apply, or abandon first.
 
+### TUI draft picker
+
+Press **`C-x e`** or choose **Switch Draft…** from the command palette to open
+the searchable draft picker. It reads the canonical list from the gateway; no
+draft state is maintained only in the TUI.
+
+The current location is selected first, so opening the picker and pressing
+Enter is a safe no-op. The rows behave as follows:
+
+- **Trunk** — stash the current draft non-destructively and return to real files;
+- **current draft** — stay where you are; and
+- **parked draft** — have the gateway stash any current draft, then resume the
+  selected `workspace_id`.
+
+This makes switching between drafts one deliberate picker action without hiding
+a destructive operation. Apply and abandon are not picker actions; use their
+explicit slash commands. The picker refuses to change workspaces while the
+current session has a turn running, so an agent cannot change roots mid-turn.
+
 Resume also refuses a draft that:
 
 - is no longer active;
@@ -205,8 +226,8 @@ Resume also refuses a draft that:
 - is currently pinned to another session; or
 - cannot be identified uniquely by the supplied label.
 
-The direct gateway resume API has slightly different ergonomics: it accepts the
-stable `workspace_id` and automatically stashes the caller's current draft before
+The direct gateway resume API—and therefore the TUI picker—accepts the stable
+`workspace_id` and automatically stashes the caller's current draft before
 switching. The slash command stays conservative and requires the two explicit
 steps shown above.
 
@@ -243,9 +264,11 @@ draft. Ordinary prompts and agent turns inside a draft use the selected provider
 normally and may include repository content needed for that work. A draft is a
 filesystem-isolation boundary, not a provider-privacy boundary.
 
-Only registered slash commands get local handling. An unknown `/something` may
-be a prompt template or ordinary model prompt; do not assume arbitrary text that
-starts with `/` is private.
+Registered slash commands are local. An unknown `/something` is also returned as
+a local unknown-command result unless it matches a prompt template; a matching
+template runs as a normal provider turn. Absolute paths and other prose beginning
+with `/` are not necessarily slash commands. Do not treat an arbitrary leading
+slash as a privacy boundary.
 
 If a recognized draft command itself displays a provider/model footer, that is a
 channel rendering bug. It is not evidence that the command invoked the model.

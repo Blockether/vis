@@ -430,6 +430,23 @@
 
     (when (< (long (:status response)) 400) (:body response))))
 
+(defn transcript-html
+  "The gateway-rendered STANDALONE HTML transcript for `sid` — the canonical
+   `transcript->html`, the HTML sibling of `transcript-md`. Returns the string,
+   or nil on a non-2xx."
+  [sid]
+  (let
+    [entry
+     (ensure-gateway!)
+
+     _
+     (ensure-client! entry)
+
+     response
+     (gw-send! entry "GET" (str "/v1/sessions/" (enc sid) "/transcript.html") {:as :string})]
+
+    (when (< (long (:status response)) 400) (:body response))))
+
 (defn turn-trace
   "Canonical wire iterations of ONE persisted turn (nil when the id is
    unknown to the daemon)."

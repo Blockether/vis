@@ -617,6 +617,7 @@
            [(keymap/label-for :pick-file) "Attach file"]
            [(keymap/label-for :toggle-voice-recording) "Voice recording"]
            [(keymap/label-for :open-dirs) "Filesystem Permissions"]
+           [(keymap/label-for :open-drafts) "Switch draft / stash to trunk"]
            [(keymap/label-for :open-resources) "Resources"]
            [(keymap/label-for :toggle-help) "Toggle this help"]]}
    {:title "Messaging & navigation"

@@ -15,20 +15,16 @@
 
 (defn- render-transcript
   "Render a session's transcript as Markdown (`:md`) or a STANDALONE,
-   vis-light-styled HTML document (`:html`). Both go through the canonical
-   `transcript` data projection and its pure renderers — no web extension
-   required."
+   vis-light-styled HTML document (`:html`). Reuses the canonical
+   `transcript-md`/`transcript-html` renderers in foundation.transcript —
+   one DB-lookup-plus-render surface (also degrades to a `Session not found`
+   string instead of throwing), no web extension required."
   [db sid fmt]
-  (let
-    [data
-     ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)
-
-     render
-     (if (= fmt :html)
-       'com.blockether.vis.internal.foundation.transcript/transcript->html
-       'com.blockether.vis.internal.foundation.transcript/transcript->md)]
-
-    ((requiring-resolve render) data)))
+  ((requiring-resolve (if (= fmt :html)
+                        'com.blockether.vis.internal.foundation.transcript/transcript-html
+                        'com.blockether.vis.internal.foundation.transcript/transcript-md))
+    db
+    sid))
 
 (defn- path->fmt
   "Infer the export format from a target path's extension: `.html`/`.htm`
