@@ -138,6 +138,8 @@ def __vis_install_urllib3__():
         try:
             rr = rq.request(m, str(url), params=params, data=data, json=json_body,
                             headers=headers, timeout=timeout)
+        except PermissionError:
+            raise  # vis network guard denial -- keep the clear message legible
         except Exception as e:
             en = type(e).__name__
             msg = str(e) or en

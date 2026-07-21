@@ -2012,6 +2012,81 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     "        _s.create_connection = _wrap_create(_s.create_connection)\n" "    except Exception:\n"
     "        pass\n" "__vis_install_net_guard__()\n"))
 
+(def ^:private method-guard-python
+  "Best-effort per-host HTTP METHOD allowlist for the sandbox's network.
+
+   Same THREAT MODEL as `network-guard-python` — a GUARDRAIL for cooperative /
+   accidental egress, NOT adversary-proof. It patches
+   `urllib.request.OpenerDirector.open` in the model's OWN interpreter, so it is
+   STRICTLY WEAKER than the host allow/deny lists: a raw socket carries no HTTP
+   method, so this can only steer code that goes THROUGH urllib — which every
+   built-in HTTP shim (requests / httpx / urllib3) and stdlib `urllib.request`
+   do, but a hand-rolled `socket` does not. The host guard remains the real
+   network boundary; this just refines *which verbs* reach an allowed host.
+
+   Policy is `{host [METHOD ...]}` (methods case-insensitive). Specificity mirrors
+   the host guard: an exact/suffix host match wins over a `*` entry. A host with
+   NO matching entry is UNRESTRICTED (opt-in / purely additive); a host that DOES
+   match must use one of its listed methods or `open` raises PermissionError
+   before the request leaves the interpreter."
+  (str
+    "def __vis_install_method_guard__():\n" "    import urllib.request as _ur\n"
+    "    import urllib.parse as _up\n" "    _pol = {}\n"
+    "    for _k, _v in dict(__vis_method_policy__).items():\n"
+    "        _h = str(_k).strip().lower().rstrip('.')\n"
+    "        if _h:\n"
+    "            _pol[_h] = set(str(_m).strip().upper() for _m in _v if str(_m).strip())\n"
+    "    if not _pol:\n" "        return\n"
+    "    _spec = dict((k, v) for k, v in _pol.items() if k != '*')\n" "    _star = _pol.get('*')\n"
+    "    def _host_of(u):\n" "        try:\n"
+    "            return (_up.urlsplit(str(u)).hostname or '').strip().lower().rstrip('.')\n"
+    "        except Exception:\n"
+    "            return ''\n" "    def _allowed(host):\n"
+    "        h = str(host).strip().lower().rstrip('.')\n" "        if h in _spec:\n"
+    "            return _spec[h]\n" "        for d, ms in _spec.items():\n"
+    "            if h.endswith('.' + d):\n" "                return ms\n"
+    "        return _star\n" "    def _check(host, method):\n"
+    "        a = _allowed(host)\n" "        if a is None:\n"
+    "            return\n" "        m = str(method).upper()\n"
+    "        if m not in a:\n"
+    "            raise PermissionError(\"vis: HTTP method '%s' not allowed for host '%s' (allowed=%s)\" % (m, host, sorted(a)))\n"
+    "    _orig = _ur.OpenerDirector.open\n" "    def _open(self, fullurl, data=None, *a, **k):\n"
+    "        if isinstance(fullurl, _ur.Request):\n"
+    "            host = _host_of(fullurl.full_url)\n"
+    "            method = fullurl.get_method()\n" "        else:\n"
+    "            host = _host_of(fullurl)\n"
+    "            method = 'GET' if data is None else 'POST'\n"
+    "        _check(host, method)\n" "        return _orig(self, fullurl, data, *a, **k)\n"
+    "    _ur.OpenerDirector.open = _open\n" "__vis_install_method_guard__()\n"))
+
+(defn- normalize-method-policy
+  "Normalize a config `:network :method-policy` map into
+   `{host-string [UPPER-METHOD ...]}` for `->py` / `method-guard-python`: host
+   keys trimmed + lower-cased, method values upper-cased, and any entry with a
+   blank host or no methods dropped. An empty/absent policy yields `{}` (⇒ no
+   guard installed). Keyword or string hosts/methods are both accepted; a lone
+   method value is treated as a one-element list."
+  [method-policy]
+  (letfn [(nm [x]
+            (some-> (if (keyword? x) (name x) (str x))
+                    str/trim
+                    not-empty))]
+    (into {}
+          (keep (fn [[host methods]]
+                  (let
+                    [h
+                     (some-> (nm host)
+                             str/lower-case)
+
+                     ms
+                     (vec (keep (fn [m]
+                                  (some-> (nm m)
+                                          str/upper-case))
+                                (if (coll? methods) methods [methods])))]
+
+                    (when (and h (seq ms)) [h ms]))))
+          method-policy)))
+
 (defn- make-outbox
   "Create a fresh per-context OUTBOX directory under the system temp dir and return
    `{:dir <abs path string> :on-close record-file!}` for
@@ -2123,6 +2198,15 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      ;; off the socket capability is denied outright, so no guard is needed.
      guard?
      (and net? (or (seq denied) (not allow-all?)))
+
+     ;; Best-effort per-host HTTP METHOD allowlist (config `:network :method-policy`,
+     ;; opt-in). Normalized to {host [UPPER-METHOD ...]}; installed only when net is
+     ;; on AND a policy is present (it patches urllib, so it needs sockets to matter).
+     method-policy
+     (normalize-method-policy (:method-policy network-opts))
+
+     method-guard?
+     (and net? (seq method-policy))
 
      ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
      ;; REAL filesystem access CONFINED to the current filesystem roots (Python
@@ -2309,6 +2393,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
       (.putMember g "__vis_allowed_domains__" (->py allowed))
       (.putMember g "__vis_denied_domains__" (->py (vec denied)))
       (.eval ctx "python" network-guard-python))
+    ;; NETWORK method policy: when sockets are on AND a per-host method allowlist is
+    ;; configured, patch `urllib.request` to refuse disallowed verbs. Eval'd before the
+    ;; snapshot so the guard's names are BASELINE (not model-visible).
+    (when method-guard?
+      (.putMember g "__vis_method_policy__" (->py method-policy))
+      (.eval ctx "python" method-guard-python))
     (let
       [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]]

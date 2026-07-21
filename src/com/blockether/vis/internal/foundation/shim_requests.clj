@@ -602,6 +602,11 @@ def __vis_install_requests_compat__():
         start = _dt.datetime.now()
         try:
             raw = opener(req, timeout=t)
+        except PermissionError:
+            # vis network guard (host/method denial) raises PermissionError with a
+            # clear 'vis: ...' message -- surface it VERBATIM instead of masking it
+            # as a generic ConnectionError (PermissionError is an OSError subclass).
+            raise
         except _ue.HTTPError as e:
             # A 4xx/5xx (or a blocked redirect) is a REAL Response in requests,
             # not an exception -- surface it and let raise_for_status() decide.

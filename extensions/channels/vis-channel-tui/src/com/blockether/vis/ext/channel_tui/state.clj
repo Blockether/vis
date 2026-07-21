@@ -308,6 +308,36 @@
     "code" "turn_pending"
     "message" "Sending request to provider..."}])
 
+(def ^:private pending-shell-content
+  "Pending-assistant placeholder for a `!`/`!&` shell-sugar turn. It runs a
+   shell command LOCALLY with no provider round-trip, so it must never claim
+   \"Sending request to provider…\". The engine flips it to `Vis is running:
+   <cmd>` the instant it emits the shell-phase chunk."
+  [{"id" "pending" "type" "notice" "code" "turn_pending" "message" "Running shell command..."}])
+
+(defn- shell-bang-command?
+  "True when TEXT is a `!`/`!&` shell-sugar command carrying a NON-blank body —
+   the same rule the engine's `parse-bang` applies. A bare `!`/`!&` is ordinary
+   prose (a normal LLM turn), so it is NOT a command."
+  [text]
+  (boolean (when (string? text)
+             (let [t (str/triml text)]
+               (cond (str/starts-with? t "!&") (seq (str/trim (subs t 2)))
+                     (str/starts-with? t "!") (seq (str/trim (subs t 1)))
+                     :else false)))))
+
+(defn- pending-assistant-for
+  "Pending-assistant slot for a submission. A shell-sugar (`!`/`!&`) turn calls
+   no provider, so it gets a command-flavored placeholder and the `:slash?`
+   command marker — which suppresses the model/provider footer, exactly like a
+   resumed shell turn (`:tag :user-shell`)."
+  [text]
+  (if (shell-bang-command? text)
+    (assoc (chat/assistant-message pending-shell-content)
+      :pending? true
+      :slash? true)
+    (assoc (chat/assistant-message pending-assistant-content) :pending? true)))
+
 (defn- pending-assistant-message? [m] (and (= :assistant (:role m)) (true? (:pending? m))))
 
 (defn- replace-pending-assistant
@@ -335,10 +365,17 @@
                                 messages)))
          (first (keep-indexed (fn [idx m]
                                 (when (pending-assistant-message? m) idx))
-                              messages)))]
+                              messages)))
 
-    (cond idx (assoc messages idx response)
-          (and (seq messages) (= :assistant (:role (peek messages)))) (conj (pop messages) response)
+     carry-slash
+     (fn [old resp]
+       (cond-> resp
+         (and (not (contains? resp :slash?)) (:slash? old))
+         (assoc :slash? true)))]
+
+    (cond idx (assoc messages idx (carry-slash (get messages idx) response))
+          (and (seq messages) (= :assistant (:role (peek messages))))
+          (conj (pop messages) (carry-slash (peek messages) response))
           :else (conj messages response))))
 
 (def ^:private throttled-streaming-phases
@@ -2857,8 +2894,7 @@
                                            :client-turn-id client-turn-id))
                                  (update :messages
                                          conj
-                                         (assoc (chat/assistant-message pending-assistant-content)
-                                           :pending? true
+                                         (assoc (pending-assistant-for text)
                                            :client-turn-id client-turn-id))
                                  (update :input-history
                                          (fn [xs]
@@ -3131,9 +3167,7 @@
                                                            :client-turn-id client-turn-id))
                                                  (update :messages
                                                          conj
-                                                         (assoc (chat/assistant-message
-                                                                  pending-assistant-content)
-                                                           :pending? true
+                                                         (assoc (pending-assistant-for preview-text)
                                                            :client-turn-id client-turn-id))
                                                  (assoc :scroll scroll/follow
                                                         :loading? true
@@ -3255,8 +3289,7 @@
                          (assoc (chat/user-message request-text) :client-turn-id client-turn-id))
                  (update :messages
                          conj
-                         (assoc (chat/assistant-message pending-assistant-content)
-                           :pending? true
+                         (assoc (pending-assistant-for request-text)
                            :client-turn-id client-turn-id))
                  ;; The turn we are ATTACHING as running must not
                  ;; ALSO linger as a "Queued" row: the backlog mirror

@@ -39,6 +39,30 @@
 
       :reached-socket-layer)))
 
+(defn- method-outcome
+  "Eval an `urllib.request` call issuing `method` to `url` in `ctx` and classify:
+   `:blocked` when the method guard refuses with a PermissionError naming the
+   verb, else `:allowed` (the guard let it through — the real connection may still
+   fail offline, which we don't distinguish here)."
+  [ctx method url]
+  (let
+    [code (str "def _p():\n"
+               "    import urllib.request as u\n"
+               "    req = u.Request("
+               (pr-str url)
+               ", method="
+               (pr-str method)
+               ")\n"
+               "    try:\n" "        u.urlopen(req, timeout=0.2); return 'allowed'\n"
+               "    except PermissionError as e:\n"
+               "        return 'blocked' if 'method' in str(e) else 'allowed'\n"
+               "    except Exception: return 'allowed'\n" "_p()")]
+    (case (.asString (.eval (pctx ctx) "python" code))
+      "blocked"
+      :blocked
+
+      :allowed)))
+
 (defdescribe
   network-guard-test
   (it "OFF ⇒ no sockets at all (DNS denied)"
@@ -85,4 +109,27 @@
              {:enabled? true :allowed-domains ["*"] :denied-domains ["127.0.0.1"]})]
         (try (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
              (expect (= :blocked (raw-connect-outcome c "169.254.169.254"))) ; default SSRF denylist
-             (finally (.close (pctx c) true))))))
+             (finally (.close (pctx c) true)))))
+  (it "method-policy ⇒ blocks disallowed verbs per host, allows listed ones (suffix match)"
+      (let
+        [m (env/create-python-context
+             {}
+             nil
+             {:enabled? true :allowed-domains ["*"] :method-policy {"example.com" ["GET"]}})]
+        (try (expect (= :blocked (method-outcome m "POST" "http://example.com/x")))
+             (expect (= :allowed (method-outcome m "GET" "http://example.com/x")))
+             (expect (= :blocked (method-outcome m "POST" "http://www.example.com/x"))) ; suffix match
+             (expect (= :allowed (method-outcome m "POST" "http://other.com/x")))       ; unlisted host ⇒ free
+             (finally (.close (pctx m) true)))))
+  (it "method-policy `*` ⇒ default verb allowlist; a specific host entry overrides it"
+      (let
+        [m (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :allowed-domains ["*"]
+                                       :method-policy {"*" ["GET"] "api.example.com" ["POST"]}})]
+        (try (expect (= :blocked (method-outcome m "POST" "http://other.com/x")))       ; * ⇒ GET only
+             (expect (= :allowed (method-outcome m "GET" "http://other.com/x")))
+             (expect (= :allowed (method-outcome m "POST" "http://api.example.com/x"))) ; specific host wins
+             (expect (= :blocked (method-outcome m "GET" "http://api.example.com/x")))  ; GET not in [POST]
+             (finally (.close (pctx m) true))))))

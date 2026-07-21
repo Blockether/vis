@@ -2930,6 +2930,37 @@
             (let [src (slurp (fs/file f))]
               (expect (clojure.string/includes? src "keep-me"))
               (expect (not (clojure.string/includes? src "drop-me")))))))
+    (it
+      "append_child/prepend_child by NAME (no at/anchor) steers to `append` instead of a cryptic op error"
+      (let
+        [_ (temp-dir-path "spac")
+         f (str (temp-root) "/spac/m.clj")]
+
+        (spit (fs/file f) "(defn foo [x] (inc x))\n")
+        ;; append_child is PATH-only; paired with a name `target` it must NOT
+        ;; throw the internal \"Unknown structural op\" — it steers to `append`.
+        (let
+          [ex (try (sp {"path" f "op" "append_child" "target" "foo" "code" "(defn bar [] 1)"})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+          (expect (some? ex))
+          (expect (= :ext.foundation.editing/struct-op-needs-path (:type (ex-data ex))))
+          (expect (= "append_child" (:op (ex-data ex))))
+          (expect (clojure.string/includes? (.getMessage ^Throwable ex) "append_child"))
+          (expect (clojure.string/includes? (.getMessage ^Throwable ex) "`append`"))
+          (expect (not (clojure.string/includes? (.getMessage ^Throwable ex)
+                                                 "Unknown structural op")))
+          ;; the file is untouched by the refusal
+          (expect (= "(defn foo [x] (inc x))\n" (slurp (fs/file f)))))))
+    (it "append_child WITH a path locator (`at`) still edits the located node"
+        (let
+          [_ (temp-dir-path "spac2")
+           f (str (temp-root) "/spac2/m.clj")]
+
+          (spit (fs/file f) "(ns t)\n(defn f [] (do 1 2))\n")
+          (let [r (sp {"path" f "op" "append_child" "at" [1] "code" "3"})]
+            (expect (:success? r))
+            (expect (clojure.string/includes? (slurp (fs/file f)) "(do 1 2)3")))))
     (it "replace_node with a target but no match = a name-based replace (not an error)"
         (let
           [_ (temp-dir-path "spr")

@@ -297,13 +297,23 @@
    REPL gets its own log. The logs dir is created on demand."
   ^java.io.File [dir]
   (let
-    [safe
-     (-> (str dir)
+    [home
+     (System/getProperty "user.home")
+
+     ;; Relativize against ~ so the log name reflects the project's path
+     ;; RELATIVE to home (e.g. `vis`), not the whole absolute path
+     ;; (`Users_fierycod_vis`). Paths outside home fall back to as-is.
+     rel
+     (let [d (str dir)]
+       (if (and (seq home) (str/starts-with? d home)) (subs d (count home)) d))
+
+     safe
+     (-> rel
          (str/replace #"[^A-Za-z0-9]+" "_")
          (str/replace #"(^_+|_+$)" ""))
 
      logs-dir
-     (io/file (System/getProperty "user.home") ".vis" "logs")]
+     (io/file home ".vis" "logs")]
 
     (.mkdirs logs-dir)
     (io/file logs-dir (str "vis-nrepl-" safe ".log"))))

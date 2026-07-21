@@ -4360,7 +4360,7 @@
      (seq (remove #(= "." (kw->str %)) (get r "paths")))
 
      scope-chip
-     (when scope (str "in " (str/join ", " (map #(md-inline-code (kw->str %)) scope))))
+     (when scope (str "in " (str/join ", " (map #(md-inline-code (disp-path (kw->str %))) scope))))
 
      with-query
      (fn [tail]
@@ -5052,6 +5052,23 @@
      (or (contains? args "at")
          ;; For moves, `anchor` is a definition NAME rather than a node handle.
          (and (contains? args "anchor") (not (#{:move-before :move-after} raw-op))))
+
+     ;; STEERING — `append_child`/`prepend_child` are PATH-only (they add a form
+     ;; INSIDE a located container node). Paired with a NAME `target` and no
+     ;; `at`/node `anchor` they would fall through to the name-based op map and
+     ;; throw a cryptic "Unknown structural op". Catch it up front with a fix.
+     _
+     (when (and (#{:append-child :prepend-child} raw-op) (not path-locator?))
+       (throw (ex-info
+                (str "struct_patch: "
+                     (str/replace (name raw-op) "-" "_")
+                     " is a PATH-based op — pass `at` or a node `anchor` to enter"
+                     " the container node. To add a form into a def located by NAME,"
+                     " use op `append` (name-based) instead.")
+                {:type :ext.foundation.editing/struct-op-needs-path
+                 :op (str/replace (name raw-op) "-" "_")
+                 :hint
+                 "append_child/prepend_child need `at`/`anchor`; use `append` for name-based"})))
 
      ;; LENIENCY — do the obvious thing instead of erroring:
      ;;  • `delete` (by name OR path) = replace the located node with "" (there was

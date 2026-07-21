@@ -152,6 +152,8 @@ def __vis_install_httpx__():
             rr = rq.request(str(method).upper(), str(url), params=params, data=data,
                             json=json_body, headers=headers, cookies=cookies,
                             timeout=timeout, auth=auth, allow_redirects=bool(follow))
+        except PermissionError:
+            raise  # vis network guard denial -- keep the clear message legible
         except Exception as e:
             en = type(e).__name__
             msg = str(e) or en

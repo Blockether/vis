@@ -9337,7 +9337,8 @@
      network-opts
      {:enabled? (toggles/enabled? :network/enabled)
       :allowed-domains (:allowed-domains net-cfg)
-      :denied-domains (:denied-domains net-cfg)}
+      :denied-domains (:denied-domains net-cfg)
+      :method-policy (:method-policy net-cfg)}
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))

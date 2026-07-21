@@ -3120,7 +3120,9 @@
      (= :cancelled status)
 
      meta-str
-     (when (and (not= role :user) (or (not cancelled?) (assistant-usage? message)))
+     (when (and (not= role :user)
+                (not (:slash? message))
+                (or (not cancelled?) (assistant-usage? message)))
        (vis/meta-summary-line message))
 
      fallback-note

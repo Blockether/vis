@@ -515,7 +515,8 @@
                       "Host policy in config.edn :network is a best-effort GUARDRAIL for "
                       "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
                       "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
-                      "cloud-metadata SSRF defaults.")
+                      "cloud-metadata SSRF defaults, and :method-policy {\"host\" [\"GET\"]} "
+                      "to allow only listed HTTP verbs per host (unlisted hosts unrestricted).")
        ;; A host capability, not a display concern. ON by default and out of the
        ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
        :default true
