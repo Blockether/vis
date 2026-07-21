@@ -606,10 +606,10 @@
 
 (defn- keywordize-yaml
   "Recursively map a YAMLStar-parsed value (string keys — the YAML boundary
-   contract) onto the EDN config shape: keys → kebab keywords, keyword-valued
-   fields (`keyword-valued-keys`, plus any explicit `\":foo\"` string) coerced
-   to keywords, and `verbatim-key-subtrees` kept EXACTLY as parsed — string
-   keys, string values, no case-mangling."
+   contract) onto the EDN config shape: keys → kebab keywords, the few
+   `keyword-valued-keys` provider fields coerced from their plain string
+   (`id: anthropic` → :anthropic), and `verbatim-key-subtrees` kept EXACTLY as
+   parsed. Every OTHER value stays a plain string — no `:`-prefix smuggling."
   [v]
   (cond (map? v) (into {}
                        (map (fn [[k val]]
@@ -617,11 +617,10 @@
                                 [kw
                                  (cond (contains? verbatim-key-subtrees kw) val
                                        (and (string? val) (contains? keyword-valued-keys kw))
-                                       (keyword (str/replace-first val ":" ""))
+                                       (keyword val)
                                        :else (keywordize-yaml val))])))
                        v)
         (sequential? v) (mapv keywordize-yaml v)
-        (and (string? v) (str/starts-with? v ":")) (keyword (subs v 1))
         :else v))
 
 (defn- read-yaml-config-map
@@ -844,7 +843,9 @@
 
     (try (Files/deleteIfExists p)
          (Files/createFile p (into-array FileAttribute [attr]))
-         (Files/write p (.getBytes content StandardCharsets/UTF_8) ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
+         (Files/write p
+                      (.getBytes content StandardCharsets/UTF_8)
+                      ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
          (catch UnsupportedOperationException _ (spit path content))
          (catch Throwable _
            (spit path content)

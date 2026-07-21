@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.egress-proxy :as egress]
+            [com.blockether.vis.internal.tls-mitm :as tls-mitm]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
@@ -8567,6 +8568,12 @@
       (try (when-let [stop! (:stop! @d)]
              (stop!))
            (catch Throwable _ nil))))
+  ;; Delete this session's ephemeral CA PEM if a MITM capability was ever built.
+  (when-let [d (:mitm-cap-delay environment)]
+    (when (realized? d)
+      (try (when-let [close! (:close! @d)]
+             (close!))
+           (catch Throwable _ nil))))
   (when-let [python-context (:python-context environment)]
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
@@ -9358,7 +9365,6 @@
      {:enabled? (toggles/enabled? :network/enabled)
       :allowed-domains (:allowed-domains net-cfg)
       :denied-domains (:denied-domains net-cfg)
-      :method-policy (:method-policy net-cfg)
       :rules (:rules net-cfg)}
 
      ;; OS jail (real containment for shell children) — opt-in via vis.yml
@@ -9376,10 +9382,38 @@
      ;; session runs no shell egress. Its policy-fn re-reads vis.yml `:network` per
      ;; connection, so `/reload` + config edits take effect with no restart. Stopped
      ;; in `dispose-environment!`.
+     ;; Per-session ephemeral CA for the proxy's TLS-terminating (MITM) tier. A
+     ;; `delay` so the RSA keygen happens at most once, only when a jailed child
+     ;; actually needs HTTPS verb/path enforcement. Its CA PEM is injected into the
+     ;; child's trust env so it accepts the proxy's per-host leaf certs.
+     mitm-cap-delay
+     (delay (tls-mitm/create!))
+
+     ;; MITM is engaged when the jail isn't opted out (`:mitm false`) AND either it's
+     ;; explicitly on (`:mitm true`) or there are verb/path `:rules` to enforce over
+     ;; HTTPS. Read fresh so config edits + `/reload` take effect with no restart.
+     mitm-on?
+     (fn []
+       (let
+         [cfg
+          (config/load-config-raw)
+
+          jail
+          (get-in cfg [:shell :jail])
+
+          m
+          (if (map? jail) jail {})]
+
+         (and (not (false? (:mitm m)))
+              (or (true? (:mitm m)) (boolean (seq (:rules (get cfg :network))))))))
+
      egress-proxy-delay
-     (delay (egress/start! {:policy-fn (fn []
-                                         (egress/compile-policy (get (config/load-config-raw)
-                                                                     :network)))}))
+     (delay (egress/start! {:mitm (fn []
+                                    @mitm-cap-delay)
+                            :policy-fn (fn []
+                                         (some-> (egress/compile-policy
+                                                   (get (config/load-config-raw) :network))
+                                                 (assoc :mitm? (mitm-on?))))}))
 
      jail-policy-fn
      (when sandbox-roots-fn
@@ -9398,7 +9432,11 @@
                 proxy? (and net-on?
                             (not (false? (:proxy m)))
                             (some? (egress/compile-policy (get (config/load-config-raw) :network))))
-                proxy-port (when proxy? (:port @egress-proxy-delay))]
+                ;; When MITM is engaged, inject the ephemeral CA into the child's trust
+                ;; env (via `:ca-file`) so it accepts the proxy's leaf certs.
+                mitm? (and proxy? (mitm-on?))
+                proxy-port (when proxy? (:port @egress-proxy-delay))
+                ca-file (when mitm? (:ca-file @mitm-cap-delay))]
 
                {:roots-fn sandbox-roots-fn
                 :net-enabled? net-on?
@@ -9406,7 +9444,8 @@
                 :allow-read (:allow-read m)
                 :deny-write (:deny-write m)
                 :deny-read (:deny-read m)
-                :proxy-port proxy-port})))))
+                :proxy-port proxy-port
+                :ca-file ca-file})))))
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
@@ -9441,7 +9480,10 @@
         :jail-policy-fn jail-policy-fn
         ;; Per-session egress-proxy handle (a delay; realized only if a jailed
         ;; shell child needed restricted network). dispose-environment! stops it.
-        :egress-proxy-delay egress-proxy-delay}
+        :egress-proxy-delay egress-proxy-delay
+        ;; Per-session MITM CA (a delay; realized only if a jailed child needed
+        ;; HTTPS verb/path enforcement). dispose-environment! deletes its CA PEM.
+        :mitm-cap-delay mitm-cap-delay}
        ;; Workspace info attached at env-build time so the extension
        ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
        ;; root the very first time it fires.

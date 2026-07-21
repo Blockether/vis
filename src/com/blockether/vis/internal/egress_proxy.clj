@@ -15,9 +15,12 @@
    What it enforces (no MITM — no new deps, no CA):
      - Plain HTTP  (absolute-form proxy request): FULL host + method + path, because
        the request line is cleartext. GET-not-POST works here.
-     - HTTPS (`CONNECT host:443`): HOST allow/deny only — method + path are inside the
-       TLS the proxy does not terminate. That verb fidelity is the documented ceiling;
-       closing it needs a TLS-terminating (MITM) proxy + an injected CA (future).
+     - HTTPS (`CONNECT host:443`): HOST allow/deny always; FULL method + path too when
+       a MITM capability is supplied and the policy asks for it (`:mitm?`) — the proxy
+       terminates the child's TLS with an ephemeral per-host leaf cert (see
+       `internal.tls-mitm`), reads the real verb/path, then re-encrypts to the real
+       upstream (whose real cert it still validates). Without MITM it is a raw byte
+       tunnel (verb opaque) — the documented CONNECT-only ceiling.
 
    The policy is a plain VALUE (per session), read fresh per connection via `policy-fn`
    so `/reload` + config edits take effect with no restart. One request per upstream
@@ -27,7 +30,8 @@
   (:import (java.io InputStream OutputStream)
            (java.net InetAddress InetSocketAddress ServerSocket Socket URI)
            (java.util.concurrent Executors ExecutorService ThreadFactory)
-           (java.util.concurrent.atomic AtomicLong)))
+           (java.util.concurrent.atomic AtomicLong)
+           (javax.net.ssl SSLContext SSLSocket SSLSocketFactory)))
 
 ;; ============================================================================
 ;; Policy: normalize vis.yml :network into a matcher, then decide per request.
@@ -103,7 +107,7 @@
                     (host-key (:host r))
                     (into (access->methods (:access r)) (methods-of (:methods r)))
                     (allow-of (:allow r))))
-             acc
+             {}
              rules)]
 
     (mapv (fn [[h {:keys [methods allow]}]]
@@ -299,9 +303,110 @@
   (let [parts (str/split (str line) #"\s+")]
     (when (= 3 (count parts)) parts)))
 
+(defn- raw-tunnel
+  "CONNECT fallback (no MITM): a raw byte tunnel to `host:port` — verb/path opaque."
+  [^ExecutorService pool ^Socket client ^OutputStream cout ^String host port on-log]
+  (let [upstream (Socket.)]
+    (on-log {:phase :connect :host host :port port :allow? true})
+    (try (.connect upstream (InetSocketAddress. host (int port)) 15000)
+         (write-str cout "HTTP/1.1 200 Connection Established\r\n\r\n")
+         (splice pool client upstream)
+         (catch Throwable t
+           (try (deny-response cout (str "upstream error: " (.getMessage t)))
+                (catch Throwable _ nil)))
+         (finally (try (.close upstream) (catch Throwable _ nil))))))
+
+(defn- mitm-intercept
+  "CONNECT with a MITM capability: terminate the child's TLS with a per-host leaf,
+   read the real method+path, apply the policy, then re-encrypt to the real
+   upstream (system-validated) and relay. One request per connection (Connection:
+   close) so keep-alive can't smuggle a second, unfiltered verb."
+  [^ExecutorService pool ^Socket client ^OutputStream cout ^String host port policy cap on-log]
+  (write-str cout "HTTP/1.1 200 Connection Established\r\n\r\n")
+  (let
+    [^SSLContext ctx
+     ((:ctx-for cap) host)
+
+     ^SSLSocket ssl-client
+     (.createSocket (.getSocketFactory ctx) ^Socket client host (int port) true)]
+
+    (try
+      (.setUseClientMode ssl-client false)
+      (.startHandshake ssl-client)
+      (let
+        [cin
+         (.getInputStream ssl-client)
+
+         scout
+         (.getOutputStream ssl-client)
+
+         rl
+         (parse-request-line (read-line-bytes cin))]
+
+        (when rl
+          (let
+            [[method target version]
+             rl
+
+             headers
+             (read-headers cin)
+
+             path
+             (str target)
+
+             {:keys [allow? reason]}
+             (decide policy method host path)]
+
+            (if-not allow?
+              (do
+                (on-log
+                  {:phase :https :method method :host host :path path :allow? false :reason reason})
+                (deny-response scout reason))
+              (let
+                [^SSLSocketFactory usf
+                 (:upstream-factory cap)
+
+                 ^SSLSocket upstream
+                 (.createSocket usf host (int port))]
+
+                (on-log {:phase :https :method method :host host :path path :allow? true})
+                (try (.startHandshake upstream)
+                     (let
+                       [uout
+                        (.getOutputStream upstream)
+
+                        kept
+                        (remove (fn [h]
+                                  (#{"proxy-connection" "connection" "keep-alive"
+                                     "proxy-authorization"}
+                                   (header-name h)))
+                          headers)
+
+                        req
+                        (str method
+                             " "
+                             path
+                             " "
+                             version
+                             "\r\n"
+                             (str/join "\r\n" kept)
+                             (when (seq kept) "\r\n")
+                             "Connection: close\r\n\r\n")]
+
+                       (write-str uout req)
+                       (splice pool ssl-client upstream))
+                     (catch Throwable t
+                       (try (deny-response scout (str "upstream error: " (.getMessage t)))
+                            (catch Throwable _ nil)))
+                     (finally (try (.close upstream) (catch Throwable _ nil)))))))))
+      (catch Throwable _ nil)
+      (finally (try (.close ssl-client) (catch Throwable _ nil))))))
+
 (defn- handle-connect
-  "HTTPS CONNECT host:port — host-level policy, then a raw byte tunnel (verb opaque)."
-  [^ExecutorService pool ^Socket client ^OutputStream cout target policy on-log]
+  "HTTPS CONNECT host:port — host-level allow/deny first, then either a MITM
+   inspection (when a capability is supplied and the policy asks, `:mitm?`) for
+   full verb/path, or a raw byte tunnel (verb opaque)."
+  [^ExecutorService pool ^Socket client ^OutputStream cout target policy mitm on-log]
   (let
     [[host port-s]
      (str/split (str target) #":" 2)
@@ -315,15 +420,10 @@
     (if-not allow?
       (do (on-log {:phase :connect :host host :allow? false :reason reason})
           (deny-response cout reason))
-      (let [upstream (Socket.)]
-        (on-log {:phase :connect :host host :port port :allow? true})
-        (try (.connect upstream (InetSocketAddress. ^String host (int port)) 15000)
-             (write-str cout "HTTP/1.1 200 Connection Established\r\n\r\n")
-             (splice pool client upstream)
-             (catch Throwable t
-               (try (deny-response cout (str "upstream error: " (.getMessage t)))
-                    (catch Throwable _ nil)))
-             (finally (try (.close upstream) (catch Throwable _ nil))))))))
+      (let [cap (when (and mitm (:mitm? policy)) (try (mitm) (catch Throwable _ nil)))]
+        (if cap
+          (mitm-intercept pool client cout host port policy cap on-log)
+          (raw-tunnel pool client cout host port on-log))))))
 
 (defn- handle-http
   "Plain HTTP absolute-form proxy request — full host+method+path, then forward the one
@@ -391,7 +491,7 @@
                        (finally (try (.close upstream) (catch Throwable _ nil))))))))
 
 (defn- handle-client
-  [^ExecutorService pool ^Socket client policy-fn on-log]
+  [^ExecutorService pool ^Socket client policy-fn mitm on-log]
   (try (.setSoTimeout client 30000)
        (let
          [cin
@@ -414,7 +514,7 @@
            (let [[method target version] rl]
              (if (= (str/upper-case method) "CONNECT")
                (do (read-headers cin) ; consume CONNECT headers
-                   (handle-connect pool client cout target policy on-log))
+                   (handle-connect pool client cout target policy mitm on-log))
                (let [headers (read-headers cin)]
                  (handle-http pool client cout method target version headers policy on-log))))))
        (catch Throwable _ nil)
@@ -439,8 +539,12 @@
    compiled policy (see `compile-policy`) or nil (⇒ allow all). Binds `127.0.0.1` on an
    ephemeral port. Returns `{:port <int> :stop! (fn [])}`. Idempotent stop.
 
-   `:on-log` (optional) receives a decision map per request for audit."
-  [{:keys [policy-fn on-log]}]
+   `:on-log` (optional) receives a decision map per request for audit.
+
+   `:mitm` (optional) a 0-arg fn returning a `tls-mitm/create!` capability (or nil).
+   When present AND the per-connection policy carries `:mitm?`, HTTPS CONNECT is
+   TLS-terminated so method+path are enforced; otherwise CONNECT is a raw tunnel."
+  [{:keys [policy-fn on-log mitm]}]
   (let
     [on-log
      (or on-log
@@ -466,10 +570,11 @@
        (while @running
          (let [client (try (.accept server) (catch Throwable _ nil))]
            (when client
-             (.submit pool
-                      ^Runnable
-                      (fn []
-                        (handle-client pool client (or policy-fn (constantly nil)) on-log)))))))]
+             (.submit
+               pool
+               ^Runnable
+               (fn []
+                 (handle-client pool client (or policy-fn (constantly nil)) mitm on-log)))))))]
 
     (doto (Thread. ^Runnable accept "vis-egress-accept") (.setDaemon true) (.start))
     {:port port

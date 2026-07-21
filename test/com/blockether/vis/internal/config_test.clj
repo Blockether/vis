@@ -163,7 +163,7 @@
                     [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
                    (keywordize {"environment" {"ANTHROPIC_API_KEY" "tok"}
                                 "providers" [{"id" "anthropic"
-                                              "api_style" ":anthropic"
+                                              "api_style" "anthropic"
                                               "llm-headers" {"X-Custom-Header" "v"}}]})))))
   (it
     "parses a vis.yml into the EDN shape; EDN wins when both formats exist"

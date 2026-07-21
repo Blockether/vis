@@ -58,10 +58,12 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.content :as content])
+            [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.format :as fmt])
   (:import [java.util Locale]
            [java.time ZoneId]
            [java.time.format DateTimeFormatter]
+           [org.commonmark.ext.gfm.tables TablesExtension]
            [org.commonmark.parser Parser]
            [org.commonmark.renderer.html HtmlRenderer]))
 
@@ -128,7 +130,21 @@
     (assoc :stdout (:stdout envelope))
 
     (contains? envelope :error)
-    (assoc :error (:error envelope))))
+    (assoc :error (:error envelope))
+
+    ;; Canonical native-tool IR (`:vis/tool-name`/`:tool-color-role`/
+    ;; `:result-summary`/`:result-render`, plus any printed `:cards`) so the
+    ;; dialog renderer reuses the SAME op-card descriptors the TUI/web build
+    ;; from (`vis/result-cards`) instead of re-parsing the invocation string.
+    (:vis/tool-name envelope)
+    (assoc :vis/tool-name
+      (:vis/tool-name envelope) :tool-color-role
+      (:tool-color-role envelope) :result-summary
+      (:result-summary envelope) :result-render
+      (:result-render envelope))
+
+    (seq (:cards envelope))
+    (assoc :cards (:cards envelope))))
 
 (defn- attachment-descriptor
   "Lean, byte-free descriptor for ONE persisted iteration attachment (an element
@@ -177,6 +193,12 @@
 
     (cond->
       (-> iter
+          ;; `:llm-assistant-message` is a `<-json-lazy` DELAY (an internal
+          ;; preserved-thinking replay blob, redundant with :blocks/:thinking/
+          ;; the turn's :content). An unrealized delay crosses the Clojure->Python
+          ;; boundary as a ForeignObject and breaks json.dumps on the transcript,
+          ;; so keep it out of this read-only projection entirely.
+          (dissoc :llm-assistant-message)
           (update :thinking visible-thinking)
           (assoc :blocks blocks)
           (assoc :failure-count (count (filter :error blocks))))
@@ -481,6 +503,9 @@
        :code (:code block)}
       (contains? block :result)
       (assoc :result-summary (result-summary (:result block)))
+
+      (seq (vis/result-cards block))
+      (assoc :cards (vis/result-cards block))
 
       error
       (assoc :error error))))
@@ -918,7 +943,7 @@
   (str "### Turn "
        (or position "?")
        "\n"
-       "- **User request:** "
+       "- **You:** "
        (one-line user-request)
        "\n"
        "- **Status:** "
@@ -970,28 +995,214 @@
                              (str "- **" k ":** " v "\n")))
                          "\n"))))))
 
-(defn- render-dialog-message
-  [{:keys [role content]}]
-  (let [body (if (vector? content) (content/text-projection content) (str content))]
-    (str "### "
-         (case role
-           :user
-           "User"
+(defn- status-label
+  "Compact status tag for a dialog tool call."
+  [status]
+  (case status
+    :error
+    "[error]"
 
-           :assistant
-           "Assistant"
+    :timeout
+    "[timeout]"
 
-           (name role))
+    "[ok]"))
+
+(defn- md-html-escape
+  "Minimal &<> escape for text placed inside literal HTML in Markdown output."
+  [s]
+  (-> (str s)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
+
+(defn- tool-op
+  "Uppercase operation label parsed from a tool-call invocation like `rg(...)`."
+  [code]
+  (if-let [m (re-find #"^[\s(]*([A-Za-z_][A-Za-z0-9_]*)" (str code))]
+    (str/upper-case (second m))
+    "TOOL"))
+
+(defn- tool-summary
+  "One compact line summarising a tool call's arguments (op token stripped)."
+  [code]
+  (let
+    [s (-> (str code)
+           one-line
+           (str/replace #"^[\s(]*[A-Za-z_][A-Za-z0-9_]*\s*\(?" "")
+           str/trim)]
+    (when-not (str/blank? s) (if (> (count s) 120) (str (subs s 0 120) "\u2026") s))))
+
+(defn- dialog-result-preview
+  "One bounded, single-line preview of a code/tool result-summary, or nil."
+  [rs]
+  (when (map? rs)
+    (let
+      [p (some-> (:preview rs)
+                 str
+                 one-line
+                 str/trim)]
+      (when-not (str/blank? p) (if (> (count p) 220) (str (subs p 0 220) "\u2026") p)))))
+
+(defn- dialog-thinking
+  "Non-blank reasoning traces across a turn's iterations."
+  [turn]
+  (->> (:iterations turn)
+       (keep :thinking)
+       (map (comp str/trim str))
+       (remove str/blank?)
+       vec))
+
+(defn- dialog-tools
+  "Compact tool-call descriptors for one turn, from its timeline code events."
+  [timeline turn-id]
+  (->> timeline
+       (filter #(and (= :code (:kind %)) (= turn-id (:turn-id %))))
+       (keep (fn [{:keys [code result-summary status cards]}]
+               (when-not (str/blank? (str code))
+                 (let
+                   [c
+                    (str/trim (str code))
+
+                    card
+                    (first cards)]
+
+                   {:code c
+                    :op (or (:label card) (tool-op c))
+                    :summary (or (:summary card) (tool-summary c))
+                    :color-role (:color-role card)
+                    :body (:body card)
+                    :status status
+                    :preview (dialog-result-preview result-summary)}))))
+       vec))
+
+(defn- thinking-split
+  "Split a turn's reasoning trace into an always-visible peek (the first
+   `reasoning-preview-line-limit` lines) plus a collapsed remainder, mirroring
+   the TUI/web: short traces render inline, only a remainder larger than
+   `reasoning-collapse-min-hidden` folds behind a `+N more` disclosure."
+  [thinking]
+  (let
+    [lines
+     (str/split-lines (str/join "\n\n" thinking))
+
+     n
+     (long vis/reasoning-preview-line-limit)
+
+     hidden
+     (max 0 (- (count lines) n))]
+
+    (if (< hidden (long vis/reasoning-collapse-min-hidden))
+      {:peek (str/join "\n" lines) :more nil :hidden 0}
+      {:peek (str/join "\n" (take n lines)) :more (str/join "\n" (drop n lines)) :hidden hidden})))
+
+(def ^:private user-peek-lines
+  "Leading lines of a long user message shown before the fold, mirroring the
+   TUI's pasted-content disclosure."
+  6)
+
+(def ^:private user-collapse-min-hidden
+  "A user message only folds when at least this many lines would hide, so a
+   normal short prompt is never wrapped in a disclosure."
+  4)
+
+(defn- user-split
+  "Split a user message into an always-visible peek plus a collapsed remainder,
+   mirroring the TUI's pasted-content disclosure: a short prompt renders whole;
+   a long paste shows its first `user-peek-lines` lines then folds the rest
+   behind a `+N more lines` disclosure."
+  [user]
+  (let
+    [lines
+     (str/split-lines user)
+
+     hidden
+     (max 0 (- (count lines) (long user-peek-lines)))]
+
+    (if (< hidden (long user-collapse-min-hidden))
+      {:peek user :more nil :hidden 0}
+      {:peek (str/join "\n" (take user-peek-lines lines))
+       :more (str/join "\n" (drop user-peek-lines lines))
+       :hidden hidden})))
+
+(defn- dialog-footer
+  "TUI-style meta footer for a turn's answer, rendered through the SAME canonical
+   `format/meta-summary-line` the TUI bubble footer uses:
+   `provider/model  \u00b7  in\u2192out  \u00b7  ~$cost  \u00b7  duration`. nil when empty."
+  [{:keys [tokens cost-usd duration-ms provider model]}]
+  (let
+    [label (cond (and provider model) (str provider "/" model)
+                 model model
+                 provider provider
+                 :else false)]
+    (fmt/meta-summary-line
+      {:tokens {"input" (:input tokens) "output" (:output tokens) "cached" (:cached tokens)}
+       :cost cost-usd
+       :duration-ms duration-ms}
+      {:model label})))
+
+(defn- render-dialog-turn-md
+  "One user->assistant exchange as opencode-style Markdown: the user request,
+   collapsible reasoning + tool calls, then the assistant's answer. Message
+   bodies render as real Markdown (never fenced) so headings/bold/code survive."
+  [timeline turn]
+  (let
+    [user
+     (str/trim (str (:user-request turn)))
+
+     thinking
+     (dialog-thinking turn)
+
+     tools
+     (dialog-tools timeline (:id turn))
+
+     answer
+     (str/trim (str (content/text-projection (:content turn))))]
+
+    (str "### You\n\n"
+         (if (str/blank? user)
+           "_(empty)_"
+           (let [{:keys [peek more hidden]} (user-split user)]
+             (str peek
+                  (when more
+                    (str "\n\n<details>\n<summary>+"
+                         hidden
+                         " more lines</summary>\n\n"
+                         (render-fenced "" more)
+                         "\n\n</details>")))))
          "\n\n"
-         (render-fenced "markdown" body)
-         "\n")))
+         "### Vis"
+         "\n\n"
+         (when (seq thinking)
+           (let [{:keys [peek more hidden]} (thinking-split thinking)]
+             (str "**Thinking**\n\n" peek
+                  "\n\n" (when more
+                           (str "<details>\n<summary>+"
+                                hidden
+                                " more</summary>\n\n"
+                                more
+                                "\n\n</details>\n\n")))))
+         (when (seq tools)
+           (apply str
+             (for [{:keys [op summary code status preview body]} tools]
+               (str "<details>\n<summary>\u25be "
+                    (md-html-escape op)
+                    (when-not (str/blank? summary) (str " \u00b7 " summary))
+                    "</summary>\n\n"
+                    (if-not (str/blank? body)
+                      (str body "\n")
+                      (str (render-fenced "python" code)
+                           (when preview (str "\n> " (status-label status) " " preview "\n"))))
+                    "\n</details>\n\n"))))
+         (when-not (str/blank? answer) (str answer "\n\n"))
+         (when-let [footer (dialog-footer turn)]
+           (str "_" footer "_\n\n")))))
 
 (defn- render-dialog-md
-  [{:keys [session dialog]}]
-  (str "# Dialog" (when-let [t (:title session)]
-                    (str " - " t))
-       "\n\n"
-       (if (seq dialog) (apply str (map render-dialog-message dialog)) "_No dialog messages._\n")))
+  [{:keys [session turns timeline]}]
+  (str "# " (or (:title session) "vis transcript")
+       "\n\n" (if (seq turns)
+                (str/join "---\n\n" (map #(render-dialog-turn-md timeline %) turns))
+                "_No dialog messages._\n")))
 
 (defn- render-turns-md
   "Turn-by-turn forensic body (no summary header)."
@@ -1086,10 +1297,16 @@
                  (fn [[_ idx]]
                    (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
 
-(def ^:private ^Parser md-parser (.build (Parser/builder)))
+(def ^:private md-extensions
+  ;; GFM tables: the transcript body embeds pipe tables (e.g. struct-index
+  ;; skeletons) that core CommonMark leaves as literal text.
+  (java.util.Collections/singletonList (TablesExtension/create)))
+
+(def ^:private ^Parser md-parser (.build (.extensions (Parser/builder) md-extensions)))
 
 (def ^:private ^HtmlRenderer md-renderer
   (-> (HtmlRenderer/builder)
+      (.extensions md-extensions)
       ;; Transcript HTML is a standalone local artifact assembled from model,
       ;; tool, and user text. Keep CommonMark's fence/list/header behavior, but
       ;; do not let raw Markdown HTML pass through unescaped.
@@ -1110,7 +1327,7 @@
    vis palette - ground, ink, accent headers, code panels, hairline rules."
   (str
     "body{margin:0;background:var(--bg);color:var(--fg);"
-    "font:15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
+    "font:13.5px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
     ".transcript{max-width:860px;margin:0 auto;padding:2.5rem 1.5rem 6rem;}"
     "@media (max-width:640px){.transcript{padding:1.25rem .9rem 3.5rem;}}"
     "h1{font-size:1.9rem;margin:.2em 0 .6em;}"
@@ -1119,21 +1336,27 @@
     "h4{font-size:1.02rem;margin:1.3rem 0 .5rem;color:var(--secondary);}"
     "h5{font-size:.9rem;margin:1.1rem 0 .4rem;color:var(--dim);"
     "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;}"
-    "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}" "a{color:var(--primary);}"
-    "p{margin:.6em 0;}" "ul{margin:.4em 0;padding-left:1.4em;}"
-    "li{margin:.2em 0;}" "strong{color:var(--fg);font-weight:650;}"
-    "em{color:var(--dim);font-style:normal;}"
+    "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}"
+    "a{color:var(--primary);}" "p{margin:.6em 0;}"
+    "ul{margin:.4em 0;padding-left:1.4em;}" "li{margin:.2em 0;}"
+    "strong{color:var(--fg);font-weight:650;}" "em{color:var(--dim);font-style:normal;}"
     "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;"
-    "background:var(--code-bg);padding:.1em .35em;border-radius:4px;}"
-    "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;"
+    "background:var(--code-bg);padding:.1em .35em;border-radius:0;}"
+    "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:0;"
     "padding:1rem 1.1rem;overflow-x:auto;margin:.85em 0;}"
+    ;; GFM tables: hairline grid on the code-panel ground, matching the vis palette.
+    "table{border-collapse:collapse;width:100%;margin:.85em 0;font-size:.9em;display:block;overflow-x:auto;}"
+    "thead{background:var(--code-bg);}"
+    "th,td{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top;word-break:normal;}"
+    "th{font-weight:650;color:var(--fg);white-space:nowrap;}"
+    "td code{white-space:nowrap;}"
     "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"
     ;; Summary card - full-viewport responsive grid of stat cards (one per
     ;; session-summary group), breaking out of the 860px transcript column.
     ".tx-summary{position:relative;left:50%;transform:translateX(-50%);"
     "width:min(1360px,94vw);display:grid;gap:.9rem;align-items:start;margin:.4rem 0 2.2rem;"
     "grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));font-size:.92rem;}"
-    ".tx-card{border:1px solid var(--line);border-radius:10px;background:var(--code-bg);"
+    ".tx-card{border:1px solid var(--line);border-radius:0;background:var(--code-bg);"
     "padding:.4rem 1rem .9rem;}"
     ".tx-card-title{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
     "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;padding:.7rem 0 .1rem;}"
@@ -1143,7 +1366,51 @@
     ".tx-v{color:var(--fg);text-align:right;word-break:break-word;min-width:0;}"
     ".tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;" "font-size:.88em;}"
     "@media (max-width:640px){.tx-summary{width:100%;left:0;transform:none;}"
-    ".tx-card{padding:.35rem .85rem .8rem;}}"))
+    ".tx-card{padding:.35rem .85rem .8rem;}}"
+    ;; Dialog view - opencode-style user/assistant exchanges with collapsible
+    ;; reasoning + tool calls, coloured from the shared vis theme vars.
+    ".dialog{display:flex;flex-direction:column;gap:1.4rem;}"
+    ".turn{display:flex;flex-direction:column;gap:.7rem;padding-bottom:1.4rem;border-bottom:1px solid var(--line);}"
+    ".turn:last-child{border-bottom:0;padding-bottom:0;}"
+    ".msg-role{display:flex;align-items:baseline;gap:.6rem;font-weight:600;font-size:.8rem;margin:0 0 .1rem;}"
+    ".msg.user .who{color:var(--dim);}" ".msg.assistant .who{color:var(--ok);}"
+    ".msg .model{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;}"
+    ".msg.user{padding:.1rem;}"
+    ".msg.assistant{padding:.1rem;}" ".msg-body>*:first-child{margin-top:0;}"
+    ".msg-body>*:last-child{margin-bottom:0;}"
+    "details.thinking,details.tools,details.tool{margin:.45rem 0;border:1px solid var(--line);border-radius:0;background:var(--code-bg);overflow:hidden;}"
+    "details.thinking>summary,details.tools>summary,details.tool>summary{cursor:pointer;padding:.45rem .8rem;color:var(--dim);"
+    "font-size:.83rem;user-select:none;list-style:none;}"
+    "details.tool>summary{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;color:var(--fg);display:flex;align-items:baseline;gap:.35rem;}"
+    ;; TUI-style disclosure chevron: right-pointing when collapsed, down when open.
+    "details.tool>summary::before{content:\"\u25b8\";color:var(--dim);font-size:.72rem;flex:0 0 auto;}"
+    "details.tool[open]>summary::before{content:\"\u25be\";}"
+    "details.tool>summary .tool-op{color:var(--fg);font-weight:650;letter-spacing:.03em;}"
+    "details.tool>summary .tool-args{color:var(--dim);margin-left:.15rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
+    "details.tool>summary .tool-args code{background:none;padding:0;color:var(--fg);}"
+    "details.thinking>summary::-webkit-details-marker,details.tools>summary::-webkit-details-marker,details.tool>summary::-webkit-details-marker{display:none;}"
+    "details[open]>summary{border-bottom:1px solid var(--line);}"
+    ".details-body{padding:.65rem .85rem;}" ".details-body>*:first-child{margin-top:0;}"
+    ".details-body>*:last-child{margin-bottom:0;}"
+    "details.thinking .details-body{color:var(--dim);font-style:italic;}"
+    ".tool-code{margin:0;}"
+    ".tool-out{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;"
+    "white-space:pre-wrap;word-break:break-word;border-left:2px solid var(--line);padding:.15rem 0 .15rem .6rem;margin-top:.35rem;}"
+    "details.tool.status-error .tool-out{color:var(--err);border-left-color:var(--err);}"
+    ".thinking-band{margin:.45rem 0;border:1px solid var(--line);border-radius:0;background:var(--code-bg);padding:.5rem .8rem;color:var(--dim);font-style:italic;font-size:.8rem;line-height:1.5;}"
+    ".thinking-band .thinking-label{font-style:normal;font-weight:700;font-size:.64rem;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);margin-bottom:.3rem;}"
+    ".thinking-band .thinking-peek>*:first-child{margin-top:0;}"
+    ".thinking-band .thinking-peek>*:last-child{margin-bottom:0;}"
+    ".thinking-band details.thinking-more{margin:.4rem 0 0;}"
+    ".thinking-band details.thinking-more>summary{cursor:pointer;padding:.2rem 0;color:var(--dim);font-size:.76rem;font-style:normal;list-style:none;user-select:none;}"
+    ".thinking-band details.thinking-more>summary::-webkit-details-marker{display:none;}"
+    ".thinking-band details.thinking-more .details-body{padding:.35rem 0 0;}"
+    ".paste-more{margin:.5rem 0 0;border:1px solid var(--line);border-radius:0;background:var(--code-bg);overflow:hidden;}"
+    ".paste-more>summary{cursor:pointer;padding:.4rem .8rem;color:var(--dim);font-size:.78rem;user-select:none;list-style:none;}"
+    ".paste-more>summary::-webkit-details-marker{display:none;}"
+    ".paste-more .details-body{padding:.55rem .85rem;}"
+    ".paste-more .paste-body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.45;white-space:pre;overflow-x:auto;color:var(--fg);}"
+    ".msg-footer{text-align:right;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;margin-top:.7rem;}"))
 
 (def ^:private prism-token-css
   "The vis-light Prism token theme. Uses the SAME `web-css-root` CSS vars the
@@ -1199,6 +1466,105 @@
                   "</div>\n")))
          "</div>\n")))
 
+(defn- render-dialog-turn-html
+  "One user->assistant exchange as styled HTML: user bubble, collapsible
+   reasoning + tool calls, then the assistant's answer. Each text body renders
+   through the Markdown->HTML surface so prose looks like the TUI."
+  [timeline turn]
+  (let
+    [user
+     (str/trim (str (:user-request turn)))
+
+     thinking
+     (dialog-thinking turn)
+
+     tools
+     (dialog-tools timeline (:id turn))
+
+     answer
+     (str/trim (str (content/text-projection (:content turn))))]
+
+    (str "<section class=\"turn\">\n"
+         "<article class=\"msg user\">\n"
+         "<header class=\"msg-role\"><span class=\"who\">You</span></header>\n"
+         "<div class=\"msg-body\">"
+         (if (str/blank? user)
+           (md->html "_(empty)_")
+           (let [{:keys [peek more hidden]} (user-split user)]
+             (str (md->html peek)
+                  (when more
+                    (str "<details class=\"paste-more\"><summary>+"
+                         hidden
+                         " more lines</summary><div class=\"details-body\">"
+                         "<pre class=\"paste-body\"><code>" (html-escape more)
+                         "</code></pre>" "</div></details>")))))
+         "</div>\n"
+         "</article>\n"
+         "<article class=\"msg assistant\">\n"
+         "<header class=\"msg-role\"><span class=\"who\">Vis</span>"
+         "</header>\n"
+         "<div class=\"msg-body\">\n"
+         (when (seq thinking)
+           (let [{:keys [peek more hidden]} (thinking-split thinking)]
+             (str "<div class=\"thinking-band\">"
+                  "<div class=\"thinking-label\">Thinking</div>"
+                  "<div class=\"thinking-peek\">"
+                  (md->html peek)
+                  "</div>"
+                  (when more
+                    (str "<details class=\"thinking-more\"><summary>+"
+                         hidden
+                         " more</summary>"
+                         "<div class=\"details-body\">"
+                         (md->html more)
+                         "</div></details>"))
+                  "</div>")))
+         (when (seq tools)
+           (apply str
+             (for [{:keys [op summary code status preview body color-role]} tools]
+               (str "<details class=\"tool status-"
+                    (name (or status :done))
+                    "\"><summary><span class=\"tool-op\""
+                    (when color-role (str " style=\"color:var(--tool-" (name color-role) ")\""))
+                    ">"
+                    (html-escape op)
+                    "</span>"
+                    (when-not (str/blank? summary)
+                      (str "<span class=\"tool-args\">" (render-inline summary) "</span>"))
+                    "</summary>\n"
+                    "<div class=\"details-body\">"
+                    (if-not (str/blank? body)
+                      (md->html body)
+                      (str "<pre class=\"tool-code\"><code class=\"language-python\">" (html-escape
+                                                                                         code)
+                           "</code></pre>" (when preview
+                                             (str "<div class=\"tool-out\">"
+                                                  (html-escape
+                                                    (str (status-label status) " " preview))
+                                                  "</div>"))))
+                    "</div></details>\n"))))
+         (when-not (str/blank? answer) (md->html answer))
+         (when-let [footer (dialog-footer turn)]
+           (str "<div class=\"msg-footer\">" (html-escape footer) "</div>"))
+         "</div>\n</article>\n</section>\n")))
+
+(defn- render-dialog-html
+  "Standalone HTML dialog: a title `<h1>` plus one styled section per turn."
+  [{:keys [turns timeline] :as data}]
+  (let
+    [title (or (some-> data
+                       :session
+                       :title)
+               "vis transcript")]
+    (str "<h1>"
+         (render-inline title)
+         "</h1>\n"
+         "<div class=\"dialog\">\n"
+         (if (seq turns)
+           (apply str (map #(render-dialog-turn-html timeline %) turns))
+           "<p><em>No dialog messages.</em></p>\n")
+         "</div>\n")))
+
 (defn transcript->html
   "Render transcript data as a STANDALONE HTML document, styled with the
    vis-light theme's shared web CSS variables so an exported transcript
@@ -1207,9 +1573,10 @@
 
    Opts:
    - `:mode`     - `:full` (default) or `:dialog`, forwarded to `transcript->md`.
-   - `:theme-id` - theme id for the embedded CSS (default `:vis-light`)."
+   - `:theme-id` - theme id for the embedded CSS (default = the TUI's active
+                   theme via `vis/default-theme-id`, so exports match the TUI)."
   ([data] (transcript->html data {:mode :full}))
-  ([data {:keys [mode theme-id] :or {mode :full theme-id :vis-light}}]
+  ([data {:keys [mode theme-id] :or {mode :full theme-id vis/default-theme-id}}]
    (let
      [title
       (or (some-> data
@@ -1222,7 +1589,7 @@
 
       body
       (if dialog?
-        (md->html (transcript->md data {:mode :dialog}))
+        (render-dialog-html data)
         (str (render-summary-html data) (md->html (render-turns-md data))))]
 
      (str "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"

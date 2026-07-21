@@ -799,6 +799,10 @@
                             {}
                             x)
         (or (vector? x) (seq? x) (set? x)) (mapv deep-stringify x)
+        ;; Force any lazy leaf (e.g. a `<-json-lazy` DELAY) so no unrealized
+        ;; deref crosses the boundary as a ForeignObject and breaks json.dumps.
+        ;; Degrade a bad blob to nil rather than aborting the whole verb.
+        (delay? x) (deep-stringify (try (force x) (catch Throwable _ nil)))
         (keyword? x) (kw->snake x)
         (symbol? x) (kw->snake (keyword x))
         :else x))

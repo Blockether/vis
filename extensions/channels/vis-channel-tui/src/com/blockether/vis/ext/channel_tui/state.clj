@@ -850,27 +850,11 @@
    `:open-building-tab`)."
   "Starting…")
 
-(def ^:private transcript-dump-markers
-  ["▾ REASONING [" "▾ RESULT [" "▾ ERROR [" "RESULT [iteration" "REASONING [iteration"])
-
-(defn transcript-dump-input?
-  "True when text looks like a copied Vis assistant trace/transcript, not a
-   fresh user prompt. These strings can enter `user_request` after accidental
-   bubble copy/paste, then poison ArrowUp history on resumed sessions."
-  [text]
-  (let [s (str text)]
-    (boolean (or (some #(str/includes? s %) transcript-dump-markers)
-                 (and (> (count s) 8000)
-                      (boolean (re-find #"(?m)^\s*The user (wants|is|asked|reports|says|needs)\b"
-                                        s))
-                      (boolean (re-find #"(?m)^\s*\(def\s+" s)))))))
-
 (defn- history-user-texts
   [history]
   (->> (or history [])
        (keep (fn [message]
                (when (= :user (:role message)) (:text message))))
-       (remove transcript-dump-input?)
        vec))
 
 (defn- tab-number
@@ -2889,79 +2873,78 @@
        preview-text
        (input/collapse-paste-placeholders text pastes)]
 
-      (cond
-        (transcript-dump-input? full-text)
-        {:db db :fx [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]}
-        (:loading? source-db) (enqueue-message-result db workspace-id text)
-        (nil? (:session source-db)) {:db db}
-        :else
-        (let
-          [workspace
-           (active-workspace source-db)
+      (cond (:loading? source-db) (enqueue-message-result db workspace-id text)
+            (nil? (:session source-db)) {:db db}
+            :else
+            (let
+              [workspace
+               (active-workspace source-db)
 
-           agent-text
-           (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
-             (input/expand-file-mentions full-text))
+               agent-text
+               (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
+                 (input/expand-file-mentions full-text))
 
-           token
-           (vis/cancellation-token)
+               token
+               (vis/cancellation-token)
 
-           extra-body
-           (turn-extra-body db)
+               extra-body
+               (turn-extra-body db)
 
-           turn-features
-           {}
+               turn-features
+               {}
 
-           reasoning-level
-           (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
+               reasoning-level
+               (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
 
-           client-turn-id
-           (str (java.util.UUID/randomUUID))]
+               client-turn-id
+               (str (java.util.UUID/randomUUID))]
 
-          {:db (update-tab db
-                           workspace-id
-                           (fn [w]
-                             (-> w
-                                 (update :messages
-                                         conj
-                                         (assoc (chat/user-message preview-text)
-                                           :client-turn-id client-turn-id))
-                                 (update :messages
-                                         conj
-                                         (assoc (pending-assistant-for text)
-                                           :client-turn-id client-turn-id))
-                                 (update :input-history
-                                         (fn [xs]
-                                           (let [xs (vec (or xs []))]
-                                             (if (= full-text (last xs)) xs (conj xs full-text)))))
-                                 ;; Sending re-pins to the bottom: one atomic FOLLOW
-                                 ;; reset replaces the whole `:scroll` value, so no
-                                 ;; in-flight animation target can dangle and flash the
-                                 ;; view to the top of the freshly-appended message.
-                                 (assoc :scroll scroll/follow
-                                        :loading? true
-                                        :cancel-token token
-                                        :cancelling? false
-                                        :cancel-awaiting-turn-id? false
-                                        :progress {:iterations []}
-                                        :turn-start-ms (System/currentTimeMillis)
-                                        :submitted-input {:text text
-                                                          :pastes (:pastes source-db)
-                                                          :paste-counter (:paste-counter source-db)}
-                                        :input-history-index nil
-                                        :input-history-draft nil
-                                        :slash-command-index 0
-                                        :slash-command-hidden? false))))
-           ;; `agent-text` (LLM-facing, with `@path` expanded into a
-           ;; `[Attached File: ...]` directive) drives the model.
-           ;; `preview-text` (un-expanded `@path` token, plus a fenced
-           ;; head+tail peek of each paste) is the user's collapsed line -
-           ;; flowed in as `display-text` so it lands in the persisted
-           ;; `user_request` column. Without the split,
-           ;; reopening a session re-rendered the verbose attachment
-           ;; directive in the user bubble.
-           :fx [[:session-turn workspace-id (:session source-db) agent-text token reasoning-level
-                 extra-body turn-features workspace client-turn-id preview-text]]})))))
+              {:db (update-tab
+                     db
+                     workspace-id
+                     (fn [w]
+                       (-> w
+                           (update :messages
+                                   conj
+                                   (assoc (chat/user-message preview-text)
+                                     :client-turn-id client-turn-id))
+                           (update :messages
+                                   conj
+                                   (assoc (pending-assistant-for text)
+                                     :client-turn-id client-turn-id))
+                           (update :input-history
+                                   (fn [xs]
+                                     (let [xs (vec (or xs []))]
+                                       (if (= full-text (last xs)) xs (conj xs full-text)))))
+                           ;; Sending re-pins to the bottom: one atomic FOLLOW
+                           ;; reset replaces the whole `:scroll` value, so no
+                           ;; in-flight animation target can dangle and flash the
+                           ;; view to the top of the freshly-appended message.
+                           (assoc :scroll scroll/follow
+                                  :loading? true
+                                  :cancel-token token
+                                  :cancelling? false
+                                  :cancel-awaiting-turn-id? false
+                                  :progress {:iterations []}
+                                  :turn-start-ms (System/currentTimeMillis)
+                                  :submitted-input {:text text
+                                                    :pastes (:pastes source-db)
+                                                    :paste-counter (:paste-counter source-db)}
+                                  :input-history-index nil
+                                  :input-history-draft nil
+                                  :slash-command-index 0
+                                  :slash-command-hidden? false))))
+               ;; `agent-text` (LLM-facing, with `@path` expanded into a
+               ;; `[Attached File: ...]` directive) drives the model.
+               ;; `preview-text` (un-expanded `@path` token, plus a fenced
+               ;; head+tail peek of each paste) is the user's collapsed line -
+               ;; flowed in as `display-text` so it lands in the persisted
+               ;; `user_request` column. Without the split,
+               ;; reopening a session re-rendered the verbose attachment
+               ;; directive in the user bubble.
+               :fx [[:session-turn workspace-id (:session source-db) agent-text token
+                     reasoning-level extra-body turn-features workspace client-turn-id
+                     preview-text]]})))))
 
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.

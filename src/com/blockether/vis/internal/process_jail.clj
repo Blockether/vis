@@ -231,14 +231,32 @@
    egress proxy: point every common HTTP-client proxy var at 127.0.0.1:<proxy-port> so
    curl/wget/git/requests/… send their traffic to the one door the jail leaves open.
    Returns {} when the policy carries no `:proxy-port`. Both letter-cases are set
-   because tools disagree (curl reads lowercase, many libraries read uppercase)."
+   because tools disagree (curl reads lowercase, many libraries read uppercase).
+
+   When the policy also carries a `:ca-file` (the egress proxy is running its
+   TLS-terminating MITM tier), point every common CA-trust var at that ephemeral CA
+   PEM so the child accepts the proxy's per-host leaf certs — the thing that lets the
+   proxy read HTTPS method/path. Each runtime reads a different var, so all the
+   common ones are set. Stripping them doesn't grant escape: the kernel wall still
+   forces traffic through the proxy, so a child without the CA just fails the TLS
+   handshake (fails closed, never open)."
   [policy]
   (if-let [port (:proxy-port policy)]
-    (let [url (str "http://127.0.0.1:" port)]
-      {"http_proxy" url
-       "https_proxy" url
-       "all_proxy" url
-       "HTTP_PROXY" url
-       "HTTPS_PROXY" url
-       "ALL_PROXY" url})
+    (let
+      [url (str "http://127.0.0.1:" port)
+       ca (:ca-file policy)]
+
+      (cond->
+        {"http_proxy" url
+         "https_proxy" url
+         "all_proxy" url
+         "HTTP_PROXY" url
+         "HTTPS_PROXY" url
+         "ALL_PROXY" url}
+        ca
+        (merge {"CURL_CA_BUNDLE" ca
+                "SSL_CERT_FILE" ca
+                "REQUESTS_CA_BUNDLE" ca
+                "NODE_EXTRA_CA_CERTS" ca
+                "GIT_SSL_CAINFO" ca})))
     {}))

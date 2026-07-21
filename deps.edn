@@ -55,7 +55,12 @@
   ;; (reverse port-forwarding); JSch above is client-only.
   org.apache.sshd/sshd-core                       {:mvn/version "2.15.0"}
   ;; Pure-Java OOXML (Apache POI) backing the sandbox `xlsxwriter` + `pptx` shims.
-  org.apache.poi/poi-ooxml                        {:mvn/version "5.5.1"}}
+  org.apache.poi/poi-ooxml                        {:mvn/version "5.5.1"}
+  ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session)
+  ;; — HTTPS verb/path enforcement for jailed shell children. No system provider is
+  ;; registered; bcpkix builders use the default JCA signer (native-image friendly).
+  org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.78.1"}
+  org.bouncycastle/bcpkix-jdk18on                 {:mvn/version "1.78.1"}}
  :paths ["src" "resources"]
  :aliases
  {:antq        {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}

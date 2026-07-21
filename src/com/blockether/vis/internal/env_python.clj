@@ -2143,7 +2143,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     "    _ur.OpenerDirector.open = _open\n" "__vis_install_method_guard__()\n"))
 
 (defn- normalize-network-rules
-  "Merge the legacy `:method-policy {host [methods]}` map and the new `:rules` list —
+  "Normalize the `:rules` list —
    `[{:host h :access preset :methods [M…] :allow [{:method M :path P}…]}]` — into a
    normalized VECTOR of `{\"host\" h \"methods\" [UPPER…] \"allow\" [{\"method\" M
    \"path\" P}…]}` for `->py` / `method-guard-python`.
@@ -2200,15 +2200,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                        (update :methods into ms)
                        (update :allow into al))))))]
     (let
-      [acc
-       (reduce (fn [m r]
-                 (add m
-                      (host-key (:host r))
-                      (into (access-of (:access r)) (methods-of (:methods r)))
-                      (allow-of (:allow r))))
-               acc
-               rules)]
-
+      [acc (reduce (fn [m r]
+                     (add m
+                          (host-key (:host r))
+                          (into (access-of (:access r)) (methods-of (:methods r)))
+                          (allow-of (:allow r))))
+                   {}
+                   rules)]
       (mapv (fn [[h {:keys [methods allow]}]]
               {"host" h "methods" (vec (sort methods)) "allow" allow})
             acc))))
@@ -2326,7 +2324,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      (and net? (or (seq denied) (not allow-all?)))
 
      ;; Best-effort per-host HTTP METHOD + PATH allowlist (config `:network :rules`,
-     ;; plus the legacy `:method-policy`; opt-in). Normalized to a list of
+     ;; opt-in). Normalized to a list of
      ;; {host, methods, allow} rules; installed only when net is on AND at least one
      ;; rule is present (it patches urllib, so it needs sockets to matter).
      network-rules

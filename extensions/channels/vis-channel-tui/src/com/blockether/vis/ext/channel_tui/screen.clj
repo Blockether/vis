@@ -405,21 +405,16 @@
     ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
     ;; feedback; drained from `:message-received` once :loading? clears.
     (when (and (seq (str/trim text)) (:session db))
-      (cond (state/transcript-dump-input? text)
-            (vis/notify! "Input looks like copied assistant transcript; not sent"
-                         :level :warn
-                         :ttl-ms 4000)
-            ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
-            ;; submission is a fresh intent — not queue fodder. Keep it in the editor
-            ;; (NO :reset-input) and tell them to resend once the cancel settles,
-            ;; rather than parking it in the queue behind the turn being torn down.
-            (:cancelling? db) (vis/notify!
-                                "Cancelling current turn — press Enter again once it stops"
-                                :level :warn
-                                :ttl-ms 2500)
-            (:loading? db) (do (state/dispatch [:enqueue-message text])
-                               (state/dispatch [:reset-input]))
-            :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
+      (cond
+        ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
+        ;; submission is a fresh intent — not queue fodder. Keep it in the editor
+        ;; (NO :reset-input) and tell them to resend once the cancel settles,
+        ;; rather than parking it in the queue behind the turn being torn down.
+        (:cancelling? db) (vis/notify! "Cancelling current turn — press Enter again once it stops"
+                                       :level :warn
+                                       :ttl-ms 2500)
+        (:loading? db) (do (state/dispatch [:enqueue-message text]) (state/dispatch [:reset-input]))
+        :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
 
