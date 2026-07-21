@@ -372,8 +372,7 @@
         (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity])))
         (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
         (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
-        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))
-        (expect (false? (get-in @state/app-db [:settings :voice/respond])))))
+        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
   (it "hydrates persisted enum toggles into the registry"
       ;; The persistence shape now lives under `:toggles`, not
       ;; `:tui-settings`. `state/init!` keeps the `:settings`

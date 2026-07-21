@@ -585,7 +585,7 @@
 (defn- template-slash-commands
   "Prompt templates as typed-`/` palette entries: `.vis/prompts/*.md`,
    `~/.vis/prompts/*.md`, and provider-contributed dynamic templates
-   (`/skill:<name>`, …). NOT memoized — the template registries are
+   (`/<name>`, …). NOT memoized — the template registries are
    marker-cached internally (stat-only when unchanged) and templates can
    appear mid-session (a file dropped in, a skill added). Selecting one
    submits the plain `/name` text; the engine expands it (registered

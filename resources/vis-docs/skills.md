@@ -8,7 +8,7 @@ skill markdown that Claude Code, pi, opencode, and the
 [agents standard](https://agentskills.io) already define.
 
 Skills are exposed through a model-facing verb, **`skill(name)`**, and a
-user-facing invocation, **`/skill:<name> [task]`** (see
+user-facing invocation, **`/<name> [task]`** (see
 [Context files & prompts](context-and-prompts.md)) — both gated by the
 `:vis/harness-skills` feature toggle (**ON** by default).
 
@@ -114,8 +114,8 @@ disappear, costing zero tokens.
 ## Invoking a skill yourself
 
 The model picks skills from the prompt listing on its own, but you can force
-one: every skill is also a prompt template named `skill:<name>`, so typing
-`/skill:setup-pre-commit for husky` in any channel loads that skill's full
+one: every skill is also a prompt template named `<name>`, so typing
+`/setup-pre-commit for husky` in any channel loads that skill's full
 `SKILL.md` (once per session) and runs your task with it. Details in
 [Context files & prompts](context-and-prompts.md).
 

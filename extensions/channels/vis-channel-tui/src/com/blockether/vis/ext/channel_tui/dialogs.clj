@@ -3677,8 +3677,7 @@
 (def ^{:private true} retired-extension-setting-keys
   "Old :ext/settings rows now owned by registry toggles. Drop them rather than
    aliasing or rendering duplicates."
-  #{:voice/respond? :reasoning-level :vis/reasoning-level :openai-codex-verbosity
-    :openai-codex/verbosity})
+  #{:reasoning-level :vis/reasoning-level :openai-codex-verbosity :openai-codex/verbosity})
 
 (defn- extension-setting-declarations
   []

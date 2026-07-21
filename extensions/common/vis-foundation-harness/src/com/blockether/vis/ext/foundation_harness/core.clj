@@ -158,11 +158,11 @@
      :color-role :tool-color/meta}))
 
 ;; =============================================================================
-;; /skill:<name> — user-invokable skill templates (pi-style)
+;; /<name> — user-invokable skill templates (pi-style)
 ;; =============================================================================
 
 (defn- skill-template-text
-  "Expanded user-message text for a `/skill:<name> [task]` invocation:
+  "Expanded user-message text for a `/<name> [task]` invocation:
    the full SKILL.md (once — an already-loaded skill gets a pointer
    instead of a re-injection, same as skill()) plus the optional task."
   [env s args]
@@ -190,13 +190,13 @@
            task))))
 
 (defn- skill-template-entries
-  "Every discovered skill as a dynamic prompt template named
-   `skill:<name>`, so the user can type `/skill:<name> [task]` in any
+  "Every discovered skill as a dynamic prompt template named `<name>`,
+   so the user can type `/<name> [task]` in any
    channel. Gated by the same toggle as the skill() verb."
   []
   (when (toggles/enabled? :vis/harness-skills)
     (mapv (fn [s]
-            {:name (str "skill:" (:name s))
+            {:name (:name s)
              :description (str "Load skill "
                                (:name s)
                                (when-let [d (not-empty (str (:description s)))]

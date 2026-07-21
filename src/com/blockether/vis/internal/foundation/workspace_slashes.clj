@@ -12,7 +12,7 @@
      /draft new <label>    clone cwd into a draft named <label>, enter it
      /draft apply          land the draft's changes into cwd, leave the draft
      /draft abandon [why]  discard the draft, leave it
-     /draft-fresh <label>  like /draft new, but the draft starts EMPTY —
+     /draft-blank <label>  like /draft new, but the draft starts EMPTY —
                            no files from the current HEAD are carried in
 
    Filesystem permissions (`/fs`, `/root`) — session-scoped, every channel:
@@ -77,7 +77,7 @@
 ;; Handlers
 ;; =============================================================================
 (defn- handle-create
-  "Shared `/draft new` + `/draft-fresh` implementation. `fresh?` forks an
+  "Shared `/draft new` + `/draft-blank` implementation. `fresh?` forks an
    EMPTY draft — nothing from the current HEAD is carried into it."
   [ctx fresh?]
   (let
@@ -96,7 +96,7 @@
      (session-workspace ctx)
 
      usage
-     (if fresh? "/draft-fresh <label>" "/draft new <label>")]
+     (if fresh? "/draft-blank <label>" "/draft new <label>")]
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
@@ -116,7 +116,7 @@
       :else
       (let [draft (workspace/create! db {:session-state-id state-id :label label :fresh? fresh?})]
         {:slash/status :ok
-         :slash/title (str (if fresh? "Fresh draft '" "Draft '")
+         :slash/title (str (if fresh? "Blank draft '" "Draft '")
                            (workspace/display-label draft)
                            "' — you're in it now")
          :slash/body
@@ -130,8 +130,8 @@
   [ctx]
   (handle-create ctx false))
 
-(defn- handle-new-fresh
-  "`/draft-fresh <label>` — like /draft new, but the draft starts EMPTY: no
+(defn- handle-new-blank
+  "`/draft-blank <label>` — like /draft new, but the draft starts EMPTY: no
    files from the current HEAD are carried into it."
   [ctx]
   (handle-create ctx true))
@@ -482,13 +482,13 @@
       :slash/usage "/draft abandon [reason]"
       :slash/requires #{:session}
       :slash/run-fn handle-abandon}
-     {:slash/name "draft-fresh"
+     {:slash/name "draft-blank"
       :slash/doc
       "Like /draft new, but the draft starts EMPTY — no files from your current repo (HEAD) are carried in."
-      :slash/usage "/draft-fresh <label>"
+      :slash/usage "/draft-blank <label>"
       :slash/prompt-arg "Draft label (e.g. feature-x)"
       :slash/requires #{:session}
-      :slash/run-fn handle-new-fresh}]
+      :slash/run-fn handle-new-blank}]
     ;; Filesystem permissions — available on EVERY channel: rich channels keep
     ;; their pickers (TUI directory dialog, web rail), but /root and /fs work
     ;; typed anywhere, which is how a web session moves to a different project.

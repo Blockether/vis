@@ -747,8 +747,7 @@
          vis/registered-extensions
          (fn []
            [{:ext/name "voice"
-             :ext/settings [{:key :voice/respond? :type :toggle :label "Voice responses"}
-                            {:key :voice/tui-auto-read? :type :toggle :label "TUI auto-read"}]}
+             :ext/settings [{:key :voice/tui-auto-read? :type :toggle :label "TUI auto-read"}]}
             {:ext/name "provider-openai-codex"
              :ext/providers [{:provider/id :openai-codex :provider/label "OpenAI Codex"}]
              :ext/settings [{:key :openai-codex-verbosity
@@ -765,7 +764,6 @@
            ids (set (map :id rows))
            toggles (set (keep :toggle-id rows))]
 
-          (expect (contains? toggles :voice/respond))
           ;; Reasoning-effort has its OWN control (Ctrl+R) — `:settings? false`
           ;; keeps it registered but out of the Settings dialog.
           (expect (not (contains? toggles :vis/reasoning-level)))
@@ -775,7 +773,6 @@
           ;; though it stays registered.
           (expect (not (contains? toggles :openai-codex/verbosity)))
           (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
-          (expect (not (contains? ids [:extension-setting "voice" :voice/respond?])))
           (expect (not (contains? ids
                                   [:extension-setting "provider-openai-codex"
                                    :openai-codex-verbosity])))

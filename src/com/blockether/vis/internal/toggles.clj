@@ -523,16 +523,6 @@
        :owner :vis
        :group :capabilities
        :persist? true})
-    (register-toggle! {:id :voice/respond
-                       :label "Voice respond to answers"
-                       :description
-                       "Speak the final answer aloud via the foundation-voice extension."
-                       ;; A voice feature, not a TUI-display concern — its own `:voice` group
-                       ;; (channel-neutral; the daemon speaks regardless of channel).
-                       :default false
-                       :owner :vis
-                       :group :voice
-                       :persist? true})
     (register-toggle! {:id :vis/reasoning-level
                        :label "Reasoning effort"
                        :description "Reasoning budget hint passed to reasoning-capable models."

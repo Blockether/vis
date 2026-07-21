@@ -562,7 +562,7 @@
 
    Every other former settings key (`:show-thinking`,
    `:show-iterations`, `:show-silent`, `:show-timestamps`,
-   `:mouse-selection-copy`, `:voice/respond?`,
+   `:mouse-selection-copy`,
    `:reasoning-level`, `:openai-codex-verbosity`) now lives in the
    toggles registry. The `:settings` map in app-db is a cached
    projection of (registry + these two locals); a listener wired in
@@ -592,7 +592,6 @@
    :show-silent true
    :show-timestamps true
    :mouse-selection-copy (vis/toggle-enabled? :vis/mouse-selection-copy)
-   :voice/respond (vis/toggle-enabled? :voice/respond)
    :reasoning-level (vis/toggle-value :vis/reasoning-level)
    :openai-codex-verbosity (vis/toggle-value :openai-codex/verbosity)})
 
@@ -2769,9 +2768,7 @@
               (turn-extra-body db)
 
               turn-features
-              (cond-> {}
-                (get-in db [:settings :voice/respond])
-                (assoc :voice-response? true))
+              {}
 
               reasoning-level
               (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))]
@@ -2842,9 +2839,7 @@
            (turn-extra-body db)
 
            turn-features
-           (cond-> {}
-             (get-in db [:settings :voice/respond])
-             (assoc :voice-response? true))
+           {}
 
            reasoning-level
            (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
@@ -3769,16 +3764,6 @@
              @restore-pending?
              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))
 ;;; ── Side effects ───────────────────────────────────────────────────────────
-(defn- speak-answer-async!
-  [answer]
-  (try (when-let
-         [speak (requiring-resolve
-                  'com.blockether.vis.ext.foundation-voice.core/speak-answer-async!)]
-         (speak answer))
-       (catch Throwable t
-         (vis/notify! (str "Voice response failed: " (or (ex-message t) t))
-                      :level :error
-                      :ttl-ms 5000))))
 
 (reg-fx :dispatch
         (fn [event]
@@ -3943,9 +3928,7 @@
                      ;; this cache.
                      (try (when-let [sid (:id session)]
                             (dispatch [:set-ctx-panel sid {}]))
-                          (catch Throwable _ nil))
-                     (when (:voice-response? turn-features)
-                       (speak-answer-async! (chat/content->markdown (get result "content")))))))
+                          (catch Throwable _ nil)))))
              (catch Throwable t
                ;; channels.cancellation/cancellation? folds in
                ;; InterruptedException, CancellationException, and

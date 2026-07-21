@@ -113,7 +113,7 @@
 ;; =============================================================================
 (defdescribe
   specs-shape-test
-  (it "exposes the full slash spec set (/draft tree, /draft-fresh, /root, /fs tree)"
+  (it "exposes the full slash spec set (/draft tree, /draft-blank, /root, /fs tree)"
       (expect (= 12 (count ws-slashes/specs))))
   (it "exposes /fs root/add/remove/list/create subcommands under `:slash/parent [\"fs\"]`"
       (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
@@ -132,7 +132,7 @@
         (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
       (let [env (env-with nil)]
-        ;; 12 specs: /draft + new/apply/abandon + /draft-fresh + /root + /fs +
+        ;; 12 specs: /draft + new/apply/abandon + /draft-blank + /root + /fs +
         ;; root/add/remove/list/create.
         ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
         (expect (= 12 (count (slash/active-slashes env))))
@@ -231,9 +231,9 @@
            (finally (delete-tree! base))))))
 
 (defdescribe
-  dispatch-draft-fresh-test
-  (it "/draft-fresh mints an EMPTY draft — trunk's files are NOT carried in"
-      (let [base (temp-dir "vis-draft-fresh")]
+  dispatch-draft-blank-test
+  (it "/draft-blank mints an EMPTY draft — trunk's files are NOT carried in"
+      (let [base (temp-dir "vis-draft-blank")]
         (try (if-not (workspace/isolated-workspaces-supported? base)
                ;; No CoW workspace backend here (CI) — skip the live round-trip.
                (expect (not (workspace/isolated-workspaces-supported? base)))
@@ -246,7 +246,7 @@
                                      [seed (seed-workspace! store base)
                                       state-id (pin-session! store (:id seed))
                                       env (env-with store)
-                                      out (dispatch! env store state-id "/draft-fresh scratch")
+                                      out (dispatch! env store state-id "/draft-blank scratch")
                                       draft (workspace/for-session store state-id)]
 
                                      (try
@@ -261,18 +261,18 @@
                                          (try (workspace/abandon! store {:workspace-id (:id draft)})
                                               (catch Throwable _ nil)))))))))))
              (finally (delete-tree! base)))))
-  (it "/draft-fresh requires a label, like /draft new"
+  (it "/draft-blank requires a label, like /draft new"
       (with-store (fn [store]
-                    (let [base (temp-dir "vis-draft-fresh-nolabel")]
+                    (let [base (temp-dir "vis-draft-blank-nolabel")]
                       (try (let
                              [seed (seed-workspace! store base)
                               state-id (pin-session! store (:id seed))
                               env (env-with store)
-                              out (dispatch! env store state-id "/draft-fresh")]
+                              out (dispatch! env store state-id "/draft-blank")]
 
                              (expect (= :error (get-in out [:result :slash/status])))
                              (expect (str/includes? (get-in out [:result :slash/title])
-                                                    "/draft-fresh <label>")))
+                                                    "/draft-blank <label>")))
                            (finally (delete-tree! base))))))))
 
 (defdescribe
@@ -280,7 +280,7 @@
   (it "/draft remains discoverable when no isolation backend is available"
       (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
         (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-          (expect (= #{"draft" "new" "apply" "abandon" "draft-fresh" "root" "fs" "add" "remove"
+          (expect (= #{"draft" "new" "apply" "abandon" "draft-blank" "root" "fs" "add" "remove"
                        "list" "create"}
                      names)))))
   (it "/draft new reports the unavailable capability matrix"

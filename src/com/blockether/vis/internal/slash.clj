@@ -91,7 +91,7 @@
        (a spec whose path is some other visible spec's `:slash/parent`) and
        hidden / channel-unavailable specs filtered out — then
      • prompt-template entries: `.vis/prompts/*.md` file prompts and harness
-       `/skill:<name>` commands, minus any name a registered slash already
+       `/<name>` skill commands, minus any name a registered slash already
        claimed (registered slashes always win).
 
    `extra` are CHANNEL-NATIVE entries (`{:name :doc}`) the channel handles

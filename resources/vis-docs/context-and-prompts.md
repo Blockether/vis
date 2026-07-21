@@ -85,15 +85,15 @@ turn. Argument handling:
 Registered slash commands (from extensions) always win over templates — a
 template only fires for a `/name` no extension claimed.
 
-## Skill invocations: `/skill:<name>`
+## Skill invocations: `/<name>`
 
 Every discovered [skill](skills.md) is also exposed as a dynamic template
-named `skill:<name>`, so you can load a skill explicitly instead of waiting
+named `<name>`, so you can load a skill explicitly instead of waiting
 for the model to pick it:
 
 ```
-/skill:setup-pre-commit          # load the skill, follow its instructions
-/skill:setup-pre-commit for husky  # load it with a task appended
+/setup-pre-commit          # load the skill, follow its instructions
+/setup-pre-commit for husky  # load it with a task appended
 ```
 
 The expansion injects the full `SKILL.md` (once per session — an

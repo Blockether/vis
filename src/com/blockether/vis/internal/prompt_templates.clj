@@ -18,7 +18,7 @@
 
    Extensions can contribute DYNAMIC templates through
    `register-provider!` — e.g. the harness extension exposes every
-   discovered skill as `/skill:<name>`. File templates win on a name
+   discovered skill as `/<name>`. File templates win on a name
    collision; among providers, registration order wins.
 
    Dispatch: the engine consults `expand` ONLY for slash texts no

@@ -7630,7 +7630,7 @@
 
    A slash NO extension claims (`:reason :unknown`) gets one more
    chance as a PROMPT TEMPLATE (`.vis/prompts/*.md`, `~/.vis/prompts`,
-   provider-contributed templates like `/skill:<name>`): when a
+   provider-contributed templates like `/<name>`): when a
    template matches, the expanded text runs as a NORMAL LLM turn.
    Registered slashes always win over templates."
   [env user-request loop-opts]
