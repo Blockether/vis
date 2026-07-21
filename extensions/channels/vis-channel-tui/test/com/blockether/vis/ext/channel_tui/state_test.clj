@@ -2410,8 +2410,12 @@
         (let
           [{:keys [fx]} (close-tab (base {:session {:id "queued"} :pending-sends [{:text "later"}]})
                                    :main)]
-          ;; Queued work also prevents runtime/listener release.
-          (expect (= [[:unassign-session-project "queued"]] fx))))
+          ;; Queued work prevents runtime/listener release; the authored-but-
+          ;; unsubmitted sends are handed to the gateway (:submit-orphan-sends)
+          ;; instead of being dropped with the closing tab's :tab-locals.
+          (expect (= [[:unassign-session-project "queued"]
+                      [:submit-orphan-sends "queued" ["later"]]]
+                     fx))))
     (it "closing the last remaining tab is a no-op (no release)"
         (let
           [{:keys [db fx]} (close-tab {:tabs [{:id :main :active? true}]

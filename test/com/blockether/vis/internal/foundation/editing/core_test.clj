@@ -1222,7 +1222,6 @@
       ;; shared temp root; a prior run's leftovers make copy/move throw
       ;; FileAlreadyExists. Clear the derived paths before asserting.
       (run! #(fs/delete-if-exists (fs/file %)) [(str txt ".bak") (str txt ".bak2")])
-
       ;; Each `tool(path=p, ...)` collapses at the Python boundary to ONE map
       ;; `{"path" p, ...}`; a scalar-first arity used to treat that whole map as the
       ;; path/src and stringify it (the `cat` bug). Assert the unwrap for each.

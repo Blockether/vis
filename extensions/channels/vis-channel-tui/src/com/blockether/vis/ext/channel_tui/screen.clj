@@ -5441,7 +5441,14 @@
                            (recur))
                        (and selection-copy?
                             (= atype MouseActionType/DRAG)
-                            (some? @mouse-selection-anchor))
+                            (some? @mouse-selection-anchor)
+                            ;; A double-click pre-expands the whole clicked line
+                            ;; at click-down (`mouse-selection-line?`). Terminals
+                            ;; commonly emit jitter DRAGs during the second tap;
+                            ;; honouring them here would drag the stored focus off
+                            ;; the line and copy MORE than the one line the user
+                            ;; asked for. Keep the pre-expanded line stable.
+                            (not @mouse-selection-line?))
                        (let
                          [screen-focus (selection/point mx my)
                           doc-focus (selection/screen->document-point screen-focus
