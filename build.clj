@@ -581,7 +581,8 @@
 ;; extension/load-builtin-extensions! (they ship in the main jar, not via a
 ;; classpath manifest). Keep in sync with extension/builtin-extension-nses.
 (def ^:private builtin-extension-nses
-  ["com.blockether.vis.internal.foundation.core" "com.blockether.vis.internal.foundation.shell"])
+  ["com.blockether.vis.internal.foundation.core" "com.blockether.vis.internal.foundation.shell"
+   "com.blockether.vis.internal.foundation.harness.core"])
 
 (defn- manifest-entry-namespaces
   "Every namespace under `:nses` across the merged extension manifest written by

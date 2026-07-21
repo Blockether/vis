@@ -1,2 +1,0 @@
-{foundation-harness
- {:nses [com.blockether.vis.ext.foundation-harness.core]}}

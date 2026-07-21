@@ -907,13 +907,13 @@
    too — its clone still lacks the trunk files the lineage never saw, so
    applying it with a real fork timestamp would mass-report trunk's files
    as deletions and wipe the repo."
-  [db-info {:keys [session-state-id label from required-capabilities fresh?]}]
+  [db-info {:keys [session-state-id label from required-capabilities blank?]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
 
      parent
-     (if fresh? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
+     (if blank? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
 
      rid
      (repo-id-for trunk)
@@ -938,7 +938,7 @@
                    (zero? (long (or (apply-fork-ms-of from) 0)))))
 
      fork-ms
-     (if (or fresh? inherited-fresh?) 0 (System/currentTimeMillis))
+     (if (or blank? inherited-fresh?) 0 (System/currentTimeMillis))
 
      ws
      (p/db-workspace-insert! db-info

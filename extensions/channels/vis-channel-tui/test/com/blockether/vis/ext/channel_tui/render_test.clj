@@ -1031,6 +1031,19 @@
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "git clone"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
+  (it "labels a pure slash command in the spinner instead of the provider placeholder"
+      ;; A registered slash (/fs, /draft, …) runs LOCALLY via run-slash-turn! and
+      ;; never touches a provider, so it streams ONE :slash phase chunk; the spinner
+      ;; must read `Vis is running: /<name>` — never the zero-iterations provider fallback.
+      (let
+        [body (strip-ansi (render/progress->text
+                            {:iterations [{:iteration 1 :activity :slash :slash/label "/fs list"}]}
+                            80
+                            {:show-thinking true :show-iterations true}
+                            {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (str/includes? body "Vis is running:"))
+        (expect (str/includes? body "/fs list"))
+        (expect (not (str/includes? body "Vis is calling the provider")))))
   (it "labels a nested tool call in the spinner while the block runs"
       ;; A shell_run (or any native tool) INSIDE a python_execution block streams
       ;; a :tool-call activity naming the op, so the bubble reads

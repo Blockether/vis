@@ -322,6 +322,11 @@
       :activity :shell-bg
       :shell/cmd (:cmd chunk))
 
+    :slash
+    (assoc entry
+      :activity :slash
+      :slash/label (:slash chunk))
+
     :tool-start
     ;; A native tool (shell_run/shell_bg/cat/rg/…) began executing INSIDE a
     ;; python_execution block. `:form-start` cleared `:activity` to nil, so a

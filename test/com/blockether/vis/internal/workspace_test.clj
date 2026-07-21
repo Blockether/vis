@@ -187,7 +187,7 @@
 (defdescribe
   fresh-draft-roundtrip-test
   (it
-    "create! :fresh? starts EMPTY; apply! lands only created files and never deletes trunk"
+    "create! :blank? starts EMPTY; apply! lands only created files and never deletes trunk"
     (let [base (temp-dir "vis-ws-fresh")]
       (try
         (if-not (ws/isolated-workspaces-supported? base)
@@ -199,7 +199,7 @@
               (fn [store]
                 (let
                   [seed (seed-workspace! store base)
-                   draft (ws/create! store {:from seed :fresh? true})
+                   draft (ws/create! store {:from seed :blank? true})
                    draft-id (:id draft)]
 
                   (try
@@ -674,7 +674,7 @@
                 (fn [store]
                   (let
                     [seed (seed-workspace! store base)
-                     fresh (ws/create! store {:from seed :fresh? true})
+                     fresh (ws/create! store {:from seed :blank? true})
                      ;; exactly what loop/child-workspace! does for a
                      ;; sub-loop spawned INSIDE the fresh draft
                      child (ws/create! store {:from fresh :label "subloop"})]

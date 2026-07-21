@@ -7,7 +7,6 @@
   com.blockether/vis-provider-standard            {:local/root "extensions/providers/vis-provider-standard"}
   com.blockether/vis-channel-tui                  {:local/root "extensions/channels/vis-channel-tui"}
   com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
-  com.blockether/vis-foundation-harness           {:local/root "extensions/common/vis-foundation-harness"}
   com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-foundation-mcp               {:local/root "extensions/common/vis-foundation-mcp"}
@@ -89,7 +88,6 @@
     "extensions/providers/vis-provider-standard/test"
     "extensions/channels/vis-channel-tui/test"
     "extensions/common/vis-foundation-bridge/test"
-    "extensions/common/vis-foundation-harness/test"
     "extensions/common/vis-foundation-search/test"
     "extensions/common/vis-foundation-voice/test"
     "extensions/common/vis-foundation-mcp/test"
@@ -109,7 +107,6 @@
                 "extensions/providers/vis-provider-standard/test" "--dir"
                 "extensions/channels/vis-channel-tui/test" "--dir"
                 "extensions/common/vis-foundation-bridge/test" "--dir"
-                "extensions/common/vis-foundation-harness/test" "--dir"
                 "extensions/common/vis-foundation-search/test" "--dir"
                 "extensions/common/vis-foundation-voice/test" "--dir"
                 "extensions/common/vis-foundation-mcp/test" "--dir"

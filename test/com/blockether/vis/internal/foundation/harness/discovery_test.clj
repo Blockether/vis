@@ -1,6 +1,6 @@
-(ns com.blockether.vis.ext.foundation-harness.discovery-test
+(ns com.blockether.vis.internal.foundation.harness.discovery-test
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.ext.foundation-harness.discovery :as d]
+            [com.blockether.vis.internal.foundation.harness.discovery :as d]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -144,6 +144,33 @@
                    (expect (re-find #"BODY" (:body spel))))))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
+(defdescribe
+  command-discovery-test
+  (it
+    "command sources span the cross-harness command dirs (no vis-local row — vis commands are .vis/prompts)"
+    (expect (= #{:claude :pi :agents :opencode} (set (map first d/command-sources)))))
+  (it
+    "discovers a claude command from .claude/commands/<name>.md with its $ARGUMENTS body preserved"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-cmd" (make-array FileAttribute 0)))
+
+       cmd-md
+       (io/file root ".claude" "commands" "review.md")]
+
+      (try (io/make-parents cmd-md)
+           (spit cmd-md "---\ndescription: Review a PR\n---\nReview the diff for $ARGUMENTS.")
+           (with-redefs-fn {#'d/project-root (fn []
+                                               root)
+                            #'d/command-sources [[:claude :rel ".claude" "commands"]]}
+             (fn []
+               (let [c (first (filter #(= "review" (:name %)) (d/discover-commands)))]
+                 (expect (= "review" (:name c)))
+                 (expect (= :claude (:tool c)))
+                 (expect (re-find #"Review a PR" (:description c)))
+                 (expect (re-find #"\$ARGUMENTS" (:body c))))))
+           (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+
 (defdescribe discovery-smoke-test
              ;; Environment-agnostic: the scan must NEVER throw and always returns a
              ;; vector, whatever is (or isn't) on disk in ~/.claude.
@@ -151,6 +178,8 @@
                  (expect (vector? (vec (d/discover-agents)))))
              (it "discover-skills returns a vector and never throws"
                  (expect (vector? (vec (d/discover-skills)))))
+             (it "discover-commands returns a vector and never throws"
+                 (expect (vector? (vec (d/discover-commands)))))
              (it "every discovered entry has a non-blank name"
                  (expect (every? #(seq (:name %))
                                  (concat (d/discover-agents) (d/discover-skills))))))

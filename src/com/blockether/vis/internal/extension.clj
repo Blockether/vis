@@ -3392,7 +3392,8 @@
     com.blockether.vis.internal.foundation.shim-paramiko
     com.blockether.vis.internal.foundation.shim-xlsxwriter
     com.blockether.vis.internal.foundation.shim-pptx
-    com.blockether.vis.internal.foundation.shim-attach])
+    com.blockether.vis.internal.foundation.shim-attach
+    com.blockether.vis.internal.foundation.harness.core])
 
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`

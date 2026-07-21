@@ -77,9 +77,9 @@
 ;; Handlers
 ;; =============================================================================
 (defn- handle-create
-  "Shared `/draft new` + `/draft-blank` implementation. `fresh?` forks an
+  "Shared `/draft new` + `/draft-blank` implementation. `blank?` forks an
    EMPTY draft — nothing from the current HEAD is carried into it."
-  [ctx fresh?]
+  [ctx blank?]
   (let
     [db
      (ctx-db ctx)
@@ -96,7 +96,7 @@
      (session-workspace ctx)
 
      usage
-     (if fresh? "/draft-blank <label>" "/draft new <label>")]
+     (if blank? "/draft-blank <label>" "/draft new <label>")]
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
@@ -114,16 +114,16 @@
            :slash/data {:capability-matrix (workspace/workspace-capability-matrix
                                              (or (:root current) (workspace/trunk-root)))})
       :else
-      (let [draft (workspace/create! db {:session-state-id state-id :label label :fresh? fresh?})]
+      (let [draft (workspace/create! db {:session-state-id state-id :label label :blank? blank?})]
         {:slash/status :ok
-         :slash/title (str (if fresh? "Blank draft '" "Draft '")
+         :slash/title (str (if blank? "Blank draft '" "Draft '")
                            (workspace/display-label draft)
                            "' — you're in it now")
          :slash/body
-         (if fresh?
+         (if blank?
            "Started EMPTY — nothing from your repo was carried in. /draft apply lands created files into your repo · /draft abandon discards."
            "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
-         :slash/data {:workspace-id (:id draft) :label (:label draft) :fresh? fresh?}}))))
+         :slash/data {:workspace-id (:id draft) :label (:label draft) :blank? blank?}}))))
 
 (defn- handle-new
   "`/draft new <label>` — clone cwd into a draft named <label> and enter it."

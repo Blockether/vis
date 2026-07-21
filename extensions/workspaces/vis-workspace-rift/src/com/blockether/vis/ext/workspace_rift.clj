@@ -5,8 +5,7 @@
             [com.blockether.rift :as rift]
             [com.blockether.vis.core :as vis]
             [taoensso.telemere :as tel])
-  (:import [java.io File]
-           [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
+  (:import [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute FileAttribute PosixFilePermission]))
 
 (defn- file-path ^String [path] (.getCanonicalPath (io/file path)))
@@ -95,17 +94,55 @@
      :rift-error-path (:path data)
      :error (or (ex-message t) (str t))}))
 
+(def ^:private prune-root-dirs
+  "Top-level directory names skipped when toggling source perms for a fork:
+   VCS internals plus build/dependency/editor caches. They hold thousands of
+   gitignored files that are never part of the fork, so walking them just to
+   flip a write bit is what made `/draft new` stall on a large repo."
+  #{".git" ".rift" ".trash" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules" ".shadow-cljs"
+    ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
+
+(defn- prune-dir?
+  "True when the source-relative directory `dir` is a VCS/build/cache subtree
+   (`prune-root-dirs`, or `.clj-kondo/.cache`) that the perms walk must skip."
+  [^Path root ^Path dir]
+  (let
+    [rel
+     (.relativize root dir)
+
+     c
+     (.getNameCount rel)]
+
+    (and (pos? c)
+         (let [s0 (str (.getName rel 0))]
+           (or (contains? prune-root-dirs s0)
+               (and (= ".clj-kondo" s0) (>= c 2) (= ".cache" (str (.getName rel 1)))))))))
+
 (defn- read-only-perms
+  "Map {Path -> perms} of every non-owner-writable regular file under `src`,
+   pruning `prune-dir?` subtrees so a large repo's `.git`/`target`/`.cpcache`
+   are never walked."
   [src]
-  (try (let [no-link (make-array LinkOption 0)]
-         (into {}
-               (comp (filter #(.isFile ^File %))
-                     (map (fn [^File f]
-                            (let [p (.toPath f)]
-                              [p (Files/getPosixFilePermissions p no-link)])))
-                     (filter (fn [[_ ^java.util.Set perms]]
-                               (not (.contains perms PosixFilePermission/OWNER_WRITE)))))
-               (file-seq (io/file src))))
+  (try (let
+         [root
+          (.toPath (io/file src))
+
+          no-link
+          (make-array LinkOption 0)
+
+          acc
+          (java.util.HashMap.)]
+
+         (Files/walkFileTree
+           root
+           (proxy [SimpleFileVisitor] []
+             (preVisitDirectory [dir _attrs]
+               (if (prune-dir? root dir) FileVisitResult/SKIP_SUBTREE FileVisitResult/CONTINUE))
+             (visitFile [^Path p _attrs]
+               (let [perms (Files/getPosixFilePermissions p no-link)]
+                 (when-not (.contains perms PosixFilePermission/OWNER_WRITE) (.put acc p perms)))
+               FileVisitResult/CONTINUE)))
+         (into {} acc))
        (catch Exception _ {})))
 
 (defn- with-source-writable
@@ -196,7 +233,12 @@
                    (str "Rift workspace fork failed: " (or (ex-message t) (str t))))
          (throw t))))
 
-(defn- discard! [{:keys [root]}] (rift/remove! {:at root}) (rift/gc))
+(defn- discard!
+  "Release and physically delete the clone at `root` (remove! + gc). Synchronous:
+   callers (and tests) rely on the clone being gone once this returns."
+  [{:keys [root]}]
+  (rift/remove! {:at root})
+  (rift/gc))
 
 (vis/register-extension! {:ext/name "workspace-rift"
                           :ext/description "Rift copy-on-write isolated workspace backend."

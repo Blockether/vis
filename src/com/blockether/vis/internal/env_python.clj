@@ -1542,7 +1542,7 @@ def __vis_native_result_scan__(__vis_tree__):
       'session-fold
       (str
         "session_fold(target, gist=None) -> str. Collapse completed prior-turn wire steps into a breadcrumb; every target turn N must be less than session['turn'].\n"
-        "Targets may be step/turn ids or through/from/to/since selectors. Folding changes rendering, not stored history; there is no destructive unfold command. Recover raw current-session content with `s = await session_state()`; select `s['transcript']['turns']` by numeric `position`, then filter `['iterations'][...]['blocks']`. For another conversation, use `await sessions()` then `await session_state(id)`. `ntr[tool_id]` directly retrieves one prior native result.\n"
+        "Targets may be step/turn ids or through/from/to/since selectors. Folding changes rendering, not stored history; there is no destructive unfold command. Recover a folded step the cheap way: the fold breadcrumb itself lists its folded steps' `ntr[<id>]` accessors, and `ntr[tool_id]` retrieves that one prior native result from storage with no re-run — it SURVIVES a harness restart (`ntr.keys()` browses every stored id). Only if an id isn't in view, walk raw content — `s = await session_state()`, select `s['transcript']['turns']` by numeric `position`, then filter `['iterations'][...]['blocks']` (`code`/`result`). For another conversation, use `await sessions()` then `await session_state(id)`.\n"
         "Fold of fold: a broader newer fold supersedes fully covered narrower breadcrumbs; equal scopes keep the newer gist. Partial overlaps remain separate."))))
 
 
@@ -2825,6 +2825,17 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
   (let [raw (System/getenv "VIS_PY_BLOCK_LOG_EVERY")]
     (if (str/blank? raw) 25 (try (max 0 (Long/parseLong (str/trim raw))) (catch Exception _ 25)))))
 
+(defn- mem-log-enabled?
+  "Master switch for memory-observability logging: the per-block heap sample here
+   AND the env-reaper sweep summary in `internal.loop`. Enabled unless VIS_MEM_LOG
+   is a falsey token (0/false/off/no) — one flag silences every memory log."
+  []
+  (let
+    [raw (some-> (System/getenv "VIS_MEM_LOG")
+                 str/trim
+                 str/lower-case)]
+    (not (contains? #{"0" "false" "off" "no"} raw))))
+
 (defn- old-gen-used
   "Live bytes in the tenured/old generation — the leak-truthful floor (rises
    across full GCs only when objects are genuinely retained). 0 if no old pool."
@@ -2845,6 +2856,24 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
           0
           (java.lang.management.ManagementFactory/getGarbageCollectorMXBeans)))
 
+(defn- cpu-pcts
+  "Process + whole-system CPU load as whole percents (0–100; -1 when the JVM can't
+   sample the interval yet) plus the OS 1-minute load average. Uses com.sun's
+   OperatingSystemMXBean when present; never throws. Cheap — no allocation."
+  []
+  (let
+    [os
+     (java.lang.management.ManagementFactory/getOperatingSystemMXBean)
+
+     pct
+     (fn [^double v]
+       (if (>= v 0.0) (Math/round (* v 100.0)) -1))]
+
+    (if (instance? com.sun.management.OperatingSystemMXBean os)
+      (let [^com.sun.management.OperatingSystemMXBean sun os]
+        [(pct (.getProcessCpuLoad sun)) (pct (.getSystemCpuLoad sun)) (.getSystemLoadAverage os)])
+      [-1 -1 (.getSystemLoadAverage os)])))
+
 (defn- log-block-eval!
   "Count one executed block and emit a heap sample: an immediate baseline on the
    FIRST block, then every Nth. Auto-enabled — cadence 25 with NO env var needed;
@@ -2858,7 +2887,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      every
      (py-block-log-every)]
 
-    (when (and (pos? every) (or (= n 1) (zero? (rem (long n) every))))
+    (when (and (mem-log-enabled?) (pos? every) (or (= n 1) (zero? (rem (long n) every))))
       (let
         [^Runtime rt
          (Runtime/getRuntime)
@@ -2892,19 +2921,28 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
            (quot b 1048576))
 
          per-blk-kb
-         (quot delta (* window 1024))]
+         (quot delta (* window 1024))
+
+         [cpu-proc cpu-sys cpu-raw]
+         (cpu-pcts)
+
+         cpu-load
+         (double (/ (Math/round (* (double cpu-raw) 100.0)) 100.0))]
 
         (reset! py-block-prev-heap used)
         (reset! py-block-prev-n n)
         (let
           [msg
            (format
-             "python-block-eval blocks=%d heap=%dMB/%dMB old=%dMB gc=%d Δ=%+dMB (~%+dKB/block over last %d)"
+             "python-block-eval blocks=%d heap=%dMB/%dMB old=%dMB gc=%d cpu=proc%d%%/sys%d%% load=%s Δ=%+dMB (~%+dKB/block over last %d)"
              n
              (mb used)
              (mb max-m)
              (mb oldb)
              gcs
+             cpu-proc
+             cpu-sys
+             cpu-load
              (mb delta)
              per-blk-kb
              window)]
@@ -2925,7 +2963,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                             :approx-kb-per-block per-blk-kb
                             :sample-window window
                             :old-gen-mb (mb oldb)
-                            :gc-count gcs}}
+                            :gc-count gcs
+                            :cpu-proc-pct cpu-proc
+                            :cpu-sys-pct cpu-sys
+                            :load-avg cpu-load}}
                     msg))))))
 
 

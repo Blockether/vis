@@ -724,6 +724,30 @@
         (expect
           (= "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% · big cat dump"
              line))))
+  (it "a fold breadcrumb carries its folded steps' ntr[...] recovery accessors"
+      ;; The scope→accessor index rides the DURABLE breadcrumb so a harness
+      ;; restart (which drops the per-call `# saved: ntr[…]` lines) can't strip
+      ;; the recovery handles. Drops and python_execution-only folds (no stored
+      ;; result) carry none.
+      (let
+        [tr
+         [[1 {:forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "a"}]}]
+          [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b"}]}]]
+
+         folded
+         (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
+
+         dropped
+         (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
+
+         printed
+         (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
+                          [{"scopes" #{"t1/i1"} "gist" "no store"}])]
+
+        (expect (= "# ⋯ folded t1/i1-i2 · recover ntr[\"toolu_A\"], ntr[\"toolu_B\"] · did it"
+                   (:content (irm (second (first folded))))))
+        (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
+        (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))

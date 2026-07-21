@@ -8,6 +8,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -741,16 +742,49 @@
      (run-helper-process! cmd {:stdin-bytes stdin-bytes :merge-stderr? true})]
     {:success? success? :stdout (when bytes (String. bytes "UTF-8"))}))
 
+(def ^:private cached-copy-strategy
+  "Memoized clipboard-WRITE strategy, resolved once per session by the first
+   real copy so we don't re-spawn doomed helper processes on every ⌘C:
+     `nil`   — not probed yet
+     `:none` — every helper in `copy-helpers` was missing/failed, so callers
+               skip the shell entirely and go straight to OSC 52 next time
+     argv    — the helper vector that worked; reused directly on later copies.
+   A cached helper that later stops working (display torn down, binary removed)
+   clears the cache and forces a fresh probe."
+  (atom nil))
+
 (defn- shell-clipboard-copy!
-  "Try every helper in `copy-helpers` until one succeeds. Returns
-   the keyword name of the helper that won (`:pbcopy`, `:wl-copy`,
-   `:xclip`, `:xsel`) or `:none` when every candidate failed."
+  "Copy `text` via the first working helper in `copy-helpers`. Returns the
+   keyword name of the winning helper (`:pbcopy`, `:wl-copy`, `:xclip`,
+   `:xsel`) or `:none` when every candidate failed.
+
+   The resolved strategy is memoized in `cached-copy-strategy` so we probe the
+   helper chain ONCE: a box with no clipboard helper records `:none` and every
+   later copy short-circuits straight to `:none` (→ OSC 52) without spawning a
+   single doomed process; a box where one helper works reuses that argv. A
+   cached helper that unexpectedly fails clears the cache and re-probes."
   [^String text]
-  (let [bytes (.getBytes text "UTF-8")]
-    (loop [[cmd & rest] copy-helpers]
-      (if (nil? cmd)
-        :none
-        (if (:success? (run-shell-helper! cmd bytes)) (keyword (first cmd)) (recur rest))))))
+  (let
+    [bytes
+     (.getBytes text "UTF-8")
+
+     cached
+     @cached-copy-strategy]
+
+    (cond
+      ;; Known: no shell helper works here — tell the caller to use OSC 52.
+      (= cached :none) :none
+      ;; Known winner — reuse it; on unexpected failure forget and re-probe.
+      (vector? cached) (if (:success? (run-shell-helper! cached bytes))
+                         (keyword (first cached))
+                         (do (reset! cached-copy-strategy nil) (recur text)))
+      ;; First copy (or post-invalidation): probe the whole chain once.
+      :else (loop [[cmd & rest] copy-helpers]
+              (if (nil? cmd)
+                (do (reset! cached-copy-strategy :none) :none)
+                (if (:success? (run-shell-helper! cmd bytes))
+                  (do (reset! cached-copy-strategy cmd) (keyword (first cmd)))
+                  (recur rest)))))))
 
 (defn- shell-clipboard-paste!
   "Try every helper in `paste-helpers` until one returns a non-empty
@@ -768,25 +802,59 @@
   []
   (try (shell-clipboard-paste!) (catch Throwable _ nil)))
 
+(defn osc52-copy!
+  "Terminal-native clipboard write via the OSC 52 escape
+   (`ESC ] 52 ; c ; <base64> BEL`). Needs NO external binary and works
+   over SSH: the terminal emulator itself puts `text` on the user's LOCAL
+   system clipboard. Bytes go straight to the controlling TTY (`out`) —
+   the same channel `enable-bracketed-paste!` writes to. Returns true when
+   the sequence was written and flushed, false on any failure (nil/closed
+   stream). Best-effort: a terminal that doesn't implement OSC 52 (or has
+   it disabled) silently drops the sequence, so `true` means 'sent', not
+   'confirmed on the clipboard'."
+  [^java.io.OutputStream out ^String text]
+  (try (if (nil? out)
+         false
+         (let
+           [b64
+            (.encodeToString (java.util.Base64/getEncoder) (.getBytes text "UTF-8"))
+
+            payload
+            (str "\u001B]52;c;" b64 "\u0007")]
+
+           (.write out (.getBytes payload "UTF-8"))
+           (.flush out)
+           true))
+       (catch Throwable _ false)))
+
 (defn clipboard-copy!
-  "Best-effort copy `text` onto the system clipboard via shell
-   helpers (`pbcopy` / `wl-copy` / `xclip` / `xsel`). Returns true
-   on success, false when every helper failed. Logs the winning
-   helper so \"the copy didn't work\" reports can be diagnosed
-   against `~/.vis/vis.log`."
+  "Best-effort copy `text` onto the system clipboard. Tries the OS shell
+   helpers first (`pbcopy` / `wl-copy` / `xclip` / `xsel`); when EVERY
+   helper is missing — a bare SSH session or a minimal Linux box with no
+   `wl-clipboard`/`xclip`/`xsel` installed — falls back to the terminal's
+   own OSC 52 clipboard over the controlling TTY, so copy still works with
+   zero binaries. Returns true on success, false when both paths failed.
+   Logs the winning mechanism so \"the copy didn't work\" reports can be
+   diagnosed against `~/.vis/vis.log`."
   [^String text]
   (let
-    [winner
+    [helper
      (shell-clipboard-copy! text)
 
+     winner
+     (if (not= helper :none)
+       helper
+       (when (osc52-copy! (try (force config/tty-out) (catch Throwable _ nil)) text) :osc52))
+
      ok?
-     (not= winner :none)]
+     (some? winner)]
 
     (try (tel/log! {:level (if ok? :info :warn)
                     :id ::clipboard-copy
-                    :data
-                    {:winner winner :len (count text) :platform (System/getProperty "os.name")}
-                    :msg (str "clipboard-copy! winner=" winner " len=" (count text))})
+                    :data {:winner (or winner :none)
+                           :len (count text)
+                           :platform (System/getProperty "os.name")}
+                    :msg (str "clipboard-copy! winner=" (or winner :none) " len=" (count text))})
          (catch Throwable _ nil))
     ok?))
 

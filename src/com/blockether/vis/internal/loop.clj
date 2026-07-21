@@ -2645,6 +2645,27 @@
               "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
               "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))
 
+(def ^:private MAX_FOLD_NTR_HINTS 6)
+
+(defn- ntr-recover-hint
+  "Compact `ntr[<id>]` accessor clause stamped onto a FOLD breadcrumb so the
+   folded steps' native results stay reachable AFTER their per-call
+   `# saved: ntr[…]` lines collapse off the wire — or a harness restart drops
+   every in-context breadcrumb. Each id is DB-resolvable with no re-run; the
+   inline list is capped and points at `ntr.keys()` for the overflow. Returns a
+   leading-` · ` fragment, or nil when the fold covered no result-bearing calls
+   (a pure python_execution fold stores nothing to recover)."
+  [ids]
+  (let [ids (into [] (comp (filter some?) (distinct)) ids)]
+    (when (seq ids)
+      (let
+        [shown (vec (take MAX_FOLD_NTR_HINTS ids))
+         extra (- (count ids) (count shown))]
+
+        (str " · recover "
+             (str/join ", " (map #(str "ntr[" (pr-str (str %)) "]") shown))
+             (when (pos? extra) (str " (+" extra " more via ntr.keys())")))))))
+
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
    `session_drop` intents at ITERATION granularity. Each summary is
@@ -2666,6 +2687,21 @@
       [iter-scope-of
        (fn [rec]
          (some iter-of-scope (keep :scope (:forms-vec rec))))
+
+       ;; NATIVE tool_use ids a rec's result-bearing calls stored (`ntr[<id>]`
+       ;; resolvable). python_execution prints (no `:result`) → stores nothing,
+       ;; so it contributes no accessor. Distinct, wire order.
+       rec-ntr-ids
+       (fn [rec]
+         (into []
+               (comp (filter (fn [f]
+                               (and (:svar/tool-call-id f) (some? (:result f)))))
+                     (map :svar/tool-call-id)
+                     (distinct))
+               (or (seq (:forms-vec rec))
+                   (mapcat (fn [b]
+                             (or (seq (:forms b)) [b]))
+                           (:blocks rec)))))
 
        ;; Resolve any `:through` range cursor against THIS trailer's live
        ;; iteration scopes before matching, so a range fold collapses every
@@ -2692,7 +2728,16 @@
                            {:gist (get s "gist")
                             :drop? (get s "drop")
                             :summary-iters (vec (sort (get s "scopes")))
-                            :note (get s "note")})
+                            :note (get s "note")
+                            ;; Scope→accessor index carried ON the breadcrumb so a
+                            ;; restart can't strip the recovery handles.
+                            :ntr-ids (into []
+                                           (comp (mapcat (fn [[_ rec]]
+                                                           (when (contains? (set (get s "scopes"))
+                                                                            (iter-scope-of rec))
+                                                             (rec-ntr-ids rec))))
+                                                 (distinct))
+                                           trailer-iters)})
                    m))
                {}
                summaries)]
@@ -2714,7 +2759,8 @@
                                      :summary-gist (:gist g)
                                      :summary-drop? (:drop? g)
                                      :summary-iters (:summary-iters g)
-                                     :summary-note (:note g)})
+                                     :summary-note (:note g)
+                                     :summary-ntr-ids (:ntr-ids g)})
                                   gists))]
 
                          [pos
@@ -3000,12 +3046,19 @@
                   (:summary-note f)
 
                   g
-                  (:summary-gist f)]
+                  (:summary-gist f)
+
+                  ;; Fold breadcrumbs carry their OWN `ntr[<id>]` accessors so a
+                  ;; restart (or the collapsed per-call `# saved:` lines) can't
+                  ;; strip the scope→result index. Drops keep no handle.
+                  recover
+                  (when-not (:summary-drop? f) (ntr-recover-hint (:summary-ntr-ids f)))]
 
                  (str "# ⋯ "
                       (if (:summary-drop? f) "dropped " "folded ")
                       at
                       note
+                      recover
                       (when g (str " · " g))))))
            forms)
 
@@ -3551,16 +3604,18 @@
    ctx-atom closure is reused — no separate Clojure handler."
   []
   {:name "session_fold"
-   :description (str
-                  "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
-                  "`N < session[\"turn\"]`. Never call for current/future turns, even after "
-                  "verification. At the next turn's start, understand its intent, then retry "
-                  "before new work. Fold only completed prior-turn wire steps, preserving a "
-                  "durable takeaway when useful. Folding changes rendering, not storage: recover "
-                  "raw current-session blocks via `await session_state()` → "
-                  "`transcript/turns/iterations/blocks`; `ntr[...]` gets one native result. "
-                  "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep "
-                  "the newer gist, while partial overlaps remain.")
+   :description
+   (str
+     "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
+     "`N < session[\"turn\"]`. Never call for current/future turns, even after "
+     "verification. At the next turn's start, understand its intent, then retry "
+     "before new work. Fold only completed prior-turn wire steps, preserving a "
+     "durable takeaway when useful. Folding changes rendering, not storage: the cheap "
+     "recovery is `ntr[tool_id]` (one native result, no re-run, survives a restart) — the "
+     "fold breadcrumb lists its accessors; only if that id isn't in "
+     "view, walk `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
+     "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep "
+     "the newer gist, while partial overlaps remain.")
    :schema
    {:type "object"
     :properties
@@ -7213,10 +7268,29 @@
 
    Slash context mutations are no longer applied; the synthetic iter row is
    persisted for audit/history only."
-  [env user-request slash-result]
+  [env user-request slash-result loop-opts]
   (let
     [db-info
      (:db-info env)
+
+     ;; A slash turn never enters `iteration-loop` (the only path that streams
+     ;; live `:progress` activity), so the zero-iterations live bubble otherwise
+     ;; claims Vis is "calling the provider". Emit ONE `:slash` phase chunk BEFORE
+     ;; the (possibly slow) local dispatch so the tracker renders
+     ;; `Vis is running: /<name>` instead — a PURE command never touches a provider.
+     on-chunk
+     (or (:on-chunk loop-opts) (get-in loop-opts [:hooks :on-chunk]))
+
+     slash-label
+     (or (re-find #"^/\S+" (str/trim (str user-request))) (str/trim (str user-request)))
+
+     _
+     (when (fn? on-chunk)
+       (try (on-chunk {:phase :slash :iteration 1 :slash slash-label})
+            (catch Throwable t
+              (tel/log! {:level :warn
+                         :id ::slash-progress-emit-failed
+                         :data {:slash slash-label :error (ex-message t)}}))))
 
      turn-id
      (persistance/db-store-session-turn!
@@ -7724,7 +7798,7 @@
                                          :data {:user-request user-request :error (ex-message t)}})
                               nil)))]
           (run-normal-turn! env (:text expansion) loop-opts)
-          (run-slash-turn! env user-request slash-result))
+          (run-slash-turn! env user-request slash-result loop-opts))
         (run-normal-turn! env user-request loop-opts)))))
 
 (defn custom-bindings
@@ -9451,6 +9525,27 @@
            (let [rt (Runtime/getRuntime)]
              (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long env-heap-budget-mb) 1024 1024))))))
 
+(defn- cpu-load-pct
+  "Whole-process CPU load as a percent (0–100; -1 when the JVM can't sample the
+   interval yet). Uses com.sun's OperatingSystemMXBean when present; never throws."
+  ^long []
+  (let [os (java.lang.management.ManagementFactory/getOperatingSystemMXBean)]
+    (if (instance? com.sun.management.OperatingSystemMXBean os)
+      (let [v (.getProcessCpuLoad ^com.sun.management.OperatingSystemMXBean os)]
+        (if (>= v 0.0) (Math/round (* v 100.0)) -1))
+      -1)))
+
+(defn- mem-log-enabled?
+  "Master switch for memory-observability logging, shared conceptually with the
+   per-block heap sample in `internal.env-python`. Enabled unless VIS_MEM_LOG is a
+   falsey token (0/false/off/no) — one flag silences the reaper sweep summary."
+  []
+  (let
+    [raw (some-> (System/getenv "VIS_MEM_LOG")
+                 str/trim
+                 str/lower-case)]
+    (not (contains? #{"0" "false" "off" "no"} raw))))
+
 (defn- new-cache-entry
   "Build a cache entry wrapping `env`: the environment, its per-session
    `ReentrantLock` (one turn at a time), and an `AtomicLong` `:last-active`
@@ -9561,9 +9656,34 @@
                           (if (evict-if-idle! k 0) (inc (long n)) n))
                         0))
            0))
-       0)]
+       0)
 
-    (+ (long ttl-evicted) (long lru-evicted))))
+     total
+     (+ (long ttl-evicted) (long lru-evicted))
+
+     cpu
+     (cpu-load-pct)]
+
+    (when (and (pos? (long total)) (mem-log-enabled?))
+      (tel/log! {:level :info
+                 :id ::env-reaper-sweep
+                 :data {:evicted total
+                        :ttl-evicted ttl-evicted
+                        :lru-evicted lru-evicted
+                        :heap-used-pct (heap-used-pct)
+                        :cpu-proc-pct cpu
+                        :heap-pressure? pressure?
+                        :cache-size (count @cache)}}
+                (format
+                  "env-reaper evicted=%d (ttl=%d lru=%d) heap=%d%% cpu=%d%% pressure=%s cache=%d"
+                  (long total)
+                  (long ttl-evicted)
+                  (long lru-evicted)
+                  (long (heap-used-pct))
+                  cpu
+                  pressure?
+                  (count @cache))))
+    total))
 
 (defn- reaper-loop
   "Background sweep loop: sleep the interval, sweep, repeat. Exits on interrupt;

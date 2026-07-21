@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.foundation-harness.discovery
+(ns com.blockether.vis.internal.foundation.harness.discovery
   "Cross-HARNESS discovery of agents + skills — the sibling of the shell
    layer's POSIX compat, for the agent/skill definitions vis' OWN project dir
    and OTHER AI coding harnesses (Claude Code, pi, opencode, the agents
@@ -206,6 +206,22 @@
    [:opencode :rel ".opencode" "skill"]   ; opencode project (legacy/singular layout)
    [:opencode :home ".config" "opencode" "skills"] [:opencode :home ".config" "opencode" "skill"]])
 
+(def command-sources
+  "Cross-HARNESS COMMAND (prompt-template) dirs — markdown prompts a user
+   invokes as `/<name> [args]`, `$ARGUMENTS`-substituted. Vis' OWN commands are
+   the `.vis/prompts` FILE templates (prompt-templates ns, highest precedence);
+   these rows add the OTHER harnesses' command dirs. Precedence = ORDER."
+  [[:claude :rel ".claude" "commands"]      ; claude project
+   [:claude :home ".claude" "commands"]     ; claude user
+   [:pi :rel ".pi" "commands"]              ; pi project
+   [:pi :home ".pi" "agent" "commands"]     ; pi user
+   [:agents :rel-walk ".agents" "commands"] ; agents-standard project (+ ancestors up to git root)
+   [:agents :home ".agents" "commands"]     ; agents-standard user
+   [:opencode :rel ".opencode" "command"]   ; opencode project (singular layout)
+   [:opencode :rel ".opencode" "commands"]  ; opencode project (plural layout)
+   [:opencode :home ".config" "opencode" "command"]
+   [:opencode :home ".config" "opencode" "commands"]])
+
 (def known-tools
   "Every harness tag a source row can carry — the closed set discovery emits."
   #{:vis :claude :pi :agents :opencode})
@@ -244,6 +260,11 @@
   "Ordered `[tool ^File dir]` pairs for skills (existing dirs only)."
   []
   (mapcat resolve-source skill-sources))
+
+(defn command-dirs
+  "Ordered `[tool ^File dir]` pairs for commands (existing dirs only)."
+  []
+  (mapcat resolve-source command-sources))
 
 (defn- md-files
   "Direct `*.md` children of `d`, name-sorted."
@@ -326,6 +347,28 @@
 
       e)))
 
+(defn discover-commands
+  "Parse every command markdown across `command-dirs`, first-name-wins, tagged by
+   tool. Each entry's `:body` IS the prompt template (`$ARGUMENTS`-aware at expand
+   time); `:model`/`:tools` frontmatter is carried through but currently unused."
+  []
+  (dedup-by-name (for
+                   [[tool ^java.io.File d]
+                    (command-dirs)
+
+                    ^java.io.File f
+                    (md-files d)
+
+                    :let [e
+                          (try (parse-agent (slurp f)
+                                            {:name-default (name-stem (.getName f))
+                                             :tool tool
+                                             :path (.getPath f)})
+                               (catch Throwable _ nil))]
+                    :when e]
+
+                   e)))
+
 ;; =============================================================================
 ;; Cache + accessors — marker-revalidated, so a skill/agent added (or edited)
 ;; mid-session is picked up without a process restart. The marker is a cheap
@@ -354,7 +397,15 @@
                    ^java.io.File f
                    (skill-md-files d)]
 
-                  [tool (file-mark f)]))})
+                  [tool (file-mark f)]))
+   :commands (vec (for
+                    [[tool ^java.io.File d]
+                     (command-dirs)
+
+                     ^java.io.File f
+                     (md-files d)]
+
+                    [tool (file-mark f)]))})
 
 (defn- ensure!
   []
@@ -367,13 +418,16 @@
 
     (if (and c (= m (:marker c)))
       c
-      (reset! cache {:marker m :agents (vec (discover-agents)) :skills (vec (discover-skills))}))))
+      (reset! cache {:marker m
+                     :agents (vec (discover-agents))
+                     :skills (vec (discover-skills))
+                     :commands (vec (discover-commands))}))))
 
 (defn reload!
   "Rescan the source dirs and refresh the cache. Returns `{:agents :skills}`."
   []
   (reset! cache nil)
-  (select-keys (ensure!) [:agents :skills]))
+  (select-keys (ensure!) [:agents :skills :commands]))
 
 (defn agents [] (:agents (ensure!)))
 
@@ -382,3 +436,7 @@
 (defn agent-by-name [nm] (first (filter #(= nm (:name %)) (agents))))
 
 (defn skill-by-name [nm] (first (filter #(= nm (:name %)) (skills))))
+
+(defn commands [] (:commands (ensure!)))
+
+(defn command-by-name [nm] (first (filter #(= nm (:name %)) (commands))))

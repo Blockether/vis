@@ -1,6 +1,7 @@
-(ns com.blockether.vis.ext.foundation-harness.core
-  "`harness` compatibility extension — a DROPPABLE classpath plug-in (drop the
-   jar, drop the feature) that exposes the AGENTS and SKILLS vis' own project
+(ns com.blockether.vis.internal.foundation.harness.core
+  "`harness` compatibility layer — a BUILT-IN foundation module (ships in the
+   main jar, always present, gated by toggles) that exposes the AGENTS and
+   SKILLS vis' own project
    dir and other AI coding HARNESSES (Claude Code, pi, opencode, the agents
    standard, …) leave on disk to the vis model. The sibling of the shell
    layer's POSIX compat. Vis reads its OWN project-local skills from
@@ -17,8 +18,8 @@
      agent as a CHILD loop whose system prompt IS that agent's markdown body,
      on its declared model. Gated by `:vis/harness-agents`.
 
-   This layer OWNS its toggles — registered here, not in core — so dropping the
-   jar drops the toggles. `:owner :vis :group :tools` parks them in Settings →
+   This layer OWNS its toggles — registered on load, not by core proper — so the
+   feature is one toggle flip away. `:owner :vis :group :tools` parks them in Settings →
    Feature Toggles beside the shell toggle. Each verb gates on its OWN toggle
    (the extension activates if EITHER is on), so they switch independently."
   ;; `agent` is the bare model-facing verb; deliberately shadow clojure.core/agent
@@ -30,7 +31,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.ext.foundation-harness.discovery :as d]))
+            [com.blockether.vis.internal.foundation.harness.discovery :as d]))
 
 ;; =============================================================================
 ;; Toggles — OWNED by this layer (registered on load), not by core. :owner :vis
@@ -66,6 +67,20 @@
                            :owner :vis
                            :group :tools
                            :persist? true})
+
+(toggles/register-toggle!
+  {:id :vis/harness-commands
+   :label "Harness commands (compatibility layer)"
+   :description (str "When ON, cross-harness COMMANDS — markdown prompt templates other AI"
+                     " coding harnesses leave on disk (.claude/commands, ~/.claude/commands,"
+                     " .opencode/command, .agents/commands, ~/.pi/agent/commands, …) — are"
+                     " invocable as /<name> [args] in any channel, alongside vis' own"
+                     " .vis/prompts templates. `$ARGUMENTS` in the body is substituted (else"
+                     " non-blank args append). ON by default.")
+   :default true
+   :owner :vis
+   :group :tools
+   :persist? true})
 
 ;; =============================================================================
 ;; Small utilities
@@ -207,6 +222,23 @@
 
 (prompt-templates/register-provider! ::skills skill-template-entries)
 
+(defn- command-template-entries
+  "Every discovered cross-harness COMMAND as a `/<name>` prompt template, so the
+   user can type `/<name> [args]` in any channel. The body is expanded like a
+   file template (`$ARGUMENTS`-substituted). Gated by :vis/harness-commands."
+  []
+  (when (toggles/enabled? :vis/harness-commands)
+    (mapv (fn [c]
+            {:name (:name c)
+             :description (str "Command "
+                               (:name c)
+                               (when-let [d (not-empty (str (:description c)))]
+                                 (str " — " (clip d 140))))
+             :body (:body c)})
+          (d/commands))))
+
+(prompt-templates/register-provider! ::commands command-template-entries)
+
 ;; `/reload` refresh: force a full rescan of the harness agent/skill source
 ;; dirs (the marker cache already catches file edits; the hook also covers
 ;; sources a stat can miss and gives the user an explicit big hammer).
@@ -334,7 +366,8 @@
      ;; inactive and `sync-active-extension-symbols!` removes both bare verbs.
      :ext/activation-fn (fn [_env]
                           (or (toggles/enabled? :vis/harness-skills)
-                              (toggles/enabled? :vis/harness-agents)))
+                              (toggles/enabled? :vis/harness-agents)
+                              (toggles/enabled? :vis/harness-commands)))
      ;; builtin? → symbols bind BARE (skill / agent, not harness_skill).
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols [skill-symbol agent-symbol]}
      :ext/prompt-fn harness-prompt}))

@@ -4957,7 +4957,16 @@
      shell-label
      (cond (str/blank? shell-cmd) "…"
            (> (count shell-cmd) 64) (str (subs shell-cmd 0 61) "…")
-           :else shell-cmd)]
+           :else shell-cmd)
+
+     slash-label
+     (let
+       [s (some-> (:slash/label last-iteration)
+                  str
+                  str/trim)]
+       (cond (str/blank? s) "command"
+             (> (count s) 64) (str (subs s 0 61) "…")
+             :else s))]
 
     (cond cancelling? "Vis is cancelling"
           errored? (let [label (prettify-error-type err)]
@@ -4965,6 +4974,7 @@
           (zero? n) "Vis is calling the provider"
           (= :shell-run activity) (str "Vis is running: " shell-label)
           (= :shell-bg activity) (str "Vis is starting: " shell-label)
+          (= :slash activity) (str "Vis is running: " slash-label)
           (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
           (= :tool-call activity) (str "Vis is running: " (or tool-op "tool") " (iter " n ")")

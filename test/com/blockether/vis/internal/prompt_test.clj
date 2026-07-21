@@ -79,12 +79,12 @@
             "benchmark/profile identical workloads" "smallest relevant check"
             "Never expose or log secrets" "Do not commit, push, publish"
             "`session_fold` completed prior-turn wire steps with a gist"
-            "Raw folds remain in `await session_state()` → `transcript/turns/iterations/blocks`"
-            "`ntr[tool_id]` gets one native result" "Find other sessions via `await sessions()`"
-            "Broader/newer folds replace covered breadcrumbs" "Lead with the answer or next action"
-            "short plain sentences" "≤120 words" "≤3 bullets" "numbered bounded actions" "Show wins"
-            "Step N/M complete. Next: ..." "location → cause → fix"
-            "end with one action under 2 minutes" "never a menu"]]
+            "Recover a folded step cheaply via `ntr[tool_id]`"
+            "`await session_state()` → `transcript/turns/iterations/blocks`"
+            "Other sessions: `await sessions()`" "Broader/newer folds replace covered breadcrumbs"
+            "Lead with the answer or next action" "short plain sentences" "≤120 words" "≤3 bullets"
+            "numbered bounded actions" "Show wins" "Step N/M complete. Next: ..."
+            "location → cause → fix" "end with one action under 2 minutes" "never a menu"]]
           (expect (str/includes? text required)))
         (expect (not (str/includes? text "Complete tasks autonomously")))
         (expect (not (str/includes? text "canonical decision table")))))

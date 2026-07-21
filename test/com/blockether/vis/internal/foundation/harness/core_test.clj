@@ -1,7 +1,7 @@
-(ns com.blockether.vis.ext.foundation-harness.core-test
+(ns com.blockether.vis.internal.foundation.harness.core-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.foundation-harness.core :as core]
-            [com.blockether.vis.ext.foundation-harness.discovery :as d]
+            [com.blockether.vis.internal.foundation.harness.core :as core]
+            [com.blockether.vis.internal.foundation.harness.discovery :as d]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.toggles :as toggles]

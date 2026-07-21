@@ -251,7 +251,7 @@
 
                                      (try
                                        (expect (= :ok (get-in out [:result :slash/status])))
-                                       (expect (true? (get-in out [:result :slash/data :fresh?])))
+                                       (expect (true? (get-in out [:result :slash/data :blank?])))
                                        ;; a real isolated draft is pinned to the session…
                                        (expect (workspace/draft? draft))
                                        (expect (not= base (:root draft)))
