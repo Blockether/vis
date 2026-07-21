@@ -1079,95 +1079,123 @@
                    (expect (= (numbered-tuples 18 ["L18" "L19" "L20"])
                               (patch/anchor-map->tuples (get out "anchors")))))))
 
-(defdescribe vis-cat-range-arity-test
-             ;; G1 from the cat probe (C9): the offset+count arity feels awkward
-             ;; when the model already knows both endpoints ("convert end=100 to
-             ;; n=51 mentally"). The :range arity takes inclusive start..end.
-             (it "(cat path :range start end) reads inclusive 1-based start..end"
-                 (let
-                   [body
-                    (string/join "\n" (map #(str "L" %) (range 1 21)))
+(defdescribe
+  vis-cat-range-arity-test
+  ;; G1 from the cat probe (C9): the offset+count arity feels awkward
+  ;; when the model already knows both endpoints ("convert end=100 to
+  ;; n=51 mentally"). The :range arity takes inclusive start..end.
+  (it "(cat path :range start end) reads inclusive 1-based start..end"
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-                    path
-                    (write-temp! "range/inclusive.txt" (str body "\n"))
+         path
+         (write-temp! "range/inclusive.txt" (str body "\n"))
 
-                    cat-tool
-                    (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-                    out
-                    (-> (cat-tool path :range 5 10)
-                        :result)]
+         out
+         (-> (cat-tool path :range 5 10)
+             :result)]
 
-                   ;; 5..10 inclusive = 6 lines (L5, L6, L7, L8, L9, L10).
-                   (expect (= 6 (count (get out "anchors"))))
-                   ;; Each anchor VALUE is a {"text" line} map — mirrors rg's hit
-                   ;; value, so `v["text"]` reads the line uniformly across tools.
-                   (expect (every? #(and (map? %) (contains? % "text")) (vals (get out "anchors"))))
-                   (expect (= #{"L5" "L6" "L7" "L8" "L9" "L10"}
-                              (set (map #(get % "text") (vals (get out "anchors"))))))
-                   (expect (= [[5 "L5"] [6 "L6"] [7 "L7"] [8 "L8"] [9 "L9"] [10 "L10"]]
-                              (patch/anchor-map->tuples (get out "anchors"))))))
-             (it ":range with start == end reads exactly one line"
-                 (let
-                   [body
-                    (string/join "\n" (map #(str "L" %) (range 1 11)))
+        ;; 5..10 inclusive = 6 lines (L5, L6, L7, L8, L9, L10).
+        (expect (= 6 (count (get out "anchors"))))
+        ;; Each anchor VALUE is a {"text" line} map — mirrors rg's hit
+        ;; value, so `v["text"]` reads the line uniformly across tools.
+        (expect (every? #(and (map? %) (contains? % "text")) (vals (get out "anchors"))))
+        (expect (= #{"L5" "L6" "L7" "L8" "L9" "L10"}
+                   (set (map #(get % "text") (vals (get out "anchors"))))))
+        (expect (= [[5 "L5"] [6 "L6"] [7 "L7"] [8 "L8"] [9 "L9"] [10 "L10"]]
+                   (patch/anchor-map->tuples (get out "anchors"))))))
+  (it ":range with start == end reads exactly one line"
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 11)))
 
-                    path
-                    (write-temp! "range/single.txt" (str body "\n"))
+         path
+         (write-temp! "range/single.txt" (str body "\n"))
 
-                    cat-tool
-                    (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-                    out
-                    (-> (cat-tool path :range 7 7)
-                        :result)]
+         out
+         (-> (cat-tool path :range 7 7)
+             :result)]
 
-                   (expect (= [[7 "L7"]] (patch/anchor-map->tuples (get out "anchors"))))))
-             (it ":range rejects start > end, non-positive ints, and the wrong kw"
-                 (let
-                   [path
-                    (write-temp! "range/invalid.txt" "a\nb\nc\n")
+        (expect (= [[7 "L7"]] (patch/anchor-map->tuples (get out "anchors"))))))
+  (it ":range rejects start > end, non-positive ints, and the wrong kw"
+      (let
+        [path
+         (write-temp! "range/invalid.txt" "a\nb\nc\n")
 
-                    cat-tool
-                    (private-fn "cat-tool")]
+         cat-tool
+         (private-fn "cat-tool")]
 
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 10 5)))
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 0 5)))
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range -1 5)))
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :not-range 1 5)))))
-             (it "(cat path :ranges [[start end] ...]) reads several ranges in one result"
-                 (let
-                   [body
-                    (string/join "\n" (map #(str "L" %) (range 1 21)))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 10 5)))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 0 5)))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range -1 5)))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :not-range 1 5)))))
+  (it "(cat path :ranges [[start end] ...]) reads several ranges in one result"
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-                    path
-                    (write-temp! "range/multi.txt" (str body "\n"))
+         path
+         (write-temp! "range/multi.txt" (str body "\n"))
 
-                    cat-tool
-                    (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-                    out
-                    (-> (cat-tool path :ranges [[2 4] [10 12]])
-                        :result)]
+         out
+         (-> (cat-tool path :ranges [[2 4] [10 12]])
+             :result)]
 
-                   (expect (= [[2 "L2"] [3 "L3"] [4 "L4"] [10 "L10"] [11 "L11"] [12 "L12"]]
-                              (patch/anchor-map->tuples (get out "anchors"))))
-                   (expect (= [[2 4] [10 12]] (mapv #(get % "range") (get out "ranges"))))
-                   (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
-                              (patch/anchor-map->tuples (get (first (get out "ranges"))
-                                                             "anchors"))))
-                   (expect (nil? (get out "next_offset")))))
-             (it ":ranges rejects empty or malformed range specs"
-                 (let
-                   [path
-                    (write-temp! "range/bad-multi.txt" "a\nb\nc\n")
+        (expect (= [[2 "L2"] [3 "L3"] [4 "L4"] [10 "L10"] [11 "L11"] [12 "L12"]]
+                   (patch/anchor-map->tuples (get out "anchors"))))
+        (expect (= [[2 4] [10 12]] (mapv #(get % "range") (get out "ranges"))))
+        (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
+                   (patch/anchor-map->tuples (get (first (get out "ranges")) "anchors"))))
+        (expect (nil? (get out "next_offset")))))
+  (it "(cat {\"path\" p, ...}) accepts the collapsed all-kwargs spec map"
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-                    cat-tool
-                    (private-fn "cat-tool")]
+         path
+         (write-temp! "range/spec-map.txt" (str body "\n"))
 
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [])))
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [[2 1]])))
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [1 2 3]))))))
+         cat-tool
+         (private-fn "cat-tool")
+
+         ;; `cat(path=p, ranges=[[2 4]])` collapses to ONE spec map at
+         ;; the Python boundary; it must equal the positional form.
+         spec
+         (-> (cat-tool {"path" path "ranges" [[2 4]]})
+             :result)
+
+         positional
+         (-> (cat-tool path {"ranges" [[2 4]]})
+             :result)]
+
+        (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
+        (expect (= spec positional))
+        ;; a path-only spec map == whole-file read
+        (expect (= (-> (cat-tool {"path" path})
+                       :result)
+                   (-> (cat-tool path)
+                       :result)))))
+  (it ":ranges rejects empty or malformed range specs"
+      (let
+        [path
+         (write-temp! "range/bad-multi.txt" "a\nb\nc\n")
+
+         cat-tool
+         (private-fn "cat-tool")]
+
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [])))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [[2 1]])))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [1 2 3]))))))
 
 (defdescribe
   vis-cat-line-passthrough-test

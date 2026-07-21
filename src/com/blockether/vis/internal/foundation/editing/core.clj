@@ -3222,12 +3222,18 @@
    Each key IS the `patch` from_anchor — copy it straight into an edit.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
-   (let [out (read-file path 1 default-cat-limit)]
-     (tool-success {:op :cat
-                    :path path
-                    :kind :file
-                    :result (cat-result->model out)
-                    :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}})))
+   (if (map? path)
+     ;; All-kwargs form: `cat(path="p", ranges=rs)` collapses at the Python
+     ;; boundary to ONE spec map `{"path" "p", ...opts}` (see __vis_exec_call__).
+     ;; Pull the path out and delegate to the opts-map arity so range/ranges/
+     ;; anchor/tail keep working — mirrors rg's lone-spec-map contract.
+     (cat-tool (get path "path") (dissoc path "path"))
+     (let [out (read-file path 1 default-cat-limit)]
+       (tool-success {:op :cat
+                      :path path
+                      :kind :file
+                      :result (cat-result->model out)
+                      :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}}))))
   ([path arg]
    (cond
      ;; Python-native form: a single options dict, e.g.
