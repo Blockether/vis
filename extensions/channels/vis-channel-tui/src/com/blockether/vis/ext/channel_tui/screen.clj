@@ -852,7 +852,18 @@
 
 (def ^:private selection-output-indent "  ")
 
-(def ^:private selection-output-indent-markers #{})
+(def ^:private selection-output-indent-markers
+  "Structural markers whose rendered body carries a baked `tool-output-indent`
+   left margin (see `render/->result`, which prefixes `MARKER_RESULT` op-card
+   body rows with `tool-output-indent`). The mouse-selection copy path strips
+   that inset from the copied text and shifts the selectable column so a drag
+   over a result row highlights and copies the same cells the user sees.
+
+   NOTE: kept in sync with the render-side `output-indentable-markers`. The old
+   `MARKER_STDOUT/STDERR` markers were retired when tool output moved to the
+   unified `MARKER_RESULT` model; emptying this set silently broke result-row
+   copy alignment."
+  #{p/MARKER_RESULT p/MARKER_ERR_RESULT})
 
 (defn- assistant-code-text-row?
   [line]

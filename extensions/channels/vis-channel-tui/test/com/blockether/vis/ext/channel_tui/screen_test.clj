@@ -635,6 +635,45 @@
 
         (expect (= "line zero\nline one\nline two\nline three"
                    (selected-transcript-text [message] layout 40 {} {} sel)))))
+  (it "strips the baked output indent from result rows and keeps highlight/copy columns aligned"
+      ;; Regression: `render/->result` bakes `tool-output-indent` into MARKER_RESULT
+      ;; op-card body rows. `selection-output-indent-markers` must list that marker so
+      ;; the copy path drops the inset from the text AND shifts the selectable column
+      ;; by the indent width — otherwise result-row copy keeps stray leading spaces and
+      ;; the highlighted cells drift 2 columns left of the text the user sees.
+      (let
+        [result-line
+         (str p/MARKER_RESULT "  the result body text")
+
+         plain-line
+         (str p/MARKER_RESULT "no-indent result")
+
+         message
+         {:role :assistant :prewrapped-lines [plain-line result-line]}
+
+         layout
+         {:total-h 4
+          :heights [4]
+          :offsets [0 4]
+          :visible [{:top 0 :height 4 :idx 0 :projected message}]}
+
+         ;; result row is document/screen row 2 (content-top = offset 0 + 1)
+         sel
+         {:anchor (selection/point 0 2) :focus (selection/point 200 2)}
+
+         ranges
+         (bubble-selectable-ranges layout 0 6 40)
+
+         plain-col
+         (:col (first (filter #(= 1 (:row %)) ranges)))
+
+         result-col
+         (:col (first (filter #(= 2 (:row %)) ranges)))]
+
+        (expect (= "the result body text" (selected-transcript-text [message] layout 40 {} {} sel))
+                "copied result text has no baked leading indent")
+        (expect (= 2 (- (long result-col) (long plain-col)))
+                "result row is selectable starting after the 2-col output indent")))
   (it
     "copies a multi-bubble chunk that auto-scrolled off-screen while dragging"
     (let
