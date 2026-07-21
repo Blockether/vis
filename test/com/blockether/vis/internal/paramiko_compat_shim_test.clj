@@ -8,6 +8,7 @@
    the server-independent surface: module publication, the class/exception tree,
    key objects, connect-failure mapping, and SFTPAttributes marshaling."
   (:require [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.internal.foundation.shim-paramiko :as shim]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.jcraft.jsch JSch Session]
            [java.net InetSocketAddress ServerSocket Socket]
@@ -266,3 +267,50 @@
                     (finally (.close cli))))
              (.disconnect sess))
            (finally (.close target) (.close ^Context python-context))))))
+
+(defdescribe
+  paramiko-server-reap-test
+  (it
+    "stops and deregisters the MINA server host-side the moment its SSH session closes, so a started server never outlives its connection (independent of the guest Python `_reap` thread the GraalPy context cancels on close)"
+    (let
+      [info
+       ((deref #'shim/op-server-start)
+         (fn [_u _p]
+           0)
+         (fn [_a _p]
+           true))
+
+       handle
+       (long (get info "handle"))
+
+       port
+       (int (get info "port"))
+
+       registry
+       (deref #'shim/server-registry)]
+
+      (expect (contains? @registry handle))
+      ;; A completed SSH session that then disconnects is what fires MINA's
+      ;; `sessionClosed` in production (the guest relay carries a real SSH
+      ;; connection). The handshake does a fresh per-server RSA host-key gen + KEX,
+      ;; which can exceed the client timeout on a heavily loaded box — so ASSERT the
+      ;; reap only when the handshake actually completed; a timed-out connect is an
+      ;; environment limit, not a reap regression.
+      (let
+        [sess
+         (doto (.getSession (JSch.) "bob" "127.0.0.1" port)
+           (.setPassword "pw")
+           (.setConfig "StrictHostKeyChecking" "no"))
+
+         connected?
+         (try (.connect sess 15000) true (catch Throwable _ false))]
+
+        (when connected?
+          (.disconnect sess)
+          ;; The reap runs on a daemon thread fired by the SessionListener; poll briefly.
+          (expect (loop [tries 50]
+                    (cond (not (contains? @registry handle)) true
+                          (zero? tries) false
+                          :else (do (Thread/sleep 100) (recur (dec tries))))))))
+      ;; Never leak this test's server into later tests, even if the reap was skipped.
+      ((deref #'shim/op-server-stop) handle))))

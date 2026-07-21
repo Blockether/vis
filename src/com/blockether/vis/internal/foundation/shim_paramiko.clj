@@ -16,6 +16,7 @@
            [org.apache.sshd.common Factory]
            [org.apache.sshd.common.io.nio2 Nio2ServiceFactoryFactory]
            [org.apache.sshd.common.util.threads ThreadUtils]
+           [org.apache.sshd.common.session SessionListener]
            [org.apache.sshd.server SshServer]
            [org.apache.sshd.server.auth.password PasswordAuthenticator]
            [org.apache.sshd.server.forward ForwardingFilter]
@@ -56,9 +57,9 @@
 ;; server's own `.stop` from tearing the shared pool down (shut down on JVM exit).
 (defonce ^:private sshd-io-factory
   (delay (let
-           [pool (ThreadUtils/protectExecutorServiceShutdown
-                   (ThreadUtils/newCachedThreadPool "vis-sshd-nio2")
-                   true)]
+           [pool (ThreadUtils/protectExecutorServiceShutdown (ThreadUtils/newCachedThreadPool
+                                                               "vis-sshd-nio2")
+                                                             true)]
            (Nio2ServiceFactoryFactory. (reify
                                          Factory
                                            (create [_] pool)
@@ -395,13 +396,22 @@
                     (ifn? f) (apply f args)
                     :else nil)))
 
+(declare op-server-stop)
+
 (defn- op-server-start
   "Start an Apache MINA SSHD server on an ephemeral loopback port; returns
    `{\"handle\" H \"port\" P}`. The paramiko shim's `Transport.start_server` relays
    the pre-accepted client socket to `127.0.0.1:P`, so MINA terminates SSH while
    auth and reverse-forward decisions delegate to the guest `ServerInterface`:
    `auth-pw-fn` (-> paramiko AUTH_* int; 0 == success) and `forward-fn` (-> truthy
-   to allow a `tcpip-forward` request). A fresh host key is generated per server."
+   to allow a `tcpip-forward` request). A fresh host key is generated per server.
+
+   The server self-reaps HOST-side via a `SessionListener`: the instant its (single)
+   relayed SSH session closes it is stopped and deregistered, so its acceptor and
+   `-timer-thread` never outlive the connection. This does NOT depend on the guest
+   Python `_reap` daemon — GraalPy cancels that thread when the context closes
+   (logging \"Could not stop thread\"), which used to strand the MINA server and leak
+   its threads (and grow `server-registry` unbounded across turns/sessions)."
   [auth-pw-fn forward-fn]
   (let
     [hostkey
@@ -429,10 +439,25 @@
                                                    [(.getHostName ^SshdSocketAddress address)
                                                     (.getPort ^SshdSocketAddress address)]))
                                         (catch Throwable _ false)))
-                                 (canConnect [_ _type _address _session] true))))]
+                                 (canConnect [_ _type _address _session] true))))
 
+     h
+     (reg-server! {:server server :hostkey hostkey})]
+
+    ;; Reap the instant the relayed SSH session ends, on a fresh daemon thread so
+    ;; the stop never re-enters MINA's own session-close callback.
+    (.addSessionListener server
+                         (reify
+                           SessionListener
+                             (sessionClosed [_ _sess]
+                               (doto (Thread. ^Runnable
+                                              (fn []
+                                                (op-server-stop h))
+                                              "vis-sshd-reap")
+                                 (.setDaemon true)
+                                 (.start)))))
     (.start server)
-    {"handle" (reg-server! {:server server :hostkey hostkey}) "port" (.getPort server)}))
+    {"handle" h "port" (.getPort server)}))
 
 (defn- op-server-stop
   "Stop and deregister the MINA server bound to handle `h`; returns nil."
