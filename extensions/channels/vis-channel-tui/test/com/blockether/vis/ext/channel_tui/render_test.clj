@@ -139,30 +139,58 @@
                    (expect (= 2 (count head-idxs)))
                    (expect (= 2 (- (second head-idxs) (first head-idxs)))))))
 
-(defdescribe native-tool-error-compact-test
+(defdescribe
+  native-tool-error-compact-test
   ;; A FAILED native tool (cat/rg/patch/…) must NOT dump its synthesized
   ;; `name({…args…})` invocation source into the client — that wall of the very
   ;; args that failed is redundant chrome. The user channel shows only the
   ;; compact error message. `python_execution` (the model's own program) still
   ;; keeps its code so the inline caret has context.
   (it "drops the args-source wall for a failed native tool, keeps the message"
-      (let [txt (str/join "\n"
-                          (render-forms
-                            [{:vis/tool-name "patch"
-                              :success? false
-                              :code "patch([{\"replace\": \"ARGWALLMARKER huge\nmulti\nline\"}])"
-                              :error {:message "No changes: patch is atomic. edit 1: stale from_anchor."}
-                              :result nil}])) ]
+      (let
+        [txt (str/join "\n"
+                       (render-forms
+                         [{:vis/tool-name "patch"
+                           :success? false
+                           :code "patch([{\"replace\": \"ARGWALLMARKER huge\nmulti\nline\"}])"
+                           :error {:message
+                                   "No changes: patch is atomic. edit 1: stale from_anchor."}
+                           :result nil}]))]
         (expect (not (str/includes? txt "ARGWALLMARKER")))
         (expect (str/includes? txt "stale from_anchor"))))
+  (it
+    "keeps JSON-restored native errors compact"
+    (let
+      [msg
+       "clojure.lang.ExceptionInfo: clj_test found no *_test.clj namespaces under [\"test/com/blockether/vis/internal/gateway\"] {:type :clj/bad-args, :got {\"language\" \"clojure\"}}"
+
+       txt
+       (str/join
+         "\n"
+         (render-forms
+           [{:vis/tool-name "run_tests"
+             :success? false
+             :code
+             "run_tests({\"language\": \"clojure\", \"paths\": [\"test/com/blockether/vis/internal/gateway\"]})"
+             :error {"message" msg
+                     "cause_data" {"type" "clj/bad-args"}
+                     "trace" (str "java.util.concurrent.ExecutionException: " msg)
+                     "block" {"source" "run_tests" "phase" "preflight"}}
+             :result nil}]))]
+
+      (expect (str/includes? txt "clj_test found no *_test.clj namespaces"))
+      (expect (not (str/includes? txt "error: {\"message\"")))
+      (expect (not (str/includes? txt "clojure.lang.ExceptionInfo")))
+      (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
+      (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it "keeps python_execution code + caret on error"
-      (let [txt (str/join "\n"
-                          (render-forms
-                            [{:vis/tool-name "python_execution"
-                              :success? false
-                              :code "print(PYCODEMARKER)\nx = 1/0"
-                              :error {:message "ZeroDivisionError: division by zero"}
-                              :result nil}])) ]
+      (let
+        [txt (str/join "\n"
+                       (render-forms [{:vis/tool-name "python_execution"
+                                       :success? false
+                                       :code "print(PYCODEMARKER)\nx = 1/0"
+                                       :error {:message "ZeroDivisionError: division by zero"}
+                                       :result nil}]))]
         (expect (str/includes? txt "PYCODEMARKER"))
         (expect (str/includes? txt "ZeroDivisionError")))))
 

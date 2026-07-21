@@ -301,8 +301,50 @@
                (expect (:success? r))
                (expect (= "sub/fmt.clj" (get-in r [:result "path"])))
                (expect (true? (get-in r [:result "changed"])))
+               (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file sub "fmt.clj"))))
                (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file sub "fmt.clj"))))))
            (finally (cleanup dir))))))
+
+(defdescribe
+  lint-nonexistent-target-errors-test
+  (it
+    "a named path that resolves to nothing is an actionable ERROR, not a false `clean` (models spun on this)"
+    (let [dir (tmp-dir)]
+      (try
+        ;; a junk `path` beside a REAL `paths` (the exact model shape that spun):
+        ;; the old code let `path` shadow `paths` AND a missing path linted 0 files,
+        ;; so it falsely reported `clean` with nothing to correct against.
+        (let [sub (io/file dir "sub")]
+          (.mkdirs sub)
+          (spit (io/file sub "probe.clj") "(ns sub.probe)\n(defn foo [] (let [x 1] 42))\n")
+          (let
+            [r (core/clj-lint-fn {:workspace/root (str dir)}
+                                 {"code" "" "path" "/dev/null???" "paths" ["sub"]})]
+            ;; a non-existent target now FAILS with a clear, actionable message
+            (expect (not (:success? r)))
+            (expect (re-find #"lint target does not exist: /dev/null\?\?\?"
+                             (str (get-in r [:error :message]))))
+            (expect (some? (get-in r [:error :hint])))))
+        (finally (cleanup dir))))))
+
+(defdescribe lint-path-and-paths-union-test
+             (it "`path` and `paths` are UNIONED, not shadowing — both are linted"
+                 (let [dir (tmp-dir)]
+                   (try
+                     (let [sub (io/file dir "sub")]
+                       (.mkdirs sub)
+                       (spit (io/file sub "a.clj") "(ns sub.a)\n(defn foo [] (let [x 1] 42))\n")
+                       (spit (io/file sub "b.clj") "(ns sub.b)\n(defn bar [] (let [y 2] 7))\n")
+                       (let
+                         [r (core/clj-lint-fn {:workspace/root (str dir)}
+                                              {"path" "sub/a.clj" "paths" ["sub/b.clj"]})
+                          files (into #{} (map #(get % "file") (get-in r [:result "findings"])))]
+
+                         (expect (:success? r))
+                         ;; both files were actually linted (neither silently dropped)
+                         (expect (= #{"sub/a.clj" "sub/b.clj"} files))
+                         (expect (= ["sub/a.clj" "sub/b.clj"] (get-in r [:result "targets"])))))
+                     (finally (cleanup dir))))))
 
 (defdescribe
   recursive-format-test

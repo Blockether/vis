@@ -250,7 +250,7 @@
        (get event "turn_id")
 
        terminal?
-       (contains? #{"turn.completed" "turn.failed"} type)
+       (contains? #{"turn.completed" "turn.failed" "turn.cancelled"} type)
 
        ;; The registry's internal turn records are keyword-keyed engine
        ;; state, so the string-keyed wire event is re-keyed at THIS ingress

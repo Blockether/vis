@@ -476,6 +476,15 @@
   [ns-str]
   (when ns-str (if (str/ends-with? ns-str "-test") ns-str (str ns-str "-test"))))
 
+(defn- selector-present?
+  [v]
+  (cond (nil? v) false
+        (string? v) (not (str/blank? v))
+        (coll? v) (boolean (seq v))
+        :else true))
+
+(defn- first-selector [& xs] (some #(when (selector-present? %) %) xs))
+
 (defn- all-test-files
   "Index every *_test.clj under root by its declared ns string, built once per
    run so SOURCE paths can be resolved to their corresponding test namespace."
@@ -544,7 +553,7 @@
     (cond
       (string? arg) {:ns arg}
       (symbol? arg) {:ns (str arg)}
-      (map? arg) {:ns (or (get arg "ns") (get arg "namespace") (get arg "namespaces"))
+      (map? arg) {:ns (first-selector (get arg "ns") (get arg "namespace") (get arg "namespaces"))
                   :only (get arg "only")
                   :include (get arg "include")
                   :exclude (get arg "exclude")}
@@ -939,7 +948,8 @@
       (when (map? arg) (or (get arg "paths") (get arg "path")))
 
       arg
-      (if (and paths (not (or (get arg "ns") (get arg "namespace") (get arg "namespaces"))))
+      (if (and paths
+               (not (first-selector (get arg "ns") (get arg "namespace") (get arg "namespaces"))))
         (-> arg
             (dissoc "paths" "path")
             (assoc "ns" (paths->test-nses root paths)))

@@ -3164,15 +3164,37 @@
   ([s] (str/upper-case (str s)))
   ([s n] (str (str/upper-case (str s)) " " n)))
 
+(defn- error-field
+  "Read an error map field across in-memory keyword keys and JSON-restored
+   string keys (kebab or snake). TUI history can contain either shape."
+  [m k]
+  (when (map? m)
+    (let [n (name k)]
+      (or (get m k) (get m n) (get m (str/replace n "-" "_"))))))
+
+(defn- strip-exception-prefixes
+  [s]
+  (loop [s (str s)]
+    (let [s' (str/replace s #"^(?:(?:[\w$]+\.)+[\w$]+|ExceptionInfo):\s*" "")]
+      (if (= s' s) s (recur s')))))
+
+(defn- concise-error-message
+  [s]
+  (some-> s
+          str
+          strip-exception-prefixes
+          (str/replace #"\s+\{:[\s\S]*$" "")
+          str/trim
+          not-empty))
+
 (defn- error-trace-headline
   [error]
-  (when-let [trace (:trace error)]
+  (when-let [trace (error-field error :trace)]
     (some-> trace
             str
             str/split-lines
             first
-            str/trim
-            not-empty)))
+            concise-error-message)))
 
 (defn- error-detail-text
   "A non-empty, INFORMATIVE one-line error string — NEVER a content-free
@@ -3182,13 +3204,18 @@
    real failure behind \"we don't know nothing\". Only a genuinely empty error
    says so plainly — and that is itself a bug worth seeing."
   [error]
-  (or (not-empty (str (:message error)))
+  (or (concise-error-message (error-field error :message))
       (error-trace-headline error)
-      (not-empty (some-> (:type error)
+      (not-empty (some-> (error-field error :type)
                          str))
       (when-let
-        [detail (or (not-empty (:data error))
-                    (and (map? error) (not-empty (dissoc error :message :type :trace))))]
+        [detail (or (not-empty (error-field error :data))
+                    (not-empty (error-field error :cause-data))
+                    (and (map? error)
+                         (not-empty (apply dissoc
+                                      error
+                                      [:message "message" :type "type" :trace "trace" :data "data"
+                                       :cause-data "cause-data" "cause_data"]))))]
         (str "error: " (pr-str detail)))
       (when (and error (not (map? error))) (not-empty (str error)))
       "error: the engine produced no message (please report — this is a bug)"))
@@ -3202,19 +3229,19 @@
   [code-text error]
   (let
     [block
-     (:block error)
+     (error-field error :block)
 
      source
-     (or (:source block) code-text)
+     (or (error-field block :source) code-text)
 
      opened
-     (:opened-loc block)
+     (error-field block :opened-loc)
 
      arrow-row
-     (or (:row opened) (:row block))
+     (or (error-field opened :row) (error-field block :row))
 
      arrow-col
-     (or (:col opened) (:col block))]
+     (or (error-field opened :col) (error-field block :col))]
 
     (when (and (string? source) (not (str/blank? source)))
       (let

@@ -416,7 +416,7 @@
    render it like a locally-started turn (user bubble + running chip, not bare
    deltas leaking under the previous answer), `ingest-mirrored-event!` must
    materialize a running row in :turns/:turn-order on `turn.started` and mark it
-   terminal on `turn.completed`/`turn.failed` — carrying :engine_turn_id so
+   terminal on `turn.completed`/`turn.failed`/`turn.cancelled` — carrying :engine_turn_id so
    list-turns can dedup it against the durable DB row once persisted."
   (let
     [reg
@@ -425,33 +425,46 @@
      sid
      "mirror-test-sid"]
 
-    (it "materializes a running row on turn.started, terminal on turn.completed"
-        (try (swap! reg assoc sid {:next-seq 0})
-             (#'state/ingest-mirrored-event!
-              sid
-              false
-              {"type" "turn.started" "turn_id" "T1" "request" "hello world" "started_at" 777})
-             (let [started (get @reg sid)]
-               (expect (= "T1" (:current-turn started)))
-               (expect (= ["T1"] (:turn-order started)))
-               (expect (= "running" (get-in started [:turns "T1" :status])))
-               (expect (= "hello world" (get-in started [:turns "T1" :request])))
-               ;; The turn row owns its replay boundary. Channels must not scan
-               ;; the event ring to rediscover the matching turn.started event.
-               (expect (= 1 (get-in started [:turns "T1" :event_start_seq])))
-               (expect (= 1 (get (state/get-turn sid "T1") "event_start_seq")))
-               ;; the mirror adopts the PRODUCER's canonical run-start clock —
-               ;; stamping mirror-local time desynced elapsed across processes
-               (expect (= 777 (get-in started [:turns "T1" :started_at]))))
-             (#'state/ingest-mirrored-event!
-              sid
-              false
-              {"type" "turn.completed" "turn_id" "T1" "status" "completed" "engine_turn_id" "E1"})
-             (let [done (get @reg sid)]
-               (expect (nil? (:current-turn done)))
-               (expect (= "completed" (get-in done [:turns "T1" :status])))
-               (expect (= "E1" (get-in done [:turns "T1" :engine_turn_id]))))
-             (finally (swap! reg dissoc sid))))
+    (it
+      "materializes a running row on turn.started, terminal on turn.completed"
+      (try (swap! reg assoc sid {:next-seq 0})
+           (#'state/ingest-mirrored-event!
+            sid
+            false
+            {"type" "turn.started" "turn_id" "T1" "request" "hello world" "started_at" 777})
+           (let [started (get @reg sid)]
+             (expect (= "T1" (:current-turn started)))
+             (expect (= ["T1"] (:turn-order started)))
+             (expect (= "running" (get-in started [:turns "T1" :status])))
+             (expect (= "hello world" (get-in started [:turns "T1" :request])))
+             ;; The turn row owns its replay boundary. Channels must not scan
+             ;; the event ring to rediscover the matching turn.started event.
+             (expect (= 1 (get-in started [:turns "T1" :event_start_seq])))
+             (expect (= 1 (get (state/get-turn sid "T1") "event_start_seq")))
+             ;; the mirror adopts the PRODUCER's canonical run-start clock —
+             ;; stamping mirror-local time desynced elapsed across processes
+             (expect (= 777 (get-in started [:turns "T1" :started_at]))))
+           (#'state/ingest-mirrored-event!
+            sid
+            false
+            {"type" "turn.completed" "turn_id" "T1" "status" "completed" "engine_turn_id" "E1"})
+           (let [done (get @reg sid)]
+             (expect (nil? (:current-turn done)))
+             (expect (= "completed" (get-in done [:turns "T1" :status])))
+             (expect (= "E1" (get-in done [:turns "T1" :engine_turn_id]))))
+           (swap! reg assoc sid {:next-seq 0})
+           (#'state/ingest-mirrored-event!
+            sid
+            false
+            {"type" "turn.started" "turn_id" "T2" "request" "please stop"})
+           (#'state/ingest-mirrored-event!
+            sid
+            false
+            {"type" "turn.cancelled" "turn_id" "T2" "status" "cancelled"})
+           (let [cancelled (get @reg sid)]
+             (expect (nil? (:current-turn cancelled)))
+             (expect (= "cancelled" (get-in cancelled [:turns "T2" :status]))))
+           (finally (swap! reg dissoc sid))))
     (it "ignores mirrored events for a session this process never touched"
         (expect (nil? (#'state/ingest-mirrored-event!
                        "never-touched-sid"

@@ -2,7 +2,8 @@
   "Unit tests for the in-REPL test path's failure handling — specifically that a
    server that vanishes mid-run surfaces as a structured result the model can act
    on, never a raw connect exception that eats the turn."
-  (:require [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
             [com.blockether.vis.internal.extension :as extension]
@@ -218,3 +219,45 @@
                                         {"namespaces" ["x.y-test"]}))]
             (expect (= "/ws" @seen-root))
             (expect (= "/ws" (get r "root"))))))))
+
+(defdescribe
+  clj-test-fn-path-discovery-test
+  (it
+    "treats empty namespaces from the facade as absent when paths are present"
+    (let
+      [root-file
+       (.toFile (java.nio.file.Files/createTempDirectory
+                  "vis-clj-test"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+
+       test-dir
+       (io/file root-file "test/com/example")
+
+       test-file
+       (io/file test-dir "thing_test.clj")
+
+       seen-nses
+       (atom nil)]
+
+      (try (.mkdirs test-dir)
+           (spit test-file "(ns com.example.thing-test)\n")
+           (with-redefs
+             [extension/run-outside-tool-wall
+              (fn [_env thunk]
+                (thunk))
+
+              repl-manager/ensure-repl-for-dir!
+              (fn [_sid _root]
+                {:port 12345})
+
+              com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
+              (fn [_root nses _sel _port]
+                (reset! seen-nses nses)
+                {"mode" "repl" "ns" (first nses)})]
+
+             (tr/clj-test-fn
+               {:workspace/root (.getPath root-file) :session-id "sid"}
+               {"paths" ["test/com/example"] "namespaces" [] "only" [] "include" [] "exclude" []})
+             (expect (= ["com.example.thing-test"] @seen-nses)))
+           (finally (doseq [f (reverse (file-seq root-file))]
+                      (io/delete-file f true)))))))

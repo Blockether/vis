@@ -840,6 +840,8 @@
      - {\"paths\": [\"src\", \"test\"]}        -> lint those paths
      - nothing / {}                       -> lint the whole project's source roots
          (every deps.edn module's :paths + test), skipping build/vendor dirs
+   `path` and `paths` are UNIONED (not shadowing); a target that resolves to
+   nothing is an ERROR, not a silent `clean`.
    Paths are resolved against the workspace root when relative. Finding \"file\"
    paths are reported RELATIVE to the workspace root (absolute only when outside).
 
@@ -879,51 +881,68 @@
        (let [f (io/file (str p))]
          (str (if (.isAbsolute f) f (io/file root (str p))))))
 
-     targets
-     (cond code nil
-           path [(relativize-path root (under path))]
-           (seq paths) (mapv #(relativize-path root (under %)) paths)
-           :else nil)
+     ;; `path` and `paths` are UNIONED, not shadowing — a model that emits BOTH
+     ;; (e.g. a junk `path` beside a real `paths`) lints/validates every named
+     ;; target instead of silently dropping one.
+     requested
+     (when-not code (into [] (distinct (concat (when path [path]) (when (seq paths) paths)))))
 
-     base
-     ;; clj-kondo is the STATIC provider (all branches). The :general provider
-     ;; (reflection + boxed-math) is a COMPILER pass — the warnings only exist
-     ;; while the code is compiled — so it runs over whatever we're TARGETING:
-     ;; the `code` snippet, or each source file being linted (compiled in a
-     ;; throwaway namespace that is torn down afterwards, so nothing leaks).
-     ;; Its warnings merge into the flat findings and the warning count.
-     (let
-       [merge-general (fn [k g]
-                        (-> k
-                            (update "findings" into g)
-                            (update "warning" (fnil + 0) (count g))))]
-       (if code
-         (merge-general (lint/lint-code code) (reflection/compile-warnings code "<stdin>"))
+     ;; A named target that resolves to nothing must be an ERROR, not a silent
+     ;; `clean`: a non-existent path expands to zero files → 0 findings, so the
+     ;; model gets meaningless `clean` feedback with nothing to correct and spins.
+     missing
+     (into [] (remove #(.exists (io/file (under %))) requested))]
+
+    (if (seq missing)
+      (extension/failure
+        {:error {:message (str "lint target does not exist: "
+                               (str/join ", " missing)
+                               " — relative paths resolve against the workspace root")
+                 :hint "pass an existing file/dir, or omit path/paths to lint the whole project"}})
+      (let
+        [targets
+         (when (seq requested) (mapv #(relativize-path root (under %)) requested))
+
+         base
+         ;; clj-kondo is the STATIC provider (all branches). The :general provider
+         ;; (reflection + boxed-math) is a COMPILER pass — the warnings only exist
+         ;; while the code is compiled — so it runs over whatever we're TARGETING:
+         ;; the `code` snippet, or each source file being linted (compiled in a
+         ;; throwaway namespace that is torn down afterwards, so nothing leaks).
+         ;; Its warnings merge into the flat findings and the warning count.
          (let
-           [src-files (expand-clj-source-files root
-                                               (cond path [(under path)]
-                                                     (seq paths) (mapv under paths)
-                                                     :else (discover-project-source-paths root)))]
-           (merge-general (lint-grouped src-files)
-                          (into []
-                                (mapcat #(reflection/compile-warnings (slurp (io/file %)) (str %)))
-                                src-files)))))
+           [merge-general (fn [k g]
+                            (-> k
+                                (update "findings" into g)
+                                (update "warning" (fnil + 0) (count g))))]
+           (if code
+             (merge-general (lint/lint-code code) (reflection/compile-warnings code "<stdin>"))
+             (let
+               [src-files (expand-clj-source-files root
+                                                   (if (seq requested)
+                                                     (mapv under requested)
+                                                     (discover-project-source-paths root)))]
+               (merge-general (lint-grouped src-files)
+                              (into []
+                                    (mapcat #(reflection/compile-warnings (slurp (io/file %))
+                                                                          (str %)))
+                                    src-files)))))
 
-     providers
-     ["clj-kondo" "general"]
+         providers
+         ["clj-kondo" "general"]
 
-     findings
-     (mapv #(update % "file" (partial relativize-path root)) (get base "findings"))]
+         findings
+         (mapv #(update % "file" (partial relativize-path root)) (get base "findings"))]
 
-    (extension/success {:result (contract/check :lint-fn
-                                                (cond->
-                                                  (assoc base
-                                                    "findings" findings
-                                                    "language" "clojure"
-                                                    "providers" providers
-                                                    "by-dir" (lint/group-by-dir findings))
-                                                  (seq targets)
-                                                  (assoc "targets" (vec targets))))})))
+        (extension/success {:result (contract/check :lint-fn
+                                                    (cond->
+                                                      (assoc base
+                                                        "findings" findings
+                                                        "language" "clojure"
+                                                        "providers" providers
+                                                        "by-dir" (lint/group-by-dir findings))
+                                                      (seq targets)
+                                                      (assoc "targets" (vec targets))))})))))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
 
