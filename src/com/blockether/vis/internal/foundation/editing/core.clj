@@ -3758,11 +3758,22 @@
    `to_anchor` for one line, use an inclusive range otherwise, and use an empty
    replacement to delete. Re-read after every successful write."
   [edits]
-  (let [result (patch-safe edits)]
+  ;; All-kwargs form: `patch(edits=[...])` collapses at the Python boundary to ONE
+  ;; spec map `{"edits" [...]}` (see __vis_exec_call__). Unwrap it — mirrors cat/rg.
+  (let
+    [edits
+     (if (and (map? edits) (contains? edits "edits")) (get edits "edits") edits)
+
+     result
+     (patch-safe edits)]
+
     (if (:success? result)
       (let
-        [plans (:plans result)
-         summaries (mapv patch-result-file-summary plans)]
+        [plans
+         (:plans result)
+
+         summaries
+         (mapv patch-result-file-summary plans)]
 
         (tool-success {:op :patch
                        :path (or (:path (first plans)) ".")
@@ -3878,7 +3889,11 @@
    bound result."
   [path]
   (let
-    [before
+    ;; All-kwargs `create_dirs(path="p")` collapses to ONE map `{"path" "p"}`; unwrap it.
+    [path
+     (if (map? path) (get path "path") path)
+
+     before
      (fs/exists? (safe-path path))
 
      out
@@ -3897,6 +3912,8 @@
 
    Returns {\"src\": src, \"dest\": dest, \"path\": dest}.
    Gotcha: without is_overwrite an existing dest fails."
+  ;; All-kwargs `copy(src="a", dest="b")` collapses to ONE map — unwrap to the 3-arity.
+  ([m] (copy-tool (get m "src") (get m "dest") (dissoc m "src" "dest")))
   ([src dest & {:as opts}]
    (let [out (copy-safe src dest opts)]
      (tool-success {:op :copy
@@ -3913,6 +3930,8 @@
 
    Returns {\"src\": src, \"dest\": dest, \"path\": dest}.
    Gotcha: without is_overwrite an existing dest fails."
+  ;; All-kwargs `move(src="a", dest="b")` collapses to ONE map — unwrap to the 3-arity.
+  ([m] (move-tool (get m "src") (get m "dest") (dissoc m "src" "dest")))
   ([src dest & {:as opts}]
    (let [out (move-safe src dest opts)]
      (tool-success {:op :move
@@ -3932,8 +3951,13 @@
    delete_if_exists)."
   [path & {:as opts}]
   (let
-    [deleted?
+    ;; All-kwargs `delete(path="p", is_missing_ok=True)` collapses to ONE map; split it.
+    [[path opts]
+     (if (map? path) [(get path "path") (dissoc path "path")] [path opts])
+
+     deleted?
      (if (get opts "is_missing_ok") (delete-if-exists-safe path) (do (delete-safe path) true))]
+
     (tool-success {:op :delete
                    :path path
                    :kind :path
@@ -3947,7 +3971,13 @@
    Returns {\"path\": path, \"deleted\": bool}.
    Gotcha: \"deleted\" is False when nothing was there — never raises on a missing path."
   [path]
-  (let [deleted? (delete-if-exists-safe path)]
+  (let
+    [path
+     (if (map? path) (get path "path") path)
+
+     deleted?
+     (delete-if-exists-safe path)]
+
     (tool-success {:op :delete-if-exists
                    :path path
                    :kind :path
@@ -3961,7 +3991,13 @@
    Returns {\"path\": path, \"exists\": bool}.
    Gotcha: returns a dict, not a bare bool — read r[\"exists\"]."
   [path]
-  (let [exists? (exists-safe? path)]
+  (let
+    [path
+     (if (map? path) (get path "path") path)
+
+     exists?
+     (exists-safe? path)]
+
     (tool-success {:op :file-exists
                    :path path
                    :kind :path
@@ -5275,7 +5311,11 @@
    cursor with struct_patch({\"path\": P, \"op\": ..., \"at\": path})."
   [path & [opts]]
   (let
-    [lang
+    ;; All-kwargs `struct_node(path="p", at=[…])` collapses to ONE map; split it.
+    [[path opts]
+     (if (map? path) [(get path "path") (dissoc path "path")] [path opts])
+
+     lang
      (zipper/detect-language path)
 
      source

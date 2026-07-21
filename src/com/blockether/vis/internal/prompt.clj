@@ -108,7 +108,8 @@
   [attached skipped]
   (when (or (seq attached) (seq skipped))
     (prompt-block "attached-images"
-                  (str/join "\n"
+                  (str "You can SEE these images — they ride this message as image blocks. Look at them\n   directly. Do NOT open them with PIL or other imaging libraries to \"read\" their\n   content — that yields only pixel size/mode, never meaning. Reach for PIL ONLY to\n   TRANSFORM an image (resize/crop/convert), never to inspect one you can already see.\n\n"
+                       (str/join "\n"
                             (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
                                                    (str "- image "
                                                         (inc (long i))
@@ -122,7 +123,7 @@
                                                  attached)
                                     (map (fn [{:keys [path reason]}]
                                            (str "- " path " — NOT attached: " reason))
-                                         skipped))))))
+                                         skipped)))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
