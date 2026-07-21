@@ -13,9 +13,6 @@
            [java.nio.file.attribute FileAttribute]
            [java.util Base64 Properties]
            [org.apache.sshd.common.util.net SshdSocketAddress]
-           [org.apache.sshd.common Factory]
-           [org.apache.sshd.common.io.nio2 Nio2ServiceFactoryFactory]
-           [org.apache.sshd.common.util.threads ThreadUtils]
            [org.apache.sshd.common.session SessionListener]
            [org.apache.sshd.server SshServer]
            [org.apache.sshd.server.auth.password PasswordAuthenticator]
@@ -45,25 +42,15 @@
 ;; oldest is stopped to keep the registry — and its threads — bounded.
 (def ^:private max-live-servers 32)
 
-;; ONE shared NIO2 pool for EVERY MINA SSHD server. Otherwise each
-;; `SshServer/setUpDefaultServer` builds its OWN AsynchronousChannelGroup
-;; (acceptor + per-session `nio2-thread-N`), so N servers => N thread pools —
-;; the exact source of the runaway thread/RAM growth. A single shared, ELASTIC
-;; cached pool lets threads be reused across servers (and reaped when idle)
-;; instead of every server hoarding its own; combined with each server's
-;; self-reap on connection close, SSHD threads stay flat. A cached (not fixed)
-;; pool is what `AsynchronousChannelGroup` wants — a small fixed pool can
-;; deadlock a single handshake. `protectExecutorServiceShutdown` stops a
-;; server's own `.stop` from tearing the shared pool down (shut down on JVM exit).
-(defonce ^:private sshd-io-factory
-  (delay (let
-           [pool (ThreadUtils/protectExecutorServiceShutdown (ThreadUtils/newCachedThreadPool
-                                                               "vis-sshd-nio2")
-                                                             true)]
-           (Nio2ServiceFactoryFactory. (reify
-                                         Factory
-                                           (create [_] pool)
-                                           (get [_] pool))))))
+;; Each MINA SSHD server uses MINA's OWN default per-server NIO2 io-service
+;; factory (its own AsynchronousChannelGroup: acceptor + per-session
+;; `nio2-thread-N`). We deliberately do NOT share one `Nio2ServiceFactoryFactory`
+;; / executor across servers: MINA 2.15 disposes a shared io-service when the
+;; FIRST server `.stop`s, which poisons every later server (its SSH banner is
+;; never sent, so clients time out) — only the first server per JVM would ever
+;; negotiate. Thread growth is instead bounded by each server's self-reap on
+;; connection close (the `SessionListener` below) plus the `max-live-servers`
+;; cap, which together keep SSHD threads flat across many start/stop cycles.
 
 (defn- reg-sess!
   [^Session s]
@@ -420,7 +407,6 @@
 
      server
      (doto (SshServer/setUpDefaultServer)
-       (.setIoServiceFactoryFactory @sshd-io-factory)
        (.setHost "127.0.0.1")
        (.setPort 0)
        (.setKeyPairProvider (SimpleGeneratorHostKeyProvider. hostkey))
@@ -2254,7 +2240,7 @@ del __vis_install_paramiko__
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/description
-       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. `Transport(sock).start_server()` starts a real Apache MINA SSHD only when given a real client socket — it serves reverse (`tcpip-forward`) port-forwarding over that socket, delegating password auth and forward approval to the Python `ServerInterface` (`check_auth_password`/`check_port_forward_request`). Nothing starts on `import` or on a socket-less `start_server()` (that degrades to a passive stub); every started server draws from one shared bounded NIO2 pool, is capped (max 32 live), and self-reaps when its connection ends. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
+       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. `Transport(sock).start_server()` starts a real Apache MINA SSHD only when given a real client socket — it serves reverse (`tcpip-forward`) port-forwarding over that socket, delegating password auth and forward approval to the Python `ServerInterface` (`check_auth_password`/`check_port_forward_request`). Nothing starts on `import` or on a socket-less `start_server()` (that degrades to a passive stub); every started server uses MINA's own per-server NIO2 io-service, is capped (max 32 live), and self-reaps when its connection ends. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
        :shim/bindings paramiko-bridge-bindings
        :shim/preamble paramiko-shim-src}]}))
 
