@@ -9,6 +9,30 @@ directory until you apply.
 Drafts are **opt-in**. By default a session edits your real cwd directly — Vis
 calls this **trunk**. You only ever enter a draft on purpose.
 
+## Project vs workspace vs trunk vs draft
+
+These four words sit on two different axes, so they never compete — it helps to
+keep them straight:
+
+- **Project** — *what* you are working on. A read-only fact Vis **detects** about
+  the repo (single vs monorepo, primary language), surfaced in
+  `session.env.project`. You do not switch or create projects; they are
+  introspection, not a place.
+- **Repo** (`repo_root`) — the git repository root. This is the **grouping key**:
+  `/draft list` and the drafts API return drafts *per repo*.
+- **Workspace** — *where* a session works on that repo. It is a mutable,
+  session-scoped, persisted record that is either **trunk** or a **draft**.
+- **Trunk** — the workspace that points at your real cwd. The default.
+- **Draft** — the *isolated* flavor of a workspace: a backend clone of the repo.
+  Trunk and draft are both workspaces; a draft is simply "a workspace that is an
+  isolated copy."
+
+So **project = what**, **workspace = where**. A draft can't be called a "project":
+you have N drafts of *one* project, which is exactly the trunk ↔ draft overlay.
+That is why the gateway feature is named around **workspace** (it already owns the
+session's filesystem roots and identity) rather than **project** (already taken
+for the detection concept).
+
 ## Why drafts exist
 
 The point of a draft is a **safe, reversible sandbox** for work you are not sure

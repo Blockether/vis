@@ -562,13 +562,6 @@
 
 (s/def :ext/op-hooks (s/coll-of :ext/op-hook))
 
-;; Process-spawn guards: a declarative `:ext/process-guards` entry is just a map
-;; carrying the guard fn; the owner is derived from the extension name at install.
-(s/def :ext.process-guard/fn ifn?)
-
-(s/def :ext/process-guard (s/keys :req-un [:ext.process-guard/fn]))
-
-(s/def :ext/process-guards (s/coll-of :ext/process-guard))
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
 ;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
@@ -1201,7 +1194,7 @@
                        :ext/license :ext/cli :ext/channels :ext/providers :ext/persistance
                        :ext/workspace-backends :ext/attachment-storage :ext/channel-contributions
                        :ext/slash-commands :ext/startable-resources :ext/doctor-fn
-                       :ext/sandbox-shims :ext/process-guards])
+                       :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
 ;; =============================================================================
@@ -2170,88 +2163,6 @@
     (doseq [h (:ext/op-hooks ext)]
       (register-op-hook! (assoc h :owner owner)))))
 
-;; ----------------------------------------------------------------------------
-;; Process-spawn guards: the CANONICAL admission gate every host process spawn
-;; passes through — shell_run / shell_bg AND the rerouted Python `subprocess`
-;; shim all converge on the shell executors, which call `authorize-process!`.
-;; A guard is (fn [info] -> nil | {:block <reason>}); a :block reason DENIES.
-;; Mirrors the op-hook owner lifecycle so an extension's guards die with it.
-(defonce ^:private process-guards (atom {}))   ; owner -> [ (fn [info] -> nil|{:block reason}) ]
-
-(defn register-process-guard!
-  "Register a canonical process-spawn guard. `f` is (fn [info] -> nil | {:block reason})
-   where `info` is {:cmd <string> :cwd <string> :interactive? <bool>}. Returning a map
-   whose `:block` is a truthy reason DENIES the spawn (authorize-process! throws with
-   that reason); nil allows. `owner` (an ext keyword; default nil = host) scopes
-   teardown so guards die with their extension. Returns owner."
-  ([f] (register-process-guard! nil f))
-  ([owner f]
-   (assert (ifn? f) "process guard must be a function")
-   (swap! process-guards update owner (fnil conj []) f)
-   owner))
-
-(defn unregister-process-guards-for-owner!
-  "Remove EVERY process guard registered by `owner`. Driven by
-   `deregister-extension!` so an extension's guards die with it; also callable
-   directly to tear an owner's guards down."
-  [owner]
-  (swap! process-guards dissoc owner)
-  owner)
-
-(defn- install-process-guards!
-  "Register an extension's declarative `:ext/process-guards` under its derived owner —
-   idempotent on reload (replaces the owner's guards wholesale)."
-  [ext]
-  (let
-    [owner
-     (ext-op-hook-owner ext)
-
-     fns
-     (mapv :fn (:ext/process-guards ext))]
-
-    (when (seq fns) (swap! process-guards assoc owner fns))))
-
-(defn authorize-process!
-  "Canonical process-spawn gate. Runs every registered process guard over `info`
-   ({:cmd :cwd :interactive?}); the FIRST guard returning a map with a truthy `:block`
-   DENIES — throws an ex-info (type ::process-denied) carrying the reason, which the
-   shell layer renders as a clean model-facing failure. A guard that THROWS fails OPEN
-   (logged) so a broken guard can't brick spawning. With no guards registered this is a
-   cheap no-op. Returns `info` when allowed."
-  [info]
-  (doseq
-    [[owner fns]
-     @process-guards
-
-     f
-     fns]
-
-    (let
-      [res
-       (try (f info)
-            (catch Throwable e
-              (tel/log!
-                {:level :warn :id ::process-guard-threw :data {:owner owner :error (ex-message e)}})
-              nil))
-
-       reason
-       (when (map? res) (:block res))]
-
-      (when reason
-        (throw (ex-info
-                 (str reason)
-                 {:type ::process-denied :reason (str reason) :owner owner :cmd (:cmd info)})))))
-  info)
-
-(defn process-denied-reason
-  "If `t` (or any cause in its chain) is an `authorize-process!` denial, its reason
-   string; else nil. Lets the shell layer render a clean model-facing failure instead
-   of a raw stack trace."
-  [^Throwable t]
-  (loop [e t]
-    (when e
-      (if (= ::process-denied (:type (ex-data e))) (:reason (ex-data e)) (recur (.getCause e))))))
-
 (defn- run-op-before-hooks
   "Thread `args` through every :before hook registered for `op-kw`."
   [op-kw env args]
@@ -2976,7 +2887,6 @@
     (dispatch-workspace-backends! (:ext/workspace-backends ext))
     (dispatch-attachment-storage! (:ext/attachment-storage ext))
     (install-op-hooks! ext)
-    (install-process-guards! ext)
     (theme/register-themes! (:ext/theme ext))
     ;; Index every symbol's inline `:ext.symbol/tag` into the
     ;; global op-keyword -> tag map. The sym-entry remains the source
@@ -3163,7 +3073,6 @@
                         {:ext ns-sym :backend-id (:storage/id backend) :error (ex-message t)}}))))
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (unregister-op-hooks-for-owner! (ext-op-hook-owner ext))
-    (unregister-process-guards-for-owner! (ext-op-hook-owner ext))
     (tel/log! {:level :info
                :id ::deregister-global
                :data {:ext ns-sym}

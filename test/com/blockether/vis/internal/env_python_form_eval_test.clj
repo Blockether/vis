@@ -423,6 +423,63 @@ await patch({'path': css})" "t1/i1")]
           (expect (= "42" (clojure.string/trim (str (:stdout r)))))))))
 
 (defdescribe
+  tool-failure-catchable-test
+  "A raising tool surfaces its MESSAGE and is CATCHABLE in-block like any other
+   error (issue #42). Host tool callables raise a foreign exception that derives
+   from BaseException but NOT Exception; the driver re-raises the failure at the
+   coroutine's OWN await point (wrapping a foreign one so ordinary `except
+   Exception` also catches it, with a clean message), while an UNCAUGHT failure
+   still maps to the same host tool-failure op-error."
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context
+                             {'boom (fn [& _]
+                                      (throw (ex-info "boom message"
+                                                      {:type :vis/tool-failure :symbol :boom})))
+                              'echo (fn [x]
+                                      (str "<" x ">"))})))]
+    (it "`except Exception` catches a tool failure and sees the clean message"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "try:\n    await boom()\nexcept Exception as e:\n    print('caught: ' + str(e))"
+               "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "caught: boom message" (clojure.string/trim (str (:stdout r)))))))
+    (it "`except BaseException` catches it too"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "try:\n    await boom()\nexcept BaseException as e:\n    print('base: ' + str(e))"
+               "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "base: boom message" (clojure.string/trim (str (:stdout r)))))))
+    (it "catching lets the block CONTINUE and run more tools"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "try:\n    await boom()\nexcept Exception:\n    pass\nprint(await echo(\"ok\"))"
+               "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "<ok>" (clojure.string/trim (str (:stdout r)))))))
+    (it "a NON-matching except still surfaces the host tool-failure op-error"
+        (let
+          [r (ep/run-python-block (mk)
+                                  "try:\n    await boom()\nexcept ValueError:\n    print('nope')"
+                                  "t1/i1")]
+          (expect (nil? (:stdout r)))
+          (expect (= "boom message" (:message (:error r))))
+          (expect (= :python/host (:phase (:data (:error r)))))
+          (expect (= :vis/tool-failure (:type (:data (:error r)))))))
+    (it "an UNCAUGHT tool failure maps to the host tool-failure op-error (message + data)"
+        (let [r (ep/run-python-block (mk) "await boom()" "t1/i1")]
+          (expect (nil? (:stdout r)))
+          (expect (= "boom message" (:message (:error r))))
+          (expect (= :python/host (:phase (:data (:error r)))))
+          (expect (= :vis/tool-failure (:type (:data (:error r)))))
+          (expect (= :boom (:symbol (:data (:error r)))))))))
+
+(defdescribe
   asyncio-shim-test
   "The model's habitual `asyncio.run(...)` / `asyncio.gather(...)` is ROUTED onto
    our virtual-thread driver instead of the sandbox-excluded real asyncio (which

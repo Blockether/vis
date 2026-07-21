@@ -75,7 +75,7 @@ _registration = {'spec': None}
 
 def extension(name=None, description=None, version=None, kind=None, alias=None,
               activation=None, symbols=None, prompt=None, slash_commands=None,
-              op_hooks=None, ctx=None, providers=None, process_guards=None):
+              op_hooks=None, ctx=None, providers=None):
     if _registration['spec'] is not None:
         raise ValueError('vis.extension() may only be called once per file')
     if not name or not isinstance(name, str):
@@ -93,7 +93,6 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'slash_commands': list(slash_commands or []),
         'op_hooks': list(op_hooks or []), 'ctx': ctx,
         'providers': list(providers or []),
-        'process_guards': list(process_guards or []),
     }
 
 def symbol(fn, name=None, tag='observation', is_hidden=False):
@@ -132,11 +131,6 @@ def op_hook(ops, fn, phase='before'):
     if not ops:
         raise ValueError('vis.op_hook requires a non-empty ops list')
     return {'marker': 'op_hook', 'ops': ops, 'fn': fn, 'phase': phase}
-
-def process_guard(fn):
-    if not callable(fn):
-        raise ValueError('vis.process_guard(fn) requires a callable fn')
-    return {'marker': 'process_guard', 'fn': fn}
 
 def provider(id, label, preset=None, get_token_fn=None, detect_fn=None,
              status_fn=None, logout_fn=None, limits_fn=None, refresh_token_fn=None,
@@ -536,26 +530,6 @@ def __vis_registration__():
                       :data {:extension ext-name :op op-kw :error (ex-message t)}})))
     result))
 
-(defn- process-guard-adapter
-  "Python `vis.process_guard` callable -> a host process guard fn consulted by the
-   canonical `extension/authorize-process!` gate. The callable receives
-   `{'cmd','cwd','interactive'}`; returning `vis.block(reason)` DENIES the spawn,
-   returning None allows. A hook error fails OPEN (authorize-process! logs it) so a
-   broken guard can't brick process spawning."
-  [ext-name ^Context ctx ^Value pyfn]
-  (fn [info]
-    (let
-      [res (call-py-ext ext-name
-                        nil
-                        ctx
-                        pyfn
-                        [{"cmd" (str (:cmd info))
-                          "cwd" (str (:cwd info))
-                          "interactive" (boolean (:interactive? info))}])]
-      (when (and (map? res) (= "block" (get res "marker")))
-        {:block (str (or (get res "reason")
-                         (str "Blocked by the '" ext-name "' process guard")))}))))
-
 ;; =============================================================================
 ;; Registration dict -> extension spec
 ;; =============================================================================
@@ -954,12 +928,7 @@ def __vis_registration__():
      (get reg "activation")
 
      providers
-     (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))
-
-     process-guards
-     (mapv (fn [g]
-             {:fn (process-guard-adapter ext-name ctx (get g "fn"))})
-           (get reg "process_guards"))]
+     (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))]
 
     (cond->
       {:ext/name ext-name
@@ -991,10 +960,7 @@ def __vis_registration__():
       (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn))
 
       (seq providers)
-      (assoc :ext/providers providers)
-
-      (seq process-guards)
-      (assoc :ext/process-guards process-guards))))
+      (assoc :ext/providers providers))))
 
 ;; =============================================================================
 ;; Loader

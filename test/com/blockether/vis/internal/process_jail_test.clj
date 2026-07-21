@@ -52,49 +52,59 @@
     {:exit (.waitFor p) :out out}))
 
 (deftest real-containment
+  ;; The threat model is a secret OUTSIDE every allowed root (e.g. ~/.ssh). Temp
+  ;; dirs are INTENTIONALLY writable roots (mirrors the Python sandbox), so the
+  ;; secret + escape target live under $HOME, which the jail never allows.
   (when (pj/supported?)
     (let
-      [ws
+      [home
+       (System/getProperty "user.home")
+
+       ws
        (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-ws-" (System/nanoTime)))
          (.mkdirs))
 
        secret
-       (io/file (System/getProperty "java.io.tmpdir")
-                (str "vis-jail-secret-" (System/nanoTime) ".txt"))]
+       (io/file home (str ".vis-jail-secret-" (System/nanoTime) ".txt"))
+
+       escape
+       (io/file home (str ".vis-jail-escape-" (System/nanoTime) ".txt"))
+
+       wsc
+       (.getCanonicalPath ws)]
 
       (spit (io/file ws "inside.txt") "workspace-ok")
       (spit secret "TOP-SECRET")
       (pj/set-active-policy! {:roots-fn (constantly [(.getPath ws)]) :net-enabled? false})
       (try (testing "reads + writes inside the workspace succeed"
              (let
-               [r (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
-                                             (str "cat "
-                                                  (.getCanonicalPath ws)
-                                                  "/inside.txt"
-                                                  " && echo x > "
-                                                  (.getCanonicalPath ws)
-                                                  "/w.txt && echo WROTE")]))]
+               [r (run-jailed
+                    (pj/wrap-argv
+                      ["bash" "--noprofile" "--norc" "-lc"
+                       (str "cat " wsc "/inside.txt" " && echo x > " wsc "/w.txt && echo WROTE")]))]
                (is (zero? (:exit r)))
                (is (str/includes? (:out r) "workspace-ok"))
                (is (str/includes? (:out r) "WROTE"))))
-           (testing "reading a secret OUTSIDE the workspace is denied"
+           (testing "reading a secret OUTSIDE every root ($HOME) is denied"
              (let
                [r (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
-                                             (str "cat " (.getCanonicalPath secret))]))]
+                                             (str "cat " (.getCanonicalPath secret) " 2>&1")]))]
                (is (not (str/includes? (:out r) "TOP-SECRET")))))
-           (testing "writing outside the workspace is denied"
+           (testing "writing outside every root ($HOME) is denied"
+             (run-jailed (pj/wrap-argv
+                           ["bash" "--noprofile" "--norc" "-lc"
+                            (str "echo escaped > " (.getCanonicalPath escape) " 2>&1")]))
+             (is (not (.exists escape))))
+           (testing "network is denied when the policy is net-off"
              (let
-               [target
-                (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-escape-" (System/nanoTime) ".txt"))
-
-                _
-                (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
-                                           (str "echo escaped > " (.getCanonicalPath target))]))]
-
-               (is (not (.exists target)))))
+               [r (run-jailed
+                    (pj/wrap-argv
+                      ["bash" "--noprofile" "--norc" "-lc"
+                       "curl -sS --max-time 4 https://example.com -o /dev/null && echo GOTNET"]))]
+               (is (not (str/includes? (:out r) "GOTNET")))))
            (finally (pj/set-active-policy! nil)
                     (io/delete-file (io/file ws "inside.txt") true)
                     (io/delete-file (io/file ws "w.txt") true)
                     (io/delete-file ws true)
-                    (io/delete-file secret true))))))
+                    (io/delete-file secret true)
+                    (io/delete-file escape true))))))

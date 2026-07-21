@@ -380,14 +380,51 @@ class __vis_Raise__:
     # Driver -> awaitable signal that the tool/gather call the driver just ran
     # RAISED. The await point re-`raise`s the captured exception INSIDE the
     # coroutine (at the user's own `await`), so an in-block `try/except` around
-    # `await tool(...)` can CATCH a tool failure. Re-raising the ORIGINAL object
-    # (usually a foreign host exception) keeps full fidelity: left uncaught it
-    # escapes exactly as before, so the host `PolyglotException` still maps to the
-    # same clean tool-failure error. (We cannot use `it.throw(exc)`: GraalPy
-    # rejects a ForeignException there, but a plain `raise foreign` works.)
+    # `await tool(...)` CATCHES a tool failure like any other error; left
+    # uncaught it escapes the driver exactly as before.
     __slots__ = ('exc',)
     def __init__(self, exc):
         self.exc = exc
+
+class __vis_ToolError__(Exception):
+    # A tool/gather failure normalized to a REAL Python exception. Host tool
+    # callables raise a foreign exception that derives from BaseException but NOT
+    # from Exception, so a plain `except Exception:` would MISS it. Wrapping gives
+    # the model the ordinary contract (`except Exception` / `except BaseException`
+    # both catch it) with a clean message, while `__vis_orig__` keeps the original
+    # host exception so an UNCAUGHT failure still maps to the same host
+    # tool-failure error (message + :data) at the sandbox boundary.
+    def __init__(self, orig, msg):
+        self.__vis_orig__ = orig
+        super().__init__(msg)
+
+def __vis_clean_msg__(exc):
+    # The bare message of a foreign host exception. `str(exc)` on a host throwable
+    # is `fully.qualified.ClassName: message`, and a deny-by-default sandbox does
+    # NOT expose its Java `getMessage()`, so strip that leading dotted class name
+    # to leave just the message. (The authoritative error channel still recovers
+    # the exact host message via ex-message at the boundary.)
+    try:
+        m = exc.getMessage()
+        if m:
+            return str(m)
+    except BaseException:
+        pass
+    s = str(exc)
+    i = s.find(': ')
+    if i > 0:
+        head = s[:i]
+        if '.' in head and ' ' not in head:
+            return s[i + 2:]
+    return s
+
+def __vis_wrap_tool_exc__(exc):
+    # A native Python exception passes through untouched (its own type/message are
+    # the contract). A foreign host exception is wrapped so `except Exception`
+    # catches it; the original rides along as `__vis_orig__` for boundary mapping.
+    if isinstance(exc, Exception):
+        return exc
+    return __vis_ToolError__(exc, __vis_clean_msg__(exc))
 
 class __vis_Call__:
     __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'res')
@@ -603,7 +640,7 @@ def __vis_drive__(coro):
             # the next send so it re-raises at the coroutine's OWN await point: an
             # in-block `try/except` can then catch it, and if uncaught it simply
             # propagates out of the driver just as it did before.
-            send = __vis_Raise__(__vis_exc__)
+            send = __vis_Raise__(__vis_wrap_tool_exc__(__vis_exc__))
 
 def __vis_error_pos__(e):
     # Deepest '<prog>' (user-code) traceback frame -> (line, col, end_col). The
@@ -2696,6 +2733,22 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                 (.append sb "\n")))))
         (str/trimr (str sb))))))
 
+(defn- vis-tool-error-host-cause
+  "When `e` is a GUEST `__vis_ToolError__` — a foreign tool failure the driver
+   WRAPPED so the sandbox can `except Exception` it — return the ORIGINAL host
+   exception it carries as `__vis_orig__`. That lets an UNCAUGHT wrapped failure
+   map to the same host tool-failure error (clean message + ex-data) as a bare
+   host exception. nil for any other error."
+  [^PolyglotException e]
+  (try (when (.isGuestException e)
+         (let [g (.getGuestObject e)]
+           (when (and g (.hasMember g "__vis_orig__"))
+             (let [orig (.getMember g "__vis_orig__")]
+               (when (and orig (.isHostObject orig))
+                 (let [h (.asHostObject orig)]
+                   (when (instance? Throwable h) h)))))))
+       (catch Throwable _ nil)))
+
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
@@ -2709,11 +2762,16 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    bracket pinpointed to its line/col."
   [python-context ^PolyglotException e code]
   (let
-    [host?
-     (.isHostException e)
+    [wrapped-host-cause
+     (vis-tool-error-host-cause e)
+
+     host?
+     (or (.isHostException e) (some? wrapped-host-cause))
 
      cause
-     (when host? (.asHostException e))
+     (cond (.isHostException e) (.asHostException e)
+           wrapped-host-cause wrapped-host-cause
+           :else nil)
 
      loc
      (.getSourceLocation e)
@@ -2722,7 +2780,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      (and (not host?) (.isSyntaxError e))
 
      base
-     (or (when cause (or (ex-message cause) (.getMessage cause))) (.getMessage e))
+     (or (when cause (or (ex-message cause) (.getMessage ^Throwable cause))) (.getMessage e))
 
      ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `x`
      ;; in a leading sentence must be reported as PROSE, not "avoid x").

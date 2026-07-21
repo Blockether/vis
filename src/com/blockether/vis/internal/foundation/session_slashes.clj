@@ -13,13 +13,28 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.titling :as titling]))
 
-(defn- export-html
-  "Standalone, vis-light-styled HTML transcript for a session — the canonical
-   `transcript/transcript->html` render (summary card + turn-by-turn forensic
-   body, all CSS inlined). No web extension required."
-  [db sid]
-  ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript->html)
-    ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)))
+(defn- render-transcript
+  "Render a session's transcript as Markdown (`:md`) or a STANDALONE,
+   vis-light-styled HTML document (`:html`). Both go through the canonical
+   `transcript` data projection and its pure renderers — no web extension
+   required."
+  [db sid fmt]
+  (let
+    [data
+     ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript) db sid)
+
+     render
+     (if (= fmt :html)
+       'com.blockether.vis.internal.foundation.transcript/transcript->html
+       'com.blockether.vis.internal.foundation.transcript/transcript->md)]
+
+    ((requiring-resolve render) data)))
+
+(defn- path->fmt
+  "Infer the export format from a target path's extension: `.html`/`.htm`
+   → `:html`, anything else → `:md`."
+  [path]
+  (if (and path (re-find #"(?i)\.html?$" path)) :html :md))
 
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
 
@@ -49,12 +64,12 @@
                      :slash/title (str "Renamed session to '" title "'")
                      :slash/data {:session-id sid :title title}}))))
 
-(defn- handle-export
-  "`/export-html [path]` — write this session's transcript to a STANDALONE,
-   vis-light-styled HTML file (same renderer as `vis sessions export
-   --html` and the web download). Defaults to `vis-transcript-<id8>.html`
-   in the working directory."
-  [ctx]
+(defn- export!
+  "Core `/export` implementation. Writes this session's transcript to a file,
+   choosing Markdown or HTML by `forced-fmt` when non-nil, otherwise the path
+   extension. Defaults to `vis-transcript-<id8>.<ext>` in the working
+   directory. Same renderers as `vis sessions export --md|--html`."
+  [ctx forced-fmt]
   (let
     [sid
      (or (:session/id ctx) (:session-id ctx))
@@ -67,21 +82,41 @@
              str/trim
              not-empty)]
 
-    (cond (nil? sid) (err "Send a message first, then /export-html (session not ready yet)")
+    (cond (nil? sid) (err "Send a message first, then /export (session not ready yet)")
           (nil? db) (err "No database available to export from.")
           :else (let
-                  [fname
-                   (or path (str "vis-transcript-" (subs (str sid) 0 8) ".html"))
+                  [fmt
+                   (or forced-fmt (path->fmt path))
+
+                   ext
+                   (if (= fmt :html) "html" "md")
+
+                   fname
+                   (or path (str "vis-transcript-" (subs (str sid) 0 8) "." ext))
 
                    target
                    (io/file fname)]
 
                   (when-let [parent (.getParentFile ^java.io.File target)]
                     (.mkdirs parent))
-                  (spit target (export-html db sid))
+                  (spit target (render-transcript db sid fmt))
                   {:slash/status :ok
-                   :slash/title (str "Exported HTML transcript to " (.getPath target))
-                   :slash/data {:session-id sid :path (.getPath target)}}))))
+                   :slash/title (str "Exported " (str/upper-case ext)
+                                     " transcript to " (.getPath target))
+                   :slash/data {:session-id sid :path (.getPath target) :format fmt}}))))
+
+(defn- handle-export
+  "`/export [path]` — write this session's transcript to a file, format chosen
+   by the path extension (`.html`/`.htm` → styled standalone HTML, otherwise
+   Markdown). Defaults to `vis-transcript-<id8>.md`."
+  [ctx]
+  (export! ctx nil))
+
+(defn- handle-export-html
+  "`/export-html [path]` — always write a STANDALONE, vis-light-styled HTML
+   transcript. Kept for back-compat; `/export foo.html` is equivalent."
+  [ctx]
+  (export! ctx :html))
 
 (def specs
   "Declarative session slash specs, hooked onto foundation-core's manifest
@@ -92,9 +127,16 @@
     :slash/prompt-arg "New session title"
     :slash/requires #{:session}
     :slash/run-fn handle-rename}
+   {:slash/name "export"
+    :slash/doc
+    "Export this session's transcript to a file (Markdown, or HTML when the path ends in .html)."
+    :slash/usage "/export [path]"
+    :slash/prompt-arg "Output path (.md or .html, optional)"
+    :slash/requires #{:session}
+    :slash/run-fn handle-export}
    {:slash/name "export-html"
     :slash/doc "Export this session's transcript as styled HTML."
     :slash/usage "/export-html [path]"
     :slash/prompt-arg "Output .html path (optional)"
     :slash/requires #{:session}
-    :slash/run-fn handle-export}])
+    :slash/run-fn handle-export-html}])

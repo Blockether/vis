@@ -663,6 +663,28 @@
         (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; sentinel f2 excluded
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
   (it
+    "keeps synthetic slash commands out of later provider context"
+    (with-redefs
+      [persistance/db-list-session-turns
+       (constantly
+         [{:id "t1"
+           :status :done
+           :user-request "/draft list"
+           :content [(content/prose "2 drafts")]}])
+
+       persistance/db-list-session-turn-iterations
+       (constantly
+         [{:status :done
+           :forms [{:scope "t1/i1/f1"
+                    :tag :user-slash
+                    :src "/draft list"
+                    :result {"drafts" [{"label" "secret-feature"}]}}]}])]
+
+      (expect
+        (nil? (previous-turn-context
+                {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                "t2")))))
+  (it
     "is deterministic — same DB ⇒ identical output (process-invariant)"
     (with-redefs
       [persistance/db-list-session-turns

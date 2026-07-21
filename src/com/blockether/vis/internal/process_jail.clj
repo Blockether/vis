@@ -2,9 +2,9 @@
   "OS-level process CONTAINMENT — the 'jail' — that wraps the shell executors'
    argv so an allowed child is physically confined to the session workspace roots
    and, when network is off, cannot open a socket. This is real containment, a
-   layer BELOW the cooperative admission gate in `extension/authorize-process!`:
-   the admission gate decides *whether* a spawn is allowed (and can be walked
-   around — argv[0] is `bash`, the real binary hides inside the `-lc` string);
+   a real containment boundary — not a cooperative name/argv check, which can be
+   walked around since argv[0] is `bash` and the real binary hides inside the
+   `-lc` string;
    the jail constrains what the child can DO once it runs, regardless of what a
    script inside it tries (curl, python -c, /dev/tcp — all hit the same wall).
 
@@ -68,9 +68,8 @@
 ;; that can't read its own libreadline aborts before main, so this must be broad
 ;; enough to actually launch tools.
 (def ^:private macos-system-read-roots
-  ["/usr" "/bin" "/sbin" "/System" "/Library"
-   "/private/var/db/dyld" "/private/var/select" "/private/etc"
-   "/opt/homebrew" "/usr/local" "/opt/local"])
+  ["/usr" "/bin" "/sbin" "/System" "/Library" "/private/var/db/dyld" "/private/var/select"
+   "/private/etc" "/opt/homebrew" "/usr/local" "/opt/local"])
 
 (defn- sbpl-quote
   [s]

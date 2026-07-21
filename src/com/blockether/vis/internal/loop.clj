@@ -1706,64 +1706,64 @@
               [[] #{}]
               forms))))
 
+(defn- user-slash-iteration?
+  "True for a synthetic slash-command iteration. These rows stay in local
+   transcript/audit history but must never enter a later provider request."
+  [iteration]
+  (boolean
+    (some #(= "user-slash" (some-> (:tag %) name))
+          (:forms iteration))))
+
 (defn- previous-turn-context
-  "ALL prior ANSWERED turns as cross-process RESUME context — the conversation a
-   fresh process must reconstruct to continue. Each turn carries its user
-   request, its prose answer, and a LEAN index of the scopes it produced (scope +
-   the call that made it), so the model KNOWS what it asked and answered.
+  "ALL prior provider-visible answered turns as cross-process RESUME context.
+   Synthetic slash turns remain in local transcript history but are excluded so
+   their command text and results never enter a later provider request. Each
+   included turn carries its user request, prose answer, and a lean scope index.
    Oldest→newest; current turn excluded; nil when none."
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
-      (let
-        [d (:db-info environment)
-         ;; Summary-awareness: the model's session_fold/session_drop intents
-         ;; (persisted on the ctx blob) reshape the scope index UNIFORMLY via
-         ;; `prior-turn-scope-index`, so a prior turn renders the same here as
-         ;; it did live — dropped scopes vanish, folded scopes carry their gist.
-         summaries (some-> (:ctx-atom environment)
-                           deref
-                           (get "session_summaries"))
-         ;; Include every prior turn the model must reconstruct to continue:
-         ;; ANSWERED turns (Q/A carry) AND INTERRUPTED ones — a turn the
-         ;; process was killed mid-flight (e.g. a gateway restart) still
-         ;; carries the user's request, and a follow-up "continue" is
-         ;; meaningless without it. Skip only the current turn and a still-
-         ;; running one.
-         include? (fn [turn]
-                    (and (not= (str (:id turn)) (str current-turn-id))
-                         (not= :running (:status turn))
-                         (or (seq (some-> (:content turn)
-                                          answer-markdown
-                                          str
-                                          str/trim))
-                             (contains? #{:interrupted :error} (:status turn)))))
-         turns (filter include? (persistance/db-list-session-turns d session-id))]
-
+      (let [d (:db-info environment)
+            ;; Summary-awareness: the model's session_fold/session_drop intents
+            ;; (persisted on the ctx blob) reshape the scope index uniformly.
+            summaries (some-> (:ctx-atom environment)
+                              deref
+                              (get "session_summaries"))
+            ;; Include answered turns and interrupted/error turns needed for
+            ;; recovery. Skip the current turn and any still-running turn.
+            include? (fn [turn]
+                       (and (not= (str (:id turn)) (str current-turn-id))
+                            (not= :running (:status turn))
+                            (or (seq (some-> (:content turn)
+                                             answer-markdown
+                                             str
+                                             str/trim))
+                                (contains? #{:interrupted :error} (:status turn)))))
+            turns (filter include? (persistance/db-list-session-turns d session-id))]
         (not-empty
-          (mapv (fn [turn]
-                  (let
-                    [forms (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
-                                     (catch Throwable _ []))
-                                (filter #(= :done (:status %)))
-                                (mapcat :forms))
-                     ;; A form is worth listing if it produced EITHER a value
-                     ;; (:result) OR printed output (:stdout); fold/drop intents
-                     ;; reshape it (see prior-turn-scope-index). Print-only forms
-                     ;; carry only :stdout (de-conflated).
-                     scopes (vec (take 40 (prior-turn-scope-index forms summaries)))]
-
-                    {:user-request (:user-request turn)
-                     ;; An interrupted/error turn's only "answer" is the orphan-sweep
-                     ;; sentinel / provider fallback, or nil — never a normal
-                     ;; success answer. Drop it so the turn renders as
-                     ;; UNFINISHED work to continue, not as "you answered with
-                     ;; a warning/error".
-                     :answer (when-not (contains? #{:interrupted :error} (:status turn))
-                               (answer-markdown (:content turn)))
-                     :interrupted? (contains? #{:interrupted :error} (:status turn))
-                     :results scopes}))
-                turns))))
+          (into []
+                (keep (fn [turn]
+                        (let [iterations (->> (try
+                                                (persistance/db-list-session-turn-iterations
+                                                  d
+                                                  (:id turn))
+                                                (catch Throwable _ []))
+                                              (filter #(= :done (:status %)))
+                                              vec)]
+                          (when-not (some user-slash-iteration? iterations)
+                            (let [forms (mapcat :forms iterations)
+                                  scopes (vec
+                                           (take 40
+                                                 (prior-turn-scope-index forms summaries)))]
+                              {:user-request (:user-request turn)
+                               ;; Error/interrupted turns carry no normal answer.
+                               :answer (when-not
+                                         (contains? #{:interrupted :error} (:status turn))
+                                         (answer-markdown (:content turn)))
+                               :interrupted? (contains? #{:interrupted :error}
+                                                       (:status turn))
+                               :results scopes}))))
+                      turns)))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-turn-context-failed
@@ -6303,6 +6303,9 @@
                                    (try (persistance/db-list-session-turn-iterations d (:id q))
                                         (catch Throwable _ []))))
                          (filter #(= :done (:status %)))
+                         ;; Slash commands are local control-plane events. Keep
+                         ;; their rows for transcript/audit, never provider replay.
+                         (remove user-slash-iteration?)
                          (sort-by :created-at)
                          vec)
               iters-atts
