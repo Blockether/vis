@@ -93,6 +93,24 @@
           (finally (vis/unregister-resource! sid rid) (.delete log))))))
 
 (defdescribe
+  resource-mirror-dir-test
+  (it "keeps executable absolute dirs instead of display-only home abbreviations"
+      (let
+        [sid
+         (str "nrepl-ctx-dir-" (System/nanoTime))
+
+         dir
+         (.getCanonicalPath (java.io.File. (System/getProperty "user.home") "vis"))
+
+         rid
+         (rm/id-of dir)]
+
+        (try
+          (@#'nx/ensure-resource! sid {7001 {:status :up}} {:id rid :dir dir :port 7001 :tool :clj})
+          (expect (= dir (get-in (vis/get-resource sid rid) ["detail" "dir"])))
+          (finally (vis/unregister-resource! sid rid))))))
+
+(defdescribe
   resource-mirror-health-test
   (it "does not mark a classpath-resolving nREPL healthy before its port answers"
       (let

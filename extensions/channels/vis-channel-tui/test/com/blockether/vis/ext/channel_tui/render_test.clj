@@ -139,6 +139,33 @@
                    (expect (= 2 (count head-idxs)))
                    (expect (= 2 (- (second head-idxs) (first head-idxs)))))))
 
+(defdescribe native-tool-error-compact-test
+  ;; A FAILED native tool (cat/rg/patch/…) must NOT dump its synthesized
+  ;; `name({…args…})` invocation source into the client — that wall of the very
+  ;; args that failed is redundant chrome. The user channel shows only the
+  ;; compact error message. `python_execution` (the model's own program) still
+  ;; keeps its code so the inline caret has context.
+  (it "drops the args-source wall for a failed native tool, keeps the message"
+      (let [txt (str/join "\n"
+                          (render-forms
+                            [{:vis/tool-name "patch"
+                              :success? false
+                              :code "patch([{\"replace\": \"ARGWALLMARKER huge\nmulti\nline\"}])"
+                              :error {:message "No changes: patch is atomic. edit 1: stale from_anchor."}
+                              :result nil}])) ]
+        (expect (not (str/includes? txt "ARGWALLMARKER")))
+        (expect (str/includes? txt "stale from_anchor"))))
+  (it "keeps python_execution code + caret on error"
+      (let [txt (str/join "\n"
+                          (render-forms
+                            [{:vis/tool-name "python_execution"
+                              :success? false
+                              :code "print(PYCODEMARKER)\nx = 1/0"
+                              :error {:message "ZeroDivisionError: division by zero"}
+                              :result nil}])) ]
+        (expect (str/includes? txt "PYCODEMARKER"))
+        (expect (str/includes? txt "ZeroDivisionError")))))
+
 (defdescribe
   coalesce-forms-test
   ;; Regression: a DB-restored session whose trailer had >=2 adjacent `cat`

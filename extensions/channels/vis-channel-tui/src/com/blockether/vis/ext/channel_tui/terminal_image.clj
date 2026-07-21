@@ -123,10 +123,20 @@
 ;; =============================================================================
 
 (defn encode-kitty
-  "Kitty graphics `\\x1b_G` transmit+display sequence for base64 `data`,
-   sized to `cols`×`rows` cells. `C=1` keeps the cursor put after placement."
-  [^String data {:keys [cols rows]}]
-  (TerminalImage/encodeKitty data (int (or cols 0)) (int (or rows 0))))
+  "Kitty graphics `\\x1b_G` transmit+display sequence for base64 `data`, sized to
+   `cols`×`rows` cells. `C=1` keeps the cursor put after placement. When
+   `crop-top`/`crop-bottom` (cell rows scrolled past the band's top/bottom edge)
+   are positive, only the visible vertical slice is shown at native scale via the
+   Kitty source rectangle, sized from the transmitted image's `img-w`×`img-h`
+   pixel dimensions."
+  [^String data {:keys [cols rows crop-top crop-bottom img-w img-h]}]
+  (TerminalImage/encodeKitty data
+                             (int (or cols 0))
+                             (int (or rows 0))
+                             (int (or crop-top 0))
+                             (int (or crop-bottom 0))
+                             (int (or img-w 0))
+                             (int (or img-h 0))))
 
 (defn encode-iterm2
   "iTerm2 `\\x1b]1337;File=` inline-image sequence for base64 `data`."
@@ -149,25 +159,44 @@
   [path {:keys [cols rows]}]
   (TerminalImage/transcodePngBase64 (str path) (int cols) (int rows)))
 
-(defn- kitty-png-base64
-  "PNG base64 for the Kitty wire. A PNG file rides through verbatim (works in
-   the native image too); anything else is transcoded via ImageIO."
-  [path mime box]
-  (if (= mime "image/png") (read-base64 path) (transcode->png-base64 path box)))
+(defn- transcode->png
+  "Transcode `path` to a box-fitted PNG, returning `{:data :w :h}` — base64 plus
+   the TRANSMITTED (scaled) PNG's pixel dims — or nil on failure."
+  [path {:keys [cols rows]}]
+  (when-let [r (TerminalImage/transcodePng (str path) (int cols) (int rows))]
+    {:data (aget ^objects r 0) :w (aget ^objects r 1) :h (aget ^objects r 2)}))
+
+(defn- kitty-png
+  "PNG base64 + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
+   file rides through verbatim — transmitted at its intrinsic `width`×`height`
+   (and works in the native image too); anything else is transcoded via ImageIO."
+  [path mime {:keys [width height] :as box}]
+  (if (= mime "image/png")
+    (when-let [data (read-base64 path)]
+      {:data data :w width :h height})
+    (transcode->png path box)))
 
 (defn render-sequence
   "Full escape sequence that draws the image at `path` (`mime`) into a
    `cols`×`rows` cell box for the current terminal, or nil when the terminal
-   can't render inline images / the file can't be decoded."
+   can't render inline images / the file can't be decoded. `box` may carry
+   `:crop-top`/`:crop-bottom` (cell rows scrolled past the band edge) plus the
+   image's intrinsic `:width`/`:height`, so a partly-scrolled Kitty image renders
+   its visible slice at native scale instead of vanishing."
   [path mime box]
   (when-let [proto (images-protocol)]
     (case proto
-      ;; Kitty (Ghostty/kitty/WezTerm/Warp): f=100 is PNG-only — transcode.
+      ;; Kitty (Ghostty/kitty/WezTerm/Warp): f=100 is PNG-only — transcode, then
+      ;; crop to the visible slice via the source rectangle when scrolled.
       :kitty
-      (when-let [data (kitty-png-base64 path mime box)]
-        (encode-kitty data box))
+      (when-let [{:keys [data w h]} (kitty-png path mime box)]
+        (encode-kitty data
+                      (assoc box
+                        :img-w w
+                        :img-h h)))
 
-      ;; iTerm2 accepts any container format as-is.
+      ;; iTerm2 accepts any container format as-is (no source-crop; the fitting
+      ;; pass shrinks a bottom-overflowing box instead).
       :iterm2
       (when-let [data (read-base64 path)]
         (encode-iterm2 data box))

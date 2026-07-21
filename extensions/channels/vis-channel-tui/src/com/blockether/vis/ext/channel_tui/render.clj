@@ -1783,7 +1783,9 @@
 (def ^:dynamic *image-placements*
   "When bound to an atom holding a vector, `draw-chat-bubble!` conj's the
    EXACT painted screen position of every inline-image row it draws:
-   `{:row abs-screen-row :col abs-screen-col :img {...}}`. The screen loop
+   `{:row abs-screen-row :col abs-screen-col :img {...} :img-idx cell-row-index}`
+   (`:img-idx` is the row's 0-based offset within the image box, so the screen
+   loop can tell how many rows scrolled past the band's top edge). The screen loop
    drains it after the delta refresh to place Kitty/iTerm2 graphics precisely
    over the reserved cells — recording from inside the paint loop avoids
    re-deriving the bubble's chrome offsets (role banner, top pad, turn
@@ -2198,9 +2200,12 @@
                   ;; Reserved inline-image row: record its EXACT painted
                   ;; position (absolute screen coords) for the post-refresh
                   ;; graphics pass. The row itself paints blank below.
-                  (when (and *image-placements* (= :image (:kind meta)))
+                  (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
-                      {:row (+ (long viewport-top) (long y)) :col x :img (:img meta)}))
+                      {:row (+ (long viewport-top) (long y))
+                       :col x
+                       :img (:img meta)
+                       :img-idx (:img-idx meta)}))
                   ;; Every painted image row (paint row + pads) is a click
                   ;; target: clicking the picture opens the file in the OS
                   ;; previewer (`:image` branch of `open-click-target!`).
@@ -4404,6 +4409,17 @@
           is-error?
           (and has-status? (not success?))
 
+          ;; A NATIVE tool call (cat/rg/patch/…, not python_execution) that
+          ;; FAILED: its synthesized `name({…args…})` source is redundant
+          ;; chrome — a wall of the very args that failed — so the client
+          ;; drops it and shows only the compact error message. Only
+          ;; python_execution (the model's OWN program) keeps its code, whose
+          ;; inline `^---` caret needs the surrounding source.
+          native-tool-error?
+          (and is-error?
+               (some? (:vis/tool-name form))
+               (not= (name (:vis/tool-name form)) "python_execution"))
+
           ;; BLOCK N header removed per user directive (also gated
           ;; on `show-header?` which is now always false). Keep
           ;; `expr-hdr` defined as empty so the existing `(when
@@ -4481,12 +4497,14 @@
           ;; its plain segments so the column math (ANSI-blind) and overflow
           ;; guards stay correct.
           code-lines
-          (or inline-error-code-lines
-              (vec (mapcat (fn [plain colored]
-                             (let [folded (p/fold-cols plain fill-w)]
-                               (if (and colored (= 1 (count folded))) [colored] folded)))
-                           (str/split-lines code-text)
-                           (or colored-lines (repeat nil)))))
+          (cond native-tool-error? []
+                :else (or inline-error-code-lines
+                          (vec
+                            (mapcat (fn [plain colored]
+                                      (let [folded (p/fold-cols plain fill-w)]
+                                        (if (and colored (= 1 (count folded))) [colored] folded)))
+                                    (str/split-lines code-text)
+                                    (or colored-lines (repeat nil))))))
 
           code-node-id
           (when session-id
@@ -5847,15 +5865,17 @@
           (max 1 (long (:rows box)))
 
           img
-          {:path path :mime mime :cols (:cols box) :rows rows}]
+          {:path path :mime mime :cols (:cols box) :rows rows :width width :height height}]
 
          ;; First reserved row carries the paint meta; the rest are
          ;; blanks the graphics sequence spans over. Every row is
          ;; tagged (and carries `:img`) so `trim-user-prompt-margin-entries`
          ;; doesn't mistake the reserved box for trailing margin AND so
          ;; each painted row registers its own click region.
-         (into [{:line "" :meta {:kind :image :img img :node-id (str node-id)}}]
-               (repeat (dec rows) {:line "" :meta {:kind :image-pad :img img}})))
+         (into [{:line "" :meta {:kind :image :img img :img-idx 0 :node-id (str node-id)}}]
+               (map (fn [i]
+                      {:line "" :meta {:kind :image-pad :img img :img-idx (inc (long i))}})
+                    (range (dec rows)))))
        ;; Fallback: describe the image so headless / unsupported
        ;; terminals still see what was attached (ASCII body included).
        (let

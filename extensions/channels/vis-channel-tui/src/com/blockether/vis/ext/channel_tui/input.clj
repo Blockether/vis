@@ -802,30 +802,87 @@
   []
   (try (shell-clipboard-paste!) (catch Throwable _ nil)))
 
+(def ^:private osc52-truncation-warn-bytes
+  "Base64 payloads beyond this many bytes are silently dropped or truncated
+   by many terminals' OSC 52 parsers (classic xterm caps far lower). We still
+   send — modern emulators and tmux handle large writes — but log a warning so a
+   silently-truncated big copy is diagnosable instead of a false green."
+  100000)
+
+(defn- osc52-sequence
+  "Build the `ESC ] 52 ; c ; <base64> BEL` clipboard sequence for `text`, adapting
+   to a terminal multiplexer that `env-get` reveals (`$TMUX`, or GNU `screen` via
+   `$STY` + a `screen*` `$TERM`). Inside a multiplexer a copy can fail two ways:
+   tmux drops raw OSC 52 unless `set-clipboard on`, and drops DCS passthrough unless
+   `allow-passthrough on` — neither is a universal default. So under tmux we emit
+   BOTH the raw sequence and the DCS passthrough (`ESC P tmux; ... ESC \\` with every
+   inner `ESC` doubled), an idempotent double clipboard-set that copies across the
+   widest range of configs. GNU screen only forwards via DCS passthrough and
+   truncates an over-long DCS string, so its base64 is split into 76-byte chunks
+   rejoined by `<end-DCS><start-DCS>`. tmux/screen wrapping matches go-osc52."
+  ^String [^String text env-get]
+  (let
+    [b64
+     (.encodeToString (java.util.Base64/getEncoder) (.getBytes text "UTF-8"))
+
+     base
+     (str "\u001B]52;c;" b64 "\u0007")
+
+     tmux?
+     (some? (env-get "TMUX"))
+
+     term
+     (env-get "TERM")
+
+     screen?
+     (and (not tmux?) (some? (env-get "STY")) (some? term) (str/starts-with? term "screen"))
+
+     screen-body
+     ;; GNU screen truncates a DCS string past its length limit, so chunk the
+     ;; base64 into 76-byte pieces rejoined by <end-DCS><start-DCS> (go-osc52).
+     (str/join "\u001B\\\u001BP" (map #(apply str %) (partition-all 76 b64)))]
+
+    ;; tmux: emit BOTH the raw OSC 52 (forwarded when `set-clipboard on`) and the
+    ;; DCS passthrough (reaches the outer term when `allow-passthrough on`). Neither
+    ;; config is universal, so sending both — idempotent clipboard set — copies
+    ;; across the widest range of tmux setups. Ref: opencode #19982/#26815 (raw) vs
+    ;; claude-code #38944 (DCS unreliable in alt-screen); dual-emit satisfies both.
+    (cond tmux? (str base "\u001BPtmux;" (str/replace base "\u001B" "\u001B\u001B") "\u001B\\")
+          screen? (str "\u001BP\u001B]52;c;" screen-body "\u0007\u001B\\")
+          :else base)))
+
 (defn osc52-copy!
   "Terminal-native clipboard write via the OSC 52 escape
    (`ESC ] 52 ; c ; <base64> BEL`). Needs NO external binary and works
    over SSH: the terminal emulator itself puts `text` on the user's LOCAL
    system clipboard. Bytes go straight to the controlling TTY (`out`) —
-   the same channel `enable-bracketed-paste!` writes to. Returns true when
-   the sequence was written and flushed, false on any failure (nil/closed
-   stream). Best-effort: a terminal that doesn't implement OSC 52 (or has
-   it disabled) silently drops the sequence, so `true` means 'sent', not
-   'confirmed on the clipboard'."
-  [^java.io.OutputStream out ^String text]
-  (try (if (nil? out)
-         false
-         (let
-           [b64
-            (.encodeToString (java.util.Base64/getEncoder) (.getBytes text "UTF-8"))
-
-            payload
-            (str "\u001B]52;c;" b64 "\u0007")]
-
-           (.write out (.getBytes payload "UTF-8"))
-           (.flush out)
-           true))
-       (catch Throwable _ false)))
+   the same channel `enable-bracketed-paste!` writes to. Automatically wraps
+   the sequence for tmux / GNU screen so it survives a multiplexer. Returns
+   true when the sequence was written and flushed, false on any failure
+   (nil/closed stream). Best-effort: a terminal that doesn't implement OSC 52
+   (or has it disabled) silently drops the sequence, so `true` means 'sent',
+   not 'confirmed on the clipboard'."
+  ([out text]
+   (osc52-copy! out
+                text
+                (fn [k]
+                  (System/getenv k))))
+  ([^java.io.OutputStream out ^String text env-get]
+   (try (if (nil? out)
+          false
+          (let [b64-len (quot (* 4 (long (count (.getBytes text "UTF-8")))) 3)]
+            (when (> b64-len (long osc52-truncation-warn-bytes))
+              (try (tel/log! {:level :warn
+                              :id ::osc52-large
+                              :data {:b64-bytes b64-len}
+                              :msg (str "osc52-copy! large payload ("
+                                        b64-len
+                                        " b64 bytes) — some terminals truncate OSC 52")})
+                   (catch Throwable _ nil)))
+            (.write out (.getBytes (osc52-sequence text env-get) "UTF-8"))
+            (.flush out)
+            true))
+        (catch Throwable _ false))))
 
 (defn clipboard-copy!
   "Best-effort copy `text` onto the system clipboard. Tries the OS shell

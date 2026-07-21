@@ -1456,9 +1456,10 @@ def __vis_native_result_scan__(__vis_tree__):
 
                gist
                (fn [nm]
-                 ;; first non-blank line of the registered doc, capped
-                 ;; so `apropos` stays a scannable name -> gist index
-                 ;; (full text is `doc(name)`).
+                 ;; first non-blank line of the registered doc, capped so
+                 ;; `apropos` stays a scannable name -> gist index while still
+                 ;; carrying enough essence to read (the TUI table-cell wrapper
+                 ;; wraps it across rows; full text is `doc(name)`).
                  (let
                    [full
                     (when (and docs (.hasHashEntry docs (->py nm)))
@@ -1469,7 +1470,7 @@ def __vis_native_result_scan__(__vis_tree__):
                       (first (remove str/blank? (str/split-lines (str full)))))]
 
                    (cond (str/blank? (str line)) ""
-                         (> (count line) 100) (str (subs line 0 99) "…")
+                         (> (count line) 240) (str (subs line 0 239) "…")
                          :else line)))]
 
               ;; Return a REAL native Python dict {name -> gist} (order preserved)

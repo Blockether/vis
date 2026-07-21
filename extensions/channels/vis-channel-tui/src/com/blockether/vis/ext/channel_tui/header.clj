@@ -28,6 +28,7 @@
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.flex :as flex]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             ;; Channel-agnostic header policy (slot ratios, workspace
@@ -746,19 +747,20 @@
     ;; affordance. Each chip shows its Emacs chord inline (`C-x h` / `C-x f`)
     ;; so the binding is discoverable right on the button; C-x C-p opens the full
     ;; searchable palette.
-    (reduce (fn [x [kind label]]
-              (let [x (long x)]
-                (+ x
-                   chip-gap
-                   #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
-                   (long (components/button! g
-                                             x
-                                             content-row
-                                             label
-                                             kind
-                                             {:register? *register-click-regions?*})))))
-            cluster-start
-            chips)
+    ;; A declarative flex ROW lays the chips out left→right (`:gap` between),
+    ;; so the coordinate threading is gone — each chip is a measured node that
+    ;; delegates to the shared `button!` (its own paint + hover + click).
+    (flex/render!
+      g
+      cluster-start
+      content-row
+      (flex/row
+        (for [[kind label] chips]
+          (flex/node
+            (p/display-width label)
+            (fn [g x r]
+              (components/button! g x r label kind {:register? *register-click-regions?*}))))
+        {:gap chip-gap}))
     ;; Extension-contributed rows.
     (loop
       [row

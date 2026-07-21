@@ -17,6 +17,7 @@
             ;; tool calls below see the same op-tag registry as production.
             [com.blockether.vis.internal.foundation.core]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
+            [com.blockether.vis.internal.render :as render]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -820,8 +821,7 @@
         ;; Force-clock the file backwards so the next read sees a fresh mtime
         ;; distinct from `mtime0` regardless of filesystem millis precision.
         (.setLastModified (fs/file path) (- (long mtime0) 60000))
-        (let
-          [r (write {"path" path "content" "GAMMA\n" "expected_mtime" mtime0})]
+        (let [r (write {"path" path "content" "GAMMA\n" "expected_mtime" mtime0})]
           (expect (false? (:success? r)))
           (expect (= :stale
                      (-> r
@@ -1656,26 +1656,25 @@
                        :failures
                        first
                        :reason)))))
-  (it
-    "a changed anchor target fails closed without an mtime guard"
-    (let
-      [patch
-       (private-fn "patch-safe")
+  (it "a changed anchor target fails closed without an mtime guard"
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-       p
-       (write-temp! "bbfs/patch-target-changed.txt" "hello\nworld\n")
+         p
+         (write-temp! "bbfs/patch-target-changed.txt" "hello\nworld\n")
 
-       anchor
-       (patch/line-anchor 1 "hello")
+         anchor
+         (patch/line-anchor 1 "hello")
 
-       _
-       (spit p "HELLO-ELSEWHERE\nworld\n")
+         _
+         (spit p "HELLO-ELSEWHERE\nworld\n")
 
-       r
-       (patch [{"path" p "from_anchor" anchor "replace" "x"}])]
+         r
+         (patch [{"path" p "from_anchor" anchor "replace" "x"}])]
 
-      (expect (false? (:success? r)))
-      (expect (= "HELLO-ELSEWHERE\nworld\n" (slurp p)))))
+        (expect (false? (:success? r)))
+        (expect (= "HELLO-ELSEWHERE\nworld\n" (slurp p)))))
   (it "empty edit vector is rejected"
       (let [patch (private-fn "patch-safe")]
         (expect (throws? clojure.lang.ExceptionInfo #(patch [])))))
@@ -2408,14 +2407,9 @@
     (it "rejects file-wide mtime/size guards"
         (doseq [field ["expected_mtime" "expected_size"]]
           (let
-            [ex
-             (try (coerce [{"path" "p.txt"
-                            "from_anchor" "1:abc"
-                            "replace" "new"
-                            field 1}])
-                  nil
-                  (catch clojure.lang.ExceptionInfo e e))]
-
+            [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" field 1}])
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
             (expect (some? ex))
             (expect (= [field] (:unknown (ex-data ex)))))))
     (it "rejects an edit with no locator"
@@ -2646,6 +2640,35 @@
           (expect (= "`foo` · 1 hit in 1 file · in `src`, `test`" (:summary scoped)))
           (expect (= "`foo` · 1 hit in 1 file" (:summary default)))
           (expect (= "`foo` · 1 matching file · in `src`" (:summary files-only)))))
+    (it "a needle CONTAINING backticks stays ONE clean chip (no chip-glue corruption)"
+        ;; Regression: a naive `` `needle` `` broke when the needle held backticks
+        ;; (e.g. an rg regex term). CommonMark closed the span early and swallowed
+        ;; the following ` OR ` separators — the `parse-inlineORinline` display bug.
+        ;; md-inline-code now fences with more backticks + symmetric padding.
+        (let
+          [summary (:summary (render {"matches" {"x.clj" {"1:abc" "l"}}
+                                      "hit_count" 63
+                                      "file_count" 1
+                                      "needles" ["parse-inline" "\\\\``" "inline"]}))
+           ast (com.blockether.vis.internal.render/markdown->ast summary)
+           ;; every rendered inline node under the paragraph
+           inlines (drop 2 (nth ast 2))
+           codes (->> inlines
+                      (filter #(= :c (first %)))
+                      (map #(nth % 2))
+                      set)
+           spans (->> inlines
+                      (filter #(= :span (first %)))
+                      (map #(nth % 2))
+                      set)]
+
+          ;; all three needles survive as their OWN code chips
+          (expect (contains? codes "parse-inline"))
+          (expect (contains? codes "\\\\``"))
+          (expect (contains? codes "inline"))
+          ;; the joiners stay as plain " OR " spans — never glued into a chip
+          (expect (contains? spans " OR "))
+          (expect (not (contains? codes "OR")))))
     (it "content mode right-aligns the gutter to the file's widest line number"
         ;; Same class as the cat-card margin bug: mixed 1- and 4-digit line
         ;; numbers must NOT stagger the text column. Each row's text starts at

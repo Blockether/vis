@@ -288,6 +288,20 @@
    a false refuse costs one re-read, a false accept corrupts the file."
   40)
 
+(defn- unwrap-anchor
+  "Tolerate an anchor that arrives wrapped in stray whitespace or quote chars — a
+   common JSON/LLM mistake where the `lineno:hash` string is re-quoted, so
+   `\"325:0e3\"` arrives WITH the literal quote characters and `parse-long` chokes
+   on the leading quote. A real anchor is only digits, a colon and hex, so
+   trimming surrounding whitespace + matching `\"'` quotes can never corrupt a
+   valid one; it just lets the mis-quoted case parse (mirrors rg's arg coercion)."
+  ^String [^String s]
+  (-> s
+      str/trim
+      (str/replace #"^['\"`]+" "")
+      (str/replace #"['\"`]+$" "")
+      str/trim))
+
 (defn- parse-anchor
   "Parse a `<line-number>:<hash>` anchor into `{:line L :hash H}` (L a 1-based
    long, H the hex content hash). The line number is REQUIRED: an anchor with no
@@ -298,7 +312,7 @@
   [anchor]
   (let
     [s
-     (str anchor)
+     (unwrap-anchor (str anchor))
 
      i
      (.indexOf s (int \:))

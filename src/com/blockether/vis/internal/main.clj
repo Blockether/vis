@@ -2223,7 +2223,11 @@
     ;; DELETE removes the draft too: trash the session's draft clones (primary
     ;; + auto-cloned filesystem roots) before the DB tree. Draft-only — a trunk
     ;; workspace's roots are the user's real dirs and are never touched.
-    (try (workspace/discard-session-clones! d (:id session)) (catch Throwable _ nil))
+    ;; CLI one-shot: deref so reclamation finishes before the JVM exits (the
+    ;; shared discard executor is a daemon thread and would be killed mid-delete).
+    (try (some-> (workspace/discard-session-clones! d (:id session))
+                 deref)
+         (catch Throwable _ nil))
     (lp/delete! (:id session))
     (stdout! (str "Deleted session " (:id session)))
     (shutdown-agents)))

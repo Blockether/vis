@@ -635,6 +635,135 @@
 
         (expect (= "line zero\nline one\nline two\nline three"
                    (selected-transcript-text [message] layout 40 {} {} sel)))))
+  (it
+    "copies a multi-bubble chunk that auto-scrolled off-screen while dragging"
+    (let
+      [messages
+       [{:role :assistant :prewrapped-lines ["Line A0" "Line A1" "Line A2"]}
+        {:role :assistant :prewrapped-lines ["Line B0" "Line B1"]}
+        {:role :assistant :prewrapped-lines ["Line C0" "Line C1" "Line C2"]}
+        {:role :assistant :prewrapped-lines ["Line D0" "Line D1"]}]
+
+       ;; Viewport scrolled to the bottom: only the last bubble is on
+       ;; screen, every earlier bubble has scrolled out of :visible.
+       layout
+       {:total-h 18
+        :heights [5 4 5 4]
+        :offsets [0 5 9 14 18]
+        :visible [{:idx 3
+                   :top 14
+                   :height 4
+                   :projected {:role :assistant :prewrapped-lines ["Line D0" "Line D1"]}}]}]
+
+      ;; Whole-document drag still copies every off-screen row, not just
+      ;; the one visible bubble.
+      (expect
+        (=
+          "Line A0\nLine A1\nLine A2\nLine B0\nLine B1\nLine C0\nLine C1\nLine C2\nLine D0\nLine D1"
+          (selected-transcript-text messages
+                                    layout
+                                    40
+                                    {}
+                                    {}
+                                    {:anchor (selection/point 0 1)
+                                     :focus (selection/point 39 16)})))
+      ;; A partial chunk landing entirely off-screen also survives.
+      (expect (= "Line B1\nLine C0\nLine C1"
+                 (selected-transcript-text messages
+                                           layout
+                                           40
+                                           {}
+                                           {}
+                                           {:anchor (selection/point 0 7)
+                                            :focus (selection/point 39 11)})))
+      ;; Reversed drag (focus above anchor) normalizes to the same chunk.
+      (expect
+        (=
+          "Line A0\nLine A1\nLine A2\nLine B0\nLine B1\nLine C0\nLine C1\nLine C2\nLine D0\nLine D1"
+          (selected-transcript-text messages
+                                    layout
+                                    40
+                                    {}
+                                    {}
+                                    {:anchor (selection/point 39 16)
+                                     :focus (selection/point 0 1)})))))
+  (it
+    "copies a very long off-screen drag spanning dozens of scrolled-out bubbles"
+    (let
+      [n-bubbles
+       60
+
+       lines-per
+       5
+
+       messages
+       (vec (for [b (range n-bubbles)]
+              {:role :assistant
+               :prewrapped-lines (vec (for [l (range lines-per)]
+                                        (format "B%02d-L%d" b l)))}))
+
+       height-per
+       (+ lines-per 2)
+
+       heights
+       (vec (repeat n-bubbles height-per))
+
+       total-h
+       (* n-bubbles height-per)
+
+       offsets
+       (vec (reductions + 0 heights))
+
+       ;; Viewport scrolled to the very bottom: only the LAST bubble is
+       ;; visible; 59 earlier bubbles (400+ rows) are scrolled off-screen.
+       layout
+       {:total-h total-h
+        :heights heights
+        :offsets offsets
+        :visible [{:idx (dec n-bubbles)
+                   :top (nth offsets (dec n-bubbles))
+                   :height height-per
+                   :projected (nth messages (dec n-bubbles))}]}
+
+       all-lines
+       (fn [from to]
+         (clojure.string/join "\n"
+                              (for
+                                [b
+                                 (range from to)
+
+                                 l
+                                 (range lines-per)]
+
+                                (format "B%02d-L%d" b l))))]
+
+      ;; Full-document drag from top to bottom copies all 300 content lines.
+      (expect (= (all-lines 0 n-bubbles)
+                 (selected-transcript-text messages
+                                           layout
+                                           40
+                                           {}
+                                           {}
+                                           {:anchor (selection/point 0 1)
+                                            :focus (selection/point 39 (- total-h 2))})))
+      ;; Reversed long drag normalizes to the same full document.
+      (expect (= (all-lines 0 n-bubbles)
+                 (selected-transcript-text messages
+                                           layout
+                                           40
+                                           {}
+                                           {}
+                                           {:anchor (selection/point 39 (- total-h 2))
+                                            :focus (selection/point 0 1)})))
+      ;; A long partial chunk entirely off-screen (bubbles 10..50) survives.
+      (expect (= (all-lines 10 51)
+                 (selected-transcript-text messages
+                                           layout
+                                           40
+                                           {}
+                                           {}
+                                           {:anchor (selection/point 0 (+ (nth offsets 10) 1))
+                                            :focus (selection/point 39 (+ (nth offsets 50) 5))})))))
   (it "copies visible live text for pending assistant drag selection"
       (let
         [message
@@ -655,6 +784,92 @@
          {:anchor (selection/point 0 1) :focus (selection/point 39 1)}]
 
         (expect (= "live visible text" (selected-transcript-text [message] layout 40 {} {} sel)))))
+  (it "recovers a pending bubble's off-screen head when its top scrolled above the viewport"
+      ;; A streaming bubble whose HEAD scrolled off the top (`:top` < 0) keeps
+      ;; only its visible tail in the live paint. The copy path must rebuild the
+      ;; off-screen head from the canonical projection, not drop it.
+      (let
+        [message
+         {:role :assistant
+          :pending? true
+          :text (str "HEADSTART alpha beta gamma delta epsilon zeta "
+                     "eta theta iota kappa lambda mu nu xi TAILEND")}
+
+         ;; live paint holds only the last visible line (tail-pinned)
+         layout
+         {:total-h 1000
+          :heights [1000]
+          :offsets [0 1000]
+          :visible [{:idx 0
+                     :top -20
+                     :height 1000
+                     :projected {:role :assistant
+                                 :prewrapped-lines ["kappa lambda mu nu xi TAILEND"]}}]}
+
+         sel
+         {:anchor (selection/point 0 0) :focus (selection/point 39 999)}
+
+         copied
+         (selected-transcript-text [message] layout 40 {} {} sel)]
+
+        (expect (clojure.string/includes? copied "HEADSTART") "off-screen head must be recovered")
+        (expect (clojure.string/includes? copied "TAILEND") "visible tail must remain")))
+  (it "keeps a fully-visible pending bubble on its live paint (no head injection)"
+      ;; `:top` >= 0 means nothing scrolled off; the canonical projection may
+      ;; still be placeholder IR, so the live paint must be used verbatim.
+      (let
+        [message
+         {:role :assistant :pending? true :text "Sending request to provider..."}
+
+         layout
+         {:total-h 4
+          :heights [4]
+          :offsets [0 4]
+          :visible [{:idx 0
+                     :top 0
+                     :height 4
+                     :projected {:role :assistant :prewrapped-lines ["live visible text"]}}]}
+
+         sel
+         {:anchor (selection/point 0 1) :focus (selection/point 39 3)}]
+
+        (expect (= "live visible text" (selected-transcript-text [message] layout 40 {} {} sel)))))
+  (it "copies a fully-visible multi-line streaming pending bubble with correct structure"
+      ;; The live paint of a still-streaming answer holds several wrapped lines.
+      ;; Dragging over the whole bubble must copy EVERY live line, in order,
+      ;; newline-joined — not just the first/last or the placeholder IR text.
+      (let
+        [message
+         {:role :assistant
+          :pending? true
+          :text "placeholder IR"
+          :prewrapped-lines ["live line one" "live line two" "live line three" "live line four"]}
+
+         layout
+         {:total-h 6
+          :heights [6]
+          :offsets [0 6]
+          :visible [{:idx 0
+                     :top 0
+                     :height 6
+                     :projected {:role :assistant
+                                 :prewrapped-lines ["live line one" "live line two"
+                                                    "live line three" "live line four"]}}]}
+
+         ;; whole-bubble drag spanning header/pad down past the last line
+         sel-all
+         {:anchor (selection/point 0 0) :focus (selection/point 39 5)}
+
+         ;; partial mid drag over only the middle two live lines
+         sel-mid
+         {:anchor (selection/point 0 2) :focus (selection/point 39 3)}]
+
+        (expect (= "live line one\nlive line two\nlive line three\nlive line four"
+                   (selected-transcript-text [message] layout 40 {} {} sel-all))
+                "whole streaming bubble copies all live lines in order")
+        (expect (= "live line two\nlive line three"
+                   (selected-transcript-text [message] layout 40 {} {} sel-mid))
+                "partial drag copies exactly the spanned live lines")))
   (it "uses release viewport for drag-copy focus after scrolling beyond the first screen"
       (expect (= (selection/point 7 42)
                  (release-selection-focus (selection/point 3 10)

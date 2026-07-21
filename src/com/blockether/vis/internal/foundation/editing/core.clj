@@ -2581,12 +2581,24 @@
 
      {:keys [origs spans checks failures]}
      (loop
-       [idx 0
-        remaining edits
-        origs {}
-        spans {}
-        checks []
-        failures []]
+       [idx
+        0
+
+        remaining
+        edits
+
+        origs
+        {}
+
+        spans
+        {}
+
+        checks
+        []
+
+        failures
+        []]
+
        (if-let [{:strs [path replace from_anchor to_anchor]} (first remaining)]
          (let [resolved (resolve-edit-target path)]
            (if-let [path-error (:error resolved)]
@@ -2610,11 +2622,12 @@
                             :from_anchor from_anchor
                             :to_anchor (or to_anchor from_anchor)}
                 res (patch/resolve-anchor-edit-span current from_anchor to_anchor replace)]
+
                (if-let [err (:error res)]
                  (let
                    [check (assoc base-check
-                                :reason (:reason err)
-                                :hash-error err)]
+                            :reason (:reason err)
+                            :hash-error err)]
                    (recur (inc idx)
                           (next remaining)
                           origs
@@ -2629,6 +2642,7 @@
                           :path rel
                           :edit-index idx}
                     check (assoc base-check :applied-positions [(:applied-line res)])]
+
                    (recur (inc idx)
                           (next remaining)
                           origs
@@ -2645,6 +2659,7 @@
           bad (first (filter (fn [[a b]]
                                (> (long (:end a)) (long (:start b))))
                              (partition 2 1 sorted)))]
+
          (if bad
            {:failure {:edit-index (:edit-index (second bad))
                       :path path
@@ -2654,9 +2669,7 @@
                    :path (:path (first file-spans))
                    :before before
                    :after (reduce (fn [content {:keys [start end replacement]}]
-                                    (str (subs content 0 start)
-                                         replacement
-                                         (subs content end)))
+                                    (str (subs content 0 start) replacement (subs content end)))
                                   before
                                   (reverse sorted))}})))
 
@@ -2673,61 +2686,59 @@
 
 (defn- explain-failure
   [{:keys [edit-index path reason hash-error message path-error]}]
-  (or
-    message
-    (:message path-error)
-    (let [head (str "edit " edit-index " in " path)]
-      (case reason
-        :hashline-malformed
-        (str head
-             ": malformed "
-             (name (:which hash-error))
-             "_anchor "
-             (pr-str (:anchor hash-error))
-             "; use a fresh `lineno:hash` from `cat`.")
+  (or message
+      (:message path-error)
+      (let [head (str "edit " edit-index " in " path)]
+        (case reason
+          :hashline-malformed
+          (str head
+               ": malformed "
+               (name (:which hash-error))
+               "_anchor "
+               (pr-str (:anchor hash-error))
+               "; use a fresh `lineno:hash` from `cat`.")
 
-        :hashline-line-out-of-range
-        (str head
-             ": anchor line "
-             (:line hash-error)
-             " is outside the "
-             (:lines hash-error)
-             "-line file; refresh it with `cat`.")
+          :hashline-line-out-of-range
+          (str head
+               ": anchor line "
+               (:line hash-error)
+               " is outside the "
+               (:lines hash-error)
+               "-line file; refresh it with `cat`.")
 
-        :hashline-not-found
-        (str head
-             ": stale " (name (:which hash-error))
-             "_anchor" (if-let [ca (:current-anchor hash-error)]
-                         (str "; line " (:stated-line hash-error) " is now `" ca "`.")
-                         "; refresh the target with `cat`."))
+          :hashline-not-found
+          (str head
+               ": stale " (name (:which hash-error))
+               "_anchor" (if-let [ca (:current-anchor hash-error)]
+                           (str "; line " (:stated-line hash-error) " is now `" ca "`.")
+                           "; refresh the target with `cat`."))
 
-        :hashline-misplaced
-        (str head
-             ": anchor says line "
-             (:stated-line hash-error)
-             " but matches line(s) "
-             (pr-str (:found-lines hash-error))
-             "; refresh the target before editing.")
+          :hashline-misplaced
+          (str head
+               ": anchor says line "
+               (:stated-line hash-error)
+               " but matches line(s) "
+               (pr-str (:found-lines hash-error))
+               "; refresh the target before editing.")
 
-        :overlapping-edits
-        (str head ": overlapping targets; merge them or use separate patch calls.")
+          :overlapping-edits
+          (str head ": overlapping targets; merge them or use separate patch calls.")
 
-        :hashline-range-inverted
-        (str head
-             ": to_anchor line "
-             (:to-line hash-error)
-             " precedes from_anchor line "
-             (:from-line hash-error)
-             ".")
+          :hashline-range-inverted
+          (str head
+               ": to_anchor line "
+               (:to-line hash-error)
+               " precedes from_anchor line "
+               (:from-line hash-error)
+               ".")
 
-        (str head " failed.")))))
+          (str head " failed.")))))
 
 (defn- failure-family
   "Group anchor-resolution failures that share one stale-target cause."
   [{:keys [reason]}]
   (case reason
-    (:hashline-not-found :hashline-misplaced
-                         :hashline-line-out-of-range :hashline-range-inverted)
+    (:hashline-not-found :hashline-misplaced :hashline-line-out-of-range :hashline-range-inverted)
     :stale-anchors
 
     reason))
@@ -4205,6 +4216,30 @@
   [k]
   (str k))
 
+(defn- md-inline-code
+  "CommonMark-safe inline code span for `s`. A naive `` `s` `` breaks when `s`
+   itself contains backticks (e.g. a regex rg needle like `` \\`` ``): the inner
+   backtick closes the span early, corrupting every following span on the line
+   (the `parse-inlineORinline` chip-glue bug). Pick a fence one longer than the
+   longest backtick run in `s`, and pad with a space when `s` starts/ends with a
+   backtick (CommonMark strips a single symmetric leading+trailing space), so the
+   term renders as ONE clean chip."
+  [s]
+  (let
+    [s
+     (str s)
+
+     longest
+     (transduce (map count) max 0 (re-seq #"`+" s))
+
+     fence
+     (apply str (repeat (inc (long longest)) \`))
+
+     pad
+     (if (or (str/starts-with? s "`") (str/ends-with? s "`")) " " "")]
+
+    (str fence pad s pad fence)))
+
 (defn- rg-anchor-lineno
   "The leading line number from an `<lineno>:<hash>` anchor key (string form)."
   [k]
@@ -4316,7 +4351,7 @@
      (seq (get r "needles"))
 
      query-chip
-     (when needles (str/join " OR " (map #(str "`" % "`") needles)))
+     (when needles (str/join " OR " (map md-inline-code needles)))
 
      ;; NAME the search SCOPE too — WHERE rg looked. The implicit `["."]`
      ;; default (the whole workspace) stays off the headline; an explicit
@@ -4325,7 +4360,7 @@
      (seq (remove #(= "." (kw->str %)) (get r "paths")))
 
      scope-chip
-     (when scope (str "in " (str/join ", " (map #(str "`" (kw->str %) "`") scope))))
+     (when scope (str "in " (str/join ", " (map #(md-inline-code (kw->str %)) scope))))
 
      with-query
      (fn [tail]
@@ -4351,9 +4386,8 @@
                files
                (for [[path hits] (get r "matches")]
                  (let [width (rg-gutter-width hits)]
-                   (str "`"
-                        (disp-path (kw->str path))
-                        "`\n\n```\n"
+                   (str (md-inline-code (disp-path (kw->str path)))
+                        "\n\n```\n"
                         (str/join "\n"
                                   (mapcat (fn [[k v]]
                                             (rg-hit-rows needles width k v))

@@ -1861,9 +1861,35 @@
                        (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
                      m))
                  (transient {})
+                 trailer-iters))
+
+       ;; `{scope → [native tool_use id …]}` for each iteration's result-bearing
+       ;; calls (`ntr[<id>]` resolvable; python_execution prints, so contributes
+       ;; none). Lets `session_fold` stamp the SAME recover-accessor clause onto
+       ;; the human-facing fold CARD that the durable breadcrumb already carries.
+       ntr
+       (persistent!
+         (reduce (fn [m [_ rec]]
+                   (if-let [sc (scope-of rec)]
+                     (let
+                       [ids (into []
+                                  (comp (filter (fn [f]
+                                                  (and (:svar/tool-call-id f) (some? (:result f)))))
+                                        (map :svar/tool-call-id)
+                                        (distinct))
+                                  (or (seq (:forms-vec rec))
+                                      (mapcat (fn [b]
+                                                (or (seq (:forms b)) [b]))
+                                              (:blocks rec))))]
+                       (if (seq ids) (assoc! m sc (into (vec (get m sc [])) ids)) m))
+                     m))
+                 (transient {})
                  trailer-iters))]
 
-      (swap! ctx-atom assoc "engine_iter_universe" uni "engine_iter_weights" weights))))
+      (swap! ctx-atom assoc
+        "engine_iter_universe" uni
+        "engine_iter_weights" weights
+        "engine_iter_ntr" ntr))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2414,6 +2440,8 @@
     (let [parts (str/split scope #"/")]
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
+(declare ntr-recover-hint)
+
 (defn- compaction-verbs
   "Build the model-facing compaction verb bound into the sandbox as
    `session_fold`, closing over `ctx-atom`. It records a `:session/summaries`
@@ -2601,7 +2629,28 @@
                   " tokens"
                   (when pct (str " · ~" pct "% of window"))
                   (when (and sat (pos? (long sat))) (str " · context " sat "%")))))
-         (catch Throwable _ "")))]
+         (catch Throwable _ "")))
+
+     recover-hint
+     (fn [base]
+       (try (let
+              [ctx
+               (some-> ctx-atom
+                       deref)
+
+               universe
+               (get ctx "engine_iter_universe")
+
+               ntr
+               (get ctx "engine_iter_ntr")
+
+               scopes
+               (sort (into #{}
+                           (mapcat #(get % "scopes"))
+                           (ctx-engine/expand-through [base] (or universe []))))]
+
+              (ntr-recover-hint (into [] (comp (mapcat #(get ntr %)) (distinct)) scopes)))
+            (catch Throwable _ nil)))]
 
     {'session-fold
      (fn session-fold [scopes & [gist]]
@@ -2630,6 +2679,7 @@
                         str/trim
                         not-empty)
               note (priced base)
+              recover (recover-hint base)
               intent (cond-> base
                        g
                        (assoc "gist" g)
@@ -2640,7 +2690,7 @@
              (record! intent)
              (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
                        "model folded scopes")
-             (str "folded " label note (when g (str " → " g)))))
+             (str "folded " label note recover (when g (str " → " g)))))
          (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
               "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
               "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))
@@ -9664,7 +9714,7 @@
      cpu
      (cpu-load-pct)]
 
-    (when (and (pos? (long total)) (mem-log-enabled?))
+    (when (mem-log-enabled?)
       (tel/log! {:level :info
                  :id ::env-reaper-sweep
                  :data {:evicted total

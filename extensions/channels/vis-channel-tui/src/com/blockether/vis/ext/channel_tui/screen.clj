@@ -972,10 +972,10 @@
      heights
      (vec (:heights layout))
 
-     visible-projected-by-idx
+     visible-entry-by-idx
      (into {}
-           (keep (fn [{:keys [idx projected]}]
-                   (when (some? idx) [idx projected]))
+           (keep (fn [{:keys [idx] :as entry}]
+                   (when (some? idx) [idx entry]))
                  (:visible layout)))
 
      {:keys [start end]}
@@ -1000,11 +1000,42 @@
                  bottom
                  (long (or (get offsets (inc (long idx))) (+ top (long (or (get heights idx) 0)))))]
            :when (and (<= top end-row) (>= (dec bottom) start-row))
-           :let [visible-projected
-                 (get visible-projected-by-idx idx)
+           :let [visible-entry
+                 (get visible-entry-by-idx idx)
+
+                 visible-projected
+                 (:projected visible-entry)
 
                  projected
-                 (cond (and (:pending? message) visible-projected) visible-projected
+                 (cond (and (:pending? message) visible-projected)
+                       ;; A pending/streaming bubble's live paint holds only the
+                       ;; VISIBLE tail rows. When the bubble's head has scrolled
+                       ;; ABOVE the viewport (`:top` < 0) those earlier rows are
+                       ;; gone from the paint, so rebuild the full body from the
+                       ;; canonical projection and substitute the fresher live paint
+                       ;; for just the tail — a drag over a scrolled streaming bubble
+                       ;; then copies its off-screen head, not only what's on screen.
+                       ;; A fully-visible pending bubble keeps the live paint as-is
+                       ;; (its canonical projection may still be placeholder IR).
+                       (let
+                         [live-lines
+                          (:prewrapped-lines visible-projected)
+
+                          head-scrolled-off?
+                          (neg? (long (or (:top visible-entry) 0)))
+
+                          full-lines
+                          (when head-scrolled-off?
+                            (:prewrapped-lines
+                              (virtual/project-message message bubble-w settings copy-opts)))]
+
+                         (if (and (seq full-lines)
+                                  (seq live-lines)
+                                  (< (count live-lines) (count full-lines)))
+                           (assoc visible-projected
+                             :prewrapped-lines (into (vec (drop-last (count live-lines) full-lines))
+                                                     live-lines))
+                           visible-projected))
                        (:prewrapped-lines message) message
                        :else (virtual/project-message message bubble-w settings copy-opts))
 
@@ -1255,26 +1286,88 @@
            :node-id (:node-id m)})))))
 
 (defn- fitting-image-placements
-  "Keep only inline-image placements whose full `:rows` box fits inside the
-   transcript viewport `[messages-top, messages-bottom)`. The graphics layer
-   can't be clipped to the scroll region, so a partially-scrolled image is
-   dropped rather than drawn over the input/footer. `placements` are the exact
-   painted positions `draw-chat-bubble!` recorded via `render/*image-placements*`."
+  "Keep every inline-image placement that INTERSECTS the transcript viewport
+   `[messages-top, messages-bottom)`, so a partially-scrolled picture stays
+   VISIBLE instead of vanishing the instant its box isn't fully on screen.
+
+   The graphics layer can't be cell-clipped to the scroll region, so an image
+   whose box overflows the BOTTOM edge would otherwise paint over the input /
+   footer. Rather than drop it (the old behaviour), clamp the box to the visible
+   row count — shrinking `:rows`/`:cols` together so aspect is preserved — and
+   let the picture render smaller within the band. `draw-chat-bubble!` only
+   records the placement for a row it actually painted, so `:row` is always
+   inside the band and only the bottom edge can overflow. `placements` are the
+   exact painted positions recorded via `render/*image-placements*`."
   [placements messages-top messages-bottom]
   (let
     [top
      (long messages-top)
 
      bottom
-     (long messages-bottom)]
+     (long messages-bottom)
 
-    (vec (for
-           [{:keys [row img] :as p}
-            placements
+     kitty?
+     (= :kitty (timg/images-protocol))]
 
-            :when (and (>= (long row) top) (<= (+ (long row) (long (:rows img))) bottom))]
+    (->> placements
+         ;; Only rows actually painted inside the band.
+         (filter (fn [{:keys [row]}]
+                   (let [r (long row)]
+                     (and (>= r top) (< r bottom)))))
+         ;; Collapse the per-row placements of ONE image (same `:img` instance,
+         ;; one per reserved cell row) back into a single placement.
+         (group-by (fn [{:keys [img]}]
+                     (System/identityHashCode img)))
+         vals
+         (keep
+           (fn [rows-of-img]
+             (let
+               [sorted
+                (sort-by (comp long :img-idx) rows-of-img)
 
-           p))))
+                topmost
+                (first sorted)
+
+                img
+                (:img topmost)
+
+                full-rows
+                (long (:rows img))
+
+                cols
+                (long (or (:cols img) 1))
+
+                crop-top
+                (long (or (:img-idx topmost) 0))
+
+                visible
+                (count sorted)
+
+                crop-bot
+                (max 0 (- full-rows crop-top visible))]
+
+               (cond
+                 ;; Fully on screen — unchanged.
+                 (and (zero? crop-top) (zero? crop-bot)) topmost
+                 ;; Kitty: show the visible vertical slice at native scale via the
+                 ;; protocol's source rectangle — top AND bottom overflow both work.
+                 kitty? (assoc topmost
+                          :img (assoc img
+                                 :crop-top crop-top
+                                 :crop-bottom crop-bot))
+                 ;; iTerm2 can't source-crop. A top-cropped image can't be shown
+                 ;; partially, so drop it; a bottom-overflowing one shrinks
+                 ;; (aspect-preserving) to the visible rows so it doesn't bleed over
+                 ;; the input / footer.
+                 (pos? crop-top) nil
+                 :else (assoc topmost
+                         :img (assoc img
+                                :rows visible
+                                :cols (max 1
+                                           (long (Math/round (* (double cols)
+                                                                (/ (double visible)
+                                                                   (double full-rows))))))))))))
+         vec)))
 
 (defonce ^:private image-paint-state
   ;; Signature of the images currently drawn on the terminal's graphics layer.
@@ -1296,7 +1389,7 @@
 
      signature
      (mapv (fn [{:keys [row col img]}]
-             [row col (:path img) (:cols img) (:rows img)])
+             [row col (:path img) (:cols img) (:rows img) (:crop-top img) (:crop-bottom img)])
            regions)]
 
     (when (and proto (not= signature @image-paint-state))
@@ -1312,8 +1405,14 @@
           (.append sb "\u001b_Ga=d,d=A,q=2\u001b\\")) ;; drop prior kitty images
         (doseq [{:keys [row col img]} regions]
           (when-let
-            [seqstr
-             (timg/render-sequence (:path img) (:mime img) {:cols (:cols img) :rows (:rows img)})]
+            [seqstr (timg/render-sequence (:path img)
+                                          (:mime img)
+                                          {:cols (:cols img)
+                                           :rows (:rows img)
+                                           :crop-top (:crop-top img)
+                                           :crop-bottom (:crop-bottom img)
+                                           :width (:width img)
+                                           :height (:height img)})]
             (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
             (.append sb seqstr)))
         (.append sb "\u001b8") ;; DECRC restore cursor

@@ -915,3 +915,86 @@
         (expect (true? (:success? r)) "the helper itself exited 0")
         (expect (= "abc" (String. ^bytes (:bytes r) "UTF-8"))
                 "bytes written before exit still ride through"))))
+
+(defn- osc52-capture
+  "Run `osc52-copy!` against an in-memory stream with a fake env and return
+   the UTF-8 string that was written to the TTY."
+  [env text]
+  (let
+    [bos
+     (java.io.ByteArrayOutputStream.)
+
+     ok
+     (#'input/osc52-copy!
+      bos
+      text
+      (fn [k]
+        (get env k)))]
+
+    {:ok ok :bytes (String. (.toByteArray bos) "UTF-8")}))
+
+(defdescribe
+  osc52-copy-test
+  (it "writes a bare OSC 52 sequence outside any multiplexer"
+      (let [{:keys [ok bytes]} (osc52-capture {} "hi")]
+        (expect (true? ok))
+        (expect (= "\u001B]52;c;aGk=\u0007" bytes))))
+  (it "round-trips UTF-8 through the base64 payload"
+      (let
+        [{:keys [bytes]}
+         (osc52-capture {} "héllo\nworld 中文")
+
+         b64
+         (subs bytes 7 (dec (count bytes)))]
+
+        (expect (= "héllo\nworld 中文"
+                   (String. (.decode (java.util.Base64/getDecoder) b64) "UTF-8")))))
+  (it "emits BOTH raw OSC 52 and tmux DCS passthrough inside $TMUX (dual-emit)"
+      ;; raw is forwarded when tmux `set-clipboard on`; the DCS passthrough
+      ;; reaches the outer term when `allow-passthrough on`. Neither config
+      ;; is universal, so both are sent. The wrapped half is byte-identical
+      ;; to go-osc52's TmuxMode.
+      (let [{:keys [ok bytes]} (osc52-capture {"TMUX" "/tmp/x,1,0"} "hi")]
+        (expect (true? ok))
+        ;; raw first, so tmux's set-clipboard forwarder catches it
+        (expect (str/starts-with? bytes "\u001B]52;c;aGk=\u0007"))
+        ;; then the DCS passthrough with the inner ESC doubled
+        (expect (str/includes? bytes "\u001BPtmux;\u001B\u001B]52;c;"))
+        (expect (str/ends-with? bytes "\u001B\\"))
+        ;; exact bytes: raw ++ wrapped
+        (expect (= (str "\u001B]52;c;aGk=\u0007" "\u001BPtmux;\u001B\u001B]52;c;aGk=\u0007\u001B\\")
+                   bytes))))
+  (it "prefers tmux passthrough over screen when both are signalled"
+      ;; TERM=screen is normal INSIDE tmux; $TMUX must win.
+      (let [{:keys [bytes]} (osc52-capture {"TMUX" "x" "STY" "1" "TERM" "screen"} "hi")]
+        (expect (str/includes? bytes "\u001BPtmux;"))
+        (expect (not (str/includes? bytes "\u001BP\u001B]52;c;")))))
+  (it "uses a plain DCS passthrough under GNU screen ($STY + screen TERM)"
+      (let [{:keys [bytes]} (osc52-capture {"STY" "1.pts" "TERM" "screen-256color"} "hi")]
+        (expect (str/starts-with? bytes "\u001BP\u001B]52;c;"))
+        (expect (not (str/includes? bytes "tmux")))
+        (expect (str/ends-with? bytes "\u001B\\"))))
+  (it "chunks the base64 into 76-byte DCS pieces under GNU screen"
+      ;; screen truncates an over-long DCS string, so a large payload must be
+      ;; split into <end-DCS><start-DCS>-rejoined 76-byte chunks (go-osc52).
+      (let [{:keys [bytes]} (osc52-capture {"STY" "1" "TERM" "screen"} (apply str (repeat 200 \A)))]
+        (expect (str/starts-with? bytes "\u001BP\u001B]52;c;"))
+        ;; 200 'A' -> 268 b64 chars -> ceil(268/76)=4 chunks -> 3 joiners
+        (expect (= 3 (count (re-seq #"\u001B\\\u001BP" bytes))))
+        (expect (str/ends-with? bytes "\u0007\u001B\\"))))
+  (it "returns false for a nil output stream instead of throwing"
+      (expect (false? (#'input/osc52-copy!
+                       nil
+                       "hi"
+                       (fn [_]
+                         nil)))))
+  (it "still sends (does not silently fail) for a large payload"
+      (let
+        [big
+         (apply str (repeat 90000 \x))
+
+         {:keys [ok bytes]}
+         (osc52-capture {} big)]
+
+        (expect (true? ok))
+        (expect (str/starts-with? bytes "\u001B]52;c;")))))

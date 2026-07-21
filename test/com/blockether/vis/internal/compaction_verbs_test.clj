@@ -750,4 +750,15 @@
         (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
-        (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))
+        (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g")))))
+  (it "the fold card carries the same ntr[...] recovery accessors"
+      ;; `stamp-iter-universe!` stamps `engine_iter_ntr` {scope -> ids} so the
+      ;; verb resolves the SAME recover clause for the human-facing card that the
+      ;; durable breadcrumb carries — a restart-proof handle visible on scroll-back.
+      (let
+        [sf (get (compaction-verbs (atom {"session_turn" 2
+                                          "engine_iter_universe" ["t1/i1"]
+                                          "engine_iter_ntr" {"t1/i1" ["toolu_A" "toolu_B"]}}))
+                 'session-fold)]
+        (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"], ntr[\"toolu_B\"] → g"
+                   (sf ["t1/i1"] "g"))))))

@@ -2134,19 +2134,33 @@
                       (recur)))))))))
 ;;; ── Confirm dialog ──────────────────────────────────────────────────────────
 (defn- draw-button!
-  "Draw a button label. Selected = accent bg, normal = dialog bg."
+  "Draw a confirm-dialog action button in the shared blockether look (mirroring
+   `components/action-button!` and the spel-bridge modal): the FOCUSED/selected
+   button is a solid ink cap with a cream bold label (the primary/confirming
+   action); the other is an OUTLINE cap — cream ground, ink bold label flanked by
+   `▏`/`▕` side rails. Same width either way, so the row stays put as focus moves.
+   Returns the consumed width."
   [g col row label selected?]
   (let
-    [text
-     (str " " label " ")
+    [col
+     (long col)
 
      w
-     (count text)]
+     (+ 2 (count label))]
 
+    (p/clear-styles! g)
     (if selected?
-      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-      (p/set-colors! g t/dialog-fg t/dialog-bg))
-    (p/put-str! g col row text)
+      (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
+          (p/enable! g p/BOLD)
+          (p/put-str! g col row (str " " label " ")))
+      (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+          (p/put-str! g col row "▏")
+          (p/set-colors! g t/dialog-fg t/dialog-bg)
+          (p/enable! g p/BOLD)
+          (p/put-str! g (inc col) row label)
+          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+          (p/put-str! g (+ col (dec w)) row "▕")))
+    (p/clear-styles! g)
     w))
 
 (defn confirm-dialog!
@@ -5642,6 +5656,35 @@
            (reset! selected 0)
            (reset! scroll 0))
 
+         ;; Finder-style path filtering: when the query carries a path
+         ;; separator, fold every COMPLETE leading directory segment into
+         ;; @path and keep only the trailing fragment as the live filter.
+         ;; `~/` jumps to home, `~/s` then browses home filtered to "s",
+         ;; `/usr/lo` browses /usr filtered by "lo", `sub/` steps into a
+         ;; child of the current dir. An unresolvable prefix is left as-is
+         ;; so the filter simply matches nothing (visible feedback).
+         fold-query!
+         (fn []
+           (let [qv @query]
+             (when (str/includes? qv "/")
+               (let
+                 [idx (long (str/last-index-of qv "/"))
+                  prefix (subs qv 0 idx)
+                  frag (subs qv (inc idx))
+                  home (System/getProperty "user.home")
+                  ^java.io.File resolved
+                  (cond (= prefix "") (java.io.File. "/")
+                        (= prefix "~") (java.io.File. (str home))
+                        (str/starts-with? prefix "~/") (java.io.File. (str home (subs prefix 1)))
+                        (str/starts-with? prefix "/") (java.io.File. prefix)
+                        :else (java.io.File. ^java.io.File @path ^String prefix))
+                  canon (dir-canon resolved)]
+
+                 (when (.isDirectory canon)
+                   (reset! path canon)
+                   (reset! query frag)
+                   (reset-list!))))))
+
          toggle-root!
          (fn []
            (when manager?
@@ -5659,8 +5702,6 @@
                                      (vis/gateway-add-filesystem-root! sid (.getPath target-dir)))]
                           (reset! ws-info updated)
                           (reset! wid (get updated "id")))
-                        (reset! notice [dir-canon-str :ok
-                                        (str (if target-already? "Removed " "Added ") target-name)])
                         (catch Throwable t
                           (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
 
@@ -5898,6 +5939,7 @@
                   (input/paste-start? key) (do (let [pasted (drain-modal-paste! screen)]
                                                  (when (seq pasted)
                                                    (swap! query str (str/replace pasted #"\s+" " "))
+                                                   (fold-query!)
                                                    (reset-list!)))
                                                (recur))
                   (modal-enter-key? key) (or (enter!) (recur))
@@ -5919,6 +5961,7 @@
                                                    (not (input/ctrl-modifier? key))
                                                    (not (iso-control-character? c)))
                                           (swap! query str c)
+                                          (fold-query!)
                                           (reset-list!))
                                         (recur))
                     (recur)))))))))

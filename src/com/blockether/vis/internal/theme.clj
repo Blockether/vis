@@ -335,16 +335,16 @@
      :box-bg [250 243 235]
      :box-fg [38 38 38]
      :border-fg [140 133 122]
-     :dialog-bg [255 253 248]
+     :dialog-bg [250 243 235]
      :dialog-fg [38 38 38]
-     ;; Amber accent title stripe with dark ink — the blockether.com / spel
-     ;; report signature (amber on the warm ground) carried onto the dialog.
-     :dialog-title-fg [38 30 0]
-     :dialog-title-bg [240 173 0]
+     ;; Cream-on-ink title header — the spel-bridge dialog signature: the dark
+     ;; frame ink carried across the header row with the warm cream ground as text.
+     :dialog-title-fg [250 243 235]
+     :dialog-title-bg [63 63 63]
      :button-bg [240 173 0]
      :button-fg [38 30 0]
-     :dialog-border [201 193 179]
-     :dialog-shadow [214 205 191]
+     :dialog-border [63 63 63]
+     :dialog-shadow [255 196 32]
      :dialog-hint [111 106 99]
      :dialog-hint-key [63 63 63]
      :input-field-bg [255 253 248]

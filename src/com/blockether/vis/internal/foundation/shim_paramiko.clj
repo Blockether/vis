@@ -13,6 +13,9 @@
            [java.nio.file.attribute FileAttribute]
            [java.util Base64 Properties]
            [org.apache.sshd.common.util.net SshdSocketAddress]
+           [org.apache.sshd.common Factory]
+           [org.apache.sshd.common.io.nio2 Nio2ServiceFactoryFactory]
+           [org.apache.sshd.common.util.threads ThreadUtils]
            [org.apache.sshd.server SshServer]
            [org.apache.sshd.server.auth.password PasswordAuthenticator]
            [org.apache.sshd.server.forward ForwardingFilter]
@@ -34,6 +37,32 @@
 (defonce ^:private server-registry (atom {}))
 
 (defonce ^:private server-counter (atom 0))
+
+;; Hard cap on concurrently live MINA servers. Each server self-reaps when its
+;; relayed connection ends (see the preamble's `start_server`), so this only
+;; bites a pathological guest that opens servers faster than they close; the
+;; oldest is stopped to keep the registry — and its threads — bounded.
+(def ^:private max-live-servers 32)
+
+;; ONE shared NIO2 pool for EVERY MINA SSHD server. Otherwise each
+;; `SshServer/setUpDefaultServer` builds its OWN AsynchronousChannelGroup
+;; (acceptor + per-session `nio2-thread-N`), so N servers => N thread pools —
+;; the exact source of the runaway thread/RAM growth. A single shared, ELASTIC
+;; cached pool lets threads be reused across servers (and reaped when idle)
+;; instead of every server hoarding its own; combined with each server's
+;; self-reap on connection close, SSHD threads stay flat. A cached (not fixed)
+;; pool is what `AsynchronousChannelGroup` wants — a small fixed pool can
+;; deadlock a single handshake. `protectExecutorServiceShutdown` stops a
+;; server's own `.stop` from tearing the shared pool down (shut down on JVM exit).
+(defonce ^:private sshd-io-factory
+  (delay (let
+           [pool (ThreadUtils/protectExecutorServiceShutdown
+                   (ThreadUtils/newCachedThreadPool "vis-sshd-nio2")
+                   true)]
+           (Nio2ServiceFactoryFactory. (reify
+                                         Factory
+                                           (create [_] pool)
+                                           (get [_] pool))))))
 
 (defn- reg-sess!
   [^Session s]
@@ -332,6 +361,15 @@
 
 (defn- reg-server!
   [entry]
+  ;; Keep the live-server set bounded: if a guest leaks servers faster than they
+  ;; self-reap, stop the oldest so MINA instances (and their threads) can't grow
+  ;; without limit.
+  (let [snapshot @server-registry]
+    (when (>= (count snapshot) (long max-live-servers))
+      (let [oldest (first (sort (keys snapshot)))]
+        (when-let [e (get snapshot oldest)]
+          (try (.stop ^SshServer (:server e) true) (catch Throwable _ nil))
+          (swap! server-registry dissoc oldest)))))
   (let [h (swap! server-counter inc)]
     (swap! server-registry assoc h entry)
     h))
@@ -372,6 +410,7 @@
 
      server
      (doto (SshServer/setUpDefaultServer)
+       (.setIoServiceFactoryFactory @sshd-io-factory)
        (.setHost "127.0.0.1")
        (.setPort 0)
        (.setKeyPairProvider (SimpleGeneratorHostKeyProvider. hostkey))
@@ -1128,8 +1167,32 @@
                         b.shutdown(_socketmod.SHUT_WR)
                     except Exception:
                         pass
-                _threadingmod.Thread(target=_pump, args=(sock, relay), daemon=True).start()
-                _threadingmod.Thread(target=_pump, args=(relay, sock), daemon=True).start()
+                _t_up = _threadingmod.Thread(target=_pump, args=(sock, relay), daemon=True)
+                _t_dn = _threadingmod.Thread(target=_pump, args=(relay, sock), daemon=True)
+                _t_up.start()
+                _t_dn.start()
+                def _reap(up=_t_up, dn=_t_dn, relay=relay):
+                    # Tie the MINA server's lifetime to this ONE relayed
+                    # connection: once both pump directions end (the client
+                    # socket closed), stop the server so its NIO2 threads and
+                    # buffers are reclaimed even if the guest never calls close().
+                    try:
+                        up.join()
+                        dn.join()
+                    except Exception:
+                        pass
+                    h = getattr(self, '_server_handle', None)
+                    if h is not None:
+                        try:
+                            _call(_server_stop, h)
+                        except Exception:
+                            pass
+                        self._server_handle = None
+                    try:
+                        relay.close()
+                    except Exception:
+                        pass
+                _threadingmod.Thread(target=_reap, daemon=True).start()
             self._server_started = True
             if event is not None and hasattr(event, 'set'):
                 event.set()
@@ -2166,7 +2229,7 @@ del __vis_install_paramiko__
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/description
-       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. Transport server mode over a real client socket is backed by an Apache MINA SSHD server: `Transport(sock).start_server()` serves reverse (`tcpip-forward`) port-forwarding, delegating password auth and forward approval to the Python `ServerInterface` (`check_auth_password`/`check_port_forward_request`); it degrades to a passive stub when given a non-socket. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
+       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. `Transport(sock).start_server()` starts a real Apache MINA SSHD only when given a real client socket — it serves reverse (`tcpip-forward`) port-forwarding over that socket, delegating password auth and forward approval to the Python `ServerInterface` (`check_auth_password`/`check_port_forward_request`). Nothing starts on `import` or on a socket-less `start_server()` (that degrades to a passive stub); every started server draws from one shared bounded NIO2 pool, is capped (max 32 live), and self-reaps when its connection ends. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
        :shim/bindings paramiko-bridge-bindings
        :shim/preamble paramiko-shim-src}]}))
 

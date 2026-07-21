@@ -1,9 +1,9 @@
 # Skills
 
 Vis can discover and load the **skills** you (or other AI coding harnesses)
-leave on disk — no vis-specific format required. This is a droppable
-compatibility layer, the `foundation-harness` extension: drop the jar, drop the
-feature. It is the sibling of the shell layer's POSIX compatibility, but for the
+leave on disk — no vis-specific format required. This is a built-in
+compatibility layer, the `foundation-harness` foundation module (ships in core,
+gated by a toggle). It is the sibling of the shell layer's POSIX compatibility, but for the
 skill markdown that Claude Code, pi, opencode, and the
 [agents standard](https://agentskills.io) already define.
 

@@ -164,6 +164,48 @@
                             extra)))
      w)))
 
+(defn action-button!
+  "Neobrutalist dialog/action button — the shared blockether look (the spel-bridge
+   web modal): `:variant :primary` paints a SOLID ink cap with a cream bold label
+   (the default/confirming action, e.g. Connect); any other variant paints an
+   OUTLINE cap — cream ground, ink bold label flanked by `▏`/`▕` side rails (the
+   Cancel/secondary action). `:focused?` promotes ANY button to the solid primary
+   fill so keyboard focus reads as the active choice.
+
+   Both variants consume the SAME width — `(display-width label) + 2` — so a row of
+   buttons never shifts as focus moves. Registers a `:kind` click region (merging
+   `:extra`) when `:register?` is set. Returns the consumed width."
+  ([g col row label] (action-button! g col row label nil))
+  ([g col row label
+    {:keys [variant focused? kind extra register?] :or {variant :secondary register? false}}]
+   (let
+     [col
+      (long col)
+
+      w
+      (+ 2 (p/display-width label))
+
+      solid?
+      (or (boolean focused?) (= variant :primary))]
+
+     (p/clear-styles! g)
+     (if solid?
+       (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
+           (p/enable! g p/BOLD)
+           (p/put-str! g col row (str " " label " ")))
+       (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+           (p/put-str! g col row "▏")
+           (p/set-colors! g t/dialog-fg t/dialog-bg)
+           (p/enable! g p/BOLD)
+           (p/put-str! g (inc col) row label)
+           (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+           (p/put-str! g (+ col (dec w)) row "▕")))
+     (p/clear-styles! g)
+     (when (and register? kind)
+       (cr/register! (merge {:bounds {:row row :col col :width w} :kind kind :enabled? true}
+                            extra)))
+     w)))
+
 (def ^:private find-bar-buttons
   "Trailing buttons of the find bar: [click-kind glyph-label]. Padded GLYPHS —
    ◀ ▶ (narrow geometric) and ✕ (1-cell, as `close-button!` uses it). Spaced

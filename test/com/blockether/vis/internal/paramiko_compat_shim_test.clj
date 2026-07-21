@@ -210,7 +210,7 @@
    wraps the accepted socket in `Transport(sock).start_server(...)` with a
    password `ServerInterface` that also approves reverse port-forward requests."
   (str
-    "import socket, threading, paramiko\n"
+    "import os, socket, threading, paramiko\n"
     "lst = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
     "lst.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
     "lst.bind(('127.0.0.1', 0)); lst.listen(1)\n"

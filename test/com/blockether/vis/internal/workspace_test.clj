@@ -432,8 +432,10 @@
                                           changed))
                             (expect (= "EDITED\n" (slurp (io/file ext "lib.txt")))))
                           ;; abandon! trashes the context clone too
-                          (ws/abandon! store {:workspace-id draft-id :reason "done"})
-                          (expect (not (.exists (io/file (:clone entry))))))
+                          (let [done (ws/abandon! store {:workspace-id draft-id :reason "done"})]
+                            (some-> (:discard-future done)
+                                    deref)
+                            (expect (not (.exists (io/file (:clone entry)))))))
                         (finally (try (ws/abandon! store {:workspace-id draft-id})
                                       (catch Throwable _ nil))))))))
            (finally (delete-tree! base) (delete-tree! ext)))))
@@ -493,37 +495,40 @@
 
       (try (spit (io/file base "a.txt") "x\n")
            (spit (io/file ext "e.txt") "x\n")
-           (when-cow base
-                     (with-store
-                       (fn [store]
-                         ;; DRAFT session → discard-session-clones! trashes primary + context clones
-                         (let
-                           [draft
-                            (ws/create! store {:from (seed-workspace! store base)})
+           (when-cow
+             base
+             (with-store
+               (fn [store]
+                 ;; DRAFT session → discard-session-clones! trashes primary + context clones
+                 (let
+                   [draft
+                    (ws/create! store {:from (seed-workspace! store base)})
 
-                            soul
-                            (str (random-uuid))]
+                    soul
+                    (str (random-uuid))]
 
-                           (pin-session! store soul (:id draft))
-                           (ws/add-filesystem-root! store (:id draft) ext)
-                           (let [entry (first (ws/filesystem-roots (ws/get store (:id draft))))]
-                             (expect (.exists (io/file (:root draft))))
-                             (expect (.exists (io/file (:clone entry))))
-                             (ws/discard-session-clones! store soul)
-                             (expect (not (.exists (io/file (:root draft)))))
-                             (expect (not (.exists (io/file (:clone entry)))))
-                             (expect (.exists (io/file ext))))) ;; REAL filesystem dir untouched
-                         ;; TRUNK session → discard must NEVER touch the user's real cwd
-                         (let
-                           [trunk
-                            (ws/create-trunk-at! store live)
+                   (pin-session! store soul (:id draft))
+                   (ws/add-filesystem-root! store (:id draft) ext)
+                   (let [entry (first (ws/filesystem-roots (ws/get store (:id draft))))]
+                     (expect (.exists (io/file (:root draft))))
+                     (expect (.exists (io/file (:clone entry))))
+                     (some-> (ws/discard-session-clones! store soul)
+                             deref)
+                     (expect (not (.exists (io/file (:root draft)))))
+                     (expect (not (.exists (io/file (:clone entry)))))
+                     (expect (.exists (io/file ext))))) ;; REAL filesystem dir untouched
+                 ;; TRUNK session → discard must NEVER touch the user's real cwd
+                 (let
+                   [trunk
+                    (ws/create-trunk-at! store live)
 
-                            soul2
-                            (str (random-uuid))]
+                    soul2
+                    (str (random-uuid))]
 
-                           (pin-session! store soul2 (:id trunk))
-                           (ws/discard-session-clones! store soul2)
-                           (expect (.exists (io/file live)))))))
+                   (pin-session! store soul2 (:id trunk))
+                   (some-> (ws/discard-session-clones! store soul2)
+                           deref)
+                   (expect (.exists (io/file live)))))))
            (finally (delete-tree! base) (delete-tree! ext) (delete-tree! live))))))
 
 (defdescribe

@@ -367,6 +367,33 @@
       (throw (ex-info "Workspace backend is not registered"
                       {:type :workspace/backend-unavailable :backend backend-id :root root})))))
 
+(defonce ^:private discard-executor
+  ;; Single daemon thread: serializes physical clone reclamation OFF the request
+  ;; thread so `/draft abandon` never blocks the UI on file deletion, and keeps
+  ;; the global `rift/gc` from running concurrently with a fork.
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+           (reify
+             java.util.concurrent.ThreadFactory
+               (newThread [_ r]
+                 (doto (Thread. ^Runnable r "vis-workspace-discard") (.setDaemon true)))))))
+
+(defn- discard-roots-async!
+  "Physically release each `{:backend :root}` off the request thread. Returns a
+   Future callers/tests can await; the DB `:discarded` transition has already
+   happened synchronously, so the UI never waits on deletion. Best-effort: a
+   failed reclamation is swallowed rather than resurrecting the abandoned row."
+  [roots]
+  (.submit ^java.util.concurrent.ExecutorService @discard-executor
+           ^Callable
+           (fn []
+             (doseq
+               [{:keys [backend root]}
+                roots
+
+                :when root]
+
+               (try (discard-root! backend root) (catch Throwable _ nil))))))
+
 ;; =============================================================================
 ;; Since-fork diff — pure mtime, git-free
 ;; =============================================================================
@@ -1056,34 +1083,53 @@
                (conj discarded (:id done)))))))
 
 (defn abandon!
-  "Release backend-owned roots and transition the row to :discarded. A `:live`
-   backend (trunk) owns no clone, so its shared root is never deleted."
+  "Transition the row to :discarded and release backend-owned roots. The DB
+   transition is synchronous (the caller returns to trunk at once); physical
+   clone reclamation runs on a background thread and is exposed as
+   `:discard-future` for callers/tests that need to await it. A `:live` backend
+   (trunk) owns no clone, so its shared root is never deleted."
   [db-info {:keys [workspace-id reason]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
-    (discard-root! (:workspace-backend ws) (:root ws))
-    (doseq
-      [{:keys [trunk clone backend]} (filesystem-roots ws)
-       :when (and clone (not= clone trunk))]
+    (let
+      [roots (into [{:backend (:workspace-backend ws) :root (:root ws)}]
+                   (for
+                     [{:keys [trunk clone backend]} (filesystem-roots ws)
+                      :when (and clone (not= clone trunk))]
 
-      (try (discard-root! backend clone) (catch Throwable _ nil)))
-    (let [done (p/db-workspace-update-state! db-info workspace-id :discarded)]
+                     {:backend backend :root clone}))
+       done (p/db-workspace-update-state! db-info workspace-id :discarded)
+       fut (discard-roots-async! roots)]
+
       (fire-hook! :on-discard done {:reason reason})
-      (assoc (or done ws) :reason reason))))
+      (assoc (or done ws)
+        :reason reason
+        :discard-future fut))))
 
 (defn discard-session-clones!
-  "On session DELETE, walk the complete revision lineage and release every
-   backend-owned root. Live roots are never deleted."
+  "On session DELETE, walk the complete revision lineage, gather every
+   backend-owned clone, then release them off the request thread through the
+   shared discard executor — the SAME path `abandon!` uses, so no gateway thread
+   ever blocks on file deletion. Row resolution is synchronous, so the returned
+   root list is fully materialized before the caller deletes the DB tree. Live
+   (trunk) roots are never touched. Returns a Future callers can await — the CLI
+   derefs it before process exit; the long-lived gateway fires and forgets."
   [db-info session-soul-id]
   (when (and db-info session-soul-id)
     (when-let [state-id (p/db-latest-session-state-id db-info session-soul-id)]
-      (loop [ws (for-session db-info state-id)]
-        (when ws
-          (try (discard-root! (:workspace-backend ws) (:root ws)) (catch Throwable _ nil))
-          (doseq
-            [{:keys [trunk clone backend]} (filesystem-roots ws)
-             :when (and clone (not= clone trunk))]
+      (let
+        [roots (loop
+                 [ws (for-session db-info state-id)
+                  acc []]
 
-            (try (discard-root! backend clone) (catch Throwable _ nil)))
-          (recur (some->> (:parent-workspace-id ws)
-                          (get db-info))))))))
+                 (if-not ws
+                   acc
+                   (recur (some->> (:parent-workspace-id ws)
+                                   (get db-info))
+                          (into (conj acc {:backend (:workspace-backend ws) :root (:root ws)})
+                                (for
+                                  [{:keys [trunk clone backend]} (filesystem-roots ws)
+                                   :when (and clone (not= clone trunk))]
+
+                                  {:backend backend :root clone})))))]
+        (discard-roots-async! roots)))))

@@ -60,34 +60,47 @@
         (expect (str/includes? text "Native descriptions and JSON Schemas are authoritative"))
         (expect (str/includes? text "hard preconditions"))
         (expect (not (str/includes? text "Session titles are host-generated")))))
-  (it "keeps the core compact while preserving its cross-tool contract"
-      (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-        (expect (< (count text) 2300))
-        (doseq [heading ["## Contract" "## Work" "## Output"]]
-          (expect (str/includes? text heading)))
-        (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`"]]
-          (expect (not (str/includes? text tool))))
-        (doseq
-          [required
-           ["Hybrid:" "`python_execution`" "batches/chains" "`await gather(...)` independent calls"
-            "filter/print" "direct native tools for single operations" "host project"
-            "`await vis_docs()`" "runtime > source > docs > assumptions" "Use `apropos` to discover"
-            "`doc` for exact contracts" "`struct_index`/`struct_patch`" "Batch edits atomically"
-            "after writes, refresh anchors via `cat`/`struct_index`" "prefer project `repl_eval`"
-            "inspect REPL resources before lifecycle changes" "Reproduce before editing"
-            "rerun the same check" "inspect dependencies before adding them"
-            "benchmark/profile identical workloads" "smallest relevant check"
-            "Never expose or log secrets" "Do not commit, push, publish"
-            "`session_fold` completed prior-turn wire steps with a gist"
-            "Recover a folded step cheaply via `ntr[tool_id]`"
-            "`await session_state()` → `transcript/turns/iterations/blocks`"
-            "Other sessions: `await sessions()`" "Broader/newer folds replace covered breadcrumbs"
-            "Lead with the answer or next action" "short plain sentences" "≤120 words" "≤3 bullets"
-            "numbered bounded actions" "Show wins" "Step N/M complete. Next: ..."
-            "location → cause → fix" "end with one action under 2 minutes" "never a menu"]]
-          (expect (str/includes? text required)))
-        (expect (not (str/includes? text "Complete tasks autonomously")))
-        (expect (not (str/includes? text "canonical decision table")))))
+  (it
+    "keeps the sectioned core contract explicit and non-contradictory"
+    (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
+      (expect (< (count text) 3980))
+      (doseq
+        [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
+                  "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
+                  "## 7. Style and finish"]]
+        (expect (str/includes? text heading)))
+      (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`"]]
+        (expect (not (str/includes? text tool))))
+      (doseq
+        [required
+         ["Work on the host project by default" "For vis tasks" "`await vis_docs()`"
+          "runtime > source > docs > assumption"
+          "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
+          "`python_execution`" "`await gather(...)` independent calls"
+          "direct native tools for single operations" "Reading `session` is always live"
+          "never probe merely to refresh it" "Before `repl_eval` or lifecycle changes"
+          "`repl_start`" "after verification, stop only those you" "External REPLs are"
+          "`find_files`" "`rg`" "`struct_index` for code structure" "batch" "independent reads"
+          "Inspect dependencies before adding them" "benchmark/profile identical workloads"
+          "`struct_index`/`struct_patch`" "refresh anchors via `cat`/`struct_index`"
+          "Create no unrequested" "without asking permission or offering optional"
+          "Never expose or log secrets" "commit, push, publish" "Before every `session_fold`"
+          "read `session[\"turn\"]`" "`N < session[\"turn\"]`" "never target current/future turns"
+          "Fold only completed prior-turn wire steps" "`ntr[tool_id]`" "breadcrumb lists accessors"
+          "`await session_state()`" "session UID" "resolve it via `await sessions()`"
+          "Route vis issues upstream" "`blockether/vis`" "open one only when requested"
+          "Broader/newer folds replace covered breadcrumbs" "Lead with the answer or next action"
+          "≤120 words" "≤3 bullets" "numbered bounded actions" "State completed results"
+          "Step N/M complete. Next: ..." "location → cause → fix"
+          "3 failed attempts at the same operation" "end with one action under 2 minutes"
+          "never offer a menu"]]
+        (expect (str/includes? text required)))
+      (expect (= 1 (count (re-seq #"ntr\[tool_id\]" text))))
+      (doseq
+        [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
+                  "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
+                  "canonical decision table"]]
+        (expect (not (str/includes? text surplus))))))
   (it "advertises concise Python guidance and every auto-imported name"
       (let [text (#'prompt/sandbox-shims-prompt-block)]
         (expect (< (count text) 1000))
