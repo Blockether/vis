@@ -329,7 +329,7 @@
      :header-hover-fg [180 120 0]
      :close-button-hover-fg [200 40 40]
      :header-active-tab-fg [38 30 0]
-     :header-active-tab-bg [240 173 0]
+     :header-active-tab-bg [255 196 32]
      :header-active-tab-accent [240 173 0]
      :header-tab-number-fg [38 30 0]
      :box-bg [250 243 235]
@@ -341,7 +341,7 @@
      ;; frame ink carried across the header row with the warm cream ground as text.
      :dialog-title-fg [250 243 235]
      :dialog-title-bg [63 63 63]
-     :button-bg [240 173 0]
+     :button-bg [255 196 32]
      :button-fg [38 30 0]
      :dialog-border [63 63 63]
      :dialog-shadow [255 196 32]

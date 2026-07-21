@@ -376,12 +376,28 @@ def __vis_banned_name__(src, banned):
     return next((n.id for n in __vis_ast__.walk(__vis_ast__.parse(src))
                  if isinstance(n, __vis_ast__.Name) and n.id in banned), None)
 
+class __vis_Raise__:
+    # Driver -> awaitable signal that the tool/gather call the driver just ran
+    # RAISED. The await point re-`raise`s the captured exception INSIDE the
+    # coroutine (at the user's own `await`), so an in-block `try/except` around
+    # `await tool(...)` can CATCH a tool failure. Re-raising the ORIGINAL object
+    # (usually a foreign host exception) keeps full fidelity: left uncaught it
+    # escapes exactly as before, so the host `PolyglotException` still maps to the
+    # same clean tool-failure error. (We cannot use `it.throw(exc)`: GraalPy
+    # rejects a ForeignException there, but a plain `raise foreign` works.)
+    __slots__ = ('exc',)
+    def __init__(self, exc):
+        self.exc = exc
+
 class __vis_Call__:
     __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'res')
     def __init__(self, fn, a, k, nm='tool'):
         self.fn = fn; self.a = a; self.k = k; self.nm = nm; self.ran = False; self.res = None
     def __await__(self):
-        return (yield self)
+        __vis_r__ = yield self
+        if type(__vis_r__) is __vis_Raise__:
+            raise __vis_r__.exc
+        return __vis_r__
     def __repr__(self):
         return '<unawaited async tool call: write `await ' + self.nm + '(...)`>'
     # INLINE-USE auto-settle. Subscripting / `len(...)` / `in` a deferred call is
@@ -404,7 +420,10 @@ class __vis_Gather__:
     def __init__(self, aws):
         self.aws = aws
     def __await__(self):
-        return (yield self)
+        __vis_r__ = yield self
+        if type(__vis_r__) is __vis_Raise__:
+            raise __vis_r__.exc
+        return __vis_r__
 
 def gather(*aws):
     if len(aws) == 1 and isinstance(aws[0], (list, tuple)):
@@ -572,12 +591,19 @@ def __vis_drive__(coro):
             y = it.send(send)
         except StopIteration as e:
             return e.value
-        if isinstance(y, __vis_Call__):
-            send = __vis_exec_call__(y)
-        elif isinstance(y, __vis_Gather__):
-            send = __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws])
-        else:
-            send = y
+        try:
+            if isinstance(y, __vis_Call__):
+                send = __vis_exec_call__(y)
+            elif isinstance(y, __vis_Gather__):
+                send = __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws])
+            else:
+                send = y
+        except BaseException as __vis_exc__:
+            # The tool/gather call RAISED. Hand the exception to the awaitable via
+            # the next send so it re-raises at the coroutine's OWN await point: an
+            # in-block `try/except` can then catch it, and if uncaught it simply
+            # propagates out of the driver just as it did before.
+            send = __vis_Raise__(__vis_exc__)
 
 def __vis_error_pos__(e):
     # Deepest '<prog>' (user-code) traceback frame -> (line, col, end_col). The

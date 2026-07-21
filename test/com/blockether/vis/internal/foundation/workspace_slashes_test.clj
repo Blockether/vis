@@ -114,7 +114,7 @@
 (defdescribe
   specs-shape-test
   (it "exposes the full slash spec set (/draft tree, /draft-blank, /root, /fs tree)"
-      (expect (= 12 (count ws-slashes/specs))))
+      (expect (= 15 (count ws-slashes/specs))))
   (it "exposes /fs root/add/remove/list/create subcommands under `:slash/parent [\"fs\"]`"
       (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
         (expect (= #{"root" "add" "remove" "list" "create"} (set (map :slash/name fssubs))))))
@@ -126,16 +126,17 @@
         [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
                          ws-slashes/specs)]
         (expect (every? #(nil? (:slash/availability-fn %)) fs-tree))))
-  (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
-      (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
-        (expect (= 3 (count subs)))
-        (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
+  (it
+    "subcommands are new + apply + abandon + stash + resume + list under `:slash/parent [\"draft\"]`"
+    (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
+      (expect (= 6 (count subs)))
+      (expect (= #{"new" "apply" "abandon" "stash" "resume" "list"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
       (let [env (env-with nil)]
-        ;; 12 specs: /draft + new/apply/abandon + /draft-blank + /root + /fs +
-        ;; root/add/remove/list/create.
+        ;; 15 specs: /draft + new/apply/abandon/stash/resume/list + /draft-blank
+        ;; + /root + /fs + root/add/remove/list/create.
         ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
-        (expect (= 12 (count (slash/active-slashes env))))
+        (expect (= 15 (count (slash/active-slashes env))))
         (expect (some? (slash/slash-by-path env ["draft" "apply"])))
         (expect (some? (slash/slash-by-path env ["fs" "root"])))
         (expect (some? (slash/slash-by-path env ["root"]))))))
@@ -280,8 +281,8 @@
   (it "/draft remains discoverable when no isolation backend is available"
       (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
         (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-          (expect (= #{"draft" "new" "apply" "abandon" "draft-blank" "root" "fs" "add" "remove"
-                       "list" "create"}
+          (expect (= #{"draft" "new" "apply" "abandon" "stash" "resume" "draft-blank" "root" "fs"
+                       "add" "remove" "list" "create"}
                      names)))))
   (it "/draft new reports the unavailable capability matrix"
       (with-store
@@ -425,3 +426,47 @@
               (expect (= [(workspace/normalize-root ext)]
                          (mapv :trunk (workspace/filesystem-roots @ws-atom)))))))
         (finally (delete-tree! a) (delete-tree! ext))))))
+
+(defdescribe
+  dispatch-stash-resume-test
+  (it
+    "/draft stash parks the draft (kept :active) and /draft resume re-enters it"
+    (let [base (temp-dir "vis-draft-stash")]
+      (try
+        (if-not (workspace/isolated-workspaces-supported? base)
+          ;; No CoW workspace backend here (CI) — skip the live round-trip.
+          (expect (not (workspace/isolated-workspaces-supported? base)))
+          (do
+            (spit (io/file base "seed.txt") "seed\n")
+            (with-cwd
+              base
+              (fn []
+                (with-store
+                  (fn [store]
+                    (let
+                      [[env state-id draft] (setup! store base)
+                       label (workspace/display-label draft)]
+
+                      (try
+                        ;; STASH — leaves the draft, but never discards it.
+                        (let [out (dispatch! env store state-id "/draft stash")]
+                          (expect (= :ok (get-in out [:result :slash/status])))
+                          (expect (= (:id draft) (get-in out [:result :slash/data :workspace-id]))))
+                        ;; Session is back on trunk; the draft stays :active.
+                        (expect (not (workspace/draft? (workspace/for-session store state-id))))
+                        (expect (= :active (:state (workspace/get store (:id draft)))))
+                        ;; LIST — the stashed draft is discoverable.
+                        (let
+                          [out (dispatch! env store state-id "/draft list")
+                           ids (map :workspace-id (get-in out [:result :slash/data :drafts]))]
+
+                          (expect (= :ok (get-in out [:result :slash/status])))
+                          (expect (some #(= (:id draft) %) ids)))
+                        ;; RESUME — re-pins the session to the same draft.
+                        (let [out (dispatch! env store state-id (str "/draft resume " label))]
+                          (expect (= :ok (get-in out [:result :slash/status])))
+                          (expect (= (:id draft) (get-in out [:result :slash/data :workspace-id])))
+                          (expect (= (:id draft) (:id (workspace/for-session store state-id)))))
+                        (finally (try (workspace/abandon! store {:workspace-id (:id draft)})
+                                      (catch Throwable _ nil)))))))))))
+        (finally (delete-tree! base))))))

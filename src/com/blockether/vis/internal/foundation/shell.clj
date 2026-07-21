@@ -39,6 +39,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.paths :as paths]
@@ -325,9 +326,10 @@
 
 (defn- spawn!
   ^Process [cmd ^File dir merge-err?]
+  (extension/authorize-process! {:cmd (str cmd) :cwd (.getPath dir) :interactive? false})
   (let
     [^java.util.List args
-     [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
+     (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
 
      pb
      (ProcessBuilder. args)]
@@ -371,12 +373,13 @@
     ;; bridge), but shell_bg still runs/captures/stops cleanly instead of
     ;; throwing. (ConPTY could restore a real TTY here later.)
     (process->handle (spawn! cmd dir true))
-    (pty/spawn! {:command [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
-                 :dir (.getPath dir)
-                 :env (doto (HashMap. ^java.util.Map (System/getenv))
-                        (.put "TERM" "xterm-256color"))
-                 :cols 120
-                 :rows 40})))
+    (do (extension/authorize-process! {:cmd (str cmd) :cwd (.getPath dir) :interactive? true})
+        (pty/spawn!
+          {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
+           :dir (.getPath dir)
+           :env (doto (HashMap. ^java.util.Map (System/getenv)) (.put "TERM" "xterm-256color"))
+           :cols 120
+           :rows 40}))))
 
 (defn- kill-tree!
   "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
@@ -904,6 +907,9 @@
       [interrupted?
        (instance? InterruptedException err)
 
+       denied
+       (extension/process-denied-reason err)
+
        t
        (now-ms)]
 
@@ -915,11 +921,13 @@
                               (assoc :interrupted?
                                 true :status
                                 :interrupted))
-                  :error (when interrupted?
-                           {:message (str (op-label op)
-                                          " interrupted while running;"
-                                          " the spawned process tree was killed.")})
-                  :throwable (when-not interrupted? err)})})))
+                  :error (cond interrupted? {:message (str (op-label op)
+                                                           " interrupted while running;"
+                                                           " the spawned process tree was killed.")}
+                               denied {:message denied
+                                       :hint (str "Denied by a registered process guard."
+                                                  " Ask the user before retrying.")})
+                  :throwable (when-not (or interrupted? denied) err)})})))
 
 ;; =============================================================================
 ;; Public, doc-bearing vars retain developer examples and fallback docs. Native

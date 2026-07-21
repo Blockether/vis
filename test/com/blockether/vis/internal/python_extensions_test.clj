@@ -373,6 +373,49 @@ vis.extension(
                        (fn [_]
                          :ran)))))))))
 
+(def ^:private process-guard-py
+  "\"\"\"Process-guard fixture.\"\"\"
+import vis
+
+
+def _deny_curl(info):
+    if \"curl\" in info[\"cmd\"].split():
+        return vis.block(\"blocked curl in \" + info[\"cwd\"])
+    return None
+
+
+vis.extension(
+    name=\"procguard\",
+    description=\"Process guard fixture extension.\",
+    kind=\"guard\",
+    process_guards=[vis.process_guard(_deny_curl)],
+)
+")
+
+(defdescribe
+  process-guard-test
+  (it
+    "vis.process_guard installs an :ext/process-guards entry the canonical authorize-process! consults"
+    (with-loaded {"procguard.py" process-guard-py}
+                 (fn [_ _]
+                   (let [guards (:ext/process-guards (registered "procguard"))]
+                     (expect (= 1 (count guards)))
+                     (expect (ifn? (:fn (first guards))))
+                     ;; DENY: a curl spawn is blocked with the Python-supplied reason,
+                     ;; surfaced cleanly via process-denied-reason (no raw stack).
+                     (let
+                       [reason (try (extension/authorize-process!
+                                      {:cmd "curl https://x" :cwd "/tmp" :interactive? false})
+                                    nil
+                                    (catch clojure.lang.ExceptionInfo e
+                                      (extension/process-denied-reason e)))]
+                       (expect (some? reason))
+                       (expect (str/includes? reason "blocked curl")))
+                     ;; ALLOW: a non-curl spawn passes through untouched.
+                     (expect (= {:cmd "git status" :cwd "/tmp" :interactive? false}
+                                (extension/authorize-process!
+                                  {:cmd "git status" :cwd "/tmp" :interactive? false}))))))))
+
 ;; =============================================================================
 ;; Failure containment
 ;; =============================================================================

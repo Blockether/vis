@@ -315,6 +315,13 @@
    <cmd>` the instant it emits the shell-phase chunk."
   [{"id" "pending" "type" "notice" "code" "turn_pending" "message" "Running shell command..."}])
 
+(def ^:private pending-slash-content
+  "Pending-assistant placeholder for a registered slash command (`/draft …`,
+   `/voice`, …). Slash dispatch runs LOCALLY with no provider round-trip, so the
+   bubble must never claim \"Sending request to provider…\". The engine flips it to
+   `Vis is running: /<name>` the instant it emits the slash-phase chunk."
+  [{"id" "pending" "type" "notice" "code" "turn_pending" "message" "Running command..."}])
+
 (defn- shell-bang-command?
   "True when TEXT is a `!`/`!&` shell-sugar command carrying a NON-blank body —
    the same rule the engine's `parse-bang` applies. A bare `!`/`!&` is ordinary
@@ -326,17 +333,44 @@
                      (str/starts-with? t "!") (seq (str/trim (subs t 1)))
                      :else false)))))
 
-(defn- pending-assistant-for
-  "Pending-assistant slot for a submission. A shell-sugar (`!`/`!&`) turn calls
-   no provider, so it gets a command-flavored placeholder and the `:slash?`
-   command marker — which suppresses the model/provider footer, exactly like a
-   resumed shell turn (`:tag :user-shell`)."
+(defn- slash-command?
+  "True when TEXT is a submission for a REGISTERED slash command — it runs
+   locally with NO provider call, so its settled bubble must not carry a
+   model/provider footer. Mirrors the engine's `slash-text?` guard (a leading
+   `/word` token with NO interior `/`, so a pasted `/var/…/shot.png` path is NOT
+   a slash) AND additionally requires the root token to resolve to a registered
+   slash root — an unknown `/foo` falls through to a prompt-template expansion or
+   a normal LLM turn, which legitimately keeps its footer."
   [text]
-  (if (shell-bang-command? text)
-    (assoc (chat/assistant-message pending-shell-content)
-      :pending? true
-      :slash? true)
-    (assoc (chat/assistant-message pending-assistant-content) :pending? true)))
+  (boolean (when (string? text)
+             (let [t (str/triml text)]
+               (when (re-find #"^/[^\s/]+(?:\s|$)" t)
+                 (let
+                   [root (-> (subs t 1)
+                             (str/split #"\s+")
+                             first)
+                    roots (into #{}
+                                (comp (filter #(empty? (:slash/parent %)))
+                                      (keep #(some-> (:slash/name %)
+                                                     name)))
+                                (vis/registered-slashes))]
+
+                   (contains? roots root)))))))
+
+(defn- pending-assistant-for
+  "Pending-assistant slot for a submission. A shell-sugar (`!`/`!&`) turn or a
+   registered slash command (`/draft …`) runs LOCALLY with no provider round-trip,
+   so it gets a command-flavored placeholder and the `:slash?` command marker —
+   which suppresses the model/provider footer, exactly like a resumed command turn
+   (`:tag :user-shell` / `:user-slash`)."
+  [text]
+  (cond (shell-bang-command? text) (assoc (chat/assistant-message pending-shell-content)
+                                     :pending? true
+                                     :slash? true)
+        (slash-command? text) (assoc (chat/assistant-message pending-slash-content)
+                                :pending? true
+                                :slash? true)
+        :else (assoc (chat/assistant-message pending-assistant-content) :pending? true)))
 
 (defn- pending-assistant-message? [m] (and (= :assistant (:role m)) (true? (:pending? m))))
 

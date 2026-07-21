@@ -447,13 +447,17 @@
      box-h
      (max box-h 7)
 
-     ;; Clamp to terminal - hard constraint, always final so the
-     ;; frame can never leave the screen even on a tiny terminal
+     ;; Clamp to terminal - hard constraint, always final so the frame can
+     ;; never leave the screen. The inset is deliberately generous (4 cols /
+     ;; 3 rows each side once centered) so full-bleed dialogs — the magit
+     ;; buffer, session/copy browsers, theme picker — float with a clear
+     ;; margin instead of butting flush against the window frame, header
+     ;; tab bar, and footer.
      box-w
-     (min box-w (- cols 4))
+     (min box-w (- cols 8))
 
      box-h
-     (min box-h (- rows 4))]
+     (min box-h (- rows 6))]
 
     [box-w box-h]))
 ;;; ── Box drawing ────────────────────────────────────────────────────────────

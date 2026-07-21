@@ -105,11 +105,14 @@
 (defn point-in-ranges?
   "True when `point` lies inside at least one selectable row range.
 
-   Optional `:row-padding` expands the vertical hitbox without expanding the
-   copied/highlighted cells. This gives mouse selection a forgiving start zone
-   above and below bubbles while preserving bubble-only copy semantics."
+   Optional `:row-padding` expands the vertical hitbox and `:col-padding` the
+   horizontal one, WITHOUT expanding the copied/highlighted cells. This gives
+   mouse selection a forgiving start zone above/below AND left/right of bubbles
+   (so a press in a bubble's left gutter or right padding still starts a
+   selection) while preserving bubble-only copy semantics — the selection is
+   still clipped back to the content band by `selected-ranges`."
   ([point ranges] (point-in-ranges? point ranges nil))
-  ([{:keys [col row]} ranges {:keys [row-padding]}]
+  ([{:keys [col row]} ranges {:keys [row-padding col-padding]}]
    (let
      [col
       (long col)
@@ -118,13 +121,16 @@
       (long row)
 
       row-pad
-      (long (max 0 (long (or row-padding 0))))]
+      (long (max 0 (long (or row-padding 0))))
+
+      col-pad
+      (long (max 0 (long (or col-padding 0))))]
 
      (boolean (some (fn [{r :row c :col w :width}]
                       (and (>= row (- (long r) row-pad))
                            (<= row (+ (long r) row-pad))
-                           (>= col (long c))
-                           (< col (+ (long c) (long w)))))
+                           (>= col (- (long c) col-pad))
+                           (< col (+ (long c) (long w) col-pad))))
                     ranges)))))
 
 (defn source-at-point

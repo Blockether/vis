@@ -288,12 +288,16 @@
   (when-not @client-id
     (locking client-id
       (when-not @client-id
-        (let [response (send-json-with-entry! entry
-                                              "POST"
-                                              "/v1/clients"
-                                              {:pid (discovery/current-pid)
-                                               :kind "clojure-client"})
-              registered-id (get response "client_id")]
+        (let
+          [response
+           (send-json-with-entry! entry
+                                  "POST"
+                                  "/v1/clients"
+                                  {:pid (discovery/current-pid) :kind "clojure-client"})
+
+           registered-id
+           (get response "client_id")]
+
           (when-not (seq registered-id)
             (throw (ex-info "gateway client registration returned no client_id"
                             {:type :gateway/invalid-client-registration})))
@@ -633,6 +637,30 @@
   (decode-workspace
     (get (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/workspace/root") {:path path})
          "workspace")))
+
+(defn list-drafts
+  "Active/stashed DRAFTS for `sid`'s repo IN THE DAEMON, newest first, in the
+   canonical wire shape `[{\"workspace_id\" \"label\" \"root\" \"repo_root\"
+   \"fork_ms\" \"is_current\"}]`. The gateway is the source of truth for parked
+   drafts, so every channel reads the SAME list here (web picker, TUI drafts view)."
+  [sid]
+  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace/drafts")) "drafts"))
+
+(defn stash-draft!
+  "Park `sid`'s current draft IN THE DAEMON (non-destructive), returning the
+   refreshed `session-workspace-info` — now back on trunk."
+  [sid]
+  (decode-workspace (get (send-json! "POST" (str "/v1/sessions/" (enc sid) "/workspace/stash") {})
+                         "workspace")))
+
+(defn resume-draft!
+  "Switch `sid` INTO the stashed draft `workspace-id` IN THE DAEMON (stashing any
+   current draft first), returning the refreshed `session-workspace-info`."
+  [sid workspace-id]
+  (decode-workspace (get (send-json! "POST"
+                                     (str "/v1/sessions/" (enc sid) "/workspace/resume")
+                                     {:workspace_id workspace-id})
+                         "workspace")))
 
 (defn submit-turn!
   [sid opts]

@@ -109,3 +109,55 @@
                 (expect (nil? (get decoded "draft?")))
                 (expect (nil? (:filesystem-roots decoded)))))
             (finally (delete-tree! base) (delete-tree! extra))))))))
+
+(defn- draft-list-shape
+  "The exact per-draft map `state/list-drafts` emits (before the wire hop): the
+   canonical parked-draft descriptor every channel's drafts picker reads."
+  [ws-rec current?]
+  (wire/canonical {:workspace-id (:id ws-rec)
+                   :label (ws/display-label nil ws-rec nil)
+                   :root (:root ws-rec)
+                   :repo-root (:repo-root ws-rec)
+                   :fork-ms (:fork-ms ws-rec)
+                   :current? current?}))
+
+(defdescribe
+  draft-list-survives-the-wire-test
+  (it
+    "a parked draft reaches every channel's picker in the canonical string shape"
+    (let
+      [d1
+       {:id (str (random-uuid))
+        :repo-id "rt"
+        :repo-root "/repo"
+        :root "/repo/.vis/draft-a"
+        :label "feature-a"
+        :fork-ms 111
+        :state :active}
+
+       d2
+       {:id (str (random-uuid))
+        :repo-id "rt"
+        :repo-root "/repo"
+        :root "/repo/.vis/draft-b"
+        :label "feature-b"
+        :fork-ms 222
+        :state :active}
+
+       ;; the session is currently IN d2 — it rides is_current true.
+       info
+       [(draft-list-shape d1 false) (draft-list-shape d2 true)]
+
+       decoded
+       (wire/parse-json (wire/json-str info))]
+
+      ;; Verbatim passthrough — ONE canonical shape on both transports.
+      (expect (= decoded info))
+      ;; Channels read these snake_case STRING keys off each picker row:
+      (expect (= [(:id d1) (:id d2)] (mapv #(get % "workspace_id") decoded)))
+      (expect (= ["feature-a" "feature-b"] (mapv #(get % "label") decoded)))
+      (expect (= [111 222] (mapv #(get % "fork_ms") decoded)))
+      ;; The `?` boolean rides as `is_current` — no kebab / `?` key survives.
+      (expect (= [false true] (mapv #(get % "is_current") decoded)))
+      (expect (every? #(nil? (get % "current?")) decoded))
+      (expect (= ["/repo" "/repo"] (mapv #(get % "repo_root") decoded))))))

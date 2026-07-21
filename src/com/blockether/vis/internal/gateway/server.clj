@@ -89,15 +89,21 @@
    once-per-second steady-state sweep allocation-light. Nil-pid leases remain
    independent because they cannot be associated with an OS process."
   [clients]
-  (let [seen-pids (java.util.HashSet.)
-        removed-ids (transient [])
-        counts (long-array 2)] ; [dead duplicates]
+  (let
+    [seen-pids
+     (java.util.HashSet.)
+
+     removed-ids
+     (transient [])
+
+     counts
+     (long-array 2)]
+    ; [dead duplicates]
     (reduce-kv (fn [_ client-id {:keys [pid]}]
                  (when (some? pid)
                    (cond (not (.add seen-pids pid))
                          (do (aset-long counts 1 (unchecked-inc (aget counts 1)))
                              (conj! removed-ids client-id))
-
                          (not (discovery/pid-alive-cached? pid))
                          (do (aset-long counts 0 (unchecked-inc (aget counts 0)))
                              (conj! removed-ids client-id))))
@@ -105,9 +111,7 @@
                nil
                clients)
     (let [removed-ids (persistent! removed-ids)]
-      {:clients (if (seq removed-ids)
-                  (reduce dissoc clients removed-ids)
-                  clients)
+      {:clients (if (seq removed-ids) (reduce dissoc clients removed-ids) clients)
        :dead (aget counts 0)
        :duplicates (aget counts 1)})))
 
@@ -116,22 +120,24 @@
    release. A skipped CAS is harmless; the one-second reaper retries."
   []
   (when-let [state @server-state]
-    (let [before (:clients state)
-          {:keys [clients dead duplicates]} (compact-client-leases before)
-          removed (+ (long dead) (long duplicates))]
+    (let
+      [before (:clients state)
+       {:keys [clients dead duplicates]} (compact-client-leases before)
+       removed (+ (long dead) (long duplicates))]
+
       (when (pos? removed)
         (let [applied? (volatile! false)]
-          (swap! server-state
-                 (fn [current]
-                   (if (identical? before (:clients current))
-                     (do (vreset! applied? true)
-                         (-> current
-                             (assoc :clients clients)
-                             (update :client-leases-reaped-total (fnil + 0) removed)
-                             (update :client-dead-reaped-total (fnil + 0) dead)
-                             (update :client-duplicates-reaped-total (fnil + 0) duplicates)))
-                     (do (vreset! applied? false)
-                         current))))
+          (swap! server-state (fn [current]
+                                (if (identical? before (:clients current))
+                                  (do (vreset! applied? true)
+                                      (-> current
+                                          (assoc :clients clients)
+                                          (update :client-leases-reaped-total (fnil + 0) removed)
+                                          (update :client-dead-reaped-total (fnil + 0) dead)
+                                          (update :client-duplicates-reaped-total
+                                                  (fnil + 0)
+                                                  duplicates)))
+                                  (do (vreset! applied? false) current))))
           (when @applied?
             (log-client-lease-warning! :client-leases-compacted
                                        {:before (count before)
@@ -141,10 +147,11 @@
 
 (defn- gateway-client-metrics
   []
-  (let [{:keys [clients sse-clients client-registrations-total client-releases-total
-                client-replacements-total client-leases-reaped-total
-                client-dead-reaped-total client-duplicates-reaped-total]}
-        @server-state]
+  (let
+    [{:keys [clients sse-clients client-registrations-total client-releases-total
+             client-replacements-total client-leases-reaped-total client-dead-reaped-total
+             client-duplicates-reaped-total]}
+     @server-state]
     {:gateway-client-leases (count clients)
      :gateway-sse-clients (count sse-clients)
      :gateway-client-registrations-total (long (or client-registrations-total 0))
@@ -166,11 +173,15 @@
 
 (defn- status-map
   []
-  (let [{:keys [port host db require-token? managed?]} @server-state
-        {:keys [gateway-client-leases gateway-sse-clients
-                gateway-client-registrations-total gateway-client-releases-total
-                gateway-client-replacements-total gateway-client-leases-reaped-total]}
-        (gateway-client-metrics)]
+  (let
+    [{:keys [port host db require-token? managed?]}
+     @server-state
+
+     {:keys [gateway-client-leases gateway-sse-clients gateway-client-registrations-total
+             gateway-client-releases-total gateway-client-replacements-total
+             gateway-client-leases-reaped-total]}
+     (gateway-client-metrics)]
+
     {:status (if @server-state "running" "stopped")
      :pid (discovery/current-pid)
      :host host
@@ -226,16 +237,14 @@
    count and never perform OS liveness probes or rebuild a set."
   []
   (when (compare-and-set! idle-reaper nil ::starting)
-    (reset! idle-reaper (future (try (loop []
-                                       (Thread/sleep (long IDLE_REAP_MS))
-                                       (when @server-state
-                                         (reap-client-leases!)
-                                         (maybe-stop-when-idle!)
-                                         (recur)))
-                                     (catch Throwable t
-                                       (tel/log! :warn
-                                                 ["gateway: idle reaper failed" (ex-message t)]))
-                                     (finally (reset! idle-reaper nil)))))))
+    (reset! idle-reaper
+      (future (try (loop []
+
+                     (Thread/sleep (long IDLE_REAP_MS))
+                     (when @server-state (reap-client-leases!) (maybe-stop-when-idle!) (recur)))
+                   (catch Throwable t
+                     (tel/log! :warn ["gateway: idle reaper failed" (ex-message t)]))
+                   (finally (reset! idle-reaper nil)))))))
 
 ;; =============================================================================
 ;; Bearer token (§3)
@@ -569,49 +578,50 @@
            sessions-tracked turns-running gateway-client-leases gateway-sse-clients
            gateway-client-registrations-total gateway-client-releases-total
            gateway-client-replacements-total gateway-client-leases-reaped-total]}]
-  (str "# TYPE vis_turns_total counter\nvis_turns_total "
-       turns-total
-       "\n"
-       "# TYPE vis_turns_failed_total counter\nvis_turns_failed_total "
-       turns-failed
-       "\n"
-       "# TYPE vis_turn_tokens_total counter\n"
-       "vis_turn_tokens_total{kind=\"input\"} "
-       tokens-input
-       "\n"
-       "vis_turn_tokens_total{kind=\"output\"} "
-       tokens-output
-       "\n"
-       "# TYPE vis_turn_cost_usd_total counter\nvis_turn_cost_usd_total "
-       cost-total
-       "\n"
-       "# TYPE vis_turn_duration_ms_total counter\nvis_turn_duration_ms_total "
-       duration-ms-total
-       "\n"
-       "# TYPE vis_sessions_tracked gauge\nvis_sessions_tracked "
-       sessions-tracked
-       "\n"
-       "# TYPE vis_turns_running gauge\nvis_turns_running "
-       turns-running
-       "\n"
-       "# TYPE vis_gateway_client_leases gauge\nvis_gateway_client_leases "
-       gateway-client-leases
-       "\n"
-       "# TYPE vis_gateway_sse_clients gauge\nvis_gateway_sse_clients "
-       gateway-sse-clients
-       "\n"
-       "# TYPE vis_gateway_client_registrations_total counter\nvis_gateway_client_registrations_total "
-       gateway-client-registrations-total
-       "\n"
-       "# TYPE vis_gateway_client_releases_total counter\nvis_gateway_client_releases_total "
-       gateway-client-releases-total
-       "\n"
-       "# TYPE vis_gateway_client_replacements_total counter\nvis_gateway_client_replacements_total "
-       gateway-client-replacements-total
-       "\n"
-       "# TYPE vis_gateway_client_leases_reaped_total counter\nvis_gateway_client_leases_reaped_total "
-       gateway-client-leases-reaped-total
-       "\n"))
+  (str
+    "# TYPE vis_turns_total counter\nvis_turns_total "
+    turns-total
+    "\n"
+    "# TYPE vis_turns_failed_total counter\nvis_turns_failed_total "
+    turns-failed
+    "\n"
+    "# TYPE vis_turn_tokens_total counter\n"
+    "vis_turn_tokens_total{kind=\"input\"} "
+    tokens-input
+    "\n"
+    "vis_turn_tokens_total{kind=\"output\"} "
+    tokens-output
+    "\n"
+    "# TYPE vis_turn_cost_usd_total counter\nvis_turn_cost_usd_total "
+    cost-total
+    "\n"
+    "# TYPE vis_turn_duration_ms_total counter\nvis_turn_duration_ms_total "
+    duration-ms-total
+    "\n"
+    "# TYPE vis_sessions_tracked gauge\nvis_sessions_tracked "
+    sessions-tracked
+    "\n"
+    "# TYPE vis_turns_running gauge\nvis_turns_running "
+    turns-running
+    "\n"
+    "# TYPE vis_gateway_client_leases gauge\nvis_gateway_client_leases "
+    gateway-client-leases
+    "\n"
+    "# TYPE vis_gateway_sse_clients gauge\nvis_gateway_sse_clients "
+    gateway-sse-clients
+    "\n"
+    "# TYPE vis_gateway_client_registrations_total counter\nvis_gateway_client_registrations_total "
+    gateway-client-registrations-total
+    "\n"
+    "# TYPE vis_gateway_client_releases_total counter\nvis_gateway_client_releases_total "
+    gateway-client-releases-total
+    "\n"
+    "# TYPE vis_gateway_client_replacements_total counter\nvis_gateway_client_replacements_total "
+    gateway-client-replacements-total
+    "\n"
+    "# TYPE vis_gateway_client_leases_reaped_total counter\nvis_gateway_client_leases_reaped_total "
+    gateway-client-leases-reaped-total
+    "\n"))
 
 (defn- metrics-handler
   [request]
@@ -645,39 +655,53 @@
   [clients client-id {:keys [pid] :as lease}]
   (if (nil? pid)
     {:clients (assoc clients client-id lease) :replaced 0}
-    (let [stale-ids (persistent!
-                      (reduce-kv (fn [ids existing-id existing]
-                                   (if (= pid (:pid existing))
-                                     (conj! ids existing-id)
-                                     ids))
-                                 (transient [])
-                                 clients))]
+    (let
+      [stale-ids (persistent! (reduce-kv (fn [ids existing-id existing]
+                                           (if (= pid (:pid existing)) (conj! ids existing-id) ids))
+                                         (transient [])
+                                         clients))]
       {:clients (assoc (reduce dissoc clients stale-ids) client-id lease)
        :replaced (count stale-ids)})))
 
 (defn- client-register-handler
   [request]
-  (let [{:strs [pid kind]} (body-json request)
-        client-id (str (java.util.UUID/randomUUID))
-        lease {:pid pid :kind kind :connected-at (System/currentTimeMillis)}
-        replacement-stats (long-array 2)] ; [this registration, cumulative]
-    (swap! server-state
-           (fn [st]
-             (let [{:keys [clients replaced]}
-                   (register-client-lease (:clients st) client-id lease)
-                   total (+ (long (or (:client-replacements-total st) 0))
-                            (long replaced))]
-               (aset-long replacement-stats 0 (long replaced))
-               (aset-long replacement-stats 1 (long total))
-               (-> st
-                   (assoc :saw-client? true :clients clients)
-                   (update :client-registrations-total (fnil inc 0))
-                   (assoc :client-replacements-total total)))))
-    (let [replaced (aget replacement-stats 0)
-          replacement-total (aget replacement-stats 1)]
+  (let
+    [{:strs [pid kind]}
+     (body-json request)
+
+     client-id
+     (str (java.util.UUID/randomUUID))
+
+     lease
+     {:pid pid :kind kind :connected-at (System/currentTimeMillis)}
+
+     replacement-stats
+     (long-array 2)]
+    ; [this registration, cumulative]
+    (swap! server-state (fn [st]
+                          (let
+                            [{:keys [clients replaced]}
+                             (register-client-lease (:clients st) client-id lease)
+
+                             total
+                             (+ (long (or (:client-replacements-total st) 0)) (long replaced))]
+
+                            (aset-long replacement-stats 0 (long replaced))
+                            (aset-long replacement-stats 1 (long total))
+                            (-> st
+                                (assoc :saw-client? true
+                                       :clients clients)
+                                (update :client-registrations-total (fnil inc 0))
+                                (assoc :client-replacements-total total)))))
+    (let
+      [replaced
+       (aget replacement-stats 0)
+
+       replacement-total
+       (aget replacement-stats 1)]
+
       (when (and (pos? replaced)
-                 (or (= 1 replacement-total)
-                     (zero? (long (mod replacement-total 100)))))
+                 (or (= 1 replacement-total) (zero? (long (mod replacement-total 100)))))
         (log-client-lease-warning! :client-lease-replaced
                                    {:replaced replaced
                                     :replacements-total replacement-total
@@ -687,13 +711,12 @@
 (defn- client-release-handler
   [request]
   (let [client-id (get-in request [:path-params :cid])]
-    (swap! server-state
-           (fn [st]
-             (if (contains? (:clients st) client-id)
-               (-> st
-                   (update :clients dissoc client-id)
-                   (update :client-releases-total (fnil inc 0)))
-               st)))
+    (swap! server-state (fn [st]
+                          (if (contains? (:clients st) client-id)
+                            (-> st
+                                (update :clients dissoc client-id)
+                                (update :client-releases-total (fnil inc 0)))
+                            st)))
     (maybe-stop-when-idle!)
     (json-response {:released true :status (status-map)})))
 
@@ -1427,6 +1450,27 @@
       (json-response {:workspace (state/change-root! sid path)}))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- drafts-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:drafts (state/list-drafts sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- stash-draft-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:workspace (state/stash-draft! sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- resume-draft-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{:strs [workspace_id]} (body-json request)]
+      (try (json-response {:workspace (state/resume-draft! sid workspace_id)})
+           (catch clojure.lang.ExceptionInfo e
+             (error-response 409 (:type (ex-data e) :draft-resume-failed) (ex-message e)))))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- seq-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -1786,6 +1830,9 @@
         ["/sessions/:sid/workspace/roots"
          {:post add-filesystem-root-handler :delete remove-filesystem-root-handler}]
         ["/sessions/:sid/workspace/root" {:patch change-root-handler}]
+        ["/sessions/:sid/workspace/drafts" {:get drafts-handler}]
+        ["/sessions/:sid/workspace/stash" {:post stash-draft-handler}]
+        ["/sessions/:sid/workspace/resume" {:post resume-draft-handler}]
         ["/sessions/:sid/suggest" {:get suggest-handler}]
         ["/sessions/:sid/turns" {:get list-turns-handler :post submit-turn-handler}]
         ["/sessions/:sid/turns/:tid"

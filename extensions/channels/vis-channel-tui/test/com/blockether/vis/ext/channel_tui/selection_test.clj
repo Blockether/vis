@@ -77,7 +77,24 @@
   (it "keeps the comfort zone within the bubble columns"
       (expect (not (selection/point-in-ranges? (selection/point 1 5)
                                                [{:row 5 :col 2 :width 6}]
-                                               {:row-padding 2})))))
+                                               {:row-padding 2}))))
+  (it
+    "accepts a horizontal comfort zone so a press in a bubble's left gutter still starts a selection"
+    ;; Regression: drag-selecting from a card's left margin (cols left of the
+    ;; text) silently no-opped because `source-at-point` required the press
+    ;; column to land inside the narrow content band. `:col-padding` widens the
+    ;; START hitbox WITHOUT widening the copied cells (still clipped by
+    ;; `selected-ranges`), so a gutter press begins a transcript selection.
+    (expect (selection/point-in-ranges? (selection/point 0 5)
+                                        [{:row 5 :col 5 :width 6}]
+                                        {:row-padding 2 :col-padding 60}))
+    (expect (selection/point-in-ranges? (selection/point 3 5)
+                                        [{:row 5 :col 5 :width 6}]
+                                        {:row-padding 2 :col-padding 60}))
+    ;; Without col-padding the band stays tight (unchanged default behaviour).
+    (expect (not (selection/point-in-ranges? (selection/point 0 5)
+                                             [{:row 5 :col 5 :width 6}]
+                                             {:row-padding 2})))))
 
 (defdescribe
   click-selection-test

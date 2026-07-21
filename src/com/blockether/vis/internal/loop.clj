@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
@@ -9349,6 +9350,15 @@
       :allowed-domains (:allowed-domains net-cfg)
       :denied-domains (:denied-domains net-cfg)
       :method-policy (:method-policy net-cfg)}
+
+     ;; OS jail (real containment for shell children) — opt-in via vis.yml
+     ;; `:shell {:jail true}`. When on, every shell/subprocess spawn is confined
+     ;; to the LIVE session roots and, when :network/enabled is off, denied all
+     ;; sockets. nil (default) leaves the executors unwrapped = today's behavior.
+     _
+     (process-jail/set-active-policy!
+       (when (and sandbox-roots-fn (get-in (config/load-config-raw) [:shell :jail]))
+         {:roots-fn sandbox-roots-fn :net-enabled? (:enabled? network-opts)}))
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))

@@ -490,6 +490,56 @@
       (workspace/change-root! db state-id path)))
   (session-workspace-info sid))
 
+(defn list-drafts
+  "Active/stashed DRAFTS for the repo the session pinned to `sid` lives in, in
+   THE canonical string-keyed wire shape
+   `[{\"workspace_id\" \"label\" \"root\" \"repo_root\" \"fork_ms\" \"is_current\"}]`,
+   newest first — the parked drafts any channel can `resume-draft!`. The session's
+   own current draft (when it is in one) rides `\"is_current\" true`. Server-side
+   twin of the `/draft list` slash: ONE gateway fact every channel (web picker,
+   TUI drafts view) reads instead of typing the slash. Never throws; returns []
+   when the session or its repo is unknown."
+  [sid]
+  (or (try (when-let [db (lp/db-info)]
+             (when-let [ws (resolve-workspace db sid)]
+               (let [current-id (when (workspace/draft? ws) (:id ws))]
+                 (mapv (fn [d]
+                         (wire/canonical {:workspace-id (:id d)
+                                          :label (workspace/display-label db d nil)
+                                          :root (:root d)
+                                          :repo-root (:repo-root d)
+                                          :fork-ms (:fork-ms d)
+                                          :current? (= current-id (:id d))}))
+                       (workspace/list-drafts db (:repo-id ws))))))
+           (catch Throwable _ nil))
+      []))
+
+(defn stash-draft!
+  "Park the session's current draft — leave the draft row `:active` and its clone
+   on disk, repoint the session back to trunk — then return the refreshed
+   `session-workspace-info`. The non-destructive twin of abandoning; a no-op that
+   returns trunk info when the session is already on trunk. Runs SERVER-SIDE in
+   the daemon that owns the DB. Channel-agnostic twin of the `/draft stash` slash."
+  [sid]
+  (when-let [db (lp/db-info)]
+    (when-let [state-id (resolve-state-id db sid)]
+      (workspace/stash! db state-id)))
+  (session-workspace-info sid))
+
+(defn resume-draft!
+  "Switch the session pinned to `sid` INTO the stashed draft `workspace-id`, then
+   return the refreshed `session-workspace-info`. When the session is currently in
+   ANOTHER draft it is first STASHED (non-destructive), so this is a true draft
+   switch, not just an enter-from-trunk. Runs SERVER-SIDE in the daemon. Throws
+   `ex-info` with a `:type` when `workspace-id` is not a resumable active draft
+   (see `workspace/resume!`). Channel-agnostic twin of the `/draft resume` slash."
+  [sid workspace-id]
+  (when-let [db (lp/db-info)]
+    (when-let [state-id (resolve-state-id db sid)]
+      (when (workspace/draft? (resolve-workspace db sid)) (workspace/stash! db state-id))
+      (workspace/resume! db {:session-state-id state-id :workspace-id workspace-id})))
+  (session-workspace-info sid))
+
 ;; =============================================================================
 ;; Chunk -> event translation (§8)
 ;; =============================================================================

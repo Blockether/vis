@@ -5779,10 +5779,19 @@
                            (when selection-copy?
                              (let
                                [screen-anchor (selection/point mx my)
-                                source (selection/source-at-point screen-anchor
-                                                                  transcript-selectable-ranges
-                                                                  input-selectable-ranges
-                                                                  {:row-padding 2})]
+                                source (selection/source-at-point
+                                         screen-anchor
+                                         transcript-selectable-ranges
+                                         input-selectable-ranges
+                                         ;; Column-forgiving START: a press anywhere
+                                         ;; horizontally on a selectable transcript row
+                                         ;; (its left gutter, indent, or right padding)
+                                         ;; begins a selection. Links/copy-ids/scrollbar
+                                         ;; are already intercepted before this branch, and
+                                         ;; the selection itself stays clipped to the
+                                         ;; content band. Without this, dragging from a
+                                         ;; bubble's left margin silently no-ops.
+                                         {:row-padding 2 :col-padding cols})]
 
                                (if-not source
                                  (do (vreset! last-selection-click nil)

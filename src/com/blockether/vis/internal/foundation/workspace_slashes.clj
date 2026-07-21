@@ -211,18 +211,142 @@
      current
      (session-workspace ctx)]
 
-    (cond (workspace/draft? current)
-          (let [st (workspace/status db (:id current))]
-            {:slash/status :ok
-             :slash/title (str "Draft '" (workspace/display-label current) "'")
-             :slash/body (str (:workspace/changed st 0)
-                              " file(s) changed · "
-                              "/draft apply to land them, /draft abandon to discard")
-             :slash/data {:workspace-id (:id current)}})
+    (cond
+      (workspace/draft? current)
+      (let [st (workspace/status db (:id current))]
+        {:slash/status :ok
+         :slash/title (str "Draft '" (workspace/display-label current) "'")
+         :slash/body
+         (str (:workspace/changed st 0)
+              " file(s) changed · "
+              "/draft apply to land them, /draft stash to park it, /draft abandon to discard")
+         :slash/data {:workspace-id (:id current)}})
+      :else
+      {:slash/status :ok
+       :slash/title "On trunk — your real repo"
+       :slash/body
+       "Editing your repo directly. /draft new <label> to start an isolated draft, /draft list + /draft resume <label> to re-enter a stashed one."})))
+
+(defn- handle-stash
+  "`/draft stash` — leave the draft WITHOUT discarding it, so `/draft resume`
+   can re-enter it later. The non-destructive twin of /draft abandon."
+  [ctx]
+  (let
+    [db
+     (ctx-db ctx)
+
+     state-id
+     (ctx-session-state-id ctx)
+
+     current
+     (session-workspace ctx)]
+
+    (cond (nil? current) (err "No active workspace")
+          (not (workspace/draft? current)) (err "Not in a draft — nothing to stash")
+          :else (let [label (workspace/display-label current)]
+                  (workspace/stash! db state-id)
+                  {:slash/status :ok
+                   :slash/title (str "Stashed draft '" label "' — back on trunk")
+                   :slash/body (str "Parked, not discarded. /draft resume "
+                                    label
+                                    " to re-enter it · /draft list to see every stashed draft.")
+                   :slash/data {:workspace-id (:id current) :label label}}))))
+
+(defn- handle-list
+  "`/draft list` — every active/stashed draft in this repo, newest first, with
+   the current one marked. The gateway keeps stashed drafts alive until they are
+   applied or abandoned, so this is how you find one to /draft resume."
+  [ctx]
+  (let
+    [db
+     (ctx-db ctx)
+
+     current
+     (session-workspace ctx)
+
+     repo-id
+     (:repo-id current)
+
+     drafts
+     (when repo-id (workspace/list-drafts db repo-id))
+
+     current-id
+     (when (workspace/draft? current) (:id current))]
+
+    (cond (nil? current) (err "No active workspace")
+          (empty? drafts) {:slash/status :ok
+                           :slash/title "No drafts yet"
+                           :slash/body "Editing trunk directly. /draft new <label> to start one."}
           :else {:slash/status :ok
-                 :slash/title "On trunk — your real repo"
-                 :slash/body
-                 "Editing your repo directly. /draft new <label> to start an isolated draft."})))
+                 :slash/title (str (count drafts) " draft" (when (not= 1 (count drafts)) "s"))
+                 :slash/body (->> drafts
+                                  (map (fn [d]
+                                         (str (if (= current-id (:id d)) "* " "  ")
+                                              (workspace/display-label d)
+                                              (when (= current-id (:id d)) " (current)"))))
+                                  (str/join "\n"))
+                 :slash/data {:drafts (mapv (fn [d]
+                                              {:workspace-id (:id d)
+                                               :label (workspace/display-label d)
+                                               :current? (= current-id (:id d))})
+                                            drafts)}})))
+
+(defn- handle-resume
+  "`/draft resume [label]` — re-enter a stashed draft by label. With no label,
+   lists the stashed drafts to choose from. Refuses while already in a draft."
+  [ctx]
+  (let
+    [db
+     (ctx-db ctx)
+
+     state-id
+     (ctx-session-state-id ctx)
+
+     current
+     (session-workspace ctx)
+
+     label
+     (some-> (str/join " " (:command/argv ctx))
+             str/trim
+             not-empty)
+
+     repo-id
+     (:repo-id current)
+
+     drafts
+     (when repo-id (workspace/list-drafts db repo-id))]
+
+    (cond
+      (nil? state-id) (err "Send a message first, then /draft resume <label>")
+      (workspace/draft? current)
+      (err (str "Already in draft '"
+                (workspace/display-label current)
+                "' — /draft stash, /draft apply, or /draft abandon it first"))
+      (empty? drafts)
+      (err "No stashed drafts to resume" :slash/body "/draft new <label> to start one.")
+      (nil? label) {:slash/status :ok
+                    :slash/title "Which draft? — /draft resume <label>"
+                    :slash/body (->> drafts
+                                     (map #(str "  " (workspace/display-label %)))
+                                     (str/join "\n"))
+                    :slash/data {:drafts (mapv #(workspace/display-label %) drafts)}}
+      :else
+      (let [match (filter #(= label (workspace/display-label %)) drafts)]
+        (cond
+          (empty? match) (err (str "No stashed draft named '" label "'")
+                              :slash/body
+                              (str "Stashed: "
+                                   (str/join ", " (map workspace/display-label drafts))))
+          (next match) (err
+                         (str "Multiple drafts named '" label "' — abandon the duplicates first"))
+          :else
+          (let [d (first match)]
+            (workspace/resume! db {:session-state-id state-id :workspace-id (:id d)})
+            {:slash/status :ok
+             :slash/title (str "Resumed draft '" (workspace/display-label d) "'")
+             :slash/body
+             "Back in your draft. /draft apply to land it · /draft stash to park it again · /draft abandon to discard."
+             :slash/data {:workspace-id (:id d) :label (workspace/display-label d)}}))))))
 
 (defn- expand-home
   "Expand a leading `~` in a typed path to the user's home dir, so
@@ -460,7 +584,7 @@
   (into
     [{:slash/name "draft"
       :slash/doc "Drafts — isolated workspace copies of your repo (opt-in)."
-      :slash/usage "/draft <new <label> | apply | abandon>"
+      :slash/usage "/draft <new <label> | apply | stash | resume <label> | list | abandon>"
       :slash/ui {:kind :navigator}
       :slash/run-fn handle-status}
      {:slash/name "new"
@@ -482,6 +606,24 @@
       :slash/usage "/draft abandon [reason]"
       :slash/requires #{:session}
       :slash/run-fn handle-abandon}
+     {:slash/name "stash"
+      :slash/parent ["draft"]
+      :slash/doc "Park the draft without discarding it — resume it later."
+      :slash/usage "/draft stash"
+      :slash/requires #{:session}
+      :slash/run-fn handle-stash}
+     {:slash/name "resume"
+      :slash/parent ["draft"]
+      :slash/doc "Re-enter a stashed draft by <label>."
+      :slash/usage "/draft resume <label>"
+      :slash/prompt-arg "Draft label to resume"
+      :slash/requires #{:session}
+      :slash/run-fn handle-resume}
+     {:slash/name "list"
+      :slash/parent ["draft"]
+      :slash/doc "List every stashed/active draft in this repo."
+      :slash/usage "/draft list"
+      :slash/run-fn handle-list}
      {:slash/name "draft-blank"
       :slash/doc
       "Like /draft new, but the draft starts EMPTY — no files from your current repo (HEAD) are carried in."

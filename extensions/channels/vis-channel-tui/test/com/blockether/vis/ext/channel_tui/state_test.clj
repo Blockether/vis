@@ -2459,6 +2459,28 @@
           (expect (true? (:pending? m)))
           (expect (true? (:slash? m)))
           (expect (= "Running shell command..." (get-in m [:content 0 "message"])))))
+    (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
+        ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
+        ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
+        ;; An UNKNOWN `/foo` (no registered root) falls through to template expansion
+        ;; or a normal LLM turn and legitimately keeps its footer; a pasted absolute
+        ;; path (`/var/…/shot.png …`) is prose, never a slash.
+        (with-redefs
+          [com.blockether.vis.core/registered-slashes
+           (fn []
+             [{:slash/name "draft-blank" :slash/parent []} {:slash/name "draft" :slash/parent []}
+              {:slash/name "abandon" :slash/parent ["draft"]}])]
+          (let
+            [blank (pending-assistant-for "/draft-blank empty-provider-list")
+             sub (pending-assistant-for "/draft abandon")
+             unk (pending-assistant-for "/nope do a thing")
+             path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
+
+            (expect (true? (:slash? blank)))
+            (expect (= "Running command..." (get-in blank [:content 0 "message"])))
+            (expect (true? (:slash? sub)))
+            (expect (nil? (:slash? unk)))
+            (expect (nil? (:slash? path))))))
     (it "leaves a normal submission on the provider placeholder, no command marker"
         (let [m (pending-assistant-for "summarize the repo")]
           (expect (true? (:pending? m)))
