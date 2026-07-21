@@ -2842,7 +2842,7 @@
   "Apply anchored patch edits to the filesystem.
 
    Returns a structured map; **never throws on normal failure paths**
-   (stale anchor, stale mtime, file not found, path escape). Reserves exceptions for genuinely
+   (stale anchor, file not found, path escape). Reserves exceptions for genuinely
    unexpected errors (thread interrupt, disk full, etc.).
 
    Success shape:
@@ -2897,9 +2897,9 @@
 ;;    :message  <human-readable>}
 ;;
 ;; The `:is_overwrite` knob defaults to true. `:expected_mtime` /
-;; `:expected_size` provide the same staleness guard as patch — pair
-;; them with (:mtime / :size) from a prior cat for atomic
-;; read-modify-write on existing files.
+;; `:expected_size` pair with (:mtime / :size) from a prior cat for atomic
+;; read-modify-write on existing files. Patch uses content-addressed anchors
+;; instead of a file-wide metadata guard.
 ;; =============================================================================
 
 (def ^:private write-required-keys #{"path" "content"})
@@ -3733,9 +3733,13 @@
       (dissoc "diff"))))
 
 (defn- patch-tool
-  Edit files by anchor (no text search/replace).
+  "Edit files by anchor (no text search/replace).
 
-Each `lineno:hash` comes from a fresh `cat`, `rg`, or `struct_index` read. Anchors re-resolve against live content: unrelated changes are preserved when the targets still match; changed targets abort the entire atomic batch. Omit `to_anchor` for one line, use an inclusive range otherwise, and use an empty replacement to delete. Re-read after every successful write.
+   Each `lineno:hash` comes from a fresh `cat`, `rg`, or `struct_index` read.
+   Anchors re-resolve against live content: unrelated changes are preserved when
+   the targets still match; changed targets abort the entire atomic batch. Omit
+   `to_anchor` for one line, use an inclusive range otherwise, and use an empty
+   replacement to delete. Re-read after every successful write."
   [edits]
   (let [result (patch-safe edits)]
     (if (:success? result)

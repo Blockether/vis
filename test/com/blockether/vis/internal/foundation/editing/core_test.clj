@@ -774,8 +774,9 @@
         (expect (true? (:eof? out)))
         (expect (false? (:truncated? out)))
         (expect (= (numbered-tuples 1 ["alpha" "beta" "gamma"]) (:lines out)))
-        ;; staleness metadata mirrors File.lastModified / File.length and can
-        ;; be threaded into a later patch as :expected_mtime / :expected_size.
+        ;; Staleness metadata mirrors File.lastModified / File.length and can
+        ;; guard a later whole-file write. Anchored patch edits deliberately do
+        ;; not accept file-wide mtime/size guards.
         (expect (pos-int? (:mtime out)))
         (expect (= (.length (fs/file path)) (:size out)))))
   (it ":eof? false (with :next-offset) when window stops short of file end"
@@ -794,10 +795,9 @@
 
         (expect (false? (:eof? out)))
         (expect (= 4 (:next-offset out)))))
-  (it ":mtime / :size from cat round-trip into patch :expected_mtime guard"
-      ;; This is the canonical staleness recipe: cat -> patch :expected_mtime
-      ;; matches -> succeeds. If something rewrites the file in between, the
-      ;; patch fails closed with :reason :stale.
+  (it ":mtime from cat round-trips into write's :expected_mtime guard"
+      ;; Whole-file write needs a file-wide concurrency guard. Patch does not:
+      ;; its fresh line anchors verify the target content instead.
       (let
         [path
          (write-temp! "cat-stale.txt" "alpha\n")
@@ -805,8 +805,8 @@
          read-file
          (private-fn "read-file")
 
-         patch
-         (private-fn "patch-safe")
+         write
+         (private-fn "write-safe")
 
          first-read
          (read-file path)
@@ -814,20 +814,14 @@
          mtime0
          (:mtime first-read)]
 
-        ;; Same mtime -> patch goes through cleanly.
-        (patch [{"path" path
-                 "from_anchor" (patch/line-anchor 1 "alpha")
-                 "replace" "BETA"
-                 "expected_mtime" mtime0}])
+        ;; Same mtime -> whole-file write goes through cleanly.
+        (write {"path" path "content" "BETA\n" "expected_mtime" mtime0})
         (expect (= "BETA\n" (slurp path)))
         ;; Force-clock the file backwards so the next read sees a fresh mtime
         ;; distinct from `mtime0` regardless of filesystem millis precision.
         (.setLastModified (fs/file path) (- (long mtime0) 60000))
         (let
-          [r (patch [{"path" path
-                      "from_anchor" (patch/line-anchor 1 "BETA")
-                      "replace" "GAMMA"
-                      "expected_mtime" mtime0}])]
+          [r (write {"path" path "content" "GAMMA\n" "expected_mtime" mtime0})]
           (expect (false? (:success? r)))
           (expect (= :stale
                      (-> r
@@ -1504,33 +1498,28 @@
 (defdescribe
   thin-bbfs-wrapper-test
   ;; patch-safe returns a STRUCTURED MAP and never throws on "normal"
-  ;; failure paths (anchor-not-found / hashline-out-of-range / stale /
+  ;; failure paths (anchor-not-found / hashline-out-of-range / stale anchor /
   ;; file-not-found / path-escape / etc.). Throws are reserved for genuinely
   ;; unexpected programming errors (a missing :from_anchor, an unknown key).
-  (it ":expected_mtime guards against editing a file that changed since it was read"
+  (it "anchors preserve unrelated concurrent changes without an mtime guard"
       (let
         [patch
          (private-fn "patch-safe")
 
          p
-         (write-temp! "bbfs/patch-stale.txt" "alpha\n")
+         (write-temp! "bbfs/patch-concurrent.txt" "alpha\nbeta\n")
 
-         stale-mtime
-         (- (.lastModified (fs/file p)) 100000)
+         anchor
+         (patch/line-anchor 1 "alpha")
+
+         _
+         (spit p "alpha\nBETA-ELSEWHERE\n")
 
          r
-         (patch [{"path" p
-                  "from_anchor" (patch/line-anchor 1 "alpha")
-                  "replace" "BETA"
-                  "expected_mtime" stale-mtime}])]
+         (patch [{"path" p "from_anchor" anchor "replace" "ALPHA"}])]
 
-        (expect (false? (:success? r)))
-        (expect (= :stale
-                   (-> r
-                       :failures
-                       first
-                       :reason)))
-        (expect (= "alpha\n" (slurp p)))))
+        (expect (true? (:success? r)))
+        (expect (= "ALPHA\nBETA-ELSEWHERE\n" (slurp p)))))
   (it "unknown edit keys are rejected (typo guard)"
       (let
         [patch
@@ -1668,31 +1657,25 @@
                        first
                        :reason)))))
   (it
-    ":expected_size guards independent of :expected_mtime"
+    "a changed anchor target fails closed without an mtime guard"
     (let
       [patch
        (private-fn "patch-safe")
 
        p
-       (write-temp! "bbfs/patch-size.txt" "hello\n")
+       (write-temp! "bbfs/patch-target-changed.txt" "hello\nworld\n")
+
+       anchor
+       (patch/line-anchor 1 "hello")
+
+       _
+       (spit p "HELLO-ELSEWHERE\nworld\n")
 
        r
-       (patch
-         [{"path" p "from_anchor" (patch/line-anchor 1 "hello") "replace" "x" "expected_size" 1}])]
+       (patch [{"path" p "from_anchor" anchor "replace" "x"}])]
 
       (expect (false? (:success? r)))
-      (expect (= :stale
-                 (-> r
-                     :failures
-                     first
-                     :reason)))
-      (expect (= :stale-size
-                 (-> r
-                     :failures
-                     first
-                     :stale
-                     :reason)))
-      (expect (= "hello\n" (slurp p)))))
+      (expect (= "HELLO-ELSEWHERE\nworld\n" (slurp p)))))
   (it "empty edit vector is rejected"
       (let [patch (private-fn "patch-safe")]
         (expect (throws? clojure.lang.ExceptionInfo #(patch [])))))
@@ -2422,6 +2405,19 @@
           (expect (some? ex))
           (expect (string/includes? (ex-message ex) "unknown keys"))
           (expect (= ["typo"] (:unknown (ex-data ex))))))
+    (it "rejects file-wide mtime/size guards"
+        (doseq [field ["expected_mtime" "expected_size"]]
+          (let
+            [ex
+             (try (coerce [{"path" "p.txt"
+                            "from_anchor" "1:abc"
+                            "replace" "new"
+                            field 1}])
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+
+            (expect (some? ex))
+            (expect (= [field] (:unknown (ex-data ex)))))))
     (it "rejects an edit with no locator"
         (expect (throws? clojure.lang.ExceptionInfo #(coerce [{"path" "p.txt" "replace" "x"}]))))))
 
@@ -2446,8 +2442,7 @@
                                       "from_anchor")))
                (it "advertises exactly the canonical patch fields"
                    (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
-                     (expect (= #{"path" "from_anchor" "to_anchor" "replace" "expected_mtime"
-                                  "expected_size"}
+                     (expect (= #{"path" "from_anchor" "to_anchor" "replace"}
                                 (set (keys fields))))))))
 
 (defdescribe editing-native-schema-shape-test
