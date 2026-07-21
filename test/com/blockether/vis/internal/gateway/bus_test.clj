@@ -88,6 +88,28 @@
                                (expect (= "turn.failed" (get ev "type")))
                                (expect (= "interrupted" (get ev "status")))
                                (expect (= "T-orphan" (get ev "turn_id"))))))))
+  (it "treats a cancelled turn as terminal, not an orphan to fail again"
+      (with-temp-journal
+        (fn [capture write!]
+          (let
+            [prod
+             (str (java.util.UUID/randomUUID))
+
+             sid
+             "sid-cancel"
+
+             tid
+             "T-cancel"]
+
+            (write! sid
+                    [(turn-started prod dead-pid sid tid)
+                     (assoc (delta prod dead-pid tid)
+                       :seq 7
+                       :type "turn.cancelled"
+                       :status "cancelled"
+                       :session_id sid)])
+            (bus/hydrate! sid)
+            (expect (empty? @capture))))))
   (it "is idempotent: a second hydrate of a reaped journal delivers nothing"
       (with-temp-journal (fn [capture write!]
                            (let [prod (str (java.util.UUID/randomUUID))]

@@ -398,7 +398,9 @@
            foreign (remove #(= (get % "_producer") producer-id) events)
            ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
            ;; THIS process) means the turn is done — don't re-stream it.
-           terminal? (some #(contains? #{"turn.completed" "turn.failed"} (get % "type")) events)]
+           terminal? (some #(contains? #{"turn.completed" "turn.failed" "turn.cancelled"}
+                                       (get % "type"))
+                           events)]
 
           (when (and (seq foreign) (not terminal?))
             ;; claim everything up to EOF so poll-once! won't re-deliver it
