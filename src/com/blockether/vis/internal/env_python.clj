@@ -2076,7 +2076,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     "        pass\n" "__vis_install_net_guard__()\n"))
 
 (def ^:private method-guard-python
-  "Best-effort per-host HTTP METHOD allowlist for the sandbox's network.
+  "Best-effort per-host HTTP METHOD + PATH allowlist for the sandbox's network.
 
    Same THREAT MODEL as `network-guard-python` — a GUARDRAIL for cooperative /
    accidental egress, NOT adversary-proof. It patches
@@ -2085,70 +2085,140 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    method, so this can only steer code that goes THROUGH urllib — which every
    built-in HTTP shim (requests / httpx / urllib3) and stdlib `urllib.request`
    do, but a hand-rolled `socket` does not. The host guard remains the real
-   network boundary; this just refines *which verbs* reach an allowed host.
+   network boundary; this just refines *which verbs + paths* reach an allowed host.
 
-   Policy is `{host [METHOD ...]}` (methods case-insensitive). Specificity mirrors
-   the host guard: an exact/suffix host match wins over a `*` entry. A host with
-   NO matching entry is UNRESTRICTED (opt-in / purely additive); a host that DOES
-   match must use one of its listed methods or `open` raises PermissionError
-   before the request leaves the interpreter."
+   Consumes `__vis_network_rules__` — a LIST of `{host, methods:[…], allow:[{method,
+   path}]}` dicts (see `normalize-network-rules`). Specificity mirrors the host
+   guard: an exact/suffix host match wins over a `*` entry (longest suffix first).
+   A host with NO matching rule is UNRESTRICTED (opt-in / purely additive). For a
+   matched host a request passes iff its verb is in `methods` (a `*` method = any
+   verb), OR it matches an `allow` grant (verb + `fnmatch` path glob, `*` path =
+   any); otherwise `open` raises PermissionError before the request leaves the
+   interpreter."
   (str
     "def __vis_install_method_guard__():\n" "    import urllib.request as _ur\n"
-    "    import urllib.parse as _up\n" "    _pol = {}\n"
-    "    for _k, _v in dict(__vis_method_policy__).items():\n"
-    "        _h = str(_k).strip().lower().rstrip('.')\n"
-    "        if _h:\n"
-    "            _pol[_h] = set(str(_m).strip().upper() for _m in _v if str(_m).strip())\n"
-    "    if not _pol:\n" "        return\n"
-    "    _spec = dict((k, v) for k, v in _pol.items() if k != '*')\n" "    _star = _pol.get('*')\n"
+    "    import urllib.parse as _up\n" "    import fnmatch as _fn\n"
+    "    _rules = []\n" "    for _r in list(__vis_network_rules__):\n"
+    "        _r = dict(_r)\n" "        _h = str(_r.get('host','')).strip().lower().rstrip('.')\n"
+    "        if not _h:\n" "            continue\n"
+    "        _ms = set(str(_m).strip().upper() for _m in _r.get('methods', []) if str(_m).strip())\n"
+    "        _al = []\n"
+    "        for _a in list(_r.get('allow', [])):\n" "            _a = dict(_a)\n"
+    "            _am = str(_a.get('method', '')).strip().upper()\n"
+    "            _ap = str(_a.get('path', '')).strip() or '*'\n"
+    "            if _am:\n" "                _al.append((_am, _ap))\n"
+    "        if _ms or _al:\n" "            _rules.append((_h, _ms, _al))\n"
+    "    if not _rules:\n" "        return\n"
     "    def _host_of(u):\n" "        try:\n"
     "            return (_up.urlsplit(str(u)).hostname or '').strip().lower().rstrip('.')\n"
     "        except Exception:\n"
-    "            return ''\n" "    def _allowed(host):\n"
-    "        h = str(host).strip().lower().rstrip('.')\n" "        if h in _spec:\n"
-    "            return _spec[h]\n" "        for d, ms in _spec.items():\n"
-    "            if h.endswith('.' + d):\n" "                return ms\n"
-    "        return _star\n" "    def _check(host, method):\n"
-    "        a = _allowed(host)\n" "        if a is None:\n"
-    "            return\n" "        m = str(method).upper()\n"
-    "        if m not in a:\n"
-    "            raise PermissionError(\"vis: HTTP method '%s' not allowed for host '%s' (allowed=%s)\" % (m, host, sorted(a)))\n"
+    "            return ''\n" "    def _path_of(u):\n"
+    "        try:\n" "            return _up.urlsplit(str(u)).path or '/'\n"
+    "        except Exception:\n" "            return '/'\n"
+    "    def _match(host):\n" "        _best = None\n"
+    "        _star = None\n" "        for _e in _rules:\n"
+    "            if _e[0] == '*':\n" "                _star = _e\n"
+    "            elif host == _e[0] or host.endswith('.' + _e[0]):\n"
+    "                if _best is None or len(_e[0]) > len(_best[0]):\n"
+    "                    _best = _e\n" "        return _best or _star\n"
+    "    def _path_ok(path, pat):\n" "        if pat in ('', '*', '/*', '**', '/**'):\n"
+    "            return True\n"
+    "        return _fn.fnmatchcase(path, pat) or _fn.fnmatchcase(path, pat.rstrip('/') + '/*')\n"
+    "    def _check(host, method, path):\n" "        _e = _match(host)\n"
+    "        if _e is None:\n" "            return\n"
+    "        _h, _ms, _al = _e\n" "        m = str(method).upper()\n"
+    "        if m in _ms or '*' in _ms:\n" "            return\n"
+    "        for _am, _ap in _al:\n"
+    "            if (_am == m or _am in ('*', 'ANY')) and _path_ok(path, _ap):\n"
+    "                return\n"
+    "        raise PermissionError(\"vis: HTTP method '%s' not allowed for host '%s' path '%s'\" % (m, host, path))\n"
     "    _orig = _ur.OpenerDirector.open\n" "    def _open(self, fullurl, data=None, *a, **k):\n"
     "        if isinstance(fullurl, _ur.Request):\n"
     "            host = _host_of(fullurl.full_url)\n"
-    "            method = fullurl.get_method()\n" "        else:\n"
-    "            host = _host_of(fullurl)\n"
+    "            path = _path_of(fullurl.full_url)\n" "            method = fullurl.get_method()\n"
+    "        else:\n" "            host = _host_of(fullurl)\n"
+    "            path = _path_of(fullurl)\n"
     "            method = 'GET' if data is None else 'POST'\n"
-    "        _check(host, method)\n" "        return _orig(self, fullurl, data, *a, **k)\n"
+    "        _check(host, method, path)\n" "        return _orig(self, fullurl, data, *a, **k)\n"
     "    _ur.OpenerDirector.open = _open\n" "__vis_install_method_guard__()\n"))
 
-(defn- normalize-method-policy
-  "Normalize a config `:network :method-policy` map into
-   `{host-string [UPPER-METHOD ...]}` for `->py` / `method-guard-python`: host
-   keys trimmed + lower-cased, method values upper-cased, and any entry with a
-   blank host or no methods dropped. An empty/absent policy yields `{}` (⇒ no
-   guard installed). Keyword or string hosts/methods are both accepted; a lone
-   method value is treated as a one-element list."
-  [method-policy]
-  (letfn [(nm [x]
-            (some-> (if (keyword? x) (name x) (str x))
-                    str/trim
-                    not-empty))]
-    (into {}
-          (keep (fn [[host methods]]
-                  (let
-                    [h
-                     (some-> (nm host)
-                             str/lower-case)
+(defn- normalize-network-rules
+  "Merge the legacy `:method-policy {host [methods]}` map and the new `:rules` list —
+   `[{:host h :access preset :methods [M…] :allow [{:method M :path P}…]}]` — into a
+   normalized VECTOR of `{\"host\" h \"methods\" [UPPER…] \"allow\" [{\"method\" M
+   \"path\" P}…]}` for `->py` / `method-guard-python`.
 
-                     ms
-                     (vec (keep (fn [m]
-                                  (some-> (nm m)
-                                          str/upper-case))
-                                (if (coll? methods) methods [methods])))]
+   Hosts are trimmed + lower-cased (trailing dots stripped), methods upper-cased,
+   paths kept verbatim (default `*` = any). `:access` presets expand to method sets:
+   `read-only` ⇒ GET/HEAD/OPTIONS, `read-write`/`full` ⇒ `*` (any verb), `none` ⇒
+   none. A method value `*` means any verb. Keyword or string hosts/methods/access
+   are all accepted; a lone method value is treated as a one-element list. Entries
+   whose host is blank, or that carry neither a method nor an allow-rule, are
+   dropped; an empty result yields `[]` (⇒ no guard installed). Legacy `:method-policy`
+   and `:rules` for the same host are merged (methods union, allow concatenated)."
+  [{:keys [method-policy rules]}]
+  (letfn
+    [(nm [x]
+       (some-> (if (keyword? x) (name x) (str x))
+               str/trim
+               not-empty))
+     (host-key [x]
+       (some-> (nm x)
+               str/lower-case
+               (str/replace #"\.+$" "")))
+     (methods-of [ms]
+       (into #{}
+             (keep #(some-> (nm %)
+                            str/upper-case))
+             (if (coll? ms) ms [ms])))
+     (access-of [a]
+       (case
+         (some-> (nm a)
+                 str/lower-case)
+         ("read-only" "readonly" "ro")
+         #{"GET" "HEAD" "OPTIONS"}
 
-                    (when (and h (seq ms)) [h ms]))))
-          method-policy)))
+         ("read-write" "readwrite" "rw" "full" "all")
+         #{"*"}
+
+         ("none" "deny" "closed")
+         #{}
+
+         #{}))
+     (allow-of [al]
+       (vec (keep (fn [a]
+                    (when-let
+                      [m (some-> (nm (:method a))
+                                 str/upper-case)]
+                      {"method" m "path" (or (nm (:path a)) "*")}))
+                  al)))
+     (add [m h ms al]
+       (cond-> m
+         (and h (or (seq ms) (seq al)))
+         (update h
+                 (fn [e]
+                   (-> (or e {:methods #{} :allow []})
+                       (update :methods into ms)
+                       (update :allow into al))))))]
+    (let
+      [acc
+       (reduce (fn [m [host methods]]
+                 (add m (host-key host) (methods-of methods) []))
+               {}
+               method-policy)
+
+       acc
+       (reduce (fn [m r]
+                 (add m
+                      (host-key (:host r))
+                      (into (access-of (:access r)) (methods-of (:methods r)))
+                      (allow-of (:allow r))))
+               acc
+               rules)]
+
+      (mapv (fn [[h {:keys [methods allow]}]]
+              {"host" h "methods" (vec (sort methods)) "allow" allow})
+            acc))))
 
 (defn- make-outbox
   "Create a fresh per-context OUTBOX directory under the system temp dir and return
@@ -2262,14 +2332,15 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      guard?
      (and net? (or (seq denied) (not allow-all?)))
 
-     ;; Best-effort per-host HTTP METHOD allowlist (config `:network :method-policy`,
-     ;; opt-in). Normalized to {host [UPPER-METHOD ...]}; installed only when net is
-     ;; on AND a policy is present (it patches urllib, so it needs sockets to matter).
-     method-policy
-     (normalize-method-policy (:method-policy network-opts))
+     ;; Best-effort per-host HTTP METHOD + PATH allowlist (config `:network :rules`,
+     ;; plus the legacy `:method-policy`; opt-in). Normalized to a list of
+     ;; {host, methods, allow} rules; installed only when net is on AND at least one
+     ;; rule is present (it patches urllib, so it needs sockets to matter).
+     network-rules
+     (normalize-network-rules network-opts)
 
      method-guard?
-     (and net? (seq method-policy))
+     (and net? (seq network-rules))
 
      ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
      ;; REAL filesystem access CONFINED to the current filesystem roots (Python
@@ -2460,7 +2531,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; configured, patch `urllib.request` to refuse disallowed verbs. Eval'd before the
     ;; snapshot so the guard's names are BASELINE (not model-visible).
     (when method-guard?
-      (.putMember g "__vis_method_policy__" (->py method-policy))
+      (.putMember g "__vis_network_rules__" (->py network-rules))
       (.eval ctx "python" method-guard-python))
     (let
       [defer-names (->> (or custom-bindings {})

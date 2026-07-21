@@ -148,3 +148,10 @@ setup you can instead bind the Tailscale IP directly with
 Because a non-loopback bind always requires the token, keep
 `--require-token` on for any remote/Tailscale exposure — the bearer token is
 the only thing standing between the tailnet and your sessions.
+
+## Draft workspaces
+
+The gateway also owns each session's current workspace and the repo-scoped draft
+list. That shared ownership is why a draft survives client reconnects and why TUI
+and web surfaces see the same state. Draft creation, safety, persistence, slash
+commands, and the workspace HTTP routes are documented in [Drafts](drafts.md).

@@ -25,7 +25,7 @@
          {:file "queue-and-cancel.md" :title "Queue, cancel & quit" :section "Using Vis" :order 62
           :blurb "Queueing follow-up messages, auto-drain on resume, cancelling a turn, and Ctrl+C quit."}
          {:file "drafts.md" :title "Drafts" :section "Using Vis" :order 63
-          :blurb "Isolated throwaway copies of your repo: new/blank, apply, abandon, and stash/list/resume — how they work and why."}
+          :blurb "Isolated workspaces for speculative changes: create, apply, park, resume, abandon, and gateway semantics."}
          {:file "gateway.md" :title "Gateway & pairing" :section "Using Vis" :order 65
           :blurb "The gateway server and device pairing for remote sessions."}
          {:file "python-extensions.md" :title "Python extensions" :section "Extensions" :order 70

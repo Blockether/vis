@@ -447,3 +447,87 @@
                             (println "..."))
                           (expect (not (uuid-leak? body))))
                         (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
+  form-envelope-stdout-test
+  "Regression for #40: a `python_execution` block's printed output rides
+   `:stdout` on the envelope, NOT `:result`. The forensic projection must
+   surface it (data + Markdown) or every python block reads back as
+   `result: None` with its real content lost."
+  (let
+    [->block
+     #'transcript/form-envelope->block
+
+     ->md
+     #'transcript/render-block-section]
+
+    (it "projects :stdout onto the block for a printed (result-less) envelope"
+        (let [b (->block 0 {:src "print('hi')" :stdout "hi\n" :scope :block})]
+          (expect (= "hi\n" (:stdout b)))
+          (expect (not (contains? b :result)))))
+    (it "keeps :result for a value envelope and does not fabricate :stdout"
+        (let [b (->block 1 {:src "1+1" :result 2})]
+          (expect (= 2 (:result b)))
+          (expect (not (contains? b :stdout)))))
+    (it "surfaces partial :stdout alongside :error on a failing block"
+        (let [b (->block 2 {:src "boom()" :error {:message "e"} :stdout "partial\n"})]
+          (expect (= "partial\n" (:stdout b)))
+          (expect (= {:message "e"} (:error b)))))
+    (it "renders printed output verbatim in the Markdown forensic dump"
+        (let [md (->md 0 false {:code "print('hi')" :stdout "hello world\n"})]
+          (expect (str/includes? md "_stdout:_"))
+          (expect (str/includes? md "hello world"))))
+    (it "omits the stdout section when there was no printed output"
+        (let [md (->md 0 false {:code "1+1" :result 2})]
+          (expect (not (str/includes? md "_stdout:_")))))))
+
+(defdescribe
+  iteration-attachments-test
+  "The transcript surfaces the OUTBOUND artifacts a tool call produced
+   (matplotlib figures / `vis_attach` payloads) as byte-free descriptors
+   carrying a read-back id, so a reader can fetch them from the transcript.
+   Bytes are NEVER inlined into the projection."
+  (it
+    "joins iteration attachments as lean byte-free descriptors and renders their read-back id"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let
+          [cid (h/store-session! s {:channel :cli :title "att" :provider :openai :model "gpt-4o"})
+           tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "chart me"})
+           png (byte-array (mapv unchecked-byte [0x89 0x50 0x4E 0x47 1 2 3 4]))
+           b64 (.encodeToString (java.util.Base64/getEncoder) png)
+           iid (h/store-iteration!
+                 s
+                 {:session-turn-id tid
+                  :status :done
+                  :idx 0
+                  :code "plt.show()"
+                  :forms [{:scope "t1/i1" :tag :observation :src "plt.show()" :stdout "<figure>\n"}]
+                  :attachments [{:tool-call-id "call_A"
+                                 :media-type "image/png"
+                                 :base64 b64
+                                 :filename "chart.png"
+                                 :size (alength png)}]})
+           data (transcript/transcript s cid)
+           iter (->> (:turns data)
+                     (mapcat :iterations)
+                     first)
+           atts (:attachments iter)
+           att (first atts)
+           md (transcript/transcript-md s cid)]
+
+          ;; Data view: one descriptor, byte-free, with a read-back id + metadata.
+          (expect (some? iid))
+          (expect (= 1 (count atts)))
+          (expect (= "chart.png" (:filename att)))
+          (expect (= "image/png" (:media-type att)))
+          (expect (= :inline (:stored att)))
+          (expect (= "call_A" (:tool-call-id att)))
+          (expect (not (contains? att :base64)))
+          (expect (and (string? (:id att)) (not (str/blank? (:id att)))))
+          ;; Markdown report: lists the artifact + its read-back id, no bytes.
+          (expect (str/includes? md "_attachments:_"))
+          (expect (str/includes? md "chart.png"))
+          (expect (str/includes? md (str "vis_read_attachment(" (:id att) ")")))
+          (expect (not (str/includes? md b64))))
+        (finally (vis/db-dispose-connection! s))))))

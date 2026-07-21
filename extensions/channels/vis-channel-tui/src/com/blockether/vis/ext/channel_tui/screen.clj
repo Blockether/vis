@@ -3414,6 +3414,19 @@
           :id
           str))
 
+(defn- export-dialog-md
+  "Markdown dialog document for the bare `/export` viewer, fetched from the
+   GATEWAY's canonical `transcript->md :dialog` renderer — the SAME output every
+   surface (CLI, web, file export) produces — instead of re-rendering the
+   conversation client-side. Falls back to a placeholder when the session has no
+   persisted transcript yet (e.g. a brand-new chat)."
+  []
+  (or (try (some-> (current-session-id)
+                   vis/gateway-transcript-md
+                   not-empty)
+           (catch Throwable _ nil))
+      "# Dialog\n\n_No transcript yet — send a message first._\n"))
+
 (defn- workspace-sessions
   []
   (let [db @state/app-db]
@@ -6453,6 +6466,19 @@
                          ;; normal message.
                          (do
                            (cond
+                             ;; Bare `/export`: open the conversation in a
+                             ;; scrollable Markdown viewer (opencode-style)
+                             ;; instead of writing a file. `/export <path>`
+                             ;; still writes to disk via the engine slash.
+                             (= "/export"
+                                (some-> (input/input->text state)
+                                        str/trim))
+                             (do (when-not (:dialog-open? @state/app-db)
+                                   (with-dialog-lock #(dlg/markdown-viewer-dialog!
+                                                        screen
+                                                        "Transcript"
+                                                        (export-dialog-md))))
+                                 (state/dispatch [:reset-input]))
                              ;; A slash that requires an argument typed with
                              ;; none (e.g. `/draft new`): pop a text-input for
                              ;; it, then run the slash with the value. Cancel

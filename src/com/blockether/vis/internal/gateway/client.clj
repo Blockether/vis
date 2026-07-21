@@ -414,6 +414,22 @@
   [sid]
   (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/transcript")) "turns"))
 
+(defn transcript-md
+  "The gateway-rendered user/assistant dialog Markdown for `sid` — the canonical
+   `transcript->md :dialog`. Returns the string, or nil on a non-2xx."
+  [sid]
+  (let
+    [entry
+     (ensure-gateway!)
+
+     _
+     (ensure-client! entry)
+
+     response
+     (gw-send! entry "GET" (str "/v1/sessions/" (enc sid) "/transcript.md") {:as :string})]
+
+    (when (< (long (:status response)) 400) (:body response))))
+
 (defn turn-trace
   "Canonical wire iterations of ONE persisted turn (nil when the id is
    unknown to the daemon)."

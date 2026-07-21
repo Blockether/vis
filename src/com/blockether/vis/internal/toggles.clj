@@ -509,14 +509,16 @@
     (register-toggle!
       {:id :network/enabled
        :label "Network access (Python sandbox)"
-       :description (str
-                      "Let the Python sandbox open sockets (urllib/requests/socket). "
-                      "ALWAYS ON — the sandbox always has host socket access. "
-                      "Host policy in config.edn :network is a best-effort GUARDRAIL for "
-                      "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
-                      "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
-                      "cloud-metadata SSRF defaults, and :method-policy {\"host\" [\"GET\"]} "
-                      "to allow only listed HTTP verbs per host (unlisted hosts unrestricted).")
+       :description
+       (str "Let the Python sandbox open sockets (urllib/requests/socket). "
+            "ALWAYS ON — the sandbox always has host socket access. "
+            "Host policy in config.edn :network is a best-effort GUARDRAIL for "
+            "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
+            "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
+            "cloud-metadata SSRF defaults, and :rules [{:host \"api.example.com\" "
+            ":access :read-only :allow [{:method :POST :path \"/v1/**\"}]}] to allow "
+            "per-host HTTP verbs + paths (preset :read-only = GET/HEAD/OPTIONS; unlisted "
+            "hosts unrestricted). Legacy :method-policy {\"host\" [\"GET\"]} still works.")
        ;; A host capability, not a display concern. ON by default and out of the
        ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
        :default true

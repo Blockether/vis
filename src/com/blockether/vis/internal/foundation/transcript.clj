@@ -45,8 +45,11 @@
             :answer-position :returned-empty-blocks?
             :vars
             [{:name :code :value :version}]
+            :attachments
+            [{:id :source :tool-call-id :position :kind
+              :media-type :filename :size :stored}]
             :blocks
-            [{:position :code :comment :result :error
+            [{:position :code :comment :result :stdout :error
               :duration-ms :timeout? :repaired?}]}]}]}
 
    The Markdown renderer renders thinking, iteration-level errors,
@@ -100,8 +103,11 @@
 (defn- form-envelope->block
   "Project one per-form envelope from `:forms` into the transcript's
    `:blocks` shape. Each envelope carries `:scope :tag :src :result :error`
-   so the block surfaces all of them, plus a 0-based `:position` derived
-   from the form's index in the iter's `:forms` vec."
+   and `:stdout` (what a `python_execution` block PRINTED — its primary
+   output; a success value rides `:result` while printed context rides
+   `:stdout`, and a failing block may carry partial `:stdout` alongside
+   `:error`). All are surfaced, plus a 0-based `:position` derived from the
+   form's index in the iter's `:forms` vec."
   [position envelope]
   (cond-> {:position position :code (or (:src envelope) "")}
     (:scope envelope)
@@ -113,11 +119,33 @@
     (contains? envelope :result)
     (assoc :result (:result envelope))
 
+    ;; Printed output — the primary content of a `python_execution` block.
+    ;; Rides `:stdout`, NOT `:result` (bare values aren't echoed), and also
+    ;; appears alongside `:error` when a failing block printed before it threw.
+    ;; Without this the forensic transcript shows `result: None` for every
+    ;; python block and loses what it actually printed.
+    (some? (:stdout envelope))
+    (assoc :stdout (:stdout envelope))
+
     (contains? envelope :error)
     (assoc :error (:error envelope))))
 
+(defn- attachment-descriptor
+  "Lean, byte-free descriptor for ONE persisted iteration attachment (an element
+   of `db-list-iteration-attachments`). Drops `:base64` — a produced artifact can
+   be MBs and would bloat every transcript projection — keeping only the metadata
+   a reader needs PLUS the bare row `:id` to fetch the bytes on demand via
+   `db-read-attachment` (Clojure) / the sandbox `vis_read_attachment(id)` shim.
+   `:stored` records where the bytes live (`:inline` DB blob, `:external` storage
+   backend, or `:none`) without carrying them."
+  [att]
+  (-> (select-keys att [:id :source :tool-call-id :position :kind :media-type :filename :size])
+      (assoc :stored (cond (:base64 att) :inline
+                           (:storage-uri att) :external
+                           :else :none))))
+
 (defn- enrich-iteration
-  "Attach `:blocks` to one iteration row.
+  "Attach `:blocks` and `:attachments` to one iteration row.
 
      `:blocks` - one entry per top-level form the iter executed,
                 derived from the iter's `:forms` envelope vec on
@@ -125,20 +153,35 @@
                 rehydration is gone, so there is no separate `:vars`
                 slice — every form lives on the iteration row.
 
+     `:attachments` - byte-free descriptors for the OUTBOUND artifacts
+                (matplotlib figures, `vis_attach` payloads) the iter's
+                tool calls produced, joined from the `session_attachment`
+                rail via `db-list-iteration-attachments`. Each carries a
+                read-back `:id` so the bytes stay lazily fetchable
+                (`db-read-attachment` / `vis_read_attachment`) instead of
+                bloating the transcript. Absent when the iter produced none.
+
    Degrades silently to `[]` so the renderer never throws on a
    partial DB."
-  [_db-info iter]
+  [db-info iter]
   (let
     [forms
      (or (:forms iter) [])
 
      blocks
-     (vec (map-indexed form-envelope->block forms))]
+     (vec (map-indexed form-envelope->block forms))
 
-    (-> iter
-        (update :thinking visible-thinking)
-        (assoc :blocks blocks)
-        (assoc :failure-count (count (filter :error blocks))))))
+     attachments
+     (mapv attachment-descriptor
+           (try (vis/db-list-iteration-attachments db-info (:id iter)) (catch Throwable _ [])))]
+
+    (cond->
+      (-> iter
+          (update :thinking visible-thinking)
+          (assoc :blocks blocks)
+          (assoc :failure-count (count (filter :error blocks))))
+      (seq attachments)
+      (assoc :attachments attachments))))
 
 (defn- build-turn
   "Pure projection: one session_turn_soul row + its iterations -> the
@@ -724,7 +767,7 @@
    Verbatim: result strings, error blobs, and code segments are
    rendered without truncation. Forensic reports are useless when the
    first place you look has been clipped."
-  [idx answer? {:keys [code comment render-segments result error] :as block}]
+  [idx answer? {:keys [code comment render-segments result stdout error] :as block}]
   (let
     [marker
      (if error "✗" "✓")
@@ -760,6 +803,9 @@
          "\n"
          (when (not (str/blank? comment)) (str comment "\n"))
          (render-block-code-segments code render-segments)
+         ;; What the block PRINTED — the primary output of a python_execution
+         ;; block; rendered verbatim so forensic review sees the real content.
+         (when (not (str/blank? stdout)) (str "\n_stdout:_\n" (render-fenced "text" stdout)))
          (when has-result? (str "\nResult: `" (display-result result) "`\n"))
          (when error (str "\n_error:_\n" (render-fenced "text" error)))
          "\n")))
@@ -779,6 +825,29 @@
   [error]
   (when (and error (not (str/blank? (str error))))
     (str "_iteration error:_\n" (render-fenced "text" (str error)) "\n")))
+
+(defn- render-attachments
+  "List the OUTBOUND artifacts (matplotlib figures, `vis_attach` payloads) an
+   iteration's tool calls produced, each with its read-back id. Bytes are NEVER
+   inlined — the reader fetches them on demand via `db-read-attachment` /
+   `vis_read_attachment(<id>)`. nil when the iteration produced none."
+  [attachments]
+  (when (seq attachments)
+    (str "_attachments:_\n"
+         (apply str
+           (map (fn [{:keys [filename media-type kind size stored id]}]
+                  (str "- "
+                       (or (not-empty (str filename)) "artifact")
+                       " ("
+                       (or media-type "?")
+                       (when kind (str ", " kind))
+                       (when size (str ", " size "B"))
+                       (when (and stored (not= stored :none)) (str ", " (name stored)))
+                       ") — read with `vis_read_attachment("
+                       id
+                       ")`\n"))
+                attachments))
+         "\n")))
 
 (defn- render-iteration-section
   [iter]
@@ -827,6 +896,7 @@
          "ms)\n\n"
          (render-thinking (:thinking iter))
          (render-iter-error (:error iter))
+         (render-attachments (:attachments iter))
          (cond (empty? blocks) "_No code blocks (LLM returned an empty response)._\n"
                :else (apply str
                        (map-indexed (fn [idx block]

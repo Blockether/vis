@@ -132,4 +132,28 @@
              (expect (= :allowed (method-outcome m "GET" "http://other.com/x")))
              (expect (= :allowed (method-outcome m "POST" "http://api.example.com/x"))) ; specific host wins
              (expect (= :blocked (method-outcome m "GET" "http://api.example.com/x")))  ; GET not in [POST]
+             (finally (.close (pctx m) true)))))
+  (it ":rules :access :read-only ⇒ GET/HEAD/OPTIONS pass, mutations blocked"
+      (let
+        [m (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :allowed-domains ["*"]
+                                       :rules [{:host "example.com" :access :read-only}]})]
+        (try (expect (= :allowed (method-outcome m "GET" "http://example.com/x")))
+             (expect (= :blocked (method-outcome m "POST" "http://example.com/x")))
+             (expect (= :blocked (method-outcome m "DELETE" "http://example.com/x")))
+             (finally (.close (pctx m) true)))))
+  (it ":rules :allow carves a per-path POST exception on a read-only host"
+      (let
+        [m (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :allowed-domains ["*"]
+                                       :rules [{:host "api.example.com"
+                                                :access :read-only
+                                                :allow [{:method :POST :path "/v1/**"}]}]})]
+        (try (expect (= :allowed (method-outcome m "POST" "http://api.example.com/v1/things"))) ; path grant
+             (expect (= :blocked (method-outcome m "POST" "http://api.example.com/admin")))     ; wrong path
+             (expect (= :allowed (method-outcome m "GET" "http://api.example.com/admin")))      ; read-only preset
              (finally (.close (pctx m) true))))))

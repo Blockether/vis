@@ -98,6 +98,7 @@
 
      counts
      (long-array 2)]
+
     ; [dead duplicates]
     (reduce-kv (fn [_ client-id {:keys [pid]}]
                  (when (some? pid)
@@ -677,6 +678,7 @@
 
      replacement-stats
      (long-array 2)]
+
     ; [this registration, cumulative]
     (swap! server-state (fn [st]
                           (let
@@ -1229,6 +1231,24 @@
   [request]
   (if-let [sid (path-sid request)]
     (json-response {:turns (state/transcript sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- transcript-md-handler
+  "Render a session's user/assistant dialog as Markdown — the canonical
+   `transcript->md :dialog` every surface (CLI, web, file export) renders
+   through — served as text so a channel can DISPLAY it without re-implementing
+   transcript rendering client-side. `transcript` is resolved dynamically to
+   avoid a load-time require cycle (core -> gateway.server -> transcript ->
+   core)."
+  [request]
+  (if-let [sid (path-sid request)]
+    {:status 200
+     :headers {"Content-Type" "text/markdown; charset=utf-8"}
+     :body (str ((requiring-resolve
+                   'com.blockether.vis.internal.foundation.transcript/transcript-md)
+                  (lp/db-info)
+                  sid
+                  {:mode :dialog}))}
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- turn-trace-handler
@@ -1818,6 +1838,7 @@
         ["/sessions/:sid/events-since" {:get events-since-handler}]
         ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
         ["/sessions/:sid/transcript" {:get transcript-handler}]
+        ["/sessions/:sid/transcript.md" {:get transcript-md-handler}]
         ["/sessions/:sid/resources" {:get resources-handler}]
         ["/sessions/:sid/resources/startables" {:get startables-handler}]
         ["/sessions/:sid/resources/start" {:post resource-start-handler}]

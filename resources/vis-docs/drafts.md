@@ -1,199 +1,314 @@
 # Drafts
 
-A **draft** is an isolated, throwaway copy of your repository that a session
-works inside instead of your real files. You make changes, look at the result,
-and then decide in one clean step: **land them** into your repo (`/draft apply`)
-or **discard them** (`/draft abandon`). Nothing a draft does touches your working
-directory until you apply.
+A **draft** is an isolated workspace for trying a change without editing your
+real working directory. Work in the draft, then choose what happens next:
 
-Drafts are **opt-in**. By default a session edits your real cwd directly — Vis
-calls this **trunk**. You only ever enter a draft on purpose.
+| Decision | Command | Result |
+| --- | --- | --- |
+| Keep it | `/draft apply` | Copy the draft's changes into your real directories and consume the draft. |
+| Keep it for later | `/draft stash` | Return to trunk while retaining the draft for `/draft resume`. |
+| Throw it away | `/draft abandon` | Discard the draft permanently and return to trunk. |
 
-## Project vs workspace vs trunk vs draft
+Drafts are opt-in. A session starts on **trunk**, where it edits your real files
+directly. Nothing is isolated until you explicitly create or resume a draft.
 
-These four words sit on two different axes, so they never compete — it helps to
-keep them straight:
+> **The safe default is stash.** Apply changes your real files. Abandon cannot be
+> undone. Stash does neither.
 
-- **Project** — *what* you are working on. A read-only fact Vis **detects** about
-  the repo (single vs monorepo, primary language), surfaced in
-  `session.env.project`. You do not switch or create projects; they are
-  introspection, not a place.
-- **Repo** (`repo_root`) — the git repository root. This is the **grouping key**:
-  `/draft list` and the drafts API return drafts *per repo*.
-- **Workspace** — *where* a session works on that repo. It is a mutable,
-  session-scoped, persisted record that is either **trunk** or a **draft**.
-- **Trunk** — the workspace that points at your real cwd. The default.
-- **Draft** — the *isolated* flavor of a workspace: a backend clone of the repo.
-  Trunk and draft are both workspaces; a draft is simply "a workspace that is an
-  isolated copy."
+## Quick start
 
-So **project = what**, **workspace = where**. A draft can't be called a "project":
-you have N drafts of *one* project, which is exactly the trunk ↔ draft overlay.
-That is why the gateway feature is named around **workspace** (it already owns the
-session's filesystem roots and identity) rather than **project** (already taken
-for the detection concept).
+Start from the current workspace tree, make a change, and land it:
+
+```text
+/draft new safer-parser
+Please refactor the parser and run its tests.
+/draft
+/draft apply
+```
+
+Park unfinished work and return later:
+
+```text
+/draft stash
+/draft list
+/draft resume safer-parser
+```
+
+Switch between two drafts from the slash interface:
+
+```text
+# while inside draft A
+/draft stash
+/draft resume feature-b
+```
+
+There is deliberately no destructive "switch" hidden in that flow: the current
+draft is parked before another one is entered.
+
+## The mental model
+
+Vis uses several related nouns. They describe different things:
+
+| Term | Meaning |
+| --- | --- |
+| **Project** | A gateway-owned, cross-channel collection of sessions (the TUI's project/tab set). A project may be bound to a workspace root, but it organizes conversations; it does not isolate files. |
+| **Repo root** (`repo_root`) | The real root directory from which a workspace was derived. Active drafts are listed per repo root. |
+| **Workspace** | The persisted filesystem location currently pinned to a session, including its primary root and any extra filesystem roots. |
+| **Trunk** | A live workspace that points at your real directories. This is the default. |
+| **Draft** | An isolated workspace with a baseline and a merge-back target. |
+
+A project can contain several sessions. Each session is pinned to one workspace.
+Each workspace is either trunk or a draft. Draft identity and listing are based
+on the repo root, not on project membership.
+
+The runtime also exposes detected repository/language metadata under
+`session.env.project`. That metadata is not the gateway **Project** record above;
+the shared name is historical. In this feature, **project organizes sessions;
+workspace selects files; draft isolates a workspace**.
+
+This is why the gateway routes are under `/workspace`: resuming a draft changes
+where a session's tools run. It does not move the session to another project.
 
 ## Why drafts exist
 
-The point of a draft is a **safe, reversible sandbox** for work you are not sure
-about yet:
+Drafts make speculative agent work cheap to reject:
 
-- **Isolation** — the agent can refactor, delete, or rewrite files freely; your
-  real repo is untouched until you apply. A bad turn costs you nothing.
-- **One clean decision** — instead of hand-reverting a pile of edits, you make a
-  single call at the end: apply (keep everything) or abandon (keep nothing).
-- **A named unit of work** — a draft is labelled (`feature-x`), so the header and
-  the draft list always tell you *which* piece of work you are looking at.
+- **Isolation before commitment.** Refactors, generated files, and deletions occur
+  in the isolated copy until you apply.
+- **An explicit boundary.** Apply, stash, and abandon make the transition back to
+  real files visible rather than implicit.
+- **Named, resumable work.** Labels make parked work discoverable across turns and
+  channel reconnects.
+- **One current location.** Every tool call sees one coherent root instead of a
+  mixture of several working copies.
 
-Think of it as "try this in a scratch copy" without the ceremony of a git branch,
-a stash, or a second checkout.
+A draft is **not** a Git branch, commit, or stash. Vis does not create commits or
+manage your Git history, and apply is not a three-way Git merge.
 
-## The lifecycle
+## Lifecycle and invariants
 
-A session is always in exactly **one** place: **trunk** (your real cwd) or a
-**single draft**. It is a linear trunk ↔ draft overlay, not a set of live
-branches you juggle. The header shows `<label> (DRAFT)` while you are in one.
-
+```text
+                         /draft apply    (land, consume)
+                       ┌──────────────────────────────────┐
+                       │                                  ▼
+trunk ── new/blank ──► draft ── /draft stash ──► trunk
+  ▲                    │                         │
+  │                    └── /draft abandon ───────┘
+  │                              (destroy)
+  └──────────── /draft resume <label> ────────── parked draft
 ```
-                 /draft new <label>        /draft apply   → changes land in cwd
-   ┌────────┐   ───────────────────────►  ┌─────────┐  ─────────────────────────►  ┌────────┐
-   │ trunk  │   /draft-blank <label>       │  draft  │     /draft abandon  → discarded  │ trunk  │
-   │ (cwd)  │   ◄───────────────────────   │ <label> │  ◄─────────────────────────  │ (cwd)  │
-   └────────┘        /draft stash          └─────────┘        /draft resume <label>  └────────┘
-                (park it, keep it alive)              (re-enter a parked draft)
-```
 
-You **enter** a draft two ways, **leave** it three ways.
+The important invariants are:
 
-## Entering a draft
+1. A session is pinned to exactly one current workspace.
+2. A repo may have many active drafts, but a session can be inside only one.
+3. "Stashed" is not a second copy or a Git stash. It is an active draft that the
+   session has left intact on disk.
+4. A draft can be pinned to only one session at a time. Another session cannot
+   resume it until the first session leaves it.
+5. Applied and abandoned drafts are no longer active and disappear from
+   `/draft list`.
 
-- **`/draft new <label>`** — clone your current cwd into an isolated draft named
-  `<label>` and enter it. The draft starts as a full copy of HEAD, so the agent
-  sees your real files and edits the copy.
-- **`/draft-blank <label>`** — like `/draft new`, but the draft starts **empty**:
-  no files from your repo are carried in. Useful for generating something from
-  scratch (a fresh module, a spike) without your existing tree in the way.
+The TUI header shows `<label> (DRAFT)` while the current workspace is isolated.
+Bare `/draft` reports the same state and the current changed-file count.
 
-A draft **must be named** — an unnamed draft is anonymous and indistinguishable
-in the draft list. Rich channels (the TUI) pop a prompt for the label; other
-channels return a "Name the draft" nudge.
+## Starting a draft
 
-You can only be in one draft at a time. Trying to start a second one while you're
-already in a draft is refused with *"Already in draft '…' — /draft apply or
-/draft abandon it first"*.
+### `/draft new <label>`
+
+Creates and enters a draft forked from the **current workspace tree**. This is a
+filesystem snapshot of the root Vis is using, not an instruction to check out a
+clean Git `HEAD`. Existing working-tree content is therefore the source of the
+draft.
+
+A label is required. Vis may add a numeric suffix when the corresponding draft
+directory name already exists; use the displayed label when resuming it.
+
+### `/draft-blank <label>`
+
+Creates and enters an empty draft. No files from the real root are copied in.
+This is useful for a spike, a fresh module, or generated output that should not
+see the existing tree.
+
+A blank draft has one special apply rule: because it never saw the original
+files, it can add or overwrite files on trunk, but it cannot infer that an
+absent trunk file was deleted. Applying a blank draft therefore does not delete
+pre-existing files merely because they are absent from the draft.
+
+### Before the first command
+
+A newly created session needs a persisted session state before slash handlers can
+pin a draft. If Vis says `session not ready yet`, send one normal message and
+retry.
+
+## Working inside a draft
+
+Once entered, file tools, searches, shell commands, and the agent's cwd resolve
+to the draft root. Relative paths cannot silently fall back to trunk.
+
+A workspace can also have extra filesystem roots added with `/fs add`. Creating
+a draft isolates those roots as part of the same workspace. Applying the draft
+lands each root back into its own real directory; abandoning it discards all of
+its isolated roots.
+
+Use bare `/draft` at any time to check whether the session is on trunk or in a
+draft.
 
 ## Leaving a draft
 
-There are three exits, two permanent and one reversible:
+### Apply: keep the changes
 
-- **`/draft apply`** — **land** the draft's changes into your real cwd, then
-  leave the draft. This is the "keep it" exit: after apply, the changes are real
-  files you can commit, branch, or keep editing on trunk. The draft is consumed.
-- **`/draft abandon [reason]`** — **discard** the draft and leave it. This is
-  destructive: the draft's working copy is physically reclaimed on a background
-  thread. There is no undo, and an abandoned draft cannot be resumed. The
-  optional `reason` is recorded for history.
-- **`/draft stash`** — **park** the draft without discarding it, and return to
-  trunk. The draft stays alive on disk; `/draft resume` re-enters it later. This
-  is the non-destructive twin of abandon — use it when you want to switch back to
-  trunk (or to a different draft) but keep this work for later.
+`/draft apply` copies files changed since the draft baseline, plus inferred
+deletions, into the corresponding real directories. It then consumes the draft
+and returns the session to trunk. The landed files remain **uncommitted** for you
+to review and commit normally.
 
-> **apply keeps, abandon destroys, stash parks.** If you're unsure, stash — it's
-> the only exit you can walk back.
+> **Apply is a replacement operation, not a conflict-resolving merge.** If the
+> same real file changed after the draft was created, apply can overwrite it; an
+> inferred deletion can remove it. Review concurrent trunk work before applying.
 
-## Parking & coming back: stash, list, resume
+Isolation protects trunk **until apply**. It cannot undo an apply afterward; use
+Git or another backup if you need that recovery boundary.
 
-Because a session holds only one draft at a time, "switch to another draft" is
-really **stash the current one, then resume the other**:
+### Stash: park the changes
 
-- **`/draft stash`** — leave the current draft on trunk, keeping it alive.
-- **`/draft list`** — show every active/stashed draft in this repo, newest first,
-  with the current one marked. This is how you find a parked draft to go back to.
-- **`/draft resume <label>`** — re-enter a stashed draft by its label. With no
-  label it lists the stashed drafts to choose from. Resume is **refused while you
-  are already in a draft** — stash, apply, or abandon the current one first.
+`/draft stash` returns the session to trunk without changing the draft's files or
+active state. The clone remains available to `/draft list` and `/draft resume`.
+Use this to pause work, inspect trunk, or move to another draft.
 
-The gateway keeps stashed drafts alive until they are applied or abandoned, so a
-stashed draft survives across turns (and session resumes) until you decide its
-fate. A typical "switch drafts" flow:
+Closing a client view, disconnecting, or restarting the gateway does not turn a
+stash into an abandon. The gateway persists the record and the working copy on
+the host. A draft remains active until it is applied or abandoned.
 
-```
-/draft stash                 # park draft A, back on trunk
-/draft list                  # see A (and any others) parked
-/draft resume feature-b      # hop into a different parked draft
-```
+### Abandon: destroy the changes
 
-## Checking where you are
+`/draft abandon [reason]` marks the draft discarded and returns to trunk. Clone
+reclamation happens asynchronously, but the decision is immediate: the draft
+cannot be resumed. The optional reason is retained in history.
 
-- **`/draft`** (bare) — reports whether you're on **trunk** or in a **draft**, and
-  when in a draft, how many files have changed plus your exit options.
+There is no restore command for an abandoned draft. If there is any doubt, use
+`/draft stash` instead.
 
-## Drafts are local — no model, no provider
+## List, resume, and switch
 
-Every `/draft …` command is handled **entirely inside Vis**. It never calls the
-LLM and never sends anything to a provider — it just manipulates local workspace
-state. Consequently a draft command:
+`/draft list` shows active drafts for the current repo, newest first, and marks
+the current one. Applied and abandoned drafts are intentionally absent.
 
-- **does not consume tokens** and costs nothing;
-- **does not show a model/provider footer** under its reply (the little
-  `provider/model · time` line that assistant answers carry). A draft reply is a
-  command result, not a model turn, so attributing it to a model would be
-  misleading — Vis deliberately suppresses that footer for slash commands.
+`/draft resume <label>` matches the displayed label exactly. With no label it
+lists the available choices. The slash command refuses to resume while the
+session is already inside a draft; stash, apply, or abandon first.
 
-If you ever see a draft reply tagged with a provider/model line, that's a display
-bug (the command still never reached a provider).
+Resume also refuses a draft that:
+
+- is no longer active;
+- is not a draft workspace;
+- is currently pinned to another session; or
+- cannot be identified uniquely by the supplied label.
+
+The direct gateway resume API has slightly different ergonomics: it accepts the
+stable `workspace_id` and automatically stashes the caller's current draft before
+switching. The slash command stays conservative and requires the two explicit
+steps shown above.
+
+## Gateway ownership and persistence
+
+Drafts are a canonical gateway feature, not TUI-local state. The daemon owns the
+workspace records, coordinates the on-disk clones, and executes workspace
+mutations. Consequently:
+
+- TUI and web clients attached to the same session see the same current workspace;
+- sessions rooted in the same repo see the same active draft list;
+- a client reconnect does not lose a draft; and
+- only one session can pin a particular draft at a time.
+
+Production draft storage defaults to `~/.vis/drafts` (overridable with the
+`vis.drafts.dir` JVM system property). Treat that directory as Vis-managed data:
+use apply, stash, and abandon rather than moving clone directories manually.
+
+The slash UI and HTTP API are two control surfaces over the same gateway-owned
+workspace state. Today the HTTP surface directly exposes listing and switching;
+creation, apply, and abandon are exposed as slash commands.
+
+## Provider and privacy boundary
+
+**Recognized draft control commands are local control-plane operations.** Vis
+executes `/draft …` and `/draft-blank …` without an LLM call, charges no model
+tokens for the command, and does not send the command text or result to a
+provider—either immediately or as later provider context. They remain visible in
+the local transcript for audit. The TUI suppresses the model/provider footer on
+their result because no model produced it.
+
+This guarantee applies to the **control command**, not to work performed in the
+draft. Ordinary prompts and agent turns inside a draft use the selected provider
+normally and may include repository content needed for that work. A draft is a
+filesystem-isolation boundary, not a provider-privacy boundary.
+
+Only registered slash commands get local handling. An unknown `/something` may
+be a prompt template or ordinary model prompt; do not assume arbitrary text that
+starts with `/` is private.
+
+If a recognized draft command itself displays a provider/model footer, that is a
+channel rendering bug. It is not evidence that the command invoked the model.
 
 ## Requirements
 
-Drafts need a workspace backend that supports **isolation, rollback, merge-back,
-and retained revisions**. When the current root can't provide an isolated copy,
-`/draft new` / `/draft-blank` return *"No workspace backend can create an
-isolated draft here"* with the capability matrix, and you keep working on trunk.
+Drafts require a workspace backend that can provide isolation, rollback,
+merge-back, and retained revisions for the current root. Vis never silently
+falls back to editing trunk when those capabilities are unavailable.
+
+If creation fails with `No workspace backend can create an isolated draft here`,
+the session remains on trunk and the command result includes the backend
+capability matrix. Fix or install an appropriate backend, then retry.
+
+## Troubleshooting
+
+| Message or symptom | Meaning | What to do |
+| --- | --- | --- |
+| `Already in draft '…'` | The session already has an isolated current workspace. | Apply, stash, or abandon it first. |
+| `No stashed drafts to resume` | No active draft exists for the current repo. | Create one with `/draft new <label>`. |
+| `No stashed draft named '…'` | Labels match exactly and the draft may be under another repo root. | Run `/draft list` and copy the displayed label. |
+| `Draft is in use by another session` | Another session is pinned to that workspace. | Leave it from that session before resuming here. |
+| A draft vanished from the list | It was applied or abandoned, or the session now points at a different repo root. | Check the root and local transcript history. |
+| Trunk changed while a draft was parked | Apply has no automatic conflict resolver. | Review both trees and reconcile before applying. |
 
 ## Command reference
 
-| Command | What it does |
-| --- | --- |
-| `/draft` | Show whether you're on trunk or in a draft. |
-| `/draft new <label>` | Clone cwd into a draft named `<label>`, enter it. |
-| `/draft-blank <label>` | Start an **empty** draft (nothing carried from HEAD), enter it. |
-| `/draft apply` | Land the draft's changes into cwd, leave the draft. |
-| `/draft stash` | Park the draft (keep it alive), return to trunk. |
-| `/draft list` | List every active/stashed draft in this repo. |
-| `/draft resume <label>` | Re-enter a stashed draft by label. |
-| `/draft abandon [reason]` | Discard the draft and leave it (destructive). |
-
-## A canonical gateway feature
-
-Drafts are **owned by the gateway daemon**, not by any one channel. The daemon
-holds the session's database and the on-disk clones, so every draft operation
-runs *server-side* and every channel (TUI, web) sees the exact same state. This
-is the same design as the session's filesystem roots and model preference: one
-source of truth in the daemon, read back identically everywhere.
-
-That means a draft you start in the TUI is visible and resumable from the web
-surface, survives a client disconnect/reconnect, and never depends on
-client-local state. Two channels attached to the same session share one draft
-list.
-
-### Gateway HTTP API
-
-Alongside typing the `/draft …` slash commands, channels drive drafts through
-the session's workspace endpoints — the canonical, channel-agnostic surface:
-
-| Method + path | Purpose | Returns |
+| Command | Valid from | Effect |
 | --- | --- | --- |
-| `GET  /v1/sessions/:sid/workspace/drafts` | List active/stashed drafts for the session's repo. | `{"drafts": [{"workspace_id", "label", "root", "repo_root", "fork_ms", "is_current"}]}` |
-| `POST /v1/sessions/:sid/workspace/stash` | Park the current draft (non-destructive), return to trunk. | refreshed `{"workspace": …}` |
-| `POST /v1/sessions/:sid/workspace/resume` | Switch into `{"workspace_id"}` (stashing any current draft first). | refreshed `{"workspace": …}` |
+| `/draft` | trunk or draft | Show the current workspace state. |
+| `/draft new <label>` | trunk | Fork the current tree, enter the new draft. |
+| `/draft-blank <label>` | trunk | Create an empty draft and enter it. |
+| `/draft apply` | draft | Land changes into real directories, consume draft, return to trunk. |
+| `/draft stash` | draft | Keep the draft active, return to trunk. |
+| `/draft list` | trunk or draft | List active drafts for the current repo. |
+| `/draft resume <label>` | trunk | Enter an active draft by displayed label. |
+| `/draft abandon [reason]` | draft | Permanently discard the draft, return to trunk. |
 
-All three are served in **the canonical string-keyed wire shape** (`wire/canonical`)
-on both transports, so a remote client passes the payload through verbatim — one
-representation, no re-hydration. `resume` returns HTTP `409` with a typed error
-when the target is not a resumable active draft (e.g. it was applied/abandoned,
-or is pinned by another session).
+## Gateway HTTP API
 
-The engine facades backing these routes live in `gateway/state.clj`
-(`list-drafts`, `stash-draft!`, `resume-draft!`) with client stubs in
-`gateway/client.clj`; the `/draft …` slash commands and any GUI drafts picker are
-both just front-ends over the same gateway operations.
+All routes are session-scoped and use the gateway's normal authentication rules.
+They return canonical JSON with string keys.
+
+| Method + path | Request | Result |
+| --- | --- | --- |
+| `GET /v1/sessions/:sid/workspace/drafts` | — | `{"drafts": [...]}` for the session's current repo. |
+| `POST /v1/sessions/:sid/workspace/stash` | `{}` | Park the current draft; on trunk this is an idempotent no-op. |
+| `POST /v1/sessions/:sid/workspace/resume` | `{"workspace_id":"…"}` | Stash any current draft, then enter the target. |
+
+A draft list item has this shape:
+
+```json
+{
+  "workspace_id": "…",
+  "label": "safer-parser",
+  "root": "/host/path/to/the/isolated/copy",
+  "repo_root": "/host/path/to/the/real/repo",
+  "fork_ms": 1784620000000,
+  "is_current": false
+}
+```
+
+Resume returns HTTP `409` with a typed error when the target is not a resumable
+active draft—for example, after apply/abandon or while another session pins it.
+The gateway client exposes the corresponding `list-drafts`, `stash-draft!`, and
+`resume-draft!` operations.

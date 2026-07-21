@@ -1710,9 +1710,10 @@
   "True for a synthetic slash-command iteration. These rows stay in local
    transcript/audit history but must never enter a later provider request."
   [iteration]
-  (boolean
-    (some #(= "user-slash" (some-> (:tag %) name))
-          (:forms iteration))))
+  (boolean (some #(= "user-slash"
+                     (some-> (:tag %)
+                             name))
+                 (:forms iteration))))
 
 (defn- previous-turn-context
   "ALL prior provider-visible answered turns as cross-process RESUME context.
@@ -1723,45 +1724,44 @@
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
-      (let [d (:db-info environment)
-            ;; Summary-awareness: the model's session_fold/session_drop intents
-            ;; (persisted on the ctx blob) reshape the scope index uniformly.
-            summaries (some-> (:ctx-atom environment)
-                              deref
-                              (get "session_summaries"))
-            ;; Include answered turns and interrupted/error turns needed for
-            ;; recovery. Skip the current turn and any still-running turn.
-            include? (fn [turn]
-                       (and (not= (str (:id turn)) (str current-turn-id))
-                            (not= :running (:status turn))
-                            (or (seq (some-> (:content turn)
-                                             answer-markdown
-                                             str
-                                             str/trim))
-                                (contains? #{:interrupted :error} (:status turn)))))
-            turns (filter include? (persistance/db-list-session-turns d session-id))]
+      (let
+        [d (:db-info environment)
+         ;; Summary-awareness: the model's session_fold/session_drop intents
+         ;; (persisted on the ctx blob) reshape the scope index uniformly.
+         summaries (some-> (:ctx-atom environment)
+                           deref
+                           (get "session_summaries"))
+         ;; Include answered turns and interrupted/error turns needed for
+         ;; recovery. Skip the current turn and any still-running turn.
+         include? (fn [turn]
+                    (and (not= (str (:id turn)) (str current-turn-id))
+                         (not= :running (:status turn))
+                         (or (seq (some-> (:content turn)
+                                          answer-markdown
+                                          str
+                                          str/trim))
+                             (contains? #{:interrupted :error} (:status turn)))))
+         turns (filter include? (persistance/db-list-session-turns d session-id))]
+
         (not-empty
           (into []
                 (keep (fn [turn]
-                        (let [iterations (->> (try
-                                                (persistance/db-list-session-turn-iterations
-                                                  d
-                                                  (:id turn))
-                                                (catch Throwable _ []))
-                                              (filter #(= :done (:status %)))
-                                              vec)]
+                        (let
+                          [iterations
+                           (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
+                                     (catch Throwable _ []))
+                                (filter #(= :done (:status %)))
+                                vec)]
                           (when-not (some user-slash-iteration? iterations)
-                            (let [forms (mapcat :forms iterations)
-                                  scopes (vec
-                                           (take 40
-                                                 (prior-turn-scope-index forms summaries)))]
+                            (let
+                              [forms (mapcat :forms iterations)
+                               scopes (vec (take 40 (prior-turn-scope-index forms summaries)))]
+
                               {:user-request (:user-request turn)
                                ;; Error/interrupted turns carry no normal answer.
-                               :answer (when-not
-                                         (contains? #{:interrupted :error} (:status turn))
+                               :answer (when-not (contains? #{:interrupted :error} (:status turn))
                                          (answer-markdown (:content turn)))
-                               :interrupted? (contains? #{:interrupted :error}
-                                                       (:status turn))
+                               :interrupted? (contains? #{:interrupted :error} (:status turn))
                                :results scopes}))))
                       turns)))))
     (catch Throwable t
@@ -9352,7 +9352,8 @@
      {:enabled? (toggles/enabled? :network/enabled)
       :allowed-domains (:allowed-domains net-cfg)
       :denied-domains (:denied-domains net-cfg)
-      :method-policy (:method-policy net-cfg)}
+      :method-policy (:method-policy net-cfg)
+      :rules (:rules net-cfg)}
 
      ;; OS jail (real containment for shell children) — opt-in via vis.yml
      ;; `:shell {:jail true}`. When on, every shell/subprocess spawn is confined

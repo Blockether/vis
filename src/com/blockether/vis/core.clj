@@ -124,6 +124,7 @@
              [gateway-get-turn gateway-client/get-turn]
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]
+             [gateway-transcript-md gateway-client/transcript-md]
              [gateway-turn-trace gateway-client/turn-trace]
              [gateway-reconcile-running-turns! gateway-client/reconcile-running-turns!]
              [gateway-context-snapshot gateway-client/context-snapshot]
