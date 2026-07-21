@@ -6030,11 +6030,21 @@
                          :skipped (mapv :path (:skipped user-attachments))}
                   :msg "attached user-message images"}))
 
+     ;; Gate the user-message image blocks on the TURN's resolved model: a
+     ;; text-only model must never be handed `image_url` blocks it cannot
+     ;; consume (mirrors the generated-figure `target-supports-vision?` gate).
+     ;; Only resolve when there is actually an image to gate.
+     initial-target-vision?
+     (or (empty? (:attached user-attachments))
+         (target-supports-vision? (replay-context (resolve-effective-model (:router environment)
+                                                                           (or routing {})))))
+
      initial-messages
      (prompt/assemble-initial-messages {:stable-prompt-messages stable-prompt-messages
                                         :initial-user-content user-request
                                         :user-images (:attached user-attachments)
                                         :skipped-images (:skipped user-attachments)
+                                        :vision? initial-target-vision?
                                         :previous-turn-context
                                         (previous-turn-context environment session-turn-id)})
 

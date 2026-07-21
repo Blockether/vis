@@ -3024,73 +3024,84 @@
                         (and awaiting-cancel? sid)
                         (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
 
-(reg-event-db
-  :sync-queued-turn
-  ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
-  ;; forwarded through the gateway sync/attach subscriptions as a :queue-sync
-  ;; chunk) into this tab's local :pending-sends. The gateway is the queue of
-  ;; record, so a message queued in a sibling TUI (or the web) shows up here,
-  ;; stays editable, and drains through the same attach machinery. The gateway
-  ;; turn id is the sync key:
-  ;;   :add    — no-op when already mirrored; otherwise bind the id onto our
-  ;;             own un-bound local echo (the enqueue's :set-queued-turn-id
-  ;;             may still be in flight) matched by text, else append.
-  ;;   :update — rewrite the entry's text (queued-prompt edit elsewhere).
-  ;;   :delete — drop the entry (cleared / pulled back to input elsewhere).
-  (fn [db [_ workspace-id {:keys [op turn-id text]}]]
-    (let [workspace-id (or workspace-id (current-tab-id db))]
-      (if-not (and workspace-id turn-id)
-        db
-        (update-tab
-          db
-          workspace-id
-          (fn [w]
-            (update w
-                    :pending-sends
-                    (fn [q]
-                      (let
-                        [q (vec (or q []))
-                         mirrored? (boolean (some #(= turn-id (:turn-id %)) q))
-                         local-echo? (fn [e]
-                                       (and (nil? (:turn-id e))
-                                            (or (= text (:agent-text e)) (= text (:text e)))))]
+(reg-event-db :sync-queued-turn
+              ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
+              ;; forwarded through the gateway sync/attach subscriptions as a :queue-sync
+              ;; chunk) into this tab's local :pending-sends. The gateway is the queue of
+              ;; record, so a message queued in a sibling TUI (or the web) shows up here,
+              ;; stays editable, and drains through the same attach machinery. The gateway
+              ;; turn id is the sync key:
+              ;;   :add    — no-op when already mirrored; otherwise bind the id onto our
+              ;;             own un-bound local echo (the enqueue's :set-queued-turn-id
+              ;;             may still be in flight) matched by text, else append.
+              ;;   :update — rewrite the entry's text (queued-prompt edit elsewhere).
+              ;;   :delete — drop the entry (cleared / pulled back to input elsewhere).
+              (fn [db [_ workspace-id {:keys [op turn-id text]}]]
+                (let [workspace-id (or workspace-id (current-tab-id db))]
+                  (if-not (and workspace-id turn-id)
+                    db
+                    (update-tab
+                      db
+                      workspace-id
+                      (fn [w]
+                        (update
+                          w
+                          :pending-sends
+                          (fn [q]
+                            (let
+                              [q (vec (or q []))
+                               mirrored? (boolean (some #(= turn-id (:turn-id %)) q))
+                               local-echo? (fn [e]
+                                             (and (nil? (:turn-id e))
+                                                  (or (= text (:agent-text e)) (= text (:text e)))))
+                               ;; The gateway already DRAINED this turn and it is now this
+                               ;; tab's LIVE turn (:gateway-turn-id). A late / out-of-order
+                               ;; queue-sync add|update — a replayed backlog, or an event
+                               ;; that races the local drain+attach — must NOT resurrect it
+                               ;; as a "Queued" row while it is running (the "sent AND queued
+                               ;; at the same time" ghost). Collapse every op to "ensure it
+                               ;; is not mirrored"; the live turn paints once, on its own.
+                               running? (= turn-id (:gateway-turn-id w))]
 
-                        (case op
-                          :add
-                          (cond mirrored? q
-                                (some local-echo? q)
-                                (let [bound? (volatile! false)]
-                                  (mapv (fn [e]
-                                          (if (and (not @bound?) (local-echo? e))
-                                            (do (vreset! bound? true) (assoc e :turn-id turn-id))
-                                            e))
-                                        q))
-                                :else (conj q
-                                            {:text text
-                                             :preview-text text
-                                             :turn-id turn-id
-                                             :queued-at-ms (System/currentTimeMillis)}))
+                              (if running?
+                                (vec (remove #(= turn-id (:turn-id %)) q))
+                                (case op
+                                  :add
+                                  (cond mirrored? q
+                                        (some local-echo? q)
+                                        (let [bound? (volatile! false)]
+                                          (mapv (fn [e]
+                                                  (if (and (not @bound?) (local-echo? e))
+                                                    (do (vreset! bound? true)
+                                                        (assoc e :turn-id turn-id))
+                                                    e))
+                                                q))
+                                        :else (conj q
+                                                    {:text text
+                                                     :preview-text text
+                                                     :turn-id turn-id
+                                                     :queued-at-ms (System/currentTimeMillis)}))
 
-                          :update
-                          (if mirrored?
-                            (mapv (fn [e]
-                                    (if (= turn-id (:turn-id e))
-                                      (assoc e
-                                        :text text
-                                        :preview-text text
-                                        :agent-text text)
-                                      e))
-                                  q)
-                            (conj q
-                                  {:text text
-                                   :preview-text text
-                                   :turn-id turn-id
-                                   :queued-at-ms (System/currentTimeMillis)}))
+                                  :update
+                                  (if mirrored?
+                                    (mapv (fn [e]
+                                            (if (= turn-id (:turn-id e))
+                                              (assoc e
+                                                :text text
+                                                :preview-text text
+                                                :agent-text text)
+                                              e))
+                                          q)
+                                    (conj q
+                                          {:text text
+                                           :preview-text text
+                                           :turn-id turn-id
+                                           :queued-at-ms (System/currentTimeMillis)}))
 
-                          :delete
-                          (vec (remove #(= turn-id (:turn-id %)) q))
+                                  :delete
+                                  (vec (remove #(= turn-id (:turn-id %)) q))
 
-                          q))))))))))
+                                  q)))))))))))
 
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no

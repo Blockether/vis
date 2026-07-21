@@ -2166,7 +2166,35 @@
                  (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
                  (let [q (:pending-sends @state/app-db)]
                    (expect (= 1 (count q)))
-                   (expect (= "q1" (:turn-id (first q)))))))
+                   (expect (= "q1" (:turn-id (first q))))))
+             ;; The gateway drained (auto-started) this queued turn and it is now the
+             ;; tab's LIVE turn (:gateway-turn-id). A late / out-of-order queue-sync
+             ;; add|update for that SAME id — a replayed backlog or an event racing the
+             ;; drain+attach — must NOT resurrect it as a "Queued" row while it runs
+             ;; (the "sent AND queued at the same time" ghost seen in the TUI).
+             (it "never mirrors the tab's currently-running turn as a queued row"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id "turn-1"
+                                       :pending-sends []})
+                 ;; A stray :add for the running turn is ignored.
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-1" :text "hello"}])
+                 (expect (= [] (:pending-sends @state/app-db)))
+                 ;; A genuinely queued sibling (different id) still mirrors.
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-2" :text "world"}])
+                 (expect (= ["turn-2"] (mapv :turn-id (:pending-sends @state/app-db))))
+                 ;; An already-mirrored entry that becomes the running turn is stripped
+                 ;; on the next queue-sync op for it (e.g. a replayed :update).
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id "turn-1"
+                                       :pending-sends [{:text "hello" :turn-id "turn-1"}]})
+                 (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
+                 (expect (= [] (:pending-sends @state/app-db)))))
 
 (defdescribe sync-turn-clock-test
              ;; `turn.started` carries the gateway's CANONICAL started_at (epoch ms).

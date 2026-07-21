@@ -229,6 +229,30 @@
           (expect (str/includes? text "/tmp/shot.png (image/png, 5B)"))
           (expect (str/includes? text "NOT attached"))
           (expect (str/includes? text "/tmp/huge.png")))))
+  (it "omits image blocks for a text-only model and demotes them to the manifest"
+      (let
+        [msgs
+         (prompt/assemble-initial-messages {:stable-prompt-messages []
+                                            :initial-user-content "what is on /tmp/shot.png?"
+                                            :vision? false
+                                            :user-images [{:path "/tmp/shot.png"
+                                                           :media-type "image/png"
+                                                           :base64 "aGVsbG8="
+                                                           :size 5
+                                                           :size-label "5B"}]})
+
+         user
+         (last msgs)]
+
+        ;; text-only target: plain string content, NO image_url block
+        (expect (= "user" (:role user)))
+        (expect (string? (:content user)))
+        (expect (not (str/includes? (:content user) "image_url")))
+        ;; the image is not silently dropped — it is demoted with a reason
+        (expect (str/includes? (:content user) "ATTACHED-IMAGES"))
+        (expect (str/includes? (:content user) "/tmp/shot.png"))
+        (expect (str/includes? (:content user) "NOT attached"))
+        (expect (str/includes? (:content user) "no vision"))))
   (it "omits the manifest when there is no user content at all"
       (let
         [msgs (prompt/assemble-initial-messages

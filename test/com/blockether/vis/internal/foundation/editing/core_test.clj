@@ -1185,6 +1185,63 @@
                        :result)
                    (-> (cat-tool path)
                        :result)))))
+  (it
+    "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
+    (let
+      [txt
+       (write-temp! "kwargs-collapse/a.txt" "hi\n")
+
+       clj
+       (write-temp! "kwargs-collapse/n.clj" "(def x 1)\n")
+
+       create-dirs
+       (private-fn "create-dirs-tool")
+
+       exists
+       (private-fn "exists-tool")
+
+       delete
+       (private-fn "delete-tool")
+
+       delete-if
+       (private-fn "delete-if-exists-tool")
+
+       copy
+       (private-fn "copy-tool")
+
+       move
+       (private-fn "move-tool")
+
+       sexpr
+       (private-fn "sexpr-tool")
+
+       patch-tool
+       (private-fn "patch-tool")]
+
+      ;; Idempotency: copy/move below leave `.bak`/`.bak2` artifacts under the
+      ;; shared temp root; a prior run's leftovers make copy/move throw
+      ;; FileAlreadyExists. Clear the derived paths before asserting.
+      (run! #(fs/delete-if-exists (fs/file %)) [(str txt ".bak") (str txt ".bak2")])
+
+      ;; Each `tool(path=p, ...)` collapses at the Python boundary to ONE map
+      ;; `{"path" p, ...}`; a scalar-first arity used to treat that whole map as the
+      ;; path/src and stringify it (the `cat` bug). Assert the unwrap for each.
+      (expect (true? (get (:result (exists {"path" txt})) "exists")))
+      (expect (= txt (get (:result (exists {"path" txt})) "path")))
+      (expect (= (str txt "-dir") (get (:result (create-dirs {"path" (str txt "-dir")})) "path")))
+      (expect (false? (get (:result (delete-if {"path" (str txt "-absent")})) "deleted")))
+      ;; `delete(path=p, is_missing_ok=True)` splits the lone map into path + opts.
+      (expect (false? (get (:result (delete {"path" (str txt "-absent") "is_missing_ok" true}))
+                           "deleted")))
+      ;; `copy/move(src=a, dest=b)` previously threw wrong-arity (1).
+      (expect (= txt (get (:result (copy {"src" txt "dest" (str txt ".bak")})) "src")))
+      (expect (= (str txt ".bak")
+                 (get (:result (move {"src" (str txt ".bak") "dest" (str txt ".bak2")})) "src")))
+      ;; `struct_node(path=p)` previously threw a map→String ClassCastException.
+      (expect (map? (sexpr {"path" clj})))
+      ;; `patch(edits=[…])` unwraps to the edits vector — empty is a CLEAN rejection,
+      ;; not a map cast error.
+      (expect (throws? clojure.lang.ExceptionInfo #(patch-tool {"edits" []})))))
   (it ":ranges rejects empty or malformed range specs"
       (let
         [path

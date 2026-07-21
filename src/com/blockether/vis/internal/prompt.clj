@@ -103,27 +103,43 @@
   "Manifest for image attachments riding this user message. Lists each
    attached image (path/mime/size, in attachment order) so the model can
    pair the opaque image blocks with the paths the user mentioned, and
-   names sniffed-but-skipped images with the WHY (size/count cap) so the
-   model doesn't hunt for an attachment that isn't there."
+   names sniffed-but-skipped images with the WHY (size/count cap, or a
+   text-only model) so the model doesn't hunt for an attachment that isn't
+   there.
+
+   Two mutually exclusive directives ride at most one per manifest:
+   - the \"you can SEE these\" / anti-PIL directive ONLY when at least one
+     image is actually attached (a vision model — reading it with PIL is
+     wasteful), and
+   - the \"you canNOT see these, DO reach for PIL\" directive when an image
+     was demoted purely because the active model has no vision. There the
+     file is on disk and real; PIL/imaging libs are the model's ONLY way to
+     inspect its content, so we tell it to."
   [attached skipped]
   (when (or (seq attached) (seq skipped))
-    (prompt-block "attached-images"
-                  (str "You can SEE these images — they ride this message as image blocks. Look at them\n   directly. Do NOT open them with PIL or other imaging libraries to \"read\" their\n   content — that yields only pixel size/mode, never meaning. Reach for PIL ONLY to\n   TRANSFORM an image (resize/crop/convert), never to inspect one you can already see.\n\n"
-                       (str/join "\n"
-                            (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
-                                                   (str "- image "
-                                                        (inc (long i))
-                                                        ": "
-                                                        path
-                                                        " ("
-                                                        media-type
-                                                        ", "
-                                                        size-label
-                                                        ") — attached to this message"))
-                                                 attached)
-                                    (map (fn [{:keys [path reason]}]
-                                           (str "- " path " — NOT attached: " reason))
-                                         skipped)))))))
+    (let [readable-blind (filter :readable-blind? skipped)]
+      (prompt-block
+        "attached-images"
+        (str
+          (when (seq attached)
+            "You can SEE these images — they ride this message as image blocks. Look at them\n   directly. Do NOT open them with PIL or other imaging libraries to \"read\" their\n   content — that yields only pixel size/mode, never meaning. Reach for PIL ONLY to\n   TRANSFORM an image (resize/crop/convert), never to inspect one you can already see.\n\n")
+          (when (and (empty? attached) (seq readable-blind))
+            "The active model has NO vision — the image(s) below are NOT attached and you canNOT\n   see them. The files are real and on disk, so to inspect their CONTENT open them with\n   PIL / an imaging library and read what you need (that is the ONLY way to see them here).\n\n")
+          (str/join "\n"
+                    (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
+                                           (str "- image "
+                                                (inc (long i))
+                                                ": "
+                                                path
+                                                " ("
+                                                media-type
+                                                ", "
+                                                size-label
+                                                ") — attached to this message"))
+                                         attached)
+                            (map (fn [{:keys [path reason]}]
+                                   (str "- " path " — NOT attached: " reason))
+                                 skipped))))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
@@ -137,9 +153,17 @@
    `:user-images` (from `attachments/collect-user-images`) turns the user
    message multimodal: svar image blocks ride ahead of the text block and
    an `ATTACHED-IMAGES` manifest inside the text names each one.
-   `:skipped-images` entries appear in the manifest only."
+   `:skipped-images` entries appear in the manifest only.
+
+   `:vision?` (default true) gates the image blocks on the resolved model's
+   capability: a text-only model NEVER receives `image_url` blocks it cannot
+   consume. When false, every collected image is DEMOTED into the skipped
+   manifest with a reason — the model still learns a mentioned image exists
+   but is honestly told it cannot see it (never a silent drop, never a lying
+   \"you can SEE these images\")."
   [{:keys [stable-prompt-messages initial-user-content previous-turn-context user-images
-           skipped-images]}]
+           skipped-images vision?]
+    :or {vision? true}}]
   (let
     [previous-block
      (previous-turn-context-block previous-turn-context)
@@ -147,18 +171,35 @@
      user-block
      (when initial-user-content (prompt-block "current-user-message" initial-user-content))
 
+     ;; Vision gate: only a vision-capable model gets real image blocks; for a
+     ;; text-only target attach NONE and fold every image into the skipped
+     ;; manifest so the model is told the truth instead of an invisible payload.
+     attached-images
+     (if vision? (vec user-images) [])
+
+     manifest-skipped
+     (if vision?
+       skipped-images
+       (into (vec skipped-images)
+             (map (fn [{:keys [path]}]
+                    {:path path
+                     :reason "the active model has no vision — image not attached"
+                     :readable-blind? true})
+                  user-images)))
+
      images-block
-     (when user-block (attached-images-block user-images skipped-images))
+     (when user-block (attached-images-block attached-images manifest-skipped))
 
      text
      (str/join "\n\n" (keep identity [previous-block user-block images-block]))]
 
-    (vec (concat
-           (or stable-prompt-messages [])
-           (when user-block
-             [(if (seq user-images)
-                (apply svar/user text (map #(svar/image (:base64 %) (:media-type %)) user-images))
-                {:role "user" :content text})])))))
+    (vec (concat (or stable-prompt-messages [])
+                 (when user-block
+                   [(if (seq attached-images)
+                      (apply svar/user
+                        text
+                        (map #(svar/image (:base64 %) (:media-type %)) attached-images))
+                      {:role "user" :content text})])))))
 
 ;; =============================================================================
 ;; System prompt
