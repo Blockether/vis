@@ -2929,6 +2929,63 @@
             (expect (= (get-in r1 [:result "skeleton"]) (get-in r2 [:result "skeleton"]))))))))
 
 (defdescribe
+  index-tool-range-test
+  "struct_index narrows to a single `range` OR several `ranges` windows; a def is
+   kept when its span hits ANY window, and the chosen key is echoed back."
+  (let
+    [index
+     (private-fn "index-tool")
+
+     names
+     (fn [r]
+       (mapv #(get % "name") (get-in r [:result "definitions"])))]
+
+    (it "range keeps defs in the single window; ranges unions disjoint windows"
+        (let
+          [_
+           (temp-dir-path "idxrange")
+
+           f
+           (str (temp-root) "/idxrange/m.clj")]
+
+          (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
+          (let
+            [whole
+             (index {"path" f})
+
+             one
+             (index {"path" f "range" [2 2]})
+
+             multi
+             (index {"path" f "ranges" [[1 1] [3 3]]})]
+
+            (expect (= ["a" "b" "c"] (names whole)))
+            ;; single range: only the def on line 2
+            (expect (= ["b"] (names one)))
+            (expect (= [2 2] (get-in one [:result "range"])))
+            (expect (nil? (get-in one [:result "ranges"])))
+            ;; two windows: a and c, not b
+            (expect (= ["a" "c"] (names multi)))
+            (expect (= [[1 1] [3 3]] (get-in multi [:result "ranges"])))
+            (expect (nil? (get-in multi [:result "range"])))
+            ;; line_count always the WHOLE file, never the window
+            (expect (= 3 (get-in whole [:result "line_count"])))
+            (expect (= 3 (get-in multi [:result "line_count"]))))))
+    (it "ranges supersedes range and coerces numeric strings"
+        (let
+          [_
+           (temp-dir-path "idxrange2")
+
+           f
+           (str (temp-root) "/idxrange2/m.clj")]
+
+          (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
+          (let [r (index {"path" f "range" [1 3] "ranges" [["2" "2"]]})]
+            (expect (= ["b"] (names r)))
+            (expect (= [[2 2]] (get-in r [:result "ranges"])))
+            (expect (nil? (get-in r [:result "range"]))))))))
+
+(defdescribe
   rg-tool-e2e-test
   "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
   (let

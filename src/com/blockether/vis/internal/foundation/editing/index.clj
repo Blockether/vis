@@ -172,6 +172,45 @@
                 [(.startLine span) (.endLine span)])))
           (structure-items source language))))
 
+(defn- flatten-items
+  "Depth-first flatten of the structural items (top-level + nested children),
+   mirroring the pack engine's own outline flattening used by its name+kind
+   locator."
+  [items]
+  (mapcat (fn [^StructureItem it]
+            (cons it (flatten-items (or (.children it) []))))
+          items))
+
+(defn resolve-edit-kind
+  "The raw StructureKind name to hand the pack engine's name+kind locator for
+   `target`, made resilient to an over-specific or mismatched `kind` (e.g. the
+   source def-form head `defdescribe`/`deftest`, which the pack reports as `fn`):
+   - no `kind` → nil (locate by name alone);
+   - `kind` matches a def named `target` → that pack kind (normal disambiguation);
+   - `kind` matches NO def named `target`, yet exactly ONE def carries that name
+     → nil, so a wrong/over-specific kind never blocks an unambiguous by-name edit;
+   - otherwise the pack kind unchanged (let the engine report the real miss or
+     ambiguity)."
+  [^String source ^String language ^String target kind]
+  (let
+    [raw (some-> kind
+                 name
+                 pack-kind)]
+    (if (nil? raw)
+      nil
+      (let
+        [k (canonical-kind kind)
+         named (filter (fn [^StructureItem it]
+                         (= target (.name it)))
+                       (flatten-items (structure-items source language)))
+         kind-match? (boolean (some (fn [^StructureItem it]
+                                      (= k (canonical-kind (.kind it))))
+                                    named))]
+
+        (cond kind-match? raw
+              (= 1 (count named)) nil
+              :else raw)))))
+
 (defn- line-text
   [lines ln]
   ;; lines is 0-based; ln is 1-based.
@@ -585,6 +624,30 @@
 
     (and (<= start hi) (>= end lo))))
 
+(defn- span-overlaps-any?
+  "Whether `span` intersects ANY window in `windows` (each a 1-based inclusive
+   `[lo hi]`) — the multi-range overlap test behind `file-index`'s `ranges`."
+  [^Span span windows]
+  (boolean (some (fn [[lo hi]]
+                   (span-overlaps? span lo hi))
+                 windows)))
+
+(defn- normalize-windows
+  "Coerce `range` into a seq of ordered 1-based inclusive `[lo hi]` windows, or
+   nil for none. Accepts a SINGLE `[lo hi]` pair OR a COLLECTION of such pairs;
+   malformed/empty pairs are dropped."
+  [range]
+  (when (seq range)
+    (let [pairs (if (sequential? (first range)) range [range])]
+      (seq (keep (fn [p]
+                   (when (and (sequential? p) (first p) (second p))
+                     (let
+                       [a (long (first p))
+                        b (long (second p))]
+
+                       [(min a b) (max a b)])))
+                 pairs)))))
+
 (defn file-index
   "Maki-style structural INDEX of `path`, produced in a SINGLE tree-sitter pass:
 
@@ -595,9 +658,11 @@
 
    nil when the language is unsupported, or the file has no imports and nothing
    structural. `source` may be passed to avoid a re-read (e.g. unsaved buffers).
-   `range` (1-based inclusive `[lo hi]`, either order) narrows the index to the
-   imports and TOP-LEVEL definitions whose span intersects it — each kept def's
-   own children stay intact; `:line-count` still reports the WHOLE file. With a
+   `range` narrows the index to the imports and TOP-LEVEL definitions whose span
+   intersects it — either a SINGLE 1-based inclusive `[lo hi]` (either order) or a
+   COLLECTION of such windows `[[lo hi] …]` (a def kept when it hits ANY window).
+   Each kept def's own children stay intact; `:line-count` still reports the WHOLE
+   file. With a
    range set, a hit-nothing window still returns a (header-only) index rather
    than nil, so the caller can tell 'empty window' from 'unsupported'."
   ([path] (file-index path (slurp path) nil))
@@ -608,19 +673,15 @@
        [res (process-source source language)
         all-items (or (.structure res) [])
         all-imps (or (.imports res) [])
-        window (when (and range (first range) (second range))
-                 (let
-                   [a (long (first range))
-                    b (long (second range))]
-
-                   [(min a b) (max a b)]))
-        [lo hi] window
-        items
-        (if window (filterv #(span-overlaps? (.span ^StructureItem %) lo hi) all-items) all-items)
-        imps (if window (filterv #(span-overlaps? (.span ^ImportInfo %) lo hi) all-imps) all-imps)
+        windows (normalize-windows range)
+        items (if windows
+                (filterv #(span-overlaps-any? (.span ^StructureItem %) windows) all-items)
+                all-items)
+        imps
+        (if windows (filterv #(span-overlaps-any? (.span ^ImportInfo %) windows) all-imps) all-imps)
         lines (str/split-lines source)]
 
-       (when (or (seq items) (seq imps) window)
+       (when (or (seq items) (seq imps) windows)
          (binding [*docstrings* (.docstrings res)]
            (let [import-rows (mapv #(import->row lines %) imps)]
              {:language language
