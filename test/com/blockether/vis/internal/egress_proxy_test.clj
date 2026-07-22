@@ -63,6 +63,33 @@
       (is (:allow? (ep/decide pol "GET" "h.example.com" "/")))
       (is (not (:allow? (ep/decide pol "POST" "h.example.com" "/")))))))
 
+(deftest exclude-domains-tunnel
+  ;; `:exclude-domains` is the honest escape hatch for clients MITM cannot serve —
+  ;; cert-pinned tools and mTLS upstreams (gh/Go-on-macOS, statically-trusted
+  ;; binaries). Such hosts are still HOST-allowlisted, but the proxy must NOT
+  ;; terminate their TLS — it tunnels opaquely, so verb/path is unenforced there.
+  (let
+    [pol (ep/compile-policy {:allowed-domains ["*"]
+                             :rules [{:host "*" :access "read-only"}]
+                             :exclude-domains ["GitHub.com" "*.pinned.example"]})]
+    (testing "compile-policy carries normalized (lower-cased) :exclude-domains"
+      (is (some? pol))
+      (is (= ["github.com" "*.pinned.example"] (:exclude-domains pol))))
+    (testing "excluded hosts + their subdomains/globs are MITM-excluded, others are not"
+      (is (ep/mitm-excluded? pol "github.com"))
+      (is (ep/mitm-excluded? pol "api.github.com"))
+      (is (ep/mitm-excluded? pol "x.pinned.example"))
+      (is (not (ep/mitm-excluded? pol "example.com")))))
+  (testing "no :exclude-domains ⇒ nothing excluded"
+    (let [pol (ep/compile-policy {:rules [{:host "h.example.com" :access "read-only"}]})]
+      (is (not (ep/mitm-excluded? pol "h.example.com")))))
+  (testing "nil policy ⇒ not excluded (proxy never engaged)"
+    (is (not (ep/mitm-excluded? nil "anything"))))
+  (testing "exclusion only skips TLS termination — host allow/deny still applies"
+    (let [pol (ep/compile-policy {:allowed-domains ["good.com"] :exclude-domains ["good.com"]})]
+      (is (:allow? (ep/decide pol nil "good.com" nil)))
+      (is (not (:allow? (ep/decide pol nil "evil.com" nil)))))))
+
 ;; ---------------------------------------------------------------------------
 ;; In-process wire round-trip — hermetic (local origin, no external network)
 ;; ---------------------------------------------------------------------------
@@ -78,13 +105,20 @@
      running
      (atom true)
 
+     seen
+     (atom [])
+
      loop-fn
      (fn []
        (while @running
          (when-let [c (try (.accept server) (catch Throwable _ nil))]
            (future (try
-                     (let [in (BufferedReader. (InputStreamReader. (.getInputStream c)))]
-                       ;; drain request line + headers
+                     (let
+                       [in (BufferedReader. (InputStreamReader. (.getInputStream c)))
+                        line (.readLine in)]
+
+                       (swap! seen conj (first (str/split (str line) #"\s+")))
+                       ;; drain remaining headers
                        (loop []
 
                          (let [l (.readLine in)]
@@ -99,6 +133,7 @@
 
     (doto (Thread. ^Runnable loop-fn "origin") (.setDaemon true) (.start))
     {:port (.getLocalPort server)
+     :seen seen
      :stop! (fn []
               (reset! running false)
               (try (.close server) (catch Throwable _ nil)))}))
@@ -138,7 +173,7 @@
                          :rules [{:host "localhost" :access "read-only"}]})
 
      proxy
-     (ep/start! {:policy-fn (fn []
+     (ep/start! {:policy-fn (fn [_token]
                               policy)})]
 
     (try (testing "GET to an allowed, read-only host is forwarded (origin 200)"
@@ -261,7 +296,7 @@
      proxy
      (ep/start! {:mitm (fn []
                          cap)
-                 :policy-fn (fn []
+                 :policy-fn (fn [_token]
                               policy)})]
 
     (try (testing "the client accepts the proxy's ephemeral leaf (hostname-verified)"
@@ -273,3 +308,132 @@
          (testing "the denied POST never reached the origin; only the GET did"
            (is (= ["GET"] @(:seen origin))))
          (finally ((:stop! proxy)) ((:stop! origin)) ((:close! cap))))))
+
+;; ---------------------------------------------------------------------------
+;; Tier-2 network filters — the extension escape valve above :rules
+;; ---------------------------------------------------------------------------
+
+(deftest filter-registries
+  (testing "request filter denies via the decrypted request; decide+filter honors it"
+    (let [owner ::req-filt]
+      (try
+        (ep/register-network-filter! owner
+                                     (fn [req]
+                                       (when (= "POST" (:method req))
+                                         {:allow? false :reason "no post"})))
+        (let [pol (ep/compile-policy {:allowed-domains ["*"] :rules [{:host "*" :access "full"}]})]
+          ;; tier-1 `full` allows POST; the tier-2 filter is what denies it.
+          (is (:allow? (ep/decide+filter pol {:method "GET" :host "x.com" :path "/" :headers {}})))
+          (is (not (:allow?
+                     (ep/decide+filter pol {:method "POST" :host "x.com" :path "/" :headers {}})))))
+        (finally (ep/unregister-network-filters-for-owner! owner)))))
+  (testing "response filters: a throwing filter FAILS CLOSED; none registered ⇒ allow"
+    (let [owner ::resp-filt]
+      (try (ep/register-network-filter! owner
+                                        (fn [_]
+                                          (throw (RuntimeException. "boom"))))
+           (is (not (:allow? (ep/apply-network-filters {:status 200 :headers {}}))))
+           (finally (ep/unregister-network-filters-for-owner! owner)))
+      (is (:allow? (ep/apply-network-filters {:status 200 :headers {}}))))))
+
+(deftest response-filter-wire
+  ;; A registered response filter sees the upstream status + headers and can
+  ;; replace the response with a 403 — the child never receives the body.
+  (let
+    [origin
+     (start-origin!)
+
+     policy
+     (ep/compile-policy {:allowed-domains ["localhost"]})
+
+     owner
+     ::resp-wire
+
+     seen
+     (atom nil)]
+
+    (ep/register-network-filter!
+      owner
+      (fn [resp]
+        (reset! seen resp)
+        (if (= 200 (:status resp)) {:allow? false :reason "200 blocked"} {:allow? true})))
+    (let
+      [proxy (ep/start! {:policy-fn (fn [_token]
+                                      policy)})]
+      (try (testing "the upstream 200 is blocked at the proxy — child observes 403"
+             (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
+           (testing "the filter saw the real upstream status + response headers"
+             (is (= 200 (:status @seen)))
+             (is (= "2" (get (:headers @seen) "content-length")))
+             (is (= :http-response (:phase @seen))))
+           (finally (ep/unregister-network-filters-for-owner! owner)
+                    ((:stop! proxy))
+                    ((:stop! origin)))))))
+
+;; ---------------------------------------------------------------------------
+;; SSRF deny-floor — pure, cross-platform. The proxy is an UNJAILED deputy, so
+;; `allowed-domains ["*"]` must never mean "fetch the host's own trust plane."
+;; ---------------------------------------------------------------------------
+
+(deftest ssrf-deny-floor
+  (testing "always-blocked (non-overridable even with allow-private?)"
+    (doseq [h ["169.254.169.254" "0.0.0.0"]]
+      (is (:blocked (ep/safe-upstream-address h nil {:allow-private? false}))
+          (str h " must be blocked"))
+      (is (:blocked (ep/safe-upstream-address h nil {:allow-private? true}))
+          (str h " must stay blocked with allow-private"))))
+  (testing
+    "loopback (the user's OWN machine) is ALLOWED by default; only reserved gateway ports are not"
+    (doseq [h ["127.0.0.1" "localhost"]]
+      (is (:addr (ep/safe-upstream-address h 3000 {:allow-private? false}))
+          (str h " local dev server reachable by default")))
+    (is (:blocked (ep/safe-upstream-address "127.0.0.1" 7890 {:reserved-loopback-ports #{7890}}))
+        "a reserved gateway port stays blocked"))
+  (testing "private ranges (RFC1918/CGNAT/ULA): blocked by default, opt-in via allow-private?"
+    (doseq [h ["10.0.0.1" "192.168.1.1" "172.16.0.1" "100.64.0.1"]]
+      (is (:blocked (ep/safe-upstream-address h nil {:allow-private? false}))
+          (str h " blocked by default"))
+      (is (:addr (ep/safe-upstream-address h nil {:allow-private? true}))
+          (str h " allowed under allow-private"))))
+  (testing "a resolvable public host yields a validated IP literal to dial"
+    (let [r (ep/safe-upstream-address "93.184.216.34" nil {:allow-private? false})]
+      (is (instance? java.net.InetAddress (:addr r)))))
+  (testing "unresolvable / nil host ⇒ blocked (fail closed)"
+    (is (:blocked (ep/safe-upstream-address "no-such-host.invalid" nil {:allow-private? false})))
+    (is (:blocked (ep/safe-upstream-address nil nil {:allow-private? false}))))
+  (testing
+    "compile-policy carries :allow-private? and forces a policy value even when domains are open"
+    (is (true? (:allow-private? (ep/compile-policy {:allowed-domains ["*"] :allow-private true}))))
+    (is (nil? (ep/compile-policy {:allowed-domains ["*"]})))))
+
+(deftest loopback-policy
+  (testing "loopback dev servers are ALLOWED by default — the agent runs on your own machine"
+    (is (:addr (ep/safe-upstream-address "127.0.0.1" 3000 {})))
+    (is (:addr (ep/safe-upstream-address "localhost" 5432 {}))))
+  (testing "reserved gateway/proxy ports can NEVER be reached (non-overridable control-plane guard)"
+    (is (:blocked (ep/safe-upstream-address "127.0.0.1" 7890 {:reserved-loopback-ports #{7890}}))))
+  (testing "metadata / link-local stay blocked (separate always-on trust-plane floor)"
+    (is (:blocked (ep/safe-upstream-address "169.254.169.254" 80 {}))))
+  (testing "compile-policy no longer emits an :allow-loopback key"
+    (is (nil? (ep/compile-policy {:allowed-domains ["*"]})))
+    (is (nil? (:allow-loopback (ep/compile-policy {:allowed-domains ["example.com"]}))))))
+
+(deftest ssrf-wire-blocks-reserved-loopback-port
+  ;; End-to-end: loopback dev servers are reachable by default (see proxy-wire-roundtrip),
+  ;; but the gateway's OWN reserved control-plane/proxy port can NEVER be reached through
+  ;; the proxy — even under the friendly allow-all posture.
+  (let
+    [origin
+     (start-origin!)
+
+     ;; Allow-all domains + loopback, but mark THIS origin's port reserved (as if it were
+     ;; the gateway control plane) and prove the confused-deputy proxy refuses it.
+     proxy
+     (ep/start! {:policy-fn (fn [_token]
+                              {:reserved-loopback-ports #{(:port origin)}})})]
+
+    (try (testing "a reserved loopback port is refused (403) even though loopback is allowed"
+           (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
+         (testing "the blocked request never reached the reserved-port origin"
+           (is (empty? @(:seen origin))))
+         (finally ((:stop! proxy)) ((:stop! origin))))))

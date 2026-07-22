@@ -92,6 +92,8 @@
    {:action :open-resources :key \s :label "backgrounds"}
    {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
    {:action :show-sessions :key \b :label "switch session"}
+   {:action :fork-session :key \u :label "fork session"}
+   {:action :fork-at-turn :key \i :label "fork at turn"}
    {:action :switch-project :key \w :label "switch project"}
    {:action :close-tab :key \k :label "close tab"}
    {:action :recenter :key \j :label "jump to bottom"}

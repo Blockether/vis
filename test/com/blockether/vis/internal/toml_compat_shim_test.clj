@@ -20,7 +20,7 @@
   toml-module-test
   (it "publishes toml under sys.modules"
       (with-python-context
-        (expect (true? (ev python-context "__import__('sys').modules.get('toml') is not None")))))
+        (expect (true? (ev python-context "import toml\n__import__('sys').modules.get('toml') is not None")))))
   (it "autoloads toml onto builtins (no import needed)"
       (with-python-context (expect (true? (ev python-context "'a = 1' in toml.dumps({'a':1})")))))
   (it "supports `import toml` with a version string"

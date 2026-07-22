@@ -564,6 +564,106 @@
   [m k]
   (get m (vis/wire-key k)))
 
+(defn- wire-keyword
+  "Rehydrate a keyword-valued wire field without guessing map-key policy."
+  [x]
+  (cond (keyword? x) x
+        (and (string? x) (not (str/blank? x))) (keyword x)
+        :else nil))
+
+(defn- wire-error-map
+  "Rehydrate the concise structured error shape emitted by the gateway."
+  [raw]
+  (when (map? raw)
+    (cond-> {}
+      (event-get raw :type)
+      (assoc :type (wire-keyword (event-get raw :type)))
+
+      (event-get raw :message)
+      (assoc :message (event-get raw :message))
+
+      (some? (event-get raw :status))
+      (assoc :status (event-get raw :status))
+
+      (event-get raw :cause-class)
+      (assoc :cause-class (event-get raw :cause-class)))))
+
+(defn- provider-retry-event->chunk
+  "Project a canonical `provider.retry` gateway event into the progress reset
+   chunk consumed by every TUI path (fresh turn, attach, and reconnect)."
+  [event]
+  (let
+    [raw-error
+     (event-get event :error)
+
+     raw-route
+     (event-get event :event)
+
+     attempt
+     (event-get event :attempt)
+
+     max-retries
+     (event-get event :max-retries)
+
+     delay-ms
+     (event-get event :delay-ms)
+
+     reason
+     (or (some-> raw-route
+                 (event-get :reason)
+                 wire-keyword)
+         (some-> raw-error
+                 (event-get :type)
+                 wire-keyword)
+         :provider-retry)
+
+     error-type
+     (or (some-> raw-error
+                 (event-get :type)
+                 wire-keyword)
+         reason)
+
+     error-message
+     (when (map? raw-error) (event-get raw-error :message))
+
+     error
+     (cond-> {:type error-type}
+       error-message
+       (assoc :message error-message)
+
+       (some? attempt)
+       (assoc :attempt attempt)
+
+       (some? max-retries)
+       (assoc :max-retries max-retries)
+
+       (and (number? delay-ms) (pos? (long delay-ms)))
+       (assoc :delay-ms delay-ms))
+
+     route-event
+     (cond-> {:event/type :llm.routing/provider-retry :reason reason}
+       (some? attempt)
+       (assoc :attempt attempt)
+
+       (some? delay-ms)
+       (assoc :delay-ms delay-ms)
+
+       (map? raw-route)
+       (merge (cond-> {}
+                (event-get raw-route :provider)
+                (assoc :provider (event-get raw-route :provider))
+
+                (event-get raw-route :model)
+                (assoc :model (event-get raw-route :model)))))]
+
+    {:phase :provider-retry-reset
+     :iteration (event-get event :iteration)
+     :attempt attempt
+     :max-retries max-retries
+     :delay-ms delay-ms
+     :error error
+     :event route-event}))
+
 (defn- gateway-event->chunk
   "Project canonical gateway wire events back into the progress chunk shape the
   existing TUI renderer consumes. This is intentionally a client projection: the
@@ -660,7 +760,13 @@
        :done? (boolean done)}
 
       "iteration.error"
-      {:phase :iteration-error :iteration iteration :thinking thinking :error error}
+      {:phase :iteration-error
+       :iteration iteration
+       :thinking thinking
+       :error (or (wire-error-map (event-get event :error-data)) error)}
+
+      "provider.retry"
+      (provider-retry-event->chunk event)
 
       ;; Coarse live-progress ticker (provider wait, response parse, nested
       ;; shell/tool call). Project back to the phase the spinner reads so an

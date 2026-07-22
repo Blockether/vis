@@ -510,21 +510,26 @@
       {:id :network/enabled
        :label "Network access (Python sandbox)"
        :description
-       (str
-         "Let the Python sandbox open sockets (urllib/requests/socket). "
-         "ALWAYS ON — the sandbox always has host socket access. "
-         "Host policy in vis.yml network: is a best-effort GUARDRAIL for "
-         "cooperative code (not adversary-proof): allowed-domains: [\"example.com\"] "
-         "(empty or [\"*\"] = allow all), denied-domains: [...] on top of the "
-         "cloud-metadata SSRF defaults, and rules: [{host: api.example.com, "
-         "access: read-only, allow: [{method: POST, path: /v1/**}]}] to allow "
-         "per-host HTTP verbs + paths (preset read-only = GET/HEAD/OPTIONS; unlisted "
-         "hosts unrestricted). "
-         "When the OS jail is on (shell: {jail: true}) these SAME domain+verb rules are "
-         "enforced for SHELL children (curl/wget/scripts): the jail walls the child to a "
-         "loopback egress proxy (net-off-except-proxy) that applies them — real "
-         "containment, not a hint. HTTPS gets host allow/deny (verb needs future MITM); "
-         "plain HTTP gets full verb+path. Opt out per session with :shell {:jail {:proxy false}}.")
+       (str "Let the Python sandbox open sockets (urllib/requests/socket). "
+            "ALWAYS ON — the sandbox always has host socket access. "
+            "Host policy in vis.yml network: is a best-effort GUARDRAIL for "
+            "cooperative code (not adversary-proof): allowed-domains: [\"example.com\"] "
+            "(empty or [\"*\"] = allow all), denied-domains: [...] on top of the "
+            "cloud-metadata SSRF defaults, and rules: [{host: api.example.com, "
+            "access: read-only, allow: [{method: POST, path: /v1/**}]}] to allow "
+            "per-host HTTP verbs + paths (preset read-only = GET/HEAD/OPTIONS; unlisted "
+            "hosts unrestricted). "
+            "The SHELL is ALWAYS jailed: shell children (curl/wget/scripts) are confined to "
+            "the workspace roots + tmp, and filesystem: {allow-write: [...], deny-write: [...], "
+            "allow-read: [...], deny-read: [...]} adds carve-outs. These SAME domain+verb rules "
+            "are enforced for shell children too: the jail walls the child to a loopback egress "
+            "proxy (net-off-except-proxy) that applies them — real containment, not a hint. HTTPS "
+            "verb/path is read via the MITM CA; exclude-domains: [...] tunnels pinned/Go clients "
+            "that reject the CA (host allow/deny only). "
+            "The proxy blocks cloud-metadata / link-local and the internal LAN even under "
+            "allowed-domains: [\"*\"]; the LAN opts back in with allow-private: true (RFC1918/"
+            "CGNAT/ULA). Loopback dev servers are reachable by default — only the gateway's own "
+            "control-plane and proxy ports can never be reached.")
        ;; A host capability, not a display concern. ON by default and out of the
        ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
        :default true

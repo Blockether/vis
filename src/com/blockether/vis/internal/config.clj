@@ -5,7 +5,7 @@
 
    Two halves:
 
-     - On-disk config under `~/.vis/`: `config.edn`, `vis.mdb/`, `vis.log`.
+     - On-disk config under `~/.vis/`: `state.yml` (machine-written), `vis.mdb/`, `vis.log`.
        `init!` / `init-cli!` / `shutdown!` redirect stdout/stderr into
        the log file and bring up Telemere's file handler.
      - Live process state: the `active-config` atom holds the
@@ -33,22 +33,18 @@
 
 (def config-dir (str (System/getProperty "user.home") "/.vis"))
 
-(def config-path (str config-dir "/config.edn"))
+(def config-path
+  "Legacy machine store `~/.vis/config.edn`. Vis no longer WRITES EDN; this path
+   is read THROUGH only, for a one-time migration of an existing install into
+   `state-path`."
+  (str config-dir "/config.edn"))
 
-(defn project-config-path
-  "Project-local config override path. `bin/vis` preserves the invocation cwd
-   as JVM `user.dir`, so this resolves to `<project>/.vis/config.edn` for the
-   user project, not the Vis install checkout."
-  []
-  (str (System/getProperty "user.dir") "/.vis/config.edn"))
-
-(defn project-root-config-path
-  "Project-local `vis.edn` at the invocation cwd root. Same `user.dir`
-   basis as `project-config-path`, so this resolves to `<project>/vis.edn`
-   for the user project — a visible, root-level alternative to the hidden
-   `.vis/config.edn`."
-  []
-  (str (System/getProperty "user.dir") "/vis.edn"))
+(def state-path
+  "Machine-owned RMW config store `~/.vis/state.yml` (YAML). Vis read-modify-writes
+   this exact file — OAuth tokens, TUI-added providers, extension env overrides — so
+   it is kept SEPARATE from the hand-written `~/.vis/config.yml` tier: the RMW cycle
+   must never fold (and thus clobber) a user's hand-written YAML."
+  (str config-dir "/state.yml"))
 
 (def db-path (str config-dir "/vis.mdb"))
 
@@ -656,29 +652,6 @@
           (str config-dir "/" n))
         ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]))
 
-(defn- read-tier-config-map
-  "Read ONE project config tier that accepts either format: the EDN file when
-   present, else the first existing YAML candidate. Both present → EDN wins and
-   the YAML file is IGNORED (logged, never merged): two spellings of the same
-   tier must not deep-merge into a config neither file describes."
-  [edn-path yaml-paths]
-  (let
-    [edn-file
-     (io/file ^String edn-path)
-
-     yaml-path
-     (first (filter (fn [^String p]
-                      (.exists (io/file p)))
-                    yaml-paths))]
-
-    (when (and (.exists edn-file) yaml-path)
-      (tel/log! :warn
-                ["config: both" edn-path "and" yaml-path
-                 "exist at the same tier; EDN wins, the YAML file is ignored"]))
-    (cond (.exists edn-file) (read-config-map edn-path)
-          yaml-path (read-yaml-config-map yaml-path)
-          :else nil)))
-
 (defn- deep-merge-config
   [& maps]
   (letfn [(merge* [a b]
@@ -689,13 +662,14 @@
     (reduce merge* nil maps)))
 
 (defn load-global-config-raw
-  "Load only the machine-written global `~/.vis/config.edn` map (or nil on
-   read/parse error). EDN ONLY on purpose: Vis itself read-modify-writes this
-   exact file (`save-config!`, provider add/remove, OAuth token persistence),
-   so the RMW cycle must never fold hand-written YAML into the file it spits
-   back out."
+  "Load the machine-written global store as a config map (or nil). Prefers
+   `~/.vis/state.yml` — the YAML file Vis read-modify-writes. When it is absent but
+   the legacy `~/.vis/config.edn` still exists, that EDN is read THROUGH so an
+   existing install keeps working; the next `save-config!` migrates it to YAML.
+   Machine-owned on purpose: kept out of the hand-written YAML merge so the RMW
+   cycle never clobbers user files."
   []
-  (read-config-map config-path))
+  (or (read-yaml-config-map state-path) (read-config-map config-path)))
 
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
@@ -709,38 +683,34 @@
   (some read-yaml-config-map (global-config-yaml-paths)))
 
 (defn load-project-config-raw
-  "Load only the hidden project overlay tier: `<invocation-cwd>/.vis/config.edn`,
-   or its YAML twin `.vis/config.yml` / `.yaml` when no EDN file exists (EDN
-   wins when both exist; nil on read/parse error)."
+  "Load the hidden project overlay tier: the first existing of
+   `<invocation-cwd>/.vis/config.yml` / `.vis/config.yaml`, or nil. Skipped when
+   the overlay dir resolves to the global `~/.vis` store, so running Vis from
+   $HOME never aliases a global file as a project overlay."
   []
-  (let
-    [global-file
-     (io/file config-path)
-
-     project-file
-     (io/file (project-config-path))]
-
-    (when-not (= (.getCanonicalPath global-file) (.getCanonicalPath project-file))
-      (read-tier-config-map (.getPath project-file) (project-config-yaml-paths)))))
+  (let [overlay-dir (io/file (System/getProperty "user.dir") ".vis")]
+    (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file config-dir)))
+      (some read-yaml-config-map (project-config-yaml-paths)))))
 
 (defn load-project-root-config-raw
-  "Load only the visible project-root tier: `<invocation-cwd>/vis.edn`, or its
-   YAML twin `vis.yml` / `vis.yaml` when no EDN file exists (EDN wins when both
-   exist; nil on read/parse error)."
+  "Load the visible project-root tier: the first existing of
+   `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil."
   []
-  (read-tier-config-map (project-root-config-path) (project-root-yaml-paths)))
+  (some read-yaml-config-map (project-root-yaml-paths)))
 
 (defn load-config-raw
-  "Load raw config as the deep-merge of four sources — later sources win,
+  "Load raw config as the deep-merge of four YAML sources — later sources win,
    nested maps merge, scalar/vector values replace:
 
    1. `~/.vis/config.yml` (or `.yaml` / `vis.yml` / `vis.yaml`) — hand-written
-      global YAML base
-   2. `~/.vis/config.edn` — machine-written global; wins over its YAML twin
-   3. `<cwd>/vis.edn` (or `vis.yml` / `vis.yaml`) — visible project root,
-      the committed team config
-   4. `<cwd>/.vis/config.edn` (or `.vis/config.yml`) — hidden project overlay;
-      the NESTED overlay wins over the root file (personal beats committed)"
+      global base
+   2. `~/.vis/state.yml` — machine-written global store (OAuth tokens, TUI-added
+      providers); wins over the hand-written base. A legacy `~/.vis/config.edn`
+      is read THROUGH here only until the next `save-config!` migrates it.
+   3. `<cwd>/vis.yml` (or `vis.yaml`) — visible project root, the committed team
+      config
+   4. `<cwd>/.vis/config.yml` (or `.yaml`) — hidden project overlay; the NESTED
+      overlay wins over the root file (personal beats committed)"
   []
   (deep-merge-config (load-global-yaml-config-raw)
                      (load-global-config-raw)
@@ -785,7 +755,7 @@
 (defn- apply-config-metadata [config] (update config :providers #(mapv apply-provider-metadata %)))
 
 (defn load-config
-  "Load provider config in svar-native syntax from `~/.vis/config.edn`."
+  "Load provider config in svar-native syntax from the merged YAML config."
   []
   (some-> (load-config-raw)
           ((fn [raw]
@@ -819,7 +789,7 @@
 
 (defn- ensure-private-dir!
   "Create `dir` (and parents) if absent, then tighten it to owner-only (700)
-   so files written inside — provider API keys in `config.edn` — are not
+   so files written inside — provider API keys in `state.yml` — are not
    readable by other local users on a shared host. Best-effort: silently a
    no-op on a non-POSIX filesystem."
   [^String dir]
@@ -852,8 +822,22 @@
            (try (Files/setPosixFilePermissions p (PosixFilePermissions/fromString "rw-------"))
                 (catch Throwable _ nil))))))
 
+(defn- ->yaml-safe
+  "Deep-stringify a config map for YAML emission: keyword map keys and keyword
+   VALUES become plain strings (kebab spelling preserved), everything else passes
+   through. The inverse of `keywordize-yaml`, so a machine RMW round-trips
+   losslessly — the few keyword-valued provider fields re-coerce on load."
+  [v]
+  (cond (map? v) (into {}
+                       (map (fn [[k val]]
+                              [(if (keyword? k) (name k) (str k)) (->yaml-safe val)]))
+                       v)
+        (sequential? v) (mapv ->yaml-safe v)
+        (keyword? v) (name v)
+        :else v))
+
 (defn save-config!
-  "Persist provider config to `~/.vis/config.edn`.
+  "Persist provider config to `~/.vis/state.yml` (YAML).
 
    When the first provider (the active provider) changes, the newly
    selected provider's optional `:provider/on-selected-fn` is invoked
@@ -869,7 +853,7 @@
       (active-provider-entry config)]
 
      (ensure-private-dir! config-dir)
-     (spit-private! config-path (pr-str config))
+     (spit-private! state-path (yamlstar/dump (->yaml-safe config)))
      (when (provider-selection-changed? previous-provider selected-provider)
        (emit-provider-selected! {:previous-provider previous-provider
                                  :provider selected-provider
@@ -878,8 +862,8 @@
 
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from
-   `~/.vis/config.edn`, preserving unrelated global config keys. Project-local
-   `.vis/config.edn` is an overlay and is not edited by this writer. Returns
+   `~/.vis/state.yml`, preserving unrelated global config keys. Project-local
+   `.vis/config.yml` is an overlay and is not edited by this writer. Returns
    true when the global file changed."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
@@ -899,7 +883,7 @@
        true))))
 
 (defn resolve-config
-  "Resolve provider config: explicit -> `~/.vis/config.edn`.
+  "Resolve provider config: explicit -> merged YAML config.
    Throws when nothing is available."
   ([] (resolve-config nil))
   ([explicit-config]
@@ -917,12 +901,14 @@
                    seq)))
 
 (defn first-run?
-  "True on a genuine FIRST run: no provider configured AND no global
-   `~/.vis/config.edn` has ever been written. Distinguishes the full welcome
-   (brand-new user) from a returning user who merely has no provider right now
-   (e.g. removed their only one)."
+  "True on a genuine FIRST run: no provider configured AND no global machine store
+   (`~/.vis/state.yml`, nor the legacy `~/.vis/config.edn`) has ever been written.
+   Distinguishes the full welcome (brand-new user) from a returning user who merely
+   has no provider right now (e.g. removed their only one)."
   []
-  (and (not (provider-configured?)) (not (.exists (io/file config-path)))))
+  (and (not (provider-configured?))
+       (not (.exists (io/file state-path)))
+       (not (.exists (io/file config-path)))))
 
 (def ^:private router-opts-keys
   "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
@@ -934,7 +920,7 @@
 (defn router-opts
   "Extracts `svar/make-router` opts from a Vis config map.
 
-   Reads the `:router` block from `~/.vis/config.edn`:
+   Reads the `:router` block from the merged YAML config:
 
    ```clojure
    {:router
@@ -959,7 +945,7 @@
 (def ^:private extension-env-config-key :environment)
 
 (defn extension-env-overrides
-  "Persisted extension environment overrides from `~/.vis/config.edn`
+  "Persisted extension environment overrides from `~/.vis/state.yml`
    under `:environment`. Keys are environment variable names as
    strings. Values are strings. This does NOT mutate the process
    environment; extension code should call `extension-env-value` when
@@ -1003,7 +989,7 @@
   (:value (extension-env-status name)))
 
 (defn save-extension-env-var!
-  "Persist or clear one extension env override in `~/.vis/config.edn`.
+  "Persist or clear one extension env override in `~/.vis/state.yml`.
    Blank/nil `value` removes the override, revealing the process env
    value again if one exists. Preserves all other config keys."
   [name value]
@@ -1033,7 +1019,7 @@
 
 (defn resolve-db-spec
   "Resolve DB spec: explicit -> `vis.db.path` JVM property -> VIS_DB_PATH env ->
-   `:db-spec` from config.edn -> default sqlite at `~/.vis/vis.mdb`."
+   `:db-spec` from config -> default sqlite at `~/.vis/vis.mdb`."
   ([] (resolve-db-spec nil))
   ([explicit-db-spec]
    (or explicit-db-spec

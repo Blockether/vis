@@ -243,7 +243,11 @@
   [policy]
   (if-let [port (:proxy-port policy)]
     (let
-      [url (str "http://127.0.0.1:" port)
+      [token (:proxy-token policy)
+       ;; The token rides the proxy URL userinfo so curl/git/requests/… send it back
+       ;; as `Proxy-Authorization`; the shared gateway proxy uses it to attribute the
+       ;; connection to THIS session's policy (see internal.gateway-sandbox).
+       url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
        ca (:ca-file policy)]
 
       (cond->
@@ -258,5 +262,9 @@
                 "SSL_CERT_FILE" ca
                 "REQUESTS_CA_BUNDLE" ca
                 "NODE_EXTRA_CA_CERTS" ca
-                "GIT_SSL_CAINFO" ca})))
+                "GIT_SSL_CAINFO" ca
+                "PIP_CERT" ca
+                "AWS_CA_BUNDLE" ca
+                "CARGO_HTTP_CAINFO" ca
+                "DENO_CERT" ca})))
     {}))

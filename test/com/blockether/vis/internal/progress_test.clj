@@ -114,31 +114,48 @@
         (on {:phase :response-parse :iteration 1 :status :done})
         (let [entry (first ((:get-timeline tracker)))]
           (expect (nil? (:content-stream entry))))))
-  (it "provider retry reset rewinds stale streamed reasoning and content"
-      (let
-        [tracker
-         (progress/make-progress-tracker)
+  (it
+    "provider retry reset rewinds stale streamed reasoning and content"
+    (let
+      [tracker
+       (progress/make-progress-tracker)
 
-         on
-         (:on-chunk tracker)
+       on
+       (:on-chunk tracker)
 
-         event
-         {:event/type :llm.routing/provider-retry
-          :provider "zai-coding-plan"
-          :model "glm-5.1"
-          :reason :stream-connection-error
-          :attempt 1
-          :delay-ms 1000
-          :error "Stream connection error: closed"}]
+       event
+       {:event/type :llm.routing/provider-retry
+        :provider "zai-coding-plan"
+        :model "glm-5.1"
+        :reason :stream-connection-error
+        :attempt 1
+        :delay-ms 1000
+        :error "Stream connection error: closed"}]
 
-        (on {:phase :reasoning :iteration 1 :thinking "dead thinking"})
-        (on {:phase :content :iteration 1 :content "dead content"})
-        (on {:phase :provider-retry-reset :iteration 1 :event event})
-        (let [entry (first ((:get-timeline tracker)))]
-          (expect (nil? (:thinking entry)))
-          (expect (nil? (:content-stream entry)))
-          (expect (= :provider-call (:activity entry)))
-          (expect (= [event] (:provider-fallbacks entry))))))
+      (on {:phase :reasoning :iteration 1 :thinking "dead thinking"})
+      (on {:phase :content :iteration 1 :content "dead content"})
+      (on {:phase :provider-retry-reset
+           :iteration 1
+           :attempt 1
+           :max-retries 3
+           :delay-ms 1000
+           :error {:type :svar.core/http-error :message "closed"}
+           :event event})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (nil? (:thinking entry)))
+        (expect (nil? (:content-stream entry)))
+        (expect (= :provider-call (:activity entry)))
+        (expect
+          (=
+            {:type :svar.core/http-error :message "closed" :attempt 1 :max-retries 3 :delay-ms 1000}
+            (:error entry)))
+        (expect (= [event] (:provider-fallbacks entry))))
+      ;; Keep the notice while the replacement provider call is waiting; clear it
+      ;; only once the new attempt produces fresh content/parse progress.
+      (on {:phase :provider-call :iteration 1})
+      (expect (= :svar.core/http-error (get-in (first ((:get-timeline tracker))) [:error :type])))
+      (on {:phase :reasoning :iteration 1 :thinking "fresh"})
+      (expect (nil? (:error (first ((:get-timeline tracker))))))))
   (it "silently drops chunks that carry neither key"
       ;; Defensive: a malformed producer must not resurrect the phantom
       ;; bucket bug. The tracker just no-ops.

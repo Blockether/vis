@@ -326,7 +326,8 @@
 
 (defn- jail-policy
   "The live per-session jail policy VALUE (or nil) carried by `env`. Built by the
-   loop from vis.yml `:shell :jail` + the session roots; read fresh here so it
+   loop from vis.yml `:filesystem` (fs carve-outs) + `:network` + the session roots;
+   read fresh here so it
    reflects the current config/roots at spawn time. nil ⇒ argv unwrapped."
   [env]
   (when-let [f (:jail-policy-fn env)]

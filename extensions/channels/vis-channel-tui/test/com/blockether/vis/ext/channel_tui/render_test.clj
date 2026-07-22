@@ -1086,6 +1086,29 @@
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "git clone"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
+  (it "uses the :command-label for a ZERO-iteration command turn, never the provider fallback"
+      ;; Before the shell/slash activity chunk lands (n=0 iterations), the spinner
+      ;; would default to "Vis is calling the provider". A `!`/`!&`/slash turn makes
+      ;; NO provider call, so the pending message threads its :command-label through
+      ;; `progress-extra`; the spinner must show that, not the provider fallback.
+      (let
+        [body
+         (strip-ansi (render/progress->text
+                       {:iterations []}
+                       80
+                       {:show-thinking true :show-iterations true}
+                       {:now-ms 1000 :turn-start-ms 0 :command-label "Running shell command"}))
+
+         normal
+         (strip-ansi (render/progress->text {:iterations []}
+                                            80
+                                            {:show-thinking true :show-iterations true}
+                                            {:now-ms 1000 :turn-start-ms 0}))]
+
+        (expect (str/includes? body "Running shell command"))
+        (expect (not (str/includes? body "Vis is calling the provider")))
+        ;; A normal turn (no label) still legitimately waits on the provider.
+        (expect (str/includes? normal "Vis is calling the provider"))))
   (it "labels a pure slash command in the spinner instead of the provider placeholder"
       ;; A registered slash (/fs, /draft, …) runs LOCALLY via run-slash-turn! and
       ;; never touches a provider, so it streams ONE :slash phase chunk; the spinner
@@ -1468,6 +1491,50 @@
           (expect (some? queued-idx))
           ;; Queue block renders AFTER the spinner row (order preserved).
           (expect (< (long spinner-idx) (long queued-idx)))))))
+
+(defdescribe
+  spinner-transient-error-segment-test
+  ;; A recoverable error on the LAST iteration surfaces a RED (INLINE_ERR
+  ;; sentinel-wrapped) segment on the spinner row, to the RIGHT of the elapsed
+  ;; clock and to the LEFT of the "Esc to cancel" trailer (placement A). The
+  ;; phase itself stays a plain "Vis is retrying"; the error detail lives ONLY
+  ;; in the tinted suffix, and the copyable :text stays sentinel-free.
+  (let
+    [extra
+     {:now-ms 1700000000000 :turn-start-ms 1700000000000}
+
+     err-iter
+     {:activity :provider-call
+      :error {:type :svar.core/http-error :attempt 2 :max-retries 3 :delay-ms 1000}}
+
+     spinner
+     (fn [d]
+       (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
+
+    (it "wraps the transient-error detail in INLINE_ERR sentinels after the clock"
+        (let
+          [d
+           (render/progress->lines-data {:iterations [err-iter]} 130 {} extra)
+
+           line
+           (spinner d)]
+
+          (expect (str/includes? line "Vis is retrying"))
+          (expect (str/includes? line p/INLINE_ERR_ON))
+          (expect (str/includes? line p/INLINE_ERR_OFF))
+          (expect (str/includes? line "\u2014 http error \u00b7 retry 2/3 \u00b7 next in 1.0s"))
+          (expect (< (long (str/index-of line p/INLINE_ERR_OFF))
+                     (long (str/index-of line "Esc to cancel"))))
+          (expect (nil? (re-find #"[\uE110-\uE11B]" (:text d))))))
+    (it "renders no segment when the last iteration has no error"
+        (let
+          [d
+           (render/progress->lines-data {:iterations [{:activity :provider-call}]} 130 {} extra)
+
+           line
+           (spinner d)]
+
+          (expect (not (str/includes? line p/INLINE_ERR_ON)))))))
 
 (defdescribe
   live-body-throttle-test

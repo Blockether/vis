@@ -171,10 +171,14 @@
   (point col (+ (long (or eff-scroll 0)) (- (long row) (long (or viewport-top 0))))))
 
 (defn line-selection-at-point
-  "Expand a click on a selectable screen row to that whole row.
+  "Expand a click on a selectable screen row to the whole logical line.
 
-   Returns a document-space `{:anchor ... :focus ...}` selection, or nil when
-   the point is only in padding/chrome. The end point is inclusive to match
+   Wrapped source lines land as several vertically-adjacent selectable ranges
+   that share a `:line-id`; this spans every such fragment, so a double-click on
+   any visual row of a soft-wrapped line (e.g. a long error) selects the entire
+   line, not just the clicked fragment. Untagged ranges expand to their single
+   row. Returns a document-space `{:anchor ... :focus ...}` selection, or nil
+   when the point is only in padding/chrome. The end point is inclusive to match
    `selected-ranges` semantics."
   [{:keys [col row]} selectable-ranges viewport]
   (let
@@ -182,19 +186,34 @@
      (long col)
 
      row
-     (long row)]
+     (long row)
 
-    (when-let
-      [{range-col :col range-row :row width :width}
-       (some (fn [{range-col :col range-row :row width :width :as r}]
-               (when (and (= row (long range-row))
-                          (>= col (long range-col))
-                          (< col (+ (long range-col) (long width))))
-                 r))
-             selectable-ranges)]
-      {:anchor (screen->document-point (point range-col range-row) viewport)
-       :focus (screen->document-point (point (dec (+ (long range-col) (long width))) range-row)
-                                      viewport)})))
+     hit
+     (some (fn [{range-col :col range-row :row width :width :as r}]
+             (when (and (= row (long range-row))
+                        (>= col (long range-col))
+                        (< col (+ (long range-col) (long width))))
+               r))
+           selectable-ranges)]
+
+    (when hit
+      (let
+        [gid
+         (:line-id hit)
+
+         group
+         (if (some? gid) (filterv #(= gid (:line-id %)) selectable-ranges) [hit])
+
+         first-r
+         (apply min-key :row group)
+
+         last-r
+         (apply max-key :row group)]
+
+        {:anchor (screen->document-point (point (:col first-r) (:row first-r)) viewport)
+         :focus (screen->document-point (point (dec (+ (long (:col last-r)) (long (:width last-r))))
+                                               (:row last-r))
+                                        viewport)}))))
 
 (defn document->screen-selection
   "Project a document-space selection into the current screen viewport."

@@ -681,13 +681,6 @@
      n-calls
      (max (count calls) (long n-blocks))
 
-     providers
-     (->> turns
-          (map :provider)
-          (remove nil?)
-          distinct
-          vec)
-
      models
      (->> turns
           (map :model)
@@ -706,9 +699,7 @@
        ["Channel"
         (or (some-> (:channel session)
                     name)
-            "\u2014") false]]]
-     ["Timing"
-      [["Started" (or (fmt-inst started) "\u2014") false]
+            "\u2014") false] ["Started" (or (fmt-inst started) "\u2014") false]
        ["Finished" (or (fmt-inst finished) "\u2014") false]
        ["Duration"
         (or (when (and started finished)
@@ -720,13 +711,11 @@
        ["Avg iterations / turn" (fmt-avg n-iters n-turns) false] ["Tool calls" (str n-calls) false]
        ["Avg tool calls / turn" (fmt-avg n-calls n-turns) false]
        ["Avg tool calls / iteration" (fmt-avg n-calls n-iters) false]]]
-     ["Providers & models"
+     ["Models & cost"
       [["Top provider" (or (most-common (map :provider turns)) "\u2014") true]
        ["Top model" (or (most-common (map :model turns)) "\u2014") true]
-       ["Providers used" (if (seq providers) (str/join ", " providers) "\u2014") true]
-       ["Models used" (if (seq models) (str/join ", " models) "\u2014") true]]]
-     ["Cost & tokens"
-      [["Total cost" (format-cost-usd (:cost-usd totals)) false]
+       ["Models used" (if (seq models) (str/join ", " models) "\u2014") true]
+       ["Total cost" (format-cost-usd (:cost-usd totals)) false]
        ["Tokens (in / out)" (format-tokens (:tokens totals)) true]]]]))
 
 (defn- fence-delimiter
@@ -1015,6 +1004,13 @@
       (str/replace "<" "&lt;")
       (str/replace ">" "&gt;")))
 
+(defn- strip-ansi
+  "Remove ANSI/VT terminal escape sequences (CSI/SGR like `\u001b[7m` match
+   highlights) that leak into tool result cards, so an exported transcript
+   shows clean text instead of raw control bytes."
+  [s]
+  (when (some? s) (str/replace (str s) #"\u001b\[[0-9;?]*[ -/]*[@-~]" "")))
+
 (defn- tool-op
   "Uppercase operation label parsed from a tool-call invocation like `rg(...)`."
   [code]
@@ -1043,37 +1039,58 @@
                  str/trim)]
       (when-not (str/blank? p) (if (> (count p) 220) (str (subs p 0 220) "\u2026") p)))))
 
-(defn- dialog-thinking
-  "Non-blank reasoning traces across a turn's iterations."
-  [turn]
-  (->> (:iterations turn)
-       (keep :thinking)
-       (map (comp str/trim str))
-       (remove str/blank?)
-       vec))
+(defn- tool-descriptor
+  "One compact tool-call descriptor from a timeline :code event, mirroring the
+   TUI op-card: op label, arg summary, the tool's own rendered result body
+   (ANSI-stripped), and a status. Python blocks are flagged so the renderer can
+   show the source verbatim with the result folded beneath it."
+  [{:keys [code result-summary status cards]}]
+  (when-not (str/blank? (str code))
+    (let
+      [c
+       (str/trim (str code))
 
-(defn- dialog-tools
-  "Compact tool-call descriptors for one turn, from its timeline code events."
-  [timeline turn-id]
-  (->> timeline
-       (filter #(and (= :code (:kind %)) (= turn-id (:turn-id %))))
-       (keep (fn [{:keys [code result-summary status cards]}]
-               (when-not (str/blank? (str code))
-                 (let
-                   [c
-                    (str/trim (str code))
+       card
+       (first cards)
 
-                    card
-                    (first cards)]
+       python?
+       (= "RESULT" (:label card))]
 
-                   {:code c
-                    :op (or (:label card) (tool-op c))
-                    :summary (or (:summary card) (tool-summary c))
-                    :color-role (:color-role card)
-                    :body (:body card)
-                    :status status
-                    :preview (dialog-result-preview result-summary)}))))
-       vec))
+      {:kind :tool
+       :code c
+       :op (if python? "PYTHON" (or (:label card) (tool-op c)))
+       :summary (when-not python? (or (:summary card) (tool-summary c)))
+       :python? python?
+       :carded? (some? card)
+       :color-role (:color-role card)
+       :body (strip-ansi (:body card))
+       :status status
+       :preview (some-> (dialog-result-preview result-summary)
+                        strip-ansi)})))
+
+(defn- dialog-segments
+  "Ordered dialog segments for one turn, interleaving each iteration's reasoning
+   prose with that iteration's tool calls in the order they streamed - the way
+   the TUI shows a turn. Each segment is `{:kind :prose :text ...}` or a
+   `{:kind :tool ...}` descriptor."
+  [timeline turn]
+  (let
+    [events
+     (filter #(and (= :code (:kind %)) (= (:id turn) (:turn-id %))) timeline)
+
+     by-iter
+     (group-by :iteration-id events)]
+
+    (vec (mapcat (fn [it]
+                   (let
+                     [prose
+                      (str/trim (str (:thinking it)))
+
+                      tools
+                      (keep tool-descriptor (get by-iter (:id it)))]
+
+                     (concat (when-not (str/blank? prose) [{:kind :prose :text prose}]) tools)))
+                 (:iterations turn)))))
 
 (defn- thinking-split
   "Split a turn's reasoning trace into an always-visible peek (the first
@@ -1140,69 +1157,91 @@
        :duration-ms duration-ms}
       {:model label})))
 
+(defn- render-user-md
+  "The user's message as Markdown: a short prompt whole, a long paste as a peek
+   plus a verbatim `+N more lines` fold."
+  [user]
+  (let [{:keys [peek more hidden]} (user-split user)]
+    (str peek
+         (when more
+           (str "\n\n<details>\n<summary>+"
+                hidden
+                " more lines</summary>\n\n"
+                (render-fenced "" more)
+                "\n\n</details>")))))
+
+(defn- render-prose-md
+  "One reasoning/prose segment as Markdown: a `Thinking` peek then a `+N more`
+   fold, so the narration reads inline the way it streams in the TUI."
+  [text]
+  (let [{:keys [peek more hidden]} (thinking-split [text])]
+    (str "**Thinking**\n\n" peek
+         "\n\n"
+         (when more
+           (str "<details>\n<summary>+" hidden " more</summary>\n\n" more "\n\n</details>\n\n")))))
+
+(defn- render-tool-md
+  "One tool segment as Markdown. Python blocks show their source verbatim with
+   the result folded beneath; native tools stay a collapsible op-card."
+  [{:keys [op summary code status preview body python? carded?]}]
+  (if python?
+    (str "**"
+         (md-html-escape op)
+         "**\n\n"
+         (render-fenced "python" code)
+         "\n"
+         (when-not (str/blank? body)
+           (str "\n<details>\n<summary>Result</summary>\n\n" body "\n\n</details>\n\n"))
+         "\n")
+    (str "<details>\n<summary>\u25be "
+         (md-html-escape op)
+         (when-not (str/blank? summary) (str " \u00b7 " summary))
+         "</summary>\n\n"
+         (cond (not (str/blank? body)) (str body "\n")
+               carded? nil
+               :else (str (render-fenced "python" code)
+                          (when preview (str "\n> " (status-label status) " " preview "\n"))))
+         "\n</details>\n\n")))
+
 (defn- render-dialog-turn-md
   "One user->assistant exchange as opencode-style Markdown: the user request,
-   collapsible reasoning + tool calls, then the assistant's answer. Message
-   bodies render as real Markdown (never fenced) so headings/bold/code survive."
+   then the assistant's reasoning prose and tool calls interleaved in stream
+   order, then the answer. Message bodies render as real Markdown (never fenced)
+   so headings/bold/code survive."
   [timeline turn]
   (let
     [user
      (str/trim (str (:user-request turn)))
 
-     thinking
-     (dialog-thinking turn)
-
-     tools
-     (dialog-tools timeline (:id turn))
+     segments
+     (dialog-segments timeline turn)
 
      answer
      (str/trim (str (content/text-projection (:content turn))))]
 
     (str "### You\n\n"
-         (if (str/blank? user)
-           "_(empty)_"
-           (let [{:keys [peek more hidden]} (user-split user)]
-             (str peek
-                  (when more
-                    (str "\n\n<details>\n<summary>+"
-                         hidden
-                         " more lines</summary>\n\n"
-                         (render-fenced "" more)
-                         "\n\n</details>")))))
+         (if (str/blank? user) "_(empty)_" (render-user-md user))
          "\n\n"
          "### Vis"
          "\n\n"
-         (when (seq thinking)
-           (let [{:keys [peek more hidden]} (thinking-split thinking)]
-             (str "**Thinking**\n\n" peek
-                  "\n\n" (when more
-                           (str "<details>\n<summary>+"
-                                hidden
-                                " more</summary>\n\n"
-                                more
-                                "\n\n</details>\n\n")))))
-         (when (seq tools)
-           (apply str
-             (for [{:keys [op summary code status preview body]} tools]
-               (str "<details>\n<summary>\u25be "
-                    (md-html-escape op)
-                    (when-not (str/blank? summary) (str " \u00b7 " summary))
-                    "</summary>\n\n"
-                    (if-not (str/blank? body)
-                      (str body "\n")
-                      (str (render-fenced "python" code)
-                           (when preview (str "\n> " (status-label status) " " preview "\n"))))
-                    "\n</details>\n\n"))))
+         (apply str
+           (for [seg segments]
+             (case (:kind seg)
+               :prose
+               (render-prose-md (:text seg))
+
+               :tool
+               (render-tool-md seg))))
          (when-not (str/blank? answer) (str answer "\n\n"))
          (when-let [footer (dialog-footer turn)]
            (str "_" footer "_\n\n")))))
 
 (defn- render-dialog-md
-  [{:keys [session turns timeline]}]
-  (str "# " (or (:title session) "vis transcript")
-       "\n\n" (if (seq turns)
-                (str/join "---\n\n" (map #(render-dialog-turn-md timeline %) turns))
-                "_No dialog messages._\n")))
+  [{:keys [turns timeline] :as data}]
+  (str (render-summary-md data)
+       (if (seq turns)
+         (str/join "---\n\n" (map #(render-dialog-turn-md timeline %) turns))
+         "_No dialog messages._\n")))
 
 (defn- render-turns-md
   "Turn-by-turn forensic body (no summary header)."
@@ -1351,22 +1390,21 @@
     "th{font-weight:650;color:var(--fg);white-space:nowrap;}"
     "td code{white-space:nowrap;}"
     "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"
-    ;; Summary card - full-viewport responsive grid of stat cards (one per
-    ;; session-summary group), breaking out of the 860px transcript column.
-    ".tx-summary{position:relative;left:50%;transform:translateX(-50%);"
-    "width:min(1360px,94vw);display:grid;gap:.9rem;align-items:start;margin:.4rem 0 2.2rem;"
-    "grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));font-size:.92rem;}"
+    ;; Summary card - stat-card grid aligned to the 860px transcript column
+    ;; (one card per session-summary group), same width as the dialog body.
+    ".tx-summary{width:100%;display:grid;gap:.85rem;align-items:start;margin:.4rem 0 2.4rem;"
+    "grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));font-size:.82rem;}"
     ".tx-card{border:1px solid var(--line);border-radius:0;background:var(--code-bg);"
     "padding:.4rem 1rem .9rem;}"
     ".tx-card-title{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-    "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;padding:.7rem 0 .1rem;}"
+    "font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;padding:.6rem 0 .1rem;}"
     ".tx-row{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"
-    "padding:.4rem 0;border-top:1px solid var(--line);}" ".tx-card-title + .tx-row{border-top:0;}"
+    "padding:.4rem 0;border-top:1px solid var(--line);}"
+    ".tx-card-title + .tx-row{border-top:0;}"
     ".tx-k{color:var(--dim);white-space:nowrap;flex:0 0 auto;}"
     ".tx-v{color:var(--fg);text-align:right;word-break:break-word;min-width:0;}"
-    ".tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;" "font-size:.88em;}"
-    "@media (max-width:640px){.tx-summary{width:100%;left:0;transform:none;}"
-    ".tx-card{padding:.35rem .85rem .8rem;}}"
+    ".tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+    "font-size:.88em;}" "@media (max-width:640px){.tx-card{padding:.3rem .8rem .7rem;}}"
     ;; Dialog view - opencode-style user/assistant exchanges with collapsible
     ;; reasoning + tool calls, coloured from the shared vis theme vars.
     ".dialog{display:flex;flex-direction:column;gap:1.4rem;}"
@@ -1393,7 +1431,18 @@
     ".details-body{padding:.65rem .85rem;}" ".details-body>*:first-child{margin-top:0;}"
     ".details-body>*:last-child{margin-bottom:0;}"
     "details.thinking .details-body{color:var(--dim);font-style:italic;}"
-    ".tool-code{margin:0;}"
+    ;; Tool result output (RG/CAT/SHELL RUN bodies) is denser than prose.
+    "details.tool .details-body{font-size:.8rem;line-height:1.5;}" ".tool-code{margin:0;}"
+    ;; Python block: source shown verbatim, its result folded beneath (TUI-style).
+    ".tool-py{margin:.45rem 0;}"
+    ".tool-py>.tool-op{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;font-weight:650;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);margin-bottom:.25rem;}"
+    "details.tool-result{margin:.35rem 0 0;border:1px solid var(--line);border-radius:0;background:var(--code-bg);overflow:hidden;}"
+    "details.tool-result>summary{cursor:pointer;padding:.35rem .8rem;color:var(--dim);font-size:.76rem;list-style:none;user-select:none;display:flex;align-items:baseline;gap:.3rem;}"
+    "details.tool-result>summary::-webkit-details-marker{display:none;}"
+    "details.tool-result>summary::before{content:\"\u25b8\";color:var(--dim);font-size:.72rem;flex:0 0 auto;}"
+    "details.tool-result[open]>summary::before{content:\"\u25be\";}"
+    "details.tool-result[open]>summary{border-bottom:1px solid var(--line);}"
+    "details.tool-result .details-body{padding:.6rem .85rem;font-size:.8rem;line-height:1.5;}"
     ".tool-out{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;"
     "white-space:pre-wrap;word-break:break-word;border-left:2px solid var(--line);padding:.15rem 0 .15rem .6rem;margin-top:.35rem;}"
     "details.tool.status-error .tool-out{color:var(--err);border-left-color:var(--err);}"
@@ -1466,20 +1515,96 @@
                   "</div>\n")))
          "</div>\n")))
 
+(defn- render-user-html
+  "The user's message as HTML: a short prompt whole, a long paste as a peek plus
+   a verbatim monospace `+N more lines` fold."
+  [user]
+  (if (str/blank? user)
+    (md->html "_(empty)_")
+    (let [{:keys [peek more hidden]} (user-split user)]
+      (str (md->html peek)
+           (when more
+             (str "<details class=\"paste-more\"><summary>+"
+                  hidden
+                  " more lines</summary><div class=\"details-body\">"
+                  "<pre class=\"paste-body\"><code>"
+                  (html-escape more)
+                  "</code></pre></div></details>"))))))
+
+(defn- render-prose-html
+  "One reasoning/prose segment as HTML: a dim `Thinking` band with a peek plus a
+   `+N more` fold, so the narration reads inline the way it streams in the TUI."
+  [text]
+  (let [{:keys [peek more hidden]} (thinking-split [text])]
+    (str "<div class=\"thinking-band\">"
+         "<div class=\"thinking-label\">Thinking</div>"
+         "<div class=\"thinking-peek\">"
+         (md->html peek)
+         "</div>"
+         (when more
+           (str "<details class=\"thinking-more\"><summary>+"
+                hidden
+                " more</summary><div class=\"details-body\">"
+                (md->html more)
+                "</div></details>"))
+         "</div>")))
+
+(defn- render-tool-html
+  "One tool segment as HTML. Python blocks show their source verbatim with the
+   result folded beneath; native tools stay a collapsible op-card."
+  [{:keys [op summary code status preview body color-role python? carded?]}]
+  (let [op-style (when color-role (str " style=\"color:var(--tool-" (name color-role) ")\""))]
+    (if python?
+      (str "<div class=\"tool-py status-"
+           (name (or status :done))
+           "\">"
+           "<div class=\"tool-op\""
+           op-style
+           ">"
+           (html-escape op)
+           "</div>"
+           "<pre class=\"tool-code\"><code class=\"language-python\">"
+           (html-escape code)
+           "</code></pre>"
+           (when-not (str/blank? body)
+             (str "<details class=\"tool-result\"><summary>Result</summary>"
+                  "<div class=\"details-body\">"
+                  (md->html body)
+                  "</div></details>"))
+           "</div>\n")
+      (str "<details class=\"tool status-"
+           (name (or status :done))
+           "\">"
+           "<summary><span class=\"tool-op\""
+           op-style
+           ">"
+           (html-escape op)
+           "</span>"
+           (when-not (str/blank? summary)
+             (str "<span class=\"tool-args\">" (render-inline summary) "</span>"))
+           "</summary>\n<div class=\"details-body\">"
+           (cond (not (str/blank? body)) (md->html body)
+                 carded? nil
+                 :else
+                 (str "<pre class=\"tool-code\"><code class=\"language-python\">" (html-escape code)
+                      "</code></pre>" (when preview
+                                        (str "<div class=\"tool-out\">"
+                                             (html-escape (str (status-label status) " " preview))
+                                             "</div>"))))
+           "</div></details>\n"))))
+
 (defn- render-dialog-turn-html
-  "One user->assistant exchange as styled HTML: user bubble, collapsible
-   reasoning + tool calls, then the assistant's answer. Each text body renders
-   through the Markdown->HTML surface so prose looks like the TUI."
+  "One user->assistant exchange as styled HTML: the user bubble, then the
+   assistant's reasoning prose and tool calls interleaved in stream order, then
+   the answer and a meta footer. Each text body renders through the
+   Markdown->HTML surface so prose looks like the TUI."
   [timeline turn]
   (let
     [user
      (str/trim (str (:user-request turn)))
 
-     thinking
-     (dialog-thinking turn)
-
-     tools
-     (dialog-tools timeline (:id turn))
+     segments
+     (dialog-segments timeline turn)
 
      answer
      (str/trim (str (content/text-projection (:content turn))))]
@@ -1488,82 +1613,36 @@
          "<article class=\"msg user\">\n"
          "<header class=\"msg-role\"><span class=\"who\">You</span></header>\n"
          "<div class=\"msg-body\">"
-         (if (str/blank? user)
-           (md->html "_(empty)_")
-           (let [{:keys [peek more hidden]} (user-split user)]
-             (str (md->html peek)
-                  (when more
-                    (str "<details class=\"paste-more\"><summary>+"
-                         hidden
-                         " more lines</summary><div class=\"details-body\">"
-                         "<pre class=\"paste-body\"><code>" (html-escape more)
-                         "</code></pre>" "</div></details>")))))
+         (render-user-html user)
          "</div>\n"
          "</article>\n"
          "<article class=\"msg assistant\">\n"
          "<header class=\"msg-role\"><span class=\"who\">Vis</span>"
          "</header>\n"
          "<div class=\"msg-body\">\n"
-         (when (seq thinking)
-           (let [{:keys [peek more hidden]} (thinking-split thinking)]
-             (str "<div class=\"thinking-band\">"
-                  "<div class=\"thinking-label\">Thinking</div>"
-                  "<div class=\"thinking-peek\">"
-                  (md->html peek)
-                  "</div>"
-                  (when more
-                    (str "<details class=\"thinking-more\"><summary>+"
-                         hidden
-                         " more</summary>"
-                         "<div class=\"details-body\">"
-                         (md->html more)
-                         "</div></details>"))
-                  "</div>")))
-         (when (seq tools)
-           (apply str
-             (for [{:keys [op summary code status preview body color-role]} tools]
-               (str "<details class=\"tool status-"
-                    (name (or status :done))
-                    "\"><summary><span class=\"tool-op\""
-                    (when color-role (str " style=\"color:var(--tool-" (name color-role) ")\""))
-                    ">"
-                    (html-escape op)
-                    "</span>"
-                    (when-not (str/blank? summary)
-                      (str "<span class=\"tool-args\">" (render-inline summary) "</span>"))
-                    "</summary>\n"
-                    "<div class=\"details-body\">"
-                    (if-not (str/blank? body)
-                      (md->html body)
-                      (str "<pre class=\"tool-code\"><code class=\"language-python\">" (html-escape
-                                                                                         code)
-                           "</code></pre>" (when preview
-                                             (str "<div class=\"tool-out\">"
-                                                  (html-escape
-                                                    (str (status-label status) " " preview))
-                                                  "</div>"))))
-                    "</div></details>\n"))))
+         (apply str
+           (for [seg segments]
+             (case (:kind seg)
+               :prose
+               (render-prose-html (:text seg))
+
+               :tool
+               (render-tool-html seg))))
          (when-not (str/blank? answer) (md->html answer))
          (when-let [footer (dialog-footer turn)]
            (str "<div class=\"msg-footer\">" (html-escape footer) "</div>"))
          "</div>\n</article>\n</section>\n")))
 
 (defn- render-dialog-html
-  "Standalone HTML dialog: a title `<h1>` plus one styled section per turn."
+  "Standalone HTML dialog: the session summary stat-card grid on top, then one
+   styled section per turn."
   [{:keys [turns timeline] :as data}]
-  (let
-    [title (or (some-> data
-                       :session
-                       :title)
-               "vis transcript")]
-    (str "<h1>"
-         (render-inline title)
-         "</h1>\n"
-         "<div class=\"dialog\">\n"
-         (if (seq turns)
-           (apply str (map #(render-dialog-turn-html timeline %) turns))
-           "<p><em>No dialog messages.</em></p>\n")
-         "</div>\n")))
+  (str (render-summary-html data)
+       "<div class=\"dialog\">\n"
+       (if (seq turns)
+         (apply str (map #(render-dialog-turn-html timeline %) turns))
+         "<p><em>No dialog messages.</em></p>\n")
+       "</div>\n"))
 
 (defn transcript->html
   "Render transcript data as a STANDALONE HTML document, styled with the

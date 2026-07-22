@@ -528,16 +528,91 @@
 
 (defn resume-draft!
   "Switch the session pinned to `sid` INTO the stashed draft `workspace-id`, then
-   return the refreshed `session-workspace-info`. When the session is currently in
-   ANOTHER draft it is first STASHED (non-destructive), so this is a true draft
-   switch, not just an enter-from-trunk. Runs SERVER-SIDE in the daemon. Throws
-   `ex-info` with a `:type` when `workspace-id` is not a resumable active draft
-   (see `workspace/resume!`). Channel-agnostic twin of the `/draft resume` slash."
+   return the refreshed `session-workspace-info`. The target is validated against
+   the session's current repo BEFORE any current draft is stashed. When the session
+   is currently in another draft it is then stashed non-destructively, so this is a
+   true draft switch, not just an enter-from-trunk. Runs SERVER-SIDE in the daemon.
+   Throws `ex-info` with a `:type` when `workspace-id` is not resumable (see
+   `workspace/resume!`). Channel-agnostic twin of the `/draft resume` slash."
   [sid workspace-id]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
-      (when (workspace/draft? (resolve-workspace db sid)) (workspace/stash! db state-id))
-      (workspace/resume! db {:session-state-id state-id :workspace-id workspace-id})))
+      (let
+        [current (resolve-workspace db sid)
+         target (workspace/get db workspace-id)]
+
+        (when (and current target (not= (:repo-id current) (:repo-id target)))
+          (throw (ex-info "Draft belongs to a different repository"
+                          {:type :workspace/draft-repo-mismatch
+                           :workspace-id workspace-id
+                           :repo-id (:repo-id current)
+                           :draft-repo-id (:repo-id target)})))
+        (when (workspace/draft? current) (workspace/stash! db state-id))
+        (workspace/resume! db {:session-state-id state-id :workspace-id workspace-id}))))
+  (session-workspace-info sid))
+
+(defn create-draft!
+  "Create and enter a named draft for `sid` in the daemon. If the session is
+   already in a draft, park that draft first; creating from the picker is thus
+   non-destructive and always forks the real repo trunk. `blank?` creates an
+   empty draft lineage. Returns refreshed canonical workspace info."
+  [sid label blank?]
+  (let
+    [label (some-> label
+                   str
+                   str/trim)]
+    (when (str/blank? label)
+      (throw (ex-info "Draft name cannot be blank" {:type :workspace/blank-draft-label})))
+    (when-let [db (lp/db-info)]
+      (when-let [state-id (resolve-state-id db sid)]
+        (let
+          [current (resolve-workspace db sid)
+           repo-root (or (:repo-root current) (:root current) (workspace/trunk-root))]
+
+          (when-not (workspace/isolated-workspaces-supported? repo-root)
+            (throw (ex-info "No workspace backend can create an isolated draft here"
+                            {:type :workspace/isolation-unavailable :root repo-root})))
+          (when (workspace/draft? current) (workspace/stash! db state-id))
+          (let [trunk (resolve-workspace db sid)]
+            (workspace/create!
+              db
+              {:session-state-id state-id :label label :from trunk :blank? (boolean blank?)}))))))
+  (session-workspace-info sid))
+
+(defn abandon-draft!
+  "Permanently discard one active draft owned by `sid`'s current repo. A parked
+   draft may be removed directly. If it is the caller's current draft, first
+   repoint the session to that draft's real trunk. Drafts from another repo or
+   pinned to another session are rejected. Returns refreshed canonical workspace
+   info."
+  [sid workspace-id reason]
+  (when-let [db (lp/db-info)]
+    (when-let [state-id (resolve-state-id db sid)]
+      (let
+        [target (workspace/get db workspace-id)
+         current (resolve-workspace db sid)]
+
+        (when-not (workspace/draft? target)
+          (throw (ex-info "Not an active draft"
+                          {:type :workspace/not-a-draft :workspace-id workspace-id})))
+        (when (not= :active (:state target))
+          (throw (ex-info "Draft is no longer active"
+                          {:type :workspace/draft-inactive :workspace-id workspace-id})))
+        (when (and current (not= (:repo-id current) (:repo-id target)))
+          (throw (ex-info "Draft belongs to a different repository"
+                          {:type :workspace/draft-repo-mismatch
+                           :workspace-id workspace-id
+                           :repo-id (:repo-id current)
+                           :draft-repo-id (:repo-id target)})))
+        (let
+          [pinned-elsewhere (remove #(= (str state-id) (str (:id %)))
+                              (persistance/db-session-state-list-for-workspace db workspace-id))]
+          (when (seq pinned-elsewhere)
+            (throw (ex-info "Draft is in use by another session"
+                            {:type :workspace/draft-in-use :workspace-id workspace-id}))))
+        (when (= (str (:id current)) (str (:id target)))
+          (workspace/exit-to-trunk! db state-id (:repo-root target)))
+        (workspace/abandon! db {:workspace-id workspace-id :reason reason}))))
   (session-workspace-info sid))
 
 ;; =============================================================================
@@ -753,10 +828,26 @@
          (cond->
            {:error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
             :thinking (normalize-thinking-text thinking)}
+           (map? error)
+           (assoc :error-data (select-keys error [:type :message :status :cause-class]))
+
            (some? error)
            (assoc :provider-error-data (provider-error/provider-error-info error)))
 
-         {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
+         (if (= phase :provider-retry-reset)
+           (cond->
+             {:attempt (:attempt chunk)
+              :max-retries (:max-retries chunk)
+              :delay-ms (:delay-ms chunk)}
+             (map? (:error chunk))
+             (assoc :error (select-keys (:error chunk) [:type :message :status :cause-class]))
+
+             (map? (:event chunk))
+             (assoc :event
+               (select-keys (:event chunk)
+                            [:event/type :reason :provider :model :from-provider :from-model
+                             :attempt :delay-ms :status :error])))
+           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
       [(case phase
          :form-start
          "block.started"

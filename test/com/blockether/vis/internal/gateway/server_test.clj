@@ -43,6 +43,28 @@
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))
 
+(deftest draft-management-client-builds-canonical-routes
+  (let
+    [sent
+     (atom [])
+
+     sid
+     (str (random-uuid))
+
+     wid
+     (str (random-uuid))]
+
+    (with-redefs-fn {#'client/send-json! (fn [method path body]
+                                           (swap! sent conj [method path body])
+                                           {"workspace" {"root" "/repo"}})}
+      (fn []
+        (is (= {"root" "/repo"} (client/create-draft! sid "feature-c" false)))
+        (is (= {"root" "/repo"} (client/abandon-draft! sid wid "done")))
+        (is (= [["POST" (str "/v1/sessions/" sid "/workspace/drafts")
+                 {:label "feature-c" :blank false}]
+                ["DELETE" (str "/v1/sessions/" sid "/workspace/drafts/" wid) {:reason "done"}]]
+               @sent))))))
+
 (deftest foreground-daemon-does-not-refcount-stop
   (testing "a manually-run `vis gateway start` is user-owned, not client-refcounted"
     (let [stops (atom 0)]

@@ -1188,6 +1188,13 @@
                                                   ;; resets to its default. See
                                                   ;; `turn-identity` for the precedence.
                                                   :session-turn-id (turn-identity m)
+                                                  ;; Command turns (`!`/`!&` shell,
+                                                  ;; registered slash) run LOCALLY with no
+                                                  ;; provider call, so the zero-iteration
+                                                  ;; spinner must not claim "Vis is calling
+                                                  ;; the provider" before the activity chunk
+                                                  ;; lands.
+                                                  :command-label (:command-phase-label m)
                                                   :detail-expansions detail-expansions))]
               (assoc m
                 :text text

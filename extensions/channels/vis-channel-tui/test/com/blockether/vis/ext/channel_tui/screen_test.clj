@@ -15,6 +15,7 @@
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
@@ -450,6 +451,39 @@
                                    "sid"
                                    {:action :draft :workspace-id "ws-b" :label "feature-b"}))))
           (expect (= [[:stash "sid"] [:resume "sid" "ws-b"]] @calls))))))
+(it "routes create and abandon through canonical gateway APIs"
+    (let
+      [calls
+       (atom [])
+
+       created
+       {"root" "/draft/new"}
+
+       trunk
+       {"root" "/repo"}]
+
+      (with-redefs
+        [vis/gateway-create-draft!
+         (fn [sid label blank?]
+           (swap! calls conj [:create sid label blank?])
+           created)
+
+         vis/gateway-abandon-draft!
+         (fn [sid wid reason]
+           (swap! calls conj [:abandon sid wid reason])
+           trunk)]
+
+        (expect (= created
+                   (:workspace (apply-draft-picker-choice! "sid"
+                                                           {:action :new :label "feature-c"}))))
+        (expect (= trunk
+                   (:workspace (apply-draft-picker-choice! "sid"
+                                                           {:action :abandon
+                                                            :workspace-id "ws-c"
+                                                            :label "feature-c"
+                                                            :reason "not needed"}))))
+        (expect (= [[:create "sid" "feature-c" false] [:abandon "sid" "ws-c" "not needed"]]
+                   @calls)))))
 
 (defdescribe terminal-interrupt-test
              (it "configures Lanterna to trap Ctrl+C instead of exiting inside pollInput"
@@ -590,7 +624,7 @@
   (it
     "clips transcript selection to message content rows only"
     (expect
-      (= [{:row 4 :col 2 :width 11} {:row 5 :col 2 :width 11}]
+      (= [{:row 4 :col 2 :width 11 :line-id 0} {:row 5 :col 2 :width 11 :line-id 0}]
          (bubble-selectable-ranges
            {:visible
             [{:top -1 :height 4 :projected {:role :assistant :prewrapped-lines ["first" "second"]}}
@@ -599,7 +633,7 @@
            5
            20))))
   (it "keeps assistant code selection one column inside and answers aligned with Vis"
-      (expect (= [{:row 5 :col 3 :width 11} {:row 6 :col 2 :width 11}]
+      (expect (= [{:row 5 :col 3 :width 11 :line-id 0} {:row 6 :col 2 :width 11 :line-id 1}]
                  (bubble-selectable-ranges
                    {:visible [{:top 0
                                :height 3
@@ -610,7 +644,7 @@
                    6
                    20))))
   (it "does not mark role banners, padding, provider footers, or gap rows as selectable"
-      (expect (= [{:row 6 :col 4 :width 11}]
+      (expect (= [{:row 6 :col 4 :width 11 :line-id 0}]
                  (bubble-selectable-ranges
                    {:visible [{:top 0 :height 5 :projected {:role :user :text "siema"}}]}
                    4
@@ -852,6 +886,99 @@
                                            {}
                                            {:anchor (selection/point 0 (+ (nth offsets 10) 1))
                                             :focus (selection/point 39 (+ (nth offsets 50) 5))})))))
+  (it "copies scaled trace bubbles faithfully while scrolled through the REAL virtual layout"
+      ;; The hand-crafted layouts above pin the copy math, but the height cache,
+      ;; window slicing and projection all live in `virtual/layout`. This drives
+      ;; the ACTUAL layout with 40 completed trace turns (user + assistant), each
+      ;; carrying a DISTINCT identity (`:timestamp`) so message-content-fingerprint
+      ;; keys never collide — the production invariant. Then it copies while the
+      ;; viewport sits mid-document and asserts perfect fidelity: every answer, in
+      ;; order, no duplicates, nothing dropped across the scroll boundary.
+      (let
+        [cols
+         60
+
+         n
+         40
+
+         messages
+         (vec (mapcat (fn [i]
+                        [{:role :user
+                          :text (format "Q%d question mark" i)
+                          :timestamp (java.util.Date. (+ 1000000 (* i 2)))}
+                         {:role :assistant
+                          :text (format "ANSWER-%02d prose body for turn %d." i i)
+                          :traces [{:thinking (format "thinking %02d" i)
+                                    :forms [{:code (format "(+ %d 1)" i)
+                                             :result (str (inc i))
+                                             :success? true
+                                             :silent? false}]}]
+                          :iteration-count 1
+                          :timestamp (java.util.Date. (+ 1000001 (* i 2)))}])
+                      (range n)))
+
+         _
+         (virtual/invalidate-heights!)
+
+         vh
+         12
+
+         total-h
+         (long (:total-h (virtual/layout messages cols {} nil vh {})))
+
+         ;; Viewport parked in the middle of the document: dozens of bubbles
+         ;; scrolled off both above and below the visible window.
+         layout
+         (virtual/layout messages cols {} (quot total-h 2) vh {})
+
+         offsets
+         (:offsets layout)
+
+         answer-order
+         (fn [text]
+           (re-seq #"ANSWER-\d\d" text))
+
+         ;; Whole-document drag from the first row to the last.
+         full
+         (selected-transcript-text messages
+                                   layout
+                                   cols
+                                   {}
+                                   {}
+                                   {:anchor (selection/point 0 0)
+                                    :focus (selection/point (dec cols) (dec total-h))})
+
+         full-answers
+         (answer-order full)
+
+         ;; Off-screen partial chunk: assistant turns 10..25, sliced by their
+         ;; real document offsets (assistant of turn k is messages index 2k+1).
+         from-k
+         10
+
+         to-k
+         25
+
+         chunk
+         (selected-transcript-text messages
+                                   layout
+                                   cols
+                                   {}
+                                   {}
+                                   {:anchor (selection/point 0 (nth offsets (inc (* 2 from-k))))
+                                    :focus (selection/point (dec cols)
+                                                            (dec (nth offsets (+ 2 (* 2 to-k)))))})]
+
+        ;; Every answer present, in order, none duplicated.
+        (expect (= (mapv #(format "ANSWER-%02d" %) (range n)) full-answers)
+                "full-document scroll-copy keeps every answer in order")
+        (expect (= (count full-answers) (count (distinct full-answers)))
+                "no bubble is copied twice")
+        (expect (= n (count (distinct (re-seq #"Q\d+ question mark" full))))
+                "every user question is copied too")
+        ;; Partial chunk copies exactly its span, nothing more, nothing less.
+        (expect (= (mapv #(format "ANSWER-%02d" %) (range from-k (inc to-k))) (answer-order chunk))
+                "a scrolled partial chunk copies exactly its spanned answers")))
   (it "copies visible live text for pending assistant drag selection"
       (let
         [message
@@ -872,36 +999,53 @@
          {:anchor (selection/point 0 1) :focus (selection/point 39 1)}]
 
         (expect (= "live visible text" (selected-transcript-text [message] layout 40 {} {} sel)))))
-  (it "recovers a pending bubble's off-screen head when its top scrolled above the viewport"
-      ;; A streaming bubble whose HEAD scrolled off the top (`:top` < 0) keeps
-      ;; only its visible tail in the live paint. The copy path must rebuild the
-      ;; off-screen head from the canonical projection, not drop it.
+  (it "copies the on-screen live view of a streaming bubble, not its off-screen transcript"
+      ;; While a turn streams, `layout` renders the compact live PROGRESS view
+      ;; (spinner + current activity). It is far shorter than the message's full
+      ;; transcript projection and it is what SIZES the bubble's document rows.
+      ;; Copy must read that on-screen paint, NOT re-project the full body — else
+      ;; the off-screen transcript head overflows the compressed row span and the
+      ;; copied text is misaligned garbage that never matches what the user sees.
       (let
-        [message
+        [live-msg
          {:role :assistant
-          :pending? true
-          :text (str "HEADSTART alpha beta gamma delta epsilon zeta "
-                     "eta theta iota kappa lambda mu nu xi TAILEND")}
+          :text "Prose answer OFFSCREENANSWERMARK trailing."
+          :traces (vec (repeat 6
+                               {:thinking "thinking line"
+                                :forms
+                                [{:code "(+ 1 2)" :result "3" :success? true :silent? false}
+                                 {:code "(* 2 3)" :result "6" :success? true :silent? false}
+                                 {:code "(dec 9)" :result "8" :success? true :silent? false}]}))
+          :iteration-count 6
+          :timestamp #inst "2026-04-30T00:00:00"}
 
-         ;; live paint holds only the last visible line (tail-pinned)
+         messages
+         [{:role :user :text "the question"} live-msg]
+
+         cols
+         60
+
+         ;; bottom-locked (scroll nil) + loading? true -> the live bubble is the
+         ;; short progress view; the tall transcript stays off-screen/unrendered.
          layout
-         {:total-h 1000
-          :heights [1000]
-          :offsets [0 1000]
-          :visible [{:idx 0
-                     :top -20
-                     :height 1000
-                     :projected {:role :assistant
-                                 :prewrapped-lines ["kappa lambda mu nu xi TAILEND"]}}]}
+         (virtual/layout messages cols {} nil 12 {:loading? true})
 
          sel
-         {:anchor (selection/point 0 0) :focus (selection/point 39 999)}
+         {:anchor (selection/point 0 0)
+          :focus (selection/point (dec cols) (dec (long (:total-h layout))))}
 
          copied
-         (selected-transcript-text [message] layout 40 {} {} sel)]
+         (selected-transcript-text messages layout cols {} {} sel)]
 
-        (expect (clojure.string/includes? copied "HEADSTART") "off-screen head must be recovered")
-        (expect (clojure.string/includes? copied "TAILEND") "visible tail must remain")))
+        ;; The user bubble above copies verbatim.
+        (expect (str/includes? copied "the question"))
+        ;; The live bubble copies exactly the rendered on-screen progress view.
+        (expect (str/includes? copied "Vis is calling the provider")
+                "streaming bubble copies its on-screen live view")
+        ;; The full transcript body is NOT on screen while streaming, so a token
+        ;; that lives only in the full projection must never leak into the copy.
+        (expect (not (str/includes? copied "OFFSCREENANSWERMARK"))
+                "off-screen transcript must not overflow into the copy")))
   (it "keeps a fully-visible pending bubble on its live paint (no head injection)"
       ;; `:top` >= 0 means nothing scrolled off; the canonical projection may
       ;; still be placeholder IR, so the live paint must be used verbatim.

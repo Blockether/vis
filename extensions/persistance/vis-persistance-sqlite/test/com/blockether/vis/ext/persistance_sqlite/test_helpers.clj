@@ -95,6 +95,14 @@
   (let [ws-id (or (:workspace-id opts) (fresh-workspace! store))]
     (vis/db-fork-session! store session-id (assoc opts :workspace-id ws-id))))
 
+(defn fork-session-at-turn!
+  "Test wrapper for `vis/db-fork-session-at-turn!` that injects a fresh
+   workspace when no `:workspace-id` was supplied (session_state.workspace_id
+   is NOT NULL, 1:1 with workspace)."
+  [store session-id opts]
+  (let [ws-id (or (:workspace-id opts) (fresh-workspace! store))]
+    (vis/db-fork-session-at-turn! store session-id (assoc opts :workspace-id ws-id))))
+
 (defn store-iteration!
   "Test wrapper for `vis/db-store-iteration!` that wraps the old flat
    `:code`/`:result`/`:error` test ergonomics into a canonical single-form

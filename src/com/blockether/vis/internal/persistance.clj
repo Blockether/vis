@@ -334,6 +334,8 @@
 
 (defdelegate db-fork-session! [db-info session-id opts])
 
+(defdelegate db-fork-session-at-turn! [db-info session-id opts])
+
 (defdelegate db-list-session-states [db-info session-id])
 
 (defdelegate db-latest-session-state-id [db-info session-id])

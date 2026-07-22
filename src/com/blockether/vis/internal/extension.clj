@@ -28,6 +28,7 @@
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+            [com.blockether.vis.internal.egress-proxy :as egress-proxy]
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.registry :as registry]
@@ -561,6 +562,13 @@
 (s/def :ext/op-hook (s/keys :req-un [:ext.op-hook/op :ext.op-hook/fn] :opt-un [:ext.op-hook/phase]))
 
 (s/def :ext/op-hooks (s/coll-of :ext/op-hook))
+
+;; Tier-2 egress NETWORK filters: fns `(fn [ctx] -> decision)` the gateway proxy
+;; runs over the FULL decrypted exchange at BOTH phases — the request on the way
+;; out and the upstream response (status + headers) on the way back (turn 46,
+;; `:phase` distinguishes). Installed into the egress proxy at register time,
+;; torn down on deregister.
+(s/def :ext/network-filters (s/coll-of ifn?))
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
@@ -1189,12 +1197,12 @@
 (s/def ::extension
   (s/and (s/keys :req [:ext/name :ext/description]
                  :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt-fn
-                       :ext/ctx-fn :ext/protected-paths :ext/hooks :ext/op-hooks :ext/env
-                       :ext/settings :ext/theme :ext/requires :ext/version :ext/author :ext/owner
-                       :ext/license :ext/cli :ext/channels :ext/providers :ext/persistance
-                       :ext/workspace-backends :ext/attachment-storage :ext/channel-contributions
-                       :ext/slash-commands :ext/startable-resources :ext/doctor-fn
-                       :ext/sandbox-shims])
+                       :ext/ctx-fn :ext/protected-paths :ext/hooks :ext/op-hooks
+                       :ext/network-filters :ext/env :ext/settings :ext/theme :ext/requires
+                       :ext/version :ext/author :ext/owner :ext/license :ext/cli :ext/channels
+                       :ext/providers :ext/persistance :ext/workspace-backends
+                       :ext/attachment-storage :ext/channel-contributions :ext/slash-commands
+                       :ext/startable-resources :ext/doctor-fn :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
 ;; =============================================================================
@@ -2163,6 +2171,15 @@
     (doseq [h (:ext/op-hooks ext)]
       (register-op-hook! (assoc h :owner owner)))))
 
+(defn- install-egress-filters!
+  "Register an extension's declarative `:ext/network-filters` into the egress
+   proxy under its derived owner — idempotent on reload (owner replaced first)."
+  [ext]
+  (let [owner (ext-op-hook-owner ext)]
+    (egress-proxy/unregister-network-filters-for-owner! owner)
+    (doseq [f (:ext/network-filters ext)]
+      (egress-proxy/register-network-filter! owner f))))
+
 (defn- run-op-before-hooks
   "Thread `args` through every :before hook registered for `op-kw`."
   [op-kw env args]
@@ -2887,6 +2904,7 @@
     (dispatch-workspace-backends! (:ext/workspace-backends ext))
     (dispatch-attachment-storage! (:ext/attachment-storage ext))
     (install-op-hooks! ext)
+    (install-egress-filters! ext)
     (theme/register-themes! (:ext/theme ext))
     ;; Index every symbol's inline `:ext.symbol/tag` into the
     ;; global op-keyword -> tag map. The sym-entry remains the source
@@ -3073,6 +3091,7 @@
                         {:ext ns-sym :backend-id (:storage/id backend) :error (ex-message t)}}))))
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (unregister-op-hooks-for-owner! (ext-op-hook-owner ext))
+    (egress-proxy/unregister-network-filters-for-owner! (ext-op-hook-owner ext))
     (tel/log! {:level :info
                :id ::deregister-global
                :data {:ext ns-sym}

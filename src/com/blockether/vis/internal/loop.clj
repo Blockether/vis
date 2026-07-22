@@ -17,7 +17,7 @@
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.tls-mitm :as tls-mitm]
+            [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
@@ -184,35 +184,51 @@
 
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES
   "Transparent retries for svar's terminal `:svar.llm/provider-unavailable`
-   — the single (pinned) provider's upstream call failed before any usable
-   response came back (a transient 5xx / dropped connection svar already
-   gave up on). A momentary blip usually clears on a re-send, so re-send the
-   SAME request a few times (widening backoff) before surfacing the error.
-   3 retries = 4 total attempts; if it STILL fails the turn ends with the
-   provider-error card (the user picks where to go next) rather than silently
-   hopping providers or feeding an unactionable outage back to the model."
+   when the provider DID reach the HTTP layer (a transient 5xx svar gave up
+   on). A provider-SIDE fault: re-send the SAME request a few times (widening
+   backoff) then end the turn with the provider-error card so the user can hop
+   providers — which, for a genuine upstream fault, actually helps.
+   3 retries = 4 total attempts.
+
+   A CONNECT-LEVEL provider-unavailable (`:status` nil — ConnectException /
+   DNS / connect-timeout) is deliberately EXCLUDED from this retry (see
+   `provider-unavailable-retry?`): SVAR owns that decision. svar health-gates
+   the ride-out — it retries a host it has proven reachable and FAST-FAILS a
+   host that never connected (dead endpoint / wrong port). Stacking a blanket
+   vis retry on top would re-slow the very dead-endpoint case svar fast-fails,
+   so vis surfaces the card immediately and lets svar's decision stand."
   3)
 
 (def ^:private PROVIDER_UNAVAILABLE_RETRY_DELAYS_MS
-  "Widening backoff (ms) before each provider-unavailable retry, indexed by
-   attempt — same procedure as `PROVIDER_STREAM_REWIND_DELAYS_MS`. A momentary
-   upstream outage (5xx / dropped connection) realistically takes a few seconds
-   to clear, so the delay grows 1s → 2s → 4s across the retries rather than
-   re-hitting the same blip on a fixed cadence."
+  "Widening backoff (ms) before each provider-5xx retry, indexed by attempt.
+   A momentary upstream outage realistically takes a few seconds to clear, so
+   the delay grows 1s -> 2s -> 4s rather than re-hitting the same blip on a
+   fixed cadence."
   [1000 2000 4000])
 
 (defn- provider-unavailable-error?
   "True when an exception is svar's terminal `:svar.llm/provider-unavailable`
    (a single-provider turn whose upstream call failed before any usable
-   response). Retry-able ONCE, then terminal."
+   response). Retry-able (provider 5xx only), then terminal."
   [^Throwable e]
   (= :svar.llm/provider-unavailable (:type (ex-data e))))
 
+(defn- provider-connect-failure?
+  "True when a provider-unavailable never received an HTTP response at all —
+   `:status` is nil, meaning the TCP connect itself failed (ConnectException /
+   DNS / connect-timeout). SVAR OWNS this case (health-gated ride-out vs
+   fast-fail a dead endpoint), so vis does NOT retry it — it surfaces the card
+   immediately rather than double-stacking latency on svar's decision."
+  [^Throwable e]
+  (and (provider-unavailable-error? e) (nil? (:status (ex-data e)))))
+
 (defn- provider-unavailable-retry?
-  "True while a provider-unavailable exception still has PU retry budget left
-   (`pu-attempt` below the cap). Gate for the transparent re-send."
+  "True while a provider-5xx provider-unavailable still has retry budget left
+   (`pu-attempt` below the cap). Connect-level PU (`:status` nil) is EXCLUDED —
+   svar already decided it, so vis surfaces the card immediately."
   [^Throwable e pu-attempt]
   (and (provider-unavailable-error? e)
+       (not (provider-connect-failure? e))
        (< (long pu-attempt) (long MAX_PROVIDER_UNAVAILABLE_RETRIES))))
 
 (defn- provider-unavailable-retry-delay-ms
@@ -373,10 +389,10 @@
              (str/includes? cause-lower "handshake")))))
 
 (defn- provider-retry-event
-  [{:keys [provider model attempt delay-ms error]}]
+  [{:keys [provider model reason attempt delay-ms error status]}]
   (cond->
     {:event/type :llm.routing/provider-retry
-     :reason :stream-connection-error
+     :reason (or reason :stream-connection-error)
      :provider provider
      :model model
      :attempt attempt
@@ -386,7 +402,47 @@
     (assoc :from-provider provider)
 
     model
-    (assoc :from-model model)))
+    (assoc :from-model model)
+
+    (some? status)
+    (assoc :status status)))
+
+(defn- provider-retry-progress-chunk
+  "Canonical live-progress chunk for one transparent provider retry. Keeps the
+   concise error identity plus retry/backoff metadata needed by every channel;
+   the full throwable remains in telemetry only."
+  [iteration-position ^Throwable t {:keys [provider model reason attempt max-retries delay-ms]}]
+  (let
+    [delay-ms
+     (long (or delay-ms 0))
+
+     event
+     (provider-retry-event {:provider provider
+                            :model model
+                            :reason reason
+                            :attempt attempt
+                            :delay-ms delay-ms
+                            :status (:status (ex-data t))
+                            :error (ex-message t)})
+
+     error
+     (cond-> (select-keys (format-exception-short t) [:type :message :status :cause-class])
+       (some? attempt)
+       (assoc :attempt attempt)
+
+       (some? max-retries)
+       (assoc :max-retries max-retries)
+
+       (pos? delay-ms)
+       (assoc :delay-ms delay-ms))]
+
+    {:phase :provider-retry-reset
+     :iteration iteration-position
+     :attempt attempt
+     :max-retries max-retries
+     :delay-ms delay-ms
+     :error error
+     :event event}))
 
 (defn- prepend-routing-trace
   [result retry-events]
@@ -437,21 +493,18 @@
           (if can-retry?
             (let
               [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
-               event (provider-retry-event {:provider provider
-                                            :model model
-                                            :attempt (inc attempt)
-                                            :delay-ms delay-ms
-                                            :error (ex-message t)})]
+               chunk (provider-retry-progress-chunk iteration-position
+                                                    t
+                                                    {:provider provider
+                                                     :model model
+                                                     :reason :stream-connection-error
+                                                     :attempt (inc attempt)
+                                                     :max-retries PROVIDER_STREAM_REWIND_RETRIES
+                                                     :delay-ms delay-ms})
+               event (:event chunk)]
 
               (reset-stream-state!)
-              (when on-chunk
-                (on-chunk {:phase :provider-retry-reset
-                           :iteration iteration-position
-                           :attempt (inc attempt)
-                           :max-retries PROVIDER_STREAM_REWIND_RETRIES
-                           :delay-ms delay-ms
-                           :error (format-exception-short t)
-                           :event event}))
+              (when on-chunk (on-chunk chunk))
               (tel/log! {:level :warn
                          :data (assoc (format-exception-short t)
                                  :iteration iteration-position
@@ -733,14 +786,6 @@
             {:result nil :lru {} :error (python-op-error python-context e code)})
           (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
 
-    (when env
-      (cond (nil? execution-result) (env/push-eval-error! env
-                                                          (or @thrown (ex-info "Eval timeout" {})))
-            (nil? (:error execution-result)) (env/push-eval-result! env (:result execution-result))
-            :else (env/push-eval-error!
-                    env
-                    (or @thrown
-                        (ex-info (or (:message (:error execution-result)) "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
           {:result nil
@@ -820,7 +865,6 @@
                                tool-event-fn
                                environment)
               (catch Throwable e
-                (env/push-eval-error! environment e)
                 {:result nil
                  :lru {}
                  :error (try (extension/ex->op-error e {:form-source code})
@@ -1060,7 +1104,6 @@
                      ret
                      {:result ret}))))
          (catch Throwable e
-           (env/push-eval-error! environment e)
            (done {:result nil
                   :error (try (extension/ex->op-error e {:form-source display-src})
                               (catch Throwable _
@@ -6260,10 +6303,6 @@
     (when-let [ctx-atom (:ctx-atom environment)]
       (swap! ctx-atom (fn [c]
                         (ctx-engine/enter-turn c (or turn-position 1)))))
-    ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
-    ;; follow-up turn opens with all four nil so leftover values from
-    ;; the previous turn never bleed into the new OODA loop.
-    (env/reset-eval-bindings! environment)
     ;; Hot symbol archival runs only after a final successful answer.
     ;; Failed/cancelled turns keep their live scratch symbols for
     ;; recovery. This is sandbox namespace pruning — unrelated to CTX
@@ -6553,16 +6592,28 @@
                           (cond
                             (and (stream-truncated-error? e)
                                  (< (long attempt) (long MAX_STREAM_TRUNCATED_RETRIES)))
-                            (do (tel/log! {:level :warn
-                                           :id ::stream-truncated-retry
-                                           :data {:iteration iteration
-                                                  :attempt (inc (long attempt))
-                                                  :max-retries MAX_STREAM_TRUNCATED_RETRIES
-                                                  :type (:type (ex-data e))}}
-                                          (str "Stream truncated, transparent retry "
-                                               (inc (long attempt))
-                                               "/" MAX_STREAM_TRUNCATED_RETRIES))
-                                ::retry-stream)
+                            (let
+                              [attempt-number (inc (long attempt))
+                               chunk (provider-retry-progress-chunk
+                                       (inc (long iteration))
+                                       e
+                                       {:provider (:provider resolved-model)
+                                        :model (or (:name resolved-model) (:model resolved-model))
+                                        :reason :stream-truncated
+                                        :attempt attempt-number
+                                        :max-retries MAX_STREAM_TRUNCATED_RETRIES
+                                        :delay-ms 0})]
+
+                              (emit-hook! on-chunk chunk "Stream retry progress hook failed")
+                              (tel/log! {:level :warn
+                                         :id ::stream-truncated-retry
+                                         :data {:iteration iteration
+                                                :attempt attempt-number
+                                                :max-retries MAX_STREAM_TRUNCATED_RETRIES
+                                                :type (:type (ex-data e))}}
+                                        (str "Stream truncated, transparent retry " attempt-number
+                                             "/" MAX_STREAM_TRUNCATED_RETRIES))
+                              ::retry-stream)
                             ;; Max-tokens cap: model burnt the entire output
                             ;; budget on hidden reasoning before emitting a
                             ;; tool call. Double the budget and try once more so the
@@ -6621,25 +6672,40 @@
                                  (try-refresh-provider-token! resolved-model))
                             ::retry-auth-refresh
                             ;; svar gave up on the single pinned
-                            ;; provider (transient 5xx / dropped
-                            ;; connection) and threw its terminal
-                            ;; `provider-unavailable`. On the MAIN
-                            ;; turn we don't hop providers, but a
-                            ;; momentary blip usually clears: back
-                            ;; off (widening delay) and re-send the
-                            ;; SAME request a few times before the
-                            ;; turn fails with the card.
+                            ;; provider with a transient 5xx and threw
+                            ;; its terminal `provider-unavailable`. On
+                            ;; the MAIN turn we don't hop providers, but
+                            ;; a momentary upstream blip usually clears:
+                            ;; back off (widening delay) and re-send the
+                            ;; SAME request a few times before the turn
+                            ;; fails with the card. NB a CONNECT-level PU
+                            ;; (`:status` nil) is EXCLUDED by the gate —
+                            ;; svar health-gates that decision, so it
+                            ;; falls straight through to the card below.
                             (provider-unavailable-retry? e pu-attempt)
-                            (let [delay-ms (provider-unavailable-retry-delay-ms pu-attempt)]
+                            (let
+                              [delay-ms (provider-unavailable-retry-delay-ms pu-attempt)
+                               attempt-number (inc (long pu-attempt))
+                               chunk (provider-retry-progress-chunk
+                                       (inc (long iteration))
+                                       e
+                                       {:provider (:provider resolved-model)
+                                        :model (or (:name resolved-model) (:model resolved-model))
+                                        :reason :provider-unavailable
+                                        :attempt attempt-number
+                                        :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
+                                        :delay-ms delay-ms})]
+
+                              (emit-hook! on-chunk chunk "Provider retry progress hook failed")
                               (tel/log! {:level :warn
                                          :id ::provider-unavailable-retry
                                          :data {:iteration iteration
-                                                :attempt (inc (long pu-attempt))
+                                                :attempt attempt-number
                                                 :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
                                                 :delay-ms delay-ms
                                                 :status (:status (ex-data e))}}
                                         (str "Provider unavailable, transparent retry "
-                                             (inc (long pu-attempt))
+                                             attempt-number
                                              "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
                               (Thread/sleep #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
                                             (long delay-ms))
@@ -8562,18 +8628,11 @@
    A sub_loop CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
    disposing the child must NOT close it, or the parent loses its DB mid-turn."
   [environment]
-  ;; Stop this session's egress proxy if one was ever started (delay realized).
-  (when-let [d (:egress-proxy-delay environment)]
-    (when (realized? d)
-      (try (when-let [stop! (:stop! @d)]
-             (stop!))
-           (catch Throwable _ nil))))
-  ;; Delete this session's ephemeral CA PEM if a MITM capability was ever built.
-  (when-let [d (:mitm-cap-delay environment)]
-    (when (realized? d)
-      (try (when-let [close! (:close! @d)]
-             (close!))
-           (catch Throwable _ nil))))
+  ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
+  ;; proxy + CA are daemon-lifetime (internal.gateway-sandbox/shutdown!), not
+  ;; per-session, so nothing is stopped here — only this session's policy is removed.
+  (when-let [tok (:sandbox-token environment)]
+    (gateway-sandbox/unregister-session! tok))
   (when-let [python-context (:python-context environment)]
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
@@ -9365,87 +9424,99 @@
      {:enabled? (toggles/enabled? :network/enabled)
       :allowed-domains (:allowed-domains net-cfg)
       :denied-domains (:denied-domains net-cfg)
+      :exclude-domains (:exclude-domains net-cfg)
+      :allow-private (:allow-private net-cfg)
       :rules (:rules net-cfg)}
 
-     ;; OS jail (real containment for shell children) — opt-in via vis.yml
-     ;; `:shell {:jail true}` (or a map with :allow-write/:allow-read/:deny-write/
-     ;; :deny-read/:network). A PER-SESSION policy VALUE (never a global singleton),
-     ;; carried on the env and read FRESH per spawn, so it tracks the LIVE session
-     ;; roots and the current vis.yml (editing config + `/reload` needs no restart).
-     ;; nil (default: no `:shell :jail`) leaves the executors unwrapped = today's
-     ;; behavior. Filesystem model mirrors sandbox-runtime (write allow-only,
-     ;; deny-write/deny-read carve-outs win); shell-child network is on/off here
-     ;; (domain/verb fidelity is the interpreter method-guard + future proxy).
+     ;; OS jail (real containment for shell children) — ALWAYS ON, no opt-in. Every
+     ;; shell child is confined to the LIVE session roots + tmp; vis.yml `:filesystem`
+     ;; adds :allow-write/:allow-read/:deny-write/:deny-read carve-outs, and `:network`
+     ;; drives shell-child egress. A PER-SESSION policy VALUE (never a global
+     ;; singleton), carried on the env and read FRESH per spawn, so it tracks the LIVE
+     ;; session roots and the current vis.yml (editing config + `/reload` needs no
+     ;; restart). Filesystem model mirrors sandbox-runtime (write allow-only,
+     ;; deny-write/deny-read carve-outs win). On an OS that can't enforce (Linux/Windows
+     ;; today) `process-jail/wrap-argv` returns the argv unchanged.
      ;; Per-session loopback egress proxy (see internal.egress-proxy), started LAZILY
      ;; the first time a jailed shell child needs restricted network. A `delay` so it's
      ;; created at most once per session, thread-safe, and never started when the
      ;; session runs no shell egress. Its policy-fn re-reads vis.yml `:network` per
      ;; connection, so `/reload` + config edits take effect with no restart. Stopped
      ;; in `dispose-environment!`.
-     ;; Per-session ephemeral CA for the proxy's TLS-terminating (MITM) tier. A
-     ;; `delay` so the RSA keygen happens at most once, only when a jailed child
-     ;; actually needs HTTPS verb/path enforcement. Its CA PEM is injected into the
-     ;; child's trust env so it accepts the proxy's per-host leaf certs.
-     mitm-cap-delay
-     (delay (tls-mitm/create!))
+     ;; ONE shared gateway egress proxy + ONE shared MITM CA serve ALL sessions
+     ;; (see internal.gateway-sandbox) — the daemon is multi-tenant, so a per-session
+     ;; proxy/CA would thrash and hand every child a different trust root. This session
+     ;; is attributed by an unguessable TOKEN carried in the child's proxy env; the
+     ;; shared proxy resolves THIS session's policy from the registry per request
+     ;; (fail-closed on an unknown token). Registered here, dropped in
+     ;; dispose-environment!. The proxy listener + CA start LAZILY on first jailed
+     ;; egress.
+     sandbox-token
+     (str (java.util.UUID/randomUUID))
 
-     ;; MITM is engaged when the jail isn't opted out (`:mitm false`) AND either it's
-     ;; explicitly on (`:mitm true`) or there are verb/path `:rules` to enforce over
-     ;; HTTPS. Read fresh so config edits + `/reload` take effect with no restart.
+     ;; MITM (TLS termination) is engaged whenever there are verb/path `:rules` to
+     ;; enforce over HTTPS (host allow/deny alone needs only a CONNECT tunnel). Read
+     ;; fresh so config edits + `/reload` take effect with no restart.
      mitm-on?
      (fn []
-       (let
-         [cfg
-          (config/load-config-raw)
+       (boolean (seq (:rules (get (config/load-config-raw) :network)))))
 
-          jail
-          (get-in cfg [:shell :jail])
+     ;; Register this session's live policy fn under its token. Read fresh per request
+     ;; (config + `/reload` take effect with no restart). Only when a jail is possible
+     ;; (sandbox-roots-fn present).
+     _register-sandbox
+     (when sandbox-roots-fn
+       (gateway-sandbox/register-session! sandbox-token
+                                          (fn []
+                                            (some-> (egress/compile-policy
+                                                      (get (config/load-config-raw) :network))
+                                                    (assoc :mitm? (mitm-on?))))))
 
-          m
-          (if (map? jail) jail {})]
-
-         (and (not (false? (:mitm m)))
-              (or (true? (:mitm m)) (boolean (seq (:rules (get cfg :network))))))))
-
-     egress-proxy-delay
-     (delay (egress/start! {:mitm (fn []
-                                    @mitm-cap-delay)
-                            :policy-fn (fn []
-                                         (some-> (egress/compile-policy
-                                                   (get (config/load-config-raw) :network))
-                                                 (assoc :mitm? (mitm-on?))))}))
-
+     ;; The shell jail is ALWAYS ON (no opt-in toggle): every shell child is confined
+     ;; to the LIVE session workspace roots + tmp, with the vis.yml `:filesystem`
+     ;; carve-outs (:allow-write/:deny-write/:allow-read/:deny-read) folded in. Read
+     ;; FRESH per spawn so it tracks the current roots + config (editing config +
+     ;; `/reload` needs no restart). On an OS that can't enforce (Linux/Windows today)
+     ;; `process-jail/wrap-argv` returns the argv unchanged.
      jail-policy-fn
      (when sandbox-roots-fn
        (fn []
-         (let [jail (get-in (config/load-config-raw) [:shell :jail])]
-           (when jail
-             (let
-               [m (if (map? jail) jail {})
-                net-on? (if (contains? m :network)
-                          (boolean (:network m))
-                          (toggles/enabled? :network/enabled))
-                ;; Wall the child to the loopback egress proxy (net-off-except-proxy)
-                ;; when network is ON, it isn't opted out (`:proxy false`), and there
-                ;; are real domain/verb restrictions to enforce — else allow-all direct
-                ;; egress (no proxy). One config, both enforcement points.
-                proxy? (and net-on?
-                            (not (false? (:proxy m)))
-                            (some? (egress/compile-policy (get (config/load-config-raw) :network))))
-                ;; When MITM is engaged, inject the ephemeral CA into the child's trust
-                ;; env (via `:ca-file`) so it accepts the proxy's leaf certs.
-                mitm? (and proxy? (mitm-on?))
-                proxy-port (when proxy? (:port @egress-proxy-delay))
-                ca-file (when mitm? (:ca-file @mitm-cap-delay))]
+         (let
+           [cfg
+            (config/load-config-raw)
 
-               {:roots-fn sandbox-roots-fn
-                :net-enabled? net-on?
-                :allow-write (:allow-write m)
-                :allow-read (:allow-read m)
-                :deny-write (:deny-write m)
-                :deny-read (:deny-read m)
-                :proxy-port proxy-port
-                :ca-file ca-file})))))
+            fs
+            (get cfg :filesystem)
+
+            net-on?
+            (toggles/enabled? :network/enabled)
+
+            ;; Wall the child to the SHARED loopback egress proxy (net-off-except-
+            ;; proxy) when network is ON and there are real domain/verb restrictions
+            ;; to enforce — else allow-all direct egress. One config, both points.
+            proxy?
+            (and net-on? (some? (egress/compile-policy (get cfg :network))))
+
+            ;; When MITM is engaged, inject the SHARED ephemeral CA into the child's
+            ;; trust env (via `:ca-file`) so it accepts the proxy's leaf certs.
+            mitm?
+            (and proxy? (mitm-on?))
+
+            proxy-port
+            (when proxy? (gateway-sandbox/ensure-proxy!))
+
+            ca-file
+            (when mitm? (gateway-sandbox/ensure-ca!))]
+
+           {:roots-fn sandbox-roots-fn
+            :net-enabled? net-on?
+            :allow-write (:allow-write fs)
+            :allow-read (:allow-read fs)
+            :deny-write (:deny-write fs)
+            :deny-read (:deny-read fs)
+            :proxy-port proxy-port
+            :proxy-token (when proxy? sandbox-token)
+            :ca-file ca-file})))
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
@@ -9475,15 +9546,13 @@
         ;; (current model + available, for sub_loop model choice).
         :routing routing-digest
         :db-info db-info
-        ;; Per-session OS-jail policy fn (nil unless vis.yml `:shell :jail`).
-        ;; Shell/subprocess executors consult it per spawn; see process-jail.
+        ;; Per-session OS-jail policy fn — the shell jail is ALWAYS ON; nil only when
+        ;; no sandbox roots exist. Shell/subprocess executors consult it per spawn; see process-jail.
         :jail-policy-fn jail-policy-fn
-        ;; Per-session egress-proxy handle (a delay; realized only if a jailed
-        ;; shell child needed restricted network). dispose-environment! stops it.
-        :egress-proxy-delay egress-proxy-delay
-        ;; Per-session MITM CA (a delay; realized only if a jailed child needed
-        ;; HTTPS verb/path enforcement). dispose-environment! deletes its CA PEM.
-        :mitm-cap-delay mitm-cap-delay}
+        ;; This session's unguessable token for the SHARED gateway egress proxy /
+        ;; MITM CA (internal.gateway-sandbox). Registered at env build; dropped from
+        ;; the proxy's session registry in dispose-environment!.
+        :sandbox-token sandbox-token}
        ;; Workspace info attached at env-build time so the extension
        ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
        ;; root the very first time it fires.
@@ -10010,7 +10079,13 @@
   [id]
   (let [k (cache-key id)]
     (if-let [entry (get @cache k)]
-      (touch-entry! entry)
+      ;; NB: a cache HIT does NOT touch `:last-active`. Idleness must reflect
+      ;; real turn activity (marked in `send!`'s finally), not passive reads:
+      ;; hot render/status paths (`gateway.state/live-env`, `context-snapshot`)
+      ;; resolve the env via `env-for` on every poll, and touching here reset
+      ;; the idle clock each time — so a rendered-but-idle session was NEVER
+      ;; reaped (its Context stayed resident indefinitely).
+      entry
       (let [env (open-env! k {})]
         (swap! cache (fn [m]
                        (if (contains? m k) m (assoc m k (new-cache-entry env)))))

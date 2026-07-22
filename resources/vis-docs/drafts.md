@@ -203,26 +203,39 @@ session is already inside a draft; stash, apply, or abandon first.
 ### TUI draft picker
 
 Press **`C-x e`** or choose **Switch Draft…** from the command palette to open
-the searchable draft picker. It reads the canonical list from the gateway; no
-draft state is maintained only in the TUI.
+the large, searchable draft manager. It reads and mutates the canonical gateway
+state; no draft list exists only in the TUI.
 
-The current location is selected first, so opening the picker and pressing
-Enter is a safe no-op. The rows behave as follows:
+Trunk is pinned in its own section above the draft list instead of being mixed in
+as if it were another draft. A smaller italic line explains that trunk is your real
+repository and that switching there safely stashes the current draft. Each draft
+also gets a secondary line showing whether it is active or parked and where its
+isolated copy lives. While filtering, only matching locations remain; Trunk keeps
+its separate section when it matches and otherwise gets out of the way.
 
-- **Trunk** — stash the current draft non-destructively and return to real files;
-- **current draft** — stay where you are; and
-- **parked draft** — have the gateway stash any current draft, then resume the
-  selected `workspace_id`.
+The current location is selected by default, so opening the manager and pressing
+Enter is a safe no-op. The controls follow the other searchable TUI pickers:
 
-This makes switching between drafts one deliberate picker action without hiding
-a destructive operation. Apply and abandon are not picker actions; use their
-explicit slash commands. The picker refuses to change workspaces while the
-current session has a turn running, so an agent cannot change roots mid-turn.
+- **Enter** — switch to Trunk or the selected draft. Selecting Trunk stashes the
+  current draft; selecting a parked draft makes the gateway stash-then-resume;
+- **`C-n`** — name, create, and enter a new isolated draft. If another draft is
+  current, the gateway stashes it first;
+- **`C-d`** — abandon the selected current or parked draft after an explicit
+  destructive confirmation; and
+- **typing / Backspace / ↑ / ↓** — filter and navigate with the same
+  case-insensitive substring behavior as the command palette and other pickers.
+  Plain letters, including uppercase `N` and `D`, always belong to the query.
+
+Apply remains an explicit `/draft apply` command because landing files into trunk
+has a wider effect than picker management. The manager refuses every workspace
+mutation while the current session has a running or queued turn, so an agent
+cannot change roots mid-turn.
 
 Resume also refuses a draft that:
 
 - is no longer active;
 - is not a draft workspace;
+- belongs to another repository;
 - is currently pinned to another session; or
 - cannot be identified uniquely by the supplied label.
 
@@ -247,8 +260,8 @@ Production draft storage defaults to `~/.vis/drafts` (overridable with the
 use apply, stash, and abandon rather than moving clone directories manually.
 
 The slash UI and HTTP API are two control surfaces over the same gateway-owned
-workspace state. Today the HTTP surface directly exposes listing and switching;
-creation, apply, and abandon are exposed as slash commands.
+workspace state. The HTTP surface exposes list, create, stash, resume, and
+abandon; apply remains an explicit slash command.
 
 ## Provider and privacy boundary
 
@@ -315,6 +328,8 @@ They return canonical JSON with string keys.
 | Method + path | Request | Result |
 | --- | --- | --- |
 | `GET /v1/sessions/:sid/workspace/drafts` | — | `{"drafts": [...]}` for the session's current repo. |
+| `POST /v1/sessions/:sid/workspace/drafts` | `{"label":"…","blank":false}` | Stash any current draft, create an isolated draft from trunk, and enter it. |
+| `DELETE /v1/sessions/:sid/workspace/drafts/:workspace_id` | `{"reason":"…"}` | Permanently abandon a current or parked draft; rejects drafts from another repo or in use elsewhere. |
 | `POST /v1/sessions/:sid/workspace/stash` | `{}` | Park the current draft; on trunk this is an idempotent no-op. |
 | `POST /v1/sessions/:sid/workspace/resume` | `{"workspace_id":"…"}` | Stash any current draft, then enter the target. |
 
@@ -331,7 +346,8 @@ A draft list item has this shape:
 }
 ```
 
-Resume returns HTTP `409` with a typed error when the target is not a resumable
-active draft—for example, after apply/abandon or while another session pins it.
-The gateway client exposes the corresponding `list-drafts`, `stash-draft!`, and
-`resume-draft!` operations.
+Resume and abandon return HTTP `409` with a typed error when the target is not an
+active draft in the session's current repo—for example, after apply/abandon or
+while another session pins it. The gateway client exposes the corresponding
+`list-drafts`, `create-draft!`, `stash-draft!`, `resume-draft!`, and
+`abandon-draft!` operations.

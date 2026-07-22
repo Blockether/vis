@@ -47,7 +47,7 @@ _rq.request = _fake
             python-context
             (str
               fake
-              "import sys\n"
+              "import sys, httpx\n"
               "sys.modules['httpx'] is httpx and httpx.get('http://svc/a').status_code == 200"))))))
   (it "reports a vis version marker"
       (with-python-context (expect (true? (ev python-context

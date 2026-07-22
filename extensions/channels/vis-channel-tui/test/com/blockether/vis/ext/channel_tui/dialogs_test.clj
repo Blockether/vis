@@ -464,15 +464,11 @@
                     (var-get #'dlg/settings-content-height)
 
                     theme-picker-content-width
-                    (var-get #'dlg/theme-picker-content-width)
-
-                    theme-picker-content-height
-                    (var-get #'dlg/theme-picker-content-height)]
+                    (var-get #'dlg/theme-picker-content-width)]
 
                    (expect (= (dlg/default-content-width 160) (settings-content-width 160)))
                    (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
                    (expect (= (settings-content-width 160) (theme-picker-content-width 160)))
-                   (expect (= (settings-content-height 50) (theme-picker-content-height 50)))
                    (expect (<= (+ (dlg/default-content-width 60) 4) 60))
                    (expect (<= (+ (dlg/default-content-height 16) 6) 16))))
              (it "extension headings are flush; options are indented by renderer"
@@ -924,13 +920,13 @@
       (expect (str/includes? inactive-label "│     0 │"))
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
-  (it "draft picker puts the current location first and keeps trunk as stash"
+  (it "draft manager separates trunk from current and parked drafts"
       (let
         [parked
-         {"workspace_id" "ws-parked" "label" "feature-b" "is_current" false}
+         {"workspace_id" "ws-parked" "label" "feature-b" "root" "/tmp/b" "is_current" false}
 
          current
-         {"workspace_id" "ws-current" "label" "feature-a" "is_current" true}
+         {"workspace_id" "ws-current" "label" "feature-a" "root" "/tmp/a" "is_current" true}
 
          in-draft
          (dlg/draft-picker-items [parked current])
@@ -938,14 +934,84 @@
          on-trunk
          (dlg/draft-picker-items [parked])]
 
-        (expect (= [:draft :trunk :draft] (mapv :action in-draft)))
-        (expect (= ["feature-a" "Trunk" "feature-b"] (mapv :label in-draft)))
-        (expect (:current? (first in-draft)))
-        (expect (= "stash current" (:hint (second in-draft))))
+        (expect (= [:trunk :draft :draft] (mapv :action in-draft)))
+        (expect (= ["Trunk" "feature-a" "feature-b"] (mapv :label in-draft)))
+        (expect (:current? (second in-draft)))
+        (expect (= "stash + switch" (:hint (first in-draft))))
+        (expect (str/includes? (:description (first in-draft)) "real repository"))
         (expect (= :trunk (:action (first on-trunk))))
         (expect (:current? (first on-trunk)))
-        (expect (str/includes? (:hint (first on-trunk)) "/draft new"))))
-  (it "draft picker filters interactively and returns the stable workspace id"
+        (expect (str/includes? (:description (first on-trunk)) "working tree"))))
+  (it
+    "draft manager uses standard filter keys and modified management actions"
+    (let
+      [drafts
+       [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}]
+
+       component
+       (dlg/draft-picker-component drafts)
+
+       initial
+       (:init component)
+
+       measured
+       ((:measure component) initial 120 40)
+
+       state
+       ((:reconcile component) initial measured)
+
+       ctrl-key
+       (fn [c]
+         (KeyStroke. (Character/valueOf c) true false false))
+
+       new-result
+       ((:on-key component) state (ctrl-key \n) measured)
+
+       abandon-result
+       ((:on-key component) state (ctrl-key \d) measured)
+
+       typed-n
+       ((:on-key component) state (char-key \N) measured)]
+
+      (expect (>= (:content-w measured) 72))
+      (expect (>= (:content-h-req measured) 12))
+      (expect (= :new (:action (done-key new-result))))
+      (expect (= :abandon (:action (done-key abandon-result))))
+      (expect (= "ws-a" (:workspace-id (done-key abandon-result))))
+      (expect (not (contains? typed-n done-key)))
+      (expect (= "N" (:query typed-n)))))
+  (it "draft filtering shares picker matching and hides nonmatching sections"
+      (let
+        [items
+         (dlg/draft-picker-items [{"workspace_id" "ws-a" "label" "feature-a" "root" "/tmp/alpha"}
+                                  {"workspace_id" "ws-b" "label" "docs" "root" "/tmp/beta"}])
+
+         component
+         (dlg/draft-picker-component
+           [{"workspace_id" "ws-a" "label" "feature-a" "root" "/tmp/alpha"}
+            {"workspace_id" "ws-b" "label" "docs" "root" "/tmp/beta"}])
+
+         measure
+         (:measure component)
+
+         feature
+         (measure (assoc (:init component) :query "FEATURE") 120 40)
+
+         path
+         (measure (assoc (:init component) :query "beta") 120 40)
+
+         trunk
+         (measure (assoc (:init component) :query "repository") 120 40)
+
+         none
+         (measure (assoc (:init component) :query "missing") 120 40)]
+
+        (expect (= ["feature-a"] (mapv :label (:selectable feature))))
+        (expect (= ["docs"] (mapv :label (:selectable path))))
+        (expect (= ["Trunk"] (mapv :label (:selectable trunk))))
+        (expect (empty? (:selectable none)))
+        (expect (= (mapv :label items) (mapv :label (dlg/filter-select-items items ""))))))
+  (it "draft manager filters interactively and returns the stable workspace id"
       (let
         [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
          (virtual-screen)
@@ -992,6 +1058,24 @@
 
         (expect (some #{"Cycle Model"} (match "model")))
         (expect (= [] (match "zzz-no-such-command"))))))
+
+(defdescribe fork-turn-items-test
+  (it "builds filterable palette rows: message label, tN hint, turn-id, truncation"
+      (let [turns [{:id "s1" :position 1 :user-request "  first   question here  "}
+                   {:id "s2" :position 2 :user-request (apply str (repeat 200 "x"))}
+                   {:id "s3" :position 3 :user-request "   "}]
+            rows (dlg/fork-turn-items turns)]
+        ;; each row carries the soul id the fork copies THROUGH
+        (expect (= ["s1" "s2" "s3"] (mapv :turn-id rows)))
+        ;; ordinal hint
+        (expect (= ["t1" "t2" "t3"] (mapv :hint rows)))
+        ;; whitespace collapsed for the searchable label
+        (expect (= "first question here" (:label (first rows))))
+        ;; long messages truncated with an ellipsis
+        (expect (<= (count (:label (second rows))) 72))
+        (expect (clojure.string/ends-with? (:label (second rows)) "…"))
+        ;; blank message gets a placeholder
+        (expect (= "(no message)" (:label (nth rows 2)))))))
 
 ;; Navigator PROJECT grouping: non-focused rows regroup by `:dir`
 ;; (first-appearance order = projects by their most recent session),

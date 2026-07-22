@@ -900,6 +900,55 @@
   [message content-w]
   (or (:prewrapped-lines message) (render/wrap-text (or (:text message) "") content-w)))
 
+(defn- selectable-line-visible-text
+  "Visible on-screen text of a transcript row, with structural markers and any
+   tool-output indent stripped, so its width matches what the wrap step saw."
+  [line]
+  (let [visible (selection/clean-copied-text line)]
+    (if (and (output-indented-row? line) (str/starts-with? visible selection-output-indent))
+      (subs visible (count selection-output-indent))
+      visible)))
+
+(defn- line-first-token-width
+  "Display width of the first whitespace-delimited token of `s`."
+  [s]
+  (let
+    [s
+     (or s "")
+
+     i
+     (str/index-of s " ")]
+
+    (p/display-width (if i (subs s 0 i) s))))
+
+(defn- selectable-line-continuation?
+  "True when `cur` is a soft-wrap continuation of the preceding `prev` selectable
+   range: vertically adjacent, same left column, and `cur`'s first token could
+   not have fit at the end of `prev` under greedy word-wrap. Reconstructs the
+   wrap grouping the projection discarded so a wrapped line shares one `:line-id`."
+  [prev cur]
+  (boolean (and prev
+                (= (long (:row cur)) (inc (long (:row prev))))
+                (= (:col prev) (:col cur))
+                (> (+ (p/display-width (:text prev)) 1 (line-first-token-width (:text cur)))
+                   (long (:wrap-w prev))))))
+
+(defn- assign-selectable-line-ids
+  "Tag each raw selectable range (carrying `:text` + `:wrap-w`) with a `:line-id`
+   shared across the soft-wrap fragments of one logical line, then drop the
+   reconstruction-only keys so downstream range consumers are unaffected."
+  [ranges]
+  (:out (reduce (fn [{:keys [out prev id]} cur]
+                  (let [id (long (if (selectable-line-continuation? prev cur) id (inc (long id))))]
+                    {:out (conj out
+                                (-> cur
+                                    (assoc :line-id id)
+                                    (dissoc :text :wrap-w)))
+                     :prev cur
+                     :id id}))
+                {:out [] :prev nil :id -1}
+                ranges)))
+
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
 
@@ -907,7 +956,10 @@
    gutter, message-area margins, role/timestamp row, final inter-bubble gap,
    assistant provider/model footer, and structural separator/padding rows.
    Dragging across those cells may continue a gesture, but highlight/copy is
-   clipped back to user/model-authored text rows."
+   clipped back to user/model-authored text rows.
+
+   Each range also carries a `:line-id` shared by the soft-wrap fragments of one
+   logical source line, so a double-click can expand to the whole wrapped line."
   [layout text-top inner-h cols]
   (let
     [bubble-left
@@ -919,6 +971,9 @@
      content-w
      (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
 
+     indent-cols
+     (p/display-width selection-output-indent)
+
      top-limit
      (long text-top)
 
@@ -927,7 +982,7 @@
 
     (if (or (not (pos? content-w)) (<= bottom-limit top-limit))
       []
-      (vec
+      (assign-selectable-line-ids
         (for
           [{:keys [top projected]}
            (:visible layout)
@@ -952,7 +1007,10 @@
 
           {:row row
            :col (bubble-line-text-col (:role message) bubble-left line)
-           :width content-w})))))
+           :width content-w
+           :text (selectable-line-visible-text line)
+           :wrap-w
+           (if (output-indented-row? line) (max 1 (- content-w indent-cols)) content-w)})))))
 
 (defn- transcript-document-copy-lines
   "Return selectable transcript rows in document coordinates.
@@ -1013,37 +1071,27 @@
                  (:projected visible-entry)
 
                  projected
-                 (cond (and (:pending? message) visible-projected)
-                       ;; A pending/streaming bubble's live paint holds only the
-                       ;; VISIBLE tail rows. When the bubble's head has scrolled
-                       ;; ABOVE the viewport (`:top` < 0) those earlier rows are
-                       ;; gone from the paint, so rebuild the full body from the
-                       ;; canonical projection and substitute the fresher live paint
-                       ;; for just the tail — a drag over a scrolled streaming bubble
-                       ;; then copies its off-screen head, not only what's on screen.
-                       ;; A fully-visible pending bubble keeps the live paint as-is
-                       ;; (its canonical projection may still be placeholder IR).
-                       (let
-                         [live-lines
-                          (:prewrapped-lines visible-projected)
-
-                          head-scrolled-off?
-                          (neg? (long (or (:top visible-entry) 0)))
-
-                          full-lines
-                          (when head-scrolled-off?
-                            (:prewrapped-lines
-                              (virtual/project-message message bubble-w settings copy-opts)))]
-
-                         (if (and (seq full-lines)
-                                  (seq live-lines)
-                                  (< (count live-lines) (count full-lines)))
-                           (assoc visible-projected
-                             :prewrapped-lines (into (vec (drop-last (count live-lines) full-lines))
-                                                     live-lines))
-                           visible-projected))
-                       (:prewrapped-lines message) message
-                       :else (virtual/project-message message bubble-w settings copy-opts))
+                 (cond
+                   ;; A VISIBLE bubble's live paint (`:projected` from the layout)
+                   ;; is the authoritative on-screen content, and its line count
+                   ;; is exactly what sized this bubble's document row span — so
+                   ;; `content-top + line-idx` aligns perfectly. Use it directly.
+                   ;; This is the ONLY correct source for the LIVE / loading bubble:
+                   ;; while a turn streams, `layout` renders the compact progress
+                   ;; view (spinner + current activity), which is SHORTER than the
+                   ;; message's full transcript projection. Re-projecting the full
+                   ;; body here would overflow the compressed span and copy
+                   ;; misaligned head rows instead of what the user actually sees.
+                   ;; Streaming and completed trace bubbles keep `:lines-window`
+                   ;; nil, so their full-body paint is used verbatim too.
+                   (and visible-projected (nil? (:lines-window visible-projected)))
+                   visible-projected
+                   ;; A WINDOWED paint holds only a mid-scroll slice of a taller
+                   ;; plain-markdown bubble; the document allocates the FULL height,
+                   ;; so re-project the whole body to map every selected row.
+                   visible-projected (virtual/project-message message bubble-w settings copy-opts)
+                   (:prewrapped-lines message) message
+                   :else (virtual/project-message message bubble-w settings copy-opts))
 
                  message
                  (or projected message {})
@@ -2513,88 +2561,118 @@
     ;; by something we're about to repaint (header chrome + the live
     ;; bubble's previous row range). Then re-paint live bubble + header
     ;; and commit. Stable transcript bubbles keep their previous-frame
-    ;; regions verbatim because we don't touch their rows here.
+    ;; regions verbatim ONLY while the view didn't scroll; when auto-bottom
+    ;; follow shifts `eff-scroll` the branch below repaints the whole
+    ;; messages band so their regions track the new rows.
     (let
       [prev-live-entry
        old-entry
 
-       prev-text-top
-       (long (or (:text-top previous-layout) text-top))
+       transcript-shifted?
+       (and previous-layout (not= (:eff-scroll layout) (:eff-scroll previous-layout)))]
 
-       live-row-band
-       (when prev-live-entry
-         (let
-           [lo
-            (+ prev-text-top (long (:top prev-live-entry)))
-
-            hi
-            (+ lo (long (:height prev-live-entry)))]
-
-           [lo hi]))
-
-       header-rows-n
-       (long (header/header-rows db))
-
-       carry-over
-       (vec (remove (fn [{:keys [bounds]}]
-                      (let [row (long (:row bounds))]
-                        (or
-                          ;; header re-registers below
-                          (< row header-rows-n)
-                          ;; live bubble re-registers below
-                          (and live-row-band
-                               (>= row (long (first live-row-band)))
-                               (< row (long (second live-row-band))))
-                          ;; footer re-registers below (its button
-                          ;; click-regions: dirs / resources) — drop
-                          ;; stale copies so the fresh ones win.
-                          (>= row (long footer-row)))))
-              (cr/current)))]
-
-      (cr/begin-frame!)
-      (doseq [r carry-over]
-        (cr/register! r))
-      (when live-entry
+      (if transcript-shifted?
+        ;; ── FOLLOW-mode transcript shift ─────────────────────────────
+        ;; Auto-bottom follow just moved `eff-scroll`, so EVERY stable
+        ;; transcript bubble slid on screen (its `:top` drops one row per
+        ;; row the live bubble grew). Carrying their old click regions
+        ;; verbatim (the cheap path below) leaves each toggle region
+        ;; pointing at a row the disclosure no longer occupies — the user
+        ;; clicks the fold they SEE mid-stream and nothing opens.
+        ;; Repaint the whole messages band like `render-scroll-frame!`:
+        ;; `draw-messages-area!` re-lays the pixels AND re-registers every
+        ;; transcript + live click region at its NEW row. Fires only on
+        ;; height-change ticks; spinner-only ticks keep the cheap path.
+        (do (render/draw-messages-area! g layout messages-top messages-bottom cols)
+            ;; Carry only chrome regions OUTSIDE the messages band; the
+            ;; in-band ones were just re-registered fresh above.
+            (doseq [r (cr/current)]
+              (let [row (long (:row (:bounds r)))]
+                (when (or (< row messages-top) (>= row messages-bottom)) (cr/register! r))))
+            (header/draw-header! g db header-top cols)
+            (paint-search-bar! g cols text-top db)
+            (footer/draw-echo-area! g db echo-row cols now-ms)
+            (footer/draw-footer! g db footer-row cols now-ms)
+            (cr/commit-frame!))
+        ;; ── Cheap live-band path (transcript did NOT shift) ──────────
         (let
-          [clip
-           (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
+          [prev-text-top
+           (long (or (:text-top previous-layout) text-top))
 
-           y0
-           (max 0 (min (long (:top live-entry)) (long (or (:top old-entry) (:top live-entry)))))
+           live-row-band
+           (when prev-live-entry
+             (let
+               [lo
+                (+ prev-text-top (long (:top prev-live-entry)))
 
-           y1
-           (min inner-h
-                (max (+ (long (:top live-entry)) (long (:height live-entry)))
-                     (+ (long (or (:top old-entry) (:top live-entry)))
-                        (long (or (:height old-entry) (:height live-entry))))))]
+                hi
+                (+ lo (long (:height prev-live-entry)))]
 
-          (when (< y0 y1)
-            (p/set-colors! clip t/text-fg t/terminal-bg)
-            (p/fill-rect! clip 0 y0 cols (- y1 y0)))
-          (render/draw-chat-bubble! clip
-                                    (:projected live-entry)
-                                    (:top live-entry)
-                                    render/MESSAGE_MARGIN_LEFT
-                                    bubble-w
-                                    {:viewport-top text-top :viewport-h inner-h})))
-      ;; Chrome refresh - cheap text writes, kept inside the partial
-      ;; path so notification banners and footer status update on
-      ;; every spinner tick instead of waiting for the next full
-      ;; frame. Header re-registers its click rectangles into the
-      ;; staged frame above so they survive the upcoming
-      ;; `cr/commit-frame!`.
-      (header/draw-header! g db header-top cols)
-      ;; Find bar overlay + its prev/next/close click regions, staged into
-      ;; THIS frame so they stay clickable while a turn streams.
-      (paint-search-bar! g cols text-top db)
-      ;; Footer painted INSIDE the staged frame so its button click-regions
-      ;; (dirs / resources) are published by `commit-frame!` below. Painting it
-      ;; AFTER the commit (as before) left those regions in an uncommitted
-      ;; staging buffer that the next `begin-frame!` dropped — so the footer
-      ;; buttons were never clickable on the live/partial render path.
-      (footer/draw-echo-area! g db echo-row cols now-ms)
-      (footer/draw-footer! g db footer-row cols now-ms)
-      (cr/commit-frame!))
+               [lo hi]))
+
+           header-rows-n
+           (long (header/header-rows db))
+
+           carry-over
+           (vec (remove (fn [{:keys [bounds]}]
+                          (let [row (long (:row bounds))]
+                            (or
+                              ;; header re-registers below
+                              (< row header-rows-n)
+                              ;; live bubble re-registers below
+                              (and live-row-band
+                                   (>= row (long (first live-row-band)))
+                                   (< row (long (second live-row-band))))
+                              ;; footer re-registers below (its button
+                              ;; click-regions: dirs / resources) — drop
+                              ;; stale copies so the fresh ones win.
+                              (>= row (long footer-row)))))
+                  (cr/current)))]
+
+          (cr/begin-frame!)
+          (doseq [r carry-over]
+            (cr/register! r))
+          (when live-entry
+            (let
+              [clip
+               (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
+
+               y0
+               (max 0 (min (long (:top live-entry)) (long (or (:top old-entry) (:top live-entry)))))
+
+               y1
+               (min inner-h
+                    (max (+ (long (:top live-entry)) (long (:height live-entry)))
+                         (+ (long (or (:top old-entry) (:top live-entry)))
+                            (long (or (:height old-entry) (:height live-entry))))))]
+
+              (when (< y0 y1)
+                (p/set-colors! clip t/text-fg t/terminal-bg)
+                (p/fill-rect! clip 0 y0 cols (- y1 y0)))
+              (render/draw-chat-bubble! clip
+                                        (:projected live-entry)
+                                        (:top live-entry)
+                                        render/MESSAGE_MARGIN_LEFT
+                                        bubble-w
+                                        {:viewport-top text-top :viewport-h inner-h})))
+          ;; Chrome refresh - cheap text writes, kept inside the partial
+          ;; path so notification banners and footer status update on
+          ;; every spinner tick instead of waiting for the next full
+          ;; frame. Header re-registers its click rectangles into the
+          ;; staged frame above so they survive the upcoming
+          ;; `cr/commit-frame!`.
+          (header/draw-header! g db header-top cols)
+          ;; Find bar overlay + its prev/next/close click regions, staged into
+          ;; THIS frame so they stay clickable while a turn streams.
+          (paint-search-bar! g cols text-top db)
+          ;; Footer painted INSIDE the staged frame so its button click-regions
+          ;; (dirs / resources) are published by `commit-frame!` below. Painting it
+          ;; AFTER the commit (as before) left those regions in an uncommitted
+          ;; staging buffer that the next `begin-frame!` dropped — so the footer
+          ;; buttons were never clickable on the live/partial render path.
+          (footer/draw-echo-area! g db echo-row cols now-ms)
+          (footer/draw-footer! g db footer-row cols now-ms)
+          (cr/commit-frame!))))
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
       (if-let [[sx sy] (components/find-bar-cursor cols text-top (:search db))]
         ;; Active find bar owns the keyboard — cursor sits in its query field
@@ -3654,11 +3732,10 @@
   (try (vis/gateway-session-workspace session-id) (catch Throwable _ nil)))
 
 (defn- apply-draft-picker-choice!
-  "Execute one TUI draft-picker choice through the canonical gateway API.
-   Selecting the current location is a safe no-op. Selecting trunk stashes the
-   current draft; selecting another draft lets the gateway stash-then-resume
-   as one gateway operation. Returns workspace + user-facing result data for the screen loop."
-  [sid {:keys [action current? workspace-id label]}]
+  "Execute one draft-manager choice through the canonical gateway API. Switching,
+   creation, and destructive abandonment all return refreshed workspace data for
+   the TUI footer. Prompts and confirmation are handled by the screen loop."
+  [sid {:keys [action current? workspace-id label reason]}]
   (cond current? {:changed? false :message (str "Already on " label)}
         (= action :trunk) {:changed? true
                            :message "Stashed draft — switched to trunk"
@@ -3669,7 +3746,16 @@
                               {:changed? true
                                :message (str "Switched to draft '" label "'")
                                :workspace (vis/gateway-resume-draft! sid workspace-id)})
-        :else (throw (ex-info "Unknown draft picker action"
+        (= action :new) {:changed? true
+                         :message (str "Created draft '" label "'")
+                         :workspace (vis/gateway-create-draft! sid label false)}
+        (= action :abandon) (do (when-not workspace-id
+                                  (throw (ex-info "Draft manager row has no workspace id"
+                                                  {:type :draft-picker/invalid-row})))
+                                {:changed? true
+                                 :message (str "Abandoned draft '" label "'")
+                                 :workspace (vis/gateway-abandon-draft! sid workspace-id reason)})
+        :else (throw (ex-info "Unknown draft manager action"
                               {:type :draft-picker/invalid-action :action action}))))
 
 (defn- abbrev-home
@@ -3819,38 +3905,44 @@
          (sort-by #(or (get % "project_position") Long/MAX_VALUE))
          (mapv #(str (get % "id"))))))
 
+(defn- persist-tabs-order!
+  "Gateway-side reconcile + reorder for an EXPLICIT project + ordered tab ids.
+   LOOSE tabs (no project) and brand-new ones join `pid`; tabs already OWNED by
+   ANOTHER project are GUESTS — never stolen. `project_position` is rewritten to
+   match `ids` (member-scoped, so guests drop out of the order automatically).
+   BLOCKS on gateway round-trips — call OFF the input thread. Best effort — a
+   gateway hiccup is swallowed."
+  [pid ids]
+  (when (and pid (seq ids))
+    ;; One scan of every session -> its CURRENT project id (nil = loose).
+    (let
+      [proj-of
+       (into {}
+             (map (fn [s]
+                    [(str (get s "id"))
+                     (some-> (get s "project_id")
+                             str)]))
+             (try (vis/gateway-list-sessions :all) (catch Throwable _ nil)))
+
+       pid-str
+       (str pid)]
+
+      (doseq [sid ids]
+        (let [cur (get proj-of (str sid) ::unlisted)]
+          ;; Assign ONLY loose (nil) or not-yet-listed (brand-new) sessions.
+          ;; A session owned by a DIFFERENT project is a guest — leave it be.
+          (when (or (nil? cur) (= ::unlisted cur) (= pid-str cur))
+            (when-not (= pid-str cur)
+              (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))))
+      (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))))
+
 (defn- persist-tabs-once!
-  "One synchronous persist pass: reconcile the current open-tab set with the
-   launch PROJECT (a project IS a tab set). LOOSE tabs (no project) join the
-   launch project; tabs already OWNED by ANOTHER project are GUESTS — never
-   stolen, they simply aren't durable members here. `project_position` is then
-   rewritten to match tab order (member-scoped, so guests drop out of the order
-   automatically). Best effort — a gateway hiccup is swallowed."
+  "One synchronous persist pass for the ACTIVE project: snapshot the current
+   open-tab order and reconcile it via `persist-tabs-order!`. BLOCKS on gateway
+   round-trips — call off the input thread (see `persist-tabs!`)."
   []
   (when-let [pid (ensure-active-project-id!)]
-    (let
-      [snap (state/tab-session-snapshot @state/app-db)
-       ids (mapv :id (:sessions snap))]
-
-      (when (seq ids)
-        ;; One scan of every session -> its CURRENT project id (nil = loose).
-        (let
-          [proj-of (into {}
-                         (map (fn [s]
-                                [(str (get s "id"))
-                                 (some-> (get s "project_id")
-                                         str)]))
-                         (try (vis/gateway-list-sessions :all) (catch Throwable _ nil)))
-           pid-str (str pid)]
-
-          (doseq [sid ids]
-            (let [cur (get proj-of (str sid) ::unlisted)]
-              ;; Assign ONLY loose (nil) or not-yet-listed (brand-new) sessions.
-              ;; A session owned by a DIFFERENT project is a guest — leave it be.
-              (when (or (nil? cur) (= ::unlisted cur) (= pid-str cur))
-                (when-not (= pid-str cur)
-                  (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))))
-          (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))))))
+    (persist-tabs-order! pid (mapv :id (:sessions (state/tab-session-snapshot @state/app-db))))))
 
 (defn- persist-tabs!
   "Persist the current open-tab set into the launch PROJECT — no EDN sidecar.
@@ -4609,7 +4701,7 @@
                                           (catch Throwable _ nil))]
 
                       (if fork-state-id
-                        (if-let [session-result (chat/resume-session current-id)]
+                        (if-let [session-result (chat/resume-session fork-state-id)]
                           (do (open-session-tab! session-result false)
                               (vis/notify! "Forked current session"
                                            :level :success
@@ -4618,6 +4710,50 @@
                                        :level :warn
                                        :ttl-ms copy-success-ttl-ms))
                         (vis/notify! "Could not fork current session"
+                                     :level :warn
+                                     :ttl-ms copy-success-ttl-ms)))
+                    (vis/notify! "No current session to fork"
+                                 :level :warn
+                                 :ttl-ms copy-success-ttl-ms))
+                  (= :fork-at-turn (:action choice))
+                  (if-let [current-id (or (:id choice) (current-session-id))]
+                    (let
+                      [db (vis/db-info)
+                       turns (try (vis/db-list-session-turns db current-id)
+                                  (catch Throwable _ nil))]
+
+                      (if (seq turns)
+                        ;; Palette + fuzzy filter over the session's turns; the
+                        ;; pick is the LAST turn the fork keeps (copies THROUGH).
+                        (when-let
+                          [turn-id (:turn-id (with-dialog-lock #(dlg/searchable-select!
+                                                                  screen
+                                                                  "Fork session at…"
+                                                                  (dlg/fork-turn-items turns)
+                                                                  {:placeholder "Filter turns…"
+                                                                   :enter-label "fork here"})))]
+                          (let
+                            [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                        (catch Throwable _ nil))
+                             fork-state-id (try (vis/db-fork-session-at-turn!
+                                                  db
+                                                  current-id
+                                                  {:workspace-id ws-id :through-turn-id turn-id})
+                                                (catch Throwable _ nil))]
+
+                            (if fork-state-id
+                              (if-let [session-result (chat/resume-session fork-state-id)]
+                                (do (open-session-tab! session-result false)
+                                    (vis/notify! "Forked session at turn"
+                                                 :level :success
+                                                 :ttl-ms copy-success-ttl-ms))
+                                (vis/notify! "Forked, but failed to reload session"
+                                             :level :warn
+                                             :ttl-ms copy-success-ttl-ms))
+                              (vis/notify! "Could not fork session at turn"
+                                           :level :warn
+                                           :ttl-ms copy-success-ttl-ms))))
+                        (vis/notify! "No turns to fork from yet"
                                      :level :warn
                                      :ttl-ms copy-success-ttl-ms)))
                     (vis/notify! "No current session to fork"
@@ -4856,7 +4992,7 @@
                   (cond
                     (or (:loading? db) (seq (:pending-sends db)))
                     (vis/notify!
-                      "Wait for the running or queued turn to finish before switching drafts"
+                      "Wait for the running or queued turn to finish before managing drafts"
                       :level :warn
                       :ttl-ms status-error-ttl-ms)
                     (:dialog-open? db) nil
@@ -4866,15 +5002,45 @@
                         (state/dispatch [:close-overlays])
                         (when (get-in @state/app-db [:search :active?])
                           (state/dispatch [:search-clear]))
-                        (let [drafts (vis/gateway-list-drafts sid)]
-                          (when-let [choice (with-dialog-lock #(dlg/draft-picker! screen drafts))]
-                            ;; A queued or externally-started turn can become active
-                            ;; while the modal is open. Check again immediately before
-                            ;; changing the daemon-owned workspace.
+                        (let
+                          [drafts (vis/gateway-list-drafts sid)
+                           raw-choice (with-dialog-lock #(dlg/draft-picker! screen drafts))
+                           choice
+                           (case (:action raw-choice)
+                             :new
+                             (when-let
+                               [label
+                                (with-dialog-lock
+                                  #(dlg/text-input-dialog!
+                                     screen
+                                     "Create draft" "Draft name"
+                                     :body
+                                     "Creates an isolated copy of trunk and enters it. Your current draft is stashed safely."))]
+                               (when-let
+                                 [label (some-> label
+                                                str/trim
+                                                not-empty)]
+                                 (assoc raw-choice :label label)))
+
+                             :abandon
+                             (when (with-dialog-lock
+                                     #(dlg/confirm-dialog!
+                                        screen
+                                        "Abandon draft?"
+                                        (str "Permanently discard '"
+                                             (:label raw-choice)
+                                             "' and its isolated files? This cannot be undone.")))
+                               (assoc raw-choice :reason "abandoned from TUI draft manager"))
+
+                             raw-choice)]
+
+                          (when choice
+                            ;; A queued or externally-started turn can become active while a
+                            ;; modal is open. Check again immediately before changing roots.
                             (let [db-now @state/app-db]
                               (if (or (:loading? db-now) (seq (:pending-sends db-now)))
                                 (vis/notify!
-                                  "A turn started while the picker was open; draft switch cancelled"
+                                  "A turn started while the draft manager was open; change cancelled"
                                   :level :warn
                                   :ttl-ms status-error-ttl-ms)
                                 (let
@@ -4887,17 +5053,16 @@
                                                :level (if changed? :success :info)
                                                :ttl-ms copy-success-ttl-ms))))))
                         (catch Throwable t
-                          ;; Gateway resume is stash-then-resume. If target validation
-                          ;; loses a race, re-read the authoritative location so the
+                          ;; Any gateway race is followed by an authoritative re-read, so the
                           ;; footer never keeps painting a stale draft root.
                           (try (when-let [workspace (vis/gateway-session-workspace sid)]
                                  (state/dispatch [:set-workspace workspace])
                                  (state/dispatch [:bump-render-version]))
                                (catch Throwable _ nil))
-                          (vis/notify! (str "Could not switch draft: " (or (ex-message t) (str t)))
+                          (vis/notify! (str "Could not manage drafts: " (or (ex-message t) (str t)))
                                        :level :error
                                        :ttl-ms status-error-ttl-ms)))
-                      (vis/notify! "No current session for draft switching"
+                      (vis/notify! "No current session for draft management"
                                    :level :warn
                                    :ttl-ms status-error-ttl-ms)))))
               show-sessions!
@@ -4994,7 +5159,23 @@
                         [pid (some-> (:id pick)
                                      str)]
                         (when-not (= pid cur)
-                          (persist-tabs!)
+                          ;; CAPTURE the OUTGOING project's id + tab order NOW with
+                          ;; cheap in-memory reads, then reconcile+reorder OFF the
+                          ;; input thread — a slow gateway must NEVER stall a switch.
+                          ;; Binding pid+ids here also fixes the race: the async
+                          ;; `persist-tabs!` worker reads `@active-project-id*` LIVE,
+                          ;; so after the reset below it would write the old order
+                          ;; under the NEW project. The captured values pin the
+                          ;; write to the OLD project.
+                          (let
+                            [out-pid (ensure-active-project-id!)
+                             out-ids (mapv :id
+                                           (:sessions (state/tab-session-snapshot @state/app-db)))]
+
+                            (when (and out-pid (seq out-ids))
+                              (vis/worker-future "tui-persist-tabs-switch"
+                                                 (fn []
+                                                   (persist-tabs-order! out-pid out-ids)))))
                           (reset! active-project-id* pid)
                           (let
                             [root (launch-root)
@@ -6130,6 +6311,9 @@
                                   :fork-session
                                   (switch-session! {:action :fork})
 
+                                  :fork-at-turn
+                                  (switch-session! {:action :fork-at-turn})
+
                                   :switch-session
                                   (show-sessions!)
 
@@ -6509,6 +6693,12 @@
 
                          :show-sessions
                          (do (show-sessions!) (recur))
+
+                         :fork-session
+                         (do (switch-session! {:action :fork}) (recur))
+
+                         :fork-at-turn
+                         (do (switch-session! {:action :fork-at-turn}) (recur))
 
                          :switch-project
                          (do (switch-project!) (recur))

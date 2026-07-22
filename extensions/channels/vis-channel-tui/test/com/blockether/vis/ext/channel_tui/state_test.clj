@@ -2414,7 +2414,10 @@
         (let [m (pending-assistant-for "!echo hi")]
           (expect (true? (:pending? m)))
           (expect (true? (:slash? m)))
-          (expect (= "Running shell command..." (get-in m [:content 0 "message"])))))
+          (expect (= "Running shell command..." (get-in m [:content 0 "message"])))
+          ;; The zero-iteration live spinner reads this label instead of
+          ;; "Vis is calling the provider" — a bang turn makes NO provider call.
+          (expect (= "Running shell command" (:command-phase-label m)))))
     (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
         ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
         ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
@@ -2434,6 +2437,7 @@
 
             (expect (true? (:slash? blank)))
             (expect (= "Running command..." (get-in blank [:content 0 "message"])))
+            (expect (= "Running command" (:command-phase-label blank)))
             (expect (true? (:slash? sub)))
             (expect (nil? (:slash? unk)))
             (expect (nil? (:slash? path))))))
@@ -2441,7 +2445,9 @@
         (let [m (pending-assistant-for "summarize the repo")]
           (expect (true? (:pending? m)))
           (expect (nil? (:slash? m)))
-          (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))))
+          (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))
+          ;; A normal turn DOES call the provider, so no override label.
+          (expect (nil? (:command-phase-label m)))))
     (it "carries the :slash? command marker from the pending slot onto the settled bubble"
         ;; The settled wire result carries no "slash" flag (dead live-path
         ;; plumbing), so the command marker must survive the pending->settled swap

@@ -366,10 +366,12 @@
   [text]
   (cond (shell-bang-command? text) (assoc (chat/assistant-message pending-shell-content)
                                      :pending? true
-                                     :slash? true)
+                                     :slash? true
+                                     :command-phase-label "Running shell command")
         (slash-command? text) (assoc (chat/assistant-message pending-slash-content)
                                 :pending? true
-                                :slash? true)
+                                :slash? true
+                                :command-phase-label "Running command")
         :else (assoc (chat/assistant-message pending-assistant-content) :pending? true)))
 
 (defn- pending-assistant-message? [m] (and (= :assistant (:role m)) (true? (:pending? m))))
@@ -1865,7 +1867,10 @@
                                        (assoc :label (or (some-> workspace
                                                                  :label
                                                                  not-empty)
-                                                         (:label e))))
+                                                         (when (not= starting-session-label
+                                                                     (:label e))
+                                                           (not-empty (:label e)))
+                                                         untitled-session-label)))
                                    workspace
                                    (assoc :workspace workspace)
 

@@ -171,3 +171,45 @@
                     (io/delete-file ws true)
                     (io/delete-file secret true)
                     (io/delete-file escape true))))))
+
+(deftest proxy-env-vars
+  (testing "no :proxy-port ⇒ no env additions (jail leaves egress untouched)"
+    (is (= {} (pj/proxy-env {})))
+    (is (= {} (pj/proxy-env {:net-enabled? true}))))
+  (testing ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"
+    (let
+      [e
+       (pj/proxy-env {:proxy-port 4321})
+
+       url
+       "http://127.0.0.1:4321"]
+
+      (doseq [k ["http_proxy" "https_proxy" "all_proxy" "HTTP_PROXY" "HTTPS_PROXY" "ALL_PROXY"]]
+        (is (= url (get e k)) k))
+      (is (not (contains? e "CURL_CA_BUNDLE")))
+      (is (not (contains? e "SSL_CERT_FILE")))))
+  (testing ":proxy-token rides the proxy URL userinfo (session attribution)"
+    (let
+      [e
+       (pj/proxy-env {:proxy-port 4321 :proxy-token "tok-123"})
+
+       url
+       "http://tok-123@127.0.0.1:4321"]
+
+      (doseq [k ["http_proxy" "https_proxy" "all_proxy" "HTTP_PROXY" "HTTPS_PROXY" "ALL_PROXY"]]
+        (is (= url (get e k)) k))))
+  (testing "with a :ca-file EVERY common CA-trust var points at the ephemeral CA PEM"
+    ;; The MITM tier mints per-host leaves off an ephemeral CA; each runtime reads a
+    ;; different trust var, so the full set (sandbox-runtime's nine) must be covered
+    ;; or that runtime silently fails the handshake instead of trusting the proxy.
+    (let
+      [ca
+       "/tmp/vis-ca.pem"
+
+       e
+       (pj/proxy-env {:proxy-port 4321 :ca-file ca})]
+
+      (doseq
+        [v ["CURL_CA_BUNDLE" "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "NODE_EXTRA_CA_CERTS"
+            "GIT_SSL_CAINFO" "PIP_CERT" "AWS_CA_BUNDLE" "CARGO_HTTP_CAINFO" "DENO_CERT"]]
+        (is (= ca (get e v)) (str v " must point at the CA PEM"))))))

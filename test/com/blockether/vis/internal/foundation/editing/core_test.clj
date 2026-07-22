@@ -1185,6 +1185,55 @@
                        :result)
                    (-> (cat-tool path)
                        :result)))))
+  (it "cat coerces stringy/flat range + ranges shapes models mis-pass"
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
+
+         path
+         (write-temp! "range/coerce.txt" (str body "\n"))
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         canonical
+         (-> (cat-tool path {"ranges" [[2 4]]}) :result)]
+        ;; a single flat pair of NUMERIC STRINGS (the reported failure) now reads
+        (expect (= canonical (-> (cat-tool path {"ranges" ["2" "4"]}) :result)))
+        ;; nested string pair + comma-joined string coerce identically
+        (expect (= canonical (-> (cat-tool path {"ranges" [["2" "4"]]}) :result)))
+        (expect (= canonical (-> (cat-tool path {"ranges" "2, 4"}) :result)))
+        ;; `range` with numeric strings / comma string coerce too
+        (expect (= (-> (cat-tool path {"range" [2 4]}) :result)
+                   (-> (cat-tool path {"range" ["2" "4"]}) :result)))
+        (expect (= (-> (cat-tool path {"range" [2 4]}) :result)
+                   (-> (cat-tool path {"range" "2, 4"}) :result)))
+        ;; multi-window string ranges preserve each window
+        (expect (= [[2 4] [6 8]]
+                   (mapv #(get % "range")
+                         (get (-> (cat-tool path {"ranges" [["2" "4"] ["6" "8"]]}) :result)
+                              "ranges"))))))
+  (it "cat names the non-numeric component when a range/ranges value is not a line number"
+      (let
+        [path
+         (write-temp! "range/explain.txt" "L1\nL2\nL3\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         msg
+         (fn [arg]
+           (try (cat-tool path arg) nil
+                (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+        ;; the `"1, x"` shape the user hit — explicit, names `x`, not a generic pair error
+        (expect (string/includes? (msg {"ranges" "1, x"}) "non-numeric"))
+        (expect (string/includes? (msg {"ranges" "1, x"}) "\"x\""))
+        (expect (string/includes? (msg {"ranges" ["1" "x"]}) "\"x\""))
+        (expect (string/includes? (msg {"ranges" [[10 "foo"]]}) "\"foo\""))
+        (expect (string/includes? (msg {"range" "1, x"}) "non-numeric"))
+        (expect (string/includes? (msg {"range" ["1" "x"]}) "\"x\""))
+        ;; wrong arity is called out distinctly
+        (expect (string/includes? (msg {"ranges" [[1 2 3]]}) "exactly 2 components"))))
   (it
     "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
     (let
@@ -2256,6 +2305,47 @@
           (expect (true? (get out "anchors_stale")))))
     (it "an unknown 4-arity mode throws"
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :nonsense h-beta h-gamma))))))
+
+(defdescribe
+  vis-cat-anchor-line-number-coercion-test
+  ;; Models routinely send bare LINE NUMBERS where a `lineno:hash` anchor belongs
+  ;; (session f81cd89b: `{"anchor": "9357, 9412"}` → :hashline-malformed). Coerce
+  ;; every line-number shape into a line-RANGE read; real anchors fall through.
+  (let
+    [cat-tool
+     (private-fn "cat-tool")
+
+     norm
+     (private-fn "normalize-cat-anchor-option")
+
+     ->range
+     (private-fn "cat-anchor->line-range")
+
+     path
+     (write-temp! "linenum/probe.clj"
+                  (string/join "\n" (map #(str "(def x" % " " % ")") (range 1 20))))]
+
+    (it "normalize splits a comma-joined anchor string into a real [from to] vector"
+        (expect (= ["9357" "9412"] (norm "9357, 9412")))
+        (expect (= ["3:abc" "5:def"] (norm "3:abc, 5:def")))
+        (expect (= [9357 9412] (norm "[9357, 9412]")))
+        (expect (= "325:0e3" (norm "325:0e3"))))
+    (it "cat-anchor->line-range maps bare line numbers to a range, real anchors to nil"
+        (expect (= [9357 9412] (->range ["9357" "9412"])))
+        (expect (= [9 12] (->range [9 12])))
+        (expect (= [9 9] (->range 9)))
+        (expect (= [9 9] (->range "9")))
+        (expect (nil? (->range ["3:abc" "5:def"])))
+        (expect (nil? (->range "325:0e3"))))
+    (it "a comma-joined line-number anchor reads the inclusive line RANGE (was :hashline-malformed)"
+        (let [res (cat-tool path {"anchor" "3, 6"})]
+          (expect (= [3 6] (get-in res [:metadata :range])))
+          (expect (= [3 4 5 6]
+                     (mapv first (patch/anchor-map->tuples (get (:result res) "anchors")))))))
+    (it "an integer-vector anchor and a lone integer anchor both read lines directly"
+        (expect (= [3 6] (get-in (cat-tool path {"anchor" [3 6]}) [:metadata :range])))
+        (expect (= [5 5] (get-in (cat-tool path {"anchor" 5}) [:metadata :range])))
+        (expect (= [5 5] (get-in (cat-tool path {"anchor" "5"}) [:metadata :range]))))))
 
 ;; =============================================================================
 ;; Patch: duplicate-line anchors in a multi-edit batch, resolved vs the ORIGINAL

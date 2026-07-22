@@ -2570,6 +2570,147 @@
         []))
     []))
 
+(defn db-fork-session-at-turn!
+  "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
+   `:through-turn-id`, into a brand-new INDEPENDENT session.
+
+   Unlike [[db-fork-session!]] (which adds a new `session_state` UNDER the same
+   soul, so the soul's latest-leaf chain keeps ALL prior turns), this mints a
+   fresh `session_soul` + root `session_state` (version 0, `parent_state_id`
+   NULL) and DEEP-COPIES every transcript turn from the start through
+   `:through-turn-id` into it — each turn's `session_turn_soul`, its LATEST
+   `session_turn_state`, that state's `session_turn_iteration` rows, and the
+   turn's `session_attachment` rows (ids remapped). The SOURCE session is left
+   completely untouched; the fork is a separate tab/session whose history is
+   exactly those turns and which continues fresh from there.
+
+   Copies rows generically (`SELECT *` → re-insert with remapped id/FK columns),
+   so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
+   the new ROOT STATE UUID (for `resume-session`), or nil when `:through-turn-id`
+   is not a turn of the source session (or the env has no datasource)."
+  [db-info session-id {:keys [title workspace-id through-turn-id]}]
+  (when-not workspace-id
+    (throw (ex-info "db-fork-session-at-turn! requires :workspace-id (1:1 invariant)"
+                    {:type :persistance/missing-workspace-id})))
+  (when-not through-turn-id
+    (throw (ex-info "db-fork-session-at-turn! requires :through-turn-id"
+                    {:type :persistance/missing-through-turn-id})))
+  (when (ds db-info)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [soul-id-s (->ref session-id)
+              src-soul (query-one! tx-info
+                                   {:select [:channel :owner_id]
+                                    :from :session_soul
+                                    :where [:= :id soul-id-s]})
+              current (latest-state-for tx-info soul-id-s)
+              turns (db-list-session-turns tx-info session-id)
+              through-s (str through-turn-id)
+              ;; Transcript-ordered turns from the start THROUGH the picked one.
+              cut (reduce (fn [acc t]
+                            (let [acc' (conj acc t)]
+                              (if (= (str (:id t)) through-s)
+                                (reduced acc')
+                                acc')))
+                          [] turns)]
+          ;; Only fork when the picked turn actually belongs to the session
+          ;; (`reduce` without a hit returns ALL turns — reject that case).
+          (when (and src-soul current
+                     (seq cut)
+                     (= (str (:id (peek cut))) through-s))
+            (let [new-soul-id (str (new-uuid))
+                  new-state-id (str (new-uuid))
+                  now (now-ms)
+                  fork-title (or title (str (:title current) " (fork)"))]
+              ;; Fresh INDEPENDENT session soul (claimed = a real conversation).
+              (execute! tx-info
+                        {:insert-into :session_soul
+                         :values [{:id new-soul-id
+                                   :channel (:channel src-soul)
+                                   :created_at now
+                                   :owner_id (or (:owner_id src-soul) "local")
+                                   :claimed_at now}]})
+              ;; Root state: version 0, no parent — the fork's own history.
+              (execute! tx-info
+                        {:insert-into :session_state
+                         :values [(cond->
+                                    {:id new-state-id
+                                     :session_soul_id new-soul-id
+                                     :parent_state_id nil
+                                     :workspace_id (->ref workspace-id)
+                                     :title fork-title
+                                     :version 0
+                                     :system_prompt (or (:system_prompt current) "")
+                                     :llm_root_model (or (:llm_root_model current) "")
+                                     :created_at now}
+                                    (:llm_root_provider current)
+                                    (assoc :llm_root_provider
+                                      (name (->kw (:llm_root_provider current)))))]})
+              ;; Deep-copy each source turn into the fork's root state.
+              (doseq [[idx turn] (map-indexed vector cut)]
+                (let [old-soul-s (->ref (:id turn))
+                      new-turn-soul-id (str (new-uuid))
+                      soul-row (query-one! tx-info
+                                           {:select [:*]
+                                            :from :session_turn_soul
+                                            :where [:= :id old-soul-s]})
+                      ts-row (query-one! tx-info
+                                         {:select [:*]
+                                          :from :session_turn_state
+                                          :where [:and
+                                                  [:= :session_turn_soul_id old-soul-s]
+                                                  [:= :version
+                                                   {:select [[[:max :version]]]
+                                                    :from :session_turn_state
+                                                    :where [:= :session_turn_soul_id old-soul-s]}]]})
+                      new-ts-id (str (new-uuid))
+                      iters (when ts-row
+                              (query! tx-info
+                                      {:select [:*]
+                                       :from :session_turn_iteration
+                                       :where [:= :session_turn_state_id (:id ts-row)]
+                                       :order-by [[:position :asc]]}))
+                      iter-id-map (into {} (map (fn [it] [(:id it) (str (new-uuid))]) iters))
+                      atts (query! tx-info
+                                   {:select [:*]
+                                    :from :session_attachment
+                                    :where [:= :session_turn_soul_id old-soul-s]})]
+                  (when soul-row
+                    (execute! tx-info
+                              {:insert-into :session_turn_soul
+                               :values [(assoc soul-row
+                                               :id new-turn-soul-id
+                                               :session_state_id new-state-id
+                                               :position (inc (long idx)))]}))
+                  (when ts-row
+                    (execute! tx-info
+                              {:insert-into :session_turn_state
+                               :values [(assoc ts-row
+                                               :id new-ts-id
+                                               :session_turn_soul_id new-turn-soul-id
+                                               :version 0
+                                               :forked_from_session_turn_state_id nil)]}))
+                  (doseq [it iters]
+                    (execute! tx-info
+                              {:insert-into :session_turn_iteration
+                               :values [(assoc it
+                                               :id (get iter-id-map (:id it))
+                                               :session_turn_state_id new-ts-id)]}))
+                  ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail
+                  ;; rows copy only when their iteration was copied (latest state), with
+                  ;; the iteration FK remapped. Skip tool rows from older versions.
+                  (doseq [a atts
+                          :let [it-id (:session_turn_iteration_id a)]
+                          :when (or (nil? it-id) (contains? iter-id-map it-id))]
+                    (execute! tx-info
+                              {:insert-into :session_attachment
+                               :values [(assoc a
+                                               :id (str (new-uuid))
+                                               :session_turn_soul_id new-turn-soul-id
+                                               :session_turn_iteration_id (some-> it-id iter-id-map))]}))))
+              new-state-id)))))))
+
 (defn- normalize-routing-event
   "THE one adapter between `event_json` (parsed with STRING keys — `<-json`
    never keywordizes) and the INTERNAL svar routing-event shape (keyword keys,

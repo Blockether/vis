@@ -267,7 +267,7 @@
       ;; endpoint for real.
       (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
       (some? (:api-key provider))
-      {:authenticated? true :source :config :config-path config/config-path}
+      {:authenticated? true :source :config :config-path config/state-path}
       registered (or (safe-provider-status registered) {:authenticated? false})
       :else {:authenticated? false})))
 
@@ -318,7 +318,7 @@
   "Placeholder status while a real probe runs in the background."
   [provider]
   (if (some? (:api-key provider))
-    {:authenticated? true :source :config :config-path config/config-path}
+    {:authenticated? true :source :config :config-path config/state-path}
     {:authenticated? nil :loading? true}))
 
 (defn initial-provider-limits

@@ -886,11 +886,18 @@ to a file to open in a browser. Most useful for OTHER sessions."
 
 (def
   ^{:doc
-    "await sessions()  # index of EVERY past conversation, newest-first
-Returns [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\", \"modified_at\"} ...],
+    "await sessions()  # newest-first index of EVERY past conversation
+Returns a list of metadata maps you filter in python_execution:
+    [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\", \"modified_at\"} ...]
 newest-first; `modified_at` is the latest turn's timestamp (falls back to `created_at` for
-empty sessions). Pass a channel keyword to filter. Take an id from here into
-session_state(id) to investigate that conversation."
+empty sessions). Pass a channel keyword to narrow to one channel. This is a METADATA-ONLY
+index — the content lives behind session_state(id). To find and read one session, pick its
+row off the maps, then hand the `id` on:
+    rows = await sessions()
+    hit  = next(r for r in rows if \"checkout\" in (r[\"title\"] or \"\").lower())
+    convo = await session_state(hit[\"id\"])  # the ONLY way to read full content
+Sort/filter on `title`/`channel`/`modified_at` to select the row — operate on the maps, do
+not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session you want)."
     :arglists '([] [channel])}
   sessions
   foundation-sessions)

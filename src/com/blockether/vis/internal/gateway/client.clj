@@ -695,6 +695,25 @@
                                      {:workspace_id workspace-id})
                          "workspace")))
 
+(defn create-draft!
+  "Create and enter a named draft for `sid` IN THE DAEMON. Any current draft is
+   stashed first. Pass `blank?` to start from an empty tree."
+  [sid label blank?]
+  (decode-workspace (get (send-json! "POST"
+                                     (str "/v1/sessions/" (enc sid) "/workspace/drafts")
+                                     {:label label :blank (boolean blank?)})
+                         "workspace")))
+
+(defn abandon-draft!
+  "Permanently abandon `workspace-id` IN THE DAEMON. The target may be current or
+   parked, but not pinned to another session."
+  [sid workspace-id reason]
+  (decode-workspace (get (send-json! "DELETE"
+                                     (str "/v1/sessions/" (enc sid)
+                                          "/workspace/drafts/" (enc workspace-id))
+                                     {:reason reason})
+                         "workspace")))
+
 (defn submit-turn!
   [sid opts]
   (let [res (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns") opts)]

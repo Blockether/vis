@@ -75,7 +75,7 @@ _registration = {'spec': None}
 
 def extension(name=None, description=None, version=None, kind=None, alias=None,
               activation=None, symbols=None, prompt=None, slash_commands=None,
-              op_hooks=None, ctx=None, providers=None):
+              op_hooks=None, ctx=None, providers=None, network_filters=None):
     if _registration['spec'] is not None:
         raise ValueError('vis.extension() may only be called once per file')
     if not name or not isinstance(name, str):
@@ -93,6 +93,7 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'slash_commands': list(slash_commands or []),
         'op_hooks': list(op_hooks or []), 'ctx': ctx,
         'providers': list(providers or []),
+        'network_filters': list(network_filters or []),
     }
 
 def symbol(fn, name=None, tag='observation', is_hidden=False):
@@ -131,6 +132,11 @@ def op_hook(ops, fn, phase='before'):
     if not ops:
         raise ValueError('vis.op_hook requires a non-empty ops list')
     return {'marker': 'op_hook', 'ops': ops, 'fn': fn, 'phase': phase}
+
+def network_filter(fn):
+    if not callable(fn):
+        raise ValueError('vis.network_filter(fn) requires a callable')
+    return {'marker': 'network_filter', 'fn': fn}
 
 def provider(id, label, preset=None, get_token_fn=None, detect_fn=None,
              status_fn=None, logout_fn=None, limits_fn=None, refresh_token_fn=None,
@@ -530,6 +536,41 @@ def __vis_registration__():
                       :data {:extension ext-name :op op-kw :error (ex-message t)}})))
     result))
 
+(defn- network-filter-adapter
+  "Python `vis.network_filter(fn)` -> a host egress network filter `(fn [ctx])`.
+   Fires at BOTH phases: the callable receives the decrypted request
+   `{'phase','method','host','path','headers'}` on the way out and the upstream
+   response `{'phase','method','host','path','status','headers'}` on the way back
+   (`'phase'` distinguishes them). Returning `vis.block(reason)` DENIES (a denied
+   response yields a 403 instead of the body), returning None allows it.
+   FAIL-CLOSED: a hook error DENIES (a security filter must never fail open)."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [c]
+    (let
+      [pyctx
+       (cond->
+         {"phase" (some-> (:phase c)
+                          name)
+          "method" (some-> (:method c)
+                           str)
+          "host" (:host c)
+          "path" (:path c)
+          "headers" (or (:headers c) {})}
+         (contains? c :status)
+         (assoc "status" (:status c)))
+
+       res
+       (try (call-py-ext ext-name nil ctx pyfn [pyctx])
+            (catch Throwable t
+              (tel/log! {:level :warn
+                         :id ::network-filter-failed
+                         :data {:extension ext-name :error (ex-message t)}})
+              {"marker" "block" "reason" (str "network filter error in '" ext-name "'")}))]
+
+      (if (and (map? res) (= "block" (get res "marker")))
+        {:allow? false :reason (str (or (get res "reason") "blocked by network filter"))}
+        {:allow? true}))))
+
 ;; =============================================================================
 ;; Registration dict -> extension spec
 ;; =============================================================================
@@ -928,7 +969,12 @@ def __vis_registration__():
      (get reg "activation")
 
      providers
-     (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))]
+     (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))
+
+     network-filters
+     (mapv (fn [rf]
+             (network-filter-adapter ext-name ctx (get rf "fn")))
+           (get reg "network_filters"))]
 
     (cond->
       {:ext/name ext-name
@@ -960,7 +1006,10 @@ def __vis_registration__():
       (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn))
 
       (seq providers)
-      (assoc :ext/providers providers))))
+      (assoc :ext/providers providers)
+
+      (seq network-filters)
+      (assoc :ext/network-filters network-filters))))
 
 ;; =============================================================================
 ;; Loader
@@ -1131,14 +1180,6 @@ def __vis_registration__():
              {:path path :sha sha :ext-name (:ext/name spec) :ext validated :context ctx}))
          (catch Throwable t (try (.close ctx true) (catch Throwable _)) (throw t)))))
 
-(defn- teardown!
-  "Deregister every loaded Python extension and close its context."
-  []
-  (doseq [[_ {:keys [ext-name ^Context context]}] @loaded]
-    (try (extension/deregister-extension! ext-name) (catch Throwable _))
-    (try (.close context true) (catch Throwable _)))
-  (reset! loaded {}))
-
 (declare register-loader-extension!)
 
 (defn load-python-extensions!
@@ -1169,36 +1210,76 @@ def __vis_registration__():
 
      (if (= fp @last-fingerprint)
        {:loaded (count @loaded) :failed (count @failures) :changed? false}
-       (let [old-names (set (map :ext-name (vals @loaded)))]
-         (teardown!)
-         (reset! failures [])
-         (doseq [^File f files]
-           (try (let [{:keys [path ext-name] :as entry} (load-file! f)]
-                  ;; A later file (project dir) registering the same
-                  ;; extension name supersedes the earlier one — the
-                  ;; registry already swapped the registration; close the
-                  ;; superseded context so its adapters can't linger.
-                  (doseq
-                    [[opath {oname :ext-name ^Context octx :context}] @loaded
-                     :when (and (= oname ext-name) (not= opath path))]
+       (let
+         [old-loaded
+          @loaded
 
-                    (try (.close octx true) (catch Throwable _))
-                    (swap! loaded dissoc opath))
-                  (swap! loaded assoc path (dissoc entry :path)))
-                (catch Throwable t
-                  (tel/log! {:level :warn
-                             :id ::load-failed
-                             :data {:file (str f) :error (ex-message t)}
-                             :msg (str "Python extension failed to load: " f " — " (ex-message t))})
-                  (swap! failures conj {:file (str f) :error (ex-message t)}))))
+          old-names
+          (set (map :ext-name (vals old-loaded)))
+
+          scanned
+          (set (map (fn [^File f]
+                      (.getCanonicalPath f))
+                    files))]
+
+         (reset! failures [])
+         ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
+         ;; (its PREVIOUS context is closed only after the new one is live); a
+         ;; file that FAILS keeps its last-good entry — still registered, context
+         ;; still open — untouched. So a failed reload never leaves the stale
+         ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
+         ;; context → "Context execution was cancelled", new symbols missing):
+         ;; the live surface holds the working last-good module wholesale.
+         ;; `vis doctor` (a fresh process, no last-good) and a live `/reload`
+         ;; run the SAME loader and diverge only in the fallback for a failed
+         ;; load — nothing to fall back to vs. the retained last-good.
+         (doseq [^File f files]
+           (let
+             [path (.getCanonicalPath f)
+              prev-ctx (get-in @loaded [path :context])]
+
+             (try (let [{:keys [ext-name] :as entry} (load-file! f)]
+                    ;; A later file (project dir) registering the same extension
+                    ;; name supersedes an earlier one at a DIFFERENT path — the
+                    ;; registry already swapped the registration; close the
+                    ;; superseded context so its adapters can't linger.
+                    (doseq
+                      [[opath {oname :ext-name ^Context octx :context}] @loaded
+                       :when (and (= oname ext-name) (not= opath path))]
+
+                      (try (.close octx true) (catch Throwable _))
+                      (swap! loaded dissoc opath))
+                    (swap! loaded assoc path (dissoc entry :path))
+                    (when prev-ctx (try (.close ^Context prev-ctx true) (catch Throwable _))))
+                  (catch Throwable t
+                    (tel/log! {:level :warn
+                               :id ::load-failed
+                               :data {:file (str f) :error (ex-message t)}
+                               :msg (str "Python extension failed to load: " f
+                                         " — " (ex-message t))})
+                    (swap! failures conj {:file (str f) :error (ex-message t)})))))
+         ;; Files that vanished from disk since the last scan (deleted / renamed)
+         ;; have no entry to retain — deregister and close so they don't linger.
+         (doseq
+           [[opath {:keys [ext-name] :as e}]
+            @loaded
+
+            :when (not (scanned opath))]
+
+           (try (extension/deregister-extension! ext-name) (catch Throwable _))
+           (try (.close ^Context (:context e) true) (catch Throwable _))
+           (swap! loaded dissoc opath))
          (reset! last-fingerprint fp)
          ;; Propagate to live surfaces (cached session envs, TUI slash
          ;; palette). Without this a /reload only updates the GLOBAL
          ;; registry: new extensions stay invisible to running sessions
          ;; and stale env rows keep calling into the closed contexts.
          (let
-           [entries (vals @loaded)
-            new-names (set (map :ext-name entries))]
+           [entries
+            (vals @loaded)
+
+            new-names
+            (set (map :ext-name entries))]
 
            (notify-change-listeners! {:extensions (vec (keep :ext entries))
                                       :removed (vec (sort (remove new-names old-names)))}))
@@ -1243,7 +1324,15 @@ def __vis_registration__():
     {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
      :slash/title
      (str "Reloaded — Python extensions: " loaded
-          " loaded" (when (pos? (long failed)) (str ", " failed " failed — see `vis doctor`"))
+          " loaded" (when (pos? (long failed))
+                      (str ", "
+                           failed
+                           " failed (last-good kept): "
+                           (str/join "; "
+                                     (map (fn [{:keys [file error]}]
+                                            (str (.getName (io/file ^String file)) " — " error))
+                                          (load-failures)))
+                           " — see `vis doctor`"))
           "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
           ", and context files rescanned" (when (seq failed-hooks)
                                             (str " — hook failures: "

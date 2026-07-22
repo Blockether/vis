@@ -63,7 +63,7 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 3980))
+      (expect (< (count text) 4440))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
@@ -77,12 +77,14 @@
           "runtime > source > docs > assumption"
           "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
           "`python_execution`" "`await gather(...)` independent calls"
+          "anything complicated" "stays retrievable as" "control exactly what enters context"
           "direct native tools for single operations" "Reading `session` is always live"
           "never probe merely to refresh it" "Before `repl_eval` or lifecycle changes"
           "`repl_start`" "after verification, stop only those you" "External REPLs are"
           "`find_files`" "`rg`" "`struct_index` for code structure" "batch" "independent reads"
           "Inspect dependencies before adding them" "benchmark/profile identical workloads"
-          "`struct_index`/`struct_patch`" "any write or `format` stales anchors" "re-read first"
+          "Prefer structural editing" "`struct_index`/`struct_patch`" "reach for it over text edits"
+          "structural ops cannot express" "`format` stales anchors" "re-read first"
           "spent edits/reads first" "Create no unrequested"
           "without asking permission or offering optional" "Never expose or log secrets"
           "commit, push, publish" "Before every `session_fold`" "read `session[\"turn\"]`"
@@ -96,7 +98,7 @@
           "3 failed attempts at the same operation" "end with one action under 2 minutes"
           "never offer a menu"]]
         (expect (str/includes? text required)))
-      (expect (= 1 (count (re-seq #"ntr\[tool_id\]" text))))
+      (expect (= 2 (count (re-seq #"ntr\[tool_id\]" text))))
       (doseq
         [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"

@@ -96,7 +96,7 @@
 (defdescribe
   provider-persistence-test
   "save-config! / load-config round-trip backing onboarding. The first-run
-   welcome and the provider manager BOTH write ~/.vis/config.edn so a connected
+   welcome and the provider manager BOTH write ~/.vis/state.yml so a connected
    provider survives a restart; adding a second provider must preserve the first
    and any unrelated global keys (e.g. :router). Isolated to a temp config dir."
   (it
@@ -116,9 +116,15 @@
            config/config-path
            cfg-path
 
-           ;; isolate from any real project-local .vis overlay
-           config/project-config-path
-           (constantly (str tmp "/none/.vis/config.edn"))]
+           config/state-path
+           (str tmp "/state.yml")
+
+           ;; isolate from any real project-local overlay / root YAML
+           config/project-config-yaml-paths
+           (constantly [(str tmp "/none/.vis/config.yml")])
+
+           config/project-root-yaml-paths
+           (constantly [])]
 
           ;; (0) genuine first run — nothing on disk
           (expect (config/first-run?))
@@ -165,40 +171,28 @@
                                 "providers" [{"id" "anthropic"
                                               "api_style" "anthropic"
                                               "llm-headers" {"X-Custom-Header" "v"}}]})))))
-  (it
-    "parses a vis.yml into the EDN shape; EDN wins when both formats exist"
-    (let
-      [read-yaml
-       @#'config/read-yaml-config-map
+  (it "parses a vis.yml into the EDN config shape"
+      (let
+        [read-yaml
+         @#'config/read-yaml-config-map
 
-       read-tier
-       @#'config/read-tier-config-map
+         dir
+         (io/file "target/config-yaml-test")
 
-       dir
-       (io/file "target/config-yaml-test")
+         yml
+         (io/file dir "vis.yml")]
 
-       yml
-       (io/file dir "vis.yml")
-
-       edn-f
-       (io/file dir "vis.edn")]
-
-      (try (.mkdirs dir)
-           (spit yml
-                 (str "system_prompt: Prefer RST.\n"
-                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
-           (expect (= {:system-prompt "Prefer RST."
-                       :search {:include-gitignored-paths ["repositories/"]}}
-                      (read-yaml (.getPath yml))))
-           ;; YAML-only tier reads the YAML file
-           (expect (= "Prefer RST." (:system-prompt (read-tier (.getPath edn-f) [(.getPath yml)]))))
-           ;; both present -> EDN wins, YAML ignored
-           (spit edn-f "{:system-prompt \"EDN WINS\"}")
-           (expect (= {:system-prompt "EDN WINS"} (read-tier (.getPath edn-f) [(.getPath yml)])))
-           ;; malformed YAML -> nil, same contract as malformed EDN
-           (spit yml "{{{{: not yaml")
-           (expect (nil? (read-yaml (.getPath yml))))
-           (finally (rm-rf! dir)))))
+        (try (.mkdirs dir)
+             (spit yml
+                   (str "system_prompt: Prefer RST.\n"
+                        "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+             (expect (= {:system-prompt "Prefer RST."
+                         :search {:include-gitignored-paths ["repositories/"]}}
+                        (read-yaml (.getPath yml))))
+             ;; malformed YAML -> nil
+             (spit yml "{{{{: not yaml")
+             (expect (nil? (read-yaml (.getPath yml))))
+             (finally (rm-rf! dir)))))
   (it "search-overlay: nil when unset, defaults guard includes, explicit list replaces"
       (expect (nil? (with-redefs
                       [config/load-config-raw (fn []
@@ -247,10 +241,7 @@
        (io/file dir "vis.yml")
 
        nested-yml
-       (io/file dir ".vis" "config.yml")
-
-       nested-edn
-       (io/file dir ".vis" "config.edn")]
+       (io/file dir ".vis" "config.yml")]
 
       (try (.mkdirs (io/file dir ".vis"))
            (.mkdirs gdir)
@@ -266,21 +257,16 @@
              [config/config-path
               (.getPath gedn)
 
+              config/state-path
+              (.getPath (io/file gdir "absent-state.yml"))
+
               config/global-config-yaml-paths
               (fn []
                 [(.getPath gyml)])
 
-              config/project-root-config-path
-              (fn []
-                (.getPath (io/file dir "vis.edn")))
-
               config/project-root-yaml-paths
               (fn []
                 [(.getPath root-yml)])
-
-              config/project-config-path
-              (fn []
-                (.getPath (io/file dir ".vis" "config.edn")))
 
               config/project-config-yaml-paths
               (fn []
@@ -293,11 +279,7 @@
                (expect (= ["repositories/"] (get-in cfg [:search :include-gitignored-paths])))
                (expect (= [:prov-a] (mapv :id (:providers cfg))))
                (expect (= 1.0 (get-in cfg [:router :budget :max-cost]))))
-             ;; a nested EDN twin shadows the nested YAML AND still beats root
-             (spit nested-edn "{:system-prompt \"FROM-NESTED-EDN\"}")
-             (expect (= "FROM-NESTED-EDN" (:system-prompt (config/load-config-raw))))
              ;; drop the nested overlay entirely -> root wins
-             (.delete nested-edn)
              (.delete nested-yml)
              (expect (= "FROM-ROOT" (:system-prompt (config/load-config-raw))))
              ;; drop root too -> the global YAML base shows through
@@ -329,20 +311,15 @@
              [config/config-path
               (.getPath gedn)
 
+              config/state-path
+              (.getPath (io/file dir "absent-state.yml"))
+
               config/global-config-yaml-paths
               (fn []
                 [(.getPath gyml)])
 
-              config/project-root-config-path
-              (fn []
-                (.getPath (io/file dir "vis.edn")))
-
               config/project-root-yaml-paths
               none
-
-              config/project-config-path
-              (fn []
-                (.getPath (io/file dir "absent.edn")))
 
               config/project-config-yaml-paths
               none]

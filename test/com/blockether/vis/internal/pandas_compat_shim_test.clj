@@ -20,7 +20,7 @@
              (it "publishes pandas under sys.modules"
                  (with-python-context
                    (expect (true? (ev python-context
-                                      "__import__('sys').modules.get('pandas') is not None")))))
+                                      "import pandas\n__import__('sys').modules.get('pandas') is not None")))))
              (it "autoloads pandas onto builtins (no import needed)"
                  (with-python-context (expect (true? (ev python-context
                                                          "pandas.Series([1,2,3]).sum() == 6")))))

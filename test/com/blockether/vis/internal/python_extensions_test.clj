@@ -373,6 +373,59 @@ vis.extension(
                        (fn [_]
                          :ran)))))))))
 
+(def ^:private filter-py
+  "import vis
+
+def _req(r):
+    if r['method'] == 'POST':
+        return vis.block('no posting to ' + r['host'])
+    return None
+
+def _resp(r):
+    if r['status'] == 403:
+        return vis.block('upstream 403')
+    return None
+
+vis.extension(
+    name='filt',
+    description='Egress filter fixture.',
+    kind='guard',
+    network_filters=[vis.network_filter(_req), vis.network_filter(_resp)],
+)
+")
+
+(defdescribe
+  egress-filter-test
+  (it "vis.network_filter registers host egress filters (request + response phases) that can block"
+      (with-loaded
+        {"filt.py" filter-py}
+        (fn [_ _]
+          (let
+            [ext
+             (registered "filt")
+
+             rf
+             (first (:ext/network-filters ext))
+
+             pf
+             (second (:ext/network-filters ext))]
+
+            (expect (some? rf))
+            (expect (some? pf))
+            ;; request filter: POST blocked with the reason, GET allowed
+            (let [d (rf {:phase :http :method "POST" :host "x.com" :path "/" :headers {}})]
+              (expect (false? (:allow? d)))
+              (expect (str/includes? (:reason d) "no posting to x.com")))
+            (expect (:allow? (rf {:phase :http :method "GET" :host "x.com" :path "/" :headers {}})))
+            ;; response filter: upstream 403 blocked, 200 allowed
+            (expect
+              (false?
+                (:allow?
+                  (pf {:phase :http-response :status 403 :host "x.com" :path "/" :headers {}}))))
+            (expect
+              (:allow?
+                (pf {:phase :http-response :status 200 :host "x.com" :path "/" :headers {}}))))))))
+
 ;; =============================================================================
 ;; Failure containment
 ;; =============================================================================
@@ -415,6 +468,21 @@ vis.extension(
                        (str/replace counter-py "Counter fixture extension." "Counter v2."))
                      (pyx/load-python-extensions! {:dirs [(str ext-dir)]})
                      (expect (= "Counter v2." (:ext/description (registered "counter")))))))
+  (it "a failed reload keeps the last-good module (never a stale old+dead mix) — #44"
+      (with-loaded
+        {"counter.py" counter-py}
+        (fn [_ {:keys [ext-dir]}]
+          (expect (= 0 (get-in ((symbol-fn (registered "counter") 'read)) [:result "count"])))
+          (write-ext! ext-dir "counter.py" (str "BOOM = _vis_undefined_ + 1\n" counter-py))
+          (let [result (pyx/load-python-extensions! {:dirs [(str ext-dir)]})]
+            (expect (= 1 (:loaded result)))
+            (expect (= 1 (:failed result)))
+            (expect (str/includes? (:error (first (pyx/load-failures))) "_vis_undefined_"))
+            (let [ext (registered "counter")]
+              (expect (some? ext))
+              (expect (= '[bump read boom]
+                         (mapv :ext.symbol/symbol (get-in ext [:ext/engine :ext.engine/symbols]))))
+              (expect (= 0 (get-in ((symbol-fn ext 'read)) [:result "count"]))))))))
   (it "change listeners see every (re)load and removal"
       (let [events (atom [])]
         (pyx/add-change-listener! ::test #(swap! events conj %))

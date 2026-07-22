@@ -1080,10 +1080,66 @@
     (throw (ex-info "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
                     {:type :ext.foundation.editing/invalid-cat-args :start start :end end}))))
 
+(defn- cat-range-scalar
+  "Coerce a range component to a 1-based long. Accepts an int or a numeric string
+   like \"1096\" (models routinely pass line numbers as strings); nil otherwise."
+  [x]
+  (cond (integer? x) (long x)
+        (and (string? x) (re-matches #"\s*\d+\s*" x)) (parse-long (str/trim x))
+        :else nil))
+
+(defn- cat-pair-items
+  "Split a range entry into its raw components, or nil when it is not pair-shaped.
+   Accepts a `[s e]` sequential or a comma-joined string `\"s, e\"`."
+  [pair]
+  (cond (and (string? pair) (str/includes? pair ","))
+        (mapv str/trim (str/split pair #","))
+        (sequential? pair) (vec pair)
+        :else nil))
+
+(defn- normalize-cat-pair
+  "Coerce one range entry to a `[start end]` long pair, or nil when it is not a
+   pair. Accepts `[s e]` with int OR numeric-string components, or a comma-joined
+   string `\"s, e\"` — the shapes a model produces when it forgets to nest/parse."
+  [pair]
+  (let [items (cat-pair-items pair)]
+    (when (= 2 (count items))
+      (let [nums (map cat-range-scalar items)]
+        (when (every? some? nums)
+          [(long (first nums)) (long (second nums))])))))
+
+(defn- cat-pair-error!
+  "Throw a specific error explaining exactly why `pair` is not a valid
+   `[start end]`, naming the offending non-numeric component(s)."
+  [pair]
+  (let [items (cat-pair-items pair)]
+    (cond
+      (nil? items)
+      (throw (ex-info (str "cat \"ranges\" entries must be [start, end] pairs, e.g. [10, 40] or \"10, 40\"; got " (pr-str pair))
+                      {:type :ext.foundation.editing/invalid-cat-args :range pair}))
+      (not= 2 (count items))
+      (throw (ex-info (str "cat range " (pr-str pair) " must have exactly 2 components (start, end), got " (count items))
+                      {:type :ext.foundation.editing/invalid-cat-args :range pair :count (count items)}))
+      :else
+      (let [bad (filterv #(nil? (cat-range-scalar %)) items)]
+        (throw (ex-info (str "cat range " (pr-str pair) " has non-numeric component(s) "
+                             (str/join ", " (map pr-str bad))
+                             " — start/end must be line numbers like 10 or \"10\", not variables/expressions")
+                        {:type :ext.foundation.editing/invalid-cat-args :range pair :invalid bad}))))))
+
 (defn- normalize-cat-ranges
   [ranges]
   (let
-    [pairs (cond (and (vector? ranges) (= 2 (count ranges)) (every? integer? ranges)) [ranges]
+    [flat (normalize-cat-pair ranges)
+
+     items (cat-pair-items ranges)
+     ;; a pair-shaped scalar (`\"1, x\"`) or flat vector of scalars (`[\"1\" \"x\"]`)
+     ;; that failed coercion — explain the bad component instead of the generic
+     ;; \"expects [[start, end], ...]\".
+     flat-attempt? (and items (= 2 (count items)) (not-any? sequential? items))
+
+     pairs (cond flat [flat]
+                 flat-attempt? (cat-pair-error! ranges)
                  (sequential? ranges) (vec ranges)
                  :else (throw (ex-info "cat \"ranges\" expects [[start, end], ...]"
                                        {:type :ext.foundation.editing/invalid-cat-args
@@ -1092,12 +1148,11 @@
       (throw (ex-info "cat \"ranges\" expects at least one range"
                       {:type :ext.foundation.editing/invalid-cat-args :ranges ranges})))
     (mapv (fn [pair]
-            (when-not (and (sequential? pair) (= 2 (count pair)))
-              (throw (ex-info "cat \"ranges\" entries must be [start, end] pairs"
-                              {:type :ext.foundation.editing/invalid-cat-args :range pair})))
-            (let [[start end] (vec pair)]
-              (validate-cat-range! start end)
-              [(long start) (long end)]))
+            (let [p (normalize-cat-pair pair)]
+              (when-not p
+                (cat-pair-error! pair))
+              (validate-cat-range! (first p) (second p))
+              p))
           pairs)))
 
 (defn- read-file
@@ -3197,14 +3252,44 @@
       (assoc "ranges" (mapv ->win (:ranges out))))))
 
 (defn- normalize-cat-anchor-option
-  "Accept the documented anchor shapes plus the common model mistake of passing
-  a JSON/EDN-looking anchor range as one quoted string."
+  "Accept the documented anchor shapes plus the common model mistakes: a
+  JSON/EDN-looking anchor range passed as one quoted string (`\"[H1, H2]\"`), or
+  TWO anchors comma-joined into one string (`\"H1, H2\"` / `\"9357, 9412\"`).
+  Both mistakes become the real `[from to]` vector the caller expects."
   [anchor]
-  (if (and (string? anchor) (str/starts-with? (str/trim anchor) "["))
-    (try (let [v (edn/read-string anchor)]
-           (if (vector? v) v anchor))
-         (catch Throwable _ anchor))
-    anchor))
+  (cond (and (string? anchor) (str/starts-with? (str/trim anchor) "["))
+        (try (let [v (edn/read-string anchor)]
+               (if (vector? v) v anchor))
+             (catch Throwable _ anchor))
+        (and (string? anchor) (str/includes? anchor ",")) (mapv str/trim (str/split anchor #","))
+        :else anchor))
+
+(defn- cat-anchor-line-number
+  "A bare LINE NUMBER behind a mis-passed `anchor` → its 1-based long, else nil.
+  Models routinely send a line number (the int `9357` or the string `\"9357\"`)
+  where a `lineno:hash` anchor belongs. A real anchor carries a `:` separator
+  (`\"9357:1a2\"`) and returns nil, so the caller falls through to the tolerant
+  hash-addressed read instead of choking on `:hashline-malformed`."
+  [x]
+  (cond (integer? x) (long x)
+        (and (string? x) (re-matches #"\s*\d+\s*" x)) (parse-long (str/trim x))
+        :else nil))
+
+(defn- cat-anchor->line-range
+  "Coerce a mis-passed line-number `anchor` into an inclusive 1-based `[start end]`
+  line range, or nil when ANY component is a real `lineno:hash` anchor. Accepts a
+  lone number/`\"N\"` (→ that single line) or a `[from to]` vector — the shape
+  `normalize-cat-anchor-option` yields for `[9357, 9412]` or `\"9357, 9412\"`."
+  [anc]
+  (let
+    [items
+     (if (vector? anc) anc [anc])
+
+     nums
+     (map cat-anchor-line-number items)]
+
+    (when (and (seq items) (<= (count items) 2) (every? some? nums))
+      [(long (first nums)) (long (last nums))])))
 
 (defn- cat-tool
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
@@ -3255,8 +3340,16 @@
                    tail
                    (get arg "tail")]
 
-                  (cond rng (cat-tool path :range (first rng) (second rng))
+                  (cond rng (let [[s e] (or (normalize-cat-pair rng)
+                                            (when (cat-pair-items rng) (cat-pair-error! rng))
+                                            rng)]
+                              (cat-tool path :range s e))
                         ranges (cat-tool path :ranges ranges)
+                        ;; A mis-passed line-number `anchor` (`9357`, `"9357"`,
+                        ;; `[9357, 9412]`, or `"9357, 9412"`) reads as a line
+                        ;; RANGE; real `lineno:hash` anchors fall through below.
+                        (cat-anchor->line-range anc) (let [[s e] (cat-anchor->line-range anc)]
+                                                       (cat-tool path :range s e))
                         (vector? anc) (cat-tool path :anchor (first anc) (second anc))
                         (some? anc) (cat-tool path :anchor anc)
                         (integer? tail) (cat-tool path :tail tail)

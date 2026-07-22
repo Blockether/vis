@@ -1,20 +1,21 @@
 (ns com.blockether.vis.internal.gateway.workspace-roundtrip-test
-  "END-TO-END guard for the filesystem-root add the TUI picker / web footer show.
+  "END-TO-END guards for gateway workspace management.
 
-   The gateway serves the workspace in THE canonical string-keyed wire shape
-   (`wire/canonical`) on BOTH transports, and `client/decode-workspace` passes
-   it through VERBATIM — one representation, no re-hydration. This exercises
-   the REAL chain a C-a keystroke drives — `workspace/add-filesystem-root!`
-   (server DB) → the `state/session-workspace-info` map shape → `wire/json-str`
-   (server encoder) → `wire/parse-json` (client decoder) → the REAL, private
-   `client/decode-workspace` — and asserts the added root arrives in the
-   canonical snake_case STRING-key shape every channel reads."
+   The gateway serves workspace data in THE canonical string-keyed wire shape
+   (`wire/canonical`) on every transport, and `client/decode-workspace` passes it
+   through VERBATIM — one representation, no re-hydration. These tests exercise
+   both wire projection and daemon-owned draft lifecycle operations."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
+            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.ext.workspace-rift]
             [com.blockether.vis.internal.gateway.client :as client]
+            [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.workspace :as ws]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]
+            [next.jdbc :as jdbc]))
 
 (def ^:private decode-workspace
   "The real, private client decoder — the seam under test."
@@ -35,6 +36,27 @@
   [root]
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
+
+(defn- pin-session!
+  [store workspace-id]
+  (let
+    [sid
+     (str (random-uuid))
+
+     state-id
+     (str (random-uuid))
+
+     ds
+     (:datasource store)]
+
+    (jdbc/execute! ds
+                   ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
+                    1])
+    (jdbc/execute!
+      ds
+      ["INSERT INTO session_state (id, session_soul_id, workspace_id, version, created_at) VALUES (?,?,?,?,?)"
+       state-id sid workspace-id 0 1])
+    {:sid sid :state-id state-id}))
 
 (defn- session-workspace-shape
   "The exact map `state/session-workspace-info` emits for a workspace."
@@ -161,3 +183,74 @@
       (expect (= [false true] (mapv #(get % "is_current") decoded)))
       (expect (every? #(nil? (get % "current?")) decoded))
       (expect (= ["/repo" "/repo"] (mapv #(get % "repo_root") decoded))))))
+
+(defdescribe
+  gateway-draft-manager-lifecycle-test
+  (it
+    "creates and abandons through daemon state while rejecting foreign-repo ids"
+    (with-store
+      (fn [store]
+        (let
+          [base
+           (temp-dir "vis-gateway-draft-base")
+
+           drafts-home
+           (temp-dir "vis-gateway-drafts")
+
+           foreign-root
+           (temp-dir "vis-gateway-foreign")]
+
+          (try
+            (spit (io/file base "seed.txt") "seed")
+            (let
+              [trunk
+               (ps/db-workspace-insert! store
+                                        {:repo-id "seed-repo"
+                                         :repo-root base
+                                         :root base
+                                         :workspace-kind :trunk
+                                         :workspace-backend :live
+                                         :state :active})
+
+               {:keys [sid state-id]}
+               (pin-session! store (:id trunk))
+
+               foreign
+               (ps/db-workspace-insert! store
+                                        {:repo-id "foreign-repo"
+                                         :repo-root foreign-root
+                                         :root (str foreign-root "/draft")
+                                         :workspace-kind :draft
+                                         :workspace-backend :rift
+                                         :state :active
+                                         :fork-ms 1
+                                         :apply-fork-ms 1})]
+
+              (binding [ws/*drafts-home* (io/file drafts-home)]
+                (with-redefs [lp/db-info (constantly store)]
+                  (let
+                    [created (state/create-draft! sid "picker-created" false)
+                     draft-id (get created "id")]
+
+                    (expect (true? (get created "is_draft")))
+                    (expect (= "picker-created" (get created "label")))
+                    (expect (= [draft-id] (mapv #(get % "workspace_id") (state/list-drafts sid))))
+                    (let [abandoned (state/abandon-draft! sid draft-id "picker cleanup")]
+                      (expect (false? (get abandoned "is_draft")))
+                      (expect (= :discarded (:state (ws/get store draft-id))))
+                      (expect (empty? (state/list-drafts sid))))
+                    (let
+                      [before (:id (ws/for-session store state-id))
+                       resume-error (try (state/resume-draft! sid (:id foreign))
+                                         nil
+                                         (catch clojure.lang.ExceptionInfo e (ex-data e)))
+                       abandon-error (try (state/abandon-draft! sid (:id foreign) "wrong repo")
+                                          nil
+                                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+
+                      (expect (= :workspace/draft-repo-mismatch (:type resume-error)))
+                      (expect (= :workspace/draft-repo-mismatch (:type abandon-error)))
+                      (expect (= before (:id (ws/for-session store state-id)))))))))
+            (finally (delete-tree! base)
+                     (delete-tree! drafts-home)
+                     (delete-tree! foreign-root))))))))

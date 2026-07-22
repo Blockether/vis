@@ -21,7 +21,7 @@
   (it "publishes zoneinfo/pytz/dateutil under sys.modules"
       (with-python-context
         (expect (true? (ev python-context
-                           (str "import sys\n"
+                           (str "import zoneinfo, pytz, dateutil, dateutil.parser\nimport sys\n"
                                 "all(sys.modules.get(m) is not None for m in "
                                 "['zoneinfo','pytz','dateutil','dateutil.parser'])"))))))
   (it "imports zoneinfo without the getcwd SecurityException the real module hits"

@@ -45,7 +45,7 @@ _rq.request = _fake
             (ev python-context
                 (str
                   fake
-                  "import sys\n"
+                  "import sys, urllib3\n"
                   "sys.modules['urllib3'] is urllib3 and urllib3.__version__.endswith('-vis')"))))))
   (it "exposes the urllib3.exceptions tree"
       (with-python-context

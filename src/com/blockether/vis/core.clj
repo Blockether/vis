@@ -162,7 +162,9 @@
              [gateway-change-root! gateway-client/change-root!]
              [gateway-list-drafts gateway-client/list-drafts]
              [gateway-stash-draft! gateway-client/stash-draft!]
-             [gateway-resume-draft! gateway-client/resume-draft!])
+             [gateway-resume-draft! gateway-client/resume-draft!]
+             [gateway-create-draft! gateway-client/create-draft!]
+             [gateway-abandon-draft! gateway-client/abandon-draft!])
 
 ;; =============================================================================
 ;; Cancellation
@@ -510,6 +512,7 @@
              [db-claim-session! persistance/db-claim-session!]
              [db-delete-session-tree! persistance/db-delete-session-tree!]
              [db-fork-session! persistance/db-fork-session!]
+             [db-fork-session-at-turn! persistance/db-fork-session-at-turn!]
              [db-list-session-states persistance/db-list-session-states]
              [db-latest-session-state-id persistance/db-latest-session-state-id])
 
@@ -619,6 +622,7 @@
              [init-cli! config/init-cli!]
              [shutdown! config/shutdown!]
              [config-path config/config-path]
+             [state-path config/state-path]
              [tty-in config/tty-in]
              [tty-out config/tty-out]
              [original-stdout config/original-stdout]

@@ -3813,7 +3813,7 @@
   (stdout! "  ▸ Run  vis  with no arguments to open the welcome screen and")
   (stdout! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
   (stdout! "    API key, or run a local model).")
-  (stdout! "  ▸ Or hand-write ~/.vis/config.edn.")
+  (stdout! "  ▸ Or hand-write ~/.vis/config.yml.")
   (stdout! "")
   (shutdown-agents)
   (System/exit 2))

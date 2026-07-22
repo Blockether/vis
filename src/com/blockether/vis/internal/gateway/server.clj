@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.toggles :as toggles]
             [reitit.ring :as rr]
@@ -1509,6 +1510,27 @@
              (error-response 409 (:type (ex-data e) :draft-resume-failed) (ex-message e)))))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- create-draft-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{:strs [label blank]} (body-json request)]
+      (try (json-response {:workspace (state/create-draft! sid label blank)})
+           (catch clojure.lang.ExceptionInfo e
+             (error-response 409 (:type (ex-data e) :draft-create-failed) (ex-message e)))))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- abandon-draft-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let
+      [workspace-id (get-in request [:path-params :workspace-id])
+       {reason "reason"} (body-json request)]
+
+      (try (json-response {:workspace (state/abandon-draft! sid workspace-id reason)})
+           (catch clojure.lang.ExceptionInfo e
+             (error-response 409 (:type (ex-data e) :draft-abandon-failed) (ex-message e)))))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- seq-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -1870,7 +1892,8 @@
         ["/sessions/:sid/workspace/roots"
          {:post add-filesystem-root-handler :delete remove-filesystem-root-handler}]
         ["/sessions/:sid/workspace/root" {:patch change-root-handler}]
-        ["/sessions/:sid/workspace/drafts" {:get drafts-handler}]
+        ["/sessions/:sid/workspace/drafts" {:get drafts-handler :post create-draft-handler}]
+        ["/sessions/:sid/workspace/drafts/:workspace-id" {:delete abandon-draft-handler}]
         ["/sessions/:sid/workspace/stash" {:post stash-draft-handler}]
         ["/sessions/:sid/workspace/resume" {:post resume-draft-handler}]
         ["/sessions/:sid/suggest" {:get suggest-handler}]
@@ -2141,6 +2164,9 @@
                            :managed? (boolean managed?)
                            :started-at-ms (System/currentTimeMillis)
                            :saw-client? false})
+     ;; The gateway's own control-plane port is reserved so a jailed child can NEVER reach
+     ;; it through the proxy, even though loopback egress is allowed by default (SSRF floor).
+     (try (gateway-sandbox/set-reserved-ports! [port]) (catch Throwable _ nil))
      (try (discovery/register-self! db {:port port :host host :secret token})
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))

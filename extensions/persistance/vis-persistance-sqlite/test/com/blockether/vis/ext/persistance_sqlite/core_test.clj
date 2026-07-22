@@ -1172,6 +1172,26 @@
         (h/fork-session! s cid {})
         (expect (= 2 (:version (vis/db-get-session s cid))))
         (expect (= 3 (raw-count s :session_state)))))
+  (it "fork-at-turn copies turns THROUGH the pick into a NEW independent session, source intact"
+      (let [s (h/store)
+            cid (h/store-session! s {:channel :tui :title "Src"})
+            _t1 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+            t2 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q2" :status :done})
+            _t3 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q3" :status :done})
+            fork-state (h/fork-session-at-turn! s cid {:through-turn-id t2 :title "Forked"})
+            fork-turns (h/raw-query s {:select [:user_request]
+                                      :from :session_turn_soul
+                                      :where [:= :session_state_id (str fork-state)]
+                                      :order-by [[:position :asc]]})]
+        ;; SOURCE keeps all three turns — untouched.
+        (expect (= ["Q1" "Q2" "Q3"] (mapv :user-request (vis/db-list-session-turns s cid))))
+        ;; FORK got exactly the first two, in order.
+        (expect (= ["Q1" "Q2"] (mapv :user_request fork-turns)))
+        ;; It is a brand-new session soul (a fresh state id, not the source soul).
+        (expect (some? fork-state))
+        (expect (not= (str fork-state) (str cid)))
+        ;; Unknown pick ⇒ nil, nothing copied.
+        (expect (nil? (h/fork-session-at-turn! s cid {:through-turn-id (random-uuid)})))))
   (it "returns nil instead of throwing when there is no state to fork"
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))

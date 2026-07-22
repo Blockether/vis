@@ -21,7 +21,7 @@
   pil-module-test
   (it "publishes PIL + PIL.Image under sys.modules"
       (with-python-context
-        (expect (true? (ev python-context "__import__('sys').modules.get('PIL') is not None")))
+        (expect (true? (ev python-context "import PIL.Image\n__import__('sys').modules.get('PIL') is not None")))
         (expect (true? (ev python-context
                            "__import__('sys').modules.get('PIL.Image') is not None")))))
   (it "autoloads PIL onto builtins (no import needed)"

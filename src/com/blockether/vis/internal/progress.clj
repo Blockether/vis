@@ -343,20 +343,22 @@
     :response-parse
     (if (= :done (:status chunk))
       (-> entry
-          (dissoc :content-stream)
+          (dissoc :content-stream :error)
           (assoc :activity nil
                  :response-parse chunk))
-      (assoc entry
-        :activity :response-parse
-        :response-parse chunk))
+      (-> entry
+          (assoc :activity :response-parse
+                 :response-parse chunk)
+          (dissoc :error)))
 
     :reasoning
     (let
       [next-thinking (or (normalize-thinking-text (:thinking chunk))
                          (normalize-thinking-text (:thinking entry)))]
-      (assoc entry
-        :thinking next-thinking
-        :activity nil))
+      (-> entry
+          (assoc :thinking next-thinking
+                 :activity nil)
+          (dissoc :error)))
 
     :content
     ;; Provider content stream (answer Markdown) — kept on entry as
@@ -364,9 +366,10 @@
     ;; reasoning text. Cleared by :response-parse :done and
     ;; :iteration-final once the parsed block takes over.
     (let [next-content (or (normalize-thinking-text (:content chunk)) (:content-stream entry))]
-      (assoc entry
-        :content-stream next-content
-        :activity nil))
+      (-> entry
+          (assoc :content-stream next-content
+                 :activity nil)
+          (dissoc :error)))
 
     :assistant-prose
     ;; Full end-of-iteration commentary (the "prose beyond the code"). The loop
@@ -398,7 +401,9 @@
     ;; provider call before any code eval, so rewind the live attempt: drop
     ;; stale reasoning/content/parse state and keep only the retry recap.
     (-> entry
-        (assoc :activity :provider-call)
+        (assoc :activity :provider-call
+               :error (merge (when (map? (:error chunk)) (:error chunk))
+                             (select-keys chunk [:attempt :max-retries :delay-ms])))
         (dissoc :thinking :content-stream :response-parse)
         (update :provider-fallbacks
                 conj

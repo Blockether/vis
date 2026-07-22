@@ -500,6 +500,34 @@
         (expect (= {:phase :provider-call :iteration 1}
                    (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))))
 
+(defdescribe provider-retry-event-chunk-test
+             (let [g->c @#'chat/gateway-event->chunk]
+               (it "rehydrates structured retry metadata from the canonical wire event"
+                   (let
+                     [event (wire/canonical {:type "provider.retry"
+                                             :iteration 2
+                                             :attempt 1
+                                             :max-retries 3
+                                             :delay-ms 1000
+                                             :error {:type :svar.llm/provider-unavailable
+                                                     :message "Provider unavailable"}
+                                             :event {:event/type :llm.routing/provider-retry
+                                                     :reason :provider-unavailable
+                                                     :provider "openai"
+                                                     :model "gpt-x"}})
+                      chunk (g->c event)]
+
+                     (expect (= :provider-retry-reset (:phase chunk)))
+                     (expect (= 2 (:iteration chunk)))
+                     (expect (= {:type :svar.llm/provider-unavailable
+                                 :message "Provider unavailable"
+                                 :attempt 1
+                                 :max-retries 3
+                                 :delay-ms 1000}
+                                (:error chunk)))
+                     (expect (= :provider-unavailable (get-in chunk [:event :reason])))
+                     (expect (= "openai" (get-in chunk [:event :provider])))))))
+
 (defdescribe
   restore-block-record-test
   ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
@@ -626,3 +654,19 @@
                    (:session-id (g->c {"type" "session.title_updated"
                                        "session_id" "other-session"
                                        "title" "X"})))))))
+
+(it "rehydrates a structured iteration error for the transient retry row"
+    (let
+      [g->c
+       @#'chat/gateway-event->chunk
+
+       chunk
+       (g->c (wire/canonical
+               {:type "iteration.error"
+                :iteration 3
+                :error "upstream reset"
+                :error-data {:type :svar.core/http-error :message "upstream reset" :status 503}}))]
+
+      (expect (= :iteration-error (:phase chunk)))
+      (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}
+                 (:error chunk)))))

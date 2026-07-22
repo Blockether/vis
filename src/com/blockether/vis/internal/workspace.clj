@@ -992,9 +992,11 @@
 
 (defn exit-to-trunk!
   "Repoint `session-state-id` back to a TRUNK workspace (the real cwd),
-   leaving any draft. Returns the trunk workspace now pinned."
-  [db-info session-state-id]
-  (insert-trunk! db-info session-state-id))
+   leaving any draft. Returns the trunk workspace now pinned. The three-argument
+   arity preserves an explicit repo root when the session was opened away from
+   the process launch directory."
+  ([db-info session-state-id] (insert-trunk! db-info session-state-id))
+  ([db-info session-state-id root] (insert-trunk! db-info session-state-id root)))
 
 (defn list-drafts
   "Active DRAFTS for `repo-id`, newest first — the parked/stashable drafts a
@@ -1009,7 +1011,8 @@
    while LEAVING the draft row `:active` and its clone on disk intact, so it can
    be resumed later. This is the non-destructive twin of `abandon!` — nothing is
    discarded. Returns `{:draft <stashed-draft-or-nil> :trunk <trunk-ws>}`; on
-   trunk `:draft` is nil and this just ensures a trunk pin."
+   trunk `:draft` is nil and this just ensures a trunk pin. The draft's own
+   `:repo-root` is preserved for sessions opened away from the launch directory."
   [db-info session-state-id]
   (let
     [current
@@ -1018,25 +1021,41 @@
      stashed
      (when (draft? current) current)
 
+     trunk-root
+     (or (:repo-root current) (:root current) (trunk-root))
+
      trunk
-     (exit-to-trunk! db-info session-state-id)]
+     (exit-to-trunk! db-info session-state-id trunk-root)]
 
     {:draft stashed :trunk trunk}))
 
 (defn resume!
   "Re-enter a previously stashed DRAFT: pin `session-state-id` to `workspace-id`,
-   which MUST be an `:active` draft not currently pinned to another session. The
-   session must already have left any draft (be on trunk) — a stash/apply/abandon
-   precedes a resume. Returns the draft workspace now pinned. Throws `ex-info`
-   with a `:type` on any precondition failure."
+   which MUST be an `:active` draft from the session's current repo and not
+   currently pinned to another session. The session must already have left any
+   draft (be on trunk) — a stash/apply/abandon precedes a resume. Returns the
+   draft workspace now pinned. Throws `ex-info` with a `:type` on any precondition
+   failure."
   [db-info {:keys [session-state-id workspace-id]}]
-  (let [ws (get db-info workspace-id)]
+  (let
+    [ws
+     (get db-info workspace-id)
+
+     current
+     (for-session db-info session-state-id)]
+
     (when-not (draft? ws)
       (throw (ex-info "Not a resumable draft"
                       {:type :workspace/not-a-draft :workspace-id workspace-id})))
     (when (not= :active (:state ws))
       (throw (ex-info "Draft is no longer active"
                       {:type :workspace/draft-inactive :workspace-id workspace-id})))
+    (when (and current (not= (:repo-id current) (:repo-id ws)))
+      (throw (ex-info "Draft belongs to a different repository"
+                      {:type :workspace/draft-repo-mismatch
+                       :workspace-id workspace-id
+                       :repo-id (:repo-id current)
+                       :draft-repo-id (:repo-id ws)})))
     (let
       [pinned-elsewhere (remove #(= (str session-state-id) (str (:id %)))
                           (p/db-session-state-list-for-workspace db-info workspace-id))]

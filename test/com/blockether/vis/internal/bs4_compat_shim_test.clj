@@ -34,7 +34,7 @@
   (it "publishes bs4 + bs4.element under sys.modules"
       (with-python-context (expect (true?
                                      (ev python-context
-                                         (str "import sys\n"
+                                         (str "import bs4\nimport sys\n"
                                               "sys.modules.get('bs4') is not None "
                                               "and sys.modules.get('bs4.element') is not None"))))))
   (it "autoloads BeautifulSoup onto builtins (no import needed)"

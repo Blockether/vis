@@ -9,8 +9,7 @@
    Public surface used by the loop:
 
      create-python-context / set-python-binding! / bind-and-bump! /
-     bind-and-bump-with-doc! / push-eval-result! / push-eval-error! /
-     reset-eval-bindings! / count-top-level-forms / validate-non-empty-block! /
+     bind-and-bump-with-doc! / count-top-level-forms / validate-non-empty-block! /
      validate-no-banned-defs! / restore-sandbox! / SYSTEM_VAR_NAMES /
      system-var-sym? / *lru-atom* / *current-turn-position* / fresh-lru-atom /
      run-python-block / map-polyglot-error / bind-ctx! / ctx->python-str
@@ -1409,41 +1408,6 @@ def __vis_native_result_scan__(__vis_tree__):
            "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__")
     nil))
 
-(defn push-eval-result!
-  "REPL-style stack push for the sandbox `_1 _2 _3` recovery slots. Python
-   convention is `_`, but we use `_1/_2/_3` to match the engine's three-deep
-   history."
-  [env value]
-  (let
-    [python-context
-     (:python-context env)
-
-     g
-     (python-globals python-context)
-
-     v1
-     (.getMember g "_1")
-
-     v2
-     (.getMember g "_2")]
-
-    (.putMember g "_3" v2)
-    (.putMember g "_2" v1)
-    (.putMember g "_1" (->py value))))
-
-(defn push-eval-error!
-  "Park the most recent uncaught error in the sandbox `_e` slot. The `_1/_2/_3`
-   value stack does NOT advance on error."
-  [env throwable]
-  (let [g (python-globals (:python-context env))]
-    (.putMember g "_e" (str throwable))))
-
-(defn reset-eval-bindings!
-  "Clear `_1 _2 _3 _e` at turn start so a follow-up turn doesn't see leftovers."
-  [env]
-  (let [g (python-globals (:python-context env))]
-    (doseq [s ["_1" "_2" "_3" "_e"]]
-      (.putMember g s nil))))
 
 ;; =============================================================================
 ;; Python sandbox context creation
@@ -1877,6 +1841,56 @@ __vis_install_posix_compat__()
 del __vis_install_posix_compat__
 ")
 
+(def ^:private posix-lazy-init-python
+  "Eager, tiny LAZY installer for the POSIX-compat bridge. Registers a
+   `subprocess` meta_path finder + `os.system`/`os.popen` thunks that DEFER the
+   ~95ms `posix-compat-shim-src` body until the FIRST `import subprocess` /
+   `os.system` / `os.popen`, so a session that never shells out never pays it.
+   `__vis_load_posix__` is the host callback that eval's the real body, once."
+  "def __vis_posix_lazy__():
+    import sys as _sys
+    import os as _os
+    import importlib.util as _u
+    _st = {'done': False}
+    def _ensure():
+        if _st['done']:
+            return
+        _st['done'] = True
+        try:
+            __vis_load_posix__()
+        except Exception:
+            pass
+    class _PosixPreloaded:
+        def __init__(self, m):
+            self._m = m
+        def create_module(self, spec):
+            return self._m
+        def exec_module(self, module):
+            pass
+    class _PosixFinder:
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname != 'subprocess':
+                return None
+            _ensure()
+            m = _sys.modules.get('subprocess')
+            if m is None:
+                return None
+            return _u.spec_from_loader(fullname, _PosixPreloaded(m))
+    _sys.meta_path.insert(0, _PosixFinder())
+    def _mk(nm):
+        def _thunk(*a, **k):
+            _ensure()
+            return getattr(_os, nm)(*a, **k)
+        return _thunk
+    try:
+        _os.system = _mk('system')
+        _os.popen = _mk('popen')
+    except Exception:
+        pass
+__vis_posix_lazy__()
+del __vis_posix_lazy__
+")
+
 (def AUTO_IMPORTED_PYTHON_NAMES
   "Python names installed into builtins for every `python_execution` context.
    This is the model-facing inventory; keep it synchronized with
@@ -1885,54 +1899,79 @@ del __vis_install_posix_compat__
    "base64" "math" "socket" "builtins"])
 
 (def ^:private auto-imports-python
-  "Install tiny convenience imports into Python builtins so agents can use them
-   without repeating imports in every run_python block."
-  "import builtins as __vis_builtins__
-import json as __vis_json__
-import shlex as __vis_shlex__
-import re as __vis_re__
-import hashlib as __vis_hashlib__
-import glob as __vis_glob__
-import os as __vis_os__
-import sys as __vis_sys__
-import collections as __vis_collections__
-import pathlib as __vis_pathlib__
-import textwrap as __vis_textwrap__
-import base64 as __vis_base64__
-import math as __vis_math__
-import socket as __vis_socket__
-__vis_builtins__.json = __vis_json__
-__vis_builtins__.shlex = __vis_shlex__
-__vis_builtins__.re = __vis_re__
-__vis_builtins__.hashlib = __vis_hashlib__
-__vis_builtins__.glob = __vis_glob__
-__vis_builtins__.os = __vis_os__
-__vis_builtins__.sys = __vis_sys__
-__vis_builtins__.collections = __vis_collections__
-__vis_builtins__.pathlib = __vis_pathlib__
-__vis_builtins__.Path = __vis_pathlib__.Path
-__vis_builtins__.textwrap = __vis_textwrap__
-__vis_builtins__.base64 = __vis_base64__
-__vis_builtins__.math = __vis_math__
-__vis_builtins__.socket = __vis_socket__
-__vis_builtins__.builtins = __vis_builtins__
-del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__, __vis_math__, __vis_socket__
+  "Install tiny convenience imports as Python builtins so agents can use them
+   without repeating imports in every run_python block. os/sys/json/re (plus the
+   builtins self-ref) are bound EAGERLY - they are cheap, load anyway via engine
+   internals, and are the hottest names. Every OTHER name is a `_LazyStd` proxy
+   on builtins: the real stdlib module is imported on the FIRST bare touch
+   (`hashlib.md5(...)`, `Path(...)`, `socket.socket(...)`, ...) and then REPLACES
+   the proxy, so a session that never touches base64/textwrap/socket/... never
+   pays their import at context build OR at every `sub_loop` fork. An explicit
+   `import <name>` always works too (normal stdlib path). The model-facing
+   inventory is unchanged - see `AUTO_IMPORTED_PYTHON_NAMES`."
+  "def __vis_auto_imports__():
+    import builtins as _b
+    import importlib as _il
+    import json as _json, re as _re, os as _os, sys as _sys
+    _b.json = _json; _b.re = _re; _b.os = _os; _b.sys = _sys
+    _b.builtins = _b
+    class _LazyStd:
+        def __init__(self, bind, mod, attr):
+            object.__setattr__(self, '_bind', bind)
+            object.__setattr__(self, '_mod', mod)
+            object.__setattr__(self, '_attr', attr)
+        def _resolve(self):
+            bind = object.__getattribute__(self, '_bind')
+            m = _il.import_module(object.__getattribute__(self, '_mod'))
+            attr = object.__getattribute__(self, '_attr')
+            val = getattr(m, attr) if attr else m
+            setattr(_b, bind, val)
+            return val
+        def __getattr__(self, k):
+            return getattr(_LazyStd._resolve(self), k)
+        def __call__(self, *a, **k):
+            return _LazyStd._resolve(self)(*a, **k)
+    for bind, mod, attr in (
+        ('shlex', 'shlex', None),
+        ('hashlib', 'hashlib', None),
+        ('glob', 'glob', None),
+        ('collections', 'collections', None),
+        ('pathlib', 'pathlib', None),
+        ('Path', 'pathlib', 'Path'),
+        ('textwrap', 'textwrap', None),
+        ('base64', 'base64', None),
+        ('math', 'math', None),
+        ('socket', 'socket', None),
+    ):
+        setattr(_b, bind, _LazyStd(bind, mod, attr))
+__vis_auto_imports__()
+del __vis_auto_imports__
 ")
 
 (defn- install-auto-imports!
   "Make selected stdlib modules available as builtin names in every sandbox.
-   Keep this list deliberately tiny: only modules that are safe, pure, and
-   repeatedly useful in agent glue code belong here."
+   os/sys/json/re are eager; the rest are lazy proxies materialized on first
+   touch. Keep the inventory tiny: only safe, pure, repeatedly-useful glue."
   [^Context ctx]
   (try (.eval ctx "python" ^String auto-imports-python) (catch Throwable _ nil)))
 
 (defn- install-posix-compat-shim!
-  "Eval the POSIX-compat shim into `ctx`. Best-effort: a failure here just
-   leaves the sandbox without the bridge (subprocess stays unavailable), it must
-   never break context creation."
-  [^Context ctx]
+  "Install the POSIX-compat bridge LAZILY. Instead of eval'ing the ~95ms shim
+   body into every context (main + every `sub_loop` fork), wire the host loader
+   `__vis_load_posix__` and eval the tiny `posix-lazy-init-python` stubs (a
+   `subprocess` meta_path finder + `os.system`/`os.popen` thunks) that DEFER the
+   body until the first `import subprocess` / `os.system` / `os.popen`. A session
+   that never shells out never pays it. Best-effort: a failure leaves the sandbox
+   without the bridge, it must never break context creation."
+  [^Context ctx ^Value g]
   (when-let [src posix-compat-shim-src]
-    (try (.eval ctx "python" ^String src) (catch Throwable _ nil))))
+    (try (.putMember g
+                     "__vis_load_posix__"
+                     (wrap-ifn (fn []
+                                 (.eval ctx "python" ^String src)
+                                 nil)))
+         (.eval ctx "python" ^String posix-lazy-init-python)
+         (catch Throwable _ nil))))
 
 (defn- registered-sandbox-shims
   "The Python sandbox SHIMS contributed by the extension registry
@@ -1944,39 +1983,374 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
          (vec (f)))
        (catch Throwable _ nil)))
 
-(defn- install-sandbox-shim!
-  "Install ONE extension-contributed shim into `ctx`: wire its host
-   `:shim/bindings` (a `{py-name -> fn}` map, or a 0-arg fn returning one) onto
-   the sandbox globals `g` as Python callables, then eval its `:shim/preamble`
-   (a string, or a 0-arg fn returning one) to publish the module. Best-effort:
-   a failure in one shim leaves the sandbox without that module but must never
-   break context creation, nor stop later shims from installing."
-  [^Context ctx ^Value g shim]
+(def ^:private lazy-shim-runtime-python
+  "Central LAZY-SHIM runtime installed once per Context, BEFORE the shims.
+   Instead of eagerly eval'ing every shim preamble (which materializes each
+   module's whole live object graph - numpy/pandas/PIL/... - into THIS context,
+   the fat per-session baseline), we register only a tiny trigger table and
+   defer each preamble eval until the FIRST touch:
+     * `import <name>` - served by a PREPENDED `sys.meta_path` finder (prepended
+       so a shim can still shadow a stdlib name, e.g. `zoneinfo`), or
+     * a no-import bare `<name>.attr` / `<name>(...)` - served by a `builtins`
+       proxy staged under each autoload name.
+   The heavy module is then built exactly once per context, on demand; a session
+   that never touches numpy never pays numpy's heap. `__vis_load_shim__` is the
+   host callback that eval's the matching preamble source into this ctx."
+  "def __vis_init_lazy__():
+    import sys as _sys
+    import builtins as _b
+    import importlib.util as _u
+    reg = {}
+    loading = set()
+    loaded = set()
+    def _load(sid):
+        if sid in loaded or sid in loading:
+            return
+        loading.add(sid)
+        try:
+            __vis_load_shim__(sid)
+            loaded.add(sid)
+        finally:
+            loading.discard(sid)
+    class _Preloaded:
+        def __init__(self, m):
+            self._m = m
+        def create_module(self, spec):
+            return self._m
+        def exec_module(self, module):
+            pass
+    class _Finder:
+        def find_spec(self, fullname, path=None, target=None):
+            try:
+                sid = reg.get(fullname)
+                if sid is None:
+                    sid = reg.get(fullname.split('.')[0])
+                if sid is None:
+                    return None
+                _load(sid)
+                m = _sys.modules.get(fullname)
+                if m is None:
+                    return None
+                return _u.spec_from_loader(fullname, _Preloaded(m))
+            except Exception:
+                return None
+    class _Lazy:
+        def __init__(self, sid, name):
+            object.__setattr__(self, '_sid', sid)
+            object.__setattr__(self, '_name', name)
+        def _resolve(self):
+            _load(object.__getattribute__(self, '_sid'))
+            real = getattr(_b, object.__getattribute__(self, '_name'), None)
+            if real is None or real is self:
+                raise AttributeError(object.__getattribute__(self, '_name'))
+            return real
+        def __getattr__(self, k):
+            return getattr(_Lazy._resolve(self), k)
+        def __call__(self, *a, **k):
+            return _Lazy._resolve(self)(*a, **k)
+    def register(spec_json):
+        import json as _j
+        spec = _j.loads(spec_json)
+        sid = spec['sid']
+        for n in (spec.get('provides') or []):
+            reg[n] = sid
+        for n in (spec.get('autoload') or []):
+            setattr(_b, n, _Lazy(sid, n))
+    _sys.meta_path.insert(0, _Finder())
+    return register
+__vis_register_lazy_shim__ = __vis_init_lazy__()
+del __vis_init_lazy__
+")
+
+(defn- shim-preamble-src
+  "Resolve a shim's `:shim/preamble` (a string, or a 0-arg fn returning one)."
+  [shim]
+  (let [p (:shim/preamble shim)]
+    (if (fn? p) (p) p)))
+
+(defn- wire-shim-bindings!
+  "Wire a shim's host `:shim/bindings` (`{py-name -> fn}`, or a 0-arg fn -> one)
+   onto the sandbox globals `g` as Python callables. Cheap (proxies only) and
+   done EAGERLY even for lazy shims, so a deferred preamble finds them at load."
+  [^Value g shim]
+  (let
+    [b
+     (:shim/bindings shim)
+
+     bindings
+     (if (fn? b) (b) b)]
+
+    (doseq [[nm f] bindings]
+      (.putMember g ^String nm (wrap-ifn f)))))
+
+(defn- sha256-hex
+  "Lowercase-hex SHA-256 of `s` (UTF-8) - the cache key over all preamble sources."
+  ^String [^String s]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
+    (->> (.digest md (.getBytes s "UTF-8"))
+         (map #(format "%02x" (bit-and (int %) 0xff)))
+         (apply str))))
+
+(def ^:private shim-triggers-cache-file
+  ;; Persistent trigger-map cache: `~/.vis/cache/shim-triggers.json`. Holds a
+  ;; hash-keyed SET of trigger maps (newest first, capped) so a multi-project
+  ;; user alternating folders with DIFFERENT shim sets keeps each set warm
+  ;; instead of thrashing one slot. Each set self-invalidates on preamble change.
+  (delay (io/file (System/getProperty "user.home") ".vis" "cache" "shim-triggers.json")))
+
+(def ^:private shim-triggers-cache-max
+  ;; Keep at most this many distinct shim-sets (disk + memo). Bounds a user who
+  ;; churns extensions; an evicted set just re-captures (~0.5s) or re-reads (~0.6ms).
+  8)
+
+(defonce ^:private shim-triggers-memo
+  ;; Process-wide LRU memo: a newest-first VECTOR of `{:h hash :m trigger-map}`,
+  ;; so the capture probe runs at most ONCE per process per shim-set (never per
+  ;; Context / sub_loop fork). Bounded to `shim-triggers-cache-max` with TRUE
+  ;; move-to-front eviction, mirroring the disk cache (a >max churner drops only
+  ;; the OLDEST set, never the whole memo).
+  (atom []))
+
+(defn- shim-entries-hash
+  "Content hash over every string-preamble shim (sorted by name), so the trigger
+   map is recomputed only when a preamble's SOURCE (or the shim set) changes."
+  ^String [entries]
+  (sha256-hex (->> entries
+                   (filter #(string? (:src %)))
+                   (sort-by :sid)
+                   (map (fn [{:keys [sid src]}]
+                          (str sid "\u0000" src)))
+                   (str/join "\u0001"))))
+
+(defn- decode-trigger-map
+  "JSON object -> `{sid {:provides [...] :autoload [...]}}`."
+  [m]
+  (reduce-kv (fn [acc sid v]
+               (assoc acc
+                 sid {:provides (vec (get v "provides")) :autoload (vec (get v "autoload"))}))
+             {}
+             m))
+
+(defn- encode-trigger-map
+  "`{sid {:provides [...] :autoload [...]}}` -> JSON-ready object."
+  [m]
+  (reduce-kv (fn [o sid v]
+               (assoc o sid {"provides" (:provides v) "autoload" (:autoload v)}))
+             {}
+             m))
+
+(defn- read-cache-entries
+  "On-disk entry list `[{\"hash\" h \"map\" {...}} ...]` (newest first), or nil
+   when missing / unreadable / legacy single-slot format."
+  []
+  (try (let [f ^java.io.File @shim-triggers-cache-file]
+         (when (.exists f) (get (json/read-json (slurp f)) "entries")))
+       (catch Throwable _ nil)))
+
+(defn- read-shim-triggers-cache
+  "Read the disk trigger map matching `expected-hash`; nil otherwise (missing /
+   stale / unreadable). JSON, so no extra reader deps."
+  [expected-hash]
+  (some (fn [e]
+          (when (= (get e "hash") expected-hash) (decode-trigger-map (get e "map"))))
+        (read-cache-entries)))
+
+(defn- write-shim-triggers-cache!
+  "Best-effort persist of the trigger map under `expected-hash`, moved to FRONT
+   of a capped, hash-keyed set (multi-project safe). Never throws."
+  [expected-hash m]
   (try (let
-         [bindings (let [b (:shim/bindings shim)]
-                     (if (fn? b) (b) b))]
-         (doseq [[nm f] bindings]
-           (.putMember g ^String nm (wrap-ifn f))))
-       (when-let
-         [src (let [p (:shim/preamble shim)]
-                (if (fn? p) (p) p))]
-         (.eval ctx "python" ^String src))
-       (catch Throwable t
-         (tel/log! {:level :warn :id ::sandbox-shim-install-failed}
-                   (str "sandbox shim '" (:shim/name shim)
-                        "' failed to install: " (or (.getMessage t) t))))))
+         [f
+          ^java.io.File @shim-triggers-cache-file
+
+          kept
+          (->> (read-cache-entries)
+               (remove #(= (get % "hash") expected-hash))
+               (take (dec (long shim-triggers-cache-max))))
+
+          entries
+          (cons {"hash" expected-hash "map" (encode-trigger-map m)} kept)]
+
+         (.mkdirs (.getParentFile f))
+         (spit f (json/write-json-str {"entries" (vec entries)})))
+       (catch Throwable _ nil)))
+
+(defn- capture-shim-triggers
+  "Learn each shim's lazy TRIGGER names by RUNNING it, not parsing it. Build ONE
+   throwaway probe Context on the shared engine, eval every string preamble once,
+   and DIFF `sys.modules` + `builtins` before/after:
+     :autoload - the names the shim STAPLES onto builtins (its deliberate public
+                 surface: bare `<name>.attr` / `<name>(...)` with no import), and
+     :provides - the top-level modules it publishes for `import <name>`, taken as
+                 the new `sys.modules` keys that are ALSO stapled (or the shim's
+                 own name). Intersecting with the staples is what discards the
+                 shim's TRANSITIVE stdlib imports (requests pulling in `ssl`,
+                 `email`, `datetime`, ...) so they never become bogus triggers.
+   A shim with neither (e.g. `attach`) is not lazy-eligible => stays eager. The
+   probe Context is disposed before returning. Best-effort per shim: a preamble
+   that throws yields empty triggers (=> that shim installs eager) rather than
+   breaking the whole capture."
+  [entries]
+  (let
+    [ctx
+     (-> (Context/newBuilder (into-array String ["python"]))
+         (.engine ^Engine @shared-engine)
+         (.allowAllAccess false)
+         (.allowCreateThread true)
+         (.allowNativeAccess false)
+         (.allowPolyglotAccess PolyglotAccess/NONE)
+         (.build))
+
+     ^Value g
+     (.getBindings ctx "python")]
+
+    (try
+      (install-auto-imports! ctx)
+      (let
+        [snap
+         (fn []
+           (->
+             ^Value
+             (.eval
+               ctx
+               "python"
+               "__import__('json').dumps({'m':sorted(__import__('sys').modules.keys()),'b':sorted(vars(__import__('builtins')).keys())})")
+             (.asString)
+             json/read-json))
+
+         top
+         #(first (str/split % #"\."))]
+
+        (reduce (fn [acc {:keys [sid src shim]}]
+                  (if-not (string? src)
+                    (assoc acc sid {:provides [] :autoload []})
+                    (let [before (snap)]
+                      (wire-shim-bindings! g shim)
+                      (try (.eval ctx "python" ^String src) (catch Throwable _ nil))
+                      (let
+                        [after (snap)
+                         new-mods (->> (set/difference (set (get after "m")) (set (get before "m")))
+                                       (map top)
+                                       (remove #{"builtins"})
+                                       set)
+                         autoload (vec (sort (set/difference (set (get after "b"))
+                                                             (set (get before "b")))))
+                         keep? (into #{sid} autoload)
+                         provides (vec (sort (filter keep? new-mods)))]
+
+                        (assoc acc sid {:provides provides :autoload autoload})))))
+                {}
+                entries))
+      (finally (.close ctx true)))))
+
+(defn- shim-trigger-map
+  "The `{sid {:provides [...] :autoload [...]}}` lazy-trigger map for `entries`
+   (each `{:sid :src :shim}`), derived by CAPTURE (`capture-shim-triggers`), then
+   MEMOIZED process-wide and CACHED to disk keyed by a hash of the preambles. The
+   ~0.5s capture cost is therefore paid at most ONCE per machine per preamble
+   change - never per Context build or `sub_loop` fork, and never on a warm
+   restart (the disk cache is read instead). On any failure it degrades to `{}`
+   (=> every shim installs eager: correct, only not lazy)."
+  [entries]
+  (let [h (shim-entries-hash entries)]
+    (locking shim-triggers-memo
+      (if-let
+        [m (some (fn [e]
+                   (when (= (:h e) h) (:m e)))
+                 @shim-triggers-memo)]
+        (do ;; hit: move-to-front so it survives eviction (true LRU)
+          (swap! shim-triggers-memo (fn [v]
+                                      (vec (cons {:h h :m m} (remove #(= (:h %) h) v)))))
+          m)
+        (let
+          [m (try (or (read-shim-triggers-cache h)
+                      (let [computed (capture-shim-triggers entries)]
+                        (write-shim-triggers-cache! h computed)
+                        computed))
+                  (catch Throwable t
+                    (tel/log! {:level :warn :id ::shim-trigger-capture-failed}
+                              (str "shim-trigger capture failed: " (or (.getMessage t) t)))
+                    nil))]
+          (when m
+            (swap! shim-triggers-memo (fn [v]
+                                        (->> v
+                                             (remove #(= (:h %) h))
+                                             (cons {:h h :m m})
+                                             (take (long shim-triggers-cache-max))
+                                             vec))))
+          (or m {}))))))
 
 (defn- install-sandbox-shims!
-  "Install EVERY extension-contributed sandbox shim into `ctx`, in registration
-   order. Called from `build-agent-context` for the main context AND every
-   `sub_loop` fork, BEFORE the baseline snapshot so each shim's `__vis_*` /
-   published-module names land in the baseline (filtered out of the
-   model-visible live-vars view). This is the generic replacement for the old
-   hard-coded yaml install: yaml, matplotlib, and any third-party shim flow
-   through the SAME path."
+  "Install EVERY extension-contributed sandbox shim into `ctx` (main context AND
+   every `sub_loop` fork), in registration order, BEFORE the baseline snapshot.
+
+   LAZY-BY-DEFAULT: rather than eval every shim preamble here (which materializes
+   each module's full live object graph into THIS context - the fat per-session
+   baseline), install the central lazy runtime once, wire each shim's cheap host
+   bindings eagerly, and register its trigger names. Each preamble is then eval'd
+   ON DEMAND, once, on the first `import`/attribute touch (see
+   `lazy-shim-runtime-python`). A shim with no derivable trigger (no importable
+   module, no builtins staple - e.g. `attach`) stays EAGER, preserving its side
+   effects. Best-effort: one shim's failure never breaks context creation."
   [^Context ctx ^Value g]
-  (doseq [shim (registered-sandbox-shims)]
-    (install-sandbox-shim! ctx g shim)))
+  (let
+    [shims
+     (registered-sandbox-shims)
+
+     base
+     (mapv (fn [shim]
+             {:shim shim :src (shim-preamble-src shim) :sid (:shim/name shim)})
+           shims)
+
+     ;; Capture-derived (not regex-parsed) lazy triggers: MEMOIZED process-wide +
+     ;; disk-cached, so the probe cost is paid once per machine, not per build.
+     trig-map
+     (shim-trigger-map base)
+
+     entries
+     (mapv (fn [{:keys [sid src] :as e}]
+             (let
+               [trig
+                (get trig-map sid {:provides [] :autoload []})
+
+                lazy?
+                (boolean
+                  (and sid (string? src) (or (seq (:provides trig)) (seq (:autoload trig)))))]
+
+               (assoc e
+                 :trig trig
+                 :lazy? lazy?)))
+           base)
+
+     id->src
+     (into {} (comp (filter :lazy?) (map (juxt :sid :src))) entries)]
+
+    ;; Central lazy runtime + host loader callback - once, only if anything is lazy.
+    (when (seq id->src)
+      (try (.eval ctx "python" ^String lazy-shim-runtime-python)
+           (.putMember g
+                       "__vis_load_shim__"
+                       (wrap-ifn (fn [sid]
+                                   (when-let [s (get id->src (str sid))]
+                                     (.eval ctx "python" ^String s))
+                                   nil)))
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::lazy-shim-runtime-failed}
+                       (str "lazy-shim runtime failed to install: " (or (.getMessage t) t))))))
+    (doseq [{:keys [shim src sid trig lazy?]} entries]
+      (try (wire-shim-bindings! g shim)
+           (if (and lazy? (contains? id->src sid))
+             (do (.putMember g
+                             "__vis_lazy_spec_json__"
+                             (json/write-json-str
+                               {"sid" sid "provides" (:provides trig) "autoload" (:autoload trig)}))
+                 (.eval ctx "python" "__vis_register_lazy_shim__(__vis_lazy_spec_json__)")
+                 (.putMember g "__vis_lazy_spec_json__" nil))
+             (when (string? src) (.eval ctx "python" ^String src)))
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::sandbox-shim-install-failed}
+                       (str "sandbox shim '" (:shim/name shim)
+                            "' failed to install: " (or (.getMessage t) t))))))))
 
 (defonce ^:private ^java.util.Map ctx->stdout
   ;; Context -> the ByteArrayOutputStream its Python `print`/sys.stdout writes
@@ -2439,7 +2813,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
     ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
     ;; (filtered out of the model-visible live-vars view).
-    (install-posix-compat-shim! ctx)
+    (install-posix-compat-shim! ctx g)
     ;; SANDBOX SHIMS: install every extension-contributed Python shim (host
     ;; bridge callables wired onto `g`, then the shim's preamble eval'd). This
     ;; is the GENERIC mechanism — `yaml` (YAMLStar) and `matplotlib` (Java2D)
@@ -2657,14 +3031,20 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
   {:source code :result (->clj (.eval ^Context python-context "python" (str code)))})
 
 (defn collect-garbage!
-  "Best-effort guest GC between turns (Layer 1): run `gc.collect()` in the
-   session's persistent GraalPy context so reference cycles — including
-   native-extension objects GraalPy reclaims lazily — don't accrete across a
-   long-lived interpreter. Never throws; a closed/cancelled context is ignored."
+  "Best-effort GC between turns. Two steps, because GraalPy reclaims
+   native-extension (numpy/pandas/PIL) memory in TWO stages:
+     1. guest `gc.collect()` runs the cycle detector, marking dead native cycles
+        so their Java mirrors become weakly reachable, and
+     2. a JVM `System.gc()` then lets the Java tracing GC collect those mirrors
+        and drain the reference queue that actually frees the native RSS (see
+        graalpython IMPLEMENTATION_DETAILS: the guest collect ALONE does not free
+        non-cyclic native objects whose only managed ref was just dropped).
+   Runs while the interpreter is idle between turns, the cheapest time for a
+   pause. Never throws; a closed/cancelled context is ignored."
   [environment]
   (when-let [python-context (:python-context environment)]
-    (try (.eval ^Context python-context "python" "import gc\ngc.collect()")
-         (catch Throwable _ nil))))
+    (try (.eval ^Context python-context "python" "import gc\ngc.collect()") (catch Throwable _ nil))
+    (try (System/gc) (catch Throwable _ nil))))
 
 (defn- prose-leading-syntax-hint
   "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the

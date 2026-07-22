@@ -100,6 +100,34 @@
       (let [[type] (#'state/chunk->event {:phase :response-parse :iteration 1 :status :done})]
         (expect (not= "activity" type)))))
 
+(defdescribe provider-retry-wire-event-test
+             (it "ships structured retry metadata instead of an opaque detail string"
+                 (let
+                   [[type store? payload] (#'state/chunk->event
+                                           {:phase :provider-retry-reset
+                                            :iteration 2
+                                            :attempt 1
+                                            :max-retries 3
+                                            :delay-ms 1000
+                                            :error {:type :svar.llm/provider-unavailable
+                                                    :message "Provider unavailable"
+                                                    :mini-trace ["must not cross the wire"]}
+                                            :event {:event/type :llm.routing/provider-retry
+                                                    :reason :provider-unavailable
+                                                    :provider "openai"
+                                                    :model "gpt-x"
+                                                    :attempt 1
+                                                    :delay-ms 1000}})]
+                   (expect (= "provider.retry" type))
+                   (expect store?)
+                   (expect (= 2 (:iteration payload)))
+                   (expect (= {:type :svar.llm/provider-unavailable :message "Provider unavailable"}
+                              (:error payload)))
+                   (expect (= 1 (:attempt payload)))
+                   (expect (= 3 (:max-retries payload)))
+                   (expect (= 1000 (:delay-ms payload)))
+                   (expect (not (contains? (:error payload) :mini-trace))))))
+
 (defdescribe form-event-iteration-wire-test
              ;; THE "live shows reasoning but no code" bug: every streaming chunk carries
              ;; its iteration POSITION under `:iteration`, and that MUST ride the wire
@@ -792,3 +820,17 @@
                  (expect (= [:branch] (mapv :workspace-id @cold-calls)))
                  (expect (= pooled-id (get-in @pool [:ready :api 0 :id])))))
              (finally (reset! pool prior))))))
+
+(it "ships concise structured iteration errors for live retry rendering"
+    (let
+      [[type _ payload] (#'state/chunk->event
+                         {:phase :iteration-error
+                          :iteration 1
+                          :error {:type :svar.core/http-error
+                                  :message "upstream reset"
+                                  :status 503
+                                  :mini-trace ["private trace"]}})]
+      (expect (= "iteration.error" type))
+      (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}
+                 (:error-data payload)))
+      (expect (not (contains? (:error-data payload) :mini-trace)))))

@@ -20,7 +20,7 @@
   numpy-module-test
   (it "publishes numpy under sys.modules"
       (with-python-context
-        (expect (true? (ev python-context "__import__('sys').modules.get('numpy') is not None")))))
+        (expect (true? (ev python-context "import numpy\n__import__('sys').modules.get('numpy') is not None")))))
   (it "autoloads numpy onto builtins (no import needed)"
       (with-python-context (expect (true? (ev python-context "numpy.array([1,2,3]).sum() == 6")))))
   (it "supports `import numpy as np`"

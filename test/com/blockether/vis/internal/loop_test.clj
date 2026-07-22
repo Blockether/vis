@@ -261,6 +261,8 @@
 
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
 
+(def ^:private provider-connect-failure? (deref #'lp/provider-connect-failure?))
+
 (def ^:private bumped-max-tokens-extra-body (deref #'lp/bumped-max-tokens-extra-body))
 
 (def ^:private llm-provider-error-context (deref #'lp/llm-provider-error-context))
@@ -333,6 +335,10 @@
             (expect (= 2 @calls))
             (expect (= "ok" (get-in result [:final-result :answer :answer])))
             (expect (some? reset-chunk))
+            (expect (= {:attempt 1 :max-retries 3 :delay-ms 1000}
+                       (select-keys reset-chunk [:attempt :max-retries :delay-ms])))
+            (expect (= :svar.core/http-error (get-in reset-chunk [:error :type])))
+            (expect (= :stream-connection-error (get-in reset-chunk [:event :reason])))
             (expect (= "fresh thinking" (:thinking fresh-reasoning)))
             (expect (= "fresh thinking" (:delta fresh-reasoning)))
             (expect (= [:llm.routing/provider-retry]
@@ -2615,6 +2621,12 @@
      (fn []
        (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 503}))
 
+     ;; Same, but a CONNECT-level blip: no HTTP response ever reached us
+     ;; (`:status` nil), so it earns the generous 6-retry connect budget.
+     pu-connect
+     (fn []
+       (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status nil}))
+
      ;; Faithful stand-in for the real recur: re-run `attempt-fn` (which
      ;; either throws or returns a value) threading the SAME counters the
      ;; production loop threads, recording each backoff slept. Returns
@@ -2662,6 +2674,15 @@
     (it "backoff widens 1s -> 2s -> 4s and clamps past the vector"
         (expect (= [1000 2000 4000 4000 4000]
                    (mapv provider-unavailable-retry-delay-ms (range 5)))))
+    (it
+      "connect-level (:status nil) is NOT retried by vis — svar owns it, card surfaces immediately"
+      (expect (true? (provider-connect-failure? (pu-connect))))
+      (expect (false? (provider-connect-failure? (pu))))
+      (expect (false? (provider-unavailable-retry? (pu-connect) 0)))
+      (let [{:keys [delays outcome pu-attempt]} (drive zero pu-connect)]
+        (expect (= [] delays))
+        (expect (= 0 pu-attempt))
+        (expect (= :fatal outcome))))
     (it "a persistent outage: exactly 3 retries at 1s/2s/4s, then fatal"
         (let [{:keys [delays outcome pu-attempt]} (drive zero pu)]
           (expect (= [1000 2000 4000] delays))

@@ -2996,7 +2996,8 @@
                                               line-fg
                                               line-bg
                                               t/code-block-fg
-                                              t/code-block-bg))
+                                              t/code-block-bg
+                                              t/footer-error-fg))
                       (paint-turn-stamp! g x y line line-bg)
                       (when (= :toggle-details (:kind meta))
                         (let
@@ -4956,6 +4957,40 @@
               name)]
       (when (and (string? bare) (not (str/blank? bare))) (str/replace bare "-" " ")))))
 
+(defn- progress-error-segment
+  "Red, transient-error suffix for the spinner row, or nil.
+
+   Reads the LAST iteration's `:error` (the ex-data of a recoverable failure
+   the loop is about to retry) and renders
+
+     \u2014 <pretty error>[ \u00b7 retry N/M][ \u00b7 next in <delay>]
+
+   wrapped in `INLINE_ERR` sentinels so the bubble painter tints ONLY this
+   run in the error color while the spinner glyph, phase, and elapsed clock
+   stay base fg. Retry counters / backoff show only when the error map
+   carries them (`:attempt`/`:max-retries`/`:delay-ms`); a bare recoverable
+   error still gets its red label. nil when there is no error."
+  [iterations]
+  (let [err (:error (last iterations))]
+    (when (map? err)
+      (let
+        [label (prettify-error-type err)
+         attempt (:attempt err)
+         max-retries (:max-retries err)
+         delay-ms (:delay-ms err)
+         parts (cond-> []
+                 label
+                 (conj label)
+
+                 (and attempt max-retries)
+                 (conj (str "retry " attempt "/" max-retries))
+
+                 (and delay-ms (pos? (long delay-ms)))
+                 (conj (str "next in " (vis/format-duration delay-ms))))]
+
+        (when (seq parts)
+          (str p/INLINE_ERR_ON "  \u2014 " (str/join " \u00b7 " parts) p/INLINE_ERR_OFF))))))
+
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether Vis is calling
@@ -4970,7 +5005,7 @@
    A `!`/`!&` bang turn carries `{:activity :shell-run|:shell-bg}` and
    `:shell/cmd` on its single iteration; the shell branches read those
    so the bubble says `Vis is running: <cmd>` while the shell blocks."
-  [iterations cancelling?]
+  [iterations cancelling? command-label]
   (let
     [n
      (count iterations)
@@ -5020,9 +5055,8 @@
              :else s))]
 
     (cond cancelling? "Vis is cancelling"
-          errored? (let [label (prettify-error-type err)]
-                     (str "Vis is retrying" (when label (str " after " label)) " (iter " n ")"))
-          (zero? n) "Vis is calling the provider"
+          errored? "Vis is retrying"
+          (zero? n) (or command-label "Vis is calling the provider")
           (= :shell-run activity) (str "Vis is running: " shell-label)
           (= :shell-bg activity) (str "Vis is starting: " shell-label)
           (= :slash activity) (str "Vis is running: " slash-label)
@@ -5396,7 +5430,7 @@
       (max 10 (- (long bubble-w) 4))
 
       {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-              viewport-rows pending-sends]}
+              viewport-rows pending-sends command-label]}
       extra
 
       now-ms
@@ -5415,9 +5449,10 @@
       spinner-line
       (str (spinner-frame now-ms)
            "  "
-           (progress-phase iterations cancelling?)
+           (progress-phase iterations cancelling? command-label)
            "...  "
            elapsed-str
+           (or (progress-error-segment iterations) "")
            "  /  Esc to cancel")
 
       line-entry
@@ -5594,9 +5629,6 @@
      ;; A code-bearing iteration often already ends with a neutral
      ;; `iteration-pad-marker`; a thinking-only iteration ends with
      ;; a thinking-bg pad, so it still needs the neutral answer margin.
-     has-trace?
-     (seq trace-entries)
-
      neutral-margin-entry?
      (fn [entry]
        (let [line (:line entry)]
@@ -5606,10 +5638,31 @@
      (fn [entry]
        (= :recap (get-in entry [:meta :kind])))
 
+     ;; When answer-bg is indistinguishable from terminal-bg, the answer-
+     ;; pad row already reads as a single blank line above the answer, so
+     ;; an adjacent terminal-bg margin (our own answer-top-margin, or a
+     ;; neutral row the trace ended on) just stacks a SECOND, identical
+     ;; blank — the "two newlines above the answer" complaint. Drop the
+     ;; redundant margin when the band is invisible; themes that give the
+     ;; answer its own bg keep both rows as distinct band edges.
+     answer-band-visible?
+     (not= t/answer-bg t/terminal-bg)
+
+     trace-entries
+     (if (and (not answer-band-visible?)
+              (seq trace-entries)
+              (neutral-margin-entry? (peek trace-entries)))
+       (subvec (vec trace-entries) 0 (dec (count trace-entries)))
+       trace-entries)
+
+     has-trace?
+     (seq trace-entries)
+
      answer-top-margin
-     (when-not (and has-trace?
-                    (or (neutral-margin-entry? (peek trace-entries))
-                        (recap-entry? (peek trace-entries))))
+     (when (and answer-band-visible?
+                (not (and has-trace?
+                          (or (neutral-margin-entry? (peek trace-entries))
+                              (recap-entry? (peek trace-entries))))))
        (line-entry ""))
 
      cancel-block

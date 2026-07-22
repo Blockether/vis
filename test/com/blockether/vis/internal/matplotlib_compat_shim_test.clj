@@ -42,7 +42,7 @@
   (it "publishes matplotlib + matplotlib.pyplot under sys.modules"
       (with-python-context
         (expect (true? (ev python-context
-                           "__import__('sys').modules.get('matplotlib.pyplot') is not None")))
+                           "import matplotlib.pyplot\n__import__('sys').modules.get('matplotlib.pyplot') is not None")))
         (expect (true? (ev python-context
                            "__import__('sys').modules.get('matplotlib') is not None")))))
   (it "autoloads `matplotlib` onto builtins (no import needed)"
@@ -54,7 +54,7 @@
                            (expect (true? (ev python-context "plt is not None")))
                            ;; all three names resolve to the same module object
                            (expect (true? (ev python-context
-                                              "plt is pyplot and plt is matplotlib.pyplot")))))
+                                              "import matplotlib.pyplot\nplt is pyplot and plt is matplotlib.pyplot")))))
   (it "exposes a version string"
       (with-python-context (expect (= "3.0-vis-java2d"
                                       (ev python-context "__import__('matplotlib').__version__")))))

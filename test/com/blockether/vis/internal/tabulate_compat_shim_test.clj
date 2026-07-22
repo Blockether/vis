@@ -20,7 +20,7 @@
              (it "publishes tabulate under sys.modules"
                  (with-python-context
                    (expect (true? (ev python-context
-                                      "__import__('sys').modules.get('tabulate') is not None")))))
+                                      "import tabulate\n__import__('sys').modules.get('tabulate') is not None")))))
              (it "supports `from tabulate import tabulate`"
                  (with-python-context
                    (expect (true?
