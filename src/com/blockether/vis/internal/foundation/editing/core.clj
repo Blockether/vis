@@ -4091,14 +4091,28 @@
            (map? a) (get a "path")
            :else a)
 
-     ;; Optional [start end] 1-based inclusive line window — narrows the index to
-     ;; imports + top-level defs whose span intersects it (children kept). Coerced
-     ;; to longs; a malformed value is ignored (full-file index) rather than fatal.
-     range
-     (let [r (when (map? a) (get a "range"))]
-       (when (and (sequential? r) (= 2 (count r)))
-         (let [ns (map #(if (number? %) (long %) (parse-long (str %))) r)]
+     ;; Optional 1-based inclusive line window(s): `range` a single [start end],
+     ;; `ranges` a list of them [[s e] …]. Each narrows the index to imports + top-
+     ;; level defs whose span intersects ANY window (children kept). Coerced to
+     ;; longs; a malformed value is dropped (full-file index) rather than fatal.
+     coerce-pair
+     (fn [p]
+       (when (and (sequential? p) (= 2 (count p)))
+         (let [ns (map #(if (number? %) (long %) (parse-long (str %))) p)]
            (when (every? some? ns) (vec ns)))))
+
+     range
+     (coerce-pair (when (map? a) (get a "range")))
+
+     ranges
+     (let [rs (when (map? a) (get a "ranges"))]
+       (when (sequential? rs) (not-empty (vec (keep coerce-pair rs)))))
+
+     ;; What file-index sees: a collection of [lo hi] windows (or nil).
+     windows
+     (cond ranges ranges
+           range [range]
+           :else nil)
 
      ;; Resolve through safe-path (workspace-cwd confinement) like every other file
      ;; tool — file-index's internal (slurp path) must NOT see a raw relative
@@ -4111,7 +4125,7 @@
      (.getPath f)
 
      idx
-     (index/file-index abs (slurp f) range)
+     (index/file-index abs (slurp f) windows)
 
      language
      (index/detect-language abs)]
@@ -4127,8 +4141,11 @@
                             "language" (:language idx)
                             "line_count" (:line-count idx)
                             "path" path}
-                           (some? range)
-                           (assoc "range" range))
+                           (and (nil? ranges) (some? range))
+                           (assoc "range" range)
+
+                           (some? ranges)
+                           (assoc "ranges" ranges))
                      language {"language" language
                                "path" path
                                "note" "No structural index for this language yet — use cat(path)."}
@@ -4809,11 +4826,11 @@
           "use those anchors to read one definition or its name/kind with `struct_patch`.")
      :render render-index-result
      :color-role :tool-color/read
-     :schema {:type "object"
-              :properties
-              {"path" {:type "string" :description "Path to a source file."}
-               "range"
-               {:type "array"
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string" :description "Path to a source file."}
+       "range" {:type "array"
                 :items {:type "integer"}
                 :minItems 2
                 :maxItems 2
@@ -4821,9 +4838,18 @@
                 (str
                   "Optional [start, end] 1-based inclusive line range. Narrows the index to the "
                   "imports and top-level definitions whose span intersects it (each kept def keeps "
-                  "its own children); line_count still reports the whole file.")}}
-              :required ["path"]
-              :additionalProperties false}
+                  "its own children); line_count still reports the whole file. Prefer `ranges` for "
+                  "several disjoint windows.")}
+       "ranges" {:type "array"
+                 :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
+                 :minItems 1
+                 :description
+                 (str
+                   "Optional several [[start, end], …] 1-based inclusive line windows in one call. "
+                   "A definition is kept when its span intersects ANY window; line_count still "
+                   "reports the whole file. Supersedes `range` when both are given.")}}
+      :required ["path"]
+      :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
