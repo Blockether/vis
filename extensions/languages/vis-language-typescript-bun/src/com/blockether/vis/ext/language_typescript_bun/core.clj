@@ -94,7 +94,7 @@
                                         (repl/stop! dir))
                              :restart-fn (fn []
                                            (repl/stop! dir)
-                                           (let [r (repl/start! dir {})]
+                                           (let [r (repl/start! dir {:session-id session})]
                                              (register-repl-resource! session dir r id)
                                              r))})
     (vis/notify! (str "● bun REPL up — " (.getName (io/file dir))) :level :success :ttl-ms 4000)))
@@ -193,7 +193,7 @@
           (when (nil? (get opts "dir"))
             (when-let [hint (monorepo-root-hint root dir)]
               (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
-          (let [r (repl/start! dir (or opts {}))]
+          (let [r (repl/start! dir (assoc (or opts {}) :session-id (:session-id env)))]
             (register-repl-resource! (:session-id env) dir r id)
             (extension/success {:result r})))
 
@@ -268,10 +268,18 @@
        paths
        (into paths))
 
+     launch
+     (vis/session-process-launch (:session-id env) cmd)
+
      pb
-     (doto (ProcessBuilder. ^java.util.List cmd)
+     (doto (ProcessBuilder. ^java.util.List (:argv launch))
        (.directory (io/file dir))
        (.redirectErrorStream true))
+
+     _env
+     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+       (doseq [[k v] (:env launch)]
+         (.put e ^String k ^String v)))
 
      p
      (.start pb)
@@ -348,7 +356,7 @@
                                                (resolve-dir root (:startable/dir env))
 
                                                r
-                                               (repl/start! dir {})]
+                                               (repl/start! dir {:session-id (:session-id env)})]
 
                                               (register-repl-resource! (:session-id env) dir r)
                                               r))}]

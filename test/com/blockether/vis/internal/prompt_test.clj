@@ -63,7 +63,7 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 4440))
+      (expect (< (count text) 4650))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"

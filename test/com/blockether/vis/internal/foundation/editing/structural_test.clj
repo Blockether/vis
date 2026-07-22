@@ -374,8 +374,14 @@
       (expect (str/ends-with? (str/trimr
                                 (edit "demo.clj" clj-src {:op :append :code "(def END 3)"}))
                               "(def END 3)")))
-  (it "errors on a missing target"
-      (expect (throws? #(edit "demo.clj" clj-src {:op :replace :target "ghost" :code "x"}))))
+  (it "errors on a missing target (and names struct_index, not the engine's leaked `index`)"
+      (let
+        [msg (try (edit "demo.clj" clj-src {:op :replace :target "ghost" :code "x"})
+                  nil
+                  (catch Throwable e (.getMessage e)))]
+        (expect (some? msg))
+        (expect (str/includes? msg "struct_index(path)"))
+        (expect (not (str/includes? msg "Use index(")))))
   (it "errors on an ambiguous target without kind"
       (let [s "(defn dup [] 1)\n(def dup 2)\n"]
         ;; two defs named dup, different kinds

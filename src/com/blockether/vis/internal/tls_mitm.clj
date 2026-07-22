@@ -21,25 +21,29 @@
    No JCA provider is registered globally: bcpkix's Jca* builders use the default
    platform signer (SHA256withRSA via SunRsaSign), which keeps this native-image
    friendly and side-effect free."
-  (:import
-    (java.io File)
-    (java.math BigInteger)
-    (java.security KeyPair KeyPairGenerator KeyStore PrivateKey SecureRandom)
-    (java.security.cert X509Certificate)
-    (java.util Base64 Date)
-    (java.util.concurrent ConcurrentHashMap)
-    (java.util.function Function)
-    (javax.net.ssl KeyManagerFactory SSLContext SSLSocketFactory TrustManager X509TrustManager)
-    (org.bouncycastle.asn1.x500 X500Name)
-    (org.bouncycastle.asn1.x509 BasicConstraints
-                                ExtendedKeyUsage
-                                Extension
-                                GeneralName
-                                GeneralNames
-                                KeyPurposeId
-                                KeyUsage)
-    (org.bouncycastle.cert.jcajce JcaX509CertificateConverter JcaX509v3CertificateBuilder)
-    (org.bouncycastle.operator.jcajce JcaContentSignerBuilder)))
+  (:import (java.io File FileOutputStream)
+           (java.math BigInteger)
+           (java.security KeyPair KeyPairGenerator KeyStore PrivateKey SecureRandom)
+           (java.security.cert X509Certificate)
+           (java.util Base64 Date UUID)
+           (java.util.concurrent ConcurrentHashMap)
+           (java.util.function Function)
+           (javax.net.ssl KeyManagerFactory
+                          SSLContext
+                          SSLSocketFactory
+                          TrustManager
+                          TrustManagerFactory
+                          X509TrustManager)
+           (org.bouncycastle.asn1.x500 X500Name)
+           (org.bouncycastle.asn1.x509 BasicConstraints
+                                       ExtendedKeyUsage
+                                       Extension
+                                       GeneralName
+                                       GeneralNames
+                                       KeyPurposeId
+                                       KeyUsage)
+           (org.bouncycastle.cert.jcajce JcaX509CertificateConverter JcaX509v3CertificateBuilder)
+           (org.bouncycastle.operator.jcajce JcaContentSignerBuilder)))
 
 (def ^:private ^SecureRandom secure-rng (SecureRandom.))
 
@@ -127,7 +131,8 @@
 
 (defn- host-context
   "A server-mode SSLContext that presents a freshly minted leaf for `host`."
-  ^SSLContext [^X500Name ca-name ^X509Certificate ca-cert ^PrivateKey ca-key ^KeyPair leaf-kp ^String host]
+  ^SSLContext
+  [^X500Name ca-name ^X509Certificate ca-cert ^PrivateKey ca-key ^KeyPair leaf-kp ^String host]
   (let
     [leaf
      (mint-leaf ca-name ca-key leaf-kp host)
@@ -158,16 +163,42 @@
     (.getSocketFactory (doto (SSLContext/getInstance "TLS")
                          (.init nil (into-array TrustManager [tm]) secure-rng)))))
 
-(defn- write-ca-pem
-  "Write `cert` as a PEM file under the system temp dir (readable inside the jail,
-   whose RW set includes the temp dirs) and return its absolute path."
-  ^String [^X509Certificate cert]
+(defn- default-root-certificates
+  "Return the JVM's current default trust anchors. The child trust bundle includes
+   them so explicitly tunnelled domains still validate their real certificates."
+  []
   (let
-    [b64
-     (.encodeToString (Base64/getMimeEncoder 64 (.getBytes "\n")) (.getEncoded cert))
+    [tmf
+     (TrustManagerFactory/getInstance (TrustManagerFactory/getDefaultAlgorithm))
+
+     ^KeyStore no-explicit-store
+     nil]
+
+    (.init tmf no-explicit-store)
+    (->> (.getTrustManagers tmf)
+         (filter #(instance? X509TrustManager %))
+         (mapcat #(seq (.getAcceptedIssuers ^X509TrustManager %)))
+         (reduce (fn [m ^X509Certificate cert]
+                   (assoc m (str (.getSubjectX500Principal cert)) cert))
+                 {})
+         vals
+         vec)))
+
+(defn- write-ca-pem
+  "Write a PEM trust bundle with the ephemeral vis CA first and the JVM's default
+   roots after it. CA-env-aware clients can therefore validate both MITM leaves and
+   real certificates for explicitly tunnelled domains."
+  ^String [^X509Certificate cert roots]
+  (let
+    [encoder
+     (Base64/getMimeEncoder 64 (.getBytes "\n"))
 
      pem
-     (str "-----BEGIN CERTIFICATE-----\n" b64 "\n-----END CERTIFICATE-----\n")
+     (apply str
+       (for [^X509Certificate c (cons cert roots)]
+         (str "-----BEGIN CERTIFICATE-----\n"
+              (.encodeToString encoder (.getEncoded c))
+              "\n-----END CERTIFICATE-----\n")))
 
      f
      (File/createTempFile "vis-ca-" ".pem" (File. (System/getProperty "java.io.tmpdir")))]
@@ -176,13 +207,42 @@
     (spit f pem)
     (.getAbsolutePath f)))
 
+(defn- write-java-truststore
+  "Write an ephemeral PKCS12 truststore containing the vis CA plus the JVM's
+   default roots. Managed JVM children receive it through JAVA_TOOL_OPTIONS;
+   no host trust store is modified."
+  [^X509Certificate cert roots]
+  (let
+    [file
+     (File/createTempFile "vis-ca-" ".p12")
+
+     password
+     (str (UUID/randomUUID))
+
+     chars
+     (.toCharArray password)
+
+     store
+     (KeyStore/getInstance "PKCS12")]
+
+    (.load store nil chars)
+    (.setCertificateEntry store "vis-egress-ca" cert)
+    (doseq [[idx ^X509Certificate root] (map-indexed vector roots)]
+      (.setCertificateEntry store (str "system-root-" idx) root))
+    (with-open [out (FileOutputStream. file)]
+      (.store store out chars))
+    (.deleteOnExit file)
+    {:java-trust-store (.getAbsolutePath file) :java-trust-store-password password}))
+
 (defn create!
-  "Build a per-session MITM capability. Returns a map:
-     :ca-cert          the ephemeral CA certificate
-     :ca-file          path to the CA PEM (inject into the child's trust env)
-     :ctx-for          (fn [host] -> server SSLContext), cached per host
-     :upstream-factory SSLSocketFactory for the proxy->real-server leg
-     :close!           delete the CA PEM file
+  "Build the gateway MITM capability. Returns a map:
+     :ca-cert                    ephemeral CA certificate
+     :ca-file                    CA PEM for curl/Python/Bun trust env
+     :java-trust-store           PKCS12 path for managed JVM children
+     :java-trust-store-password  random password for that ephemeral store
+     :ctx-for                    (fn [host] -> server SSLContext), cached per host
+     :upstream-factory           proxy->real-server SSLSocketFactory
+     :close!                     delete both ephemeral trust files
 
    Options: `:upstream-trust-all?` (TEST) swaps upstream validation for trust-all."
   ([] (create! {}))
@@ -208,12 +268,21 @@
                             Function
                               (apply [_ h] (host-context name cert ca-key leaf-kp h)))))
 
-      ca-file
-      (write-ca-pem cert)]
+      roots
+      (default-root-certificates)
 
-     {:ca-cert cert
-      :ca-file ca-file
-      :ctx-for ctx-for
-      :upstream-factory (if upstream-trust-all? (trust-all-factory) (SSLSocketFactory/getDefault))
-      :close! (fn []
-                (try (.delete (File. ca-file)) (catch Throwable _ nil)))})))
+      ca-file
+      (write-ca-pem cert roots)
+
+      java-trust
+      (write-java-truststore cert roots)]
+
+     (merge {:ca-cert cert
+             :ca-file ca-file
+             :ctx-for ctx-for
+             :upstream-factory
+             (if upstream-trust-all? (trust-all-factory) (SSLSocketFactory/getDefault))
+             :close! (fn []
+                       (doseq [path [ca-file (:java-trust-store java-trust)]]
+                         (try (.delete (File. ^String path)) (catch Throwable _ nil))))}
+            java-trust))))

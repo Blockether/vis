@@ -317,7 +317,7 @@
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "rg matches literal substrings by default — no regex escaping needed. Pass one options dict: rg({\"any\": [\"foo\", \"bar\"]}) for OR, or rg({\"all\": [\"foo|bar\"]}) when you need the literal pipe text. Set \"is_regex\": True only for a real regex."
+    "find_files matches literal substrings by default — no regex escaping needed. Pass a list of terms for OR: find_files([\"foo\", \"bar\"]). Regex is not supported — filter the matches in Python."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
@@ -644,8 +644,8 @@
         (contains? classes :regex-unsupported-escape)
         (conj
           (str
-            "rg takes one options dict with list values, not regex strings or positional args. "
-            "Use rg({\"all\": [\"foo|bar\"]}) for literal pipe text, or rg({\"any\": [\"foo\", \"bar\"]}) for OR. "
+            "find_files takes a term or a list of terms (OR), not regex strings. "
+            "Use find_files([\"foo\", \"bar\"]) for OR; filter complex matches in Python. "
             "Add \"paths\" and \"include\" in the same dict."))
 
         (contains? classes :regex-unescaped-quote)

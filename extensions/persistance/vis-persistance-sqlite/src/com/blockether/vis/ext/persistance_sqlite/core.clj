@@ -1373,61 +1373,82 @@
                     {:update :session_soul :set set-map :where [:= :id (->id session-id)]}))))
     session-id))
 
+(defn- reorder-members-in-tx!
+  "Within an open write transaction, renumber every soul in `pid` to a gap-free
+   0-based `project_position`, leading with the members named in `session-ids`.
+   Unnamed members retain their relative order after those names. Two parking
+   phases avoid transient collisions with the unique project-position index."
+  [tx-info pid session-ids]
+  (let [members (mapv (comp str :id)
+                      (query! tx-info
+                              {:select [:id]
+                               :from :session_soul
+                               :where [:= :project_id pid]
+                               :order-by [[:project_position :asc] [:created_at :desc]]}))
+        member? (set members)
+        wanted (distinct (filter member? (map str session-ids)))
+        wanted-set (set wanted)
+        ordered (into (vec wanted) (remove wanted-set members))]
+    (doseq [[pos sid] (map-indexed vector ordered)]
+      (execute! tx-info
+                {:update :session_soul
+                 :set {:project_position (- (inc (long pos)))}
+                 :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
+    (doseq [[pos sid] (map-indexed vector ordered)]
+      (execute! tx-info
+                {:update :session_soul
+                 :set {:project_position pos}
+                 :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
+    (count ordered)))
+
 (defn db-reorder-project-sessions!
   "Persist a manual order for the sessions inside `project-id`. `session-ids` is
-   the desired LEADING order; any members not named are kept, appended after the
-   named ones in their current order. EVERY member is then renumbered to a
-   gap-free, contiguous 0-based `project_position` — so a partial or stale list
-   can never leave overlapping or orphaned ordinals (the tab strip stays a clean
-   0..n-1 sequence). Only souls that belong to `project-id` are touched. Returns
-   the count of members renumbered."
+   the desired leading order; any members not named are kept and appended in their
+   current order. Every member receives a gap-free, 0-based `project_position`.
+   Only souls already belonging to `project-id` are touched. Returns the member
+   count."
+  [db-info project-id session-ids]
+  (when (and (ds db-info) project-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (reorder-members-in-tx! tx-info (->id project-id) session-ids)))))
+
+(defn db-adopt-and-reorder-project-sessions!
+  "Persist a manual tab order for `project-id` in one atomic transaction. Named
+   sessions with no project are adopted first; sessions owned by another project
+   remain guests and are never stolen. Every target-project member is then
+   renumbered exactly as in `db-reorder-project-sessions!`. Returns the member
+   count."
   [db-info project-id session-ids]
   (when (and (ds db-info) project-id)
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (let
-          [pid
-           (->id project-id)
-
-           members
-           (mapv (comp str :id)
-                 (query! tx-info
-                         {:select [:id]
-                          :from :session_soul
-                          :where [:= :project_id pid]
-                          :order-by [[:project_position :asc] [:created_at :desc]]}))
-
-           member?
-           (set members)
-
-           wanted
-           (distinct (filter member? (map str session-ids)))
-
-           wanted-set
-           (set wanted)
-
-           ordered
-           (into (vec wanted) (remove wanted-set members))]
-
-          ;; Two phases so the partial UNIQUE index on
-          ;; (project_id, project_position) never transiently
-          ;; collides during a row-by-row renumber: first park
-          ;; every member in a distinct NEGATIVE temp slot
-          ;; (-1..-n, disjoint from every current/final 0..n-1),
-          ;; then assign the final gap-free 0..n-1 order.
-          (doseq [[pos sid] (map-indexed vector ordered)]
-            (execute! tx-info
-                      {:update :session_soul
-                       :set {:project_position (- (inc (long pos)))}
-                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
-          (doseq [[pos sid] (map-indexed vector ordered)]
-            (execute! tx-info
-                      {:update :session_soul
-                       :set {:project_position pos}
-                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
-          (count ordered))))))
-
+        (let [pid (->id project-id)
+              wanted (vec (distinct (map str session-ids)))
+              loose? (if (seq wanted)
+                       (set (map (comp str :id)
+                                 (query! tx-info
+                                         {:select [:id]
+                                          :from :session_soul
+                                          :where [:and [:in :id (mapv ->id wanted)]
+                                                  [:= :project_id nil]]})))
+                       #{})
+              loose (filterv loose? wanted)]
+          (when (seq loose)
+            (let [maxpos (long (or (:maxpos (query-one! tx-info
+                                                        {:select [[[:max :project_position]
+                                                                   :maxpos]]
+                                                         :from :session_soul
+                                                         :where [:= :project_id pid]}))
+                                   -1))]
+              (doseq [[offset sid] (map-indexed vector loose)]
+                (execute! tx-info
+                          {:update :session_soul
+                           :set {:project_id (->ref project-id)
+                                 :project_position (+ maxpos 1 (long offset))}
+                           :where [:and [:= :id (->id sid)] [:= :project_id nil]]}))))
+          (reorder-members-in-tx! tx-info pid session-ids))))))
 
 ;; =============================================================================
 ;; Fork - branch a session at a point

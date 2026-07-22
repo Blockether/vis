@@ -2422,3 +2422,30 @@
                    (vis/db-claim-session! s id)
                    (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))
                    (expect (= 1 (raw-count s :session_soul))))))
+
+(defdescribe
+  adopt-and-reorder-project-sessions-test
+  (it
+    "atomically adopts loose tabs, preserves guests, and persists the requested order"
+    (let [s (h/store)
+          target (persistance/db-create-project! s {:name "target"})
+          other (persistance/db-create-project! s {:name "other"})
+          member (h/store-session! s {:channel :tui :title "member"})
+          loose (h/store-session! s {:channel :tui :title "loose"})
+          guest (h/store-session! s {:channel :tui :title "guest"})
+          missing (random-uuid)
+          _ (persistance/db-set-session-project! s member (:id target))
+          _ (persistance/db-set-session-project! s guest (:id other))
+          n (persistance/db-adopt-and-reorder-project-sessions!
+              s (:id target) [loose guest missing member loose])
+          rows (into {} (map (juxt :id identity) (persistance/db-list-sessions s :all)))
+          ordered (->> (vals rows)
+                       (filter #(= (:id target) (:project-id %)))
+                       (sort-by :project-position)
+                       (mapv :id))]
+      (expect (= 2 n))
+      (expect (= [loose member] ordered))
+      (expect (= [0 1] (mapv (comp :project-position rows) ordered)))
+      (expect (= (:id other) (:project-id (rows guest))))
+      (expect (= 0 (:project-position (rows guest))))
+      (expect (nil? (rows missing))))))

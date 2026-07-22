@@ -1411,3 +1411,20 @@
                                     :overlay-open? false
                                     :was-blocked? true})]
         (expect (every? false? (map boolean (vals flags)))))))
+
+(defdescribe
+  tab-order-persistence-test
+  (it
+    "persists through one adopt-and-reorder call without listing or assigning tabs"
+    (let [pid (random-uuid)
+          ids [(random-uuid) (random-uuid)]
+          calls (atom [])]
+      (with-redefs [vis/gateway-list-sessions
+                    (fn [& _] (swap! calls conj :list))
+                    vis/gateway-assign-project!
+                    (fn [& _] (swap! calls conj :assign))
+                    vis/gateway-reorder-project-sessions!
+                    (fn [actual-pid actual-ids]
+                      (swap! calls conj [:reorder actual-pid actual-ids]))]
+        ((deref #'screen/persist-tabs-order!) pid ids))
+      (expect (= [[:reorder pid ids]] @calls)))))

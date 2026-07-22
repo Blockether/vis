@@ -12,7 +12,8 @@
    clean."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
-            [com.blockether.vis.ext.language-typescript-bun.runner :as runner])
+            [com.blockether.vis.ext.language-typescript-bun.runner :as runner]
+            [com.blockether.vis.core :as vis])
   (:import [java.io BufferedReader BufferedWriter]))
 
 (def ^:private server-resource "com/blockether/vis/ext/typescript_bun/repl_server.js")
@@ -43,17 +44,27 @@
 (defn start!
   "Spawn (or replace) the managed Bun REPL for `dir`. Returns a STRING-keyed
    status map (crosses the strings-only boundary as a tool `:result`)."
-  [dir _opts]
+  [dir {:keys [session-id]}]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let
     [cmd
      (conj (runner/resolve-command dir) "-e" (server-script))
 
+     ;; Resolve argv + proxy env atomically. Unknown/disposed sessions are denied
+     ;; before spawn, and direct outbound traffic remains behind Seatbelt.
+     launch
+     (vis/session-process-launch session-id cmd)
+
      pb
-     (doto (ProcessBuilder. ^java.util.List cmd)
+     (doto (ProcessBuilder. ^java.util.List (:argv launch))
        (.directory (io/file dir))
        (.redirectErrorStream false))
+
+     _env
+     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+       (doseq [[k v] (:env launch)]
+         (.put e ^String k ^String v)))
 
      p
      (.start pb)

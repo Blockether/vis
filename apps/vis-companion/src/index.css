@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+
+/* Fallback until a gateway is connected; /v1/theme replaces these variables. */
+:root {
+  --bg: #0b0b0f;
+  --fg: #e7e7ef;
+  --surface: #14141b;
+  --panel2: #1c1c26;
+  --line: #2a2a38;
+  --primary: #7c9cff;
+  --primary-fg: #0b0b0f;
+  --accent: #a684ff;
+  --ok: #4ade80;
+  --warning: #fbbf24;
+  --err: #f87171;
+}
+
+/* Tailwind utilities resolve directly to the gateway's shared TUI palette. */
+@theme inline {
+  --color-ink: var(--bg);
+  --color-panel: var(--surface);
+  --color-panel-2: var(--panel2);
+  --color-edge: var(--line);
+  --color-accent: var(--primary);
+  --color-accent-foreground: var(--primary-fg);
+  --color-accent-2: var(--accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warning);
+  --color-err: var(--err);
+  --color-white: var(--fg);
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply m-0 bg-ink text-white antialiased;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+      env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button {
+    @apply cursor-pointer disabled:cursor-default;
+  }
+}

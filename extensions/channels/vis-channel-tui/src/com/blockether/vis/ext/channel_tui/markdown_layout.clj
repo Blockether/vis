@@ -371,6 +371,71 @@
    so source / patch alignment survives."
   #{"text" "plain" "output" "log"})
 
+(def ^:private cat-gutter-row-re #"^(\s*\d+  )(.*)$")
+
+(def ^:private cat-divider-row-re #"^\s*⋯$")
+
+(defn- cat-highlight-input
+  "Recognize CAT's `<line>  <source>` rows and return gutter-free source plus
+   row metadata. Tree-sitter must parse only source: including a fresh line
+   number before every row turns otherwise valid fragments into error nodes.
+   A disjoint-range divider occupies a blank parser row and is restored later."
+  [^String content]
+  (let
+    [rows (mapv (fn [^String line]
+                  (if-let [[_ gutter source] (re-matches cat-gutter-row-re line)]
+                    {:gutter gutter :source source}
+                    (when (re-matches cat-divider-row-re line) {:divider line :source ""})))
+                (str/split-lines content))]
+    (when (and (seq rows) (every? some? rows) (some :gutter rows))
+      {:rows rows :source (str/join "\n" (map :source rows))})))
+
+(defn- highlighted-code-lines
+  "Tree-sitter-highlight `content`. CAT gutters and dividers stay outside the
+   parser and render dimmed; highlighting failures fall back to byte-visible
+   plain rows instead of failing the whole Markdown projection."
+  [grammar ^String content]
+  (if-let [{:keys [rows source]} (cat-highlight-input content)]
+    (if-let [highlighted (hl/highlight grammar source)]
+      (let [source-lines (str/split highlighted #"\n" -1)]
+        (if (= (count rows) (count source-lines))
+          (mapv (fn [{:keys [gutter divider]} line]
+                  (str "\u001b[90m" (or divider gutter) "\u001b[0m" (when-not divider line)))
+                rows
+                source-lines)
+          ;; Defensive fallback if a future highlighter stops preserving newlines.
+          (str/split-lines content)))
+      ;; The native pack is optional and `hl/highlight` deliberately fails open.
+      (str/split-lines content))
+    (some-> (hl/highlight grammar content)
+            str/split-lines)))
+
+(def ^:private ^java.util.Map folded-highlight-cache
+  "Bounded access-order cache for the completed highlight + ANSI-fold stage.
+   The native highlighter already caches parse output, but layout used to split,
+   rebuild CAT gutters, and rescan every ANSI row on each projection. Keeping the
+   width-dependent string segments avoids that remaining O(lines) ANSI pass.
+   Live fences bypass this cache because their content changes every tick."
+  (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [128 0.75 true]
+                                           (removeEldestEntry [_eldest]
+                                             (> (.size ^java.util.LinkedHashMap this) 128)))))
+
+(defn- compute-folded-highlight-lines
+  [grammar ^String content ^long budget]
+  (->> (or (highlighted-code-lines grammar content) (str/split-lines content))
+       (mapcat #(p/ansi-fold-cols % budget))
+       vec))
+
+(defn- folded-highlight-lines
+  [grammar ^String content ^long budget]
+  (if hl/*live?*
+    (compute-folded-highlight-lines grammar content budget)
+    (let [key [grammar content budget]]
+      (or (.get folded-highlight-cache key)
+          (let [lines (compute-folded-highlight-lines grammar content budget)]
+            (.put folded-highlight-cache key lines)
+            lines)))))
+
 (defn- code-block->lines
   "Code block: by default the TUI shows the body verbatim — source code
    relies on its indentation, and diff/patch output on its column
@@ -439,9 +504,7 @@
      (and grammar (not fold?) (not diff?))
 
      hl-lines
-     (when colorize?
-       (some-> (hl/highlight grammar content)
-               str/split-lines))
+     (when colorize? (folded-highlight-lines grammar content budget))
 
      ;; A `diff` fence (patch / write / format evidence) is colored by
      ;; wrapping each row in ANSI SGR: the `md-code` paint branch runs the row
@@ -502,14 +565,6 @@
                  {:runs (runs-of seg)})
                (p/fold-cols line budget))))
 
-     ansi-fold-line
-     (fn [line]
-       (if (= "" line)
-         [{:runs []}]
-         (mapv (fn [seg]
-                 {:runs (runs-of seg)})
-               (p/ansi-fold-cols line budget))))
-
      body
      (vec
        (cond fold? (mapcat fold-line (str/split-lines content))
@@ -527,7 +582,9 @@
              ;; the right edge with no wrap and no horizontal scroll,
              ;; hiding its tail (the "can't see the full bookmarklet"
              ;; thread).
-             colorize? (mapcat ansi-fold-line (or hl-lines (str/split-lines content)))
+             colorize? (mapv (fn [line]
+                               {:runs (runs-of line)})
+                             hl-lines)
              ;; A plain fence (no grammar: no `:lang`, or an unknown/unset
              ;; one — e.g. a pasted URL / token blob) has no alignment
              ;; contract, so CHAR-FOLD any over-wide row too.

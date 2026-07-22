@@ -24,7 +24,8 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client])
+            [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
+            [com.blockether.vis.core :as vis])
   (:import (java.io RandomAccessFile)
            (java.net ServerSocket)
            (java.nio.charset StandardCharsets)
@@ -538,10 +539,18 @@
              (try
                (let
                  [log (log-file dir)
-                  pb (doto (ProcessBuilder. ^java.util.List cmd)
+                  ;; Resolve argv + proxy env atomically through the shared,
+                  ;; fail-closed language-process contract. nREPL alone may bind a
+                  ;; loopback listener; direct outbound traffic remains jailed.
+                  launch (vis/session-process-launch session-id cmd {:loopback-port port})
+                  jailed-cmd (:argv launch)
+                  pb (doto (ProcessBuilder. ^java.util.List jailed-cmd)
                        (.directory (io/file dir))
                        (.redirectErrorStream true)
                        (.redirectOutput log))
+                  _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+                         (doseq [[k v] (:env launch)]
+                           (.put e ^String k ^String v)))
                   proc (.start pb)
                   pid (try (.pid proc) (catch Throwable _ nil))
                   info {:id (id-of dir)

@@ -17,7 +17,6 @@
             ;; tool calls below see the same op-tag registry as production.
             [com.blockether.vis.internal.foundation.core]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
-            [com.blockether.vis.internal.render :as render]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -78,15 +77,15 @@
        names
        (set (map :name tools))
 
-       rg-tool
-       (first (filter #(= "rg" (:name %)) tools))
+       find-files-tool
+       (first (filter #(= "find_files" (:name %)) tools))
 
        include-schema
-       (get-in rg-tool [:schema :properties "include"])]
+       (get-in find-files-tool [:schema :properties "include"])]
 
-      (expect (<= 8 (count ents)))                          ;; cat ls find rg patch move delete file_exists
+      (expect (<= 8 (count ents)))                          ;; cat ls find_files patch move delete file_exists
       (expect (contains? names "cat"))
-      (expect (contains? names "rg"))
+      (expect (not (contains? names "rg")))                 ;; rg folded into find_files
       (expect (contains? names "file_exists"))              ;; file-exists → file_exists
       (expect (every? (comp map? :ext.symbol/schema) ents)) ;; schema tight on the symbol
       (expect (every? :schema tools))                       ;; and surfaced
@@ -388,7 +387,7 @@
     ;; collapsed to observation/mutation values; ops not in the
     ;; registration table fail closed instead of defaulting to observation.
     (doseq
-      [[op tag] [[:cat :observation] [:z/locators :observation] [:rg :observation]
+      [[op tag] [[:cat :observation] [:z/locators :observation] [:find_files :observation]
                  [:patch :mutation] [:create-dirs :mutation] [:delete :mutation] [:move :mutation]]]
       (expect (= tag (extension/op-tag op)))
       (expect (= {:tag tag} (extension/op-presentation op))))
@@ -515,7 +514,7 @@
     ;; rg the same way it applies to ls.
     (let
       [before
-       (:ext.symbol/before-fn (private-fn "rg-symbol"))
+       (:ext.symbol/before-fn (private-fn "find-symbol"))
 
        out
        (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
@@ -529,7 +528,7 @@
       ;; must apply so model can call `(rg {:any ["x"]})` without paths.
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "rg-symbol"))
+         (:ext.symbol/before-fn (private-fn "find-symbol"))
 
          out
          (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
@@ -555,7 +554,7 @@
       ;; honored — we don't want the bypass to be a back door.
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "rg-symbol"))
+         (:ext.symbol/before-fn (private-fn "find-symbol"))
 
          out
          (before (protected-env [{:glob "." :access :none :hint "cwd is sealed."}])
@@ -1185,34 +1184,48 @@
                        :result)
                    (-> (cat-tool path)
                        :result)))))
-  (it "cat coerces stringy/flat range + ranges shapes models mis-pass"
-      (let
-        [body
-         (string/join "\n" (map #(str "L" %) (range 1 21)))
+  (it
+    "cat coerces stringy/flat range + ranges shapes models mis-pass"
+    (let
+      [body
+       (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-         path
-         (write-temp! "range/coerce.txt" (str body "\n"))
+       path
+       (write-temp! "range/coerce.txt" (str body "\n"))
 
-         cat-tool
-         (private-fn "cat-tool")
+       cat-tool
+       (private-fn "cat-tool")
 
-         canonical
-         (-> (cat-tool path {"ranges" [[2 4]]}) :result)]
-        ;; a single flat pair of NUMERIC STRINGS (the reported failure) now reads
-        (expect (= canonical (-> (cat-tool path {"ranges" ["2" "4"]}) :result)))
-        ;; nested string pair + comma-joined string coerce identically
-        (expect (= canonical (-> (cat-tool path {"ranges" [["2" "4"]]}) :result)))
-        (expect (= canonical (-> (cat-tool path {"ranges" "2, 4"}) :result)))
-        ;; `range` with numeric strings / comma string coerce too
-        (expect (= (-> (cat-tool path {"range" [2 4]}) :result)
-                   (-> (cat-tool path {"range" ["2" "4"]}) :result)))
-        (expect (= (-> (cat-tool path {"range" [2 4]}) :result)
-                   (-> (cat-tool path {"range" "2, 4"}) :result)))
-        ;; multi-window string ranges preserve each window
-        (expect (= [[2 4] [6 8]]
-                   (mapv #(get % "range")
-                         (get (-> (cat-tool path {"ranges" [["2" "4"] ["6" "8"]]}) :result)
-                              "ranges"))))))
+       canonical
+       (-> (cat-tool path {"ranges" [[2 4]]})
+           :result)]
+
+      ;; a single flat pair of NUMERIC STRINGS (the reported failure) now reads
+      (expect (= canonical
+                 (-> (cat-tool path {"ranges" ["2" "4"]})
+                     :result)))
+      ;; nested string pair + comma-joined string coerce identically
+      (expect (= canonical
+                 (-> (cat-tool path {"ranges" [["2" "4"]]})
+                     :result)))
+      (expect (= canonical
+                 (-> (cat-tool path {"ranges" "2, 4"})
+                     :result)))
+      ;; `range` with numeric strings / comma string coerce too
+      (expect (= (-> (cat-tool path {"range" [2 4]})
+                     :result)
+                 (-> (cat-tool path {"range" ["2" "4"]})
+                     :result)))
+      (expect (= (-> (cat-tool path {"range" [2 4]})
+                     :result)
+                 (-> (cat-tool path {"range" "2, 4"})
+                     :result)))
+      ;; multi-window string ranges preserve each window
+      (expect (= [[2 4] [6 8]]
+                 (mapv #(get % "range")
+                       (get (-> (cat-tool path {"ranges" [["2" "4"] ["6" "8"]]})
+                                :result)
+                            "ranges"))))))
   (it "cat names the non-numeric component when a range/ranges value is not a line number"
       (let
         [path
@@ -1223,8 +1236,8 @@
 
          msg
          (fn [arg]
-           (try (cat-tool path arg) nil
-                (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+           (try (cat-tool path arg) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+
         ;; the `"1, x"` shape the user hit — explicit, names `x`, not a generic pair error
         (expect (string/includes? (msg {"ranges" "1, x"}) "non-numeric"))
         (expect (string/includes? (msg {"ranges" "1, x"}) "\"x\""))
@@ -1441,13 +1454,20 @@
        (write-temp! "rgsame/a.clj" "needle same\n")
 
        spec
-       {"all" ["needle"] "paths" [(temp-dir-path "rgsame")] "include" ["*.clj"]}
+       {"query" ["needle"] "paths" [(temp-dir-path "rgsame")] "include" ["*.clj"]}
 
        grep
        (private-fn "rg-search")
 
+       find-tool
+       (private-fn "find-tool")
+
        rg
-       (private-fn "rg-tool")
+       ;; find_files now folds the content grep in; flatten its :content block up
+       ;; so these content-shape assertions read the same top-level keys rg-tool did.
+       (fn [& a]
+         (let [e (apply find-tool a)]
+           (update e :result #(merge % (get % "content")))))
 
        ;; rg-tool groups grep's flat :hits into :matches — an ordered
        ;; {path -> {anchor -> text}} map (LinkedHashMap) on the
@@ -1461,7 +1481,7 @@
        grep-hits
        (:hits (grep spec))]
 
-      (expect (= :rg (:symbol rg-env)))
+      (expect (= :find_files (:symbol rg-env)))
       (expect (instance? java.util.Map (get rg-result "matches")))
       (expect (= (count grep-hits) (get rg-result "hit_count")))
       (expect (= (count (distinct (map :path grep-hits))) (get rg-result "file_count")))
@@ -1474,8 +1494,13 @@
       [grep
        (private-fn "rg-search")
 
+       find-tool
+       (private-fn "find-tool")
+
        rg
-       (private-fn "rg-tool")]
+       (fn [& a]
+         (let [e (apply find-tool a)]
+           (update e :result #(merge % (get % "content")))))]
 
       ;; The private ENGINE (`rg-search`) still takes ONE spec map — a bare
       ;; positional string is not a map, so it throws :invalid-rg-spec.
@@ -1489,7 +1514,7 @@
          env
          (rg "needle" {"paths" [(temp-dir-path "rgposopts")] "include" ["*.clj"]})]
 
-        (expect (= :rg (:symbol env)))
+        (expect (= :find_files (:symbol env)))
         (expect (= 1 (get (:result env) "hit_count"))))
       ;; UNKNOWN keys are now IGNORED, not fatal — a model that tosses in a stray
       ;; annotation (e.g. `all_note: "defs"`, or an invented `type`/`spec`) still
@@ -2614,8 +2639,8 @@
                                 (set (keys fields))))))))
 
 (defdescribe editing-native-schema-shape-test
-             (it "matches rg's real scalar-or-list query contract"
-                 (let [query (get-in editing/rg-symbol [:ext.symbol/schema :properties "query"])]
+             (it "find_files' query is a scalar-or-list contract (name + content OR)"
+                 (let [query (get-in editing/find-symbol [:ext.symbol/schema :properties "query"])]
                    (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
              (it "rejects ambiguous cat selectors at the native boundary"
                  (let [schema (:ext.symbol/schema editing/cat-symbol)]
@@ -2779,83 +2804,6 @@
           (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))))
 
 (defdescribe
-  render-rg-result-modes-test
-  ;; Regression: a files-only / counts rg used the content-mode renderer, which
-  ;; reads `:hit_count`/`:matches` → "0 hits in 193 files" with NO body, even
-  ;; though the matching FILES were right there in `:files`. Each mode now renders
-  ;; its OWN shape. `r` arrives with snake_case wire keys.
-  (let [render @#'editing/render-rg-result]
-    (it "files-only: summary counts FILES (not 0 hits) and lists the matching paths"
-        (let [card (render {"files" ["src/a.clj" "src/b.clj" "src/c.clj"] "file_count" 3})]
-          (expect (= "3 matching files" (:summary card)))
-          (expect (clojure.string/includes? (:body card) "src/a.clj"))
-          (expect (clojure.string/includes? (:body card) "src/c.clj"))
-          (expect (not (clojure.string/includes? (:summary card) "hit")))))
-    (it "files-only: a single matching file reads `1 matching file`"
-        (expect (= "1 matching file" (:summary (render {"files" ["only.clj"] "file_count" 1})))))
-    (it "content mode is unchanged: `N hits in M files`"
-        (let [card (render {"matches" {"x.clj" {"1:abc" "line one"}} "hit_count" 1 "file_count" 1})]
-          (expect (= "1 hit in 1 file" (:summary card)))))
-    (it "an explicit `paths` scope is named on the headline; the default `.` is not"
-        (let
-          [scoped (render {"matches" {"x.clj" {"1:abc" "line one"}}
-                           "hit_count" 1
-                           "file_count" 1
-                           "needles" ["foo"]
-                           "paths" ["src" "test"]})
-           default (render {"matches" {"x.clj" {"1:abc" "line one"}}
-                            "hit_count" 1
-                            "file_count" 1
-                            "needles" ["foo"]
-                            "paths" ["."]})
-           files-only (render
-                        {"files" ["src/a.clj"] "file_count" 1 "needles" ["foo"] "paths" ["src"]})]
-
-          (expect (= "`foo` · 1 hit in 1 file · in `src`, `test`" (:summary scoped)))
-          (expect (= "`foo` · 1 hit in 1 file" (:summary default)))
-          (expect (= "`foo` · 1 matching file · in `src`" (:summary files-only)))))
-    (it "a needle CONTAINING backticks stays ONE clean chip (no chip-glue corruption)"
-        ;; Regression: a naive `` `needle` `` broke when the needle held backticks
-        ;; (e.g. an rg regex term). CommonMark closed the span early and swallowed
-        ;; the following ` OR ` separators — the `parse-inlineORinline` display bug.
-        ;; md-inline-code now fences with more backticks + symmetric padding.
-        (let
-          [summary (:summary (render {"matches" {"x.clj" {"1:abc" "l"}}
-                                      "hit_count" 63
-                                      "file_count" 1
-                                      "needles" ["parse-inline" "\\\\``" "inline"]}))
-           ast (com.blockether.vis.internal.render/markdown->ast summary)
-           ;; every rendered inline node under the paragraph
-           inlines (drop 2 (nth ast 2))
-           codes (->> inlines
-                      (filter #(= :c (first %)))
-                      (map #(nth % 2))
-                      set)
-           spans (->> inlines
-                      (filter #(= :span (first %)))
-                      (map #(nth % 2))
-                      set)]
-
-          ;; all three needles survive as their OWN code chips
-          (expect (contains? codes "parse-inline"))
-          (expect (contains? codes "\\\\``"))
-          (expect (contains? codes "inline"))
-          ;; the joiners stay as plain " OR " spans — never glued into a chip
-          (expect (contains? spans " OR "))
-          (expect (not (contains? codes "OR")))))
-    (it "content mode right-aligns the gutter to the file's widest line number"
-        ;; Same class as the cat-card margin bug: mixed 1- and 4-digit line
-        ;; numbers must NOT stagger the text column. Each row's text starts at
-        ;; the same offset once the line number is right-aligned.
-        (let
-          [card (render {"matches" {"x.clj" {"9:bb" {"text" "nine"}
-                                             "1200:dd" {"text" "twelve-hundred"}}}
-                         "hit_count" 2
-                         "file_count" 1})]
-          (expect (clojure.string/includes? (:body card) "\n     9  nine\n"))
-          (expect (clojure.string/includes? (:body card) "\n  1200  twelve-hundred\n"))))))
-
-(defdescribe
   render-cat-result-spans-test
   ;; Regression (session 128cefd8): two adjacent ranged reads of the SAME file
   ;; rendered near-identical cards — `app.css · 60 lines` then `app.css ·
@@ -2894,6 +2842,16 @@
         (let [card (render {"path" "app.css" "anchors" {}})]
           (expect (= "`app.css` · 0 lines" (:summary card)))
           (expect (nil? (:body card)))))))
+
+(defdescribe
+  render-cat-result-language-test
+  (let [render @#'editing/render-cat-result]
+    (it "tags code CAT bodies with the detected tree-sitter language"
+        (let [body (:body (render {"path" "src/app.clj" "anchors" {"1:aa" {"text" "(def x 1)"}}}))]
+          (expect (clojure.string/starts-with? body "\n```clojure\n"))))
+    (it "leaves non-code CAT bodies as plain fences"
+        (let [body (:body (render {"path" "notes.txt" "anchors" {"1:aa" {"text" "hello"}}}))]
+          (expect (clojure.string/starts-with? body "\n```\n"))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
@@ -2973,50 +2931,75 @@
 (defdescribe
   rg-tool-e2e-test
   "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
-  (let [rg (private-fn "rg-tool")]
+  (let
+    [find-tool
+     (private-fn "find-tool")
+
+     rg
+     (fn [& a]
+       (let [e (apply find-tool a)]
+         (update e :result #(merge % (get % "content")))))]
+
     (it "a comma query matches EITHER term (the session 71a69809 fix, real files)"
         (let
-          [d (temp-dir-path "rge")
-           f (str (temp-root) "/rge/a.clj")]
+          [d
+           (temp-dir-path "rge")
+
+           f
+           (str (temp-root) "/rge/a.clj")]
 
           (spit (fs/file f) "the model line\nthe cycle line\nunrelated\n")
           (let [r (rg "model, cycle" {"paths" [d]})]
             (expect (:success? r))
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
-    (it "content value is a UNIFORM `{\"text\" line}` map with AND without context"
+    (it
+      "content value is a UNIFORM `{\"text\" line}` map with AND without context"
+      (let
+        [d
+         (temp-dir-path "rguni")
+
+         f
+         (str (temp-root) "/rguni/a.clj")]
+
+        (spit (fs/file f) "L1\nMATCH\nL3\n")
         (let
-          [d (temp-dir-path "rguni")
-           f (str (temp-root) "/rguni/a.clj")]
+          [plain
+           (get-in (rg "MATCH" {"paths" [d]}) [:result "matches"])
 
-          (spit (fs/file f) "L1\nMATCH\nL3\n")
-          (let
-            [plain (get-in (rg "MATCH" {"paths" [d]}) [:result "matches"])
-             ctx (get-in (rg "MATCH" {"paths" [d] "context" 1}) [:result "matches"])
-             plain-v (-> plain
-                         vals
-                         first
-                         vals
-                         first)
-             ctx-v (-> ctx
-                       vals
-                       first
-                       vals
-                       first)]
+           ctx
+           (get-in (rg "MATCH" {"paths" [d] "context" 1}) [:result "matches"])
 
-            ;; ONE shape regardless of context: always a map carrying "text".
-            (expect (map? plain-v))
-            (expect (= "MATCH" (get plain-v "text")))
-            ;; context:0 hit is JUST {"text"} — no before/after keys.
-            (expect (= #{"text"} (set (keys plain-v))))
-            ;; context hit is the SAME map, plus before/after.
-            (expect (map? ctx-v))
-            (expect (= "MATCH" (get ctx-v "text")))
-            (expect (contains? ctx-v "before"))
-            (expect (contains? ctx-v "after")))))
+           plain-v
+           (-> plain
+               vals
+               first
+               vals
+               first)
+
+           ctx-v
+           (-> ctx
+               vals
+               first
+               vals
+               first)]
+
+          ;; ONE shape regardless of context: always a map carrying "text".
+          (expect (map? plain-v))
+          (expect (= "MATCH" (get plain-v "text")))
+          ;; context:0 hit is JUST {"text"} — no before/after keys.
+          (expect (= #{"text"} (set (keys plain-v))))
+          ;; context hit is the SAME map, plus before/after.
+          (expect (map? ctx-v))
+          (expect (= "MATCH" (get ctx-v "text")))
+          (expect (contains? ctx-v "before"))
+          (expect (contains? ctx-v "after")))))
     (it "smart-case: a lowercase query matches any case, on disk"
         (let
-          [d (temp-dir-path "rgc")
-           f (str (temp-root) "/rgc/a.clj")]
+          [d
+           (temp-dir-path "rgc")
+
+           f
+           (str (temp-root) "/rgc/a.clj")]
 
           (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
           (let [r (rg "key" {"paths" [d]})]
@@ -3024,17 +3007,25 @@
     (it
       "a MISSING path CLIMBS to its nearest existing ancestor dir and is REPORTED in missing_paths (never a hard error)"
       (let
-        [d (temp-dir-path "rgp")
-         f (str (temp-root) "/rgp/a.clj")
-         ghost (str (temp-root) "/rgp/nope.edn")]
+        [d
+         (temp-dir-path "rgp")
+
+         f
+         (str (temp-root) "/rgp/a.clj")
+
+         ghost
+         (str (temp-root) "/rgp/nope.edn")]
 
         (spit (fs/file f) "needle here\n")
         ;; one real dir + one path that does not exist. The ghost climbs to its
         ;; parent (the real dir), so the search still runs — and the ghost is
         ;; REPORTED, not silently absorbed.
         (let
-          [r (rg "needle" {"paths" [d ghost]})
-           missing (get-in r [:result "missing_paths"])]
+          [r
+           (rg "needle" {"paths" [d ghost]})
+
+           missing
+           (get-in r [:result "missing_paths"])]
 
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "hit_count"])))
@@ -3043,8 +3034,11 @@
     (it
       "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
       (let
-        [rsr @#'editing/resolve-search-roots
-         sweep (rsr ["."])]
+        [rsr
+         @#'editing/resolve-search-roots
+
+         sweep
+         (rsr ["."])]
 
         ;; a lone blank / nil / whitespace resolves to the full allowed-roots sweep
         (expect (= sweep (rsr [""])))
@@ -3055,12 +3049,23 @@
     (it
       "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
       (let
-        [dir (str (temp-root) "/rgd-precise")
-         _ (when (fs/exists? dir) (fs/delete-tree dir))
-         _ (fs/create-dirs dir)
-         a (str dir "/a.clj")
-         b (str dir "/b.clj")
-         needle "zqUNIQUEneedle42"]
+        [dir
+         (str (temp-root) "/rgd-precise")
+
+         _
+         (when (fs/exists? dir) (fs/delete-tree dir))
+
+         _
+         (fs/create-dirs dir)
+
+         a
+         (str dir "/a.clj")
+
+         b
+         (str dir "/b.clj")
+
+         needle
+         "zqUNIQUEneedle42"]
 
         (spit (fs/file a) (str needle " here\n"))
         (spit (fs/file b) (str needle " here\n"))
@@ -3080,8 +3085,11 @@
         ;; (here `dir`, holding a.clj + b.clj) so the search still runs — and the
         ;; ghost is REPORTED in missing_paths, never a hard error, never silent
         (let
-          [ghost (str dir "/gone.clj")
-           r (rg needle {"paths" [ghost]})]
+          [ghost
+           (str dir "/gone.clj")
+
+           r
+           (rg needle {"paths" [ghost]})]
 
           (expect (:success? r))
           (expect (= 2 (get-in r [:result "file_count"])))
@@ -3263,7 +3271,7 @@
      (private-fn "find-arg-paths")
 
      rg-paths
-     (private-fn "rg-arg-paths")]
+     (private-fn "find-arg-paths")]
 
     (it "find_files defaults empty paths to current directory in validation and path protection"
         (let [spec {"query" "resource-config" "paths" []}]
@@ -3485,7 +3493,7 @@
     (it "a docs-only (markdown/text) project HIDES them; cat/rg/find_files stay"
         (doseq [s struct-syms]
           (expect (false? (active? s ["markdown" "text"]))))
-        (doseq [s [editing/cat-symbol editing/rg-symbol editing/find-symbol]]
+        (doseq [s [editing/cat-symbol editing/find-symbol]]
           (expect (true? (active? s ["markdown" "text"]))))
         (with-redefs
           [environment/snapshot (fn []

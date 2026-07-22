@@ -2497,7 +2497,9 @@
   (soul sid))
 
 (defn reorder-project-sessions!
-  "Persist the manual order of sessions inside `pid`. Returns the count applied."
+  "Atomically adopt loose named sessions into `pid`, then persist their manual
+   order. Guests owned by another project are never stolen. Returns the member
+   count applied."
   [pid session-ids]
   (lp/reorder-project-sessions! pid session-ids))
 

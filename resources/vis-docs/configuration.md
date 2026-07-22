@@ -147,7 +147,7 @@ Sessions, turns, and durable agent state live in SQLite. Resolution order: expli
 
 ## Search
 
-The `:search` block tunes what `rg` and `find_files` may see. By default
+The `:search` block tunes what `find_files` may see. By default
 both honor `.gitignore`; `include-gitignored-paths` re-includes chosen
 gitignored subtrees — the walker descends them as if
 `is_respect_gitignore=False` were passed **for those subtrees only**,

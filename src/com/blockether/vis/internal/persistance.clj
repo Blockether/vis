@@ -362,6 +362,8 @@
 
 (defdelegate db-reorder-project-sessions! [db-info project-id session-ids])
 
+(defdelegate db-adopt-and-reorder-project-sessions! [db-info project-id session-ids])
+
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])
 

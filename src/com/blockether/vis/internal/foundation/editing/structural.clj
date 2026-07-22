@@ -29,7 +29,12 @@
    pack 1.10.3-blockether.24 — a miss means the name/kind is wrong, not that the
    language is unsupported.) Keep the engine's specifics; only add the steer."
   [^String msg]
-  (let [m (str msg)]
+  (let
+    [m (-> (str msg)
+           ;; The shared engine names maki's `index` outline tool; vis exposes
+           ;; it as `struct_index`. Rewrite that one leaked call site with a
+           ;; plain literal swap — the engine only ever emits `Use index(`.
+           (str/replace "Use index(" "Use struct_index("))]
     (if (str/includes? m "No definition named")
       (str m
            " (Re-check the name/`kind` against struct_index(path); or edit with"

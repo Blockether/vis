@@ -86,7 +86,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel (bare Python functions): session_state/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl_start/repl_stop), file I/O (cat/find_files/rg/patch/write/copy/move/delete/delete_if_exists/file_exists), session workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
+     "Foundation kernel (bare Python functions): session_state/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl_start/repl_stop), file I/O (cat/find_files/patch/write/copy/move/delete/delete_if_exists/file_exists), session workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"

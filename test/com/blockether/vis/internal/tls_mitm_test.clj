@@ -3,10 +3,10 @@
    asserted as crypto facts, no network: a self-signed CA, a leaf that carries the
    requested host in its SAN and verifies under the CA, per-host context caching,
    and the ephemeral CA-PEM lifecycle. Cross-platform (runs on Linux CI too)."
-  (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [com.blockether.vis.internal.tls-mitm :as tls])
-  (:import (java.io File)
+  (:import (java.io File FileInputStream)
+           (java.security KeyStore)
            (java.security.cert X509Certificate)
            (javax.net.ssl SSLContext SSLSocketFactory)))
 
@@ -59,13 +59,25 @@
     (try (testing "exposes the documented capability keys"
            (is (instance? X509Certificate (:ca-cert cap)))
            (is (string? (:ca-file cap)))
+           (is (string? (:java-trust-store cap)))
+           (is (string? (:java-trust-store-password cap)))
            (is (fn? (:ctx-for cap)))
            (is (instance? SSLSocketFactory (:upstream-factory cap)))
            (is (fn? (:close! cap))))
-         (testing "the CA PEM file exists on disk and is a PEM"
-           (let [f (File. ^String (:ca-file cap))]
-             (is (.exists f))
-             (is (str/includes? (slurp f) "BEGIN CERTIFICATE"))))
+         (testing "the combined PEM bundle and JVM PKCS12 truststore exist"
+           (let
+             [pem (File. ^String (:ca-file cap))
+              store-file (File. ^String (:java-trust-store cap))
+              chars (.toCharArray ^String (:java-trust-store-password cap))
+              store (KeyStore/getInstance "PKCS12")]
+
+             (is (.exists pem))
+             (is (.exists store-file))
+             (is (< 1 (count (re-seq #"BEGIN CERTIFICATE" (slurp pem)))))
+             (with-open [in (FileInputStream. store-file)]
+               (.load store in chars))
+             (is (.containsAlias store "vis-egress-ca"))
+             (is (< 1 (.size store)))))
          (testing "ctx-for returns a server SSLContext, cached per host (same instance)"
            (let
              [a ((:ctx-for cap) "example.com")
@@ -76,8 +88,9 @@
              (is (identical? a b))
              (is (not (identical? a c)))))
          (finally ((:close! cap))))
-    (testing "close! removes the ephemeral CA PEM (never persisted to the host)"
-      (is (not (.exists (File. ^String (:ca-file cap))))))))
+    (testing "close! removes both ephemeral trust files"
+      (is (not (.exists (File. ^String (:ca-file cap)))))
+      (is (not (.exists (File. ^String (:java-trust-store cap))))))))
 
 (deftest upstream-default-validates-real-certs
   (let [cap (tls/create! {})] ; no :upstream-trust-all?

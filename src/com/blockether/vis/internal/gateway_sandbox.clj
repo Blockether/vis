@@ -28,6 +28,13 @@
 (defonce ^:private registry (atom {}))
 ;; {:port <int> :stop! (fn [])} | nil — the ONE shared proxy
 (defonce ^:private proxy-state (atom nil))
+
+;; token -> {:port <int> :stop! fn}; compatibility front doors for managed
+;; language processes whose HTTP stacks cannot attach Proxy-Authorization.
+;; They share the policy engine + CA; only attribution moves from header to port.
+(defonce ^:private session-proxy-states (atom {}))
+(def ^:private session-proxy-lock (Object.))
+
 ;; tls-mitm capability {:ca-file :ctx-for :close! …} | nil — the ONE shared CA
 (defonce ^:private ca-state (atom nil))
 
@@ -48,12 +55,14 @@
   nil)
 
 (defn- reserved-loopback-ports
-  "All loopback ports off-limits to a jailed child: the shared proxy's own port plus any
-   gateway-registered control-plane ports."
+  "All loopback ports off-limits to a jailed child: the shared authenticated
+   proxy, every session-attributed language front door, and gateway control-plane
+   ports. A proxy can therefore never pivot into another proxy listener."
   []
   (into @extra-reserved-ports
-        (when-let [p (:port @proxy-state)]
-          [p])))
+        (concat (when-let [p (:port @proxy-state)]
+                  [p])
+                (keep :port (vals @session-proxy-states)))))
 
 (defn register-session!
   "Register `policy-fn` (0-arg → the session's compiled policy value or nil) under
@@ -63,9 +72,15 @@
   token)
 
 (defn unregister-session!
-  "Drop a session's policy from the registry (on env dispose). Idempotent."
+  "Drop a session's policy and stop its optional language-process front door.
+   Idempotent; the shared proxy + CA remain gateway-owned."
   [token]
-  (when token (swap! registry dissoc token))
+  (when token
+    (locking session-proxy-lock
+      (when-let [stop! (get-in @session-proxy-states [token :stop!])]
+        (try (stop!) (catch Throwable _ nil)))
+      (swap! session-proxy-states dissoc token))
+    (swap! registry dissoc token))
   nil)
 
 (defn registered?
@@ -83,20 +98,30 @@
            (assoc (if (map? p) p {}) :reserved-loopback-ports (reserved-loopback-ports)))
          (catch Throwable _ {:deny-all? true :reason "vis: session policy error"}))
     {:deny-all? true
+     :proxy-auth-required? true
      :reason (if token
                "vis: no live session for this proxy token"
                "vis: missing Proxy-Authorization (unattributable egress)")}))
 
-(defn ensure-ca!
-  "Lazily create the ONE shared ephemeral MITM CA. Returns its `:ca-file` PEM path
-   (injected into a jailed child's trust env). Idempotent + thread-safe."
+(defn- ensure-ca-capability!
   []
-  (or (:ca-file @ca-state)
+  (or @ca-state
       (locking ca-lock
-        (or (:ca-file @ca-state)
+        (or @ca-state
             (let [cap (tls-mitm/create!)]
               (reset! ca-state cap)
-              (:ca-file cap))))))
+              cap)))))
+
+(defn ensure-ca!
+  "Lazily create the ONE shared ephemeral MITM CA. Returns its PEM path."
+  []
+  (:ca-file (ensure-ca-capability!)))
+
+(defn ensure-java-trust!
+  "Return the shared CA's ephemeral PKCS12 truststore credentials for managed JVM
+   children. The store is deleted with the gateway capability."
+  []
+  (select-keys (ensure-ca-capability!) [:java-trust-store :java-trust-store-password]))
 
 (defn ensure-proxy!
   "Lazily start the ONE shared loopback egress proxy bound to the token-keyed
@@ -112,15 +137,40 @@
               (reset! proxy-state srv)
               (:port srv))))))
 
+(defn ensure-session-proxy!
+  "Lazily start a session-attributed compatibility front door for managed language
+   processes whose HTTP stacks do not reliably send Proxy-Authorization from URL
+   userinfo (notably urllib and JVM dependency resolvers). The listener is bound to
+   loopback, resolves exactly `token`'s live policy, and shares the gateway CA and
+   proxy implementation. Unknown/disposed sessions fail closed. Returns its port."
+  [token]
+  (when-not (registered? token)
+    (throw (ex-info "Managed language proxy denied: session is not registered"
+                    {:type ::session-proxy-missing :token token})))
+  (or (get-in @session-proxy-states [token :port])
+      (locking session-proxy-lock
+        (or (get-in @session-proxy-states [token :port])
+            (let
+              [srv (egress/start! {:policy-fn (fn [_]
+                                                (resolve-policy token))
+                                   :mitm (fn []
+                                           @ca-state)})]
+              (swap! session-proxy-states assoc token srv)
+              (:port srv))))))
+
 (defn proxy-port
   "The running shared proxy's port, or nil if it was never started."
   []
   (:port @proxy-state))
 
 (defn shutdown!
-  "Stop the shared proxy, delete the shared CA PEM, clear the registry. For daemon
-   shutdown. Idempotent."
+  "Stop every gateway proxy listener, delete the shared ephemeral trust files, and
+   clear all session policy state. Idempotent."
   []
+  (locking session-proxy-lock
+    (doseq [{:keys [stop!]} (vals @session-proxy-states)]
+      (when stop! (try (stop!) (catch Throwable _ nil))))
+    (reset! session-proxy-states {}))
   (locking proxy-lock
     (when-let [stop! (:stop! @proxy-state)]
       (try (stop!) (catch Throwable _ nil)))

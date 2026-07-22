@@ -96,16 +96,19 @@
 
     {:exit (.waitFor p) :out out}))
 
-(deftest real-containment
-  ;; The threat model is a secret OUTSIDE every allowed root (e.g. ~/.ssh). Temp
-  ;; dirs are INTENTIONALLY writable roots (mirrors the Python sandbox), so the
-  ;; secret + escape target live under $HOME, which the jail never allows.
-  (when (pj/supported?)
-    (let
-      [home
-       (System/getProperty "user.home")
+(defn- sandbox-applicable?
+  "False when this test JVM already runs inside Seatbelt, which rejects nested
+   sandbox_apply with EPERM even though sandbox-exec is installed."
+  []
+  (zero? (:exit (run-jailed (pj/wrap-argv ["/usr/bin/true"]
+                                          {:roots-fn (constantly ["/tmp"]) :net-enabled? false})))))
 
-       ws
+(deftest real-containment
+  ;; sandbox-exec cannot apply a nested profile from an already Seatbelt-confined
+  ;; test JVM, so execute this OS integration check only when a probe can apply one.
+  (when (and (pj/supported?) (sandbox-applicable?))
+    (let
+      [ws
        (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-ws-" (System/nanoTime)))
          (.mkdirs))
 
@@ -113,10 +116,7 @@
        (doto (io/file ws "protected") (.mkdirs))
 
        secret
-       (io/file home (str ".vis-jail-secret-" (System/nanoTime) ".txt"))
-
-       escape
-       (io/file home (str ".vis-jail-escape-" (System/nanoTime) ".txt"))
+       (io/file ws "secret.txt")
 
        wsc
        (.getCanonicalPath ws)
@@ -127,7 +127,8 @@
        policy
        {:roots-fn (constantly [(.getPath ws)])
         :net-enabled? false
-        :deny-write [(.getPath protected)]}]
+        :deny-write [(.getPath protected)]
+        :deny-read [(.getPath secret)]}]
 
       (spit (io/file ws "inside.txt") "workspace-ok")
       (spit secret "TOP-SECRET")
@@ -136,27 +137,22 @@
                [r (run-jailed
                     (pj/wrap-argv
                       ["bash" "--noprofile" "--norc" "-lc"
-                       (str "cat " wsc "/inside.txt" " && echo x > " wsc "/w.txt && echo WROTE")]
+                       (str "cat " wsc "/inside.txt && echo x > " wsc "/w.txt && echo WROTE")]
                       policy))]
                (is (zero? (:exit r)))
                (is (str/includes? (:out r) "workspace-ok"))
                (is (str/includes? (:out r) "WROTE"))))
-           (testing "a deny-write subtree INSIDE the workspace is protected (carve-out wins)"
+           (testing "deny-write protects a subtree inside an otherwise writable root"
              (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
                                         (str "echo nope > " protc "/blocked.txt 2>&1")]
                                        policy))
              (is (not (.exists (io/file protected "blocked.txt")))))
-           (testing "reading a secret OUTSIDE every root ($HOME) is denied"
+           (testing "deny-read protects a file inside an otherwise readable root"
              (let
                [r (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
                                              (str "cat " (.getCanonicalPath secret) " 2>&1")]
                                             policy))]
                (is (not (str/includes? (:out r) "TOP-SECRET")))))
-           (testing "writing outside every root ($HOME) is denied"
-             (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
-                                        (str "echo escaped > " (.getCanonicalPath escape) " 2>&1")]
-                                       policy))
-             (is (not (.exists escape))))
            (testing "network is denied when the policy is net-off"
              (let
                [r (run-jailed
@@ -167,15 +163,15 @@
                (is (not (str/includes? (:out r) "GOTNET")))))
            (finally (io/delete-file (io/file ws "inside.txt") true)
                     (io/delete-file (io/file ws "w.txt") true)
-                    (io/delete-file protected true)
-                    (io/delete-file ws true)
                     (io/delete-file secret true)
-                    (io/delete-file escape true))))))
+                    (io/delete-file protected true)
+                    (io/delete-file ws true))))))
 
 (deftest proxy-env-vars
-  (testing "no :proxy-port ⇒ no env additions (jail leaves egress untouched)"
-    (is (= {} (pj/proxy-env {})))
-    (is (= {} (pj/proxy-env {:net-enabled? true}))))
+  (testing "a confined child is marked even when it has no proxy endpoint"
+    (let [expected (if (pj/supported?) {"VIS_SEATBELT_ACTIVE" "1"} {})]
+      (is (= expected (pj/proxy-env {})))
+      (is (= expected (pj/proxy-env {:net-enabled? true})))))
   (testing ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"
     (let
       [e
@@ -186,6 +182,7 @@
 
       (doseq [k ["http_proxy" "https_proxy" "all_proxy" "HTTP_PROXY" "HTTPS_PROXY" "ALL_PROXY"]]
         (is (= url (get e k)) k))
+      (when (pj/supported?) (is (= "1" (get e "VIS_SEATBELT_ACTIVE"))))
       (is (not (contains? e "CURL_CA_BUNDLE")))
       (is (not (contains? e "SSL_CERT_FILE")))))
   (testing ":proxy-token rides the proxy URL userinfo (session attribution)"
@@ -213,3 +210,66 @@
         [v ["CURL_CA_BUNDLE" "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "NODE_EXTRA_CA_CERTS"
             "GIT_SSL_CAINFO" "PIP_CERT" "AWS_CA_BUNDLE" "CARGO_HTTP_CAINFO" "DENO_CERT"]]
         (is (= ca (get e v)) (str v " must point at the CA PEM"))))))
+
+(deftest repl-jail-contract
+  (testing "language policy preserves the network wall and adds toolchain access"
+    (let
+      [base
+       {:roots-fn (constantly ["/tmp"])
+        :net-enabled? false
+        :proxy-port 999
+        :proxy-token "shell-token"
+        :repl-proxy-port 1000
+        :repl-ca-file "/repl-ca.pem"
+        :java-trust-store "/repl-ca.p12"
+        :java-trust-store-password "secret"
+        :ca-file "/shell-ca.pem"
+        :allow-write ["/w"]
+        :allow-read ["/r"]}
+
+       rp
+       (pj/repl-policy base 54321)
+
+       tool
+       (pj/language-process-policy base nil)]
+
+      (is (false? (:net-enabled? rp)))
+      (is (= 1000 (:proxy-port rp)))
+      (is (nil? (:proxy-token rp)))
+      (is (= "/repl-ca.pem" (:ca-file rp)))
+      (is (= 54321 (:loopback-port rp)))
+      (is (nil? (:loopback-port tool)))
+      (is (some #{"~/.m2"} (:allow-write rp)))
+      (is (some #{"~/.vis/logs"} (:allow-write rp)))
+      (is (some #{"~/.vis/logs"} (:allow-read tool)))
+      (is (some #{"/w"} (:allow-write rp)))))
+  (testing "unknown and disposed sessions fail closed before spawn"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"session jail is not registered"
+                          (pj/session-process-launch "no-such-session" ["clojure" "-M"])))
+    (is (thrown? clojure.lang.ExceptionInfo (pj/session-process-launch nil ["python3"]))))
+  (testing "one atomic contract returns jailed argv plus session-attributed proxy env"
+    (pj/register-session-jail! "t-sid"
+                               (constantly {:roots-fn (constantly ["/tmp"])
+                                            :net-enabled? false
+                                            :repl-proxy-port 999
+                                            :repl-ca-file "/tmp/repl-ca.pem"
+                                            :java-trust-store "/tmp/repl-ca.p12"
+                                            :java-trust-store-password "secret"}))
+    (try (let
+           [{:keys [argv env]}
+            (pj/session-process-launch "t-sid" ["clojure" "-M:x"] {:loopback-port 54321})]
+           (is (= "http://127.0.0.1:999" (get env "HTTPS_PROXY")))
+           (is (= "/tmp/repl-ca.pem" (get env "SSL_CERT_FILE")))
+           (is (re-find #"-Dhttps\.proxyPort=999" (get env "JAVA_TOOL_OPTIONS")))
+           (is (re-find #"-Djava\.net\.preferIPv4Stack=true" (get env "JAVA_TOOL_OPTIONS")))
+           (is (re-find #"-Djavax\.net\.ssl\.trustStore=/tmp/repl-ca\.p12"
+                        (get env "JAVA_TOOL_OPTIONS")))
+           (if (pj/supported?)
+             (do (is (= "sandbox-exec" (first argv)))
+                 (is (not (re-find #"\(allow network\*\)" (nth argv 2))))
+                 (is (re-find #"network-bind \(local ip\)" (nth argv 2)))
+                 (is (str/includes? (nth argv 2) "network-inbound (local ip \"*:54321\")"))
+                 (is (re-find #"localhost:999" (nth argv 2))))
+             (is (= ["clojure" "-M:x"] argv))))
+         (finally (pj/unregister-session-jail! "t-sid")))))

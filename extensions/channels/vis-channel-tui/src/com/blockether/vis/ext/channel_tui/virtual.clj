@@ -1374,9 +1374,30 @@
           ;; clipped top bubble is absorbed into its own off-screen portion
           ;; instead of yanking the rows below it.
           anchor-idx
-          (long (if-let [[^long lo _] vis-window]
-                  (if (>= (long (nth est-off lo)) eff-1) lo (min (dec n) (inc lo)))
-                  0))
+          (long
+            (if-let [[^long lo _] vis-window]
+              (cond
+                ;; Top message flush with the viewport top ⇒ it IS the anchor.
+                (>= (long (nth est-off lo)) eff-1) lo
+                ;; Clipped top message that GREW this frame — a disclosure
+                ;; toggle expanded a fold inside it. Anchor on IT so its top
+                ;; stays pinned and the body grows DOWNWARD, matching the
+                ;; browser `<details>` feel. Pinning the first FULLY-visible
+                ;; message BELOW the growth (the `lo+1` fallback) instead lets
+                ;; the freshly-expanded, still-estimated (OVER-shooting) bubble's
+                ;; estimate→real correction yank the viewport UP to earlier
+                ;; content — the "scroll up a little, open a fold, jump to the
+                ;; top" bug. `lo+1` stays for a SHRINKING clipped bubble
+                ;; (never-measured estimate resolving smaller), which must be
+                ;; absorbed into its own off-screen portion.
+                (and (vector? prev-offsets)
+                     (= (long (count prev-offsets)) (inc n))
+                     (< lo (dec n))
+                     (> (- (long (nth est-off (inc lo))) (long (nth est-off lo)))
+                        (- (long (nth prev-offsets (inc lo))) (long (nth prev-offsets lo)))))
+                lo
+                :else (min (dec n) (inc lo)))
+              0))
 
           anchor-shift'
           (- (long (nth offsets' anchor-idx)) (long (nth est-off anchor-idx)))
