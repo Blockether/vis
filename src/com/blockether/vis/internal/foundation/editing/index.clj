@@ -572,6 +572,19 @@
 
     (str/join "\n\n" (remove nil? [header imports-sec defs-sec]))))
 
+(defn- span-overlaps?
+  "Whether a 0-based tree-sitter `Span` intersects the 1-based inclusive line
+   range `[lo hi]` — the overlap test behind `file-index`'s optional `range`."
+  [^Span span ^long lo ^long hi]
+  (let
+    [start
+     (inc (.startLine span))
+
+     end
+     (inc (.endLine span))]
+
+    (and (<= start hi) (>= end lo))))
+
 (defn file-index
   "Maki-style structural INDEX of `path`, produced in a SINGLE tree-sitter pass:
 
@@ -581,17 +594,33 @@
       :imports [row …]}    ; machine import rows, each anchored
 
    nil when the language is unsupported, or the file has no imports and nothing
-   structural. `source` may be passed to avoid a re-read (e.g. unsaved buffers)."
-  ([path] (file-index path (slurp path)))
-  ([path source]
+   structural. `source` may be passed to avoid a re-read (e.g. unsaved buffers).
+   `range` (1-based inclusive `[lo hi]`, either order) narrows the index to the
+   imports and TOP-LEVEL definitions whose span intersects it — each kept def's
+   own children stay intact; `:line-count` still reports the WHOLE file. With a
+   range set, a hit-nothing window still returns a (header-only) index rather
+   than nil, so the caller can tell 'empty window' from 'unsupported'."
+  ([path] (file-index path (slurp path) nil))
+  ([path source] (file-index path source nil))
+  ([path source range]
    (when-let [language (detect-language path)]
      (let
        [res (process-source source language)
-        items (or (.structure res) [])
-        imps (or (.imports res) [])
+        all-items (or (.structure res) [])
+        all-imps (or (.imports res) [])
+        window (when (and range (first range) (second range))
+                 (let
+                   [a (long (first range))
+                    b (long (second range))]
+
+                   [(min a b) (max a b)]))
+        [lo hi] window
+        items
+        (if window (filterv #(span-overlaps? (.span ^StructureItem %) lo hi) all-items) all-items)
+        imps (if window (filterv #(span-overlaps? (.span ^ImportInfo %) lo hi) all-imps) all-imps)
         lines (str/split-lines source)]
 
-       (when (or (seq items) (seq imps))
+       (when (or (seq items) (seq imps) window)
          (binding [*docstrings* (.docstrings res)]
            (let [import-rows (mapv #(import->row lines %) imps)]
              {:language language

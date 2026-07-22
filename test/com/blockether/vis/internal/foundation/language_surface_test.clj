@@ -1,13 +1,17 @@
 (ns com.blockether.vis.internal.foundation.language-surface-test
-  (:require [com.blockether.vis.internal.extension :as extension]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
-            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fake-env
   [handlers]
   {:session-id (str "ls-test-" (random-uuid))
+   :jail-policy-fn (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")])
+                                :net-enabled? false})
    :env/project {:primary_language "clojure"}
    :extensions (atom [{:ext/name "fake-clj" :ext/language-tools handlers}])})
 
@@ -473,7 +477,7 @@
              "findings" [{"file" "src/foo.clj" "row" 3 "col" 5 "level" "error" "message" "boom"}]})]
           (expect (str/includes? summary "`src/foo.clj`"))
           (expect (str/includes? summary "1 error"))
-          (expect (str/includes? body "| src/foo.clj | 3:5 | error | boom |"))))
+          (expect (str/includes? body "| src/foo.clj | 3:5 | error |  | boom |"))))
     (it "findings across many files each render as their own table row"
         (let
           [{:keys [body]}
@@ -483,10 +487,82 @@
              "info" 0
              "files" 2
              "targets" ["src/a.clj" "src/b.clj"]
-             "findings" [{"file" "src/a.clj" "row" 1 "col" 1 "level" "error" "message" "one"}
-                         {"file" "src/a.clj" "row" 9 "col" 2 "level" "error" "message" "two"}
+             "findings" [{"file" "src/a.clj"
+                          "row" 1
+                          "col" 1
+                          "level" "error"
+                          "message" "one"
+                          "provider" "clj-kondo"}
+                         {"file" "src/a.clj"
+                          "row" 9
+                          "col" 2
+                          "level" "error"
+                          "message" "two"
+                          "provider" "reflection"}
                          {"file" "src/b.clj" "row" 4 "col" 3 "level" "error" "message" "three"}]})]
           ;; every finding is its own table row (file column repeated per row)
-          (expect (str/includes? body "| src/a.clj | 1:1 | error | one |"))
-          (expect (str/includes? body "| src/a.clj | 9:2 | error | two |"))
-          (expect (str/includes? body "| src/b.clj | 4:3 | error | three |"))))))
+          ;; with the provider surfaced as its own column
+          (expect (str/includes? body "| file | at | level | provider | message |"))
+          (expect (str/includes? body "| src/a.clj | 1:1 | error | clj-kondo | one |"))
+          (expect (str/includes? body "| src/a.clj | 9:2 | error | reflection | two |"))
+          (expect (str/includes? body "| src/b.clj | 4:3 | error |  | three |"))))))
+
+(defdescribe
+  language-process-jail-refresh-test
+  (it "refreshes the session jail before a test handler launches a process"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :test-fn (fn [handler-env _]
+                                {:success? true
+                                 :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+                                                                          (:session-id handler-env)
+                                                                          ["clojure"
+                                                                           "-Sdescribe"]))))}})}])
+
+         session-id
+         (:session-id env)
+
+         result
+         (try (language-surface/run-tests env {})
+              (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before repl_eval can auto-start a REPL"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :repl-eval-fn
+                     (fn [handler-env _]
+                       {:success? true
+                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+                                                                 (:session-id handler-env)
+                                                                 ["clojure" "-Sdescribe"]))))}})}])
+
+         session-id
+         (:session-id env)
+
+         result
+         (try (language-surface/repl-eval env "(+ 1 1)")
+              (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before starting or restarting a REPL"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn
+                     (fn [handler-env _ _]
+                       {:success? true
+                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+                                                                 (:session-id handler-env)
+                                                                 ["clojure" "-Sdescribe"]))))}})}])
+
+         session-id
+         (:session-id env)
+
+         result
+         (try (language-surface/start-repl env "start")
+              (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?]))))))

@@ -6,6 +6,7 @@
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -21,6 +22,11 @@
       (.delete f))))
 
 (def ^:private on-path? @#'interp/on-path?)
+(def ^:private test-session-id "python-pack-test")
+
+(process-jail/register-session-jail!
+  test-session-id
+  (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")]) :net-enabled? true}))
 
 (defn- has-python? [] (boolean (or (on-path? "python3") (on-path? "python"))))
 
@@ -52,7 +58,8 @@
              (it "starts, evaluates, persists globals across evals, captures output + errors, stops"
                  (when (has-python?)
                    (let [dir (.getPath (tmp-dir))]
-                     (try (expect (= "up" (get (repl/start! dir {}) "status")))
+                     (try (expect
+                            (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
                           ;; last expression's value is captured (REPL semantics)
                           (expect (= "2" (get (repl/eval! dir "1+1" 10000) "value")))
                           ;; globals PERSIST across separate evals — a real session
@@ -90,7 +97,7 @@
            (.getCanonicalPath root)
 
            env
-           {:workspace/root (.getPath root)}]
+           {:workspace/root (.getPath root) :session-id test-session-id}]
 
           (try (expect (= :py/no-repl
                           (try (core/py-repl-eval-fn env "3 * 7")
@@ -111,7 +118,7 @@
            (.getCanonicalPath root)
 
            env
-           {:workspace/root (.getPath root)}]
+           {:workspace/root (.getPath root) :session-id test-session-id}]
 
           (try
             (expect (:success? (core/py-start-repl-fn env "start" nil)))
@@ -148,7 +155,7 @@
   (it "represents dicts / lists / sets as nested data"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {})
+          (try (repl/start! dir {:session-id test-session-id})
                (expect (= {"a" 1 "b" [2 3]}
                           (get (repl/eval! dir "{'a': 1, 'b': [2,3]}" 10000) "data")))
                (expect (= [1 2 3] (sort (get (repl/eval! dir "{3,1,2}" 10000) "data"))))
@@ -157,7 +164,7 @@
   (it "represents a dataclass / custom object as a field map tagged with __type__"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {})
+          (try (repl/start! dir {:session-id test-session-id})
                (repl/eval!
                  dir
                  "from dataclasses import dataclass\n@dataclass\nclass P:\n    x: int\n    y: int"
@@ -168,7 +175,7 @@
   (it "an OPAQUE object stays LIVE + is described (type/repr/attrs), not lost"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {})
+          (try (repl/start! dir {:session-id test-session-id})
                (let [d (get (repl/eval! dir "(i for i in range(3))" 10000) "data")]
                  (expect (get d "__opaque__"))
                  (expect (= "generator" (get d "__type__")))

@@ -101,50 +101,100 @@
                      (expect (str/includes? src t))))))
 
 ;; ── 2. insert_before / insert_after ─────────────────────────────────────────
-(defdescribe insert-ops-test
-             (it "insert_before places a node just before the target (clj)"
-                 (let
-                   [src
-                    "(defn a [] 1)\n(defn b [] 2)\n"
+(defdescribe
+  insert-ops-test
+  (it "insert_before places a node just before the target (clj)"
+      (let
+        [src
+         "(defn a [] 1)\n(defn b [] 2)\n"
 
-                    ib
-                    (child-idx "clojure" src "defn b")
+         ib
+         (child-idx "clojure" src "defn b")
 
-                    r
-                    (z/edit "clojure" src [ib] :insert-before "(def M 0)\n")]
+         r
+         (z/edit "clojure" src [ib] :insert-before "(def M 0)\n")]
 
-                   (expect (:ok? r))
-                   (expect (str/includes? (:new-source r) "(def M 0)\n(defn b"))
-                   (expect (str/includes? (:new-source r) "(defn a [] 1)")) ; untouched
-                   (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
-             (it "insert_after places a node just after the target (clj)"
-                 (let
-                   [src
-                    "(defn a [] 1)\n(defn b [] 2)\n"
+        (expect (:ok? r))
+        (expect (str/includes? (:new-source r) "(def M 0)\n(defn b"))
+        (expect (str/includes? (:new-source r) "(defn a [] 1)")) ; untouched
+        (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
+  (it "insert_after places a node just after the target (clj)"
+      (let
+        [src
+         "(defn a [] 1)\n(defn b [] 2)\n"
 
-                    r
-                    (z/edit "clojure" src [0] :insert-after "\n(def N 9)")]
+         r
+         (z/edit "clojure" src [0] :insert-after "\n(def N 9)")]
 
-                   (expect (:ok? r))
-                   (expect (str/includes? (:new-source r) "(defn a [] 1)\n(def N 9)"))
-                   (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
-             (it "insert works language-neutrally (python)"
-                 (let
-                   [src
-                    "def a():\n    return 1\n\ndef b():\n    return 2\n"
+        (expect (:ok? r))
+        (expect (str/includes? (:new-source r) "(defn a [] 1)\n(def N 9)"))
+        (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
+  (it "insert reuses the file's blank-line rhythm (no gluing between top-level forms)"
+      (let
+        [src
+         "(defn a [] 1)\n\n(defn b [] 2)\n"
 
-                    ib
-                    (child-idx "python" src "def b")
+         r
+         (z/edit "clojure" src [0] :insert-after "(def N 9)")]
 
-                    r
-                    (z/edit "python" src [ib] :insert-before "M = 0\n\n")]
+        (expect (:ok? r))
+        ;; a blank line BEFORE and AFTER the inserted form — the \n\n rhythm, not a glued \n
+        (expect (str/includes? (:new-source r) "(defn a [] 1)\n\n(def N 9)\n\n(defn b [] 2)"))
+        (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
+  (it "delete reclaims the trailing gap (no orphaned blank line between the survivors)"
+      (let
+        [src
+         "(defn a [] 1)\n\n(defn b [] 2)\n\n(defn c [] 3)\n"
 
-                   (expect (:ok? r))
-                   (expect (str/includes? (:new-source r) "M = 0"))
-                   (expect (not (:has-error? (z/inspect "python" (:new-source r) []))))))
-             (it "an insert that NEWLY breaks syntax is refused"
-                 (let [r (z/edit "clojure" "(defn a [] 1)\n" [0] :insert-before "(((")]
-                   (expect (= :syntax-broken (get-in r [:error :reason]))))))
+         r
+         (z/edit "clojure" src [1] :replace "")]
+
+        (expect (:ok? r))
+        ;; b and its trailing \n\n go; the leading \n\n stays as the single separator
+        (expect (= "(defn a [] 1)\n\n(defn c [] 3)\n" (:new-source r)))
+        (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
+  (it "delete of the LAST form reclaims the LEADING gap (no trailing blank line)"
+      (let
+        [src
+         "(defn a [] 1)\n\n(defn b [] 2)\n"
+
+         r
+         (z/edit "clojure" src [1] :replace "")]
+
+        (expect (:ok? r))
+        (expect (= "(defn a [] 1)\n" (:new-source r)))
+        (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
+  (it "insert works language-neutrally (python)"
+      (let
+        [src
+         "def a():\n    return 1\n\ndef b():\n    return 2\n"
+
+         ib
+         (child-idx "python" src "def b")
+
+         r
+         (z/edit "python" src [ib] :insert-before "M = 0\n\n")]
+
+        (expect (:ok? r))
+        (expect (str/includes? (:new-source r) "M = 0"))
+        (expect (not (:has-error? (z/inspect "python" (:new-source r) []))))))
+  (it "an insert that NEWLY breaks syntax is refused"
+      (let [r (z/edit "clojure" "(defn a [] 1)\n" [0] :insert-before "(((")]
+        (expect (= :syntax-broken (get-in r [:error :reason])))))
+  (it "an inline sibling insert keeps a single-space separator (never fuses onto a token)"
+      (let
+        [after
+         (z/edit "clojure" "(+ p q)\n" [0 2] :insert-after "r")
+
+         before
+         (z/edit "clojure" "(+ p q)\n" [0 2] :insert-before "r")
+
+         vec-ch
+         (z/edit "clojure" "[a]\n" [0] :append-child "b")]
+
+        (expect (= "(+ p q r)\n" (:new-source after)))
+        (expect (= "(+ p r q)\n" (:new-source before)))
+        (expect (= "[a b]\n" (:new-source vec-ch))))))
 
 ;; ── 3. path-move arithmetic (pure; the cursor the model drives) ──────────────
 (defdescribe

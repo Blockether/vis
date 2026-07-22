@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
@@ -8633,6 +8634,9 @@
   ;; per-session, so nothing is stopped here — only this session's policy is removed.
   (when-let [tok (:sandbox-token environment)]
     (gateway-sandbox/unregister-session! tok))
+  (when-let [tok (:repl-sandbox-token environment)]
+    (gateway-sandbox/unregister-session! tok))
+  (process-jail/unregister-session-jail! (:session-id environment))
   (when-let [python-context (:python-context environment)]
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
@@ -9454,6 +9458,12 @@
      sandbox-token
      (str (java.util.UUID/randomUUID))
 
+     ;; A second unguessable token attributes managed REPL/test-runner egress.
+     ;; Language processes use a session-bound compatibility listener because JVM
+     ;; proxy stacks cannot reliably attach Proxy-Authorization to CONNECT.
+     repl-sandbox-token
+     (str (java.util.UUID/randomUUID))
+
      ;; MITM (TLS termination) is engaged whenever there are verb/path `:rules` to
      ;; enforce over HTTPS (host allow/deny alone needs only a CONNECT tunnel). Read
      ;; fresh so config edits + `/reload` take effect with no restart.
@@ -9467,6 +9477,16 @@
      _register-sandbox
      (when sandbox-roots-fn
        (gateway-sandbox/register-session! sandbox-token
+                                          (fn []
+                                            (some-> (egress/compile-policy
+                                                      (get (config/load-config-raw) :network))
+                                                    (assoc :mitm? (mitm-on?))))))
+
+     ;; The managed-language token uses the SAME live policy as shell children.
+     ;; HTTPS verb/path rules therefore remain enforced at the gateway MITM boundary.
+     _register-repl-sandbox
+     (when sandbox-roots-fn
+       (gateway-sandbox/register-session! repl-sandbox-token
                                           (fn []
                                             (some-> (egress/compile-policy
                                                       (get (config/load-config-raw) :network))
@@ -9491,22 +9511,24 @@
             net-on?
             (toggles/enabled? :network/enabled)
 
-            ;; Wall the child to the SHARED loopback egress proxy (net-off-except-
-            ;; proxy) when network is ON and there are real domain/verb restrictions
-            ;; to enforce — else allow-all direct egress. One config, both points.
+            ;; Network-enabled children always use the gateway proxy. Even an allow-all
+            ;; policy therefore retains the SSRF floor and reserved-port protection.
             proxy?
-            (and net-on? (some? (egress/compile-policy (get cfg :network))))
-
-            ;; When MITM is engaged, inject the SHARED ephemeral CA into the child's
-            ;; trust env (via `:ca-file`) so it accepts the proxy's leaf certs.
-            mitm?
-            (and proxy? (mitm-on?))
+            net-on?
 
             proxy-port
             (when proxy? (gateway-sandbox/ensure-proxy!))
 
+            ;; Materialize the shared trust capability for every network-enabled managed
+            ;; process. Policy can become verb-aware after /reload without requiring a new CA.
             ca-file
-            (when mitm? (gateway-sandbox/ensure-ca!))]
+            (when proxy? (gateway-sandbox/ensure-ca!))
+
+            java-trust
+            (when proxy? (gateway-sandbox/ensure-java-trust!))
+
+            repl-proxy-port
+            (when proxy? (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
 
            {:roots-fn sandbox-roots-fn
             :net-enabled? net-on?
@@ -9516,7 +9538,17 @@
             :deny-read (:deny-read fs)
             :proxy-port proxy-port
             :proxy-token (when proxy? sandbox-token)
+            :repl-proxy-port repl-proxy-port
+            :repl-ca-file ca-file
+            :java-trust-store (:java-trust-store java-trust)
+            :java-trust-store-password (:java-trust-store-password java-trust)
             :ca-file ca-file})))
+
+     ;; Register one live policy function for the standard language-process launch
+     ;; contract. Managed REPLs and project test runners share the same Seatbelt +
+     ;; gateway-proxy boundary as shell_run / subprocess, keyed per session.
+     _register-repl-jail
+     (when session-id (process-jail/register-session-jail! session-id jail-policy-fn))
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
@@ -9552,7 +9584,8 @@
         ;; This session's unguessable token for the SHARED gateway egress proxy /
         ;; MITM CA (internal.gateway-sandbox). Registered at env build; dropped from
         ;; the proxy's session registry in dispose-environment!.
-        :sandbox-token sandbox-token}
+        :sandbox-token sandbox-token
+        :repl-sandbox-token repl-sandbox-token}
        ;; Workspace info attached at env-build time so the extension
        ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
        ;; root the very first time it fires.
@@ -10233,9 +10266,10 @@
   (persistance/db-set-session-project! (db-info) session-id project-id))
 
 (defn reorder-project-sessions!
-  "Persist a manual order for the sessions inside `project-id`."
+  "Atomically adopt any loose named session into `project-id`, then persist the
+   manual order. Guests owned by another project are never stolen."
   [project-id session-ids]
-  (persistance/db-reorder-project-sessions! (db-info) project-id session-ids))
+  (persistance/db-adopt-and-reorder-project-sessions! (db-info) project-id session-ids))
 
 ;; =============================================================================
 ;; Host title setter + public env accessor

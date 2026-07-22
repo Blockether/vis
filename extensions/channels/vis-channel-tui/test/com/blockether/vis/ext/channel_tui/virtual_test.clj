@@ -1103,7 +1103,96 @@
       ;; so this is a live estimate->real correction, not a no-op.
       (expect (every? (fn [d]
                         (= d step))
-                      deltas)))))
+                      deltas))))
+  (it "expanding a fold in the CLIPPED top message never jumps the viewport up"
+      ;; Regression: scroll up a little so the top-of-viewport message is
+      ;; clipped, then open a collapsed disclosure inside it. The freshly
+      ;; expanded bubble is still on its (over-shooting) estimate; anchoring on
+      ;; the first FULLY-visible message BELOW the growth let that estimate->real
+      ;; correction yank the viewport UP to earlier content ("open a fold, jump
+      ;; to the top"). The in-frame anchor now pins the clipped top message
+      ;; itself when IT grew this frame, so its top row stays put.
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let
+        [sid
+         "rowsess"
+
+         mk
+         (fn [i]
+           (-> (trace-assistant-msg 1 1 (str "Answer " i))
+               (assoc :session-turn-id (str "turn-" i))
+               (assoc-in [:traces 0 :thinking]
+                         (str/join "\n" (map #(str "reasoning " % " msg " i) (range 30))))
+               (assoc-in [:traces 0 :forms 0 :result]
+                         (str/join "\n" (map #(str "out " % " msg " i) (range 40))))))
+
+         msgs
+         (vec (interleave (map #(user-msg (str "q" %)) (range 20)) (map mk (range 20))))
+
+         inner-h
+         40
+
+         lay
+         (fn [scroll de prev]
+           (virtual/layout msgs
+                           bubble-w
+                           settings
+                           scroll
+                           inner-h
+                           {}
+                           (merge {:session-id sid :detail-expansions de}
+                                  (when prev {:prev-offsets prev}))))
+
+         settle
+         (fn [start de]
+           (loop
+             [scroll
+              start
+
+              prev
+              nil
+
+              k
+              0
+
+              acc
+              nil]
+
+             (if (>= k 8)
+               acc
+               (let [ly (lay scroll de prev)]
+                 (recur (:anchored-scroll ly) (:offsets ly) (inc k) ly)))))
+
+         max-s
+         (max 0 (- (long (:total-h (lay nil {} nil))) inner-h))
+
+         fA
+         (settle (- max-s 6) {})
+
+         top-idx
+         (:idx (first (:visible fA)))
+
+         node
+         (->> (:line-meta (project-message (nth msgs top-idx)
+                                           bubble-w
+                                           settings
+                                           {:session-id sid :detail-expansions {}}))
+              (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
+              first)
+
+         f1
+         (lay (:anchored-scroll fA) {[sid node] true} (:offsets fA))
+
+         row-of
+         (fn [ly]
+           (- (long (nth (:offsets ly) top-idx)) (long (:eff-scroll ly))))]
+
+        ;; sanity: a real disclosure exists and the top message is truly clipped
+        (expect (some? node))
+        (expect (neg? (row-of fA)))
+        ;; the expanded top message's top row must stay EXACTLY put — no jump
+        (expect (= (row-of fA) (row-of f1))))))
 
 (defdescribe
   turn-separator-test

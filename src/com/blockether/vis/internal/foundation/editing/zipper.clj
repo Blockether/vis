@@ -40,6 +40,85 @@
     (System/arraycopy bs end out (+ start (alength ins)) (- (alength bs) end))
     out))
 
+(defn- ws-byte?
+  "ASCII-whitespace test on a raw byte. ASCII bytes never occur inside a
+   multi-byte UTF-8 sequence, so scanning bytes for whitespace is codepoint-safe."
+  [b]
+  (case (long b)
+    (9 10 13 32)
+    true
+
+    false))
+
+(defn- gap-after
+  "The run of whitespace starting at byte offset `from`, as a string."
+  ^String [^bytes bs ^long from]
+  (loop [i from]
+    (if (and (< i (alength bs)) (ws-byte? (aget bs i))) (recur (inc i)) (byte-slice bs from i))))
+
+(defn- gap-before
+  "The run of whitespace ending at byte offset `to`, as a string."
+  ^String [^bytes bs ^long to]
+  (loop [i to]
+    (if (and (pos? i) (ws-byte? (aget bs (dec i)))) (recur (dec i)) (byte-slice bs i to))))
+
+(defn- newline-count
+  ^long [^String s]
+  (reduce (fn [^long n c]
+            (if (= c \newline) (inc n) n))
+          0
+          s))
+
+(defn- sibling-separator
+  "Whitespace separator to REUSE when splicing a sibling on `side` (:before/:after)
+   of the node spanning [sb,eb). Picks whichever adjacent inter-sibling gap spans
+   the most lines (near side wins ties), so an inserted top-level form / block
+   statement inherits the file's existing blank-line rhythm instead of gluing onto
+   its neighbour. When NEITHER gap spans a line — an inline/tight collection
+   (e.g. `(+ p q)`) — falls back to the near gap, or a single space when that is
+   empty, so a spliced sibling never fuses onto its neighbour's token."
+  ^String [^bytes bs ^long sb ^long eb side]
+  (let
+    [after
+     (gap-after bs eb)
+
+     before
+     (gap-before bs sb)
+
+     near
+     (if (= side :after) after before)
+
+     far
+     (if (= side :after) before after)
+
+     spanning
+     (if (>= (newline-count near) (newline-count far)) near far)]
+
+    (if (pos? (newline-count spanning)) spanning (if (pos? (count near)) near " "))))
+
+(defn- last-in-container?
+  "True when byte offset `i` (the end of a node's trailing whitespace) is at EOF or on a
+   closing delimiter — i.e. the node is the LAST child of its container, so a delete should
+   reclaim the whitespace gap BEFORE it rather than the gap after it."
+  [^bytes bs ^long i]
+  (or (>= i (alength bs))
+      (case (long (aget bs i))
+        (41 93 125)
+        true
+
+        false)))
+
+(defn- delete-span
+  "Byte span [start end) to REMOVE when deleting the node at [sb,eb): the node plus ONE
+   adjacent whitespace gap, so the surviving neighbours keep a single separator instead of
+   an orphaned blank line. Reclaims the TRAILING gap normally; the LEADING gap when the node
+   is the last child of its container (its trailing whitespace runs into a close delim / EOF)."
+  ^longs [^bytes bs ^long sb ^long eb]
+  (let [ea (long (+ eb (count (gap-after bs eb))))]
+    (if (last-in-container? bs ea)
+      (long-array [(- sb (long (count (gap-before bs sb)))) eb])
+      (long-array [sb ea]))))
+
 (defn detect-language [path] (index/detect-language path))
 
 (defn- parse-tree
@@ -262,7 +341,9 @@
    and refuses a result that introduces a syntax error the original file didn't
    have. Returns `{:ok? true :new-source S}` or `{:error …}`.
    :append-child / :prepend-child insert after the LAST / before the FIRST named
-   child of the node at `at` (delete = :replace with \"\")."
+   child of the node at `at`. Insert-before/after reuse the file's inter-sibling gap so
+   a spliced form keeps the blank-line rhythm; delete (= :replace with \"\") reclaims one
+   adjacent gap so the survivors keep a single separator, not an orphaned blank line."
   [lang source at op code]
   (if (#{:append-child :prepend-child} op)
     (let [n (or (:named-child-count (inspect lang source at)) 0)]
@@ -287,19 +368,33 @@
            eb
            (.endByte node)
 
-           ins
-           (utf8 (str code))
-
            new-bytes
            (case op
              :replace
-             (byte-splice src-bytes sb eb ins)
+             (if (= "" (str code))
+               (let [^longs span (delete-span src-bytes sb eb)]
+                 (byte-splice src-bytes (aget span 0) (aget span 1) (utf8 "")))
+               (byte-splice src-bytes sb eb (utf8 (str code))))
 
              :insert-before
-             (byte-splice src-bytes sb sb ins)
+             (let
+               [sep
+                (sibling-separator src-bytes sb eb :before)
+
+                ins
+                (if sep (str (str/trim (str code)) sep) (str code))]
+
+               (byte-splice src-bytes sb sb (utf8 ins)))
 
              :insert-after
-             (byte-splice src-bytes eb eb ins)
+             (let
+               [sep
+                (sibling-separator src-bytes sb eb :after)
+
+                ins
+                (if sep (str sep (str/trim (str code))) (str code))]
+
+               (byte-splice src-bytes eb eb (utf8 ins)))
 
              nil)]
 

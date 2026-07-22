@@ -17,13 +17,16 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest register-resolve-fail-closed
-  (try (testing "unknown token ⇒ deny-all sentinel, and `decide` denies every request"
+  (try (testing "unknown token ⇒ auth-required deny-all sentinel"
          (let [p (gs/resolve-policy "nope")]
            (is (:deny-all? p))
+           (is (:proxy-auth-required? p))
            (is (not (:allow? (ep/decide p "GET" "example.com" "/"))))
            (is (not (:allow? (ep/decide p nil "example.com" nil))))))
-       (testing "nil token (missing Proxy-Authorization) ⇒ deny-all"
-         (is (:deny-all? (gs/resolve-policy nil))))
+       (testing "nil token (missing Proxy-Authorization) ⇒ auth-required deny-all"
+         (let [p (gs/resolve-policy nil)]
+           (is (:deny-all? p))
+           (is (:proxy-auth-required? p))))
        (testing "a registered token resolves to THAT session's policy"
          (let
            [tok
@@ -126,8 +129,8 @@
     (let [port (gs/ensure-proxy!)]
       (try (testing "registered token ⇒ its policy applies; allowed host forwarded (200)"
              (is (str/includes? (get-status port (:port origin) tok) "200")))
-           (testing "unknown token ⇒ fail-closed deny (403), never reaches origin"
-             (is (str/includes? (get-status port (:port origin) "bogus-token") "403")))
-           (testing "missing token ⇒ fail-closed deny (403)"
-             (is (str/includes? (get-status port (:port origin) nil) "403")))
+           (testing "unknown token ⇒ fail-closed auth challenge (407), never reaches origin"
+             (is (str/includes? (get-status port (:port origin) "bogus-token") "407")))
+           (testing "missing token ⇒ fail-closed auth challenge (407)"
+             (is (str/includes? (get-status port (:port origin) nil) "407")))
            (finally ((:stop! origin)) (gs/shutdown!))))))

@@ -72,6 +72,7 @@
             [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -677,6 +678,11 @@
              [resource-logs resources/logs]
              [stop-resource! resources/stop!]
              [restart-resource! resources/restart!])
+
+;; Standard language-process jail contract — packs obtain argv + proxy env in one
+;; fail-closed policy resolution before spawning a managed REPL or test runner.
+(import-vars [prepare-session-jail! process-jail/prepare-session-jail!]
+             [session-process-launch process-jail/session-process-launch])
 
 ;; =============================================================================
 ;; Turn runtime / iteration loop / environment / sessions

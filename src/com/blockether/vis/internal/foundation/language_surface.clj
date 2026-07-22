@@ -239,6 +239,10 @@
      handler
      (choose-handler env capability opts)]
 
+    ;; A live environment may predate a process-jail namespace reload. Refresh the
+    ;; session binding immediately before a handler that may spawn a child. Clojure
+    ;; repl_eval can auto-start its managed nREPL when none is running.
+    (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
     ((:handler handler) env payload)))
 
 (def ^:private repl-ops #{"status" "start" "stop" "restart" "connect"})
@@ -310,6 +314,10 @@
        id
        (assoc "id" id))]
 
+    ;; Refresh from the live env at the process boundary. This also repairs the
+    ;; registry after a process-jail namespace reload without weakening fail-closed
+    ;; handling for missing session identity or policy.
+    (when (#{"start" "restart"} op) (vis/prepare-session-jail! env))
     ((:handler handler) env op opts)))
 
 (defn- repl-resources
@@ -435,15 +443,13 @@
 
 (defn- findings->table
   "Lint `findings` → a markdown table the LINT_CODE card renders as a boxed grid:
-   one row per finding with its `file`, `row:col`, `level`, and `message` (the
-   provider tag appended when a finding names one). nil when there are no findings."
+   one row per finding with its `file`, `row:col`, `level`, `provider`, and
+   `message`. nil when there are no findings."
   [findings]
-  (md-table ["file" "at" "level" "message"]
+  (md-table ["file" "at" "level" "provider" "message"]
             (for [f findings]
               [(str (get f "file")) (str (get f "row") ":" (get f "col")) (str (get f "level"))
-               (str (get f "message")
-                    (when-let [p (get f "provider")]
-                      (str " [" p "]")))])))
+               (str (get f "provider")) (str (get f "message"))])))
 
 (defn- render-lint-result
   "lint_code → `` `path` — clean `` / `N targets — E errors, W warnings` headline

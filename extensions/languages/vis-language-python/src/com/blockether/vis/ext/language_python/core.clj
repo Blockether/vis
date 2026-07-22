@@ -78,7 +78,7 @@
                                         (repl/stop! dir))
                              :restart-fn (fn []
                                            (repl/stop! dir)
-                                           (let [r (repl/start! dir {})]
+                                           (let [r (repl/start! dir {:session-id session})]
                                              (register-repl-resource! session dir r id)
                                              r))})
     (vis/notify! (str "● python REPL up — " (.getName (io/file dir)))
@@ -119,7 +119,7 @@
 
       ("start" "restart")
       (do (when (= op "restart") (repl/stop! dir))
-          (let [r (repl/start! dir (or opts {}))]
+          (let [r (repl/start! dir (assoc (or opts {}) :session-id (:session-id env)))]
             (register-repl-resource! (:session-id env) dir r id)
             (extension/success {:result r})))
 
@@ -218,17 +218,25 @@
 (defn- project-test
   "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
    .venv / python3 `-m pytest <paths>`) in `dir` so installed deps are visible."
-  [^String dir paths]
+  [session-id ^String dir paths]
   (let
     [cmd
      (-> (interpreter/resolve-command dir)
          (conj "-m" "pytest")
          (into paths))
 
+     launch
+     (vis/session-process-launch session-id cmd)
+
      pb
-     (doto (ProcessBuilder. ^java.util.List cmd)
+     (doto (ProcessBuilder. ^java.util.List (:argv launch))
        (.directory (io/file dir))
        (.redirectErrorStream true))
+
+     _env
+     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+       (doseq [[k v] (:env launch)]
+         (.put e ^String k ^String v)))
 
      p
      (.start pb)
@@ -296,9 +304,10 @@
      paths
      (resolve-test-paths root opts)]
 
-    (extension/success
-      {:result (assoc (if (= "project" runner) (project-test dir paths) (graalpy-test paths))
-                 "language" "python")})))
+    (extension/success {:result (assoc (if (= "project" runner)
+                                         (project-test (:session-id env) dir paths)
+                                         (graalpy-test paths))
+                                  "language" "python")})))
 
 ;; =============================================================================
 ;; Manifest
@@ -335,7 +344,7 @@
                                                (resolve-dir root (:startable/dir env))
 
                                                r
-                                               (repl/start! dir {})]
+                                               (repl/start! dir {:session-id (:session-id env)})]
 
                                               (register-repl-resource! (:session-id env) dir r)
                                               r))}]

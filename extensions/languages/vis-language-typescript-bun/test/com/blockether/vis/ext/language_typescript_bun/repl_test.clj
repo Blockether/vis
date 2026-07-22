@@ -7,6 +7,7 @@
             [com.blockether.vis.ext.language-typescript-bun.core :as core]
             [com.blockether.vis.ext.language-typescript-bun.repl-manager :as repl]
             [com.blockether.vis.ext.language-typescript-bun.runner :as runner]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -23,6 +24,14 @@
 
 (defn- has-bun? [] (runner/available?))
 
+(def ^:private test-session-id "bun-pack-test")
+
+(process-jail/register-session-jail!
+  test-session-id
+  (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")]) :net-enabled? true}))
+
+(defn- test-env [^java.io.File root] {:workspace/root (.getPath root) :session-id test-session-id})
+
 ;; ── runner detection (no subprocess) ─────────────────────────────────────────
 (defdescribe runner-test
              (it "resolves a launchable bun (PATH or ~/.bun) when available"
@@ -37,7 +46,7 @@
   (it "starts, evaluates TS, persists globals across evals, captures output + errors, stops"
       (when (has-bun?)
         (let [dir (.getPath (tmp-dir))]
-          (try (expect (= "up" (get (repl/start! dir {}) "status")))
+          (try (expect (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
                ;; last expression's value is captured (REPL semantics)
                (expect (= "2" (get (repl/eval! dir "1+1" 15000) "value")))
                ;; const/let PERSIST across separate evals — a real session
@@ -76,7 +85,7 @@
            (io/file root "answer.ts")]
 
           (try (spit mod "export const answer = (): number => 40 + 1;\n")
-               (repl/start! dir {})
+               (repl/start! dir {:session-id test-session-id})
                (expect (= "41"
                           (get
                             (repl/eval! dir "import { answer } from './answer.ts'; answer()" 15000)
@@ -102,7 +111,7 @@
            (.getCanonicalPath root)
 
            env
-           {:workspace/root (.getPath root)}]
+           (test-env root)]
 
           (try (expect (= :ts/no-repl
                           (try (core/ts-repl-eval-fn env "3 * 7")
@@ -123,7 +132,7 @@
            (.getCanonicalPath root)
 
            env
-           {:workspace/root (.getPath root)}]
+           (test-env root)]
 
           (try
             (expect (:success? (core/ts-start-repl-fn env "start" nil)))
@@ -137,7 +146,7 @@
           (try (spit (io/file root "math.test.ts")
                      (str "import { expect, test } from 'bun:test';\n"
                           "test('adds', () => { expect(1 + 1).toBe(2); });\n"))
-               (let [r (core/ts-test-fn {:workspace/root (.getPath root)} nil)]
+               (let [r (core/ts-test-fn (test-env root) nil)]
                  (expect (:success? r))
                  (expect (= 0 (get-in r [:result "exit"])))
                  (expect (= 1 (get-in r [:result "passed"])))
@@ -206,7 +215,7 @@
   (it "represents objects / arrays / Maps as nested data"
       (when (has-bun?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {})
+          (try (repl/start! dir {:session-id test-session-id})
                (expect (= {"a" 1 "b" [2 3]}
                           (get (repl/eval! dir "({a: 1, b: [2, 3]})" 15000) "data")))
                (expect (= {"__type__" "Map" "entries" [["k" 1]]}
@@ -217,7 +226,7 @@
       (when (has-bun?)
         (let [dir (.getPath (tmp-dir))]
           (try
-            (repl/start! dir {})
+            (repl/start! dir {:session-id test-session-id})
             (repl/eval! dir "class P { constructor(public x: number, public y: number) {} }" 15000)
             (expect (= {"x" 3 "y" 4 "__type__" "P"}
                        (get (repl/eval! dir "new P(3, 4)" 15000) "data")))
@@ -225,7 +234,7 @@
   (it "an OPAQUE value stays LIVE + is described (type/repr/attrs), not lost"
       (when (has-bun?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {})
+          (try (repl/start! dir {:session-id test-session-id})
                (let [d (get (repl/eval! dir "Bun.serve" 15000) "data")]
                  (expect (get d "__opaque__"))
                  (expect (= "function" (get d "__type__")))
@@ -261,8 +270,8 @@
   (it "repl_eval WITHOUT dir at a monorepo root refuses with the app-dir hint"
       (let [root (monorepo-fixture)]
         (try (let
-               [{:keys [type msg]}
-                (monorepo-guard-ex #(core/ts-repl-eval-fn {:workspace/root (.getPath root)} "1+1"))]
+               [{:keys [type msg]} (monorepo-guard-ex #(core/ts-repl-eval-fn (test-env root)
+                                                                             "1+1"))]
                (expect (= :ts/monorepo-root type))
                ;; suggests the api app dir + lists workspace dirs
                (expect (re-find #"apps/api" (str msg)))
@@ -271,9 +280,8 @@
   (it "repl_start WITHOUT dir at a monorepo root refuses the same way"
       (let [root (monorepo-fixture)]
         (try (let
-               [{:keys [type]}
-                (monorepo-guard-ex
-                  #(core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {}))]
+               [{:keys [type]} (monorepo-guard-ex
+                                 #(core/ts-start-repl-fn (test-env root) "start" {}))]
                (expect (= :ts/monorepo-root type)))
              (finally (cleanup root)))))
   (it "an explicit dir escapes the guard (app dir works; '.' forces a root REPL)"
@@ -286,22 +294,19 @@
            (.getCanonicalPath (io/file root "apps" "api"))]
 
           (try ;; app dir: explicit start + eval succeed
-            (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {"dir" "apps/api"})
-            (let
-              [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)}
-                                       {"code" "1+1" "dir" "apps/api"})]
+            (core/ts-start-repl-fn (test-env root) "start" {"dir" "apps/api"})
+            (let [r (core/ts-repl-eval-fn (test-env root) {"code" "1+1" "dir" "apps/api"})]
               (expect (= "2" (get-in r [:result "value"]))))
             ;; explicit "." at the root is allowed (deliberate root REPL)
-            (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" {"dir" "."})
-            (let
-              [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)} {"code" "40+2" "dir" "."})]
+            (core/ts-start-repl-fn (test-env root) "start" {"dir" "."})
+            (let [r (core/ts-repl-eval-fn (test-env root) {"code" "40+2" "dir" "."})]
               (expect (= "42" (get-in r [:result "value"]))))
             (finally (repl/stop! api) (repl/stop! (.getCanonicalPath root)) (cleanup root))))))
   (it "a plain (non-workspaces) root is untouched by the guard"
       (when (has-bun?)
         (let [root (tmp-dir)]
           (try (spit (io/file root "package.json") "{\"name\": \"solo\"}")
-               (core/ts-start-repl-fn {:workspace/root (.getPath root)} "start" nil)
-               (let [r (core/ts-repl-eval-fn {:workspace/root (.getPath root)} "2+3")]
+               (core/ts-start-repl-fn (test-env root) "start" nil)
+               (let [r (core/ts-repl-eval-fn (test-env root) "2+3")]
                  (expect (= "5" (get-in r [:result "value"]))))
                (finally (repl/stop! (.getCanonicalPath root)) (cleanup root)))))))

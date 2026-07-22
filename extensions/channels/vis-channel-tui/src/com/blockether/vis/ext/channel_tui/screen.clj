@@ -3906,35 +3906,17 @@
          (mapv #(str (get % "id"))))))
 
 (defn- persist-tabs-order!
-  "Gateway-side reconcile + reorder for an EXPLICIT project + ordered tab ids.
-   LOOSE tabs (no project) and brand-new ones join `pid`; tabs already OWNED by
-   ANOTHER project are GUESTS — never stolen. `project_position` is rewritten to
-   match `ids` (member-scoped, so guests drop out of the order automatically).
-   BLOCKS on gateway round-trips — call OFF the input thread. Best effort — a
-   gateway hiccup is swallowed."
+  "Persist an EXPLICIT project + ordered tab ids in ONE gateway call. LOOSE tabs
+   (no project) and brand-new ones are ADOPTED into `pid` server-side; tabs OWNED
+   by ANOTHER project are GUESTS — never stolen. `project_position` is rewritten to
+   match `ids` (member-scoped, so guests drop out of the order automatically). A
+   single round-trip — the gateway derives loose-vs-guest from the DB, so no
+   client-side session scan or per-tab assign loop is needed. BLOCKS on the one
+   round-trip — call OFF the input thread. Best effort — a gateway hiccup is
+   swallowed."
   [pid ids]
   (when (and pid (seq ids))
-    ;; One scan of every session -> its CURRENT project id (nil = loose).
-    (let
-      [proj-of
-       (into {}
-             (map (fn [s]
-                    [(str (get s "id"))
-                     (some-> (get s "project_id")
-                             str)]))
-             (try (vis/gateway-list-sessions :all) (catch Throwable _ nil)))
-
-       pid-str
-       (str pid)]
-
-      (doseq [sid ids]
-        (let [cur (get proj-of (str sid) ::unlisted)]
-          ;; Assign ONLY loose (nil) or not-yet-listed (brand-new) sessions.
-          ;; A session owned by a DIFFERENT project is a guest — leave it be.
-          (when (or (nil? cur) (= ::unlisted cur) (= pid-str cur))
-            (when-not (= pid-str cur)
-              (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))))
-      (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))))
+    (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil))))
 
 (defn- persist-tabs-once!
   "One synchronous persist pass for the ACTIVE project: snapshot the current

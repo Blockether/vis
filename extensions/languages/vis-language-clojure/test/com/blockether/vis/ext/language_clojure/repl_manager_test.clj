@@ -7,9 +7,19 @@
             [com.blockether.vis.ext.language-clojure.core :as core]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
+
+(def ^:private manager-test-session-ids
+  ["sess-fail" "sess-fail-2" "sess-race" "sess-slow" "sess-ens" "sess-ens-2" "s"])
+
+(doseq [sid manager-test-session-ids]
+  (process-jail/register-session-jail! sid
+                                       (constantly {:roots-fn (constantly [(System/getProperty
+                                                                             "java.io.tmpdir")])
+                                                    :net-enabled? true})))
 
 (defn- tmp-dir
   ^String []

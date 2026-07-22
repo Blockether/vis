@@ -505,6 +505,19 @@
                   reason
                   "\n")))
 
+(defn- proxy-auth-response
+  [^OutputStream out reason]
+  (write-str out
+             (str "HTTP/1.1 407 Proxy Authentication Required\r\n"
+                  "Proxy-Authenticate: Basic realm=\"vis-session\"\r\n"
+                  "Content-Type: text/plain\r\n"
+                  "Connection: close\r\n"
+                  "Content-Length: "
+                  (count (str reason "\n"))
+                  "\r\n\r\n"
+                  reason
+                  "\n")))
+
 (defn- copy-until-eof
   "Copy `in`→`out` until EOF, flushing each chunk; swallow IO errors (peer closed)."
   [^InputStream in ^OutputStream out]
@@ -858,9 +871,11 @@
               policy
               (try (policy-fn token) (catch Throwable _ nil))]
 
-             (if (= (str/upper-case method) "CONNECT")
-               (handle-connect pool client cout target policy mitm on-log)
-               (handle-http pool client cout method target version headers policy on-log)))))
+             (if (:proxy-auth-required? policy)
+               (proxy-auth-response cout (:reason policy "vis: proxy authentication required"))
+               (if (= (str/upper-case method) "CONNECT")
+                 (handle-connect pool client cout target policy mitm on-log)
+                 (handle-http pool client cout method target version headers policy on-log))))))
        (catch Throwable _ nil)
        (finally (try (.close client) (catch Throwable _ nil)))))
 

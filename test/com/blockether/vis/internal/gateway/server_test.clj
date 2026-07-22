@@ -1,13 +1,15 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [clojure.test :refer [deftest is testing]]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.theme :as theme]
             [reitit.ring :as rr]
             [ring.middleware.params :as ring-params]))
 
@@ -181,6 +183,42 @@
 (defn- body-stream
   [m]
   (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str m) "UTF-8")))
+
+(deftest theme-handler-shares-the-tui-palette-and-persistence
+  (let [saved (atom nil)]
+    (with-redefs
+      [config/load-config-raw (constantly {:providers [{:id :demo}]
+                                           :tui-settings {:theme-name :solarized-dark}})
+       config/save-config! #(reset! saved %)]
+
+      (let
+        [get-response ((rv 'get-theme-handler) {})
+         current (wire/parse-json (:body get-response))]
+
+        (is (= 200 (:status get-response)))
+        (is (= "solarized-dark" (get current "id")))
+        (is (= (get (theme/theme->web-css-vars (theme/theme "solarized-dark")) "--bg")
+               (get-in current ["css_vars" "--bg"])))
+        (is (some #(= "vis-dark" (get % "id")) (get current "themes"))))
+      (let
+        [set-response ((rv 'set-theme-handler) {:body (body-stream {:id "vis-dark"})})
+         updated (wire/parse-json (:body set-response))]
+
+        (is (= 200 (:status set-response)))
+        (is (= "vis-dark" (get updated "id")))
+        (is (= "vis-dark" (get-in @saved [:tui-settings :theme-name])))
+        (is (= [{:id :demo}] (:providers @saved)))))))
+
+(deftest theme-handler-rejects-unknown-themes
+  (let [saved? (atom false)]
+    (with-redefs
+      [config/load-config-raw (constantly {})
+       config/save-config! (fn [_]
+                             (reset! saved? true))]
+
+      (let [response ((rv 'set-theme-handler) {:body (body-stream {:id "not-a-theme"})})]
+        (is (= 404 (:status response)))
+        (is (false? @saved?))))))
 
 (def ^:private fake-startables
   ;; one options-based (nREPL) + one fields-based (MCP) startable

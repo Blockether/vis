@@ -2,5 +2,5 @@
  :deps
  {org.clojure/clojure  {:mvn/version "1.12.5"}
   com.blockether/vis   {:local/root "../../.."}
-  com.blockether/rift  {:mvn/version "0.0.10-5"}
+  com.blockether/rift  {:mvn/version "0.0.10-7"}
   com.taoensso/telemere {:mvn/version "1.2.1"}}}

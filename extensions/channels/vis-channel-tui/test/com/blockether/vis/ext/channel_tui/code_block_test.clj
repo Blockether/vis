@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.highlight :as highlight]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -19,6 +20,8 @@
 ;; fence now folds SGR-aware too, so a wide highlighted line stops overflowing.
 
 (def ^:private code-block->lines @#'layout/code-block->lines)
+
+(def ^:private folded-highlight-cache @#'layout/folded-highlight-cache)
 
 (defn- content-rows
   "Visible (non-pad) rows from `code-block->lines`, as concatenated text."
@@ -96,6 +99,60 @@
         (expect (every? #(<= (p/display-width %) width) rows))
         (expect (= src (apply str rows)))
         (expect (str/starts-with? (first rows) "    {")))))
+
+(defdescribe tui-cat-code-highlight-test
+             (it "highlights CAT source while dimming line-number gutters and dividers"
+                 (let
+                   [src
+                    "   9  (def x 1)\n1200  (inc x)\n   ⋯\n1300  (str x)"
+
+                    lines
+                    (code-block->lines [:code {:lang "clojure"} src] 80 {})
+
+                    rows
+                    (content-rows lines)
+
+                    strip-ansi
+                    #(str/replace % #"\u001b\[[0-9;]*m" "")]
+
+                   (expect (= (str/split-lines src) (mapv strip-ansi rows)))
+                   (expect (str/starts-with? (first rows) "\u001b[90m   9  \u001b[0m"))
+                   (expect (str/includes? (subs (first rows) 15) "\u001b["))
+                   (expect (= "\u001b[90m   ⋯\u001b[0m" (nth rows 2)))))
+             (it "falls back to plain CAT rows when the native highlighter is unavailable"
+                 (let
+                   [src
+                    "1  (def x 1)\n2  (inc x)"
+
+                    rows
+                    (with-redefs [highlight/highlight (constantly nil)]
+                      (content-rows (code-block->lines [:code {:lang "clojure"} src] 80 {})))]
+
+                   (expect (= (str/split-lines src) rows))))
+             (it "reuses completed CAT highlighting and ANSI folding at the same width"
+                 (let
+                   [src
+                    "901  (def cache-proof 1)\n902  (inc cache-proof)"
+
+                    fold-calls
+                    (atom 0)]
+
+                   (.clear ^java.util.Map folded-highlight-cache)
+                   (with-redefs
+                     [highlight/highlight
+                      (fn [_grammar source]
+                        source)
+
+                      p/ansi-fold-cols
+                      (fn [line ^long _budget]
+                        (swap! fold-calls inc)
+                        [line])]
+
+                     (code-block->lines [:code {:lang "clojure"} src] 80 {})
+                     (code-block->lines [:code {:lang "clojure"} src] 80 {})
+                     (expect (= 2 @fold-calls))
+                     (code-block->lines [:code {:lang "clojure"} src] 79 {})
+                     (expect (= 4 @fold-calls))))))
 
 ;; --- plain-fence char-fold (no `:lang`) -------------------------------------
 ;; Regression for the "can't see the full bookmarklet" thread: a plain fence

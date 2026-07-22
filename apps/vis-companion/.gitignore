@@ -1,0 +1,12 @@
+node_modules
+.npm-cache
+dist
+dist-ssr
+*.local
+
+# Capacitor native projects are generated with `cap add`; keep them out of VCS
+# until the platform is intentionally committed.
+android
+ios
+
+.DS_Store

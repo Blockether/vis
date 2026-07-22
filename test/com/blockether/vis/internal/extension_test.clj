@@ -476,3 +476,38 @@
                         (finally (extension/register-reload-hook! ::rh-idem
                                                                   (fn []
                                                                     nil)))))))
+
+(def ^:private folded->pos #'com.blockether.vis.internal.extension/folded-kwargs->positional)
+
+(defdescribe
+  folded-kwargs->positional-test
+  (it "all-kwargs on a shaped tool bind IDENTICALLY to positional"
+      ;; shell_logs :call {:pos ["id"] :opt-pos ["n"]} — the reported defect:
+      ;; `shell_logs(id=…, n=…)` folded to one dict must expand to [id n].
+      (expect (= ["lint" 100] (folded->pos {:pos ["id"] :opt-pos ["n"]} [{"id" "lint" "n" 100}])))
+      (expect (= ["lint"] (folded->pos {:pos ["id"] :opt-pos ["n"]} [{"id" "lint"}])))
+      ;; shell_run/{:pos [cmd] :rest :opt}: leftover keys ride a trailing opts dict.
+      (expect (= ["ls"] (folded->pos {:pos ["cmd"] :rest :opt} [{"cmd" "ls"}])))
+      (expect (= ["ls" {"cwd" "/tmp"}]
+                 (folded->pos {:pos ["cmd"] :rest :opt} [{"cmd" "ls" "cwd" "/tmp"}])))
+      ;; shell_bg/{:pos [id cmd]} and shell_send/{:pos [id text] :rest :opt}.
+      (expect (= ["x" "sleep 1"] (folded->pos {:pos ["id" "cmd"]} [{"id" "x" "cmd" "sleep 1"}])))
+      (expect (= ["x" "hi"]
+                 (folded->pos {:pos ["id" "text"] :rest :opt} [{"id" "x" "text" "hi"}]))))
+  (it "leaves everything ambiguous or already-correct untouched"
+      ;; already positional — pass through verbatim.
+      (expect (= ["lint" 100] (folded->pos {:pos ["id"] :opt-pos ["n"]} ["lint" 100])))
+      ;; no :call shape — the generic single-dict tools keep their lone map.
+      (expect (= [{"id" "lint"}] (folded->pos nil [{"id" "lint"}])))
+      ;; a required :pos key missing — a genuine single-map positional, not kwargs.
+      (expect (= [{"id" "x"}] (folded->pos {:pos ["id" "cmd"]} [{"id" "x"}])))
+      ;; undeclared key with no :rest — do not silently drop it.
+      (expect (= [{"id" "x" "bogus" 1}] (folded->pos {:pos ["id"]} [{"id" "x" "bogus" 1}])))
+      ;; function-valued shape — cannot key-spread, leave as-is.
+      (expect (= [{"id" "x"}]
+                 (folded->pos (fn [_]
+                                "src")
+                              [{"id" "x"}])))
+      ;; empty / multi-arg / non-map — never touched.
+      (expect (= [] (folded->pos {:pos ["id"]} [])))
+      (expect (= ["x" {"n" 1}] (folded->pos {:pos ["id"]} ["x" {"n" 1}])))))

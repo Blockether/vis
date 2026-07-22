@@ -2246,6 +2246,67 @@
                arounds)
         args))))
 
+(defn- folded-kwargs->positional
+  "Inverse of the engine's `synth-call` for the DIRECT-python surface. When the
+   agent writes a native tool call in a `python_execution` block with ALL-KEYWORD
+   args (`shell_logs(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
+   dict positional (see `__vis_exec_call__` in `env-python`). A fixed-arity impl
+   like `shell-logs-impl [env id n]` would then receive the whole `{id n}` map in
+   its `id` slot (`No background shell '{id …, n …}'`). Re-expand that lone map
+   into the positional args the symbol's `:call` SHAPE describes, so keyword and
+   positional calls bind IDENTICALLY.
+
+   Fires ONLY for the unambiguous folded-kwargs case: a MAP `:call` shape, a
+   single NON-empty map arg with all-string keys, every required `:pos` key
+   present, and no undeclared leftover keys unless the shape opts into `:rest`.
+   Everything else — positional calls, function-valued shapes, tools with no
+   `:call`, genuine single-map positionals — passes through untouched."
+  [shape args]
+  (if (and (map? shape)
+           (= 1 (count args))
+           (map? (first args))
+           (seq (first args))
+           (every? string? (keys (first args))))
+    (let
+      [m
+       (first args)
+
+       lead
+       (:lead-opt shape)
+
+       pos
+       (vec (:pos shape))
+
+       opt-pos
+       (vec (:opt-pos shape))
+
+       rest-mode
+       (:rest shape)
+
+       opt-present
+       (take-while #(contains? m %) opt-pos)
+
+       consumed
+       (cond-> (set pos)
+         lead
+         (conj lead)
+
+         (seq opt-present)
+         (into opt-present))
+
+       leftover
+       (apply dissoc m consumed)]
+
+      (if (and (or lead (seq pos) (seq opt-pos))
+               (every? #(contains? m %) pos)
+               (or rest-mode (empty? leftover)))
+        (vec (concat (when (and lead (contains? m lead)) [(get m lead)])
+                     (map #(get m %) pos)
+                     (map #(get m %) opt-present)
+                     (when (and rest-mode (or (= rest-mode :always) (seq leftover))) [leftover])))
+        args))
+    args))
+
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for an observed tool symbol entry:
    before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.
@@ -2280,6 +2341,9 @@
 
        _original-args
        args
+
+       args
+       (folded-kwargs->positional (:ext.symbol/call sym-entry) args)
 
        t0
        (System/nanoTime)

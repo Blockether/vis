@@ -5,7 +5,8 @@
    the `Process` handle is cached so teardown is clean."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
-            [com.blockether.vis.ext.language-python.interpreter :as interp])
+            [com.blockether.vis.ext.language-python.interpreter :as interp]
+            [com.blockether.vis.core :as vis])
   (:import [java.io BufferedReader BufferedWriter]))
 
 ;; The eval server. Reads a JSON object per stdin line: {"code": "..."} (or
@@ -113,17 +114,27 @@ _main()
 (defn start!
   "Spawn (or replace) the managed Python REPL for `dir`. Returns a STRING-keyed
    status map (crosses the strings-only boundary as a tool `:result`)."
-  [dir _opts]
+  [dir {:keys [session-id]}]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let
     [cmd
      (vec (concat (interp/resolve-command dir) ["-u" "-c" server-script]))
 
+     ;; Resolve argv + proxy env atomically. Unknown/disposed sessions are denied
+     ;; before spawn, and direct outbound traffic remains behind Seatbelt.
+     launch
+     (vis/session-process-launch session-id cmd)
+
      pb
-     (doto (ProcessBuilder. ^java.util.List cmd)
+     (doto (ProcessBuilder. ^java.util.List (:argv launch))
        (.directory (io/file dir))
        (.redirectErrorStream false))
+
+     _env
+     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+       (doseq [[k v] (:env launch)]
+         (.put e ^String k ^String v)))
 
      p
      (.start pb)

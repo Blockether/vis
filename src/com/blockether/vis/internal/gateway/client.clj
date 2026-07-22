@@ -369,8 +369,8 @@
   (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:project_id (when pid (str pid))}))
 
 (defn reorder-project-sessions!
-  "Persist the manual order of a project's sessions (TUI tabs). `session-ids` is
-   the desired ordering."
+  "Persist a project's manual session order in one gateway call. Loose named
+   sessions are adopted atomically; guests owned by another project are not moved."
   [pid session-ids]
   (send-json! "PATCH" (str "/v1/projects/" (enc pid) "/sessions") {:order (mapv str session-ids)}))
 

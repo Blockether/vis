@@ -17,6 +17,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.docs :as docs]
             [com.blockether.vis.internal.extension :as extension]
@@ -881,6 +882,62 @@
                           :else (toggles/set-enabled! id (not (toggles/enabled? id))))
                     (json-response (toggle-json (toggles/toggle-spec id)))))))
 
+(defn- configured-theme-id
+  "Theme selected by the TUI's persisted settings, normalized to a theme that
+   this gateway process can actually render."
+  []
+  (let
+    [saved
+     (get-in (or (config/load-config-raw) {}) [:tui-settings :theme-name])
+
+     id
+     (cond (keyword? saved) (name saved)
+           (string? saved) (str/trim saved)
+           :else nil)]
+
+    (if (contains? (theme/theme-registry) id) id theme/default-theme-id)))
+
+(defn- theme-json
+  "Cross-channel theme contract. CSS vars come from the same palette token map
+   used by the TUI adapter and HTML transcript renderer."
+  [id]
+  (let [theme-map (theme/theme id)]
+    {:id (:name theme-map)
+     :display-name (:display-name theme-map)
+     :mode (name (:mode theme-map))
+     :css-vars (theme/theme->web-css-vars theme-map)
+     :themes (mapv (fn [theme-id]
+                     (let [candidate (theme/theme theme-id)]
+                       {:id (:name candidate)
+                        :display-name (:display-name candidate)
+                        :mode (name (:mode candidate))}))
+                   (theme/available-theme-ids))}))
+
+(defn- get-theme-handler
+  "GET /v1/theme — selected TUI theme plus browser-ready CSS custom properties."
+  [_]
+  (json-response (theme-json (configured-theme-id))))
+
+(defn- set-theme-handler
+  "POST /v1/theme {id} — persist the shared TUI/companion theme and return its
+   browser-ready palette. The next TUI start reads the same value."
+  [request]
+  (let
+    [body
+     (try (body-json request) (catch Throwable _ nil))
+
+     id
+     (some-> (get body "id")
+             str
+             str/trim)]
+
+    (cond (str/blank? id) (error-response 400 :invalid-theme "theme id must be a non-blank string")
+          (not (contains? (theme/theme-registry) id))
+          (error-response 404 :unknown-theme "no such theme" :id id)
+          :else (let [raw (or (config/load-config-raw) {})]
+                  (config/save-config! (assoc-in raw [:tui-settings :theme-name] id))
+                  (json-response (theme-json id))))))
+
 (defn- create-session-handler
   [request]
   (let [body (body-json request)]
@@ -1050,27 +1107,22 @@
 
 (defn- reorder-project-sessions-handler
   "PATCH /v1/projects/:pid/sessions {order:[sid…]} — persist the manual order of
-   the sessions (TUI tabs) inside a project so they stay MOVABLE cross-channel."
+   the sessions (TUI tabs) inside a project so they stay MOVABLE cross-channel.
+   LOOSE sessions named in `order` are ADOPTED into the project atomically; guests
+   owned by another project are never stolen."
   [request]
-  (let
-    [pid-str
-     (get-in request [:path-params :pid])
-
-     pid
-     (path-pid request)
-
-     order
-     (->> (get (body-json request) "order")
-          (keep #(some-> %
-                         str
-                         parse-uuid))
-          vec)]
-
-    (cond (not pid) (project-404 pid-str)
-          (empty? order)
-          (error-response 400 :invalid-request "order must be a non-empty array of session ids")
-          :else (do (state/reorder-project-sessions! pid order)
-                    (json-response {:project_id (str pid) :count (count order)})))))
+  (let [pid-str (get-in request [:path-params :pid])
+        pid (path-pid request)
+        order (->> (get (body-json request) "order")
+                   (keep #(some-> % str parse-uuid))
+                   vec)]
+    (cond
+      (not pid) (project-404 pid-str)
+      (empty? order)
+      (error-response 400 :invalid-request "order must be a non-empty array of session ids")
+      :else
+      (let [count (state/reorder-project-sessions! pid order)]
+        (json-response {:project_id (str pid) :count count})))))
 
 
 (defn- submit-turn-handler
@@ -1858,6 +1910,7 @@
                 (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
        ["/v1" ["/models" {:get models-handler}] ["/events" {:get multi-events-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
+        ["/theme" {:get get-theme-handler :post set-theme-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
         ["/clients" {:post client-register-handler}]
