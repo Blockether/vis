@@ -833,7 +833,19 @@
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
     (try (vis/resolve-effective-model router) (catch Throwable _ nil))))
 
-(defn- current-provider-id [] (:provider (current-model-info)))
+(defn- session-model-pref
+  [db]
+  (or (:session-model-pref db)
+      (when-let [sid (get-in db [:session :id])]
+        (try (vis/gateway-session-model-cached sid) (catch Throwable _ nil)))))
+
+(defn- current-provider-id
+  "Provider selected for this session, falling back to the router default."
+  [db]
+  (some-> (or (:provider (session-model-pref db))
+              (:provider (current-model-info)))
+          name
+          keyword))
 
 (def ^:private ^:const max-tabs 8)
 
@@ -1141,7 +1153,7 @@
 
 (reg-event-fx :cycle-codex-verbosity
               (fn [db _]
-                (if-not (= :openai-codex (current-provider-id))
+                (if-not (= :openai-codex (current-provider-id db))
                   {:db db
                    :fx [[:notify "Codex verbosity is only available for OpenAI Codex" :warn
                          settings-notification-ttl-ms]]}
@@ -2749,8 +2761,8 @@
                     (assoc db :scroll (scroll/to-y offset max-s))))))
 
 (defn- turn-extra-body
-  [{:keys [settings]}]
-  (when (= :openai-codex (current-provider-id))
+  [{:keys [settings] :as db}]
+  (when (= :openai-codex (current-provider-id db))
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
 
 (defn- db-for-tab
@@ -2825,7 +2837,7 @@
          (when (and session agent-text (not (:cancelling? source-db)))
            (let
              [extra-body
-              (turn-extra-body db)
+              (turn-extra-body source-db)
 
               turn-features
               {}
@@ -2893,7 +2905,7 @@
                (vis/cancellation-token)
 
                extra-body
-               (turn-extra-body db)
+               (turn-extra-body source-db)
 
                turn-features
                {}

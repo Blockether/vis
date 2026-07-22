@@ -26,6 +26,32 @@
                        :visible-fn (fn []
                                      (boolean (vis/has-provider? :openai-codex)))})
 
+(defdescribe turn-extra-body-test
+  (it "omits OpenAI verbosity when the session selects Claude"
+    (with-redefs [vis/get-router (constantly :router)
+                  vis/resolve-effective-model
+                  (fn [_] {:provider :openai-codex :name "gpt-5.6-sol"})]
+      (expect
+        (nil?
+          (#'state/turn-extra-body
+            {:session {:id "s1"}
+             :session-model-pref {:provider "anthropic-coding-plan"
+                                  :model "claude-sonnet-4-6"}
+             :settings {:openai-codex-verbosity :high}})))))
+
+  (it "includes verbosity when the session selects OpenAI Codex"
+    (with-redefs [vis/get-router (constantly :router)
+                  vis/resolve-effective-model
+                  (fn [_] {:provider :anthropic-coding-plan
+                           :name "claude-sonnet-4-6"})]
+      (expect
+        (= {:text {:verbosity "high"}}
+           (#'state/turn-extra-body
+             {:session {:id "s1"}
+              :session-model-pref {:provider "openai-codex"
+                                   :model "gpt-5.6-sol"}
+              :settings {:openai-codex-verbosity :high}}))))))
+
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
                  ;; Their toggles were retired (the trace IS the transcript — nothing to
