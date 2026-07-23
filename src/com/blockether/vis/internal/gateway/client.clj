@@ -898,7 +898,16 @@
      (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (get (send-json-with-entry! entry "GET" path) "status")))
+    (let [status (get (send-json-with-entry! entry "GET" path) "status")]
+      (when (map? status)
+        ;; Canonical wire → engine keys: snake_case JSON strings become kebab
+        ;; keywords VERBATIM, so `is_authenticated` reads back as `:is-authenticated`
+        ;; (the ONE connection-verdict key the dot, status dialog, and routing all
+        ;; share). No bespoke restore, no `authenticated?` rename.
+        (into {}
+              (map (fn [[k v]]
+                     [(keyword (str/replace k "_" "-")) v]))
+              status)))))
 
 (defn- wire-enum [x] (if (string? x) (keyword x) x))
 
@@ -925,7 +934,7 @@
        :kind (wire-enum (get row "kind"))
        :precision (wire-enum (get row "precision"))
        :source (wire-enum (get row "source"))
-       :unlimited? (get row "is_unlimited")}
+       :is-unlimited (get row "is_unlimited")}
       (some? (get row "subject"))
       (assoc :subject (get row "subject"))
 

@@ -1,14 +1,26 @@
 # vis.yml — project sandbox config (snapshotted when an environment is created).
+
+# Master escape hatch: disable the OS jail + egress proxy entirely. Set back to
+# true (or remove) to re-enable containment. Temporarily off so an unjailed
+# test-runner can execute the real Seatbelt E2E suite.
+sandbox: false
+
 jail:
   filesystem:
-    # Sibling repositories available for full source/edit access.
+    # Sibling repositories available for full source/edit access. Each entry may be
+    # a bare path or {path: .., description: ..}; the description lands in the
+    # session's access view so the agent knows what each root is for.
     allow-read-write:
-      - ~/spel
-      - ~/tree-sitter-language-pack
-      - ~/svar
+      - path: ~/spel
+        description: Sibling repo — Clojure Playwright (spel) browser automation.
+      - path: ~/tree-sitter-language-pack
+        description: Sibling repo — tree-sitter grammars powering structural tools.
+      - path: ~/svar
+        description: Sibling repo — structured LLM output + routing library.
       # Vis' own state/config/log dir, so the agent can read ~/.vis/state.yml,
       # inspect logs, and diagnose config/provider issues in-session.
-      - ~/.vis
+      - path: ~/.vis
+        description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.
     # Managed REPL / test-runner dependency caches. OPT-IN only: nothing writable
     # is granted by default anymore. Each entry is either a bare path (read+write)
     # or {path: .., access: read-only}. read-only lets a jailed JVM RESOLVE

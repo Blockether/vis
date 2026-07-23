@@ -116,7 +116,7 @@
   "Render the usage/remaining portion of a row as a short string,
    choosing the most informative shape the row's numbers allow:
 
-     - explicit `unlimited?` flag         -> \"unlimited\"
+     - explicit `is-unlimited` flag         -> \"unlimited\"
      - percentage-style row               -> \"47% left\"
      - used + limit + remaining           -> \"3/5 used (2 left)\"
      - used + limit                       -> \"3/5 used\"
@@ -127,8 +127,8 @@
 
    Returns nil only when the row carries no usage signal at all, so
    callers can `(when usage ...)` to skip empty cells."
-  [{:keys [used limit remaining unlimited?] :as row}]
-  (cond unlimited? "unlimited"
+  [{:keys [used limit remaining is-unlimited] :as row}]
+  (cond is-unlimited "unlimited"
         (percentage-limit-row? row) (str (long (Math/round (double remaining))) "% left")
         (and (number? used) (number? limit) (number? remaining)) (str (format-limit-number used)
                                                                       "/"
@@ -151,7 +151,7 @@
    is signal even when the provider reports zero remaining and omits a limit:
    that's exactly when the user needs to know when credits come back."
   [row]
-  (or (:unlimited? row)
+  (or (:is-unlimited row)
       (some? (get-in row [:window :resets-at-ms]))
       (pos? (double (or (:limit row) (:remaining row) (:used row) 0)))))
 

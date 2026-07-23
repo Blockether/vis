@@ -549,6 +549,7 @@
                        (.redirectErrorStream true)
                        (.redirectOutput log))
                   _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+                         (when (:replace-env? launch) (.clear e))
                          (doseq [[k v] (:env launch)]
                            (.put e ^String k ^String v)))
                   proc (.start pb)

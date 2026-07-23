@@ -564,7 +564,7 @@
      (= :loading (:status limits))
 
      ok?
-     (boolean (:authenticated? status))
+     (boolean (:is-authenticated status))
 
      label
      (vis/display-label (:id provider))
@@ -987,7 +987,7 @@
 (defn- gateway-provider-status-safe
   [provider]
   (try (vis/gateway-provider-status (:id provider))
-       (catch Throwable e {:authenticated? false :error (or (ex-message e) (str e))})))
+       (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))})))
 
 (defn- gateway-provider-limits-safe
   [provider]
@@ -1027,8 +1027,8 @@
   (boolean (or (some :loading? (vals statuses)) (some #(= :loading (:status %)) (vals limits)))))
 
 (defn- provider-authenticated?
-  ([provider] (boolean (:authenticated? (configured-provider-status provider))))
-  ([_provider status] (boolean (:authenticated? status))))
+  ([provider] (boolean (:is-authenticated (configured-provider-status provider))))
+  ([_provider status] (boolean (:is-authenticated status))))
 
 (defn show-provider-status!
   "Status + limits as the RICH canonical markdown form, painted through the IR
@@ -1055,15 +1055,15 @@
      [registered
       (vis/provider-by-id (:id provider))
 
-      authenticated?
+      is-authenticated
       (provider-authenticated? provider status)
 
       auth-label
-      (if authenticated? "Re-authenticate" "Authenticate")]
+      (if is-authenticated "Re-authenticate" "Authenticate")]
 
      (cond-> [{:id :models :label "Configure Models"}]
        (provider-supports-auth? provider)
-       (conj {:id :authenticate :label auth-label :force? authenticated?})
+       (conj {:id :authenticate :label auth-label :force? is-authenticated})
 
        (or (:provider/status-fn registered) (:provider/detect-fn registered) (:api-key provider))
        (conj {:id :status :label "Show Status + Limits"})
@@ -1200,9 +1200,10 @@
               (let [status (safe-provider-status provider)]
                 {:provider-id (:provider/id provider)
                  :provider provider
-                 :label (str (:provider/label provider)
-                             " / "
-                             (if (:authenticated? status) "authenticated" "not authenticated"))})))
+                 :label (str
+                          (:provider/label provider)
+                          " / "
+                          (if (:is-authenticated status) "authenticated" "not authenticated"))})))
        (sort-by :label)
        vec))
 

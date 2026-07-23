@@ -209,7 +209,7 @@
        detected
        (detect-key plan-tag)]
 
-      (cond-> {:authenticated? (some? detected) :provider-id provider-id :label label}
+      (cond-> {:is-authenticated (some? detected) :provider-id provider-id :label label}
         detected
         (assoc :source
           (:source detected) :api-key-preview
@@ -342,7 +342,7 @@
        :kind kind
        :precision :exact
        :source :provider-api
-       :unlimited? false}
+       :is-unlimited false}
       window
       (assoc :window window)
 

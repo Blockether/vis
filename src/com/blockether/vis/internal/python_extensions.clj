@@ -668,19 +668,20 @@ def __vis_registration__():
 (defn- py-key->kw
   "A Python provider-map key -> Clojure keyword. Underscores become dashes, and a
    boolean-predicate `is_foo` / `is-foo` becomes the Clojure `:foo?` convention
-   (Python identifiers can't carry the trailing `?`, so `is_authenticated` is how
-   an author spells `:authenticated?`, `is_default` -> `:default?`, etc.). A bare
-   `is` / `is_` is left as-is."
+   (Python identifiers can't carry the trailing `?`, so `is_default` -> `:default?`,
+   etc.). A bare `is` / `is_` is left as-is. The ONE exception is `is_authenticated`:
+   it is the shared connection-verdict key, kept VERBATIM as `:is-authenticated`
+   end-to-end (wire, dot, status dialog, routing) — never `:authenticated?`."
   [k]
   (let [s (str/replace (str k) "_" "-")]
-    (if (and (str/starts-with? s "is-") (> (count s) 3))
-      (keyword (str (subs s 3) "?"))
-      (keyword s))))
+    (cond (= s "is-authenticated") :is-authenticated
+          (and (str/starts-with? s "is-") (> (count s) 3)) (keyword (str (subs s 3) "?"))
+          :else (keyword s))))
 
 (defn- keywordize
   "Deep-convert a Python string-keyed provider map to keyword keys, coercing a
    bounded allow-list of enum-ish values to keywords too. Keys follow
-   `py-key->kw` (so `is_authenticated` -> `:authenticated?`)."
+   `py-key->kw` (so `is_authenticated` -> `:is-authenticated`)."
   [x]
   (cond (map? x)
         (into
@@ -1296,6 +1297,25 @@ def __vis_registration__():
 ;; The loader's own host extension: `/reload` + doctor surface
 ;; =============================================================================
 
+(def ^:private diffed-config-keys [:sandbox :network :filesystem :jail :toggles])
+
+(defn- config-diff
+  "Short, redacted summary of changed top-level sandbox/config keys between the
+   pre- and post-reload merged config. `:sandbox` shows before→after (a bare
+   boolean); other keys report only that they moved. nil when nothing changed."
+  [old new]
+  (let
+    [tokens
+     (keep (fn [k]
+             (let
+               [o (get old k)
+                n (get new k)]
+
+               (when (not= o n)
+                 (if (= k :sandbox) (str "sandbox " (boolean o) "\u2192" (boolean n)) (name k)))))
+           diffed-config-keys)]
+    (when (seq tokens) (str/join ", " tokens))))
+
 (defn- reload-slash
   [_ctx]
   ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
@@ -1306,8 +1326,14 @@ def __vis_registration__():
     [{:keys [loaded failed]}
      (reload-python-extensions!)
 
+     old-config
+     (config/current-config)
+
      _config
      (config/reload-config!)
+
+     cfg-changes
+     (config-diff old-config (config/current-config))
 
      hook-results
      (extension/run-reload-hooks!)
@@ -1326,7 +1352,8 @@ def __vis_registration__():
 
     {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
      :slash/title
-     (str "Reloaded — configuration; Python extensions: " loaded
+     (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
+          "; Python extensions: " loaded
           " loaded" (when (pos? (long failed))
                       (str ", "
                            failed

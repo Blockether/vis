@@ -2907,12 +2907,19 @@
             sat
             (get util "saturation")]
 
-           (when (pos? (long toks))
-             (str " · saved ~"
-                  (fmt-tok toks)
-                  " tokens"
-                  (when pct (str " · ~" pct "% of window"))
-                  (when (and sat (pos? (long sat))) (str " · context " sat "%")))))
+           (let [saved (when (pos? (long toks))
+                         (str " · saved ~"
+                              (fmt-tok toks)
+                              " tokens"
+                              (when pct (str " · ~" pct "% of window"))))
+                 ;; Even a fold that reclaims no NEW wire (every covered scope
+                 ;; already collapsed on a prior turn — a whole-session
+                 ;; `{"through" "tN"}` re-fold) should still tell the human where
+                 ;; the window stands, so the card is never a bare `folded …`.
+                 ;; `context <U>%` is the provider's absolute saturation, not the
+                 ;; fold's own reduction, so it's honest even when `saved` is nil.
+                 ctx-pct (when (and sat (pos? (long sat))) (str " · context " sat "%"))]
+             (str saved ctx-pct)))
          (catch Throwable _ "")))
 
      recover-hint
@@ -4261,69 +4268,6 @@
 
         (update messages (dec (count messages)) tag-block-cached)))))
 
-(defn- live-code-from-tool-input
-  "Best-effort decode of the `code` argument from a `run_python` tool call's
-   streaming (and therefore possibly truncated) argument JSON, so the live
-   bubble can paint the Python as the model writes it. Native tool calling puts
-   ALL of the model's work in the tool-call arguments (the assistant text is
-   empty), so without this the live stream shows only reasoning.
-
-   Scans for the FIRST `\"code\": \"` key (the value precedes any occurrence
-   inside the code itself), then JSON-unescapes the string value until the
-   closing quote OR the end of the truncated buffer. Returns nil when the
-   `code` value has not started streaming yet."
-  ^String [^String tool-input]
-  (when-not (str/blank? tool-input)
-    (when-let [m (re-find #"\"code\"\s*:\s*\"" tool-input)]
-      (let
-        [start (+ (long (str/index-of tool-input m)) (count m))
-         n (count tool-input)
-         sb (StringBuilder.)]
-
-        (loop [i start]
-          (if (>= i n)
-            (str sb)                  ;; truncated mid-value
-            (let [c (.charAt tool-input i)]
-              (cond (= c \") (str sb) ;; closing quote — value complete
-                    (= c \\) (if (>= (inc i) n)
-                               (str sb)
-                               (let [e (.charAt tool-input (inc i))]
-                                 (case e
-                                   \n
-                                   (do (.append sb \newline) (recur (+ i 2)))
-
-                                   \t
-                                   (do (.append sb \tab) (recur (+ i 2)))
-
-                                   \r
-                                   (do (.append sb \return) (recur (+ i 2)))
-
-                                   \b
-                                   (do (.append sb \backspace) (recur (+ i 2)))
-
-                                   \f
-                                   (do (.append sb \formfeed) (recur (+ i 2)))
-
-                                   \"
-                                   (do (.append sb \") (recur (+ i 2)))
-
-                                   \\
-                                   (do (.append sb \\) (recur (+ i 2)))
-
-                                   \/
-                                   (do (.append sb \/) (recur (+ i 2)))
-
-                                   \u
-                                   (if (>= (+ i 6) n)
-                                     (str sb) ;; truncated escape
-                                     (do (.append sb
-                                                  (char (Integer/parseInt
-                                                          (subs tool-input (+ i 2) (+ i 6))
-                                                          16)))
-                                         (recur (+ i 6))))
-
-                                   (do (.append sb e) (recur (+ i 2))))))
-                    :else (do (.append sb c) (recur (inc i)))))))))))
 
 
 (defn- prose-beyond-code
@@ -4405,96 +4349,56 @@
        ;; ignore it and read `:thinking` as before.
        reasoning-len-volatile (volatile! 0)
        content-len-volatile (volatile! 0)
-       tool-code-len-volatile (volatile! 0)
-       tool-code-volatile (volatile! nil)
-       tool-call-preview-volatile (volatile! nil)
        reset-stream-state! (fn []
                              (vreset! reasoning-len-volatile 0)
-                             (vreset! content-len-volatile 0)
-                             (vreset! tool-code-len-volatile 0)
-                             (vreset! tool-code-volatile nil)
-                             (vreset! tool-call-preview-volatile nil))
-       streaming-fn
-       (when on-chunk
-         (fn [{:keys [reasoning content tool-input tool-call-preview done?] :as chunk}]
-           (cond (:event/type chunk)
-                 (on-chunk {:phase :provider-fallback :iteration iteration-position :event chunk})
-                 :else
-                 (do
-                   (when (or (some? reasoning) done?)
-                     (let
-                       [thinking (some-> reasoning
-                                         str)
-                        prev-len (long @reasoning-len-volatile)
-                        cur-len (long (count (or thinking "")))
-                        delta (cond (nil? thinking) nil
-                                    (< cur-len prev-len) thinking
-                                    (= cur-len prev-len) ""
-                                    :else (subs thinking prev-len))]
+                             (vreset! content-len-volatile 0))
+       streaming-fn (when on-chunk
+                      (fn [{:keys [reasoning content done?] :as chunk}]
+                        (cond (:event/type chunk) (on-chunk {:phase :provider-fallback
+                                                             :iteration iteration-position
+                                                             :event chunk})
+                              :else (do (when (or (some? reasoning) done?)
+                                          (let
+                                            [thinking (some-> reasoning
+                                                              str)
+                                             prev-len (long @reasoning-len-volatile)
+                                             cur-len (long (count (or thinking "")))
+                                             delta (cond (nil? thinking) nil
+                                                         (< cur-len prev-len) thinking
+                                                         (= cur-len prev-len) ""
+                                                         :else (subs thinking prev-len))]
 
-                       (vreset! reasoning-len-volatile cur-len)
-                       (on-chunk {:phase :reasoning
-                                  :iteration iteration-position
-                                  :thinking thinking
-                                  :delta delta
-                                  :done? (boolean done?)})))
-                   (when (some? content)
-                     ;; Stream provider content (the answer
-                     ;; markdown) so the bubble surfaces live
-                     ;; progress between reasoning and parsed
-                     ;; forms. Same delta math as
-                     ;; reasoning; consumers redraw or append.
-                     (let
-                       [content-s (some-> content
-                                          str)
-                        prev-len (long @content-len-volatile)
-                        cur-len (long (count (or content-s "")))
-                        delta (cond (nil? content-s) nil
-                                    (< cur-len prev-len) content-s
-                                    (= cur-len prev-len) ""
-                                    :else (subs content-s prev-len))]
+                                            (vreset! reasoning-len-volatile cur-len)
+                                            (on-chunk {:phase :reasoning
+                                                       :iteration iteration-position
+                                                       :thinking thinking
+                                                       :delta delta
+                                                       :done? (boolean done?)})))
+                                        (when (some? content)
+                                          ;; Stream provider content (the answer
+                                          ;; markdown) so the bubble surfaces live
+                                          ;; progress between reasoning and parsed
+                                          ;; forms. Same delta math as
+                                          ;; reasoning; consumers redraw or append.
+                                          (let
+                                            [content-s (some-> content
+                                                               str)
+                                             prev-len (long @content-len-volatile)
+                                             cur-len (long (count (or content-s "")))
+                                             delta (cond (nil? content-s) nil
+                                                         (< cur-len prev-len) content-s
+                                                         (= cur-len prev-len) ""
+                                                         :else (subs content-s prev-len))]
 
-                       (vreset! content-len-volatile cur-len)
-                       (on-chunk {:phase :content
-                                  :iteration iteration-position
-                                  :content content-s
-                                  :delta delta
-                                  :done? (boolean done?)})))
-                   ;; Native tool input is neither assistant prose nor
-                   ;; reasoning. Svar identifies the call before its argument
-                   ;; deltas; preserve that identity in a dedicated preview
-                   ;; phase so every client labels the code as a native call
-                   ;; from its first streamed byte.
-                   (when tool-call-preview (vreset! tool-call-preview-volatile tool-call-preview))
-                   (let
-                     [preview (or tool-call-preview @tool-call-preview-volatile)
-                      code (or (some-> tool-input
-                                       live-code-from-tool-input)
-                               @tool-code-volatile)]
-
-                     (when (and (str/blank? (or content ""))
-                                preview
-                                (or tool-call-preview (some? tool-input) (and done? (some? code))))
-                       (let
-                         [code (or code "")
-                          prev-len (long @tool-code-len-volatile)
-                          cur-len (long (count code))
-                          delta (cond (< cur-len prev-len) code
-                                      (= cur-len prev-len) ""
-                                      :else (subs code prev-len))]
-
-                         (vreset! tool-code-len-volatile cur-len)
-                         (vreset! tool-code-volatile (not-empty code))
-                         (on-chunk {:phase :tool-preview
-                                    :iteration iteration-position
-                                    :position 0
-                                    :code code
-                                    :delta delta
-                                    :vis/tool-name "native_call"
-                                    :tool-color-role :tool-color/meta
-                                    :result-summary (or (:name preview) "Native call")
-                                    :svar/tool-call-id (:id preview)
-                                    :done? (boolean done?)}))))))))
+                                            (vreset! content-len-volatile cur-len)
+                                            (on-chunk {:phase :content
+                                                       :iteration iteration-position
+                                                       :content content-s
+                                                       :delta delta
+                                                       :done? (boolean done?)})))
+                                        ;; Native tool input previews are intentionally not
+                                        ;; surfaced: no teal "native_call" preview card.
+                                        nil))))
        copilot-initiator (copilot-initiator-for-iteration iteration)
        effective-llm-headers
        (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))

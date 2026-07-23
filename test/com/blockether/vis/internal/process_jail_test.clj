@@ -350,3 +350,85 @@
                  (is (re-find #"localhost:999" (nth argv 2))))
              (is (= ["clojure" "-M:x"] argv))))
          (finally (pj/unregister-session-jail! "t-sid")))))
+
+(deftest env-scrub-allowlist
+  (testing
+    "a confined child inherits ONLY the allowlist + jail.env opt-ins; every
+            operator secret is dropped, proxy/CA additions are present"
+    (let
+      [policy
+       {:roots-fn (fn []
+                    [(System/getProperty "java.io.tmpdir")])
+        :net-enabled? false
+        :env-passthrough ["MY_OPT_IN"]}
+
+       env
+       (pj/jailed-child-env policy)
+
+       real
+       (into {} (System/getenv))
+
+       secretish
+       (filter #(re-find #"(?i)key|token|secret|password" %) (keys real))]
+
+      (is (map? env))
+      (is (contains? env "PATH"))
+      (is (contains? env "HOME"))
+      (is (= "1" (get env "VIS_SEATBELT_ACTIVE")))
+      (is (empty? (filter env secretish))
+          "no API key / token / secret / password var may reach a jailed child")))
+  (testing "nil when the policy is not enforcing (disabled / nil) — caller inherits"
+    (is (nil? (pj/jailed-child-env nil)))
+    (is (nil? (pj/jailed-child-env {:disabled? true
+                                    :roots-fn (fn []
+                                                ["/x"])})))))
+
+(deftest metadata-scoped-to-roots
+  (testing
+    "file-read-metadata is scoped: no global grant; ancestors are literals,
+            granted roots are subpaths, and $HOME is NOT recursively exposed"
+    (let
+      [p (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
+                                                           ["/tmp"])
+                                               :net-enabled? false}))]
+      (is (nil? (re-find #"\(allow file-read-metadata\)" p))
+          "the former GLOBAL metadata grant (the leak) must be gone")
+      (is (str/includes? p "file-read-metadata(literal \"/\")"))
+      (is (str/includes? p (str "(literal \"" (System/getProperty "user.home") "\")")))
+      (is (not (re-find #"file-read-metadata[^\n]*subpath \"[^\"]*\.ssh" p))
+          "metadata must not recurse into ~/.ssh and other home secrets")))
+  (testing
+    "a granted root's ancestor directories are metadata literals so a
+            confined child can canonicalize (lstat every component of) a path it
+            creates under, e.g. the darwin per-user temp dir (/private/var/folders/..)"
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-anc-" (System/nanoTime)))
+         (.mkdirs))
+
+       real
+       (.getCanonicalPath dir)
+
+       p
+       (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
+                                                         [(.getPath dir)])
+                                             :net-enabled? false}))
+
+       ancestors
+       (loop
+         [f
+          (.getParentFile (io/file real))
+
+          acc
+          []]
+
+         (if f (recur (.getParentFile f) (conj acc (.getPath f))) acc))]
+
+      (try
+        ;; Every resolved ancestor — /private/var, /private/var/folders, <hash>, … —
+        ;; must carry a metadata literal; without the full chain getCanonicalPath
+        ;; EPERMs on the first ungranted component.
+        (doseq [anc ancestors]
+          (is (str/includes? p (str "(literal \"" anc "\")"))
+              (str "ancestor not granted metadata: " anc)))
+        (finally (.delete dir))))))

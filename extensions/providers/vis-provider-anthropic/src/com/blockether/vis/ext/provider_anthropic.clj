@@ -317,7 +317,7 @@
        :kind :rate
        :precision :estimate
        :source :provider-api
-       :unlimited? false
+       :is-unlimited false
        :used used
        :limit 100.0
        :remaining (- 100.0 (double used))
@@ -510,7 +510,7 @@
      now
      (System/currentTimeMillis)]
 
-    (cond-> {:authenticated? (some? detected)}
+    (cond-> {:is-authenticated (some? detected)}
       detected
       (assoc :source
         (:source detected) :oauth-token-preview

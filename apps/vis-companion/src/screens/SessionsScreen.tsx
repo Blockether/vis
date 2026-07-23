@@ -19,7 +19,7 @@ interface Props {
   client: GatewayClient | null;
   subscriptions: SessionSubscriptionHub | null;
   subscribedIds: ReadonlySet<string>;
-  onOpen: (conn: GatewayConn, sid: string) => void | Promise<void>;
+  onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
 }
 
 export function SessionsScreen({ active, client, subscriptions, subscribedIds, onOpen }: Props) {
@@ -143,7 +143,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
       setCreateTitle('');
       setCreating(false);
       await load();
-      if (session.id) await onOpen(active, session.id);
+      if (session.id) await onOpen(active, session.id, true);
     } catch (cause) {
       setCreateError((cause as Error).message);
     } finally {
@@ -155,7 +155,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
 
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
-      <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel shadow-none sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)]">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:border">
         <header className="relative flex min-h-11 items-center justify-center bg-dialog-title px-4 py-2 text-dialog-title-foreground sm:min-h-10">
           <h1 className="truncate font-mono text-[11px] font-black uppercase tracking-[0.1em]">Session navigator</h1>
         </header>
@@ -194,7 +194,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
         </div>
 
         <div className="flex min-h-12 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-11 sm:px-4">
-          <span className="shrink-0 font-mono text-xs text-accent">›</span>
+          <span className="shrink-0 font-mono text-xs text-accent-ink">›</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -395,7 +395,7 @@ function SessionRow({
       data-session-id={session.id}
       onClick={() => void onOpen(conn, session.id)}
     >
-      <span className="relative min-w-0 px-3 py-2.5 sm:px-4 md:border-r md:border-dialog-edge md:py-3">
+      <span className="relative flex min-w-0 flex-col justify-center px-3 py-2.5 sm:px-4 md:border-r md:border-dialog-edge md:py-3">
         <span className="absolute inset-y-2 left-0 w-0.5 bg-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
         <span
           className={`block truncate font-mono text-xs font-semibold ${
@@ -407,7 +407,7 @@ function SessionRow({
         <span className="mt-1 flex items-center gap-x-2 overflow-hidden font-mono text-[9px] text-dialog-hint md:hidden">
           <span className="shrink-0">{shortId(session.id)}</span>
           {subscribed && (
-            <span className="inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] text-accent">
+            <span className="inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] text-accent-ink">
               <span className="size-1 bg-accent" /> SUB
             </span>
           )}
@@ -416,7 +416,7 @@ function SessionRow({
             {status}
           </span>
           <span className="truncate">{relativeTime(timestamp)}</span>
-          <span className="ml-auto text-accent opacity-60" aria-hidden="true">›</span>
+          <span className="ml-auto text-accent-ink opacity-60" aria-hidden="true">›</span>
         </span>
       </span>
       <span className="hidden items-center border-r border-dialog-edge px-3 font-mono text-[10px] text-white/55 md:flex">

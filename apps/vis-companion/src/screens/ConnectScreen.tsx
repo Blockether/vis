@@ -119,7 +119,7 @@ export function ConnectScreen({
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
       <header className="border-b border-dialog-edge pb-3">
-        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent">
+        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent-ink">
           Connections
         </p>
         <div className="mt-1 flex items-end justify-between gap-4">
@@ -235,7 +235,7 @@ export function ConnectScreen({
             <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
               <h3 className="font-mono text-xs font-bold text-white">Pairing link</h3>
               <p className="mt-0.5 text-[11px] leading-4 text-dialog-hint">
-                Paste the link from <code className="text-accent">vis gateway pair</code>.
+                Paste the link from <code className="text-accent-ink">vis gateway pair</code>.
               </p>
             </header>
             <div className="space-y-2.5 p-3">

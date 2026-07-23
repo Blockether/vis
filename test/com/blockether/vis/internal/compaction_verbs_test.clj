@@ -760,11 +760,13 @@
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44%"
                    (sf ["t1/i1"])))))
-  (it "a scope with NO stamped weight reclaims nothing, so the card omits the suffix"
+  (it "a scope with NO stamped weight reclaims nothing, so the card drops the saved figure but still surfaces the live window fullness"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; t2/i9 is not in the weights map (created this iteration, unsent) — a fold
-        ;; that frees no wire honestly shows no savings, not a phantom level.
-        (expect (= "folded t2/i9 → fresh" (sf ["t2/i9"] "fresh")))))
+        ;; that frees no wire honestly shows no phantom SAVINGS, but the absolute
+        ;; `context <U>%` (provider saturation) still tells the human where the
+        ;; window stands, so a whole-session re-fold is never a bare `folded …`.
+        (expect (= "folded t2/i9 · context 44% → fresh" (sf ["t2/i9"] "fresh")))))
   (it "a later, bigger request can't inflate the card — the reduction is the fold's own"
       ;; The scary regression (fold → tool call → fold → % climbs): a projected
       ;; level subtracts cumulative-saved from the GROWING `last_request_tokens`, so

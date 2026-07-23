@@ -123,7 +123,7 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False)
 - `is_hidden=True` hides the tool from the model-facing listing (still callable).
   This follows the bridge-wide convention: a Python boolean spelled `is_<name>`
   maps to the Clojure `:<name>?` predicate key (Python identifiers can't carry a
-  trailing `?`), so `is_hidden` → `:hidden?`, `is_authenticated` → `:authenticated?`.
+  trailing `?`), so `is_hidden` → `:hidden?`, `is_authenticated` → `:is-authenticated`.
 
 **Envelope semantics — Python authors never construct envelopes:**
 
@@ -372,7 +372,7 @@ needs `get_token_fn` + a `preset`. Dict keys may be snake_case or kebab (`api_ur
 `:api-url`), `api_style` becomes a keyword, and a Python boolean-predicate key
 written `is_<name>` maps to the `:<name>?` the host reads — so a `status_fn` result
 returns `is_authenticated` (Python can't spell the trailing `?`), which the
-runtime consumes as `:authenticated?`. `vis providers auth/status/limits
+runtime consumes as `:is-authenticated`. `vis providers auth/status/limits
 <id>` work against it like any other provider.
 
 For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime

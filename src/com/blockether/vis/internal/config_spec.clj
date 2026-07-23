@@ -18,6 +18,9 @@
 (defn- port? [x] (and (integer? x) (<= 1 x 65535)))
 (defn- scalar? [x] (or (string? x) (boolean? x) (number? x) (nil? x)))
 (defn- string-list? [x] (and (vector? x) (every? non-blank-string? x)))
+(def ^:private env-var-name-re #"[A-Za-z_][A-Za-z0-9_]*")
+(defn- env-var-name? [x] (and (string? x) (boolean (re-matches env-var-name-re x))))
+(defn- env-var-name-list? [x] (and (vector? x) (every? env-var-name? x)))
 (defn- rooted-path?
   "A filesystem grant must be absolute (\"/\") or home-relative (\"~\", \"~/\") —
    a bare-relative path resolves against the gateway process cwd, silently
@@ -165,7 +168,7 @@
 (def cache-keys #{"path" "access"})
 (def filesystem-keys
   #{"allow-read-write" "allow-read" "allow-write" "deny-read" "deny-write" "language-caches"})
-(def jail-keys #{"filesystem" "inbound-ports"})
+(def jail-keys #{"filesystem" "inbound-ports" "env"})
 (def network-rule-allow-keys #{"method" "path"})
 (def network-rule-keys #{"host" "access" "methods" "allow"})
 (def network-keys #{"allowed-domains" "denied-domains" "exclude-domains" "allow-private" "rules"})
@@ -179,10 +182,35 @@
         :map ::cache-map))
 (s/def ::caches (s/coll-of ::cache :kind vector?))
 
+(def fs-grant-keys #{"path" "description"})
+(def fs-grant-schema {"path" rooted-path? "description" non-blank-string?})
+(s/def ::fs-grant-map #(closed-map? fs-grant-schema #{"path"} %))
+(s/def ::fs-grant
+  (s/or :path rooted-path?
+        :map ::fs-grant-map))
+(s/def ::fs-grants (s/coll-of ::fs-grant :kind vector?))
+
+(defn- grant-path
+  "The rooted path of a filesystem grant entry (a bare string or a
+   `{path, description}` map). Enforcement consumes paths only."
+  [entry]
+  (if (map? entry) (get entry "path") entry))
+
+(defn- grant-descriptions
+  "Path -> human description for the grant entries that carry one. Feeds the
+   model-facing session view so the agent knows why each root is granted."
+  [grants]
+  (into {}
+        (keep (fn [entry]
+                (when (map? entry)
+                  (when-let [d (get entry "description")]
+                    [(get entry "path") d]))))
+        grants))
+
 (def filesystem-schema
-  {"allow-read-write" rooted-path-list?
-   "allow-read" rooted-path-list?
-   "allow-write" rooted-path-list?
+  {"allow-read-write" (spec-pred ::fs-grants)
+   "allow-read" (spec-pred ::fs-grants)
+   "allow-write" (spec-pred ::fs-grants)
    "deny-read" rooted-path-list?
    "deny-write" rooted-path-list?
    "language-caches" (spec-pred ::caches)})
@@ -190,7 +218,8 @@
 
 (def jail-schema
   {"filesystem" (spec-pred ::filesystem)
-   "inbound-ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))})
+   "inbound-ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
+   "env" env-var-name-list?})
 (s/def ::jail #(closed-map? jail-schema %))
 
 (def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
@@ -301,7 +330,7 @@
 
 (def process-jail-config-keys
   #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write
-    :language-cache-dirs :inbound-ports})
+    :language-cache-dirs :inbound-ports :env-passthrough :path-descriptions})
 
 (s/def ::process-jail-config
   (s/and map?
@@ -310,7 +339,9 @@
          #(every? rooted-path-list?
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
          #(s/valid? ::caches (:language-cache-dirs %))
-         #(s/valid? (get jail-schema "inbound-ports") (:inbound-ports %))))
+         #(s/valid? (get jail-schema "inbound-ports") (:inbound-ports %))
+         #(env-var-name-list? (or (:env-passthrough %) []))
+         #(let [d (:path-descriptions %)] (or (nil? d) (string-map? d)))))
 
 (defn assert-process-jail-config!
   "Validate and return the exact internal policy consumed by process-jail."
@@ -332,16 +363,23 @@
      (get config "jail" {})
 
      fs
-     (get jail "filesystem" {})]
+     (get jail "filesystem" {})
+
+     descriptions
+     (merge (grant-descriptions (get fs "allow-read-write"))
+            (grant-descriptions (get fs "allow-read"))
+            (grant-descriptions (get fs "allow-write")))]
 
     (assert-process-jail-config! {:disabled? (= false (get config "sandbox"))
-                                  :allow-read-write (vec (get fs "allow-read-write"))
-                                  :allow-read (vec (get fs "allow-read"))
-                                  :allow-write (vec (get fs "allow-write"))
+                                  :allow-read-write (into [] (keep grant-path) (get fs "allow-read-write"))
+                                  :allow-read (into [] (keep grant-path) (get fs "allow-read"))
+                                  :allow-write (into [] (keep grant-path) (get fs "allow-write"))
                                   :deny-read (vec (get fs "deny-read"))
                                   :deny-write (vec (get fs "deny-write"))
                                   :language-cache-dirs (vec (get fs "language-caches"))
-                                  :inbound-ports (vec (get jail "inbound-ports"))})))
+                                  :inbound-ports (vec (get jail "inbound-ports"))
+                                  :env-passthrough (vec (get jail "env"))
+                                  :path-descriptions descriptions})))
 
 (defn- network-allow->runtime
   [allow]

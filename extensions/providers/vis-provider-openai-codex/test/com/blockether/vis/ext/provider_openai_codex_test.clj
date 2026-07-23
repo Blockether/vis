@@ -160,7 +160,7 @@
                                                                    :kind :rate
                                                                    :precision :exact
                                                                    :source :provider-api
-                                                                   :unlimited? false
+                                                                   :is-unlimited false
                                                                    :used 20.0
                                                                    :limit 100.0
                                                                    :remaining 80.0}]})}
@@ -216,7 +216,7 @@
                                                                      :kind :rate
                                                                      :precision :exact
                                                                      :source :provider-api
-                                                                     :unlimited? false
+                                                                     :is-unlimited false
                                                                      :remaining 42.0}]}))}
         (fn []
           (let [report (codex/limits)]

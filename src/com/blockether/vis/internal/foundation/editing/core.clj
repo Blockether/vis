@@ -362,6 +362,21 @@
   (try (when (under-temp-root? f) (mpl-capture/record-file! (.toPath f))) (catch Throwable _ nil))
   nil)
 
+(defn- expand-home
+  "Expand a leading `~` / `~/…` to the user's home dir so a model-supplied path
+   like `~/bridge` resolves to a real absolute path instead of being treated as
+   a literal `~` segment UNDER cwd (which silently produces a non-existent path
+   that still passes confinement). Bare `~` → home; `~/x` → `<home>/x`; anything
+   else (including a mid-path `~`) is returned unchanged. Nil-safe; a no-op when
+   `user.home` is unset."
+  ^String [^String s]
+  (let [home (System/getProperty "user.home")]
+    (cond (nil? s) s
+          (not (seq home)) s
+          (= s "~") home
+          (str/starts-with? s "~/") (str home (subs s 1))
+          :else s)))
+
 (defn- safe-path
   ^File [p]
   ;; Resolve `p` and confine it to the union of ALLOWED ROOTS: the primary
@@ -390,7 +405,8 @@
      ;; relative → under cwd; absolute → as-is. Canonical throughout so
      ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
      ^java.nio.file.Path canonical
-     (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
+     (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath
+                                                        (fs/path cwd (expand-home (str p))))))))
 
      mappings
      (workspace/filesystem-root-mappings)
@@ -499,13 +515,31 @@
    directory. The model-facing value uses the same round-trippable address as
    every search result."
   [path]
-  (let [p (str/trim (str path))
-        p (if (str/blank? p) "." p)
-        ^File f (safe-path p)
-        ^File dir (cond (.isDirectory f) f
-                        (.isFile f) (.getParentFile f)
-                        :else (nearest-existing-dir f))]
+  (let
+    [p
+     (str/trim (str path))
+
+     p
+     (if (str/blank? p) "." p)
+
+     ^File f
+     (safe-path p)
+
+     ^File dir
+     (cond (.isDirectory f) f
+           (.isFile f) (.getParentFile f)
+           :else (nearest-existing-dir f))]
+
     (if dir (rel-path dir) p)))
+
+(defn- vis-home-path
+  "Canonical `~/.vis` NIO path — vis's own machine home (repo mirrors under
+   `drafts/`, `cache/` CPython, logs, machine state). The DEFAULT search sweep
+   prunes any bound root under this: it is noise for a project search. Explicit
+   `paths` are unaffected — they bypass the default expansion and still reach it.
+   nil when `user.home` is unresolvable."
+  []
+  (try (.toPath (.getCanonicalFile (io/file config/config-dir))) (catch Throwable _ nil)))
 
 (defn- resolve-search-roots
   "Resolve rg/find `paths` into `{:roots [File …] :resolutions [{…} …]}`.
@@ -526,8 +560,10 @@
 
    The DEFAULT/unscoped `[\".\"]` (or a BLANK/nil entry, which the model routinely
    tacks on, e.g. `[\".github\" \"\"]`) expands to the FULL allowed-roots set — the
-   primary cwd PLUS every bound filesystem-root clone — and carries NO
-   `:resolutions` (a default sweep names nothing, so nothing is reportable).
+   primary cwd PLUS every bound filesystem-root clone — EXCEPT vis's own `~/.vis`
+   home, which is pruned from the default sweep (its `drafts/` repo mirrors and
+   `cache/` CPython are search noise; explicit paths still reach it) — and carries
+   NO `:resolutions` (a default sweep names nothing, so nothing is reportable).
 
    Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap); a
    confinement violation still propagates — that is not a miss."
@@ -538,7 +574,18 @@
                     (if (str/blank? s) "." s))
                  paths)]
     (if (some #{"."} paths)
-      {:roots (mapv io/file (workspace/allowed-roots)) :resolutions []}
+      (let
+        [roots (workspace/allowed-roots)
+         primary (first roots)
+         ^java.nio.file.Path vh (vis-home-path)
+         under-vis-home?
+         (fn [r]
+           (and vh
+                (not= r primary)
+                (try (.startsWith ^java.nio.file.Path (.toPath (.getCanonicalFile (io/file r))) vh)
+                     (catch Throwable _ false))))]
+
+        {:roots (into [] (comp (remove under-vis-home?) (map io/file)) roots) :resolutions []})
       (let
         [resolutions
          (mapv (fn [p]
@@ -625,17 +672,28 @@
 
 (defn- find-arg-paths
   [args]
-  (let [a (first args)
-        opts (second args)
-        spec (cond (map? a) a
-                   (map? opts) opts
-                   :else nil)
-        paths (cond (contains? spec "paths") (get spec "paths")
-                    (contains? spec "path") (get spec "path")
-                    :else nil)
-        paths (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
-                    (sequential? paths) paths
-                    :else [paths])]
+  (let
+    [a
+     (first args)
+
+     opts
+     (second args)
+
+     spec
+     (cond (map? a) a
+           (map? opts) opts
+           :else nil)
+
+     paths
+     (cond (contains? spec "paths") (get spec "paths")
+           (contains? spec "path") (get spec "path")
+           :else nil)
+
+     paths
+     (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
+           (sequential? paths) paths
+           :else [paths])]
+
     (mapv normalize-find-dir-path paths)))
 
 (defn- protected-target
@@ -1575,63 +1633,88 @@
 
 (defn- coerce-find-spec
   [args]
-  (let [[a b] args
-        spec (cond
-               (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
-               (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b))
-               (assoc b "query" a)
-               (and (= 1 (count args)) (map? a)) a
-               :else
-               (throw
-                 (ex-info
-                   "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
-                   {:type :ext.foundation.editing/invalid-find-args
-                    :expected '([query] [query opts] [spec-map])
-                    :got args})))
-        allowed-keys #{"query" "paths" "path" "limit" "include" "is_hidden"
-                       "is_respect_gitignore"}
-        unknown-keys (seq (remove allowed-keys (keys spec)))]
+  (let
+    [[a b]
+     args
+
+     spec
+     (cond
+       (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
+       (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b)) (assoc b "query" a)
+       (and (= 1 (count args)) (map? a)) a
+       :else
+       (throw
+         (ex-info
+           "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
+           {:type :ext.foundation.editing/invalid-find-args
+            :expected '([query] [query opts] [spec-map])
+            :got args})))
+
+     allowed-keys
+     #{"query" "paths" "path" "limit" "include" "is_hidden" "is_respect_gitignore"}
+
+     unknown-keys
+     (seq (remove allowed-keys (keys spec)))]
+
     (when unknown-keys
-      (throw
-        (ex-info
-          (str "find spec has unknown keys: "
-               (str/join ", " (map str unknown-keys))
-               ". Allowed: query, paths, limit, include, is_hidden, is_respect_gitignore.")
-          {:type :ext.foundation.editing/invalid-find-args
-           :unknown (vec unknown-keys)
-           :allowed (vec (sort allowed-keys))})))
-    (let [raw-query (get spec "query")
-          _ (when-not (or (and (string? raw-query) (not (str/blank? raw-query)))
-                          (and (sequential? raw-query)
-                               (seq raw-query)
-                               (every? #(and (string? %) (not (str/blank? %))) raw-query)))
-              (throw
-                (ex-info
-                  "find \"query\" must be a non-blank string or a non-empty vector of non-blank strings"
-                  {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
-          query (if (sequential? raw-query) (str/join " " raw-query) raw-query)
-          _ (when (and (contains? spec "paths") (contains? spec "path"))
-              (throw
-                (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
+      (throw (ex-info (str
+                        "find spec has unknown keys: "
+                        (str/join ", " (map str unknown-keys))
+                        ". Allowed: query, paths, limit, include, is_hidden, is_respect_gitignore.")
+                      {:type :ext.foundation.editing/invalid-find-args
+                       :unknown (vec unknown-keys)
+                       :allowed (vec (sort allowed-keys))})))
+    (let
+      [raw-query
+       (get spec "query")
+
+       _
+       (when-not (or (and (string? raw-query) (not (str/blank? raw-query)))
+                     (and (sequential? raw-query)
+                          (seq raw-query)
+                          (every? #(and (string? %) (not (str/blank? %))) raw-query)))
+         (throw
+           (ex-info
+             "find \"query\" must be a non-blank string or a non-empty vector of non-blank strings"
+             {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
+
+       query
+       (if (sequential? raw-query) (str/join " " raw-query) raw-query)
+
+       _
+       (when (and (contains? spec "paths") (contains? spec "path"))
+         (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
                          {:type :ext.foundation.editing/invalid-find-args :spec spec})))
-          raw-paths (cond (contains? spec "paths") (get spec "paths")
-                          (contains? spec "path") (get spec "path")
-                          :else ["."])
-          paths (cond (or (nil? raw-paths)
-                          (and (sequential? raw-paths) (empty? raw-paths))) ["."]
-                      (string? raw-paths) [raw-paths]
-                      (sequential? raw-paths) (vec raw-paths)
-                      :else raw-paths)
-          _ (when-not (and (vector? paths) (seq paths) (every? string? paths))
-              (throw
-                (ex-info
-                  "find \"paths\" must be a string or vector of directory strings (empty defaults to current directory)"
-                  {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
-          paths (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
-          limit (or (get spec "limit") default-find-limit)
-          _ (when-not (and (integer? limit) (pos? (long limit)))
-              (throw (ex-info "find \"limit\" must be a positive integer"
-                              {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
+
+       raw-paths
+       (cond (contains? spec "paths") (get spec "paths")
+             (contains? spec "path") (get spec "path")
+             :else ["."])
+
+       paths
+       (cond (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths))) ["."]
+             (string? raw-paths) [raw-paths]
+             (sequential? raw-paths) (vec raw-paths)
+             :else raw-paths)
+
+       _
+       (when-not (and (vector? paths) (seq paths) (every? string? paths))
+         (throw
+           (ex-info
+             "find \"paths\" must be a string or vector of directory strings (empty defaults to current directory)"
+             {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
+
+       paths
+       (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
+
+       limit
+       (or (get spec "limit") default-find-limit)
+
+       _
+       (when-not (and (integer? limit) (pos? (long limit)))
+         (throw (ex-info "find \"limit\" must be a positive integer"
+                         {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
+
       {:query query
        :paths paths
        :limit limit
@@ -1957,15 +2040,26 @@
    caller supplied a filename. find_files intentionally exposes no context-lines
    option; each hit contains only its matching line and patch anchor."
   [args]
-  (let [[a b] args
-        spec (cond (and (= 1 (count args)) (map? a)) a
-                   (and (= 2 (count args)) (map? b)) (assoc b "query" a)
-                   (= 1 (count args)) {"query" a}
-                   :else {})
-        {:keys [paths]} (coerce-find-spec args)]
+  (let
+    [[a b]
+     args
+
+     spec
+     (cond (and (= 1 (count args)) (map? a)) a
+           (and (= 2 (count args)) (map? b)) (assoc b "query" a)
+           (= 1 (count args)) {"query" a}
+           :else {})
+
+     {:keys [paths]}
+     (coerce-find-spec args)]
+
     (cond-> {"query" (get spec "query") "paths" paths}
-      (contains? spec "include") (assoc "include" (get spec "include"))
-      (contains? spec "is_hidden") (assoc "is_hidden" (get spec "is_hidden"))
+      (contains? spec "include")
+      (assoc "include" (get spec "include"))
+
+      (contains? spec "is_hidden")
+      (assoc "is_hidden" (get spec "is_hidden"))
+
       (contains? spec "is_respect_gitignore")
       (assoc "is_respect_gitignore" (get spec "is_respect_gitignore")))))
 
@@ -1976,36 +2070,57 @@
    breadth flags when more files match than are shown. The compatibility arity
    ignores its former context argument."
   ([out needles]
-   (let [hits (vec (:hits out))
-         ordered-paths (distinct (map :path hits))
-         by-path (group-by :path hits)
-         total-files (:total-file-count out)
-         more-files? (> (long total-files) (count ordered-paths))
-         matches (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
-                   (doseq [p ordered-paths]
-                     (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
-                       (doseq [{:keys [line text]} (get by-path p)]
-                         (.put fm (patch/line-anchor line text) {"text" text}))
-                       (.put mm p fm)))
-                   mm)
-         file-counts (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
-                       (doseq [p (sort-by (fn [p] [(- (count (get by-path p))) p])
-                                          ordered-paths)]
-                         (.put fc p (count (get by-path p))))
-                       fc)]
-     (cond-> {"needles" needles
-              "matches" matches
-              "hit_count" (count hits)
-              "file_count" (count ordered-paths)
-              "first_hit" (when (pos? (count hits))
-                            (let [{:keys [path line]} (nth hits 0)]
-                              (str path ":" line)))}
-       (> (count ordered-paths) 1) (assoc "file_counts" file-counts)
-       more-files? (assoc "total_file_count" total-files)
+   (let
+     [hits
+      (vec (:hits out))
+
+      ordered-paths
+      (distinct (map :path hits))
+
+      by-path
+      (group-by :path hits)
+
+      total-files
+      (:total-file-count out)
+
+      more-files?
+      (> (long total-files) (count ordered-paths))
+
+      matches
+      (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
+        (doseq [p ordered-paths]
+          (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
+            (doseq [{:keys [line text]} (get by-path p)]
+              (.put fm (patch/line-anchor line text) {"text" text}))
+            (.put mm p fm)))
+        mm)
+
+      file-counts
+      (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
+        (doseq
+          [p (sort-by (fn [p]
+                        [(- (count (get by-path p))) p])
+                      ordered-paths)]
+          (.put fc p (count (get by-path p))))
+        fc)]
+
+     (cond->
+       {"needles" needles
+        "matches" matches
+        "hit_count" (count hits)
+        "file_count" (count ordered-paths)
+        "first_hit" (when (pos? (count hits))
+                      (let [{:keys [path line]} (nth hits 0)]
+                        (str path ":" line)))}
+       (> (count ordered-paths) 1)
+       (assoc "file_counts" file-counts)
+
+       more-files?
+       (assoc "total_file_count" total-files)
+
        (and more-files? (not (:total-file-count-exact? out)))
        (assoc "total_file_count_is_exact" false))))
-  ([out needles _former-context]
-   (content-result out needles)))
+  ([out needles _former-context] (content-result out needles)))
 
 (defn- find-tool
   "Find files by NAME/PATH and search their CONTENT in one call (bound as
@@ -2022,20 +2137,36 @@
    Content hits contain only matching lines, each keyed by a patch-ready
    `lineno:hash` anchor; find_files has no surrounding-context option."
   [& args]
-  (let [{:strs [query searched_paths limit item_count truncated_by] :as name-out}
-        (find-search args)
-        content-spec (find-args->content-spec args)
-        {:keys [needles]} (coerce-rg-spec content-spec)
-        content (content-result (rg-search content-spec) needles)
-        content-hits (long (or (get content "hit_count") 0))
-        multiword? (> (count (str/split (str/trim (str query)) #"\s+")) 2)
-        out (cond-> (assoc name-out "content" content)
-              (and (zero? (long (or item_count 0))) (zero? content-hits))
-              (assoc "hint"
-                (str "No file NAME or CONTENT matched \"" query "\". "
-                     (if multiword?
-                       "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
-                       "Try a different term, a real symbol/string, or widen the scope."))))]
+  (let
+    [{:strs [query searched_paths limit item_count truncated_by] :as name-out}
+     (find-search args)
+
+     content-spec
+     (find-args->content-spec args)
+
+     {:keys [needles]}
+     (coerce-rg-spec content-spec)
+
+     content
+     (content-result (rg-search content-spec) needles)
+
+     content-hits
+     (long (or (get content "hit_count") 0))
+
+     multiword?
+     (> (count (str/split (str/trim (str query)) #"\s+")) 2)
+
+     out
+     (cond-> (assoc name-out "content" content)
+       (and (zero? (long (or item_count 0))) (zero? content-hits))
+       (assoc "hint"
+         (str
+           "No file NAME or CONTENT matched \"" query
+           "\". "
+           (if multiword?
+             "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
+             "Try a different term, a real symbol/string, or widen the scope."))))]
+
     (tool-success {:op :find_files
                    :path (first searched_paths)
                    :kind :dir
@@ -4845,9 +4976,8 @@
         :items {:type "string" :minLength 1}
         :description
         "Directory scopes only (default: whole tree). Existing file values are normalized to their parent directory."}
-       "limit" {:type "integer"
-                 :minimum 1
-                 :description "Maximum ranked filename matches (default 50)."}
+       "limit"
+       {:type "integer" :minimum 1 :description "Maximum ranked filename matches (default 50)."}
        "include"
        {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
         :description

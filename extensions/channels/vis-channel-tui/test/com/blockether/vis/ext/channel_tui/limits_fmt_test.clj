@@ -66,12 +66,12 @@
       (expect (= "3/5 used" (lfmt/format-limit-usage {:used 3 :limit 5}))))
   (it "renders `remaining/limit left` when used is missing"
       (expect (= "2/5 left" (lfmt/format-limit-usage {:remaining 2 :limit 5}))))
-  (it "handles `:unlimited?` explicitly"
-      (expect (= "unlimited" (lfmt/format-limit-usage {:unlimited? true}))))
+  (it "handles `:is-unlimited` explicitly"
+      (expect (= "unlimited" (lfmt/format-limit-usage {:is-unlimited true}))))
   (it "returns nil when no usage signal is present" (expect (nil? (lfmt/format-limit-usage {})))))
 
 (defdescribe generic-limit-has-signal?-test
-             (it "true on :unlimited?" (expect (lfmt/generic-limit-has-signal? {:unlimited? true})))
+             (it "true on :is-unlimited" (expect (lfmt/generic-limit-has-signal? {:is-unlimited true})))
              (it "true on any positive numeric field"
                  (expect (lfmt/generic-limit-has-signal? {:remaining 47}))
                  (expect (lfmt/generic-limit-has-signal? {:limit 100}))

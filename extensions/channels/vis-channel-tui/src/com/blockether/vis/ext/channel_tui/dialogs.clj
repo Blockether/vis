@@ -5375,11 +5375,23 @@
          (.newTextGraphics screen)
 
          bounds
-         ;; Size the frame to the ACTUAL row count (+ chrome/query/header rows)
-         ;; so few sessions get a compact box instead of a full-height frame
-         ;; with dead space below the last row. golden-dialog-size still clamps
-         ;; to the terminal, so long lists stay full-height and scroll.
-         (draw-dialog-chrome! g cols rows-n "Sessions" (- cols 4) (+ (long total) 6))
+         ;; Size the frame to the UNFILTERED row count (+ chrome/query/header
+         ;; rows) so few sessions get a compact box instead of a full-height
+         ;; frame with dead space, WITHOUT the box shrinking and re-centering
+         ;; as the query narrows the matches — that vertical jump left the
+         ;; taller previous frame as ghost rows behind the new one. Keeping the
+         ;; height fixed to the full list means filtering only repaints the body
+         ;; in place. golden-dialog-size still clamps to the terminal, so long
+         ;; lists stay full-height and scroll.
+         ;; Center within `rows-n - 6`, not the full terminal height, so the
+         ;; box only occupies the band from the tab-bar bottom border down to
+         ;; the composer's top border. The bottom UI band is 6 rows — footer
+         ;; chips (2) + input box (>=3) + echo/hint row (1) — so reserving 6
+         ;; keeps the frame AND its drop shadow clear of the input form, not
+         ;; just the footer. golden-dialog-size already insets 3 rows top/bottom
+         ;; inside that window, so the top margin matches the 3-row header band
+         ;; and a clean gap sits above the composer.
+         (draw-dialog-chrome! g cols (- (long rows-n) 6) "Sessions" (- cols 4) (+ (long (count rows)) 6))
 
          {:keys [left right inner-w]}
          bounds

@@ -455,6 +455,46 @@
 
                             (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))
 
+(deftest cors-preflight-is-answered-before-auth
+  (testing
+    "a cross-origin browser reaches a token-gated gateway: preflight OPTIONS is 204 without a token, and CORS headers ride every response so the browser can read even a 401"
+    (with-server-state!
+      {:require-token? true}
+      (fn []
+        (let
+          [app
+           ((rv 'app) "sekret" [])
+
+           origin
+           "http://100.109.18.77:5273"
+
+           preflight
+           (app {:request-method :options
+                 :uri "/v1/sessions"
+                 :headers {"origin" origin
+                           "access-control-request-headers" "authorization,content-type"}})
+
+           noauth
+           (app {:request-method :get :uri "/v1/sessions" :headers {"origin" origin}})
+
+           authed
+           (app {:request-method :get
+                 :uri "/v1/sessions"
+                 :headers {"origin" origin "authorization" "Bearer sekret"}})]
+
+          (testing "preflight OPTIONS short-circuits auth with 204"
+            (is (= 204 (:status preflight)))
+            (is (= origin (get-in preflight [:headers "Access-Control-Allow-Origin"])))
+            (is (= "true" (get-in preflight [:headers "Access-Control-Allow-Credentials"])))
+            (is (= "authorization,content-type"
+                   (get-in preflight [:headers "Access-Control-Allow-Headers"]))))
+          (testing "a 401 still carries CORS so the browser surfaces the error, not an opaque block"
+            (is (= 401 (:status noauth)))
+            (is (= origin (get-in noauth [:headers "Access-Control-Allow-Origin"]))))
+          (testing "an authenticated request gets its data with CORS"
+            (is (= 200 (:status authed)))
+            (is (= origin (get-in authed [:headers "Access-Control-Allow-Origin"])))))))))
+
 (deftest parse-multi-sids-parses-and-filters
   (testing "sid[:cursor] comma list — cursor defaults to 0, unknown/non-UUID sids dropped"
     (let

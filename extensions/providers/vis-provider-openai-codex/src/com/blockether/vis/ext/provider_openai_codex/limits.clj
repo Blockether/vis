@@ -149,7 +149,7 @@
          :kind :rate
          :precision :exact
          :source :provider-api
-         :unlimited? false
+         :is-unlimited false
          :window (cond-> {:kind :rolling :unit unit :size size}
                    reset-ms
                    (assoc :resets-at-ms reset-ms))}
@@ -199,7 +199,7 @@
    :kind :rate
    :precision :unknown
    :source :provider-api
-   :unlimited? false
+   :is-unlimited false
    :window {:kind :rolling :unit unit :size size}
    :note "OpenAI Codex did not report this quota window."})
 
