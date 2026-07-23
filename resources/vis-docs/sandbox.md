@@ -38,15 +38,15 @@ carve-outs in YAML:
 jail:
   filesystem:
     allow-read-write:
-      - ../shared-repository
+      - ~/shared-repository
     allow-read:
       - ~/reference-data
     allow-write:
-      - ./generated
+      - /srv/generated
     deny-read:
-      - ./.secrets
+      - ~/shared-repository/.secrets
     deny-write:
-      - ./generated/locked
+      - /srv/generated/locked
     language-caches:
       - ~/.m2
       - path: ~/.clojure
@@ -58,7 +58,9 @@ readable (a writable file must be inspectable); `allow-read` is process-only
 read access. Deny entries are emitted after allows, so deny wins for an
 overlapping subtree. Managed language dependency caches are **not** implicit: a
 bare `language-caches` path is read/write; a map with `access: read-only` is
-read-only.
+read-only. Every filesystem path must be absolute (`/…`) or home-relative
+(`~`/`~/…`); a bare-relative path is rejected when the config is read, because it
+would resolve against the gateway process directory rather than a session root.
 
 `/cd` changes the active workspace root. `/fs add <path>` adds a temporary
 session root. Those roots participate in draft isolation and the same policy;

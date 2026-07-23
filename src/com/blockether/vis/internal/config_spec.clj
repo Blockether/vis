@@ -17,8 +17,14 @@
 (defn- non-negative-number? [x] (and (number? x) (not (neg? (double x)))))
 (defn- port? [x] (and (integer? x) (<= 1 x 65535)))
 (defn- scalar? [x] (or (string? x) (boolean? x) (number? x) (nil? x)))
-(defn- path-list? [x] (and (vector? x) (every? non-blank-string? x)))
 (defn- string-list? [x] (and (vector? x) (every? non-blank-string? x)))
+(defn- rooted-path?
+  "A filesystem grant must be absolute (\"/\") or home-relative (\"~\", \"~/\") —
+   a bare-relative path resolves against the gateway process cwd, silently
+   wrong for a multi-session gateway (allow) or an invalid subpath (deny)."
+  [x]
+  (and (non-blank-string? x) (or (str/starts-with? x "/") (= x "~") (str/starts-with? x "~/"))))
+(defn- rooted-path-list? [x] (and (vector? x) (every? rooted-path? x)))
 (defn- string-map? [m] (and (map? m) (every? string? (keys m)) (every? string? (vals m))))
 (defn- named-scalar-map?
   [m]
@@ -165,20 +171,20 @@
 (def network-keys #{"allowed-domains" "denied-domains" "exclude-domains" "allow-private" "rules"})
 
 (def cache-schema
-  {"path" non-blank-string?
+  {"path" rooted-path?
    "access" (one-of #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})})
 (s/def ::cache-map #(closed-map? cache-schema #{"path"} %))
 (s/def ::cache
-  (s/or :path non-blank-string?
+  (s/or :path rooted-path?
         :map ::cache-map))
 (s/def ::caches (s/coll-of ::cache :kind vector?))
 
 (def filesystem-schema
-  {"allow-read-write" path-list?
-   "allow-read" path-list?
-   "allow-write" path-list?
-   "deny-read" path-list?
-   "deny-write" path-list?
+  {"allow-read-write" rooted-path-list?
+   "allow-read" rooted-path-list?
+   "allow-write" rooted-path-list?
+   "deny-read" rooted-path-list?
+   "deny-write" rooted-path-list?
    "language-caches" (spec-pred ::caches)})
 (s/def ::filesystem #(closed-map? filesystem-schema %))
 
@@ -301,7 +307,7 @@
   (s/and map?
          #(every? process-jail-config-keys (keys %))
          #(boolean? (:disabled? %))
-         #(every? path-list?
+         #(every? rooted-path-list?
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
          #(s/valid? ::caches (:language-cache-dirs %))
          #(s/valid? (get jail-schema "inbound-ports") (:inbound-ports %))))

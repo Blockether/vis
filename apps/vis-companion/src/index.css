@@ -114,6 +114,7 @@
   --color-accent-2: var(--accent);
   --color-ok: var(--ok);
   --color-warn: var(--warning);
+  --color-warn-strong: var(--warning-border);
   --color-warn-surface: var(--warning-bg);
   --color-warn-edge: var(--warning-border);
   --color-err: var(--err);

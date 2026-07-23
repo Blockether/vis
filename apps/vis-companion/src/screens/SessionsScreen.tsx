@@ -526,13 +526,13 @@ function statusLabel(session: Session): string {
 
 function statusTone(session: Session): string {
   if (sessionIsLive(session)) return 'text-ok';
-  if (session.status === 'suspended') return 'text-warn';
+  if (session.status === 'suspended') return 'text-warn-strong';
   return 'text-dialog-hint';
 }
 
 function statusDot(session: Session): string {
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
-  if (session.status === 'suspended') return 'bg-warn';
+  if (session.status === 'suspended') return 'bg-warn-strong';
   return 'border border-dialog-hint';
 }
 

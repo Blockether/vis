@@ -41,16 +41,56 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
-  (:import [java.util.concurrent CancellationException ExecutionException Executors ExecutorService
-            Future]
+  (:import [java.util.concurrent CancellationException ExecutionException ExecutorService Future
+            SynchronousQueue ThreadFactory ThreadPoolExecutor ThreadPoolExecutor$CallerRunsPolicy
+            TimeUnit]
+           [java.util.concurrent.atomic AtomicLong]
            [org.graalvm.polyglot Context Value]))
 
+(def ^:private gather-max-threads
+  "Hard ceiling on concurrent `gather` worker threads. A GraalPy `Value.execute`
+   (the deferred tool-call a `gather` thunk runs) PINS its carrier thread for the
+   whole blocking call — GraalPy does NOT unmount a virtual thread across the
+   polyglot boundary — so an unbounded virtual-thread pool let heavy concurrent
+   overlap ratchet the JDK virtual-thread ForkJoinPool toward its 256-carrier
+   ceiling, which never fully reclaimed under sustained turns (the observed
+   process-thread growth). A BOUNDED platform pool caps that deterministically
+   while still overlapping up to this many real tool calls. Override with
+   `VIS_GATHER_MAX_THREADS`; floored at 4. Default 32."
+  (max 4
+       (long (or (some-> (System/getenv "VIS_GATHER_MAX_THREADS")
+                         str/trim
+                         parse-long)
+                 32))))
+
 (defonce ^:private ^ExecutorService gather-executor
-  ;; Virtual-thread-per-task pool backing the sandbox `gather` builtin. GraalPy
-  ;; allows concurrent access to a context AND releases its lock on blocking I/O,
-  ;; so I/O-bound tool calls dispatched here genuinely overlap (maki-style async
-  ;; in ONE run_python program) — without enabling sockets/asyncio.
-  (Executors/newVirtualThreadPerTaskExecutor))
+  ;; Pool backing the sandbox `gather` builtin. Each thunk runs a GraalPy
+  ;; `Value.execute` that PINS its carrier for the blocking tool call (the
+  ;; polyglot boundary does not unmount virtual threads), so virtual threads gave
+  ;; no overlap benefit here and only let carrier spawning grow unbounded. This is
+  ;; a bounded, self-reclaiming PLATFORM pool: up to `gather-max-threads` daemon
+  ;; workers of genuine overlap, 30 s idle keep-alive so bursts reclaim, a
+  ;; SynchronousQueue (no unbounded backlog) and CallerRunsPolicy so overflow runs
+  ;; inline on the submitting turn thread — bounded threads, never a deadlock.
+  (let
+    [seq
+     (AtomicLong. 0)
+
+     tf
+     (reify
+       ThreadFactory
+         (newThread [_ r]
+           (doto (Thread. ^Runnable r (str "vis-gather-" (.getAndIncrement seq)))
+             (.setDaemon true))))]
+
+    (doto (ThreadPoolExecutor. 0
+                               (int gather-max-threads)
+                               30
+                               TimeUnit/SECONDS
+                               (SynchronousQueue.)
+                               tf
+                               (ThreadPoolExecutor$CallerRunsPolicy.))
+      (.allowCoreThreadTimeOut true))))
 
 (defn- settle-gather-futures!
   "Settle every submitted gather future — `{:ok v}` or `{:err e}` per slot,
@@ -1820,15 +1860,14 @@
          ;; from the DB turn rows (not the fold ledger), so an already-folded
          ;; turn keeps a stable weight instead of dropping to zero.
          _ (when-let [ca (:ctx-atom environment)]
-             (try
-               (swap! ca assoc "engine_turn_weights"
-                      (into {}
-                            (map (fn [{:keys [turn user-request answer]}]
-                                   [turn (quot (+ (count (str user-request))
-                                                  (count (str answer)))
-                                               4)]))
-                            turn-data))
-               (catch Throwable _ nil)))
+             (try (swap! ca assoc
+                    "engine_turn_weights"
+                    (into {}
+                          (map (fn [{:keys [turn user-request answer]}]
+                                 [turn
+                                  (quot (+ (count (str user-request)) (count (str answer))) 4)]))
+                          turn-data))
+                  (catch Throwable _ nil)))
          universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
          resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
                                                                              universe))
@@ -2777,8 +2816,7 @@
                               ;; stamped into `engine_iter_universe`.
                               universe
                               (into (vec (or (get ctx "engine_iter_universe") []))
-                                    (comp (mapcat #(get % "scopes"))
-                                          (filter ctx-engine/scope-key))
+                                    (comp (mapcat #(get % "scopes")) (filter ctx-engine/scope-key))
                                     candidates)
 
                               tagged
@@ -2845,9 +2883,7 @@
             (ctx-engine/expand-through [base] (or universe []))
 
             scopes
-            (into #{}
-                  (mapcat #(get % "scopes"))
-                  expanded)
+            (into #{} (mapcat #(get % "scopes")) expanded)
 
             ;; Whole-turn intent also removes the turn's Q/A recap from the
             ;; prior-turn context — price that too (`engine_turn_weights`,
@@ -5454,14 +5490,33 @@
    Each provider may also enrich its own models via `:provider/enrich-models-fn`
    (e.g. LM Studio resolving real context windows)."
   [config]
-  (let [ropts (config/router-opts config)]
+  (let
+    [ropts
+     (config/router-opts config)
+
+     ;; Route authenticated-but-unconfigured OAuth providers too, so a
+     ;; provider chosen in a channel model picker (`picker-fleet`) ACTUALLY
+     ;; routes without first being persisted into `:providers`. `->svar-provider`
+     ;; resolves their token from the registry `:provider/get-token-fn`, so they
+     ;; need no on-disk api-key. Config entries win on id; the rest are appended.
+     configured
+     (:providers config)
+
+     configured-ids
+     (into #{} (map :id) configured)
+
+     provider-fleet
+     (into (vec configured)
+           (remove #(contains? configured-ids (:id %)))
+           (try (providers/authenticated-preset-providers) (catch Throwable _ nil)))]
+
     ;; RESILIENT build: `->svar-provider` may eagerly fetch an OAuth token
     ;; (Copilot/Codex), and that can fail (expired token, GitHub 403
     ;; "not accessible by integration", network). A single failing provider
     ;; must NOT abort the whole router build and crash startup — skip it with a
     ;; warning and keep every provider that DID resolve. Falling through with
     ;; the others (or none) lets the app start and surface a fixable message.
-    (->> (:providers config)
+    (->> provider-fleet
          (keep
            (fn [p]
              (letfn [(build [] (enrich-provider-models (config/->svar-provider p) ropts))]

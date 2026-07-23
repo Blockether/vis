@@ -616,6 +616,61 @@
        distinct
        vec))
 
+(defn authenticated-preset-providers
+  "Registered OAuth / auto-detect providers whose credentials are present
+   (each provider's LOCAL `:provider/detect-fn`, no network) but which are
+   NOT in the persisted fleet. Shaped as minimal picker rows —
+   `{:id … :models …}` carrying the preset's default catalog models — so a
+   channel's model picker lists creds that live OUTSIDE config (OAuth token
+   files / keychain). Providers with no detect-fn (local no-auth) or no
+   default models are skipped."
+  []
+  (let [configured (into #{} (map :id) (configured-providers))]
+    (into []
+          (keep (fn [{:provider/keys [id detect-fn]}]
+                  (when (and id
+                             (not (contains? configured id))
+                             detect-fn
+                             (try (boolean (detect-fn)) (catch Throwable _ false)))
+                    (let
+                      [tmpl (config/provider-template id)
+                       models (default-model-configs tmpl)]
+
+                      (when (seq models)
+                        (cond-> {:id id :models models}
+                          (:base-url tmpl)
+                          (assoc :base-url (:base-url tmpl))
+
+                          (:api-style tmpl)
+                          (assoc :api-style (:api-style tmpl))))))))
+          (registry/registered-providers))))
+
+(defn picker-fleet
+  "The provider fleet a model picker should render: the persisted
+   `configured-providers` first, then `authenticated-preset-providers`
+   (authenticated-but-unconfigured OAuth providers whose creds live outside
+   config) appended. This is what channel model pickers enumerate so
+   authenticated providers are selectable even before they're saved into the
+   fleet.
+
+   Failure-isolated by construction: the base fleet reads through the
+   never-nil `configured-providers-cached` (no per-open 4-file parse, no
+   render-thread stall), and the authenticated-preset enumeration degrades to
+   empty on any error. A transient hiccup therefore drops the OAuth extras at
+   worst — it NEVER throws and NEVER blanks the picker of already-configured
+   providers."
+  []
+  (let
+    [base
+     (or (try (configured-providers-cached) (catch Throwable _ nil))
+         (try (configured-providers) (catch Throwable _ nil))
+         [])
+
+     extras
+     (try (authenticated-preset-providers) (catch Throwable _ nil))]
+
+    (into (vec base) extras)))
+
 (defn provider-config-with-models
   "Minimal persistable provider config for a preset + chosen models."
   [preset models]

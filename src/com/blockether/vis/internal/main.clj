@@ -2979,7 +2979,7 @@
                          "  vis gateway start --host 0.0.0.0 --require-token --pair")))
                    {:vis/user-error true}))
           :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
-                  {:host host :port port :token token :require-token? (boolean token)}))))
+                  {:host host :port port :token token :require-token? (boolean token) :emit stdout!}))))
 
 (defn- cli-gateway-stop!
   [parsed _residual]

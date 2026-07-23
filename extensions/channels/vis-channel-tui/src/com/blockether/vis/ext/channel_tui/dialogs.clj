@@ -6104,10 +6104,8 @@
   [^TerminalScreen screen current]
   (let
     [providers
-     (try (vis/configured-providers)
-          (catch Throwable t
-            (tel/log! :warn ["dialogs: configured-providers failed" (ex-message t)])
-            nil))
+     (try (vis/picker-fleet)
+          (catch Throwable t (tel/log! :warn ["dialogs: picker-fleet failed" (ex-message t)]) nil))
 
      cur-provider
      (some-> (:provider current)
