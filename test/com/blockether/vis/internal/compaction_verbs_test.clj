@@ -76,6 +76,36 @@
                    (get @ca "session_summaries")))
         (expect (re-find #"^folded " out))
         (expect (re-find #"explored auth" out))))
+  (it "session_fold excludes an active skill scope and folds the remaining target"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         _
+         (swap! ca assoc
+           "engine_iter_universe" ["t1/i1" "t1/i2"]
+           "engine_protected_iter_scopes" #{"t1/i1"})
+
+         out
+         (ev "session_fold([\"t1/i1\", \"t1/i2\"], \"trim\")")]
+
+        (expect (= [{"scopes" #{"t1/i2"} "gist" "trim"}] (get @ca "session_summaries")))
+        (expect (str/includes? out "kept active skill t1/i1"))))
+  (it "session_fold records nothing when every selected scope is an active skill"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         _
+         (swap! ca assoc
+           "engine_iter_universe" ["t1/i1"]
+           "engine_protected_iter_scopes" #{"t1/i1"})
+
+         out
+         (ev "session_fold([\"t1/i1\"], \"trim\")")]
+
+        (expect (nil? (get @ca "session_summaries")))
+        (expect (str/includes? out "nothing else to fold"))))
   (it "session_fold({\"through\": …}): the options DICT marshals to a \"through\" cursor"
       (let
         [[ca ev]
@@ -399,8 +429,9 @@
            out (apply-summaries tr (get @ca "session_summaries"))
            sfs (summary-forms out)]
 
-          ;; both finer breadcrumbs are superseded — only the meta gist survives,
-          ;; and every iteration of the turn collapses off the wire.
+          ;; both finer breadcrumbs are superseded in durable state — only the
+          ;; meta gist survives, and every iteration collapses off the wire.
+          (expect (= 1 (count (get @ca "session_summaries"))))
           (expect (= 1 (count sfs)))
           (expect (= "meta: the whole turn" (:summary-gist (first sfs))))
           (expect (every? (fn [[_ r]]
@@ -538,6 +569,15 @@
          (folds-view [{"through" "t1/i2"}] uni nil nil)]
 
         (expect (= {"now" "saved 2/3 (67%) · live t2/*"} out))))
+  (it "protected skill scopes remain live and are excluded from saved accounting"
+      (let
+        [uni
+         ["t1/i1" "t1/i2" "t2/i1"]
+
+         out
+         (folds-view [{"through" "t1/i2"}] uni {"t1/i1" 9000 "t1/i2" 1000} nil #{"t1/i1"})]
+
+        (expect (= {"now" "saved 1/3 (33%, ~1k tok) · live t1/i1 t2/*"} out))))
   (it "a partial-turn fold leaves the unfolded gaps live in `now`"
       (let
         [uni

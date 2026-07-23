@@ -113,19 +113,18 @@
 ;; =============================================================================
 (defdescribe
   specs-shape-test
-  (it "exposes the full slash spec set (/draft tree, /draft-blank, /root, /fs tree)"
-      (expect (= 15 (count ws-slashes/specs))))
-  (it "exposes /fs root/add/remove/list/create subcommands under `:slash/parent [\"fs\"]`"
-      (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
-        (expect (= #{"root" "add" "remove" "list" "create"} (set (map :slash/name fssubs))))))
-  (it "exposes a TOP-LEVEL /root (quick root change) alongside /fs root"
+  (it "exposes the full slash spec set (/draft tree, /draft-blank, /cd, /fs family)"
+      (expect (= 13 (count ws-slashes/specs))))
+  (it "exposes the /fs subcommand family (add + remove + create) under `:slash/parent [\"fs\"]`"
+      (let [subs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
+        (expect (= #{"add" "remove" "create"} (set (map :slash/name subs))))))
+  (it "exposes a TOP-LEVEL /cd (change the session's root)"
       (let [tops (filter #(nil? (:slash/parent %)) ws-slashes/specs)]
-        (expect (contains? (set (map :slash/name tops)) "root"))))
-  (it "the /fs slash commands carry no channel availability gate (every channel gets them)"
+        (expect (contains? (set (map :slash/name tops)) "cd"))))
+  (it "the /fs family carries no channel availability gate (every channel gets them)"
       (let
-        [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
-                         ws-slashes/specs)]
-        (expect (every? #(nil? (:slash/availability-fn %)) fs-tree))))
+        [fs-fam (filter #(#{"fs" "add" "remove" "create" "cd"} (:slash/name %)) ws-slashes/specs)]
+        (expect (every? #(nil? (:slash/availability-fn %)) fs-fam))))
   (it
     "subcommands are new + apply + abandon + stash + resume + list under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
@@ -133,13 +132,13 @@
       (expect (= #{"new" "apply" "abandon" "stash" "resume" "list"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
       (let [env (env-with nil)]
-        ;; 15 specs: /draft + new/apply/abandon/stash/resume/list + /draft-blank
-        ;; + /root + /fs + root/add/remove/list/create.
+        ;; 13 specs: /draft + new/apply/abandon/stash/resume/list + /draft-blank
+        ;; + /cd + /fs + /fs add + /fs remove + /fs create.
         ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
-        (expect (= 15 (count (slash/active-slashes env))))
+        (expect (= 13 (count (slash/active-slashes env))))
         (expect (some? (slash/slash-by-path env ["draft" "apply"])))
-        (expect (some? (slash/slash-by-path env ["fs" "root"])))
-        (expect (some? (slash/slash-by-path env ["root"]))))))
+        (expect (some? (slash/slash-by-path env ["fs" "add"])))
+        (expect (some? (slash/slash-by-path env ["cd"]))))))
 ;; =============================================================================
 ;; Dispatch
 ;; =============================================================================
@@ -281,7 +280,7 @@
   (it "/draft remains discoverable when no isolation backend is available"
       (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
         (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-          (expect (= #{"draft" "new" "apply" "abandon" "stash" "resume" "draft-blank" "root" "fs"
+          (expect (= #{"draft" "new" "apply" "abandon" "stash" "resume" "draft-blank" "cd" "fs"
                        "add" "remove" "list" "create"}
                      names)))))
   (it "/draft new reports the unavailable capability matrix"
@@ -308,7 +307,7 @@
 
 (defdescribe
   dispatch-root-test
-  (it "/root <path> repoints the session's primary filesystem root"
+  (it "/cd <path> repoints the session's primary filesystem root"
       (let
         [a
          (temp-dir "vis-slash-root-a")
@@ -328,20 +327,20 @@
                               (env-with store)
 
                               out
-                              (dispatch! env store state-id (str "/root " b))]
+                              (dispatch! env store state-id (str "/cd " b))]
 
                              (expect (= :ok (get-in out [:result :slash/status])))
                              (expect (= (workspace/normalize-root b)
                                         (:root (workspace/for-session store state-id)))))))
              (finally (delete-tree! a) (delete-tree! b)))))
-  (it "bare /root reports the current root without changing anything"
+  (it "bare /cd reports the current root without changing anything"
       (let [a (temp-dir "vis-slash-root-show")]
         (try (with-store (fn [store]
                            (let
                              [trunk (workspace/create-trunk-at! store a)
                               state-id (pin-session! store (:id trunk))
                               env (env-with store)
-                              out (dispatch! env store state-id "/root")]
+                              out (dispatch! env store state-id "/cd")]
 
                              (expect (= :ok (get-in out [:result :slash/status])))
                              (expect (= (:id trunk)
@@ -371,7 +370,7 @@
                     (dispatch! env store state-id (str "/fs add " ext))
 
                     out
-                    (dispatch! env store state-id "/fs list")]
+                    (dispatch! env store state-id "/fs")]
 
                    (expect (= :ok (get-in out [:result :slash/status])))
                    (expect (= [(workspace/normalize-root ext)]
@@ -409,7 +408,7 @@
                         env
                         (env-with store)]
 
-                       (dispatch! env store state-id (str "/root " current-root))
+                       (dispatch! env store state-id (str "/cd " current-root))
                        (let
                          [out
                           (dispatch! env store state-id "/draft new moved-root")
@@ -517,3 +516,155 @@
                         (finally (try (workspace/abandon! store {:workspace-id (:id draft)})
                                       (catch Throwable _ nil)))))))))))
         (finally (delete-tree! base))))))
+
+;; =============================================================================
+;; /fs add · /fs create · /fs remove — the config-free, per-session temporary
+;; grants (permanent permissions live in the YAML jail.filesystem block; these are
+;; the interactive, this-session-only widenings).
+;; =============================================================================
+(defdescribe expand-home-test
+             (it "expands a bare ~ to the user's home directory"
+                 (expect (= (System/getProperty "user.home") (#'ws-slashes/expand-home "~"))))
+             (it "expands a leading ~/ prefix and keeps the rest of the path"
+                 (expect (= (str (System/getProperty "user.home") "/code/proj")
+                            (#'ws-slashes/expand-home "~/code/proj"))))
+             (it "passes an absolute path through untouched"
+                 (expect (= "/tmp/somewhere" (#'ws-slashes/expand-home "/tmp/somewhere"))))
+             (it "does not expand a ~ that is not the leading segment"
+                 (expect (= "/a/~b" (#'ws-slashes/expand-home "/a/~b")))))
+
+(defdescribe dispatch-fs-add-test
+             (it "/fs add <path> widens the session and lists the new root"
+                 (let
+                   [a
+                    (temp-dir "vis-fsadd-a")
+
+                    ext
+                    (temp-dir "vis-fsadd-ext")]
+
+                   (try (with-store
+                          (fn [store]
+                            (let
+                              [trunk
+                               (workspace/create-trunk-at! store a)
+
+                               state-id
+                               (pin-session! store (:id trunk))
+
+                               env
+                               (env-with store)
+
+                               out
+                               (dispatch! env store state-id (str "/fs add " ext))]
+
+                              (expect (= :ok (get-in out [:result :slash/status])))
+                              (expect
+                                (= [(workspace/normalize-root ext)]
+                                   (mapv :trunk
+                                         (get-in out [:result :slash/data :filesystem-roots])))))))
+                        (finally (delete-tree! a) (delete-tree! ext)))))
+             (it "/fs add with no path is a friendly error, not a crash"
+                 (let [a (temp-dir "vis-fsadd-nopath")]
+                   (try (with-store (fn [store]
+                                      (let
+                                        [trunk (workspace/create-trunk-at! store a)
+                                         state-id (pin-session! store (:id trunk))
+                                         env (env-with store)
+                                         out (dispatch! env store state-id "/fs add")]
+
+                                        (expect (= :error (get-in out [:result :slash/status])))
+                                        (expect (str/includes? (get-in out [:result :slash/title])
+                                                               "/fs add <path>")))))
+                        (finally (delete-tree! a))))))
+
+(defdescribe dispatch-fs-create-test
+             (it "/fs create <parent>/<name> makes the dir on disk AND adds it as a root"
+                 (let
+                   [a
+                    (temp-dir "vis-fscreate-a")
+
+                    parent
+                    (temp-dir "vis-fscreate-parent")]
+
+                   (try
+                     (with-store
+                       (fn [store]
+                         (let
+                           [trunk
+                            (workspace/create-trunk-at! store a)
+
+                            state-id
+                            (pin-session! store (:id trunk))
+
+                            env
+                            (env-with store)
+
+                            out
+                            (dispatch! env store state-id (str "/fs create " parent "/made-here"))]
+
+                           (expect (= :ok (get-in out [:result :slash/status])))
+                           ;; the final segment is created under the existing parent…
+                           (expect (.exists (io/file parent "made-here")))
+                           ;; …and returned + granted as a filesystem root.
+                           (expect (some? (get-in out [:result :slash/data :created])))
+                           (expect (seq (get-in out [:result :slash/data :filesystem-roots]))))))
+                     (finally (delete-tree! a) (delete-tree! parent)))))
+             (it "/fs create with no path is a friendly error"
+                 (let [a (temp-dir "vis-fscreate-nopath")]
+                   (try (with-store (fn [store]
+                                      (let
+                                        [trunk (workspace/create-trunk-at! store a)
+                                         state-id (pin-session! store (:id trunk))
+                                         env (env-with store)
+                                         out (dispatch! env store state-id "/fs create")]
+
+                                        (expect (= :error (get-in out [:result :slash/status])))
+                                        (expect (str/includes? (get-in out [:result :slash/title])
+                                                               "/fs create <path>")))))
+                        (finally (delete-tree! a))))))
+
+(defdescribe dispatch-fs-remove-test
+             (it "/fs remove drops a previously added root, back to the primary root only"
+                 (let
+                   [a
+                    (temp-dir "vis-fsrm-a")
+
+                    ext
+                    (temp-dir "vis-fsrm-ext")]
+
+                   (try (with-store
+                          (fn [store]
+                            (let
+                              [trunk
+                               (workspace/create-trunk-at! store a)
+
+                               state-id
+                               (pin-session! store (:id trunk))
+
+                               env
+                               (env-with store)
+
+                               _
+                               (dispatch! env store state-id (str "/fs add " ext))
+
+                               out
+                               (dispatch! env store state-id (str "/fs remove " ext))]
+
+                              (expect (= :ok (get-in out [:result :slash/status])))
+                              (expect (empty? (get-in out [:result :slash/data :filesystem-roots])))
+                              (expect (str/includes? (get-in out [:result :slash/body])
+                                                     "primary root only")))))
+                        (finally (delete-tree! a) (delete-tree! ext)))))
+             (it "/fs remove with no path is a friendly error"
+                 (let [a (temp-dir "vis-fsrm-nopath")]
+                   (try (with-store (fn [store]
+                                      (let
+                                        [trunk (workspace/create-trunk-at! store a)
+                                         state-id (pin-session! store (:id trunk))
+                                         env (env-with store)
+                                         out (dispatch! env store state-id "/fs remove")]
+
+                                        (expect (= :error (get-in out [:result :slash/status])))
+                                        (expect (str/includes? (get-in out [:result :slash/title])
+                                                               "/fs remove <path>")))))
+                        (finally (delete-tree! a))))))

@@ -221,6 +221,45 @@
         (expect (try (env/run-python-block python-context "1") false (catch Throwable _ true))))))
 
 (defdescribe
+  permission-config-snapshot-test
+  (it "keeps every process-jail and network grant immutable until environment rebuild"
+      (require 'com.blockether.vis.internal.config-spec :reload)
+      (require 'com.blockether.vis.internal.loop :reload)
+      (let
+        [cfg
+         (atom {"sandbox" true
+                "jail" {"filesystem" {"allow-read-write" ["/approved/full"]
+                                      "allow-read" ["/approved/read"]
+                                      "allow-write" ["/approved/write"]
+                                      "language-caches" ["/approved/cache"]}
+                        "inbound-ports" [5273]}
+                "network" {"allowed-domains" ["approved.example"]}})
+
+         snapshot
+         (with-redefs [config/load-config-raw #(deref cfg)]
+           ((ns-resolve 'com.blockether.vis.internal.loop 'security-config-snapshot)))]
+
+        ;; This models a tool editing writable vis.yml after environment creation.
+        (reset! cfg {"sandbox" false
+                     "jail" {"filesystem" {"allow-read-write" ["/escaped/full"]
+                                           "allow-read" ["/escaped/read"]
+                                           "allow-write" ["/escaped/write"]
+                                           "language-caches" ["/escaped/cache"]}
+                             "inbound-ports" [9999]}
+                     "network" {"allowed-domains" ["escaped.example"]}})
+        (expect (= true (:sandbox snapshot)))
+        (expect (= ["/approved/full"] (get-in snapshot [:process-jail :allow-read-write])))
+        (expect (= ["/approved/read"] (get-in snapshot [:process-jail :allow-read])))
+        (expect (= ["/approved/write"] (get-in snapshot [:process-jail :allow-write])))
+        (expect (= ["/approved/cache"] (get-in snapshot [:process-jail :language-cache-dirs])))
+        (expect (= [5273] (get-in snapshot [:process-jail :inbound-ports])))
+        (expect (= ["approved.example"] (get-in snapshot [:network :allowed-domains])))
+        (expect (not= @cfg snapshot))))
+  (it "fails closed when a child is created without its parent's snapshot"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(lp/create-environment ::router {:child {:parent-db-info ::borrowed}})))))
+
+(defdescribe
   prose-beyond-code-test
   ;; The model often restates its run_python code in its message prose; that
   ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
@@ -763,11 +802,58 @@
                        :forms [{:scope "t1/i1/f1" :src "cat(ui)" :stdout "read ui"}]}])]
 
         (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2")]
-          (expect (= [{:user-request "fix web"
+          (expect (= [{:turn 1
+                       :user-request "fix web"
                        :answer nil
                        :interrupted? true
                        :results [{:scope "t1/i1/f1" :src "cat(ui)"}]}]
-                     out))))))
+                     out)))))
+  (it "fold-of-fold removes every covered turn recap; trailer owns one checkpoint"
+      (with-redefs
+        [persistance/db-list-session-turns
+         (constantly [{:id "t1"
+                       :status :done
+                       :position 1
+                       :user-request "old q1"
+                       :content [(content/prose "old a1")]}
+                      {:id "t2"
+                       :status :done
+                       :position 2
+                       :user-request "old q2"
+                       :content [(content/prose "old a2")]}
+                      {:id "t3" :status :running :position 3 :user-request "now"}])
+
+         persistance/db-list-session-turn-iterations
+         (fn [_ id]
+           [{:status :done
+             :position 1
+             :forms [{:scope (str id "/i1/f1") :src (str "cat(" id ")") :result {:ok true}}]}])]
+
+        (let
+          [env {:session-id "s1"
+                :db-info ::db
+                :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
+                                                      {"through" "t2/i1"
+                                                       "gist" "one durable checkpoint"}]})}]
+          (expect (nil? (previous-turn-context env "t3"))))))
+  (it "a gist-less whole-turn fold drops the complete prior Q/A representation"
+      (with-redefs
+        [persistance/db-list-session-turns
+         (constantly [{:id "t1"
+                       :status :done
+                       :position 1
+                       :user-request "spent request"
+                       :content [(content/prose "spent answer")]}
+                      {:id "t2" :status :running :position 2}])
+
+         persistance/db-list-session-turn-iterations
+         (constantly [])]
+
+        (expect (nil? (previous-turn-context {:session-id "s1"
+                                              :db-info ::db
+                                              :ctx-atom (atom {"session_summaries" [{"scopes"
+                                                                                     #{"t1"}}]})}
+                                             "t2"))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"
@@ -845,6 +931,9 @@
      apply-summaries
      (var-get #'lp/apply-summaries)
 
+     stamp-iter-universe!
+     (var-get #'lp/stamp-iter-universe!)
+
      prior-scope-index
      (var-get #'lp/prior-turn-scope-index)]
 
@@ -875,6 +964,74 @@
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (true? (:collapsed? (second (nth out 1)))))
           (expect (nil? (:collapsed? (second (nth out 2)))))))
+    (it "derives a live skill activation from the provider-visible full-body result"
+        (let
+          [trailer
+           [[0
+             {:forms-vec
+              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]]
+
+           ca
+           (atom {})]
+
+          (stamp-iter-universe! ca trailer)
+          (expect (= {"name" "demo" "digest" (extension/sha256-hex "BODY") "scope" "t1/i1"}
+                     (get-in @ca ["engine_live_skill_activations" "demo"])))
+          (expect (= #{"t1/i1"} (get @ca "engine_protected_iter_scopes")))
+          (expect (= (get @ca "engine_live_skill_activations") (get @ca "session_active_skills")))))
+    (it "a legacy-folded skill has no phantom activation and can rehydrate once"
+        (let
+          [trailer
+           [[0
+             {:forms-vec
+              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]]
+
+           ca
+           (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "old fold"}]})]
+
+          (stamp-iter-universe! ca trailer)
+          (expect (= {} (get @ca "engine_live_skill_activations")))
+          (expect (= #{} (get @ca "engine_protected_iter_scopes")))
+          (expect (= {} (get @ca "session_active_skills")))))
+    (it "a durable pointer protects only its exact live skill body from a later broad fold"
+        (let
+          [digest
+           (extension/sha256-hex "BODY")
+
+           trailer
+           [[0
+             {:forms-vec
+              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]
+            [1 {:forms-vec [{:scope "t1/i2" :vis/tool-name "cat" :result "noise"}]}]]
+
+           ca
+           (atom {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}
+                  "session_summaries" [{"through" "t1/i2" "gist" "compact"}]})]
+
+          (stamp-iter-universe! ca trailer)
+          (let
+            [out (apply-summaries trailer
+                                  (get @ca "session_summaries")
+                                  (get @ca "engine_protected_iter_scopes"))]
+            ;; The original skill tool result stays byte-for-byte. Its sibling
+            ;; iteration still folds normally.
+            (expect (= (second (first trailer)) (second (first out))))
+            (expect (nil? (:collapsed? (second (first out)))))
+            (expect (true? (:collapsed? (second (second out))))))))
+    (it "a cross-turn DB seed is not a live skill body because its tool result is not replayed"
+        (let
+          [trailer
+           [[0
+             {:preserved-thinking/replay? false
+              :forms-vec
+              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]]
+
+           ca
+           (atom {})]
+
+          (stamp-iter-universe! ca trailer)
+          (expect (= {} (get @ca "engine_live_skill_activations")))
+          (expect (= #{} (get @ca "engine_protected_iter_scopes")))))
     (it "prior-turn-scope-index: gist applies via form->iter normalization, ONE deduped entry"
         ;; The path-A regression: a fold recorded at iteration scope (t1/i1) must
         ;; apply to forms carrying FORM scopes (t1/i1/f1, t1/i1/f2) and collapse to
@@ -2531,9 +2688,12 @@
       (let [parent (lp/create-environment ::router {:db :memory})]
         (try (let
                [child (lp/create-environment ::router
-                                             {:child {:parent-db-info (:db-info parent) :depth 1}})]
+                                             {:child {:parent-db-info (:db-info parent)
+                                                      :depth 1
+                                                      :security-policy (:security-policy parent)}})]
                ;; SAME connection object — not a second pool
                (expect (identical? (:db-info parent) (:db-info child)))
+               (expect (identical? (:security-policy parent) (:security-policy child)))
                (expect (false? (:owns-db? child)))
                (expect (not (false? (:owns-db? parent))))
                ;; disposing the child must NOT close the shared connection

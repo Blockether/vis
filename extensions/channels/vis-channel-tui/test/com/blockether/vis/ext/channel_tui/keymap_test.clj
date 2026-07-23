@@ -28,9 +28,12 @@
                  (expect (= :cycle-model (keymap/prefix-action-for \M)))
                  (expect (= :cycle-reasoning (keymap/prefix-action-for \r)))
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
-                 (expect (= :open-dirs (keymap/prefix-action-for \d)))
-                 (expect (= :open-drafts (keymap/prefix-action-for \e)))
-                 (expect (= :open-resources (keymap/prefix-action-for \s)))
+                 (expect (= :open-drafts (keymap/prefix-action-for \d)))
+                 (expect (nil? (keymap/prefix-action-for \e)))
+                 (expect (= :pick-model (keymap/prefix-action-for \c)))
+                 (expect (= :show-sessions (keymap/prefix-action-for \s)))
+                 (expect (= :fork-session (keymap/prefix-action-for \y)))
+                 (expect (= :open-resources (keymap/prefix-action-for \b)))
                  ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
                  ;; second key resolves the same with or without its own Ctrl.
                  (expect (= :search-open (keymap/prefix-action-for \f)))
@@ -39,9 +42,10 @@
                  (expect (= :toggle-help (keymap/prefix-action-for \h)))
                  ;; C-x j → jump to bottom (the discoverable keymap for the `↓ latest` chip).
                  (expect (= :recenter (keymap/prefix-action-for \j)))
-                 ;; C-x t → vim-style jump labels overlay (toggle one visible fold).
-                 (expect (= :toggle-detail-labels (keymap/prefix-action-for \t)))
-                 (expect (nil? (keymap/prefix-action-for \z)))
+                 ;; C-x t → fork the session AT a chosen turn; C-x z → vim-style jump labels.
+                 (expect (= :fork-at-turn (keymap/prefix-action-for \t)))
+                 (expect (= :toggle-detail-labels (keymap/prefix-action-for \z)))
+                 (expect (nil? (keymap/prefix-action-for \q)))
                  (expect (= \x keymap/prefix-key)))
              (it "no emacs editing key is a direct app verb (action-for returns nil)"
                  ;; The C-x prefix's second-keys (m/r/v/d/s) live behind C-x — a different
@@ -62,13 +66,12 @@
                  (expect (= "C-x f" (keymap/label-for :search-open)))
                  (expect (= "C-x a" (keymap/label-for :pick-file)))
                  (expect (= "C-x v" (keymap/label-for :toggle-voice-recording)))
-                 (expect (= "C-x e" (keymap/label-for :open-drafts)))
-                 (expect (= "C-x s" (keymap/label-for :open-resources)))
+                 (expect (= "C-x d" (keymap/label-for :open-drafts)))
+                 (expect (= "C-x b" (keymap/label-for :open-resources)))
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
                  (expect (nil? (keymap/label-for :no-such-action))))
              (it "label-or-palette always returns a working chord (prefix or the palette)"
-                 (expect (= "C-x d" (keymap/label-or-palette :open-dirs)))
-                 (expect (= "C-x s" (keymap/label-or-palette :open-resources)))
+                 (expect (= "C-x b" (keymap/label-or-palette :open-resources)))
                  ;; search / voice now have their own chord, so they return that, not the palette.
                  (expect (= "C-x f" (keymap/label-or-palette :search-open)))
                  (expect (= "C-x v" (keymap/label-or-palette :toggle-voice-recording)))

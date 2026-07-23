@@ -714,6 +714,18 @@
   [session]
   (try (collect-op session "close" (+ (System/currentTimeMillis) 2000)) (catch Throwable _ nil)))
 
+(def ^:private synthetic-eval-frame-re #"^[^\s]+/eval\d+(?:[/$][^\s]+)?(?:\s|$)")
+
+(defn- visible-trace
+  "Remove compiler-generated `ns/evalNNN` wrapper frames from a public trace.
+   Named user functions remain visible. The raw trace is retained until Context
+   location has been resolved because its NO_SOURCE_FILE line can locate the
+   submitted form."
+  [trace]
+  (->> trace
+       (remove #(re-find synthetic-eval-frame-re (str %)))
+       vec))
+
 (defn eval!
   "Evaluate `code` in the nREPL at `host:port`. Opts:
      :host        defaults to \"localhost\"
@@ -776,11 +788,16 @@
               combined
               (if (eval-error? combined)
                 (let
-                  [enriched
+                  [raw-enriched
                    (merge combined (fetch-stacktrace! session responses))
 
+                   ;; Resolve source Context before hiding generated eval frames:
+                   ;; their NO_SOURCE_FILE position can identify the submitted form.
                    ctx
-                   (error-context enriched code)]
+                   (error-context raw-enriched code)
+
+                   enriched
+                   (update raw-enriched "trace" visible-trace)]
 
                   (cond-> enriched
                     ctx

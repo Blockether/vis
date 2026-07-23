@@ -24,7 +24,7 @@
      can run EVERY app verb. It is the discoverable entry point. (A PLAIN
      second key after C-x always reaches the app — unlike Ctrl+S/Ctrl+M — so
      the palette is `C-x p`, not `C-x C-p`.)
-   - `prefix-commands` are the `C-x <key>` plain-second-key shortcuts for the
+   named verbs (model, reasoning, length, search, attach, voice,
      named verbs (model, reasoning, length, search, attach, voice, dirs,
      resources, help) — the C-x prefix keeps them off the editing letters, and a
      PLAIN second key keeps them clear of unusable Ctrl bytes (Ctrl+S=flow
@@ -83,21 +83,23 @@
    Ctrl'd second key where it survives (so `C-x C-f` == `C-x f`), but the plain
    form is the one we advertise because it works for EVERY letter.
    Order is the which-key / help display order."
-  [{:action :cycle-model :key \m :label "model"} {:action :pick-model :key \o :label "model picker"}
+  [{:action :cycle-model :key \m :label "model"} {:action :pick-model :key \c :label "choose model"}
    {:action :cycle-reasoning :key \r :label "reasoning"}
    {:action :cycle-verbosity :key \l :label "length"} {:action :search-open :key \f :label "search"}
    {:action :pick-file :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
-   {:action :open-dirs :key \d :label "filesystem"} {:action :open-drafts :key \e :label "drafts"}
-   {:action :open-resources :key \s :label "backgrounds"}
+   {:action :open-drafts :key \d :label "drafts"}
+   {:action :open-resources :key \b :label "backgrounds"}
    {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
-   {:action :show-sessions :key \b :label "switch session"}
-   {:action :fork-session :key \u :label "fork session"}
-   {:action :fork-at-turn :key \i :label "fork at turn"}
+   {:action :show-sessions :key \s :label "switch session"}
+   ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
+   {:action :fork-session :key \y :label "fork session"}
+   {:action :fork-at-turn :key \t :label "fork at turn"}
    {:action :switch-project :key \w :label "switch project"}
    {:action :close-tab :key \k :label "close tab"}
    {:action :recenter :key \j :label "jump to bottom"}
-   {:action :toggle-detail-labels :key \t :label "label folds"}
+   ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
+   {:action :toggle-detail-labels :key \z :label "label folds"}
    {:action :open-magit :key \g :label "git status"}])
 
 (def bindings

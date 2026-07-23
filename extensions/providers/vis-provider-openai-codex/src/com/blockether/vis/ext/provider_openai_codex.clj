@@ -545,7 +545,7 @@
 ;; Provider-specific Settings knob — registered HERE, next to the
 ;; backend it tunes (not in internal/toggles.clj), and visible in the
 ;; settings dialogs only while a Codex provider is actually configured.
-(vis/register-toggle! {:id :openai-codex/verbosity
+(vis/register-toggle! {:id "openai_codex_verbosity"
                        :label "Verbosity"
                        :description "Output detail hint passed to the OpenAI Codex backend."
                        :type :enum

@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.blockether.viscompanion',
-  appName: 'vis-companion',
+  appName: 'Vis',
   webDir: 'dist',
   server: {
     // The companion talks to the gateway over the network the user configures

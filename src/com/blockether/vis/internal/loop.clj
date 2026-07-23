@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
-  (:require [clojure.spec.alpha :as s]
+  (:require [clojure.set :as set]
+            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.svar.core :as svar]
@@ -9,6 +10,7 @@
             [com.blockether.svar.internal.util :as util]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-engine :as ctx-engine]
@@ -1761,23 +1763,23 @@
                  (:forms iteration))))
 
 (defn- previous-turn-context
-  "ALL prior provider-visible answered turns as cross-process RESUME context.
-   Synthetic slash turns remain in local transcript history but are excluded so
-   their command text and results never enter a later provider request. Each
-   included turn carries its user request, prose answer, and a lean scope index.
-   Oldest→newest; current turn excluded; nil when none."
+  "Prior provider-visible turns as an append-only RESUME sequence, compacted by
+   the persisted fold ledger. A summary that covers every iteration of a turn
+   removes that turn's complete Q/A + result recap here; `apply-summaries` owns
+   the summary's ONE durable trailer checkpoint. A gist-less complete fold thus
+   drops the recap entirely. Broader/newer summaries are resolved first, so a
+   fold-of-fold cannot leave older Q/A or breadcrumbs beside the checkpoint.
+
+   Synthetic slash turns remain local-only. Oldest→newest; current/running turns
+   are excluded; nil when no provider-visible representation remains."
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
       (let
         [d (:db-info environment)
-         ;; Summary-awareness: the model's session_fold/session_drop intents
-         ;; (persisted on the ctx blob) reshape the scope index uniformly.
          summaries (some-> (:ctx-atom environment)
                            deref
                            (get "session_summaries"))
-         ;; Include answered turns and interrupted/error turns needed for
-         ;; recovery. Skip the current turn and any still-running turn.
          include? (fn [turn]
                     (and (not= (str (:id turn)) (str current-turn-id))
                          (not= :running (:status turn))
@@ -1786,29 +1788,59 @@
                                           str
                                           str/trim))
                              (contains? #{:interrupted :error} (:status turn)))))
-         turns (filter include? (persistance/db-list-session-turns d session-id))]
+         turns (filter include? (persistance/db-list-session-turns d session-id))
+         turn-data
+         (into []
+               (keep (fn [turn]
+                       (let
+                         [iterations
+                          (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
+                                    (catch Throwable _ []))
+                               (filter #(= :done (:status %)))
+                               vec)]
+                         (when-not (some user-slash-iteration? iterations)
+                           (let [forms (vec (mapcat :forms iterations))]
+                             {:turn (long (or (:position turn) 0))
+                              :user-request (:user-request turn)
+                              :answer (when-not (contains? #{:interrupted :error} (:status turn))
+                                        (answer-markdown (:content turn)))
+                              :interrupted? (contains? #{:interrupted :error} (:status turn))
+                              :forms forms
+                              :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
+               turns)
+         universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
+         resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
+                                                                             universe))
+         covering-summary (fn [{:keys [turn iter-scopes]}]
+                            (or (last (filter (fn [summary]
+                                                (contains? (set (get summary "scopes"))
+                                                           (str "t" turn)))
+                                              summaries))
+                                (when (seq iter-scopes)
+                                  (last (filter (fn [summary]
+                                                  (let [selected (set (get summary "scopes"))]
+                                                    (every? selected iter-scopes)))
+                                                resolved)))))
+         covered (into #{}
+                       (keep (fn [turn]
+                               (when (covering-summary turn) (:turn turn))))
+                       turn-data)]
 
-        (not-empty
-          (into []
-                (keep (fn [turn]
-                        (let
-                          [iterations
-                           (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
-                                     (catch Throwable _ []))
-                                (filter #(= :done (:status %)))
-                                vec)]
-                          (when-not (some user-slash-iteration? iterations)
-                            (let
-                              [forms (mapcat :forms iterations)
-                               scopes (vec (take 40 (prior-turn-scope-index forms summaries)))]
-
-                              {:user-request (:user-request turn)
-                               ;; Error/interrupted turns carry no normal answer.
-                               :answer (when-not (contains? #{:interrupted :error} (:status turn))
-                                         (answer-markdown (:content turn)))
-                               :interrupted? (contains? #{:interrupted :error} (:status turn))
-                               :results scopes}))))
-                      turns)))))
+        (not-empty (reduce (fn [out {:keys [turn user-request answer interrupted? forms]}]
+                             ;; The trailer's apply-summaries path owns the ONE durable
+                             ;; breadcrumb. Removing the complete Q/A representation here
+                             ;; avoids echoing that checkpoint in a second wire location.
+                             (if (contains? covered turn)
+                               out
+                               (conj out
+                                     {:turn turn
+                                      :user-request user-request
+                                      :answer answer
+                                      :interrupted? interrupted?
+                                      :results
+                                      (vec (take 40 (prior-turn-scope-index forms resolved)))})))
+                           []
+                           turn-data))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-turn-context-failed
@@ -1873,16 +1905,11 @@
   (when (and ctx-atom util) (swap! ctx-atom assoc "engine_utilization" util)))
 
 (defn- stamp-iter-universe!
-  "Record the CURRENT wire's iteration universe — the `tN/iN` scopes present in
-   `trailer-iters` — on the ctx-atom as `engine_iter_universe`, so the render-time
-   `ctx-engine/folds-view` resolves fold selectors + computes the still-live
-   ledger against the SAME scopes the wire folds against. ALSO stamps
-   `engine_iter_weights`: a `{scope → ~tokens}` map priced with the SAME estimator
-   the `session_fold` card prices by (clipped wire chars / 4), so it can report how
-   much wire a fold reclaims. A scope created THIS iteration (not yet sent) has no
-   weight until the next send — the card just omits its token clause. Engine-ephemeral (an `engine_*`
-   key, stripped at persist by `strip-ephemeral`); overwritten every send so it
-   always reflects the live trailer."
+  "Record the CURRENT wire's iteration universe, token weights, recoverable native
+   result ids, and live skill activations. Skill activations are derived from
+   provider-visible `skill` results rather than trusted from persisted pointers.
+   A matching durable pointer protects its exact scope from a newly recorded fold;
+   stale, already-folded, and cross-turn non-replayed activations are discarded."
   [ctx-atom trailer-iters]
   (when ctx-atom
     (let
@@ -1909,10 +1936,6 @@
                  (transient {})
                  trailer-iters))
 
-       ;; `{scope → [native tool_use id …]}` for each iteration's result-bearing
-       ;; calls (`ntr[<id>]` resolvable; python_execution prints, so contributes
-       ;; none). Lets `session_fold` stamp the SAME recover-accessor clause onto
-       ;; the human-facing fold CARD that the durable breadcrumb already carries.
        ntr
        (persistent!
          (reduce (fn [m [_ rec]]
@@ -1930,12 +1953,74 @@
                        (if (seq ids) (assoc! m sc (into (vec (get m sc [])) ids)) m))
                      m))
                  (transient {})
-                 trailer-iters))]
+                 trailer-iters))
+
+       skill-candidates
+       (into []
+             (comp (keep (fn [[_ rec]]
+                           (when (not= false (:preserved-thinking/replay? rec))
+                             (when-let [scope (scope-of rec)]
+                               [scope (:forms-vec rec)]))))
+                   (mapcat
+                     (fn [[scope forms]]
+                       (keep (fn [form]
+                               (let
+                                 [result
+                                  (:result form)
+
+                                  name
+                                  (get result "name")
+
+                                  body
+                                  (get result "body")]
+
+                                 (when (and (= "skill" (:vis/tool-name form))
+                                            (map? result)
+                                            (not (str/blank? (str name)))
+                                            (string? body))
+                                   {"name" (str name)
+                                    "digest" (extension/sha256-hex body)
+                                    "scope" scope})))
+                             forms))))
+             trailer-iters)
+
+       ctx
+       @ctx-atom
+
+       pointers
+       (or (get ctx "session_active_skills") {})
+
+       pointer-protected
+       (into #{}
+             (keep (fn [activation]
+                     (let [name (get activation "name")]
+                       (when (= activation (get pointers name)) (get activation "scope")))))
+             skill-candidates)
+
+       resolved-summaries
+       (ctx-engine/expand-through (get ctx "session_summaries") uni)
+
+       collapsed
+       (into #{} (comp (mapcat #(get % "scopes")) (remove pointer-protected)) resolved-summaries)
+
+       live-skills
+       (reduce (fn [m activation]
+                 (if (contains? collapsed (get activation "scope"))
+                   m
+                   (assoc m (get activation "name") activation)))
+               {}
+               skill-candidates)
+
+       protected-scopes
+       (into #{} (map #(get % "scope")) (vals live-skills))]
 
       (swap! ctx-atom assoc
         "engine_iter_universe" uni
         "engine_iter_weights" weights
-        "engine_iter_ntr" ntr))))
+        "engine_iter_ntr" ntr
+        "engine_live_skill_activations" live-skills
+        "engine_protected_iter_scopes" protected-scopes
+        "session_active_skills" live-skills))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2575,6 +2660,37 @@
          (let [ss (->set scopes)]
            (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))]))))
 
+     exclude-protected
+     (fn [intent]
+       (let
+         [ctx
+          (some-> ctx-atom
+                  deref)
+
+          universe
+          (or (get ctx "engine_iter_universe") [])
+
+          protected
+          (set (get ctx "engine_protected_iter_scopes"))
+
+          resolved
+          (first (ctx-engine/expand-through [intent] universe))
+
+          selected
+          (set (get resolved "scopes"))
+
+          omitted
+          (set/intersection selected protected)
+
+          kept
+          (set/difference selected omitted)]
+
+         [(if (seq omitted)
+            (-> intent
+                (dissoc "through" "from" "to" "since")
+                (assoc "scopes" kept))
+            intent) omitted]))
+
      current-turn
      (fn []
        (let
@@ -2613,7 +2729,38 @@
 
      record!
      (fn [intent]
-       (when ctx-atom (swap! ctx-atom update "session_summaries" (fnil conj []) intent)))
+       (when ctx-atom
+         (swap! ctx-atom (fn [ctx]
+                           (let
+                             [candidates
+                              (conj (vec (get ctx "session_summaries")) intent)
+
+                              universe
+                              (or (get ctx "engine_iter_universe") [])
+
+                              tagged
+                              (mapv (fn [idx summary]
+                                      (assoc summary "__record_idx" idx))
+                                    (range)
+                                    candidates)
+
+                              winners
+                              (-> tagged
+                                  (ctx-engine/expand-through universe)
+                                  ctx-engine/supersede-summaries)
+
+                              kept
+                              (into #{} (map #(get % "__record_idx")) winners)]
+
+                             ;; Persist the original selector shape for stable receipts/tests,
+                             ;; but discard superseded intents NOW. Rendering no longer has to
+                             ;; refine an ever-growing fold-of-fold chain on every request.
+                             (assoc ctx
+                               "session_summaries" (into []
+                                                         (keep-indexed (fn [idx summary]
+                                                                         (when (contains? kept idx)
+                                                                           summary)))
+                                                         candidates)))))))
 
      fmt-tok
      (fn [t]
@@ -2720,23 +2867,30 @@
                        :current-turn turn
                        :blocked-turns blocked-turns})))
            (let
-             [g (some-> gist
+             [[base omitted] (exclude-protected base)
+              kept-note (when (seq omitted)
+                          (str " · kept active skill " (str/join ", " (sort omitted))))
+              g (some-> gist
                         str
                         str/trim
-                        not-empty)
-              note (priced base)
-              recover (recover-hint base)
-              intent (cond-> base
-                       g
-                       (assoc "gist" g)
+                        not-empty)]
 
-                       (not (str/blank? note))
-                       (assoc "note" note))]
+             (if (and (seq omitted) (empty? (get base "scopes")))
+               (str "session_fold: nothing else to fold" kept-note)
+               (let
+                 [note (priced base)
+                  recover (recover-hint base)
+                  intent (cond-> base
+                           g
+                           (assoc "gist" g)
 
-             (record! intent)
-             (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
-                       "model folded scopes")
-             (str "folded " label note recover (when g (str " → " g)))))
+                           (not (str/blank? note))
+                           (assoc "note" note))]
+
+                 (record! intent)
+                 (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
+                           "model folded scopes")
+                 (str "folded " label note recover kept-note (when g (str " → " g)))))))
          (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
               "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
               "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))
@@ -2776,7 +2930,7 @@
 
    Pure and deterministic (same summaries → same output → prefix-cacheable).
    Operates on a COPY; persisted iter-records are untouched."
-  [trailer-iters summaries]
+  [trailer-iters summaries & [protected-scopes]]
   (if (empty? summaries)
     (vec trailer-iters)
     (let
@@ -2804,8 +2958,11 @@
        ;; step at or before the cursor; then supersede covered summaries so a
        ;; broader re-fold replaces the finer one (one breadcrumb, not two).
        summaries
-       (ctx-engine/supersede-summaries
-         (ctx-engine/expand-through summaries (keep iter-scope-of (map second trailer-iters))))
+       (->> (ctx-engine/expand-through summaries (keep iter-scope-of (map second trailer-iters)))
+            (keep (fn [summary]
+                    (let [scopes (into #{} (remove (set protected-scopes)) (get summary "scopes"))]
+                      (when (seq scopes) (assoc summary "scopes" scopes)))))
+            (ctx-engine/supersede-summaries))
 
        summarized
        (into #{} (mapcat #(get % "scopes")) summaries)
@@ -3633,10 +3790,8 @@
 ;; plain text and NO tool call ends the turn.
 
 (defn- python-execution-capability-line
-  "The ONE line that tells the model what the sandbox can actually reach THIS
-   session — built from real capabilities (`caps` = `:sandbox-caps` on the env), so
-   the description never claims filesystem/network the sandbox doesn't have. `caps`
-   nil (no env wired) ⇒ no line (don't assert capabilities we can't confirm)."
+  "Describe confirmed sandbox capabilities without duplicating the detailed,
+   immutable policy exposed in `session[\"access\"]`."
   [caps]
   (when caps
     (let
@@ -3654,14 +3809,14 @@
 
        fs-part
        (if (:fs? caps)
-         "FS: real and root-confined; prefer native file tools."
+         "FS: see `session[\"access\"][\"filesystem\"]` for effective roots and modes; prefer native file tools."
          "FS: unavailable; use native file tools.")
 
        net-part
        (cond (not net-on?) "Network: off."
              allowed (str "Network: on, reachable hosts: " (str/join ", " allowed) ".")
              star? "Network: on (any host except blocked defaults)."
-             :else "Network: on.")]
+             :else "Network: on; see `session[\"access\"][\"network\"]`.")]
 
       (str fs-part " " net-part))))
 
@@ -3729,11 +3884,13 @@
                     "that one; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an inclusive window "
                     "(either bound optional); {\"since\": \"tN/iN\"} that step through the "
                     "newest.")}
-     "gist" {:type "string"
-             :description
-             (str "Optional one-line durable takeaway: finding, rationale/consequence, and "
-                  "useful path:line, symbol/test, or anchor. Refresh any preserved anchor before "
-                  "editing. Omit when the folded steps need no summary.")}}
+     "gist"
+     {:type "string"
+      :description
+      (str
+        "Optional one-line durable takeaway: finding, rationale/consequence, and "
+        "useful path:line, symbol/test, or anchor. Refresh any preserved anchor before "
+        "editing. OMIT gist to drop spent reads, catalogs, errors, or other steps with no durable value.")}}
     :required ["target"]
     :additionalProperties false}})
 
@@ -6012,6 +6169,13 @@
      previous-usage
      (previous-request-usage environment session-turn-id)
 
+     ;; Turn identity must be current before the frozen context and the first
+     ;; user message are assembled. This makes every turn boundary explicit on
+     ;; iteration 1 rather than waiting for the first tool-result delta.
+     _turn-sync
+     (when-let [ctx-atom (:ctx-atom environment)]
+       (swap! ctx-atom ctx-engine/enter-turn (or turn-position 1)))
+
      ;; Standing session context (workspace/env/routing/tools) baked into the
      ;; cached system prefix ONCE PER PROCESS and FROZEN (`:standing-ctx-atom`).
      ;; Re-rendering it per turn would change the cached prefix on any state
@@ -6075,18 +6239,50 @@
                          :skipped (mapv :path (:skipped user-attachments))}
                   :msg "attached user-message images"}))
 
-     ;; Gate the user-message image blocks on the TURN's resolved model: a
-     ;; text-only model must never be handed `image_url` blocks it cannot
-     ;; consume (mirrors the generated-figure `target-supports-vision?` gate).
-     ;; Only resolve when there is actually an image to gate.
+     ;; Resolve once for both image capability and the first-turn utilization
+     ;; ceiling. The previous persisted request is the only real measurement
+     ;; available before iteration 1.
+     initial-resolved-model
+     (resolve-effective-model (:router environment) (or routing {}))
+
      initial-target-vision?
      (or (empty? (:attached user-attachments))
-         (target-supports-vision? (replay-context (resolve-effective-model (:router environment)
-                                                                           (or routing {})))))
+         (target-supports-vision? (replay-context initial-resolved-model)))
+
+     initial-context-limit
+     (or max-context-tokens
+         (:input-limit initial-resolved-model)
+         (:context initial-resolved-model)
+         200000)
+
+     _initial-utilization
+     (when-let [ctx-atom (:ctx-atom environment)]
+       (if-let
+         [measured (ctx-engine/utilization (:last-request-tokens previous-usage)
+                                           initial-context-limit
+                                           0
+                                           ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)]
+         (stamp-utilization! ctx-atom measured)
+         (swap! ctx-atom (fn [ctx]
+                           (if (get ctx "engine_utilization")
+                             ctx
+                             (assoc ctx
+                               "engine_utilization"
+                               {"last_request_tokens" 0
+                                "turn_total_tokens" 0
+                                "auto_compress_above" ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS
+                                "model_input_limit" (long initial-context-limit)
+                                "saturation" 0
+                                "headroom_tokens" (long initial-context-limit)
+                                "measured" false}))))))
+
+     turn-context
+     (ctx-loop/render-block! environment ctx-renderer/render-turn-boundary)
 
      initial-messages
      (prompt/assemble-initial-messages {:stable-prompt-messages stable-prompt-messages
                                         :initial-user-content user-request
+                                        :turn-context turn-context
                                         :user-images (:attached user-attachments)
                                         :skipped-images (:skipped user-attachments)
                                         :vision? initial-target-vision?
@@ -6297,12 +6493,6 @@
                               ;; FORCING plan-gate: distinct files mutated THIS turn (reset each turn).
                               ;; The 2nd distinct file without an approved plan arms the gate.
                               :files-mutated #{})
-    ;; Sync context `:session/turn` to the persisted turn-position via
-    ;; `eng/enter-turn`. `enter-turn` is idempotent and also clears transient
-    ;; engine blockers so the new turn starts clean.
-    (when-let [ctx-atom (:ctx-atom environment)]
-      (swap! ctx-atom (fn [c]
-                        (ctx-engine/enter-turn c (or turn-position 1)))))
     ;; Hot symbol archival runs only after a final successful answer.
     ;; Failed/cancelled turns keep their live scratch symbols for
     ;; recovery. This is sandbox namespace pruning — unrelated to CTX
@@ -6533,14 +6723,17 @@
                  ;; never repeat it. Matches z.ai's canonical preserved-thinking
                  ;; shape (user → asst → user → asst → user).
                  _ (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
-                 conversation-suffix-msgs (conversation-suffix
-                                            (apply-summaries trailer-iters
-                                                             (some-> (:ctx-atom environment)
-                                                                     deref
-                                                                     (get "session_summaries")))
-                                            (replay-context pre-resolved-model)
-                                            (extension/native-tool-replay-policies active-exts
-                                                                                   environment))
+                 conversation-suffix-msgs
+                 (conversation-suffix
+                   (apply-summaries trailer-iters
+                                    (some-> (:ctx-atom environment)
+                                            deref
+                                            (get "session_summaries"))
+                                    (some-> (:ctx-atom environment)
+                                            deref
+                                            (get "engine_protected_iter_scopes")))
+                   (replay-context pre-resolved-model)
+                   (extension/native-tool-replay-policies active-exts environment))
                  provider-messages (into (vec messages) conversation-suffix-msgs)
                  effective-messages provider-messages
                  resolved-model pre-resolved-model
@@ -8838,6 +9031,9 @@
                                                    ;; (cross-soul) → queryable sub-tree, hidden from the
                                                    ;; top-level session list, cascades on parent delete.
                                                    :parent-state-id (:session/state-id parent-env)
+                                                   ;; Security is inherited by VALUE. A child may use a
+                                                   ;; different workspace/model, never a newer vis.yml.
+                                                   :security-policy (:security-policy parent-env)
                                                    :seed-ctx (subctx->seed-ctx subctx)}})
                       dispose-environment!
                       :dispose
@@ -8981,6 +9177,12 @@
              (try (future-cancel f) (catch Throwable _ nil)))
            (throw e)))))
 
+(defn- security-config-snapshot
+  "Read, validate, resolve, and hash security configuration once for a ROOT
+   environment. Child environments inherit this exact immutable value."
+  []
+  (security-policy/snapshot (or (config/load-config-raw) {})))
+
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
    querying.
@@ -9006,8 +9208,12 @@
    Returns the vis environment map."
   [router {:keys [db session channel external-id title workspace-id child prewarm?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
+  (when (and (:parent-db-info child) (nil? (:security-policy child)))
+    (throw (ex-info "Child environment requires the parent's security-policy snapshot"
+                    {:type :vis/missing-child-security-policy})))
   ;; `child` (a sub_loop child env) carries:
   ;;   :parent-db-info  reuse the parent's DB connection (don't open/close one)
+  ;;   :security-policy inherit the parent's immutable policy (required)
   ;;   :depth           starting recursion depth (parent depth + 1)
   ;;   :seed-ctx        initial ctx-atom value (the model-supplied subctx) — used
   ;;                    instead of a DB restore
@@ -9395,131 +9601,97 @@
        ;; bindings are installed here.
        (resources/sandbox-bindings session-id))
 
+     ;; Security configuration is resolved exactly once for a root environment.
+     ;; A sub_loop child receives the parent's value through `:child`; it never
+     ;; re-reads model-writable vis.yml. `/reload` rebuilds the root environment.
+     security-config
+     (or (:security-policy child) (security-config-snapshot))
+
+     configured-rw-roots
+     (security-policy/read-write-roots security-config)
+
      ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
      ;; deny-by-default polyglot Context, wires the Clojure tools as Python
-     ;; callables, and installs doc/apropos introspection).
-     ;; Confine the Python sandbox's REAL filesystem to the workspace root +
-     ;; filesystem-root working copies — the SAME set the file tools confine to.
-     ;; nil (no workspace) ⇒ the sandbox stays IO-NONE.
-     ;; The fn derefs `workspace-atom` (reset by run-turn!'s per-turn
-     ;; workspace re-resolve) instead of closing over the env-creation-time
-     ;; row, so a mid-session `/draft new|apply|abandon` or `/root <path>`
-     ;; retargets the sandbox confinement too — not just the file tools.
+     ;; callables, and installs doc/apropos introspection). Its live roots are the
+     ;; workspace overlay plus immutable configured read/write roots. Native file
+     ;; tools consume the same configured roots through the environment below.
      workspace-atom
      (atom active-workspace)
 
      sandbox-roots-fn
-     (when active-workspace
+     (when (or active-workspace (seq configured-rw-roots))
        (fn []
-         (when-let [ws @workspace-atom]
-           (into [(str (:root ws))] (keep :clone (workspace/filesystem-roots ws))))))
+         (let [ws @workspace-atom]
+           (vec (distinct (concat (when ws [(str (:root ws))])
+                                  (when ws (keep :clone (workspace/filesystem-roots ws)))
+                                  configured-rw-roots))))))
 
-     ;; Network capability: OFF unless the `:network/enabled` toggle is on. When
-     ;; on, config.edn `:network` tunes the host policy:
-     ;;   :allowed-domains [...]  confine to these (empty or ["*"] ⇒ allow all)
-     ;;   :denied-domains  [...]  always-blocked, ON TOP of the secure defaults
-     ;;                            (cloud-metadata SSRF endpoints) — wins over allow
-     ;; Children inherit it via the bound sandbox.
+     access-view-fn
+     (fn []
+       (let
+         [ws
+          @workspace-atom
+
+          live-roots
+          (concat (when ws [(:root ws)]) (when ws (keep :trunk (workspace/filesystem-roots ws))))]
+
+         (security-policy/access-view security-config live-roots)))
+
      net-cfg
-     (get (config/load-config-raw) :network)
+     (:network security-config)
+
+     ;; Network is always available through the sandbox policy. `sandbox: false`
+     ;; is the sole explicit escape hatch; there is no independent network toggle.
+     net-on?
+     true
 
      network-opts
-     {:enabled? (toggles/enabled? :network/enabled)
+     {:enabled? net-on?
       :allowed-domains (:allowed-domains net-cfg)
       :denied-domains (:denied-domains net-cfg)
       :exclude-domains (:exclude-domains net-cfg)
       :allow-private (:allow-private net-cfg)
       :rules (:rules net-cfg)}
 
-     ;; OS jail (real containment for shell children) — ALWAYS ON, no opt-in. Every
-     ;; shell child is confined to the LIVE session roots + tmp; vis.yml `:filesystem`
-     ;; adds :allow-write/:allow-read/:deny-write/:deny-read carve-outs, and `:network`
-     ;; drives shell-child egress. A PER-SESSION policy VALUE (never a global
-     ;; singleton), carried on the env and read FRESH per spawn, so it tracks the LIVE
-     ;; session roots and the current vis.yml (editing config + `/reload` needs no
-     ;; restart). Filesystem model mirrors sandbox-runtime (write allow-only,
-     ;; deny-write/deny-read carve-outs win). On an OS that can't enforce (Linux/Windows
-     ;; today) `process-jail/wrap-argv` returns the argv unchanged.
-     ;; Per-session loopback egress proxy (see internal.egress-proxy), started LAZILY
-     ;; the first time a jailed shell child needs restricted network. A `delay` so it's
-     ;; created at most once per session, thread-safe, and never started when the
-     ;; session runs no shell egress. Its policy-fn re-reads vis.yml `:network` per
-     ;; connection, so `/reload` + config edits take effect with no restart. Stopped
-     ;; in `dispose-environment!`.
-     ;; ONE shared gateway egress proxy + ONE shared MITM CA serve ALL sessions
-     ;; (see internal.gateway-sandbox) — the daemon is multi-tenant, so a per-session
-     ;; proxy/CA would thrash and hand every child a different trust root. This session
-     ;; is attributed by an unguessable TOKEN carried in the child's proxy env; the
-     ;; shared proxy resolves THIS session's policy from the registry per request
-     ;; (fail-closed on an unknown token). Registered here, dropped in
-     ;; dispose-environment!. The proxy listener + CA start LAZILY on first jailed
-     ;; egress.
+     jail-config
+     (:process-jail security-config)
+
+     jail-enabled?
+     (not (:disabled? jail-config))
+
+     ;; One shared gateway proxy serves every environment. Unguessable tokens
+     ;; attribute requests to this environment's immutable policy snapshot.
      sandbox-token
      (str (java.util.UUID/randomUUID))
 
-     ;; A second unguessable token attributes managed REPL/test-runner egress.
-     ;; Language processes use a session-bound compatibility listener because JVM
-     ;; proxy stacks cannot reliably attach Proxy-Authorization to CONNECT.
      repl-sandbox-token
      (str (java.util.UUID/randomUUID))
 
-     ;; MITM (TLS termination) is engaged whenever there are verb/path `:rules` to
-     ;; enforce over HTTPS (host allow/deny alone needs only a CONNECT tunnel). Read
-     ;; fresh so config edits + `/reload` take effect with no restart.
-     mitm-on?
-     (fn []
-       (boolean (seq (:rules (get (config/load-config-raw) :network)))))
+     compiled-network-policy
+     (some-> (egress/compile-policy net-cfg)
+             (assoc :mitm? (boolean (seq (:rules net-cfg)))))
 
-     ;; Register this session's live policy fn under its token. Read fresh per request
-     ;; (config + `/reload` take effect with no restart). Only when a jail is possible
-     ;; (sandbox-roots-fn present).
      _register-sandbox
-     (when sandbox-roots-fn
-       (gateway-sandbox/register-session! sandbox-token
-                                          (fn []
-                                            (some-> (egress/compile-policy
-                                                      (get (config/load-config-raw) :network))
-                                                    (assoc :mitm? (mitm-on?))))))
+     (when (and sandbox-roots-fn jail-enabled?)
+       (gateway-sandbox/register-session! sandbox-token (constantly compiled-network-policy)))
 
-     ;; The managed-language token uses the SAME live policy as shell children.
-     ;; HTTPS verb/path rules therefore remain enforced at the gateway MITM boundary.
      _register-repl-sandbox
-     (when sandbox-roots-fn
-       (gateway-sandbox/register-session! repl-sandbox-token
-                                          (fn []
-                                            (some-> (egress/compile-policy
-                                                      (get (config/load-config-raw) :network))
-                                                    (assoc :mitm? (mitm-on?))))))
+     (when (and sandbox-roots-fn jail-enabled?)
+       (gateway-sandbox/register-session! repl-sandbox-token (constantly compiled-network-policy)))
 
-     ;; The shell jail is ALWAYS ON (no opt-in toggle): every shell child is confined
-     ;; to the LIVE session workspace roots + tmp, with the vis.yml `:filesystem`
-     ;; carve-outs (:allow-write/:deny-write/:allow-read/:deny-read) folded in. Read
-     ;; FRESH per spawn so it tracks the current roots + config (editing config +
-     ;; `/reload` needs no restart). On an OS that can't enforce (Linux/Windows today)
-     ;; `process-jail/wrap-argv` returns the argv unchanged.
+     ;; The user-controlled keys come only from config-spec/process-jail-config.
+     ;; Per-spawn evaluation retains live workspace roots and lazy proxy startup,
+     ;; but never reads config again.
      jail-policy-fn
      (when sandbox-roots-fn
        (fn []
          (let
-           [cfg
-            (config/load-config-raw)
-
-            fs
-            (get cfg :filesystem)
-
-            net-on?
-            (toggles/enabled? :network/enabled)
-
-            ;; Network-enabled children always use the gateway proxy. Even an allow-all
-            ;; policy therefore retains the SSRF floor and reserved-port protection.
-            proxy?
-            net-on?
+           [proxy?
+            (and jail-enabled? net-on?)
 
             proxy-port
             (when proxy? (gateway-sandbox/ensure-proxy!))
 
-            ;; Materialize the shared trust capability for every network-enabled managed
-            ;; process. Policy can become verb-aware after /reload without requiring a new CA.
             ca-file
             (when proxy? (gateway-sandbox/ensure-ca!))
 
@@ -9529,19 +9701,16 @@
             repl-proxy-port
             (when proxy? (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
 
-           {:roots-fn sandbox-roots-fn
-            :net-enabled? net-on?
-            :allow-write (:allow-write fs)
-            :allow-read (:allow-read fs)
-            :deny-write (:deny-write fs)
-            :deny-read (:deny-read fs)
-            :proxy-port proxy-port
-            :proxy-token (when proxy? sandbox-token)
-            :repl-proxy-port repl-proxy-port
-            :repl-ca-file ca-file
-            :java-trust-store (:java-trust-store java-trust)
-            :java-trust-store-password (:java-trust-store-password java-trust)
-            :ca-file ca-file})))
+           (merge jail-config
+                  {:roots-fn sandbox-roots-fn
+                   :net-enabled? net-on?
+                   :proxy-port proxy-port
+                   :proxy-token (when proxy? sandbox-token)
+                   :repl-proxy-port repl-proxy-port
+                   :repl-ca-file ca-file
+                   :java-trust-store (:java-trust-store java-trust)
+                   :java-trust-store-password (:java-trust-store-password java-trust)
+                   :ca-file ca-file}))))
 
      ;; Register one live policy function for the standard language-process launch
      ;; contract. Managed REPLs and project test runners share the same Seatbelt +
@@ -9560,6 +9729,12 @@
         :session-id session-id
         :session/state-id session-state-id
         :channel (or channel :tui)
+        ;; Immutable canonical security policy plus its live workspace overlay.
+        ;; Context, GraalPy, native file tools, shell, managed language processes,
+        ;; and egress all derive from this same environment-owned value.
+        :security-policy security-config
+        :security/filesystem-roots configured-rw-roots
+        :access-view-fn access-view-fn
         ;; What the Python sandbox can ACTUALLY reach this session —
         ;; `python-execution-tool` builds its fs/network description
         ;; from this so the prompt never claims a capability the

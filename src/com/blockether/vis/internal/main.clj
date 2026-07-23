@@ -1605,9 +1605,8 @@
   (stdout! "                    or redirected), so `vis ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
   (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
-  (stdout! "                    registered toggle for this run only. Bare names")
-  (stdout! "                    work when unambiguous; namespace on collision, e.g.")
-  (stdout! "                    --toggles shell/enabled=true,reasoning-level=deep")
+  (stdout! "                    registered snake_case toggle id for this run only, e.g.")
+  (stdout! "                    --toggles reasoning_level=deep")
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
   (stdout! "                    happening, then print the answer.")
@@ -1630,83 +1629,66 @@
     "  vis --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
   (stdout! "  vis \"Throwaway one-shot probe\"")
   (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis --toggles shell/enabled=true \"Run the test suite and fix failures\"")
-  (stdout! "  vis --toggles shell/enabled=true,reasoning-level=deep \"Refactor\"")
+  (stdout! "  vis --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
+  (stdout! "  vis --toggles reasoning_level=balanced \"Refactor carefully\"")
   (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
 (defn- parse-toggle-overrides
   "Parse a `--toggles` value like
-   \"shell/enabled=true,reasoning-level=deep\" into a map of
-   {toggle-id value}. NAME may be the bare toggle name
-   (e.g. `reasoning-level`) when it is unambiguous across the registry, or
-   the fully namespaced id (e.g. `shell/enabled`, leading `:`
-   optional) - extensions register toggles under their own namespace,
-   so the namespaced form disambiguates collisions. VALUE is validated
-   against the registered `:type` -- booleans accept true/false (plus
-   on/off, yes/no, 1/0), enums must name one of the registered
-   `:choices`. Throws `:vis/user-error` ex-info on any bad pair so the
-   CLI error path renders it as a user mistake, not a crash."
+   \"reasoning_level=deep\" into a map of {toggle-id value}. NAME must be the
+   exact registered snake_case string id (e.g. `reasoning_level`,
+   `openai_codex_verbosity`). VALUE is validated against the registered `:type`:
+   booleans accept true/false (plus on/off, yes/no, 1/0), enums must name one of
+   the registered `:choices`. Throws `:vis/user-error` ex-info on any bad pair so
+   the CLI error path renders it as a user mistake, not a crash."
   [s]
-  (reduce
-    (fn [acc pair]
-      (let
-        [[k v]
-         (str/split pair #"=" 2)
+  (reduce (fn [acc pair]
+            (let
+              [[k v]
+               (str/split pair #"=" 2)
 
-         raw
-         (keyword (str/replace (or k "") #"^:" ""))
+               id
+               (or k "")
 
-         id
-         (if (namespace raw)
-           raw
-           (let [hits (filterv #(= (name raw) (name (:id %))) (toggles/registered-toggles))]
-             (cond (= 1 (count hits)) (:id (first hits))
-                   (seq hits) (throw (ex-info (str "Ambiguous toggle name: " k
-                                                   " - use one of " (str/join ", " (map :id hits)))
-                                              {:type :vis.cli/ambiguous-toggle
-                                               :vis/user-error true
-                                               :name raw
-                                               :candidates (mapv :id hits)}))
-                   :else raw)))
+               spec
+               (toggles/toggle-spec id)]
 
-         spec
-         (toggles/toggle-spec id)]
+              (when-not spec
+                (throw (ex-info (str "Unknown toggle: " k)
+                                {:type :vis.cli/unknown-toggle
+                                 :vis/user-error true
+                                 :id id
+                                 :known (mapv :id (toggles/registered-toggles))})))
+              (when (or (nil? v) (str/blank? v))
+                (throw (ex-info (str "Toggle needs NAME=VALUE, got: " pair)
+                                {:type :vis.cli/invalid-toggle :vis/user-error true :pair pair})))
+              (assoc acc
+                id (case (:type spec)
+                     :enum
+                     (let [value (keyword (str/replace v #"^:" ""))]
+                       (when-not (contains? (set (:choices spec)) value)
+                         (throw (ex-info (str "Invalid value for " k ": " v)
+                                         {:type :vis.cli/invalid-toggle
+                                          :vis/user-error true
+                                          :id id
+                                          :value value
+                                          :choices (:choices spec)})))
+                       value)
 
-        (when-not spec
-          (throw (ex-info (str "Unknown toggle: " k)
-                          {:type :vis.cli/unknown-toggle
-                           :vis/user-error true
-                           :id id
-                           :known (mapv :id (toggles/registered-toggles))})))
-        (when (or (nil? v) (str/blank? v))
-          (throw (ex-info (str "Toggle needs NAME=VALUE, got: " pair)
-                          {:type :vis.cli/invalid-toggle :vis/user-error true :pair pair})))
-        (assoc acc
-          id (case (:type spec)
-               :enum
-               (let [value (keyword (str/replace v #"^:" ""))]
-                 (when-not (contains? (set (:choices spec)) value)
-                   (throw (ex-info (str "Invalid value for " k ": " v)
-                                   {:type :vis.cli/invalid-toggle
-                                    :vis/user-error true
-                                    :id id
-                                    :value value
-                                    :choices (:choices spec)})))
-                 value)
+                     (case (str/lower-case v)
+                       ("true" "on" "yes" "1")
+                       true
 
-               (case (str/lower-case v)
-                 ("true" "on" "yes" "1")
-                 true
+                       ("false" "off" "no" "0")
+                       false
 
-                 ("false" "off" "no" "0")
-                 false
-
-                 (throw
-                   (ex-info
-                     (str "Boolean toggle " k " needs true/false, got: " v)
-                     {:type :vis.cli/invalid-toggle :vis/user-error true :id id :value v})))))))
-    {}
-    (remove str/blank? (str/split (or s "") #","))))
+                       (throw (ex-info (str "Boolean toggle " k " needs true/false, got: " v)
+                                       {:type :vis.cli/invalid-toggle
+                                        :vis/user-error true
+                                        :id id
+                                        :value v})))))))
+          {}
+          (remove str/blank? (str/split (or s "") #","))))
 
 (defn- call-with-toggle-overrides
   "Run `f` with each toggle in `overrides` ({id value}) applied, restoring
@@ -2658,7 +2640,8 @@
      (when provider-id (registry/provider-by-id provider-id))
 
      configured?
-     (boolean (some #(= provider-id (:id %)) (:providers (config/load-config-raw))))]
+     (boolean (some #(= (name provider-id) (get % "id"))
+                    (get (config/load-config-raw) "providers")))]
 
     (cond (nil? provider-id) (do (stdout! "Usage: vis providers logout <provider>")
                                  (stdout! "")
@@ -3606,7 +3589,7 @@
     "ONE-SHOT FLAGS\n" "  --json                       Print result as JSON.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
-    "  --toggles NAME=VAL[,..]      Set registered toggles for this run only (e.g. shell/enabled=true).\n"
+    "  --toggles NAME=VAL[,..]      Set registered toggles for this run only (e.g. reasoning_level=deep).\n"
     "  --full-trace-stream          Stream pretty human trace.\n"
     "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
     "  --provider PROVIDER          Override provider.\n"

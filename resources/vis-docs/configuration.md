@@ -26,14 +26,31 @@ load, deep-merged, with the EDN file winning per key. Keep hand-written
 global settings (system prompt, `:search`, `:router`, `:environment`) in the
 YAML file; let Vis own the EDN file.
 
-YAML maps onto the EDN shape with two rules:
+YAML is validated exactly as parsed:
 
-1. **Keys become keywords.** `snake_case` and `kebab-case` are both
-   accepted and normalize to the same kebab-case keyword:
-   `system_prompt:` ≡ `system-prompt:` ≡ `:system-prompt`.
-2. **String-keyed blocks stay verbatim.** Keys under `environment`,
-   `llm-headers`, and `extra-body` are kept as strings —
-   `ANTHROPIC_API_KEY` is never keywordized or case-mangled.
+1. **Configuration keys stay strings.** Canonical keys use kebab-case. No recursive
+   keywordization or underscore normalization occurs, so `system-prompt` is valid and
+   `system_prompt` is rejected as an unknown key.
+2. **User-owned keys stay verbatim.** Environment variables, MCP server names and
+   `env`/`headers`, HTTP headers, request-body fields, pricing/model ids, and toggle ids
+   retain their exact spelling and case.
+
+## Executable configuration contract
+
+`com.blockether.vis.internal.config-spec/config` is the complete `clojure.spec`
+contract for the original string-keyed YAML representation. It covers these closed
+top-level blocks: `providers`, `router`, `system-prompt`, `sandbox`, `jail`, `network`,
+`environment`, `db-spec`, `search`, `toggles`, `tui-settings`, and `mcp`. Filesystem
+policy is a closed block at `jail.filesystem`.
+
+Nested maps are also closed except maps whose keys are user-defined, such as environment
+variables, HTTP headers, toggle ids, MCP server names, pricing tables, and request bodies.
+Unknown keys and invalid value types fail config loading with source-aware spec problems;
+credentials are redacted from those problems.
+
+The parser validates this string-keyed map before any internal adaptation. The same
+namespace derives process-jail and network policies directly from that validated map, so
+security enforcement and the YAML schema cannot maintain different key lists.
 
 The same config, both ways:
 
@@ -46,10 +63,10 @@ The same config, both ways:
 
 ```yaml
 # vis.yml
-system_prompt: Prefer restructuredText docstrings.
+system-prompt: Prefer restructuredText docstrings.
 router:
   budget:
-    max_cost: 5.0
+    max-cost: 5.0
 environment:
   ANTHROPIC_API_KEY: "…"
 ```
@@ -125,7 +142,84 @@ The `:router` block tunes the request pipeline — retry pacing, network timeout
   :budget     {:max-tokens 1000000 :max-cost 5.0}}}
 ```
 
-Omit it and built-in defaults apply. Unknown keys are dropped, never fatal.
+Omit it and built-in defaults apply. Unknown keys are rejected by the configuration spec.
+
+## Sandbox, filesystem, and network
+
+The process sandbox is enabled by default. On macOS, shell commands and managed
+language processes run under Seatbelt and use the gateway egress proxy. There is
+no separate shell or network toggle: `sandbox: false` is the sole explicit
+process-jail escape hatch. Unsupported hosts currently have no OS boundary.
+
+```yaml
+# vis.yml
+sandbox: true
+jail:
+  filesystem:
+    allow-read-write:
+      - ../sibling-repository
+    allow-read:
+      - ~/shared-reference
+    allow-write:
+      - ./generated
+    deny-write:
+      - ./generated/locked
+    # Managed REPL/test-runner dependency caches are opt-in.
+    language-caches:
+      - ~/.m2
+      - path: ~/.clojure
+        access: read-only
+  # Extra local ports on which a confined shell child may accept connections.
+  inbound-ports:
+    - 5273
+network:
+  allowed-domains:
+    - github.com
+    - npmjs.org
+  denied-domains:
+    - example.invalid
+  allow-private: false
+```
+
+Filesystem roots under `jail.filesystem` use last-match-wins deny carve-outs:
+session roots and `allow-read-write` have full access, `allow-write` is the legacy
+equivalent, and `allow-read` is read-only. `deny-write` or `deny-read` takes
+precedence. A bare `language-caches` path is readable and writable;
+`access: read-only` permits dependency resolution without cache mutation. No
+dependency cache is exposed unless listed.
+
+Child processes use the gateway's loopback egress proxy. `allowed-domains`
+restricts public hosts; `denied-domains` wins over it. Loopback development
+services are allowed except Vis's reserved control-plane ports. Private LAN
+addresses require `allow-private: true`; link-local, metadata, wildcard, and
+multicast addresses remain blocked. Sandbox, filesystem, and network permissions
+are snapshotted when a session environment is built. Run `/reload` to apply policy
+changes; editing a model-writable project `vis.yml` alone cannot widen a live session.
+
+For HTTPS method/path rules, MITM behavior, network filters, managed REPLs,
+trusted-extension policy, `repl_connect`, and the macOS test matrix, see
+[Process sandbox and gateway egress](sandbox.md).
+
+The `jail` block owns filesystem confinement and inbound sockets for confined shell
+children. By default a jailed child may bind any local port but may **accept**
+connections only on Vis's managed nREPL loopback port. `jail.inbound-ports` allowlists
+additional ports a child may accept on—for example `5273`, so a jailed Vite server is
+reachable from a browser or phone. Like every jail permission, it is snapshotted when
+the environment is built, so run `/reload` after changing it.
+
+### macOS native-image startup failures
+
+`CSunMiscSignal.open() failed` with `errno: 1` is not a domain-allowlist error.
+GraalVM Native Image tools such as `spel`, `bb`, and `clj-kondo` create a named
+POSIX semaphore while installing signal handlers, before their command runs.
+The macOS profile permits that single IPC class with `ipc-posix-sem`; network
+permissions remain unchanged.
+
+Seatbelt policy is inherited and cannot be replaced inside an already confined
+process. After upgrading from a Vis build without this permission, restart the
+Vis client/gateway before retrying the native tool. An actual egress-policy
+failure instead reports the rejected host (for example, `host not permitted`);
+add that hostname to `network.allowed-domains` when appropriate.
 
 ## Extension environment overrides
 
@@ -161,10 +255,10 @@ tool-side overlay can.
 ```yaml
 # vis.yml
 search:
-  include_gitignored_paths:
+  include-gitignored-paths:
     - repositories/
   # pruned even inside re-included subtrees; setting it REPLACES the default list:
-  always_exclude:
+  always-exclude:
     - .git/
     - node_modules/
     - target/

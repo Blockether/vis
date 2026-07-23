@@ -71,6 +71,7 @@ Exactly one call per file. Keyword arguments:
 | `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
 | `slash_commands` | list of `vis.slash(...)` | User-facing commands. |
 | `op_hooks` | list of `vis.op_hook(...)` | Guards/observers over file ops. |
+| `network_filters` | list of `vis.network_filter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
 | `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
 
 The **env dict** passed to `prompt`/`activation` callables is deliberately
@@ -209,14 +210,16 @@ from the model's sandbox:
 |  | Model sandbox | Extension context |
 | --- | --- | --- |
 | Who writes the code | the model | **you** |
-| Filesystem | confined to workspace roots | real |
-| Network / env vars / subprocess | off by default | real |
+| Filesystem | confined to workspace roots | **real, unrestricted** |
+| Network / env vars / subprocess | gateway policy / restricted | **real, inherited, unrestricted** |
 | Lifetime | per session | process (rebuilt on `/reload`) |
 
-The two share nothing. The model can *call* your tools (through the host
-wrapper, envelope-checked like any tool) but can never evaluate code in your
-context. Your code reaches the host only through the `vis` API — there is no
-Java interop surface.
+This is an intentional trust decision, not a missing sandbox feature. Extension
+contexts allow full IO, process creation, threads, sockets, and inherited
+environment variables because they are user-installed plugins. They still deny
+arbitrary host-class, native, and polyglot interop; host access is limited to the
+bound `vis` API. The model can call an exported tool but cannot evaluate code in
+the extension context. See [Process sandbox and gateway egress](sandbox.md).
 
 Treat `.py` files in a project's `.vis/extensions/` like you treat its
 `deps.edn`: they execute with your user's permissions when Vis starts in

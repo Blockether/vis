@@ -268,7 +268,7 @@
          (coalesce-forms forms)]
 
         (expect (= 1 (count out)))
-        (expect (= "update `a.clj`" (:result-summary (first out))))
+        (expect (= "`a.clj`" (:result-summary (first out))))
         (expect (str/includes? (:result-render (first out)) "+ one"))
         (expect (str/includes? (:result-render (first out)) "+ two"))))
   (it "folds adjacent format_code path acks into one roll-up card"
@@ -342,7 +342,30 @@
          out
          (coalesce-forms forms)]
 
-        (expect (= 2 (count out))))))
+        (expect (= 2 (count out)))))
+  (it "uses structured format_code files instead of repeating aggregate summaries"
+      (let
+        [forms
+         [{:vis/tool-name "format_code"
+           :success? true
+           :result-summary "1 file — 1 changed"
+           :result {:op "format_code" :files [{:path "src/a.clj" :changed true}]}}
+          {:vis/tool-name "format_code"
+           :success? true
+           :result-summary "1 file — 0 changed"
+           :result {"op" "format_code" "files" [{"path" "test/a_test.clj" "changed" false}]}}]
+
+         out
+         (coalesce-forms forms)
+
+         card
+         (first out)]
+
+        (expect (= 1 (count out)))
+        (expect (= "2 files — 1 changed" (:result-summary card)))
+        (expect (str/includes? (:result-render card) "src/a.clj (changed)"))
+        (expect (str/includes? (:result-render card) "test/a_test.clj (no change)"))
+        (expect (not (str/includes? (:result-render card) "1 file —"))))))
 
 (defdescribe
   tool-color-role-coverage-test

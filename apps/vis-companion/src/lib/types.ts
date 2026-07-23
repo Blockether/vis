@@ -15,9 +15,34 @@ export interface Session {
   id: string;
   title?: string;
   channel?: string;
+  model?: string;
   project_id?: string | null;
-  updated_at?: string;
+  project_name?: string | null;
+  project_position?: number | null;
+  status?: 'idle' | 'running' | 'suspended' | string;
+  /** Canonical gateway liveness; older gateways are inferred from status. */
+  live?: boolean;
+  current_turn_id?: string | null;
+  /** In-flight facts and same-response gateway clock for clock-safe attachment. */
+  running_request?: string;
+  running_started_at?: number;
+  server_time_ms?: number;
+  turn_count?: number;
+  created_at?: string;
+  modified_at?: string;
+  last_active_at?: string;
+  workspace?: {
+    root?: string;
+    repo_root?: string;
+    label?: string;
+    fork_ms?: number;
+  } | null;
   [k: string]: unknown;
+}
+
+export interface SlashCommand {
+  name: string;
+  doc: string;
 }
 
 export interface Project {
@@ -59,6 +84,49 @@ export interface ThemeSummary {
 export interface GatewayTheme extends ThemeSummary {
   css_vars: Record<string, string>;
   themes: ThemeSummary[];
+}
+
+export interface VoiceModelState {
+  status: 'ready' | 'downloading' | 'failed' | 'absent' | 'unavailable';
+  progress?: number;
+  error?: string;
+}
+
+export interface GatewayAttachment {
+  filename: string;
+  media_type: string;
+  base64: string;
+}
+
+export interface GatewayCapabilities {
+  version: number;
+  features: {
+    chat: { enabled: boolean };
+    pastes?: {
+      enabled: boolean;
+      transport: 'display_request';
+      format: 'vis-paste-v1';
+      inline_max_chars: number;
+      collapsed_by_default: boolean;
+    };
+    attachments: {
+      enabled: boolean;
+      transport: 'inline-base64';
+      media_types: string[];
+      max_files: number;
+      max_file_bytes: number;
+    };
+    voice: {
+      enabled: boolean;
+      transport: 'audio/wav';
+      transcription: 'gateway-local';
+      model: VoiceModelState;
+    };
+  };
+}
+
+export interface VoiceTranscript {
+  text: string;
 }
 
 export interface GatewayStatus {
@@ -107,9 +175,16 @@ export interface TranscriptForm {
   src?: string;
   source?: string;
   code?: string;
+  /** Gateway-formatted Python, produced by the same cached ruff formatter as the TUI. */
+  display_code?: string;
+  comment?: string;
   result?: JsonValue;
   result_render?: string;
   result_summary?: string;
+  result_kind?: string;
+  result_detail?: Record<string, JsonValue>;
+  render_segments?: JsonValue[];
+  cards?: TranscriptForm[];
   error?: JsonValue;
   stdout?: string;
   tool_name?: string;
@@ -124,10 +199,16 @@ export interface TranscriptIteration {
   position?: number;
   thinking?: string;
   assistant_prose?: string;
+  answer?: string;
   code?: string;
   forms?: TranscriptForm[];
   duration_ms?: number;
   cost_usd?: number;
+  error?: JsonValue;
+  llm_selected?: { provider?: string; model?: string };
+  llm_actual?: { provider?: string; model?: string };
+  is_llm_fallback?: boolean;
+  llm_routing_trace?: Array<Record<string, JsonValue>>;
   [key: string]: unknown;
 }
 
@@ -146,7 +227,27 @@ export interface TranscriptTurn {
   completed_at?: number;
   duration_ms?: number;
   iteration_count?: number;
+  input_tokens?: number;
+  input_regular_tokens?: number;
+  input_cache_write_tokens?: number;
+  input_cache_read_tokens?: number;
+  output_tokens?: number;
+  output_reasoning_tokens?: number;
   total_cost?: number;
+  tokens?: {
+    input?: number;
+    input_regular?: number;
+    cache_created?: number;
+    cached?: number;
+    output?: number;
+    reasoning?: number;
+  };
+  meta_summary?: string;
+  meta_fallback_note?: string;
+  llm_selected?: { provider?: string; model?: string };
+  llm_actual?: { provider?: string; model?: string };
+  is_llm_fallback?: boolean;
+  llm_routing_trace?: Array<Record<string, JsonValue>>;
   cost?:
     | number
     | {
@@ -170,6 +271,9 @@ export interface SubmittedTurn {
 export interface SseEvent {
   type: string;
   sid?: string;
+  session_id?: string;
   seq?: number;
+  /** Gateway epoch sampled when this event was emitted. */
+  ts?: number;
   [k: string]: unknown;
 }

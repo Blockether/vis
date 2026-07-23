@@ -316,13 +316,10 @@
           (max 0 (- win req)))))))
 
 (def model-facing-keys
-  "EXACT set of `session_*` keys the model is meant to see. This is the
-   SINGLE definition of 'model-facing'; `session-view` selects on it so engine
-   bookkeeping cannot leak into the rendered `<context>` or bound `session`
-   dict. `\"session_utilization\"` is derived (from `\"engine_utilization\"`),
-   so it is folded in by `session-view` rather than listed here."
-  ["session_id" "session_turn" "session_scope" "session_workspace" "session_env" "session_routing"
-   "session_language_tools" "session_resources" "session_symbols"])
+  "EXACT set of `session_*` keys the model is meant to see. Security access is
+   included as an environment-derived value; engine bookkeeping remains hidden."
+  ["session_id" "session_turn" "session_scope" "session_workspace" "session_access" "session_env"
+   "session_routing" "session_language_tools" "session_resources" "session_symbols"])
 
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or
@@ -619,65 +616,68 @@
    breadcrumbs still carry every gist until the next send re-stamps the universe.
    The token clause is best-effort: no `weights` (or a scope not yet weighed)
    simply omits `~<toks> tok`, leaving the scope counts — never breaks the line.
+   `protected-scopes` (optional fifth arg) are live skill-body iterations; they
+   are excluded from the collapsed set so the ledger describes the exact wire.
    Pure."
-  [summaries universe weights util]
-  (let
-    [universe
-     (into [] (comp (filter string?) (distinct)) universe)
+  ([summaries universe weights util] (folds-view summaries universe weights util #{}))
+  ([summaries universe weights util protected-scopes]
+   (let
+     [universe
+      (into [] (comp (filter string?) (distinct)) universe)
 
-     has-uni?
-     (boolean (seq universe))
+      has-uni?
+      (boolean (seq universe))
 
-     resolved
-     (when has-uni? (supersede-summaries (expand-through summaries universe)))
+      resolved
+      (when has-uni? (supersede-summaries (expand-through summaries universe)))
 
-     uni-set
-     (set universe)
+      uni-set
+      (set universe)
 
-     collapsed-set
-     (into #{} (mapcat #(get % "scopes")) resolved)
+      collapsed-set
+      (into #{} (comp (mapcat #(get % "scopes")) (remove (set protected-scopes))) resolved)
 
-     live
-     (into [] (remove collapsed-set) universe)
+      live
+      (into [] (remove collapsed-set) universe)
 
-     collapsed-live
-     (filter uni-set collapsed-set)
+      collapsed-live
+      (filter uni-set collapsed-set)
 
-     c
-     (count collapsed-live)
+      c
+      (count collapsed-live)
 
-     total
-     (+ c (count live))
+      total
+      (+ c (count live))
 
-     saved-toks
-     (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live)))
+      saved-toks
+      (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live)))
 
-     sat
-     (get util "saturation")
+      sat
+      (get util "saturation")
 
-     live-str
-     (join-scopes (compress-scopes live universe))
+      live-str
+      (join-scopes (compress-scopes live universe))
 
-     now
-     (when has-uni?
-       (str/join " · "
-                 (keep identity
-                       [(when sat (str "context " sat "%"))
-                        (when (pos? total)
-                          (str "saved "
-                               c
-                               "/"
-                               total
-                               " ("
-                               (Math/round (* 100.0 (/ (double c) total)))
-                               "%"
-                               (when (and saved-toks (pos? (long saved-toks)))
-                                 (str ", ~" (fmt-toks saved-toks) " tok"))
-                               ")")) (when (seq live-str) (str "live " live-str))])))]
+      now
+      (when has-uni?
+        (str/join " · "
+                  (keep identity
+                        [(when sat (str "context " sat "%"))
+                         (when (pos? total)
+                           (str "saved "
+                                c
+                                "/"
+                                total
+                                " ("
+                                (Math/round (* 100.0 (/ (double c) total)))
+                                "%"
+                                (when (and saved-toks (pos? (long saved-toks)))
+                                  (str ", ~" (fmt-toks saved-toks) " tok"))
+                                ")")) (when (seq live-str) (str "live " live-str))])))]
 
-    (cond-> {}
-      (seq now)
-      (assoc "now" now))))
+     (cond-> {}
+       (seq now)
+       (assoc "now" now)))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
@@ -707,7 +707,8 @@
         (folds-view (get ctx "session_summaries")
                     (get ctx "engine_iter_universe")
                     (get ctx "engine_iter_weights")
-                    (get ctx "engine_utilization")))
+                    (get ctx "engine_utilization")
+                    (get ctx "engine_protected_iter_scopes")))
 
       util
       (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))

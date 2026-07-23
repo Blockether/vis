@@ -1,13 +1,22 @@
 (ns com.blockether.vis.internal.network-guard-test
   "Security regression guard for the Python sandbox's network capability.
 
-   Policy, all asserted here:
+   Two layers, both asserted here:
+
+   HOST FLOOR (cooperative socket guard — catches RAW sockets / DNS):
      - OFF (default)        ⇒ no sockets at all (DNS resolution refused).
      - ON, `*` allowlist    ⇒ unrestricted EXCEPT the always-on denylist.
      - ON, with allowlist   ⇒ hosts outside the allowlist raise PermissionError
                               before any connection (`getaddrinfo`/`gethostbyname`).
      - default denylist     ⇒ cloud-metadata SSRF endpoints blocked even under `*`.
-     - explicit denylist    ⇒ wins over the allowlist (even `*`)."
+     - explicit denylist    ⇒ wins over the allowlist (even `*`).
+
+   EGRESS ROUTING (verb/path enforcement moved to the gateway proxy): when the
+   session supplies a loopback `:proxy-port` + shared MITM `:ca-file`, the
+   interpreter's HTTP stack is pointed at the proxy and trusts the CA, so `:rules`
+   AND `network_filter`s enforce host + verb + path at the ONE gateway policy engine
+   (the in-interpreter urllib method-guard is retired). Loopback stays reachable so
+   urllib can reach the proxy even under a restrictive allowlist."
   (:require [com.blockether.vis.internal.env-python :as env]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
@@ -39,29 +48,10 @@
 
       :reached-socket-layer)))
 
-(defn- method-outcome
-  "Eval an `urllib.request` call issuing `method` to `url` in `ctx` and classify:
-   `:blocked` when the method guard refuses with a PermissionError naming the
-   verb, else `:allowed` (the guard let it through — the real connection may still
-   fail offline, which we don't distinguish here)."
-  [ctx method url]
-  (let
-    [code (str "def _p():\n"
-               "    import urllib.request as u\n"
-               "    req = u.Request("
-               (pr-str url)
-               ", method="
-               (pr-str method)
-               ")\n"
-               "    try:\n" "        u.urlopen(req, timeout=0.2); return 'allowed'\n"
-               "    except PermissionError as e:\n"
-               "        return 'blocked' if 'method' in str(e) else 'allowed'\n"
-               "    except Exception: return 'allowed'\n" "_p()")]
-    (case (.asString (.eval (pctx ctx) "python" code))
-      "blocked"
-      :blocked
-
-      :allowed)))
+(defn- env-value
+  "Read `os.environ.get(k, '')` in `ctx`."
+  [ctx k]
+  (.asString (.eval (pctx ctx) "python" (str "import os; os.environ.get(" (pr-str k) ", '')"))))
 
 (defdescribe
   network-guard-test
@@ -110,52 +100,23 @@
         (try (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
              (expect (= :blocked (raw-connect-outcome c "169.254.169.254"))) ; default SSRF denylist
              (finally (.close (pctx c) true)))))
-  (it ":rules :methods ⇒ blocks disallowed verbs per host, allows listed ones (suffix match)"
+  (it "egress routing ⇒ proxy + CA env wired, loopback reachable even under a strict allowlist"
+      ;; With :proxy-port + :ca-file the interpreter's HTTP stack is pointed at the
+      ;; gateway proxy (verb/path enforced there, not by an in-interpreter method
+      ;; guard). Loopback must stay reachable so urllib can reach the proxy.
       (let
-        [m (env/create-python-context {}
+        [p (env/create-python-context {}
                                       nil
                                       {:enabled? true
-                                       :allowed-domains ["*"]
-                                       :rules [{:host "example.com" :methods ["GET"]}]})]
-        (try (expect (= :blocked (method-outcome m "POST" "http://example.com/x")))
-             (expect (= :allowed (method-outcome m "GET" "http://example.com/x")))
-             (expect (= :blocked (method-outcome m "POST" "http://www.example.com/x"))) ; suffix match
-             (expect (= :allowed (method-outcome m "POST" "http://other.com/x")))       ; unlisted host ⇒ free
-             (finally (.close (pctx m) true)))))
-  (it ":rules `*` host ⇒ default verb allowlist; a specific host entry overrides it"
-      (let
-        [m (env/create-python-context {}
-                                      nil
-                                      {:enabled? true
-                                       :allowed-domains ["*"]
-                                       :rules [{:host "*" :methods ["GET"]}
-                                               {:host "api.example.com" :methods ["POST"]}]})]
-        (try (expect (= :blocked (method-outcome m "POST" "http://other.com/x")))       ; * ⇒ GET only
-             (expect (= :allowed (method-outcome m "GET" "http://other.com/x")))
-             (expect (= :allowed (method-outcome m "POST" "http://api.example.com/x"))) ; specific host wins
-             (expect (= :blocked (method-outcome m "GET" "http://api.example.com/x")))  ; GET not in [POST]
-             (finally (.close (pctx m) true)))))
-  (it ":rules :access :read-only ⇒ GET/HEAD/OPTIONS pass, mutations blocked"
-      (let
-        [m (env/create-python-context {}
-                                      nil
-                                      {:enabled? true
-                                       :allowed-domains ["*"]
-                                       :rules [{:host "example.com" :access :read-only}]})]
-        (try (expect (= :allowed (method-outcome m "GET" "http://example.com/x")))
-             (expect (= :blocked (method-outcome m "POST" "http://example.com/x")))
-             (expect (= :blocked (method-outcome m "DELETE" "http://example.com/x")))
-             (finally (.close (pctx m) true)))))
-  (it ":rules :allow carves a per-path POST exception on a read-only host"
-      (let
-        [m (env/create-python-context {}
-                                      nil
-                                      {:enabled? true
-                                       :allowed-domains ["*"]
-                                       :rules [{:host "api.example.com"
-                                                :access :read-only
-                                                :allow [{:method :POST :path "/v1/**"}]}]})]
-        (try (expect (= :allowed (method-outcome m "POST" "http://api.example.com/v1/things"))) ; path grant
-             (expect (= :blocked (method-outcome m "POST" "http://api.example.com/admin")))     ; wrong path
-             (expect (= :allowed (method-outcome m "GET" "http://api.example.com/admin")))      ; read-only preset
-             (finally (.close (pctx m) true))))))
+                                       :allowed-domains ["example.com"]
+                                       :proxy-port 65500
+                                       :ca-file "/tmp/vis-fake-ca.pem"})]
+        (try (expect (= "http://127.0.0.1:65500" (env-value p "http_proxy")))
+             (expect (= "http://127.0.0.1:65500" (env-value p "https_proxy")))
+             (expect (= "/tmp/vis-fake-ca.pem" (env-value p "REQUESTS_CA_BUNDLE")))
+             (expect (= "/tmp/vis-fake-ca.pem" (env-value p "SSL_CERT_FILE")))
+             ;; loopback reachable (guard permits it so urllib can reach the proxy)
+             (expect (= :ok (outcome p "127.0.0.1")))
+             ;; the raw host floor still blocks a non-allowlisted host for raw sockets
+             (expect (= :blocked (outcome p "evil.com")))
+             (finally (.close (pctx p) true))))))

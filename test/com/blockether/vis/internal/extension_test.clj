@@ -235,7 +235,7 @@
 (defdescribe startable-resource-visibility-test
              ;; The SAME `registered-startable-resources` feeds the web Resources modal AND
              ;; the TUI resource dialog, so a `:visible-fn` gate (e.g. MCP behind
-             ;; :mcp/enabled) hides a startable from BOTH channels at once. This pins that
+             ;; mcp_enabled) hides a startable from BOTH channels at once. This pins that
              ;; filter so the two surfaces can never drift.
              (it
                "drops startables whose :visible-fn is false; keeps gate-less + true ones"

@@ -72,7 +72,31 @@
   (it "projects language capabilities under canonical session language_tools"
       (let [m (cr/ctx-static-map {:ctx base-ctx})]
         (expect (= ["repl_eval" "repl_start"] (get-in m ["language_tools" "clojure"])))
-        (expect (not (contains? m "session_language_tools"))))))
+        (expect (not (contains? m "session_language_tools")))))
+  (it "projects the immutable security snapshot as standing session access"
+      (let
+        [access
+         {"generation" "sha256:abc"
+          "sandboxed" true
+          "filesystem" {"read_write" ["~/vis" "~/spel"]}
+          "changes_require" "reload"}
+
+         m
+         (cr/ctx-static-map {:ctx (assoc base-ctx "session_access" access)})]
+
+        (expect (= ["~/vis" "~/spel"] (get-in m ["access" "filesystem" "read_write"])))
+        (expect (= "reload" (get-in m ["access" "changes_require"])))
+        (expect (not (contains? m "session_access")))))
+  (it "renders turn and utilization explicitly for iteration 1"
+      (let
+        [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx
+                                                   "session_turn" 7
+                                                   "engine_utilization" {"last_request_tokens" 1200
+                                                                         "model_input_limit" 10000
+                                                                         "saturation" 12})})]
+        (expect (str/includes? boundary "session[\"turn\"] = 7"))
+        (expect (str/includes? boundary "session[\"utilization\"]"))
+        (expect (str/includes? boundary "\"saturation\": 12")))))
 
 (defdescribe
   freeze-semantics-test

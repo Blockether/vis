@@ -61,12 +61,29 @@
                        (expect (vector? (get r "trace")))
                        (expect (some #(re-find #"user/boom" %) (get r "trace")))
                        (expect (some #(re-find #"user/caller" %) (get r "trace")))
-                       (expect (not-any? #(re-find #"clojure\.lang\." %) (get r "trace")))))))
+                       (expect (not-any? #(re-find #"clojure\.lang\." %) (get r "trace")))
+                       ;; nREPL compiles submitted forms into generated user/evalNNN classes.
+                       ;; Those frames describe the transport wrapper, never user code.
+                       (expect (not-any? #(re-find #"^[^\\s]+/eval\\d+" %) (get r "trace")))))))
   (it "surfaces ex-data on an ExceptionInfo"
       (with-server (fn [port]
                      (let [r (nc/eval! {:port port :code "(throw (ex-info \"boom\" {:code 42}))"})]
                        (expect (re-find #"ExceptionInfo" (str (get r "error_message"))))
                        (expect (re-find #":code 42" (str (get r "error_data")))))))))
+
+(defdescribe
+  synthetic-eval-trace-test
+  (it "removes generated eval wrappers but keeps named user frames"
+      (let
+        [sanitize
+         (ns-resolve 'com.blockether.vis.ext.language-clojure.nrepl-client 'visible-trace)
+
+         trace
+         ["user/boom  (NO_SOURCE_FILE:1)" "user/eval407848  (NO_SOURCE_FILE:4)"
+          "user/eval407848/fn--407849  (NO_SOURCE_FILE:-1)" "my.app/evaluate  (core.clj:9)"]]
+
+        (expect (= ["user/boom  (NO_SOURCE_FILE:1)" "my.app/evaluate  (core.clj:9)"]
+                   (sanitize trace))))))
 
 (defdescribe reader-error-test
              (it "returns reader syntax errors immediately instead of timing out"

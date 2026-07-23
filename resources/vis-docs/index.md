@@ -122,6 +122,7 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 
 - **[Token optimization](token-optimization.md)**: the context-as-environment model and the tools that make it cheap.
 - **[GraalPython sandbox](graalpython.md)**: the in-process interpreter that executes the agent's actions.
+- **[Process sandbox and gateway egress](sandbox.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes a standalone binary.
 - **[Custom distributions](distributions.md)**: per-platform native artifacts and how they're built.
 - **[Configuration](configuration.md)**: providers and models, system-prompt overrides, router tuning, the database.

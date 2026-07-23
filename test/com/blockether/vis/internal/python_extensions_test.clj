@@ -993,3 +993,25 @@ vis.extension(
                            :source :tui})))
           (let [seen (symbol-fn ext (clojure.core/symbol "seen_selected"))]
             (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
+
+(defdescribe
+  trusted-extension-boundary-test
+  (it
+    "intentionally permits real filesystem and subprocess access in an unconfined gateway"
+    (if (= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
+      (expect true)
+      (with-open [ctx (pyx/build-context)]
+        (let
+          [ok
+           (.asBoolean
+             (.eval
+               ctx
+               "python"
+               (str
+                 "import os, subprocess, tempfile\n"
+                 "p = os.path.join(os.path.expanduser('~'), '.vis-extension-trust-test')\n" "try:\n"
+                 "    open(p, 'w').write('trusted')\n"
+                 "    _ok = open(p).read() == 'trusted' and subprocess.run(['/usr/bin/true']).returncode == 0\n"
+                 "finally:\n" "    try: os.unlink(p)\n"
+                 "    except FileNotFoundError: pass\n" "_ok")))]
+          (expect ok))))))

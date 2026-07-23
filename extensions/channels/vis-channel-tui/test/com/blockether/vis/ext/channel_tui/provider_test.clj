@@ -110,19 +110,19 @@
 
 (defdescribe
   configured-provider-status-test
-  (it
-    "routes configured provider status through the gateway"
-    (with-redefs
-      [vis/gateway-provider-status (fn [provider-id]
-                                     {:authenticated? true
-                                      :source :gateway
-                                      :provider-id provider-id
-                                      :config-path vis/config-path})]
-      (expect
-        (= {:authenticated? true :source :gateway :provider-id :openai :config-path vis/config-path}
-           (select-keys (@#'provider/configured-provider-status
-                         {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
-                        [:authenticated? :source :provider-id :config-path])))))
+  (it "routes configured provider status through the gateway"
+      (with-redefs
+        [vis/gateway-provider-status (fn [provider-id]
+                                       {:authenticated? true
+                                        :source :gateway
+                                        :provider-id provider-id
+                                        :config-path vis/state-path})]
+        (expect
+          (=
+            {:authenticated? true :source :gateway :provider-id :openai :config-path vis/state-path}
+            (select-keys (@#'provider/configured-provider-status
+                          {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
+                         [:authenticated? :source :provider-id :config-path])))))
   (it "routes local no-auth provider status through the gateway instead of probing locally"
       (let [local-probed? (atom false)]
         (with-redefs
@@ -342,7 +342,7 @@
                   {:id :openai-codex :base-url "https://chatgpt.com/backend-api" :api-key "tok"})]
           (expect (str/includes? text "Base URL: https://chatgpt.com/backend-api"))
           (expect (str/includes? text "Authenticated: yes"))
-          (expect (str/includes? text (str "Config path: " vis/config-path)))
+          (expect (str/includes? text (str "Config path: " vis/state-path)))
           (expect (str/includes? text "Catalog RPM: 500"))
           (expect (str/includes? text "Catalog TPM: 2000000"))
           (expect

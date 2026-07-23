@@ -17,7 +17,8 @@
    Transformed fields (`:stdout`/`:error` bounded, `:silent`/`:duration_ms`
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
    they are NOT in this set."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.pyfmt :as pyfmt]))
 
 (def ^:private display-fields
   "Every field carried VERBATIM from the loop to a channel to render a form,
@@ -32,7 +33,8 @@
    per-form display projections, the tool-call linkage, and the repair/timeout
    flags channels surface."
   [;; source
-   [:code "code"] [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
+   [:code "code"] [:display-code "display_code"] [:comment "comment"] [:scope "scope"]
+   [:started-at-ms "started_at_ms"]
    ;; result surfaces — the raw value, the pre-rendered op-card body, and the
    ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
@@ -82,6 +84,19 @@
     (let [n (name wire-name)]
       (or (label-overrides n) (str/upper-case n)))))
 
+(def ^:private compact-path-summary-tools #{"patch" "struct_patch" "write"})
+
+(defn- compact-tool-summary
+  "Remove mutation verbs made redundant by the tool badge. This also normalizes
+   persisted pre-change summaries, so restored TUI and gateway traces render like
+   new ones. Other tool-authored summaries remain untouched."
+  [summary tool-name]
+  (if (contains? compact-path-summary-tools (name tool-name))
+    (-> summary
+        (str/replace #"(^| · )(?:(?:update|add|delete|replace|overwrite)\s+|\(no change\)\s+)" "$1")
+        (str/replace " · " ", "))
+    summary))
+
 (defn result-card
   "Canonical tool-result CARD descriptor — the ONE place the op-card / collapse
    decision is made, so the TUI and web AGREE on `tool?`/label/colour/summary/
@@ -109,7 +124,8 @@
        (some-> result-summary
                str
                str/trim
-               not-empty)
+               not-empty
+               (compact-tool-summary tool-name))
 
        body
        (some-> result-render
@@ -210,11 +226,10 @@
 
 (defn- merge-same-path-summaries
   "Fold N same-file op-card summaries into ONE. Splits each on ` · `, keeps the
-   shared leading chip (`` `path` `` for cat, `` update `path` `` for patch), then
-   appends every DISTINCT tail — for cat the read's LINE SPANS plus the SUMMED
-   line count (only when every merged read carried one). So two reads render
-   `` `a.clj` · L1-10 · L40-50 `` and two edits stay `` update `a.clj` `` instead
-   of two look-alike cards."
+   shared leading chip (`` `path` `` for cat, including legacy `` update `path` ``
+   patch records), then appends every DISTINCT tail. For cat, that means the read
+   LINE SPANS plus the SUMMED line count when every merged read carried one.
+   `merge-run` removes legacy mutation verbs before exposing the merged card."
   [summaries]
   (let
     [parts
@@ -253,16 +268,40 @@
 
     (if (str/blank? tail) chip (str chip " · " tail))))
 
-(defn- format-summary-entry
-  "Parse a single-path format_code summary like `` `src/x.clj` (no change) ``.
-   Falls back to the raw summary so already-aggregated/restored cards still remain
-   visible instead of disappearing."
+(defn- format-summary-entries
+  "Recover every per-file row from a `format_code` form. Current language packs
+   return an aggregate headline plus structured `:files`; older/restored records
+   may instead carry a single `` `path` (status) `` headline. Never use an
+   aggregate headline as a fake file path."
   [form]
-  (let [summary (str (:result-summary form))]
-    (if-let [[_ path status] (re-matches #"`([^`]+)`\s+(.*)" summary)]
-      {:path path :status status}
-      {:path (or (result-field form :path) summary)
-       :status (if (result-field form :changed) "(changed)" "")})))
+  (let
+    [files
+     (result-field form :files)
+
+     from-files
+     (when (sequential? files)
+       (keep (fn [file]
+               (when (map? file)
+                 (let
+                   [path
+                    (or (get file :path) (get file "path"))
+
+                    changed?
+                    (if (contains? file :changed) (get file :changed) (get file "changed"))]
+
+                   (when (seq (str path))
+                     {:path (str path) :status (if changed? "(changed)" "(no change)")}))))
+             files))
+
+     summary
+     (str (:result-summary form))]
+
+    (or (seq from-files)
+        (when-let [[_ path status] (re-matches #"`([^`]+)`\s+(.*)" summary)]
+          [{:path path :status status}])
+        (when-let [path (result-field form :path)]
+          [{:path path :status (if (result-field form :changed) "(changed)" "(no change)")}])
+        [])))
 
 (defn- merge-format-forms
   "Turn adjacent per-file `format_code` acks into the same shape as one
@@ -271,7 +310,7 @@
   [forms]
   (let
     [entries
-     (map format-summary-entry forms)
+     (mapcat format-summary-entries forms)
 
      n
      (count entries)
@@ -314,7 +353,7 @@
 
     (cond->
       (assoc f0
-        :result-summary (:summary merged)
+        (compact-tool-summary (:summary merged) tool) (:summary merged)
         :result-render (:body merged))
       ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
       ;; `:result` comes back as the rendered string (anchors flattened) and the
@@ -352,6 +391,18 @@
    wire stringifies — `<-wire` coerces them back so a channel's keyword dispatch
    doesn't miss."
   #{:tool-color-role})
+
+(defn with-display-code
+  "Attach the canonical cached ruff rendering of a form's Python source.
+   Channels render `:display-code` verbatim; local callers without it may use
+   the same formatter. Nested result cards are normalized recursively."
+  [form]
+  (cond-> form
+    (not (str/blank? (str (:code form))))
+    (assoc :display-code (pyfmt/beautify-python (:code form)))
+
+    (seq (:cards form))
+    (update :cards #(mapv with-display-code %))))
 
 (defn ->display
   "Project the canonical display fields off a source map (loop chunk/block, a

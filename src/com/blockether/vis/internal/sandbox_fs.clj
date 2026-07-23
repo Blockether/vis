@@ -10,7 +10,7 @@
        of its nearest existing ancestor (so a symlink inside a root that points
        outside is rejected, and a symlink whose target is inside is allowed).
      - the root set is read LIVE via `roots-fn` on every check, so
-       `/fs add|remove` takes effect immediately.
+       `/fs add|/fs remove` takes effect immediately.
 
    GraalPy's own stdlib / internal resources live OUTSIDE the roots, so the
    confined FS is wrapped with `allowLanguageHomeAccess` +
@@ -94,7 +94,7 @@
 
 (defn- current-real-roots
   "Canonical (real) Paths of the CURRENT filesystem roots. Reads the root STRINGS
-   fresh each call (so `/fs add|remove` applies live), but MEMOIZES the expensive
+   fresh each call (so `/fs add|/fs remove` applies live), but MEMOIZES the expensive
    `toRealPath` syscall per root string in `cache` (a string→Path atom). A root
    dir's canonical path is stable, so this turns what was a stat-per-root on EVERY
    file op — an os.walk/glob over a big tree was a syscall storm — into one stat

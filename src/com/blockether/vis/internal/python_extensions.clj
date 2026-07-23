@@ -1298,13 +1298,16 @@ def __vis_registration__():
 
 (defn- reload-slash
   [_ctx]
-  ;; One user-facing reload for EVERY hot-reloadable resource: Python
-  ;; extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
+  ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
+  ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
   ;; templates, and any extension-owned discovery cache registered as a
   ;; reload hook (harness skills/agents).
   (let
     [{:keys [loaded failed]}
      (reload-python-extensions!)
+
+     _config
+     (config/reload-config!)
 
      hook-results
      (extension/run-reload-hooks!)
@@ -1323,7 +1326,7 @@ def __vis_registration__():
 
     {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
      :slash/title
-     (str "Reloaded — Python extensions: " loaded
+     (str "Reloaded — configuration; Python extensions: " loaded
           " loaded" (when (pos? (long failed))
                       (str ", "
                            failed
@@ -1375,7 +1378,7 @@ def __vis_registration__():
          :ext/slash-commands
          [{:slash/name "reload"
            :slash/doc
-           "Reload Python extensions, skills/agents, prompt templates, and context files."
+           "Reload configuration, Python extensions, skills/agents, prompt templates, and context files."
            :slash/run-fn reload-slash}
           {:slash/name "test"
            :slash/doc "Run Python extension tests (test_*.py / *_test.py) and report pass/fail."

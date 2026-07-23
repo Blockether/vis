@@ -85,7 +85,8 @@
           "Inspect dependencies before adding them" "benchmark/profile identical workloads"
           "Prefer structural editing" "`struct_index`/`struct_patch`" "reach for it over text edits"
           "structural ops cannot express" "`format` stales anchors" "re-read first"
-          "spent edits/reads first" "Create no unrequested"
+          "Drop spent reads/catalogs/errors with no gist" "preserve only decisions, findings, edits"
+          "Create no unrequested"
           "without asking permission or offering optional" "Never expose or log secrets"
           "commit, push, publish" "Before every `session_fold`" "read `session[\"turn\"]`"
           "`N < session[\"turn\"]`" "never target current/future turns"
@@ -111,6 +112,9 @@
         (expect (str/includes? text "Auto-imported by `python_execution`"))
         (expect (str/includes? text "Preinstalled shims"))
         (expect (str/includes? text "doc(name)"))
+        (expect (str/includes? text "always import before use"))
+        (expect (str/includes? text "import numpy as np"))
+        (expect (str/includes? text "not auto-created or inferred from source"))
         (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
           (expect (str/includes? text (str "`" name "`")))))))
 
@@ -265,3 +269,34 @@
         ;; no user message without initial-user-content — images can't ride alone
         (expect (= 1 (count msgs)))
         (expect (= "system" (:role (first msgs)))))))
+
+(defdescribe resume-message-cache-stability-test
+  (it "appends each completed turn as its own stable message"
+    (let [entry (fn [n]
+                  {:turn n
+                   :user-request (str "q" n)
+                   :answer (str "a" n)
+                   :results []})
+          assemble (fn [prior current turn]
+                     (prompt/assemble-initial-messages
+                       {:stable-prompt-messages [{:role "system" :content "stable"}]
+                        :previous-turn-context prior
+                        :turn-context (str "session[\"turn\"] = " turn)
+                        :initial-user-content current}))
+          t3 (assemble [(entry 1) (entry 2)] "q3" 3)
+          t4 (assemble [(entry 1) (entry 2) (entry 3)] "q4" 4)]
+      (expect (= (vec (butlast t3)) (subvec t4 0 (dec (count t3)))))
+      (expect (str/includes? (:content (last t4)) ";; -- TURN-SYSTEM-CONTEXT --"))
+      (expect (str/includes? (:content (last t4)) "session[\"turn\"] = 4"))))
+  (it "renders one checkpoint message without covered Q/A"
+    (let [messages (prompt/assemble-initial-messages
+                     {:previous-turn-context [{:checkpoint? true
+                                               :turns [1 2]
+                                               :gist "durable state"}]
+                      :turn-context "session[\"turn\"] = 3"
+                      :initial-user-content "continue"})
+          prior (:content (first messages))]
+      (expect (= 2 (count messages)))
+      (expect (str/includes? prior "folded turns 1, 2"))
+      (expect (str/includes? prior "durable state"))
+      (expect (not (str/includes? prior "user asked:"))))))

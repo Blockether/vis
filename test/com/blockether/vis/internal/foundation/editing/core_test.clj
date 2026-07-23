@@ -2614,6 +2614,35 @@
     (it "rejects an edit with no locator"
         (expect (throws? clojure.lang.ExceptionInfo #(coerce [{"path" "p.txt" "replace" "x"}]))))))
 
+(defdescribe
+  patch-stale-anchor-diagnostic-test
+  (let [explain (private-fn "explain-failure")]
+    (it "shows the current line before suggesting reuse of its fresh anchor"
+        (let
+          [message (explain {:edit-index 0
+                             :path "src/example.clj"
+                             :reason :hashline-not-found
+                             :hash-error {:which :from
+                                          :stated-line 835
+                                          :current-anchor "835:2b5"
+                                          :current-text "return null;"}})]
+          (expect (string/includes? message "line 835 changed — now `835:2b5`: \"return null;\"."))
+          (expect (string/includes? message
+                                    "Confirm this is your target before reusing the anchor."))))
+    (it "bounds long current-line previews"
+        (let
+          [prefix (apply str (repeat 80 "x"))
+           message (explain {:edit-index 0
+                             :path "src/example.clj"
+                             :reason :hashline-not-found
+                             :hash-error {:which :from
+                                          :stated-line 835
+                                          :current-anchor "835:2b5"
+                                          :current-text (str prefix "SHOULD-NOT-APPEAR")}})]
+
+          (expect (string/includes? message (str "\"" prefix "…\"")))
+          (expect (not (string/includes? message "SHOULD-NOT-APPEAR")))))))
+
 (defdescribe editing-native-contract-test
              (let
                [patch-description
@@ -2639,21 +2668,27 @@
                                 (set (keys fields))))))))
 
 (defdescribe editing-native-schema-shape-test
-             (it "find_files' query is a scalar-or-list contract (name + content OR)"
-                 (let [query (get-in editing/find-symbol [:ext.symbol/schema :properties "query"])]
-                   (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
-             (it "rejects ambiguous cat selectors at the native boundary"
-                 (let [schema (:ext.symbol/schema editing/cat-symbol)]
-                   (expect (= 2 (:maxProperties schema)))
-                   (expect (= 2 (get-in schema [:properties "range" :minItems])))
-                   (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
-             (it "uses one portable patch shape with a path on every edit"
-                 (let [schema (:ext.symbol/schema editing/patch-symbol)]
-                   (expect (= "object" (:type schema)))
-                   (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-                   (expect (= #{"edits"} (set (keys (:properties schema)))))
-                   (expect (= ["path" "from_anchor" "replace"]
-                              (get-in schema [:properties "edits" :items :required]))))))
+  (it "find_files' query is a scalar-or-list contract (name + content OR)"
+      (let [query (get-in editing/find-symbol [:ext.symbol/schema :properties "query"])]
+        (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
+  (it "advertises directory-only paths and no context-lines argument"
+      (let [properties (get-in editing/find-symbol [:ext.symbol/schema :properties])
+            paths (get properties "paths")]
+        (expect (contains? properties "paths"))
+        (expect (string/includes? (:description paths) "Directory scopes only"))
+        (expect (not (contains? properties "context")))))
+  (it "rejects ambiguous cat selectors at the native boundary"
+      (let [schema (:ext.symbol/schema editing/cat-symbol)]
+        (expect (= 2 (:maxProperties schema)))
+        (expect (= 2 (get-in schema [:properties "range" :minItems])))
+        (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
+  (it "uses one portable patch shape with a path on every edit"
+      (let [schema (:ext.symbol/schema editing/patch-symbol)]
+        (expect (= "object" (:type schema)))
+        (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
+        (expect (= #{"edits"} (set (keys (:properties schema)))))
+        (expect (= ["path" "from_anchor" "replace"]
+                   (get-in schema [:properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test
@@ -2802,6 +2837,16 @@
               (expect (= 1 (get-in r [:result "file_count"])))))
           (expect (clojure.string/includes? (slurp (fs/file f1)) "ww/q"))
           (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))))
+
+(defdescribe render-patch-result-compact-headline-test
+             (let [render @#'editing/render-patch-result]
+               (it "uses only path chips because the tool badge already names the operation"
+                   (let
+                     [card (render [{"path" "src/a.clj" "op" "update" "changed" true "diff" "+a"}
+                                    {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
+                     (expect (= "`src/a.clj`, `src/b.clj`" (:summary card)))
+                     (expect (not (clojure.string/includes? (:body card) "update")))
+                     (expect (not (clojure.string/includes? (:body card) "add `")))))))
 
 (defdescribe
   render-cat-result-spans-test
@@ -3169,28 +3214,28 @@
             (let [src (slurp (fs/file f))]
               (expect (clojure.string/includes? src "keep-me"))
               (expect (not (clojure.string/includes? src "drop-me")))))))
-    (it
-      "append_child/prepend_child by NAME (no at/anchor) steers to `append` instead of a cryptic op error"
-      (let
-        [_ (temp-dir-path "spac")
-         f (str (temp-root) "/spac/m.clj")]
-
-        (spit (fs/file f) "(defn foo [x] (inc x))\n")
-        ;; append_child is PATH-only; paired with a name `target` it must NOT
-        ;; throw the internal \"Unknown structural op\" — it steers to `append`.
+    (it "append_child by NAME inserts inside that definition, not at end-of-file"
         (let
-          [ex (try (sp {"path" f "op" "append_child" "target" "foo" "code" "(defn bar [] 1)"})
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
-          (expect (some? ex))
-          (expect (= :ext.foundation.editing/struct-op-needs-path (:type (ex-data ex))))
-          (expect (= "append_child" (:op (ex-data ex))))
-          (expect (clojure.string/includes? (.getMessage ^Throwable ex) "append_child"))
-          (expect (clojure.string/includes? (.getMessage ^Throwable ex) "`append`"))
-          (expect (not (clojure.string/includes? (.getMessage ^Throwable ex)
-                                                 "Unknown structural op")))
-          ;; the file is untouched by the refusal
-          (expect (= "(defn foo [x] (inc x))\n" (slurp (fs/file f)))))))
+          [_ (temp-dir-path "spac")
+           f (str (temp-root) "/spac/m.clj")
+           before (str "(defdescribe clipboard-copy-actions-test\n"
+                       "  (it \"copies\" (expect true)))\n\n"
+                       "(defdescribe later-test\n" "  (it \"stays later\" (expect true)))\n")]
+
+          (spit (fs/file f) before)
+          (let
+            [r (sp {"path" f
+                    "op" "append_child"
+                    "target" "clipboard-copy-actions-test"
+                    "kind" "fn"
+                    "code" "(it \"reports failure\" (expect true))"})
+             src (slurp (fs/file f))]
+
+            (expect (:success? r))
+            (expect (clojure.string/includes?
+                      src
+                      "(it \"copies\" (expect true))\n  (it \"reports failure\" (expect true)))"))
+            (expect (< (.indexOf src "reports failure") (.indexOf src "later-test"))))))
     (it "append_child WITH a path locator (`at`) still edits the located node"
         (let
           [_ (temp-dir-path "spac2")
@@ -3232,7 +3277,10 @@
           ;; summary must SHOW it, not flatten it to the generic "edit N in P failed."
           ;; (explain-failure used to drop :message because :syntax-error is not one
           ;; of the anchor-resolution `reason`s it case-matches on).
-          (expect (string/includes? (:message r) "SYNTAX ERROR"))
+          (expect (= (str "No changes (atomic): edit would break syntax in "
+                          p
+                          ". Fix the replacement or use struct_patch.")
+                     (:message r)))
           (expect (not (string/includes? (:message r) "failed.")))
           ;; The refusal carries the WHOLE-BATCH candidates so a language
           ;; pack's :around op-hook (e.g. the Clojure pack's parinfer rescue)
@@ -3316,28 +3364,46 @@
 
 (defdescribe
   empty-search-paths-default-test
-  "An explicit empty paths vector means the same thing as omitting paths: search the workspace root recursively."
-  (let
-    [coerce-find
-     (private-fn "coerce-find-spec")
-
-     coerce-rg
-     (private-fn "coerce-rg-spec")
-
-     find-paths
-     (private-fn "find-arg-paths")
-
-     rg-paths
-     (private-fn "find-arg-paths")]
-
+  "find_files scopes are directories; empty scope still means the workspace root."
+  (let [coerce-find (private-fn "coerce-find-spec")
+        coerce-rg (private-fn "coerce-rg-spec")
+        find-paths (private-fn "find-arg-paths")]
     (it "find_files defaults empty paths to current directory in validation and path protection"
         (let [spec {"query" "resource-config" "paths" []}]
           (expect (= ["."] (:paths (coerce-find [spec]))))
           (expect (= ["."] (find-paths [spec])))))
-    (it "rg defaults empty paths to current directory in validation and path protection"
+    (it "normalizes an existing filename scope to its parent directory everywhere"
+        (let [dir (temp-dir-path "find-dir-scope")
+              file (str dir "/one.clj")
+              expected ((private-fn "rel-path") (fs/file dir))
+              spec {"query" "needle" "paths" [file]}]
+          (spit (fs/file file) "needle\n")
+          (expect (= [expected] (:paths (coerce-find [spec]))))
+          (expect (= [expected] (find-paths [spec])))))
+    (it "rejects the removed context-lines option"
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(coerce-find [{"query" "needle" "context" 2}]))))
+    (it "rg keeps its own empty-path and file-path semantics"
         (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
-          (expect (= ["."] (:paths (coerce-rg spec))))
-          (expect (= ["."] (rg-paths [spec])))))))
+          (expect (= ["."] (:paths (coerce-rg spec))))))))
+
+(defdescribe find-files-directory-scope-test
+  (let [find-files (private-fn "find-tool")]
+    (it "widens a filename scope to its parent and returns matching lines without context"
+        (let [dir (temp-dir-path "find-file-parent")
+              scoped-file (str dir "/scope.clj")
+              sibling-file (str dir "/sibling.clj")
+              _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
+              _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
+              result (:result (find-files {"query" "sibling-only-needle"
+                                          "paths" [scoped-file]}))
+              expected-dir ((private-fn "rel-path") (fs/file dir))
+              expected-file ((private-fn "rel-path") (fs/file sibling-file))
+              hit (first (vals (get-in result ["content" "matches" expected-file])))]
+          (expect (= [expected-dir] (get result "searched_paths")))
+          (expect (= "sibling-only-needle" (get hit "text")))
+          (expect (= #{"text"} (set (keys hit))))
+          (expect (not (contains? (get result "content") "context")))))))
 
 (defdescribe
   rg-stringified-list-coercion-test

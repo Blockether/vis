@@ -1,9 +1,10 @@
 (ns com.blockether.vis.internal.foundation.shell-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -26,9 +27,10 @@
 (def ^:private format-shell-command @#'shell/format-shell-command)
 
 (defn- with-shell-on
+  "Shell is unconditionally available now; kept as a thin pass-through so the
+   existing call sites read unchanged."
   [f]
-  (toggles/set-enabled! :shell/enabled true)
-  (try (f) (finally (toggles/reset-to-default! :shell/enabled))))
+  (f))
 
 (defn- threw?
   "lazytest has no `thrown?`; run `thunk` and report whether it threw."
@@ -45,10 +47,8 @@
              (>= i tries) (throw (ex-info "poll exhausted" {:last v}))
              :else (do (Thread/sleep 100) (recur (inc i))))))))
 
-(defdescribe shell-toggle-gate-test
-             (it "is OFF by default and short-circuits every call into a refusal envelope"
-                 (toggles/reset-to-default! :shell/enabled)
-                 (expect (false? (toggles/enabled? :shell/enabled)))
+(defdescribe shell-gate-test
+             (it "the before-fn injects env as the impl's first arg (no toggle gate)"
                  (let
                    [gate
                     (@#'shell/shell-gate-before-fn :shell/run)
@@ -56,23 +56,24 @@
                     out
                     (gate {:session-id "t"} identity ["echo hi"])]
 
-                   (expect (contains? out :result))
-                   (expect (extension/envelope-failure? (:result out)))
-                   (expect (= :shell-disabled (get-in out [:result :error :reason])))
-                   ;; the human label is the snake call name, and the hint points at the USER
-                   (expect (str/includes? (get-in out [:result :error :message]) "shell_run"))
-                   (expect (str/includes? (get-in out [:result :error :hint]) "USER"))))
-             (it "injects env as the first arg when the toggle is ON"
-                 (with-shell-on (fn []
-                                  (let
-                                    [gate
-                                     (@#'shell/shell-gate-before-fn :shell/run)
-
-                                     out
-                                     (gate {:session-id "t"} identity ["echo hi"])]
-
-                                    (expect (not (contains? out :result)))
-                                    (expect (= [{:session-id "t"} "echo hi"] (:args out))))))))
+                   (expect (not (contains? out :result)))
+                   (expect (= [{:session-id "t"} "echo hi"] (:args out)))))
+             (it "a failing or nil session policy denies spawn instead of failing open"
+                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                   (expect (threw? #(shell-run* {:session-id "t"
+                                                 :jail-policy-fn (fn []
+                                                                   (throw (ex-info "boom" {})))}
+                                                "echo escaped")))
+                   (expect (threw? #(shell-run* {:session-id "t" :jail-policy-fn (constantly nil)}
+                                                "echo escaped")))))
+             (it "sandbox false is represented explicitly and still launches unwrapped"
+                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                   (let
+                     [r (:result (shell-run* {:session-id "t"
+                                              :jail-policy-fn (constantly {:disabled? true})}
+                                             "printf explicit-opt-out"))]
+                     (expect (= 0 (get r "exit")))
+                     (expect (= "explicit-opt-out" (get r "stdout")))))))
 
 (defdescribe
   shell-run-sync-test
@@ -151,10 +152,58 @@
                            (expect (true? (get r "timed_out")))
                            (expect (= 1 (get r "timeout_secs")))
                            (expect (not (contains? r "exit"))))))))
-  (it "rejects a cwd that escapes the workspace root"
+  (it "rejects a cwd outside every allowed filesystem root"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (expect (threw? #(shell-run* {} "pwd" {"cwd" "../.."})))))))
+  (it "accepts a sibling cwd granted by the immutable environment snapshot"
+      (let
+        [parent
+         (doto (io/file (System/getProperty "java.io.tmpdir")
+                        (str "vis-shell-roots-" (System/nanoTime)))
+           (.mkdirs))
+
+         primary
+         (doto (io/file parent "workspace") (.mkdirs))
+
+         sibling
+         (doto (io/file parent "svar") (.mkdirs))
+
+         env
+         {:security/filesystem-roots [(.getCanonicalPath sibling)]
+          :jail-policy-fn (constantly {:disabled? true})}]
+
+        (try (binding
+               [workspace/*workspace-root*
+                (.getCanonicalPath primary)
+
+                workspace/*filesystem-roots*
+                nil]
+
+               (let [r (:result (shell-run* env "pwd" {"cwd" "../svar"}))]
+                 (expect (= (.getCanonicalPath sibling) (str/trim (get r "stdout"))))
+                 (expect (= (.getCanonicalPath sibling) (get r "cwd")))))
+             (finally (io/delete-file sibling true)
+                      (io/delete-file primary true)
+                      (io/delete-file parent true)))))
+  (it "accepts the HOME-relative paths advertised in session access"
+      (let
+        [home
+         (.getCanonicalPath (io/file (System/getProperty "user.home")))
+
+         env
+         {:security/filesystem-roots [home] :jail-policy-fn (constantly {:disabled? true})}]
+
+        (binding
+          [workspace/*workspace-root*
+           (workspace/trunk-root)
+
+           workspace/*filesystem-roots*
+           nil]
+
+          (let [r (:result (shell-run* env "pwd" {"cwd" "~"}))]
+            (expect (= home (str/trim (get r "stdout"))))
+            (expect (= home (get r "cwd")))))))
   (it "accepts an ABSOLUTE cwd that lands inside a workspace root"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -388,3 +437,61 @@
                    (expect (contains? syms 'bg))
                    (expect (contains? syms 'logs))
                    (expect (contains? syms 'send)))))
+
+(defdescribe
+  macos-jailed-pty-e2e-test
+  (it
+    "keeps PTY/send/attach while nested shells inherit Seatbelt filesystem denial"
+    (if (or (not (process-jail/supported?)) (= "1" (System/getenv "VIS_SEATBELT_ACTIVE")))
+      (expect true)
+      (let
+        [ws
+         (doto (io/file (System/getProperty "java.io.tmpdir")
+                        (str "vis-pty-e2e-" (System/nanoTime)))
+           (.mkdirs))
+
+         secret
+         (io/file (System/getProperty "user.home") (str ".vis-pty-secret-" (System/nanoTime)))
+
+         sid
+         (str "pty-e2e-" (System/nanoTime))
+
+         env
+         {:session-id sid
+          :jail-policy-fn (constantly {:roots-fn (constantly [(.getPath ws)])
+                                       :net-enabled? false
+                                       :deny-read [(.getPath secret)]})}
+
+         cmd
+         (str "test -t 0 && echo TTY_OK; "
+              "if bash --noprofile --norc -lc 'cat " (.getPath secret)
+              " >/dev/null 2>&1'; then echo ESCAPED; else echo NESTED_SEALED; fi; "
+              "echo READY; read x; echo GOT:$x; sleep 2")]
+
+        (spit secret "TOP-SECRET")
+        (try
+          (binding [workspace/*workspace-root* (.getCanonicalPath ws)]
+            (let
+              [started (:result (shell-bg* env "pty" cmd))
+               ready? (fn [r]
+                        (some #(str/includes? (str (second %)) "READY") (get r "lines")))
+               before (poll #(:result (shell-logs* env "pty")) ready?)]
+
+              (expect (= "1"
+                         (some->> (get before "lines")
+                                  (map second)
+                                  (some #(when (str/includes? (str %) "TTY_OK") "1")))))
+              (expect (some #(str/includes? (str (second %)) "NESTED_SEALED") (get before "lines")))
+              (expect (not (some #(str/includes? (str (second %)) "ESCAPED") (get before "lines"))))
+              (expect (string? (get started "attach")))
+              (expect (string? (get started "socket")))
+              (shell-send* env "pty" "hello")
+              (let
+                [after (poll #(:result (shell-logs* env "pty"))
+                             #(some (fn [line]
+                                      (str/includes? (str (second line)) "GOT:hello"))
+                                    (get % "lines")))]
+                (expect (some #(str/includes? (str (second %)) "GOT:hello") (get after "lines"))))))
+          (finally (resources/stop-all! sid)
+                   (io/delete-file secret true)
+                   (io/delete-file ws true)))))))

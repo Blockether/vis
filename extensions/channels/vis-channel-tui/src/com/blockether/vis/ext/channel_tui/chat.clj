@@ -134,7 +134,7 @@
    the derived `:duration-ms`/`:channel`, the computed op projections
    (`:result-kind`/`:result-detail`), and the restore-only status flags."
   [block]
-  (merge (vis/form->display block)
+  (merge (vis/form->display (vis/form-with-display-code block))
          {:started-at-ms nil
           :duration-ms (or (:duration-ms block) 0)
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
@@ -839,7 +839,10 @@
        ;; sibling-started turn (state/:sibling-turn-started) with the real
        ;; user bubble, not a blank one.
        :request (event-get event :request)
-       :started-at-ms (event-get event :started-at)}
+       :started-at-ms (event-get event :started-at)
+       ;; `ts` is sampled by the gateway in the same event. Consumers derive
+       ;; elapsed from ts-started_at, so a device clock cannot skew the timer.
+       :server-at-ms (event-get event :ts)}
 
       ;; A session's title changed — auto-title or a rename, possibly produced
       ;; in a SIBLING process (another TUI, the web, the serve daemon), where
@@ -960,6 +963,15 @@
                                            (= (str tid) (str (get t "turn_id"))))
                                   t))
                               turns))
+         running-request (or (get soul "running_request") (get running-turn "request"))
+         running-started-at (or (get soul "running_started_at") (get running-turn "started_at"))
+         server-time-ms (get soul "server_time_ms")
+         local-running-started-at
+         (when (nat-int? running-started-at)
+           (if (nat-int? server-time-ms)
+             (- (System/currentTimeMillis)
+                (max 0 (- (long server-time-ms) (long running-started-at))))
+             running-started-at))
          queued-turns (->> turns
                            (filter (fn [t]
                                      (= "queued" (str (get t "status")))))
@@ -974,11 +986,11 @@
           tid
           (assoc :current-turn-id tid)
 
-          (some? (get running-turn "request"))
-          (assoc :running-request (get running-turn "request"))
+          (some? running-request)
+          (assoc :running-request running-request)
 
-          (nat-int? (get running-turn "started_at"))
-          (assoc :running-started-at (get running-turn "started_at"))
+          (nat-int? local-running-started-at)
+          (assoc :running-started-at local-running-started-at)
 
           (seq queued-turns)
           (assoc :queued-turns queued-turns))))))

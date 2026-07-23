@@ -494,7 +494,7 @@
          (var-get #'dlg/settings-row-mark)
 
          id
-         :dialogs-test/registry-row
+         "dialogs_test_registry_row"
 
          _
          (vis/register-toggle! {:id id :label "Test" :default false})]
@@ -526,7 +526,7 @@
          (var-get #'dlg/settings-option-label)
 
          id
-         :dialogs-test/registry-enum]
+         "dialogs_test_registry_enum"]
 
         (vis/register-toggle!
           {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
@@ -654,15 +654,15 @@
                      (:choices (first (filter #(= :theme-name (:key %)) rows)))))
           ;; Mouse auto-copy is now ALWAYS ON (`:settings? false`) — out of Settings.
           (expect (not-any? #(= :mouse-selection-copy (:key %)) rows))
-          (expect (not-any? #(= :vis/mouse-selection-copy (:toggle-id %)) rows))
+          (expect (not-any? #(= "mouse_selection_copy" (:toggle-id %)) rows))
           ;; Network access is ALWAYS ON too — also out of Settings.
-          (expect (not-any? #(= :network/enabled (:toggle-id %)) rows))
-          ;; Remaining registry toggle (tools) shows; the retired display gates
-          ;; (show-thinking/iterations/silent/timestamps) and the own-control
-          ;; knobs (reasoning-effort :settings? false) are NOT in the list.
-          (expect (some #(= :shell/enabled (:toggle-id %)) rows))
-          (expect (not-any? #(= :vis/show-thinking (:toggle-id %)) rows))
-          (expect (not-any? #(= :vis/reasoning-level (:toggle-id %)) rows))
+          (expect (not-any? #(= "network_enabled" (:toggle-id %)) rows))
+          ;; Shell + harness verbs are always on now (no user toggle); the retired
+          ;; display gates (show-thinking/iterations/silent/timestamps) and the
+          ;; own-control knobs (reasoning-effort :settings? false) stay out.
+          (expect (not-any? #(= "shell_enabled" (:toggle-id %)) rows))
+          (expect (not-any? #(= "show_thinking" (:toggle-id %)) rows))
+          (expect (not-any? #(= "reasoning_level" (:toggle-id %)) rows))
           ;; toggles group by :group now — no single "Feature Toggles" bucket;
           ;; with no declared extensions there is no "Extension Settings" section
           (expect (not-any? #{"Feature Toggles"} sections))
@@ -749,10 +749,6 @@
              :ext/settings [{:key :openai-codex-verbosity
                              :type :choice
                              :choices [:low :medium :high]
-                             :label "Codex verbosity"}
-                            {:key :openai-codex/verbosity
-                             :type :choice
-                             :choices [:low :medium :high]
                              :label "Codex verbosity"}]}])]
 
         (let
@@ -762,19 +758,16 @@
 
           ;; Reasoning-effort has its OWN control (Ctrl+R) — `:settings? false`
           ;; keeps it registered but out of the Settings dialog.
-          (expect (not (contains? toggles :vis/reasoning-level)))
+          (expect (not (contains? toggles "reasoning_level")))
           ;; Provider-specific knob: its `:visible-fn` hides it from
           ;; Settings unless a Codex provider is CONFIGURED — this test
           ;; env has none, so it must NOT appear in the rows even
           ;; though it stays registered.
-          (expect (not (contains? toggles :openai-codex/verbosity)))
+          (expect (not (contains? toggles "openai_codex_verbosity")))
           (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
           (expect (not (contains? ids
                                   [:extension-setting "provider-openai-codex"
-                                   :openai-codex-verbosity])))
-          (expect (not (contains? ids
-                                  [:extension-setting "provider-openai-codex"
-                                   :openai-codex/verbosity])))))))
+                                   :openai-codex-verbosity])))))))
   (it "provider-declared legacy settings are ignored"
       (let [settings-rows (var-get #'dlg/settings-rows)]
         (with-redefs
@@ -1042,7 +1035,7 @@
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids
                         [:cycle-model :cycle-reasoning :search-open :open-resources :show-sessions
-                         :open-drafts :open-dirs :pick-file :new-session :fork-session]))))
+                         :open-drafts :pick-file :new-session :fork-session]))))
   (it "command palette filters by a typed query (searchable)"
       ;; The palette is searchable: the filter is a case-insensitive substring
       ;; match on :label, the spine `searchable-select!` applies.
@@ -1060,22 +1053,27 @@
         (expect (= [] (match "zzz-no-such-command"))))))
 
 (defdescribe fork-turn-items-test
-  (it "builds filterable palette rows: message label, tN hint, turn-id, truncation"
-      (let [turns [{:id "s1" :position 1 :user-request "  first   question here  "}
-                   {:id "s2" :position 2 :user-request (apply str (repeat 200 "x"))}
-                   {:id "s3" :position 3 :user-request "   "}]
-            rows (dlg/fork-turn-items turns)]
-        ;; each row carries the soul id the fork copies THROUGH
-        (expect (= ["s1" "s2" "s3"] (mapv :turn-id rows)))
-        ;; ordinal hint
-        (expect (= ["t1" "t2" "t3"] (mapv :hint rows)))
-        ;; whitespace collapsed for the searchable label
-        (expect (= "first question here" (:label (first rows))))
-        ;; long messages truncated with an ellipsis
-        (expect (<= (count (:label (second rows))) 72))
-        (expect (clojure.string/ends-with? (:label (second rows)) "…"))
-        ;; blank message gets a placeholder
-        (expect (= "(no message)" (:label (nth rows 2)))))))
+             (it "builds filterable palette rows: message label, tN hint, turn-id, truncation"
+                 (let
+                   [turns
+                    [{:id "s1" :position 1 :user-request "  first   question here  "}
+                     {:id "s2" :position 2 :user-request (apply str (repeat 200 "x"))}
+                     {:id "s3" :position 3 :user-request "   "}]
+
+                    rows
+                    (dlg/fork-turn-items turns)]
+
+                   ;; each row carries the soul id the fork copies THROUGH
+                   (expect (= ["s1" "s2" "s3"] (mapv :turn-id rows)))
+                   ;; ordinal hint
+                   (expect (= ["t1" "t2" "t3"] (mapv :hint rows)))
+                   ;; whitespace collapsed for the searchable label
+                   (expect (= "first question here" (:label (first rows))))
+                   ;; long messages truncated with an ellipsis
+                   (expect (<= (count (:label (second rows))) 72))
+                   (expect (clojure.string/ends-with? (:label (second rows)) "…"))
+                   ;; blank message gets a placeholder
+                   (expect (= "(no message)" (:label (nth rows 2)))))))
 
 ;; Navigator PROJECT grouping: non-focused rows regroup by `:dir`
 ;; (first-appearance order = projects by their most recent session),

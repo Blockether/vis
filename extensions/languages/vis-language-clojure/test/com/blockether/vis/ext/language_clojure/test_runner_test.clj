@@ -261,3 +261,37 @@
              (expect (= ["com.example.thing-test"] @seen-nses)))
            (finally (doseq [f (reverse (file-seq root-file))]
                       (io/delete-file f true)))))))
+
+(defdescribe
+  only-miss-output-test
+  (it
+    "reports a bounded selector miss without dumping namespaces or vars"
+    (let
+      [fixture-ns
+       'vis.test-runner-only-miss-fixture
+
+       n
+       (create-ns fixture-ns)
+
+       run-form
+       @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
+
+      (try
+        (doseq [test-name '[first-test second-test]]
+          (alter-meta! (intern n
+                               test-name
+                               (fn []))
+                       assoc
+                       :test
+                       (fn [])))
+        (with-redefs [clojure.core/require (fn [& _])]
+          (let
+            [result ((eval run-form) [fixture-ns] {:only ["missing-test"]} {})
+             error (get result "error")]
+
+            (expect
+              (=
+                "only [\"missing-test\"] matched no test vars (searched 2 test vars across 1 namespace)"
+                error))
+            (expect (not (re-find #"first-test|second-test|vis\\.test-runner" error)))))
+        (finally (remove-ns fixture-ns))))))

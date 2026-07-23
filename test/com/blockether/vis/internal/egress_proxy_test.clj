@@ -13,6 +13,13 @@
            (java.security KeyStore)
            (javax.net.ssl SSLContext SSLServerSocket SSLSocket TrustManagerFactory)))
 
+(defn- run-wire-test
+  "Run socket integration only in an unconfined host JVM."
+  [f]
+  (if (= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
+    (is true "conditional skip: inherited Seatbelt forbids test listeners")
+    (f)))
+
 ;; ---------------------------------------------------------------------------
 ;; Policy brain — pure, cross-platform
 ;; ---------------------------------------------------------------------------
@@ -163,24 +170,26 @@
     (try (.getResponseCode conn) (catch Throwable _ (.getResponseCode conn)))))
 
 (deftest proxy-wire-roundtrip
-  (let
-    [origin
-     (start-origin!)
+  (run-wire-test
+    (fn []
+      (let
+        [origin
+         (start-origin!)
 
-     ;; localhost is allowed; read-only ⇒ GET forwarded, POST denied at the proxy.
-     policy
-     (ep/compile-policy {:allowed-domains ["localhost"]
-                         :rules [{:host "localhost" :access "read-only"}]})
+         ;; localhost is allowed; read-only ⇒ GET forwarded, POST denied at the proxy.
+         policy
+         (ep/compile-policy {:allowed-domains ["localhost"]
+                             :rules [{:host "localhost" :access "read-only"}]})
 
-     proxy
-     (ep/start! {:policy-fn (fn [_token]
-                              policy)})]
+         proxy
+         (ep/start! {:policy-fn (fn [_token]
+                                  policy)})]
 
-    (try (testing "GET to an allowed, read-only host is forwarded (origin 200)"
-           (is (= 200 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
-         (testing "POST to a read-only host is denied at the proxy (403), never reaching origin"
-           (is (= 403 (http-through-proxy (:port proxy) "POST" (:port origin) "/"))))
-         (finally ((:stop! proxy)) ((:stop! origin))))))
+        (try (testing "GET to an allowed, read-only host is forwarded (origin 200)"
+               (is (= 200 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
+             (testing "POST to a read-only host is denied at the proxy (403), never reaching origin"
+               (is (= 403 (http-through-proxy (:port proxy) "POST" (:port origin) "/"))))
+             (finally ((:stop! proxy)) ((:stop! origin))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; MITM (TLS-terminating) round-trip — HTTPS verb enforcement for shell children
@@ -277,37 +286,39 @@
            (catch Throwable t (str "error: " (.getMessage t)))))))
 
 (deftest proxy-mitm-https-roundtrip
-  (let
-    [cap
-     (tls/create! {:upstream-trust-all? true})
+  (run-wire-test
+    (fn []
+      (let
+        [cap
+         (tls/create! {:upstream-trust-all? true})
 
-     origin
-     (start-tls-origin! ((:ctx-for cap) "localhost"))
+         origin
+         (start-tls-origin! ((:ctx-for cap) "localhost"))
 
-     client-ctx
-     (client-ctx-trusting (:ca-cert cap))
+         client-ctx
+         (client-ctx-trusting (:ca-cert cap))
 
-     ;; localhost read-only ⇒ GET forwarded, POST denied — over HTTPS via MITM.
-     policy
-     (assoc (ep/compile-policy {:allowed-domains ["localhost"]
-                                :rules [{:host "localhost" :access "read-only"}]})
-       :mitm? true)
+         ;; localhost read-only ⇒ GET forwarded, POST denied — over HTTPS via MITM.
+         policy
+         (assoc (ep/compile-policy {:allowed-domains ["localhost"]
+                                    :rules [{:host "localhost" :access "read-only"}]})
+           :mitm? true)
 
-     proxy
-     (ep/start! {:mitm (fn []
-                         cap)
-                 :policy-fn (fn [_token]
-                              policy)})]
+         proxy
+         (ep/start! {:mitm (fn []
+                             cap)
+                     :policy-fn (fn [_token]
+                                  policy)})]
 
-    (try (testing "the client accepts the proxy's ephemeral leaf (hostname-verified)"
-           (is (= "HTTP/1.1 200 OK"
-                  (https-through-proxy (:port proxy) client-ctx "GET" (:port origin)))))
-         (testing "POST over HTTPS is read from the decrypted stream and denied at the proxy"
-           (is (= "HTTP/1.1 403 Forbidden"
-                  (https-through-proxy (:port proxy) client-ctx "POST" (:port origin)))))
-         (testing "the denied POST never reached the origin; only the GET did"
-           (is (= ["GET"] @(:seen origin))))
-         (finally ((:stop! proxy)) ((:stop! origin)) ((:close! cap))))))
+        (try (testing "the client accepts the proxy's ephemeral leaf (hostname-verified)"
+               (is (= "HTTP/1.1 200 OK"
+                      (https-through-proxy (:port proxy) client-ctx "GET" (:port origin)))))
+             (testing "POST over HTTPS is read from the decrypted stream and denied at the proxy"
+               (is (= "HTTP/1.1 403 Forbidden"
+                      (https-through-proxy (:port proxy) client-ctx "POST" (:port origin)))))
+             (testing "the denied POST never reached the origin; only the GET did"
+               (is (= ["GET"] @(:seen origin))))
+             (finally ((:stop! proxy)) ((:stop! origin)) ((:close! cap))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Tier-2 network filters — the extension escape valve above :rules
@@ -337,38 +348,40 @@
       (is (:allow? (ep/apply-network-filters {:status 200 :headers {}}))))))
 
 (deftest response-filter-wire
-  ;; A registered response filter sees the upstream status + headers and can
-  ;; replace the response with a 403 — the child never receives the body.
-  (let
-    [origin
-     (start-origin!)
+  (run-wire-test
+    (fn []
+      ;; A registered response filter sees the upstream status + headers and can
+      ;; replace the response with a 403 — the child never receives the body.
+      (let
+        [origin
+         (start-origin!)
 
-     policy
-     (ep/compile-policy {:allowed-domains ["localhost"]})
+         policy
+         (ep/compile-policy {:allowed-domains ["localhost"]})
 
-     owner
-     ::resp-wire
+         owner
+         ::resp-wire
 
-     seen
-     (atom nil)]
+         seen
+         (atom nil)]
 
-    (ep/register-network-filter!
-      owner
-      (fn [resp]
-        (reset! seen resp)
-        (if (= 200 (:status resp)) {:allow? false :reason "200 blocked"} {:allow? true})))
-    (let
-      [proxy (ep/start! {:policy-fn (fn [_token]
-                                      policy)})]
-      (try (testing "the upstream 200 is blocked at the proxy — child observes 403"
-             (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
-           (testing "the filter saw the real upstream status + response headers"
-             (is (= 200 (:status @seen)))
-             (is (= "2" (get (:headers @seen) "content-length")))
-             (is (= :http-response (:phase @seen))))
-           (finally (ep/unregister-network-filters-for-owner! owner)
-                    ((:stop! proxy))
-                    ((:stop! origin)))))))
+        (ep/register-network-filter!
+          owner
+          (fn [resp]
+            (reset! seen resp)
+            (if (= 200 (:status resp)) {:allow? false :reason "200 blocked"} {:allow? true})))
+        (let
+          [proxy (ep/start! {:policy-fn (fn [_token]
+                                          policy)})]
+          (try (testing "the upstream 200 is blocked at the proxy — child observes 403"
+                 (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
+               (testing "the filter saw the real upstream status + response headers"
+                 (is (= 200 (:status @seen)))
+                 (is (= "2" (get (:headers @seen) "content-length")))
+                 (is (= :http-response (:phase @seen))))
+               (finally (ep/unregister-network-filters-for-owner! owner)
+                        ((:stop! proxy))
+                        ((:stop! origin)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; SSRF deny-floor — pure, cross-platform. The proxy is an UNJAILED deputy, so
@@ -419,21 +432,48 @@
     (is (nil? (:allow-loopback (ep/compile-policy {:allowed-domains ["example.com"]}))))))
 
 (deftest ssrf-wire-blocks-reserved-loopback-port
-  ;; End-to-end: loopback dev servers are reachable by default (see proxy-wire-roundtrip),
-  ;; but the gateway's OWN reserved control-plane/proxy port can NEVER be reached through
-  ;; the proxy — even under the friendly allow-all posture.
+  (run-wire-test
+    (fn []
+      ;; End-to-end: loopback dev servers are reachable by default (see proxy-wire-roundtrip),
+      ;; but the gateway's OWN reserved control-plane/proxy port can NEVER be reached through
+      ;; the proxy — even under the friendly allow-all posture.
+      (let
+        [origin
+         (start-origin!)
+
+         ;; Allow-all domains + loopback, but mark THIS origin's port reserved (as if it were
+         ;; the gateway control plane) and prove the confused-deputy proxy refuses it.
+         proxy
+         (ep/start! {:policy-fn (fn [_token]
+                                  {:reserved-loopback-ports #{(:port origin)}})})]
+
+        (try (testing "a reserved loopback port is refused (403) even though loopback is allowed"
+               (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
+             (testing "the blocked request never reached the reserved-port origin"
+               (is (empty? @(:seen origin))))
+             (finally ((:stop! proxy)) ((:stop! origin))))))))
+
+(deftest policy-hot-path-performance-budget
+  ;; A generous regression ceiling, not a benchmark claim: policy evaluation must
+  ;; remain cheap enough to run synchronously on every decrypted request.
   (let
-    [origin
-     (start-origin!)
+    [policy
+     (ep/compile-policy {:allowed-domains ["*"]
+                         :denied-domains ["evil.example"]
+                         :rules [{:host "api.example.com"
+                                  :access "read-only"
+                                  :allow [{:method "POST" :path "/v1/issues/**"}]}
+                                 {:host "*" :access "read-only"}]})
 
-     ;; Allow-all domains + loopback, but mark THIS origin's port reserved (as if it were
-     ;; the gateway control plane) and prove the confused-deputy proxy refuses it.
-     proxy
-     (ep/start! {:policy-fn (fn [_token]
-                              {:reserved-loopback-ports #{(:port origin)}})})]
+     started
+     (System/nanoTime)]
 
-    (try (testing "a reserved loopback port is refused (403) even though loopback is allowed"
-           (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
-         (testing "the blocked request never reached the reserved-port origin"
-           (is (empty? @(:seen origin))))
-         (finally ((:stop! proxy)) ((:stop! origin))))))
+    (dotimes [i 50000]
+      (let
+        [method (if (zero? (bit-and i 1)) "GET" "POST")
+         path (if (zero? (mod i 3)) "/v1/issues/42" "/v1/other")]
+
+        (ep/decide policy method "api.example.com" path)))
+    (let [elapsed-ms (/ (- (System/nanoTime) started) 1000000.0)]
+      (is (< elapsed-ms 5000.0)
+          (str "50k policy decisions exceeded the 5s regression budget: " elapsed-ms "ms")))))

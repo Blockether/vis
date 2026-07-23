@@ -15,17 +15,20 @@
 
      {:roots-fn     (fn [] [root-strings])  ; live session RW roots, re-read/spawn
       :net-enabled? <bool>                  ; whole shell-child network on/off
-      :allow-write  [<path> …]              ; extra writable paths (beyond roots)
-      :deny-write   [<path> …]              ; protect within writable (deny wins)
-      :allow-read   [<path> …]              ; re-allow read within a denied region
-      :deny-read    [<path> …]}             ; protect a read region (deny wins)
+      :allow-read-write [<path> …]           ; concise full read+write grant
+      :allow-write      [<path> …]           ; legacy writable paths (also readable)
+      :deny-write       [<path> …]           ; protect within writable (deny wins)
+      :allow-read       [<path> …]           ; additional read-only paths
+      :deny-read        [<path> …]           ; protect a read region (deny wins)
+      :inbound-ports    [<int> …]}           ; extra local ports a child may ACCEPT on
+                                             ; (bind is local-only; accept is port-gated)
 
    The filesystem model mirrors Anthropic's sandbox-runtime:
      - WRITE is allow-only: denied everywhere except the session roots + tmp +
-       `:allow-write`; `:deny-write` carves protected exceptions (deny wins).
+       `:allow-read-write` + `:allow-write`; `:deny-write` wins.
      - READ is default-deny here (workspace-focused, stronger than srt's
-       read-everywhere default): system code/config + the RW roots + `:allow-read`
-       are readable; `:deny-read` protects a subtree even inside an allowed root.
+       read-everywhere default): system code/config + RW paths + `:allow-read`
+       are readable; `:deny-read` wins.
 
    `wrap-argv` compiles the policy, per spawn, into the OS enforcement primitive:
 
@@ -129,7 +132,7 @@
    order: allow reads (system + rw + ro), allow writes (rw), then the deny carve-
    outs so `:deny-write`/`:deny-read` win over the allows. One-line string for
    `sandbox-exec -p`."
-  ^String [{:keys [rw ro deny-write deny-read net-enabled? proxy-port loopback-port]}]
+  ^String [{:keys [rw ro deny-write deny-read net-enabled? proxy-port loopback-port inbound-ports]}]
   (let
     [rw
      (->> rw
@@ -161,6 +164,10 @@
       "(deny default)"
       "(allow process-fork process-exec)"
       "(allow sysctl-read)"
+      ;; GraalVM Native Image uses a named POSIX semaphore for signal delivery on
+      ;; macOS. Without this narrow IPC permission, tools such as spel and bb abort
+      ;; during VM startup before their main function runs.
+      "(allow ipc-posix-sem)"
       "(allow file-read-metadata)"
       "(allow file-read*"
       (subpaths macos-system-read-roots)
@@ -173,16 +180,26 @@
       (when (seq dw) (str "(deny file-write*" (subpaths dw) ")"))
       (when (seq dr) (str "(deny file-read*" (subpaths dr) ")"))
       ;; Network: a proxy endpoint is the sole outbound destination. A managed
-      ;; nREPL additionally needs to bind a server socket. Seatbelt's
-      ;; `network-bind` accepts the address class but not a reliable host:port
-      ;; constraint, so bind is limited to local IP sockets while inbound traffic
-      ;; is restricted to the one preselected nREPL port.
+      ;; nREPL — and any explicitly allowlisted dev/server port — additionally
+      ;; needs to bind a server socket. Seatbelt's `network-bind` accepts the
+      ;; address class but not a reliable host:port constraint, so bind is limited
+      ;; to local IP sockets while inbound traffic is restricted, port by port, to
+      ;; the preselected nREPL port plus each `:inbound-ports` entry. Binding is
+      ;; broad (any local port); ACCEPTING a connection is the gated capability.
       (let
-        [server-rules (when loopback-port
-                        (str "(allow network-bind (local ip))"
-                             "(allow network-inbound (local ip \"*:"
-                             loopback-port
-                             "\"))"))]
+        [inbound
+         (->> (cons loopback-port inbound-ports)
+              (remove nil?)
+              distinct)
+
+         server-rules
+         (when (seq inbound)
+           (str "(allow network-bind (local ip))"
+                (apply str
+                  (map (fn [p]
+                         (str "(allow network-inbound (local ip \"*:" p "\"))"))
+                       inbound))))]
+
         (cond proxy-port (str "(deny network*)"
                               server-rules
                               "(allow network-outbound (remote ip \"localhost:"
@@ -194,11 +211,13 @@
 (defn compile-policy
   "Resolve a raw jail policy VALUE into the canonical map `macos-profile` consumes:
    read the LIVE session roots via `:roots-fn`, add the always-writable temp dirs,
-   fold in the vis.yml `:allow-write`/`:allow-read`/`:deny-write`/`:deny-read`
-   paths (home-expanded + realpath'd). Called per spawn, so each child jails to
-   the CURRENT roots and CURRENT config."
-  [{:keys [roots-fn net-enabled? allow-write allow-read deny-write deny-read proxy-port
-           loopback-port]}]
+   fold in the environment-snapshotted `:allow-read-write`/`:allow-write`/
+   `:allow-read`/`:deny-write`/`:deny-read` paths (home-expanded + realpath'd).
+   Called per spawn, so each child gets the CURRENT live roots without re-reading
+   model-writable project config. `:allow-read-write` is the concise equivalent of
+   granting the same path through both legacy allow lists."
+  [{:keys [roots-fn net-enabled? allow-read-write allow-write allow-read deny-write deny-read
+           proxy-port loopback-port inbound-ports]}]
   (let
     [session-roots
      (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
@@ -207,14 +226,27 @@
      [(System/getProperty "java.io.tmpdir") "/tmp"]
 
      rw
-     (->> (concat session-roots tmps allow-write)
+     (->> (concat session-roots tmps allow-read-write allow-write)
           (keep real-path)
           distinct
           vec)
 
      ro
-     (->> allow-read
+     (->> (concat allow-read-write allow-read)
           (keep real-path)
+          distinct
+          vec)
+
+     ;; Extra inbound ports are sanitized to distinct integers in the legal TCP
+     ;; range; anything else (nil, junk, out-of-range) is dropped so a bad config
+     ;; value can never widen the profile or corrupt the emitted SBPL.
+     inbound-ports
+     (->> inbound-ports
+          (keep (fn [p]
+                  (let
+                    [n (cond (integer? p) (long p)
+                             (string? p) (parse-long (str/trim p)))]
+                    (when (and n (<= 1 n 65535)) n))))
           distinct
           vec)]
 
@@ -224,7 +256,8 @@
      :deny-read (vec deny-read)
      :net-enabled? (boolean net-enabled?)
      :proxy-port proxy-port
-     :loopback-port loopback-port}))
+     :loopback-port loopback-port
+     :inbound-ports inbound-ports}))
 
 (defn wrap-argv
   "Given the base executor argv and a jail POLICY value, return the argv to spawn.
@@ -232,7 +265,7 @@
    inherit that kernel policy and are left unwrapped because Seatbelt rejects a
    second sandbox application. Unsupported platforms remain explicit passthroughs."
   [argv policy]
-  (if (and policy (supported?) (not (inherited-jail?)))
+  (if (and policy (not (:disabled? policy)) (supported?) (not (inherited-jail?)))
     (case (os-kind)
       :macos
       (into ["sandbox-exec" "-p" (macos-profile (compile-policy policy))] argv)
@@ -268,42 +301,45 @@
    CA variables cover curl/git/Python/Bun/etc.; managed JVM children additionally
    receive proxy + ephemeral truststore properties through JAVA_TOOL_OPTIONS."
   [policy]
-  (let
-    [jail-env (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
-    (if-let [port (:proxy-port policy)]
-      (let
-        [token (:proxy-token policy)
-         url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
-         ca (:ca-file policy)
-         java-opts (java-proxy-options policy)]
+  (if (:disabled? policy)
+    {}
+    (let
+      [jail-env
+       (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
+      (if-let [port (:proxy-port policy)]
+        (let
+          [token (:proxy-token policy)
+           url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
+           ca (:ca-file policy)
+           java-opts (java-proxy-options policy)]
 
-        (cond->
-          (merge jail-env
-                 {"http_proxy" url
-                  "https_proxy" url
-                  "all_proxy" url
-                  "HTTP_PROXY" url
-                  "HTTPS_PROXY" url
-                  "ALL_PROXY" url
-                  "no_proxy" ""
-                  "NO_PROXY" ""})
-          ca
-          (merge {"CURL_CA_BUNDLE" ca
-                  "SSL_CERT_FILE" ca
-                  "REQUESTS_CA_BUNDLE" ca
-                  "NODE_EXTRA_CA_CERTS" ca
-                  "GIT_SSL_CAINFO" ca
-                  "PIP_CERT" ca
-                  "AWS_CA_BUNDLE" ca
-                  "CARGO_HTTP_CAINFO" ca
-                  "DENO_CERT" ca})
+          (cond->
+            (merge jail-env
+                   {"http_proxy" url
+                    "https_proxy" url
+                    "all_proxy" url
+                    "HTTP_PROXY" url
+                    "HTTPS_PROXY" url
+                    "ALL_PROXY" url
+                    "no_proxy" ""
+                    "NO_PROXY" ""})
+            ca
+            (merge {"CURL_CA_BUNDLE" ca
+                    "SSL_CERT_FILE" ca
+                    "REQUESTS_CA_BUNDLE" ca
+                    "NODE_EXTRA_CA_CERTS" ca
+                    "GIT_SSL_CAINFO" ca
+                    "PIP_CERT" ca
+                    "AWS_CA_BUNDLE" ca
+                    "CARGO_HTTP_CAINFO" ca
+                    "DENO_CERT" ca})
 
-          java-opts
-          (assoc "JAVA_TOOL_OPTIONS"
-            (str (when-let [existing (not-empty (System/getenv "JAVA_TOOL_OPTIONS"))]
-                   (str existing " "))
-                 java-opts))))
-      jail-env)))
+            java-opts
+            (assoc "JAVA_TOOL_OPTIONS"
+              (str (when-let [existing (not-empty (System/getenv "JAVA_TOOL_OPTIONS"))]
+                     (str existing " "))
+                   java-opts))))
+        jail-env))))
 
 ;; ── Standard language-process jail contract ────────────────────────────────
 ;; Language packs spawn managed REPLs and project test runners via raw
@@ -316,11 +352,20 @@
    remain read-only: a REPL may execute them but cannot replace its JVM/Python/Bun."
   ["~/.sdkman" "~/.asdf" "~/.jenv" "~/.pyenv" "~/.local/bin" "~/.local/share/mise"])
 
-(def ^:private repl-toolchain-cache-dirs
-  "Dependency/artifact caches a managed language process may read and write on a
-   cold start. No unrelated home directory is exposed."
-  ["~/.m2" "~/.gitlibs" "~/.clojure" "~/.deps.clj" "~/.cpcache" "~/.bun" "~/.npm" "~/.cache"
-   "~/.cargo" "~/.deno" "~/.gradle" "~/.ivy2" "~/.lein" "~/.sbt" "~/.coursier"])
+(defn- normalize-cache-entry
+  "Normalize one `:language-cache-dirs` entry to `{:path .. :write? <bool>}`.
+   A bare string grants READ+WRITE (a dependency cache normally must be
+   populated). A map `{:path .. :access ..}` chooses `read-only`/`ro` (read
+   only) vs anything else (read+write). Blank/`:path`-less entries drop."
+  [entry]
+  (letfn [(g [m k] (or (get m k) (get m (name k))))]
+    (cond (string? entry) (when (seq entry) {:path entry :write? true})
+          (map? entry) (when-let [p (g entry :path)]
+                         (let
+                           [a (some-> (g entry :access)
+                                      name
+                                      str/lower-case)]
+                           {:path p :write? (not (contains? #{"read-only" "readonly" "ro"} a))})))))
 
 (def ^:private language-process-runtime-dirs
   "Vis-owned runtime state managed language processes may read and write. REPL
@@ -330,31 +375,48 @@
 
 (defn language-process-policy
   "Derive a managed-language jail policy from a session's base policy. It keeps
-   filesystem confinement, adds read-only runtime installations plus writable
-   dependency caches/logs, and replaces the shell proxy endpoint with this
-   session's gateway-attributed language-process endpoint.
+   filesystem confinement, adds read-only runtime installations plus Vis-owned log
+   directories, and replaces the shell proxy endpoint with this session's
+   attributed language-process endpoint.
 
-   Direct network access is always disabled. HTTPS remains MITM-capable: CA-aware
-   runtimes receive the combined PEM bundle, while JVM children additionally
-   receive an ephemeral PKCS12 truststore through JAVA_TOOL_OPTIONS.
-   `loopback-port` permits bind/inbound only for the managed nREPL's selected port;
-   it does not permit direct outbound traffic."
+   Dependency caches are opt-in only. `jail.filesystem.language-caches` is the sole
+   source. Each entry is a plain path string (read/write) or a map with `path` and
+   `access: read-only`; unset means no dependency caches.
+
+   Direct network access is disabled. CA-aware runtimes receive the combined PEM
+   bundle, while JVM children also receive an ephemeral PKCS12 truststore.
+   `loopback-port` permits only the managed nREPL's selected listener port."
   [base loopback-port]
-  (when base
-    (-> base
-        (update :allow-write
-                #(vec (concat % repl-toolchain-cache-dirs language-process-runtime-dirs)))
-        (update :allow-read
-                #(vec (concat %
-                              repl-toolchain-read-dirs
-                              repl-toolchain-cache-dirs
-                              language-process-runtime-dirs)))
-        (assoc :net-enabled? false
-               :proxy-port (:repl-proxy-port base)
-               :proxy-token nil
-               :ca-file (:repl-ca-file base)
-               :java-proxy? true
-               :loopback-port loopback-port))))
+  (cond (nil? base) nil
+        (:disabled? base) base
+        :else (let
+                [entries
+                 (keep normalize-cache-entry (:language-cache-dirs base))
+
+                 cache-rw
+                 (into [] (comp (filter :write?) (map :path)) entries)
+
+                 cache-ro
+                 (into [] (comp (remove :write?) (map :path)) entries)]
+
+                (-> base
+                    (update :allow-write #(vec (concat % cache-rw language-process-runtime-dirs)))
+                    (update :allow-read
+                            #(vec (concat %
+                                          repl-toolchain-read-dirs
+                                          cache-rw
+                                          cache-ro
+                                          language-process-runtime-dirs)))
+                    ;; Managed REPL/test children get ONLY their own nREPL
+                    ;; loopback port; the shell dev-server inbound allowlist is
+                    ;; not theirs to inherit (least privilege).
+                    (dissoc :language-cache-dirs :inbound-ports)
+                    (assoc :net-enabled? false
+                           :proxy-port (:repl-proxy-port base)
+                           :proxy-token nil
+                           :ca-file (:repl-ca-file base)
+                           :java-proxy? true
+                           :loopback-port loopback-port)))))
 
 (defn repl-policy
   "Derive the managed-nREPL variant for its selected loopback listener port."

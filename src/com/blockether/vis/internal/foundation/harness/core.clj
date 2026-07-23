@@ -10,77 +10,26 @@
    Two bare verbs (bound like cat/rg via `:ext.engine/builtin? true`):
 
    - SKILLS are PROGRESSIVE: the prompt lists every skill `name — description`
-     (cheap — always present while `:vis/harness-skills` is ON), and
+     (cheap — always present), and
      `skill(name)` loads the FULL `SKILL.md` + its bundled resource PATHS on
      demand so the model spends tokens only on the one it uses.
 
    - AGENTS are an ALIAS to `sub_loop`: `agent(name, prompt)` runs the named
      agent as a CHILD loop whose system prompt IS that agent's markdown body,
-     on its declared model. Gated by `:vis/harness-agents`.
+     on its declared model.
 
-   This layer OWNS its toggles — registered on load, not by core proper — so the
-   feature is one toggle flip away. `:owner :vis :group :tools` parks them in Settings →
-   Feature Toggles beside the shell toggle. Each verb gates on its OWN toggle
-   (the extension activates if EITHER is on), so they switch independently."
+   Both bare verbs are unconditionally available — skills/agents/commands have
+   no user toggle; the layer is always active."
   ;; `agent` is the bare model-facing verb; deliberately shadow clojure.core/agent
   ;; (unused here) so loading this ns is warning-free.
   (:refer-clojure :exclude [agent])
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]))
-
-;; =============================================================================
-;; Toggles — OWNED by this layer (registered on load), not by core. :owner :vis
-;; :group :tools → Settings → General → Feature Toggles, beside the shell toggle.
-;; =============================================================================
-
-(toggles/register-toggle! {:id :vis/harness-skills
-                           :label "Harness skills (compatibility layer)"
-                           :description
-                           (str "When ON the agent can discover and load SKILLS from vis'"
-                                " own project-local .vis/skills (highest precedence) and from"
-                                " other AI coding harnesses (Claude Code, pi, opencode, the"
-                                " agents standard) — e.g. .claude/skills, ~/.claude/skills,"
-                                " plugin caches, ~/.pi/agent/skills, ~/.agents/skills. The"
-                                " prompt lists each skill's name + description cheaply;"
-                                " skill(name) loads the full SKILL.md + its bundled resource"
-                                " paths on demand. ON by default.")
-                           :default true
-                           :owner :vis
-                           :group :tools
-                           :persist? true})
-
-(toggles/register-toggle! {:id :vis/harness-agents
-                           :label "Harness agents (compatibility layer)"
-                           :description
-                           (str "When ON the agent can dispatch sub-AGENTS defined by other"
-                                " AI coding harnesses (Claude Code, opencode, …): agent(name,"
-                                " prompt) runs the named agent as a CHILD loop (a sub_loop)"
-                                " whose system prompt is that agent's markdown body, on its"
-                                " declared model. The prompt lists each agent's name +"
-                                " description. ON by default.")
-                           :default true
-                           :owner :vis
-                           :group :tools
-                           :persist? true})
-
-(toggles/register-toggle!
-  {:id :vis/harness-commands
-   :label "Harness commands (compatibility layer)"
-   :description (str "When ON, cross-harness COMMANDS — markdown prompt templates other AI"
-                     " coding harnesses leave on disk (.claude/commands, ~/.claude/commands,"
-                     " .opencode/command, .agents/commands, ~/.pi/agent/commands, …) — are"
-                     " invocable as /<name> [args] in any channel, alongside vis' own"
-                     " .vis/prompts templates. `$ARGUMENTS` in the body is substituted (else"
-                     " non-blank args append). ON by default.")
-   :default true
-   :owner :vis
-   :group :tools
-   :persist? true})
 
 ;; =============================================================================
 ;; Small utilities
@@ -92,58 +41,87 @@
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
 ;; =============================================================================
-;; skill(name) — load one SKILL.md on demand (PROGRESSIVE)
+;; skill(name) — activate one SKILL.md on demand, once per live provider tape
 ;; =============================================================================
 
-(defn- loaded-skill-names
-  "The skill names already loaded into THIS session's context. Read off the
-   durable `\"session_loaded_skills\"` set on the string-keyed ctx, which rides
-   the Nippy session snapshot (like `\"session_summaries\"`), so it persists in
-   the DB and survives resume. No transient atom to keep."
-  [env]
-  (or (some-> env
-              :ctx-atom
-              deref
-              (get "session_loaded_skills")
-              set)
-      #{}))
+(defn- skill-payload
+  [s]
+  {"name" (:name s)
+   "description" (:description s)
+   "body" (:body s)
+   "dir" (:dir s)
+   "resources" (mapv #(str (:dir s) "/" %) (:resources s))})
 
-(defn- mark-skill-loaded!
-  "Record `nm` as loaded on THIS session's string-keyed ctx so a later
-   `skill(name)` won't re-inject the body. Persists with the next ctx snapshot."
-  [env nm]
-  (when-let [ca (:ctx-atom env)]
-    (swap! ca update "session_loaded_skills" (fnil conj #{}) nm)))
+(defn- current-iter-scope
+  [env]
+  (some-> (ctx-loop/synthesize-scope env)
+          (str/split #"/f")
+          first))
+
+(defn- same-activation?
+  [activation digest]
+  (and (= digest (get activation "digest"))
+       (not (str/blank? (str (get activation "scope"))))))
 
 (defn- skill-result
+  "Return a skill body only when it is not already present on the live provider
+   tape (or its content digest changed). `stamp-iter-universe!` derives
+   `engine_live_skill_activations` from the post-fold wire before every request;
+   `session_active_skills` is only the durable pointer to the exact activation
+   scope. A same-iteration second call is handled by that pointer before the
+   first result has entered the trailer."
   [env nm]
   (if-let [s (d/skill-by-name nm)]
-    (if (contains? (loaded-skill-names env) (:name s))
-      ;; PROGRESSIVE + once-only: the SKILL.md body is already above in this
-      ;; session's context — ack WITHOUT re-injecting it (a re-call is cheap).
-      {"name" (:name s)
-       "status" "already-loaded"
-       "note" (str "Already loaded earlier this session — its SKILL.md is above "
-                   "in your context; follow it. Not re-injected.")}
-      (do (mark-skill-loaded! env (:name s))
-          {"name" (:name s)
-           "description" (:description s)
-           "body" (:body s)
-           "dir" (:dir s)
-           "resources" (mapv #(str (:dir s) "/" %) (:resources s))}))
+    (let
+      [skill-name
+       (:name s)
+
+       digest
+       (extension/sha256-hex (:body s))
+
+       scope
+       (current-iter-scope env)
+
+       ctx
+       (some-> (:ctx-atom env)
+               deref)
+
+       live
+       (get-in ctx ["engine_live_skill_activations" skill-name])
+
+       pending
+       (get-in ctx ["session_active_skills" skill-name])
+
+       already-live?
+       (or (same-activation? live digest)
+           (and (same-activation? pending digest)
+                (= scope (get pending "scope"))))]
+
+      (if already-live?
+        {"name" skill-name
+         "status" "already-active"
+         "scope" (or (get live "scope") (get pending "scope"))
+         "note" "Instructions already remain on the live provider tape; body not repeated."}
+        (do
+          (when-let [ca (:ctx-atom env)]
+            (swap! ca assoc-in
+              ["session_active_skills" skill-name]
+              {"name" skill-name "digest" digest "scope" scope}))
+          (skill-payload s))))
     {"error" (str "No skill named " (pr-str (str nm)) ".") "available" (mapv :name (d/skills))}))
 
 (defn skill-tool
   "Load a harness SKILL on demand — its full SKILL.md. Names are in the HARNESS
-   SKILLS block (✓ = already loaded). Loaded ONCE per session; a second call acks
-   already-loaded without resending the body."
+   SKILLS block. Activation is idempotent while the exact body remains on the
+   live provider tape; repeated calls return a compact receipt. A changed or
+   absent body is activated once."
   [env input]
   (skill-result env (get input "name")))
 
 (defn- render-skill
   [r]
   (cond (get r "error") {:summary (str "skill not found — " (get r "error"))}
-        (= "already-loaded" (get r "status")) {:summary (str "`" (get r "name") "` already loaded")}
+        (= "already-active" (get r "status")) {:summary (str "`" (get r "name") "` already active")}
         :else {:summary (str "loaded skill `" (get r "name") "`")
                :body (when-let [b (not-empty (str (get r "body")))]
                        (str "```\n" b "\n```"))}))
@@ -157,12 +135,12 @@
     {:symbol 'skill
      :engine-bound? false
      :active-fn (fn [_env]
-                  (toggles/enabled? :vis/harness-skills))
+                  true)
      :tag :observation
      :native-tool? true
      :name "skill"
      :description
-     "Load one advertised harness skill on demand. Loading is session-idempotent, so repeated calls acknowledge without resending the instructions."
+     "Activate one advertised harness skill on demand. Returns the full SKILL.md once while it remains on the live provider tape; repeated calls return a compact already-active receipt. If the body changed or is no longer live, it is returned once again."
      :schema {:type "object"
               :properties {"name" {:type "string"
                                    :description "Skill name from the HARNESS SKILLS list."}}
@@ -178,64 +156,56 @@
 
 (defn- skill-template-text
   "Expanded user-message text for a `/<name> [task]` invocation:
-   the full SKILL.md (once — an already-loaded skill gets a pointer
-   instead of a re-injection, same as skill()) plus the optional task."
-  [env s args]
+   the full SKILL.md plus the optional task."
+  [_env s args]
   (let
     [r
-     (skill-result env (:name s))
+     ;; A slash invocation is an explicit USER-authored injection, not a model
+     ;; tool activation. Keep it literal and do not mutate the tool activation
+     ;; index; its body lives in the current user message.
+     (skill-payload s)
 
      task
      (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
 
-    (if (= "already-loaded" (get r "status"))
-      (str "Use the skill \""
-           (:name s)
-           "\" — it was already loaded earlier "
-           "this session; its SKILL.md is above in your context. Follow it."
-           task)
-      (str "Use the skill \""
-           (:name s)
-           "\" for this task — its full SKILL.md "
-           "follows. Follow these instructions.\n\n"
-           (get r "body")
-           (when (seq (get r "resources"))
-             (str "\n\nBundled resources (read them with the file tools as needed):\n"
-                  (str/join "\n" (map #(str "- " %) (get r "resources")))))
-           task))))
+    (str "Use the skill \""
+         (:name s)
+         "\" for this task — its full SKILL.md follows. Follow these instructions.\n\n"
+         (get r "body")
+         (when (seq (get r "resources"))
+           (str "\n\nBundled resources (read them with the file tools as needed):\n"
+                (str/join "\n" (map #(str "- " %) (get r "resources")))))
+         task)))
 
 (defn- skill-template-entries
   "Every discovered skill as a dynamic prompt template named `<name>`,
-   so the user can type `/<name> [task]` in any
-   channel. Gated by the same toggle as the skill() verb."
+   so the user can type `/<name> [task]` in any channel."
   []
-  (when (toggles/enabled? :vis/harness-skills)
-    (mapv (fn [s]
-            {:name (:name s)
-             :description (str "Load skill "
-                               (:name s)
-                               (when-let [d (not-empty (str (:description s)))]
-                                 (str " — " (clip d 140))))
-             :expand-fn (fn [env args]
-                          (skill-template-text env s args))})
-          (d/skills))))
+  (mapv (fn [s]
+          {:name (:name s)
+           :description (str "Load skill "
+                             (:name s)
+                             (when-let [d (not-empty (str (:description s)))]
+                               (str " — " (clip d 140))))
+           :expand-fn (fn [env args]
+                        (skill-template-text env s args))})
+        (d/skills)))
 
 (prompt-templates/register-provider! ::skills skill-template-entries)
 
 (defn- command-template-entries
   "Every discovered cross-harness COMMAND as a `/<name>` prompt template, so the
    user can type `/<name> [args]` in any channel. The body is expanded like a
-   file template (`$ARGUMENTS`-substituted). Gated by :vis/harness-commands."
+   file template (`$ARGUMENTS`-substituted)."
   []
-  (when (toggles/enabled? :vis/harness-commands)
-    (mapv (fn [c]
-            {:name (:name c)
-             :description (str "Command "
-                               (:name c)
-                               (when-let [d (not-empty (str (:description c)))]
-                                 (str " — " (clip d 140))))
-             :body (:body c)})
-          (d/commands))))
+  (mapv (fn [c]
+          {:name (:name c)
+           :description (str "Command "
+                             (:name c)
+                             (when-let [d (not-empty (str (:description c)))]
+                               (str " — " (clip d 140))))
+           :body (:body c)})
+        (d/commands)))
 
 (prompt-templates/register-provider! ::commands command-template-entries)
 
@@ -297,7 +267,7 @@
   (vis/symbol #'agent
               {:symbol 'agent
                :active-fn (fn [_env]
-                            (toggles/enabled? :vis/harness-agents))
+                            true)
                :inject-env? true
                :tag :mutation}))
 
@@ -306,43 +276,29 @@
 ;; =============================================================================
 
 (defn- skills-prompt
-  [env]
-  (when (toggles/enabled? :vis/harness-skills)
-    (let
-      [ss
-       (d/skills)
-
-       loaded
-       (loaded-skill-names env)]
-
-      (when (seq ss)
-        (str/join
-          "\n"
-          (cons
-            "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand (✓ = already loaded this session, its body is in your context):"
-            (for [s ss]
-              (str "  "
-                   (if (contains? loaded (:name s)) "✓ " "")
-                   (:name s)
-                   " — "
-                   (clip (:description s) 180)))))))))
+  [_env]
+  (let [ss (d/skills)]
+    (when (seq ss)
+      (str/join
+        "\n"
+        (cons
+          "Harness SKILLS available — call skill(\"name\") to activate the FULL instructions on demand. Activation is idempotent while that exact body remains in the live context; a repeat returns only a compact receipt:"
+          (for [s ss]
+            (str "  " (:name s) " — " (clip (:description s) 180))))))))
 
 (defn- agents-prompt
   [_env]
-  (when (toggles/enabled? :vis/harness-agents)
-    (let [as (d/agents)]
-      (when (seq as)
-        (str/join
-          "\n"
-          (cons
-            "Harness AGENTS available — call agent(\"name\", \"task prompt\") to delegate to a child loop (the agent's body is its system prompt; EXPENSIVE):"
-            (for [a as]
-              (str "  " (:name a) " — " (clip (:description a) 180)))))))))
+  (let [as (d/agents)]
+    (when (seq as)
+      (str/join
+        "\n"
+        (cons
+          "Harness AGENTS available — call agent(\"name\", \"task prompt\") to delegate to a child loop (the agent's body is its system prompt; EXPENSIVE):"
+          (for [a as]
+            (str "  " (:name a) " — " (clip (:description a) 180))))))))
 
 (defn- harness-prompt
-  "Combined harness surface — each section present only while its toggle is ON
-   (a blank string is filtered from the extensions prompt block, so a disabled
-   half costs zero prompt tokens)."
+  "Combined always-on harness surface. Empty discovery sections are omitted."
   [env]
   (let [parts (remove str/blank? [(skills-prompt env) (agents-prompt env)])]
     (if (seq parts) (str/join "\n\n" parts) "")))
@@ -355,19 +311,16 @@
   (vis/extension
     {:ext/name "foundation-harness"
      :ext/description
-     "Harness compatibility layer: discover + use the skills and agents other AI coding harnesses (Claude Code, opencode, …) define on disk. skill(name) loads a full SKILL.md on demand; agent(name, prompt) dispatches a sub-agent as a sub_loop child. Toggles :vis/harness-skills / :vis/harness-agents, both ON by default."
+     "Harness compatibility layer: discover + use the skills and agents other AI coding harnesses (Claude Code, opencode, …) define on disk. skill(name) loads a full SKILL.md on demand; agent(name, prompt) dispatches a sub-agent as a sub_loop child. Always available."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     ;; Active when EITHER half is on; each verb's before-fn gates its OWN
-     ;; toggle, so they switch independently. Both off → the extension is
-     ;; inactive and `sync-active-extension-symbols!` removes both bare verbs.
+     ;; Always active — the skill/agent verbs are unconditionally available
+     ;; (their user toggles were removed).
      :ext/activation-fn (fn [_env]
-                          (or (toggles/enabled? :vis/harness-skills)
-                              (toggles/enabled? :vis/harness-agents)
-                              (toggles/enabled? :vis/harness-commands)))
+                          true)
      ;; builtin? → symbols bind BARE (skill / agent, not harness_skill).
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols [skill-symbol agent-symbol]}
      :ext/prompt-fn harness-prompt}))

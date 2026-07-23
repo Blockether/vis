@@ -1347,7 +1347,7 @@
                             ;; welcome screen. Preserve any other global keys.
                             (let
                               [persisted (assoc (or (vis/load-config-raw) {})
-                                           :providers [(persisted-provider-config cfg)])]
+                                           "providers" [(persisted-provider-config cfg)])]
                               (vis/save-config! persisted)
                               persisted)
                             (recur))
@@ -1541,9 +1541,10 @@
                  (cond
                    (= ktype KeyType/Escape) (let
                                               [cfg (assoc (or (vis/load-config-raw) {})
-                                                     :providers (->> @items
-                                                                     (map persisted-provider-config)
-                                                                     vec))]
+                                                     "providers" (->> @items
+                                                                      (map
+                                                                        persisted-provider-config)
+                                                                      vec))]
                                               (vis/save-config! cfg)
                                               cfg)
                    ;; ↑/↓ navigate; Ctrl+P/Ctrl+N (or Shift/Alt+↑/↓ where supported) reorder

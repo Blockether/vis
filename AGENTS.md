@@ -4,6 +4,31 @@ Guidance for humans and coding agents working on Vis. This file focuses on the
 **memory / CPU investigation** tooling — how the runtime observes itself and how
 to read what it emits.
 
+## Vis Companion UI (`apps/vis-companion`)
+
+Vis Companion is one universal product for **web, iOS, and Android**. Every UI
+change must be polished and fully usable at both desktop and phone widths; never
+treat mobile as a reduced or deferred version of the web interface.
+
+- Use **Tailwind CSS v4 utilities exclusively** for layout, spacing, typography,
+  color, borders, states, and responsive behavior. Do not add component-specific
+  CSS classes, CSS modules, CSS-in-JS, inline style objects, or another styling
+  framework.
+- Keep `src/index.css` limited to Tailwind imports, shared gateway/TUI theme token
+  declarations, bundled font setup, and unavoidable document-level base rules.
+  Express component styling in JSX with Tailwind utilities.
+- Design mobile-first, then add deliberate `sm:`, `md:`, and wider adaptations.
+  Check narrow phones, desktop widths, wrapping/overflow, touch targets, safe-area
+  insets, virtual-keyboard/composer behavior, and both light and dark gateway
+  themes before considering UI work complete.
+- Preserve the Vis TUI's information hierarchy, palette, role colors, compactness,
+  and transcript semantics while adapting interaction and density appropriately
+  for touch and pointer input. Visual parity does not justify a broken mobile
+  layout.
+- For frontend changes, verify at least `npm run build` in
+  `apps/vis-companion`; when browser tooling is available, inspect one phone-size
+  and one desktop-size viewport.
+
 ## Memory & CPU monitoring
 
 Vis has three layers of self-observation. The first two are **on by default**;
@@ -90,3 +115,25 @@ blocks startup — if unavailable it silently no-ops.
 - **"Which code is hot?":** re-run the same workload with `--jfr`, reproduce the
   burst, then `jfr print --events jdk.ExecutionSample` the matching role's dump.
   Compare the client vs gateway dumps when a client seems to wait on the gateway.
+
+## Feature toggles
+
+Every feature toggle is part of the public product surface, so treat these as
+hard requirements when you add or change one:
+
+- **Snake_case string ids only.** Toggle ids are plain snake_case strings
+  (`reasoning_level`, `shell`) — never keywords, never namespaced, no kebab or
+  slashes. The registry/spec rejects anything else.
+- **Document it.** Give the `register-toggle!` call a clear description and
+  keep any related docstrings/`sandbox.md`/`configuration.md` wording in sync;
+  a toggle with no user-facing explanation is incomplete.
+- **Keep it in the config spec.** `toggles:` is a validated top-level block in
+  `config_spec.clj` (name→scalar map). Anything that changes how toggles are
+  read/written must keep that schema — and its round-trip through
+  `->yaml-safe`/`keywordize-yaml` — correct.
+- **Configurable via vis.yml.** A toggle must hydrate from the merged config
+  (`toggles/hydrate-from-config!`) so `toggles: {id: value}` works and is
+  `/reload`-live; project `vis.yml` overrides the machine `state.yml`.
+- **Test all three surfaces.** Cover the registry/spec, the vis.yml hydrate +
+  coercion, and the settings wire (TUI dialog / gateway `/v1/settings`) so a
+  new toggle appears and round-trips everywhere, not just in code.

@@ -3,11 +3,11 @@
    tools to the agent, with each live connection registered as a session
    RESOURCE (footer count, F4 dialog, `resource_stop`).
 
-   DROPPABLE classpath plug-in. Gated behind the user-owned `:mcp/enabled`
+   DROPPABLE classpath plug-in. Gated behind the user-owned `mcp_enabled`
    toggle (ON by default — connects automatically when MCP servers are
    configured; can still be turned off to short-circuit every verb).
 
-   Servers are declared natively in `~/.vis/config.edn`:
+   Servers are declared natively in `~/.vis/state.yml`:
 
      {:mcp {:servers {\"filesystem\" {:transport :stdio :command \"npx\"
                                       :args [\"-y\" \"@modelcontextprotocol/server-filesystem\" \"/path\"]}
@@ -36,13 +36,13 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private disabled-hint
-  "MCP is OFF. Enable it in settings (toggle :mcp/enabled) to connect to MCP servers and call their tools.")
+  "MCP is OFF. Enable it in settings (toggle mcp_enabled) to connect to MCP servers and call their tools.")
 
 (toggles/register-toggle!
-  {:id :mcp/enabled
+  {:id "mcp_enabled"
    :label "MCP servers"
    :description (str "When ON the agent can connect to the Model Context Protocol"
-                     " servers declared in ~/.vis/config.edn (:mcp :servers) and call"
+                     " servers declared in ~/.vis/state.yml (:mcp :servers) and call"
                      " their tools (mcp__servers / mcp__tools / mcp__call). Each live"
                      " connection is a session resource (footer count, F4, resource_stop)."
                      " ON by default — connects automatically when MCP servers are configured.")
@@ -51,7 +51,7 @@
    :group :tools})
 
 ;; ---------------------------------------------------------------------------
-;; Config — declared servers from ~/.vis/config.edn :mcp :servers
+;; Config — declared servers from ~/.vis/state.yml :mcp :servers
 ;; ---------------------------------------------------------------------------
 
 (defn- transport-of [spec] (or (:transport spec) (if (:url spec) :http :stdio)))
@@ -59,14 +59,11 @@
 (defn- configured-servers
   "Map of `{server-name spec}` from config; keys normalised to strings."
   []
-  (let
-    [m (some-> (vis/load-config-raw)
-               :mcp
-               :servers)]
+  (let [m (get-in (or (vis/load-config-raw) {}) ["mcp" "servers"])]
     (if (map? m)
       (into {}
             (map (fn [[k v]]
-                   [(if (keyword? k) (name k) (str k)) v]))
+                   [(str k) (vis/runtime-config v)]))
             m)
       {})))
 
@@ -97,7 +94,7 @@
      (or (vis/load-config-raw) {})]
 
     (when-not server (throw (ex-info "MCP server name is required" {:type :mcp/config})))
-    (vis/save-config! (assoc-in raw [:mcp :servers server] spec) :mcp)
+    (vis/save-config! (assoc-in raw ["mcp" "servers" server] spec) :mcp)
     server))
 
 (defn- add-stdio-server!
@@ -242,7 +239,7 @@
                           "input_schema" (get t "inputSchema")})
                        (mcp/list-tools conn))})
     (err :mcp/tools
-         (str "MCP server '" server "' is not configured (see ~/.vis/config.edn :mcp :servers).")
+         (str "MCP server '" server "' is not configured (see ~/.vis/state.yml :mcp :servers).")
          :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers))))))))
 
 (defn- mcp-call-impl
@@ -259,7 +256,7 @@
             "content" (get r "content")
             "is_error" (boolean (get r "isError"))}))
      (err :mcp/call
-          (str "MCP server '" server "' is not configured (see ~/.vis/config.edn :mcp :servers).")
+          (str "MCP server '" server "' is not configured (see ~/.vis/state.yml :mcp :servers).")
           :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers)))))))))
 
 (defn- mcp-connect-impl
@@ -283,7 +280,7 @@
 (defn- mcp-gate-before-fn
   [op]
   (fn [env f args]
-    (if (toggles/enabled? :mcp/enabled)
+    (if (toggles/enabled? "mcp_enabled")
       {:env env :fn f :args (into [env] args)}
       {:result (err op
                     (str (name op) " blocked: " disabled-hint)
@@ -371,7 +368,7 @@
 
 (def
   ^{:doc
-    "List the Model Context Protocol servers declared in ~/.vis/config.edn (:mcp :servers) with their connection status. Returns {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connecting happens lazily on mcp__tools/mcp__call, or explicitly via mcp__connect."
+    "List the Model Context Protocol servers declared in ~/.vis/state.yml (:mcp :servers) with their connection status. Returns {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connecting happens lazily on mcp__tools/mcp__call, or explicitly via mcp__connect."
     :arglists '([])}
   mcp-servers
   mcp-servers-impl)
@@ -541,17 +538,17 @@
   (boolean (seq (configured-servers))))
 
 (defn- mcp-enabled?
-  "True when the user-owned `:mcp/enabled` toggle is ON. The MCP surface in any
+  "True when the user-owned `mcp_enabled` toggle is ON. The MCP surface in any
    Resources UI (web modal + TUI dialog) is gated on this — nothing MCP shows
    until the user opts in."
   []
-  (toggles/enabled? :mcp/enabled))
+  (toggles/enabled? "mcp_enabled"))
 
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp__servers/mcp__tools/mcp__call), each live connection a session resource. Gated by :mcp/enabled (ON by default). Activates when servers are configured."
+     "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp__servers/mcp__tools/mcp__call), each live connection a session resource. Gated by mcp_enabled (ON by default). Activates when servers are configured."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -600,7 +597,7 @@
                  :label "Environment"
                  :type :textarea
                  :placeholder "KEY=VALUE (one per line)"
-                 :hint "secrets like GITHUB_TOKEN=… — stored in config.edn"}
+                 :hint "secrets like GITHUB_TOKEN=… — stored in state.yml"}
                 {:name :cwd :label "Directory" :placeholder "optional"}]
        :start-fn (fn [env fields]
                    (let [server (add-stdio-server! fields)]
@@ -616,7 +613,7 @@
                  :label "Auth token"
                  :type :password
                  :placeholder "paste token"
-                 :hint "stored in config.edn, sent as Bearer"}]
+                 :hint "stored in state.yml, sent as Bearer"}]
        :start-fn (fn [env fields]
                    (let [server (add-http-server! fields)]
                      (connect-server! (:session-id env) server)))}]

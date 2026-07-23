@@ -4434,7 +4434,7 @@
      form-lines
      (fn [form block-number]
        (let
-         [{:keys [code comment error success?]}
+         [{:keys [code display-code comment error success?]}
           form
 
           has-status?
@@ -4500,14 +4500,18 @@
           title-lines
           []
 
-          ;; Canonical code surface: paint the model's raw `:code`,
-          ;; beautified via ruff (cached; verbatim fallback when ruff is
-          ;; unavailable). NO `:render-segments` / `:vis/show-raw-code`
-          ;; gate — a structurally-silent (engine-chrome / answer) form
-          ;; carries no code and is already filtered upstream, so a blank
-          ;; `code` is the only thing that drops the row (`hide-code-chrome?`).
+          ;; Canonical code surface: paint the model's raw `:code`, using the
+          ;; gateway/canonical `:display-code` (ruff-beautified ONCE upstream)
+          ;; when present so the TUI never re-formats on every re-render. Only a
+          ;; local caller without an attached `:display-code` falls back to the
+          ;; cached formatter (verbatim when ruff is unavailable). NO
+          ;; `:render-segments` / `:vis/show-raw-code` gate — a structurally-silent
+          ;; (engine-chrome / answer) form carries no code and is already filtered
+          ;; upstream, so a blank `code` is the only thing that drops the row
+          ;; (`hide-code-chrome?`).
           code-text
-          (str/trim (str (vis/beautify-python code)))
+          (str/trim (str (or (not-empty (str display-code))
+                             (vis/beautify-python code))))
 
           ;; Syntax-color the executed source (always Python in the engine
           ;; loop) with the tree-sitter highlighter — the SAME ANSI-SGR run

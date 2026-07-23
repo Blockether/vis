@@ -4,17 +4,25 @@ import { GatewayClient } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
 import { removeConnection } from '../lib/storage';
 import { scanQr } from '../lib/scan';
-import { Banner, Button, Card, Input, Section } from '../components/ui';
+import { Banner, Button, Input } from '../components/ui';
 
 interface Props {
   conns: GatewayConn[];
   active: GatewayConn | null;
   onAdd: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   onSelect: (url: string) => Promise<void>;
+  onSettings: (conn: GatewayConn) => void;
   onChanged: () => Promise<void>;
 }
 
-export function ConnectScreen({ conns, active, onAdd, onSelect, onChanged }: Props) {
+export function ConnectScreen({
+  conns,
+  active,
+  onAdd,
+  onSelect,
+  onSettings,
+  onChanged,
+}: Props) {
   const [payload, setPayload] = useState('');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
@@ -26,17 +34,15 @@ export function ConnectScreen({ conns, active, onAdd, onSelect, onChanged }: Pro
     setMsg(null);
     try {
       const client = new GatewayClient(conn);
-      await client.ping(); // throws GatewayError on 401 (reachable, needs token)
+      await client.ping();
       await onAdd(conn);
-      setMsg({ kind: 'ok', text: `paired with ${conn.label ?? conn.url}` });
+      setMsg({ kind: 'ok', text: `Paired with ${conn.label ?? conn.url}` });
       setPayload('');
       setUrl('');
       setToken('');
     } catch (e) {
-      // Still store it so the user can retry once on the network (e.g. bring up
-      // Tailscale / cloudflared), but report the failure.
       await onAdd(conn, false);
-      setMsg({ kind: 'err', text: `saved, but not reachable yet: ${(e as Error).message}` });
+      setMsg({ kind: 'err', text: `Saved, but not reachable yet: ${(e as Error).message}` });
     } finally {
       setBusy(false);
     }
@@ -45,7 +51,7 @@ export function ConnectScreen({ conns, active, onAdd, onSelect, onChanged }: Pro
   async function addFromPayload() {
     const conn = parsePairing(payload);
     if (!conn) {
-      setMsg({ kind: 'err', text: 'not a vis:// pairing link or gateway URL' });
+      setMsg({ kind: 'err', text: 'Not a vis:// pairing link or gateway URL' });
       return;
     }
     await tryConn(conn);
@@ -53,7 +59,7 @@ export function ConnectScreen({ conns, active, onAdd, onSelect, onChanged }: Pro
 
   async function addManual() {
     if (!/^https?:\/\//i.test(url.trim())) {
-      setMsg({ kind: 'err', text: 'url must start with http:// or https://' });
+      setMsg({ kind: 'err', text: 'URL must start with http:// or https://' });
       return;
     }
     const u = url.trim();
@@ -63,100 +69,179 @@ export function ConnectScreen({ conns, active, onAdd, onSelect, onChanged }: Pro
   async function scan() {
     const raw = await scanQr();
     if (!raw) {
-      setMsg({ kind: 'err', text: 'scan cancelled or camera unavailable' });
+      setMsg({ kind: 'err', text: 'Scan cancelled or camera unavailable' });
       return;
     }
     const conn = parsePairing(raw);
     if (!conn) {
-      setMsg({ kind: 'err', text: 'QR is not a vis pairing code' });
+      setMsg({ kind: 'err', text: 'QR is not a Vis pairing code' });
       return;
     }
     await tryConn(conn);
   }
 
   return (
-    <div className="space-y-6 p-4">
-      <Section title="Pair a gateway">
-        <p className="px-1 text-sm text-white/50">
-          Run <code className="text-accent">vis gateway pair</code> on the machine, then
-          scan the QR or paste the <code className="text-accent">vis://</code> link. The
-          gateway can be on LAN, a Tailscale <span className="text-white/70">100.x</span>{' '}
-          host, or a cloudflared tunnel URL.
+    <div className="mx-auto w-full max-w-5xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
+      <header className="border-b border-dialog-edge pb-3">
+        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent">
+          Connections
         </p>
-        <Card className="space-y-3">
-          <Input
-            placeholder="vis://gateway?url=…&token=…"
-            value={payload}
-            onChange={(e) => setPayload(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Button className="flex-1" onClick={addFromPayload} disabled={busy || !payload}>
-              Pair from link
-            </Button>
-            <Button variant="ghost" onClick={scan} disabled={busy}>
-              Scan QR
-            </Button>
+        <div className="mt-1 flex items-end justify-between gap-4">
+          <div>
+            <h1 className="font-mono text-base font-black text-white">Gateways</h1>
+            <p className="mt-1 max-w-xl text-xs leading-5 text-dialog-hint">
+              Choose where Vis runs. Each gateway owns its sessions, theme, and settings.
+            </p>
           </div>
-        </Card>
-      </Section>
-
-      <Section title="Manual (URL + token)">
-        <Card className="space-y-3">
-          <Input
-            placeholder="http://100.64.0.10:7890  ·  https://name.trycloudflare.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            autoCapitalize="none"
-            autoCorrect="off"
-          />
-          <Input
-            placeholder="bearer token (blank for loopback)"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            autoCapitalize="none"
-            autoCorrect="off"
-          />
-          <Button onClick={addManual} disabled={busy || !url}>
-            Connect
-          </Button>
-        </Card>
-      </Section>
+          {conns.length > 0 && (
+            <span className="shrink-0 font-mono text-[10px] text-dialog-hint">
+              {conns.length} saved
+            </span>
+          )}
+        </div>
+      </header>
 
       {msg && <Banner kind={msg.kind === 'ok' ? 'ok' : 'err'}>{msg.text}</Banner>}
 
       {conns.length > 0 && (
-        <Section title="Saved gateways">
-          <div className="space-y-2">
-            {conns.map((c) => {
-              const on = active?.url === c.url;
+        <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
+          <header className="flex min-h-9 items-center justify-between bg-dialog-title px-3 py-2 text-dialog-title-foreground">
+            <h2 className="font-mono text-xs font-black uppercase tracking-[0.12em]">Saved gateways</h2>
+            <span className="font-mono text-[9px] font-bold uppercase tracking-wider opacity-65">
+              Select · configure
+            </span>
+          </header>
+          <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
+            {conns.map((conn) => {
+              const selected = active?.url === conn.url;
               return (
-                <Card key={c.url} className="flex items-center justify-between gap-3">
+                <div
+                  key={conn.url}
+                  className={`grid min-w-0 grid-cols-1 gap-1.5 px-2 py-2 transition-[background-color,opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-2 sm:px-3 ${
+                    selected ? 'border-l-2 border-accent bg-panel-2' : 'bg-panel hover:bg-hover'
+                  }`}
+                >
                   <button
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => onSelect(c.url)}
+                    type="button"
+                    className="group flex min-h-11 min-w-0 items-center gap-3 px-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                    onClick={() => onSelect(conn.url)}
+                    aria-current={selected ? 'true' : undefined}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${on ? 'bg-ok' : 'bg-white/20'}`} />
-                      <span className="truncate text-sm text-white/90">{c.label ?? c.url}</span>
-                    </div>
-                    <div className="truncate pl-4 font-mono text-xs text-white/35">{c.url}</div>
+                    <span
+                      className={`shrink-0 font-mono text-sm ${selected ? 'text-ok' : 'text-dialog-hint'}`}
+                      aria-hidden="true"
+                    >
+                      {selected ? '●' : '○'}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-mono text-xs font-bold text-white">
+                          {conn.label ?? hostOf(conn.url)}
+                        </span>
+                        {selected && (
+                          <span className="shrink-0 font-mono text-[8px] font-black uppercase tracking-wider text-ok">
+                            Active
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate font-mono text-[9px] text-dialog-hint">
+                        {conn.url}
+                      </span>
+                    </span>
                   </button>
-                  <Button
-                    variant="danger"
-                    className="px-3 py-1.5 text-xs"
-                    onClick={async () => {
-                      await removeConnection(c.url);
-                      await onChanged();
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </Card>
+
+                  <div className="grid grid-cols-2 gap-1.5 sm:flex sm:shrink-0 sm:items-center">
+                    <Button
+                      variant="ghost"
+                      className="w-full px-2.5 py-1.5 font-mono text-[10px] sm:w-auto"
+                      onClick={() => onSettings(conn)}
+                      aria-label={`Settings for ${conn.label ?? hostOf(conn.url)}`}
+                    >
+                      Settings
+                    </Button>
+                    <Button
+                      variant="danger"
+                      className="w-full px-2.5 py-1.5 font-mono text-[10px] sm:w-auto"
+                      onClick={async () => {
+                        await removeConnection(conn.url);
+                        await onChanged();
+                      }}
+                      aria-label={`Remove ${conn.label ?? hostOf(conn.url)}`}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </div>
               );
             })}
           </div>
-        </Section>
+        </section>
       )}
+
+      <section className="transition-[opacity,transform] delay-75 duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+        <div className="mb-3 flex items-center gap-3">
+          <h2 className="font-mono text-xs font-black uppercase tracking-[0.12em] text-white">
+            Add a gateway
+          </h2>
+          <span className="h-px flex-1 bg-dialog-edge" />
+        </div>
+
+        <div className="grid min-w-0 gap-3 md:grid-cols-2">
+          <div className="overflow-hidden border border-dialog-edge bg-panel transition-colors focus-within:border-accent">
+            <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
+              <h3 className="font-mono text-xs font-bold text-white">Pairing link</h3>
+              <p className="mt-0.5 text-[11px] leading-4 text-dialog-hint">
+                Paste the link from <code className="text-accent">vis gateway pair</code>.
+              </p>
+            </header>
+            <div className="space-y-2.5 p-3">
+              <Input
+                placeholder="vis://gateway?url=…&amp;token=…"
+                value={payload}
+                onChange={(event) => setPayload(event.target.value)}
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+              <div className="flex gap-2">
+                <Button className="min-h-11 flex-1 sm:min-h-10" onClick={addFromPayload} disabled={busy || !payload}>
+                  Pair
+                </Button>
+                <Button variant="ghost" className="min-h-11 sm:min-h-10" onClick={scan} disabled={busy}>
+                  Scan QR
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-hidden border border-dialog-edge bg-panel transition-colors focus-within:border-accent">
+            <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
+              <h3 className="font-mono text-xs font-bold text-white">URL + token</h3>
+              <p className="mt-0.5 text-[11px] leading-4 text-dialog-hint">
+                LAN, Tailscale, and Cloudflare tunnel addresses are supported.
+              </p>
+            </header>
+            <div className="space-y-2.5 p-3">
+              <Input
+                placeholder="https://gateway.example.com"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+              <Input
+                placeholder="Bearer token (optional on loopback)"
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+              <Button className="min-h-11 w-full sm:min-h-10" onClick={addManual} disabled={busy || !url}>
+                Connect
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

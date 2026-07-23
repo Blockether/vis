@@ -664,12 +664,12 @@
    :show-iterations true
    :show-silent true
    :show-timestamps true
-   :mouse-selection-copy (vis/toggle-enabled? :vis/mouse-selection-copy)
-   :reasoning-level (vis/toggle-value :vis/reasoning-level)
-   :openai-codex-verbosity (vis/toggle-value :openai-codex/verbosity)})
+   :mouse-selection-copy true
+   :reasoning-level (vis/toggle-value "reasoning_level")
+   :openai-codex-verbosity (vis/toggle-value "openai_codex_verbosity")})
 
 (def default-settings
-  "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
+  "Per-user TUI settings. Persisted to `~/.vis/state.yml` under
    `:tui-settings`.
 
      theme-name - reusable channel theme id. Default `:vis-light`; extension
@@ -711,35 +711,40 @@
    :contributors-disabled #{}})
 
 (defn- load-persisted-settings
-  "Read `:tui-settings` from `~/.vis/config.edn` for the keys this
-   layer still owns (`:theme-name`, `:contributors-disabled`). The
-   migrated boolean + enum settings are loaded by
-   `vis/toggles-hydrate-from-config!` in `screen/run-chat!`."
+  "Read the string-keyed `tui-settings` YAML block and adapt its fixed fields."
   []
   (let
     [raw
      (try (vis/load-config-raw) (catch Throwable _ nil))
 
      saved
-     (when (map? raw) (:tui-settings raw))]
+     (when (map? raw) (get raw "tui-settings"))
 
-    (normalize-settings (merge default-settings
-                               (when (map? saved) (select-keys saved (keys default-settings)))))))
+     runtime-saved
+     (when (map? saved)
+       (cond-> {}
+         (contains? saved "theme-name")
+         (assoc :theme-name (get saved "theme-name"))
+
+         (contains? saved "contributors-disabled")
+         (assoc :contributors-disabled (get saved "contributors-disabled"))))]
+
+    (normalize-settings (merge default-settings runtime-saved))))
 
 (defn- persist-settings!
-  "Write `settings` back into `~/.vis/config.edn` under
+  "Write `settings` back into `~/.vis/state.yml` under
    `:tui-settings`, preserving every other key in the file. Failures
    are swallowed - a config-save failure should never crash a TUI
    that's already otherwise healthy."
   [settings]
   (try (let [raw (or (vis/load-config-raw) {})]
-         (vis/save-config! (assoc raw :tui-settings settings)))
+         (vis/save-config! (assoc raw "tui-settings" settings)))
        (catch Throwable _ nil)))
 
 (defn- apply-settings-update!
   "Merge `new-settings` over the local-owned slice (theme +
    contributors-disabled), persist that slice into
-   `~/.vis/config.edn`, and rebuild the cached `:settings` view by
+   `~/.vis/state.yml`, and rebuild the cached `:settings` view by
    overlaying the toggle projection. Migrated keys ignored here —
    they route through `vis/toggle-set-value!` / `cycle-value!` and
    the listener installed in `init!` keeps the projection coherent."
@@ -842,8 +847,7 @@
 (defn- current-provider-id
   "Provider selected for this session, falling back to the router default."
   [db]
-  (some-> (or (:provider (session-model-pref db))
-              (:provider (current-model-info)))
+  (some-> (or (:provider (session-model-pref db)) (:provider (current-model-info)))
           name
           keyword))
 
@@ -958,7 +962,7 @@
     ;; The tab ENTRY carries the workspace root reliably (set at creation). A
     ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —
     ;; can null the denormalized top-level `:workspace/root`; backfill it from
-    ;; the entry so every reader (footer, F2 context panel, `/root` picker,
+    ;; the entry so every reader (footer, F2 context panel, `/cd` picker,
     ;; magit) keeps the ACTIVE session's root and never the vis process cwd.
     (cond-> db'
       (and (nil? (:workspace/root db')) (:workspace/root entry))
@@ -1143,7 +1147,7 @@
                   {:db db
                    :fx [[:notify "Reasoning effort is not configurable for this model" :warn
                          settings-notification-ttl-ms]]}
-                  (let [next (vis/toggle-cycle-value! :vis/reasoning-level)]
+                  (let [next (vis/toggle-cycle-value! "reasoning_level")]
                     ;; The toggle listener wired in `init!` will fire next; this
                     ;; just refreshes the cached :settings projection here too
                     ;; so the FX :db ends up consistent within the same tick.
@@ -1157,7 +1161,7 @@
                   {:db db
                    :fx [[:notify "Codex verbosity is only available for OpenAI Codex" :warn
                          settings-notification-ttl-ms]]}
-                  (let [next (vis/toggle-cycle-value! :openai-codex/verbosity)]
+                  (let [next (vis/toggle-cycle-value! "openai_codex_verbosity")]
                     {:db (apply-settings-update! db {})
                      :fx [[:notify (str "Codex verbosity: " (name next)) :info
                            settings-notification-ttl-ms]]}))))
@@ -1598,14 +1602,14 @@
 
 (reg-event-db :set-workspace
               ;; Replace the session's current workspace record (trunk or draft) after a
-              ;; turn that may have switched it (`/root`, `/draft new | apply | abandon`).
+              ;; turn that may have switched it (`/cd`, `/draft new | apply | abandon`).
               ;; Keep the denormalized root in lockstep; the footer reads it first.
               ;;
               ;; `workspace-id` = the tab whose session this workspace belongs to. A
               ;; BACKGROUND (sibling) session can complete a turn while another tab is
               ;; active; routing through `update-tab` writes the root into THAT tab (its
               ;; `:tab-locals`) instead of stomping the active tab's footer with the
-              ;; wrong repo. Nil `workspace-id` (e.g. the /root picker on the active
+              ;; wrong repo. Nil `workspace-id` (e.g. the /cd picker on the active
               ;; session) targets the active tab, as before.
               ;; A nil/blank workspace (a transient gateway miss on the picker-close
               ;; re-sync, or a caught error yielding nil) must NEVER stomp a good root:
@@ -1845,91 +1849,90 @@
                              :progress {:iterations []}
                              :turn-start-ms (System/currentTimeMillis))))))
 
-(reg-event-fx :bind-built-session
-              ;; The background build for an optimistic `:open-building-tab` finished. Find
-              ;; the tab tagged with `build-id`, bind the freshly built `session` (+ its
-              ;; `history`/`workspace`) into that tab's state, clear the loading flag, and
-              ;; drain anything the user queued while it built. If the tab was closed in the
-              ;; meantime, close the now-orphan session instead of leaking it.
-              (fn [db [_ build-id session history workspace]]
-                (let
-                  [db
-                   (-> db
-                       ensure-tabs
-                       sync-active-tab)
+(reg-event-fx
+  :bind-built-session
+  ;; The background build for an optimistic `:open-building-tab` finished. Find
+  ;; the tab tagged with `build-id`, bind the freshly built `session` (+ its
+  ;; `history`/`workspace`) into that tab's state, clear the loading flag, and
+  ;; drain anything the user queued while it built. If the tab was closed in the
+  ;; meantime, close the now-orphan session instead of leaking it.
+  (fn [db [_ build-id session history workspace]]
+    (let
+      [db
+       (-> db
+           ensure-tabs
+           sync-active-tab)
 
-                   entries
-                   (vec (:tabs db))
+       entries
+       (vec (:tabs db))
 
-                   entry
-                   (some #(when (= build-id (:build-id %)) %) entries)]
+       entry
+       (some #(when (= build-id (:build-id %)) %) entries)]
 
-                  (if-not entry
-                    {:db db :fx [[:gateway-close-session (:id session)]]}
-                    (let
-                      [tab-id
-                       (:id entry)
+      (if-not entry
+        {:db db :fx [[:gateway-close-session (:id session)]]}
+        (let
+          [tab-id
+           (:id entry)
 
-                       entries'
-                       (mapv (fn [e]
-                               (if (= (:id e) tab-id)
-                                 (cond->
-                                   (-> e
-                                       (dissoc :build-id)
-                                       (assoc :label (or (some-> workspace
-                                                                 :label
-                                                                 not-empty)
-                                                         (when (not= starting-session-label
-                                                                     (:label e))
-                                                           (not-empty (:label e)))
-                                                         untitled-session-label)))
-                                   workspace
-                                   (assoc :workspace workspace)
+           entries'
+           (mapv (fn [e]
+                   (if (= (:id e) tab-id)
+                     (cond->
+                       (-> e
+                           (dissoc :build-id)
+                           (assoc :label (or (some-> workspace
+                                                     :label
+                                                     not-empty)
+                                             (when (not= starting-session-label (:label e))
+                                               (not-empty (:label e)))
+                                             untitled-session-label)))
+                       workspace
+                       (assoc :workspace workspace)
 
-                                   (:root workspace)
-                                   (assoc :workspace/root (:root workspace)))
-                                 e))
-                             entries)
+                       (:root workspace)
+                       (assoc :workspace/root (:root workspace)))
+                     e))
+                 entries)
 
-                       ;; The tab was minted at the END (no workspace known
-                       ;; yet). Now that its project root is bound, RELOCATE
-                       ;; it next to its group so the strip stays grouped.
-                       entries'
-                       (let
-                         [entry'
-                          (some #(when (= (:id %) tab-id) %) entries')
+           ;; The tab was minted at the END (no workspace known
+           ;; yet). Now that its project root is bound, RELOCATE
+           ;; it next to its group so the strip stays grouped.
+           entries'
+           (let
+             [entry'
+              (some #(when (= (:id %) tab-id) %) entries')
 
-                          without
-                          (vec (remove #(= (:id %) tab-id) entries'))]
+              without
+              (vec (remove #(= (:id %) tab-id) entries'))]
 
-                         (insert-tab-grouped without entry'))
+             (insert-tab-grouped without entry'))
 
-                       db
-                       (assoc db :tabs entries')
+           db
+           (assoc db :tabs entries')
 
-                       db
-                       (update-tab db
-                                   tab-id
-                                   (fn [w]
-                                     (clear-active-turn-state (assoc w
-                                                                :session session
-                                                                :workspace workspace
-                                                                :workspace/root (:root workspace)
-                                                                :messages (or history [])
-                                                                :input-history (history-user-texts
-                                                                                 history)
-                                                                :title nil))))
+           db
+           (update-tab db
+                       tab-id
+                       (fn [w]
+                         (clear-active-turn-state (assoc w
+                                                    :session session
+                                                    :workspace workspace
+                                                    :workspace/root (:root workspace)
+                                                    :messages (or history [])
+                                                    :input-history (history-user-texts history)
+                                                    :title nil))))
 
-                       tab-view
-                       (if (= tab-id (current-tab-id db)) db (get-in db [:tab-locals tab-id]))
+           tab-view
+           (if (= tab-id (current-tab-id db)) db (get-in db [:tab-locals tab-id]))
 
-                       pending?
-                       (seq (:pending-sends tab-view))]
+           pending?
+           (seq (:pending-sends tab-view))]
 
-                      {:db db
-                       :fx (cond-> []
-                             pending?
-                             (conj [:dispatch [:drain-pending tab-id]]))})))))
+          {:db db
+           :fx (cond-> []
+                 pending?
+                 (conj [:dispatch [:drain-pending tab-id]]))})))))
 
 (reg-event-db :preallocate-project-tabs
               ;; Pre-allocate NAME-ONLY tabs for `specs` — [{:session-id .. :label ..
@@ -3031,28 +3034,47 @@
               ;;      own (the visible "queue for a few seconds then it vanishes"). Now that
               ;;      the id is here, fire the gateway cancel automatically instead of forcing
               ;;      a SECOND Esc, and clear the marker so it never bites a later turn.
-              (fn [db [_ workspace-id {:keys [started-at-ms turn-id]}]]
-                (let [workspace-id (or workspace-id (current-tab-id db))]
+              (fn [db [_ workspace-id {:keys [started-at-ms server-at-ms turn-id]}]]
+                (let
+                  [workspace-id
+                   (or workspace-id (current-tab-id db))
+
+                   ;; Convert the gateway clock into this process's wall-clock
+                   ;; domain using the event's gateway-sampled elapsed value.
+                   local-started-at-ms
+                   (when (nat-int? started-at-ms)
+                     (if (nat-int? server-at-ms)
+                       (- (System/currentTimeMillis)
+                          (max 0 (- (long server-at-ms) (long started-at-ms))))
+                       started-at-ms))]
+
                   (if-not workspace-id
                     {:db db}
                     (let
-                      [target (db-for-tab db workspace-id)
-                       awaiting-cancel? (boolean (and turn-id (:cancel-awaiting-turn-id? target)))
-                       sid (get-in target [:session :id])
-                       db' (update-tab db
-                                       workspace-id
-                                       (fn [w]
-                                         (cond->
-                                           (if (:loading? w)
-                                             (cond-> w
-                                               (nat-int? started-at-ms)
-                                               (assoc :turn-start-ms started-at-ms)
+                      [target
+                       (db-for-tab db workspace-id)
 
-                                               (and turn-id (nil? (:gateway-turn-id w)))
-                                               (assoc :gateway-turn-id turn-id))
-                                             w)
-                                           (:cancel-awaiting-turn-id? w)
-                                           (dissoc :cancel-awaiting-turn-id?))))]
+                       awaiting-cancel?
+                       (boolean (and turn-id (:cancel-awaiting-turn-id? target)))
+
+                       sid
+                       (get-in target [:session :id])
+
+                       db'
+                       (update-tab db
+                                   workspace-id
+                                   (fn [w]
+                                     (cond->
+                                       (if (:loading? w)
+                                         (cond-> w
+                                           (nat-int? local-started-at-ms)
+                                           (assoc :turn-start-ms local-started-at-ms)
+
+                                           (and turn-id (nil? (:gateway-turn-id w)))
+                                           (assoc :gateway-turn-id turn-id))
+                                         w)
+                                       (:cancel-awaiting-turn-id? w)
+                                       (dissoc :cancel-awaiting-turn-id?))))]
 
                       (cond-> {:db db'}
                         (and awaiting-cancel? sid)
@@ -3878,7 +3900,7 @@
              (or (vis/load-config-raw) {})
 
              persistent
-             (assoc raw :providers (vec (:providers config)))]
+             (assoc raw "providers" (vec (:providers config)))]
 
             (vis/save-config! persistent)
             (let
@@ -3989,7 +4011,7 @@
                          :slash (get result "slash")
                          :client-turn-id client-turn-id}])
                      ;; A turn may have switched the session's workspace
-                     ;; (`/draft new | apply | abandon`, `/root <path>`).
+                     ;; (`/draft new | apply | abandon`, `/cd <path>`).
                      ;; Re-sync so header/footer reflect it. The gateway ws
                      ;; fact already carries the server-resolved :git status,
                      ;; so re-dispatch it — no client-side git walk here.

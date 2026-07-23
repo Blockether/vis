@@ -101,77 +101,57 @@
    and any unrelated global keys (e.g. :router). Isolated to a temp config dir."
   (it
     "first-run connect persists; adding a second provider keeps both + globals"
-    (let
-      [tmp
-       (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))
+    (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))]
+      (try (with-redefs
+             [config/config-dir tmp
+              config/state-path (str tmp "/state.yml")
+              ;; isolate from any real project-local overlay / root YAML
+              config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+              config/project-root-yaml-paths (constantly [])]
 
-       cfg-path
-       (str tmp "/config.edn")]
-
-      (try
-        (with-redefs
-          [config/config-dir
-           tmp
-
-           config/config-path
-           cfg-path
-
-           config/state-path
-           (str tmp "/state.yml")
-
-           ;; isolate from any real project-local overlay / root YAML
-           config/project-config-yaml-paths
-           (constantly [(str tmp "/none/.vis/config.yml")])
-
-           config/project-root-yaml-paths
-           (constantly [])]
-
-          ;; (0) genuine first run — nothing on disk
-          (expect (config/first-run?))
-          (expect (not (config/provider-configured?)))
-          ;; (1) welcome connects provider A (mirrors show-welcome!'s persist:
-          ;;     merge into raw global config, then save-config!)
-          (config/save-config! (assoc (or (config/load-config-raw) {})
-                                 :router {:budget {:max-cost 5.0}}
-                                 :providers [{:id :prov-a :api-key "key-a"}]))
-          (expect (not (config/first-run?)))
-          (expect (config/provider-configured?))
-          (expect (= [:prov-a] (mapv :id (:providers (config/load-config)))))
-          ;; (2) provider manager adds provider B (mirrors manage-providers:
-          ;;     seed from existing config, append, save the full list)
-          (let [raw (config/load-config-raw)]
-            (config/save-config!
-              (assoc raw :providers (conj (vec (:providers raw)) {:id :prov-b :api-key "key-b"}))))
-          ;; (3) reload from disk: BOTH providers survive (in order) and the
-          ;;     unrelated global :router key is preserved
-          (let [loaded (config/load-config)]
-            (expect (= [:prov-a :prov-b] (mapv :id (:providers loaded))))
-            (expect (= 5.0 (get-in loaded [:router :budget :max-cost])))))
-        (finally (rm-rf! (io/file tmp)))))))
+             ;; (0) genuine first run — nothing on disk
+             (expect (config/first-run?))
+             (expect (not (config/provider-configured?)))
+             ;; (1) welcome connects provider A (mirrors show-welcome!'s persist:
+             ;;     merge into raw global config, then save-config!)
+             (config/save-config! (assoc (or (config/load-config-raw) {})
+                                    "router" {"budget" {"max-cost" 5.0}}
+                                    "providers" [{"id" "prov-a" "api-key" "key-a"}]))
+             (expect (not (config/first-run?)))
+             (expect (config/provider-configured?))
+             (expect (= [:prov-a] (mapv :id (:providers (config/load-config)))))
+             ;; (2) provider manager adds provider B (mirrors manage-providers:
+             ;;     seed from existing config, append, save the full list)
+             (let [raw (config/load-config-raw)]
+               (config/save-config! (assoc raw
+                                      "providers" (conj (vec (get raw "providers"))
+                                                        {"id" "prov-b" "api-key" "key-b"}))))
+             ;; (3) reload from disk: BOTH providers survive (in order) and the
+             ;;     unrelated global :router key is preserved
+             (let [loaded (config/load-config)]
+               (expect (= [:prov-a :prov-b] (mapv :id (:providers loaded))))
+               (expect (= 5.0 (get-in loaded [:router :budget :max-cost])))))
+           (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
   yaml-config-test
-  "YAML project config (`vis.yml` / `.vis/config.yml`) maps onto the EDN
-   config shape: snake_case/kebab-case keys both land on the SAME kebab
-   keyword, keyword-valued fields (`:id`, `:backend`, `:api-style`) coerce,
-   and the string-keyed subtrees (`:environment`, `:llm-headers`,
-   `:extra-body`) stay verbatim. At a tier where BOTH formats exist the EDN
-   file wins and the YAML file is ignored — never merged."
-  (it "normalizes snake_case and kebab-case keys onto the same kebab keyword"
-      (let [keywordize @#'config/keywordize-yaml]
-        (expect (= {:system-prompt "x" :router {:budget {:max-cost 5.0}}}
-                   (keywordize {"system_prompt" "x" "router" {"budget" {"max_cost" 5.0}}})))
-        (expect (= (keywordize {"system-prompt" "x"}) (keywordize {"system_prompt" "x"})))))
-  (it "keeps :environment/:llm-headers/:extra-body keys verbatim, coerces keyword-valued fields"
-      (let [keywordize @#'config/keywordize-yaml]
+  "YAML parsing keeps canonical keys and scalar values as strings; the finite
+   internal adapter runs only after validation."
+  (it "adapts only known schema keys while preserving user-owned keys"
+      (let
+        [wire
+         {"environment" {"ANTHROPIC_API_KEY" "tok"}
+          "providers"
+          [{"id" "anthropic" "api-style" "anthropic" "llm-headers" {"X-Custom-Header" "v"}}]}
+
+         runtime
+         (config/runtime-config wire)]
+
         (expect (= {:environment {"ANTHROPIC_API_KEY" "tok"}
                     :providers
                     [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
-                   (keywordize {"environment" {"ANTHROPIC_API_KEY" "tok"}
-                                "providers" [{"id" "anthropic"
-                                              "api_style" "anthropic"
-                                              "llm-headers" {"X-Custom-Header" "v"}}]})))))
-  (it "parses a vis.yml into the EDN config shape"
+                   runtime))))
+  (it "parses vis.yml directly into the string-keyed clojure.spec shape"
       (let
         [read-yaml
          @#'config/read-yaml-config-map
@@ -184,16 +164,15 @@
 
         (try (.mkdirs dir)
              (spit yml
-                   (str "system_prompt: Prefer RST.\n"
-                        "search:\n  include_gitignored_paths:\n    - repositories/\n"))
-             (expect (= {:system-prompt "Prefer RST."
-                         :search {:include-gitignored-paths ["repositories/"]}}
+                   (str "system-prompt: Prefer RST.\n"
+                        "search:\n  include-gitignored-paths:\n    - repositories/\n"))
+             (expect (= {"system-prompt" "Prefer RST."
+                         "search" {"include-gitignored-paths" ["repositories/"]}}
                         (read-yaml (.getPath yml))))
-             ;; malformed YAML -> nil
              (spit yml "{{{{: not yaml")
              (expect (nil? (read-yaml (.getPath yml))))
              (finally (rm-rf! dir)))))
-  (it "search-overlay: nil when unset, defaults guard includes, explicit list replaces"
+  (it "search-overlay adapts the validated string block"
       (expect (nil? (with-redefs
                       [config/load-config-raw (fn []
                                                 {})]
@@ -201,26 +180,71 @@
       (let
         [overlay (with-redefs
                    [config/load-config-raw (fn []
-                                             {:search {:include-gitignored-paths
-                                                       ["repositories/"]}})]
+                                             {"search" {"include-gitignored-paths"
+                                                        ["repositories/"]}})]
                    (config/search-overlay))]
         (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
         (expect (= config/default-search-always-exclude (:always-exclude overlay))))
       (expect (= ["*.log"]
                  (:always-exclude (with-redefs
                                     [config/load-config-raw (fn []
-                                                              {:search
-                                                               {:include-gitignored-paths ["r/"]
-                                                                :always-exclude ["*.log"]}})]
+                                                              {"search"
+                                                               {"include-gitignored-paths" ["r/"]
+                                                                "always-exclude" ["*.log"]}})]
                                     (config/search-overlay)))))))
+
+(defdescribe
+  toggles-yaml-config-test
+  "Feature toggles are plain snake_case string ids end to end: hand-written
+   `vis.yml` preserves the keys verbatim, and the machine YAML writer emits
+   the same strings without keyword or namespace conversion."
+  (it "a hand-written vis.yml toggles block preserves plain string ids"
+      (let
+        [dir
+         (io/file "target/toggles-yaml-read-test")
+
+         root-yml
+         (io/file dir "vis.yml")]
+
+        (try (.mkdirs dir)
+             (spit root-yml (str "toggles:\n" "  reasoning_level: deep\n" "  auto_commit: true\n"))
+             (with-redefs
+               [config/global-config-yaml-paths
+                (fn []
+                  [])
+
+                config/state-path
+                "/nonexistent/state.yml"
+
+                config/project-root-yaml-paths
+                (fn []
+                  [(.getPath root-yml)])
+
+                config/project-config-yaml-paths
+                (fn []
+                  [])]
+
+               (let [cfg (config/load-config-raw)]
+                 (expect (= {"reasoning_level" "deep" "auto_commit" true} (get cfg "toggles")))
+                 (expect (every? string? (keys (get cfg "toggles"))))))
+             (finally (some-> root-yml
+                              .delete)
+                      (some-> dir
+                              .delete)))))
+  (it "->yaml-safe emits string toggle ids verbatim and keeps ordinary config keys"
+      (let
+        [safe (#'config/->yaml-safe
+               {:toggles {"reasoning_level" :deep "auto_commit" true} :base-url "x" :providers []})]
+        (expect (= {"reasoning_level" "deep" "auto_commit" true} (get safe "toggles")))
+        (expect (contains? safe "base-url")))))
 
 (defdescribe
   config-tier-precedence-test
   "`load-config-raw` deep-merges FOUR tiers, later wins: global `~/.vis` YAML
-   base < global `~/.vis/config.edn` < root `vis.*` < nested `.vis/config.*`.
+   base < global `~/.vis/state.yml` < root `vis.*` < nested `.vis/config.*`.
    Two contracts under test: the NESTED hidden overlay overrides the root
    file (personal beats committed), and the global `~/.vis` YAML tier loads
-   UNDER the machine-written `config.edn` (EDN wins per key, disjoint keys
+   UNDER the machine-written `state.yml` (state.yml wins per key, disjoint keys
    merge — the file Vis itself writes can never be shadowed by hand YAML)."
   (it
     "nested .vis/config.yml overrides root vis.yml; disjoint keys from every tier survive"
@@ -234,8 +258,8 @@
        gyml
        (io/file gdir "config.yml")
 
-       gedn
-       (io/file gdir "config.edn")
+       gstate
+       (io/file gdir "state.yml")
 
        root-yml
        (io/file dir "vis.yml")
@@ -246,19 +270,16 @@
       (try (.mkdirs (io/file dir ".vis"))
            (.mkdirs gdir)
            (spit gyml
-                 (str "system_prompt: FROM-GLOBAL-YAML\n"
-                      "router:\n  budget:\n    max_cost: 1.0\n"))
-           (spit gedn "{:providers [{:id :prov-a}]}")
+                 (str "system-prompt: FROM-GLOBAL-YAML\n"
+                      "router:\n  budget:\n    max-cost: 1.0\n"))
+           (spit gstate "providers:\n  - id: prov-a\n")
            (spit root-yml
-                 (str "system_prompt: FROM-ROOT\n"
-                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
-           (spit nested-yml "system_prompt: FROM-NESTED\n")
+                 (str "system-prompt: FROM-ROOT\n"
+                      "search:\n  include-gitignored-paths:\n    - repositories/\n"))
+           (spit nested-yml "system-prompt: FROM-NESTED\n")
            (with-redefs
-             [config/config-path
-              (.getPath gedn)
-
-              config/state-path
-              (.getPath (io/file gdir "absent-state.yml"))
+             [config/state-path
+              (.getPath gstate)
 
               config/global-config-yaml-paths
               (fn []
@@ -274,20 +295,20 @@
 
              (let [cfg (config/load-config-raw)]
                ;; the nested overlay wins the conflicting key
-               (expect (= "FROM-NESTED" (:system-prompt cfg)))
+               (expect (= "FROM-NESTED" (get cfg "system-prompt")))
                ;; disjoint keys from every tier survive the merge
-               (expect (= ["repositories/"] (get-in cfg [:search :include-gitignored-paths])))
-               (expect (= [:prov-a] (mapv :id (:providers cfg))))
-               (expect (= 1.0 (get-in cfg [:router :budget :max-cost]))))
+               (expect (= ["repositories/"] (get-in cfg ["search" "include-gitignored-paths"])))
+               (expect (= ["prov-a"] (mapv #(get % "id") (get cfg "providers"))))
+               (expect (= 1.0 (get-in cfg ["router" "budget" "max-cost"]))))
              ;; drop the nested overlay entirely -> root wins
              (.delete nested-yml)
-             (expect (= "FROM-ROOT" (:system-prompt (config/load-config-raw))))
+             (expect (= "FROM-ROOT" (get (config/load-config-raw) "system-prompt")))
              ;; drop root too -> the global YAML base shows through
              (.delete root-yml)
-             (expect (= "FROM-GLOBAL-YAML" (:system-prompt (config/load-config-raw)))))
+             (expect (= "FROM-GLOBAL-YAML" (get (config/load-config-raw) "system-prompt"))))
            (finally (rm-rf! dir)))))
   (it
-    "global ~/.vis: hand-written YAML merges UNDER machine-written config.edn (EDN wins per key)"
+    "global ~/.vis: hand-written YAML merges UNDER machine-written state.yml (state wins per key)"
     (let
       [dir
        (io/file "target/config-global-yaml-test")
@@ -295,8 +316,8 @@
        gyml
        (io/file dir "config.yml")
 
-       gedn
-       (io/file dir "config.edn")
+       gstate
+       (io/file dir "state.yml")
 
        none
        (fn []
@@ -304,15 +325,12 @@
 
       (try (.mkdirs dir)
            (spit gyml
-                 (str "system_prompt: FROM-YAML\n"
-                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
-           (spit gedn "{:system-prompt \"FROM-EDN\"}")
+                 (str "system-prompt: FROM-YAML\n"
+                      "search:\n  include-gitignored-paths:\n    - repositories/\n"))
+           (spit gstate "system-prompt: FROM-STATE\n")
            (with-redefs
-             [config/config-path
-              (.getPath gedn)
-
-              config/state-path
-              (.getPath (io/file dir "absent-state.yml"))
+             [config/state-path
+              (.getPath gstate)
 
               config/global-config-yaml-paths
               (fn []
@@ -325,10 +343,10 @@
               none]
 
              (let [cfg (config/load-config-raw)]
-               ;; conflicting key: the machine-written EDN wins
-               (expect (= "FROM-EDN" (:system-prompt cfg)))
+               ;; conflicting key: the machine-written state.yml wins
+               (expect (= "FROM-STATE" (get cfg "system-prompt")))
                ;; YAML-only keys still land (merged, not ignored)
-               (expect (= ["repositories/"] (get-in cfg [:search :include-gitignored-paths])))))
+               (expect (= ["repositories/"] (get-in cfg ["search" "include-gitignored-paths"])))))
            ;; ~/.vis accepts vis.yml / vis.yaml spellings as fallbacks
            (expect (= ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]
                       (mapv #(.getName (io/file ^String %)) (@#'config/global-config-yaml-paths))))

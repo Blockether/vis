@@ -35,7 +35,8 @@
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
    granularity. An :only entry matches either the bare var name or the
    fully-qualified ns/name form; a non-empty :only that matches NOTHING is an
-   ERROR carrying the available var names, never a silent 0/0 pass.
+   ERROR carrying only the searched namespace and test-var counts, never a silent
+   0/0 pass or an exhaustive list that wastes model context.
    ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath."
   (quote
     (fn [nsyms sel ns-files]
@@ -86,16 +87,20 @@
                    :else true)))
 
          ;; A non-empty :only that selects NOTHING is a caller mistake
-         ;; (wrong var names) — surface it as an error listing what IS
-         ;; available instead of reporting a vacuous 0/0 pass.
+         ;; (usually a stale or misspelled var name). Keep the error actionable
+         ;; but bounded: listing every namespace and test var can consume an
+         ;; entire tool result and adds no signal once the selector is known.
          only-miss
          (fn [framework all]
            (when (and (seq only*) (empty? (filter keep? all)))
              {"framework" framework
-              "error" (str "only " (pr-str (vec (:only sel)))
-                           " matched no test vars in [" (apply str (interpose " " (map str nsyms)))
-                           "] — available vars: " (apply str
-                                                    (interpose " " (sort (map fqname-of all)))))
+              "error" (str "only "
+                           (pr-str (vec (:only sel)))
+                           " matched no test vars (searched "
+                           (count all)
+                           " test vars across "
+                           (count nsyms)
+                           (if (= 1 (count nsyms)) " namespace)" " namespaces)"))
               "total" 0
               "pass" 0
               "fail" 0

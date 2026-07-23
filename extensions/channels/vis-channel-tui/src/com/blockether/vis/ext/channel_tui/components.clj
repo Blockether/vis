@@ -616,20 +616,19 @@
            [(keymap/label-for :search-open) "Search in session"]
            [(keymap/label-for :pick-file) "Attach file"]
            [(keymap/label-for :toggle-voice-recording) "Voice recording"]
-           [(keymap/label-for :open-dirs) "Filesystem Permissions"]
            [(keymap/label-for :open-drafts) "Switch draft / stash to trunk"]
-           [(keymap/label-for :open-resources) "Resources"]
+           [(keymap/label-for :open-resources) "Backgrounds"]
            [(keymap/label-for :toggle-help) "Toggle this help"]]}
    {:title "Messaging & navigation"
     :rows
     [["Enter" "Send — or queue it while a turn is running"]
      ["Esc · C-g" "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
      ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
-     ["M-> · C-x j · C-l · C-End" "Jump to newest — end-of-buffer (or click the ↓ latest chip)"]
+     ["M-> · C-x j · C-l · C-End" "Jump to latest — end-of-buffer (or click the ↓ latest chip)"]
      ["M-<" "Jump to the top — beginning-of-buffer"]
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
      ["Tab · Shift+Tab" "Next · previous workspace"] ["C-x ← · C-x →" "Previous · next workspace"]
-     ["C-x b" "Switch workspace — the buffer-list picker"]
+     [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
      ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]
      [(keymap/label-for :close-tab) "Close (kill) the current workspace tab"]]}
    {:title "Folding"

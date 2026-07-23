@@ -75,3 +75,37 @@ export async function getActiveConnection(): Promise<GatewayConn | null> {
   const conns = await loadConnections();
   return conns.find((c) => c.url === url) ?? null;
 }
+
+const SUBSCRIPTIONS_KEY = 'vis.sessionSubscriptions';
+const MAX_SUBSCRIBED_SESSIONS = 24;
+
+type SubscriptionStore = Record<string, string[]>;
+
+async function loadSubscriptionStore(): Promise<SubscriptionStore> {
+  const raw = await getRaw(SUBSCRIPTIONS_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as SubscriptionStore
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Sessions the user has visited and keeps live-subscribed, scoped per gateway. */
+export async function loadSubscribedSessions(gatewayUrl: string): Promise<string[]> {
+  const store = await loadSubscriptionStore();
+  return Array.from(new Set(store[gatewayUrl] ?? [])).slice(0, MAX_SUBSCRIBED_SESSIONS);
+}
+
+/** Mark one visited session as most-recently subscribed and persist across reloads. */
+export async function rememberSubscribedSession(gatewayUrl: string, sid: string): Promise<string[]> {
+  const store = await loadSubscriptionStore();
+  const sessions = [sid, ...(store[gatewayUrl] ?? []).filter((id) => id !== sid)]
+    .slice(0, MAX_SUBSCRIBED_SESSIONS);
+  store[gatewayUrl] = sessions;
+  await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
+  return sessions;
+}
