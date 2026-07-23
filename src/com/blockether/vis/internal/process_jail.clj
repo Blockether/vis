@@ -115,6 +115,18 @@
   ["/usr" "/bin" "/sbin" "/System" "/Library" "/private/var/db/dyld" "/private/var/select"
    "/private/etc" "/opt/homebrew" "/usr/local" "/opt/local"])
 
+;; Directory-EXISTENCE probes (home lookup, dyld, cwd resolution) need metadata on
+;; the traversal ancestors of granted roots. These are `literal` (the directory
+;; itself, revealing only that it exists) — never `subpath` — so a confined child
+;; can stat `$HOME` and `/Users` but cannot read the size/mtime of
+;; `~/.ssh/id_ed25519` and other secrets beneath them. This scoped metadata grant
+;; replaces a former global `(allow file-read-metadata)` that leaked file existence
+;; + size + mtime for every path on the host.
+(def ^:private macos-metadata-literals
+  (into ["/" "/Users" "/Volumes" "/private" "/opt" "/etc" "/var" "/tmp" "/home"]
+        (remove nil?)
+        [(System/getProperty "user.home") (System/getProperty "java.io.tmpdir")]))
+
 (defn- sbpl-quote
   [s]
   (str "\""
@@ -124,6 +136,28 @@
        "\""))
 
 (defn- subpaths [roots] (str/join (map #(str "(subpath " (sbpl-quote %) ")") roots)))
+
+(defn- ancestor-dirs
+  "Every ancestor directory of `p`, from its parent up to `/`, as absolute
+   strings. Canonicalizing a path under a granted root lstats/readlinks each
+   component on the way DOWN, so every ancestor needs `file-read-metadata` even
+   though only the root itself carries `file-read*`/`file-write*`. Without this a
+   confined child cannot `getCanonicalPath` a file it just created under a root
+   whose ancestors aren't otherwise granted — most notably the darwin per-user
+   temp dir (`/private/var/folders/<hash>/T`), whose `/private/var`,
+   `/private/var/folders`, ... chain is granted nowhere else."
+  [p]
+  (loop
+    [cur
+     (when-let [s (not-empty p)]
+       (.getParentFile (java.io.File. ^String s)))
+
+     acc
+     []]
+
+    (if cur
+      (recur (.getParentFile ^java.io.File cur) (conj acc (.getPath ^java.io.File cur)))
+      acc)))
 
 (defn macos-profile
   "Compile a Seatbelt (SBPL) profile string from a RESOLVED policy map
@@ -168,7 +202,12 @@
       ;; macOS. Without this narrow IPC permission, tools such as spel and bb abort
       ;; during VM startup before their main function runs.
       "(allow ipc-posix-sem)"
-      "(allow file-read-metadata)"
+      "(allow file-read-metadata"
+      (apply str
+        (map #(str "(literal " (sbpl-quote %) ")")
+             (distinct (concat macos-metadata-literals (mapcat ancestor-dirs (concat rw ro))))))
+      (subpaths (concat macos-system-read-roots rw ro))
+      ")"
       "(allow file-read*"
       (subpaths macos-system-read-roots)
       "(literal \"/dev/null\")(literal \"/dev/zero\")(literal \"/dev/random\")(literal \"/dev/urandom\"))"
@@ -341,6 +380,41 @@
                    java-opts))))
         jail-env))))
 
+(def ^:private env-passthrough-names
+  "Non-secret operator vars a confined child may inherit. Everything else in the
+   operator environment — API keys, tokens, credentials — is dropped."
+  #{"PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TERM" "TERMINFO" "TZ" "TMPDIR" "PWD"
+    "HOSTNAME" "COLORTERM" "DISPLAY"})
+
+(def ^:private env-passthrough-prefixes ["LC_"])
+
+(defn- env-passthrough?
+  [extra ^String k]
+  (or (contains? env-passthrough-names k)
+      (contains? extra k)
+      (boolean (some #(str/starts-with? k %) env-passthrough-prefixes))))
+
+(defn jailed-child-env
+  "The COMPLETE environment for a confined child. Only an allowlist of safe,
+   non-secret operator vars (PATH/HOME/LANG/…) plus any `jail.env` opt-ins are
+   inherited; every API key / token / credential in the operator environment is
+   DROPPED. This session's proxy + CA variables are then added. Returns nil when
+   the policy is not enforcing — the caller keeps the parent environment as-is
+   (unjailed platforms/`sandbox: false`), so non-confined behavior is unchanged."
+  [policy]
+  (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
+    (let
+      [extra
+       (into #{} (comp (map str) (remove str/blank?)) (:env-passthrough policy))
+
+       inherited
+       (into {}
+             (filter (fn [[k _]]
+                       (env-passthrough? extra k)))
+             (System/getenv))]
+
+      (merge inherited (proxy-env policy)))))
+
 ;; ── Standard language-process jail contract ────────────────────────────────
 ;; Language packs spawn managed REPLs and project test runners via raw
 ;; ProcessBuilder calls outside the shell executors. Every such spawn obtains its
@@ -477,5 +551,15 @@
    while the policy lookup still must succeed."
   ([session-id argv] (session-process-launch session-id argv nil))
   ([session-id argv {:keys [loopback-port]}]
-   (let [policy (language-process-policy (session-base-policy! session-id) loopback-port)]
-     {:argv (wrap-argv argv policy) :env (proxy-env policy)})))
+   (let
+     [policy
+      (language-process-policy (session-base-policy! session-id) loopback-port)
+
+      full
+      (jailed-child-env policy)]
+
+     ;; Confined child ⇒ FULL scrubbed env replaces the operator's (secrets dropped);
+     ;; unenforced platform ⇒ additions merged onto the inherited env (unchanged).
+     (if full
+       {:argv (wrap-argv argv policy) :env full :replace-env? true}
+       {:argv (wrap-argv argv policy) :env (proxy-env policy) :replace-env? false}))))

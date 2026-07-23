@@ -332,8 +332,14 @@
     (.directory pb dir)
     ;; Route the child's HTTP clients at the loopback egress proxy when the jail
     ;; policy walls it to proxy-only egress (net-off-except-loopback).
-    (let [pe (process-jail/proxy-env policy)]
-      (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe)))
+    (if-let [full (process-jail/jailed-child-env policy)]
+      ;; Confined child: REPLACE the inherited env with the allowlisted set so the
+      ;; operator's API keys/tokens are never handed to sandboxed code.
+      (let [^java.util.Map e (.environment pb)]
+        (.clear e)
+        (.putAll e ^java.util.Map full))
+      (let [pe (process-jail/proxy-env policy)]
+        (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
 
@@ -378,9 +384,12 @@
                                                    (str cmd)]
                                                   policy)
                  :dir (.getPath dir)
-                 :env (doto (HashMap. ^java.util.Map (System/getenv))
-                        (.put "TERM" "xterm-256color")
-                        (.putAll ^java.util.Map (process-jail/proxy-env policy)))
+                 :env (if-let [full (process-jail/jailed-child-env policy)]
+                        ;; Confined child: allowlisted env only (secrets dropped).
+                        (doto (HashMap. ^java.util.Map full) (.put "TERM" "xterm-256color"))
+                        (doto (HashMap. ^java.util.Map (System/getenv))
+                          (.put "TERM" "xterm-256color")
+                          (.putAll ^java.util.Map (process-jail/proxy-env policy))))
                  :cols 120
                  :rows 40})))
 

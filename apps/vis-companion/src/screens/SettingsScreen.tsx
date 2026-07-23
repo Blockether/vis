@@ -231,7 +231,7 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
                       >
                         <span
                           className={`pt-0.5 font-mono text-xs ${
-                            toggle.type === 'boolean' && toggle.enabled ? 'text-accent' : 'text-dialog-hint'
+                            toggle.type === 'boolean' && toggle.enabled ? 'text-accent-ink' : 'text-dialog-hint'
                           }`}
                           aria-hidden="true"
                         >

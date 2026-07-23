@@ -204,18 +204,23 @@
                    (expect (= 5 (:iteration payload)))
                    (expect (= "full prose" (:assistant-prose payload)))))
              (it "native-call preview is a distinct replayable block event"
-  (let [[type store? payload]
-        (#'state/chunk->event
-          {:phase :tool-preview :iteration 1 :position 0 :code "print(4"
-           :vis/tool-name "native_call" :tool-color-role :tool-color/meta
-           :result-summary "run_python" :svar/tool-call-id "call_1"})]
-    (expect (= "block.preview" type))
-    (expect store?)
-    (expect (= 1 (:iteration payload)))
-    (expect (= 0 (:block_id payload)))
-    (expect (= "print(4" (:code payload)))
-    (expect (= "native_call" (:tool_name payload)))
-    (expect (= "call_1" (:tool_call_id payload))))))
+                 (let
+                   [[type store? payload] (#'state/chunk->event
+                                           {:phase :tool-preview
+                                            :iteration 1
+                                            :position 0
+                                            :code "print(4"
+                                            :vis/tool-name "native_call"
+                                            :tool-color-role :tool-color/meta
+                                            :result-summary "run_python"
+                                            :svar/tool-call-id "call_1"})]
+                   (expect (= "block.preview" type))
+                   (expect store?)
+                   (expect (= 1 (:iteration payload)))
+                   (expect (= 0 (:block_id payload)))
+                   (expect (= "print(4" (:code payload)))
+                   (expect (= "native_call" (:tool_name payload)))
+                   (expect (= "call_1" (:tool_call_id payload))))))
 
 (defdescribe
   iteration-attachment-descriptor-wire-test
@@ -676,11 +681,18 @@
         (expect (false?
                   (coalesce? {[:reasoning 0] {:ms 1000 :len 0}} {:phase :form-result} 1050)))))
   (it "coalesces native-call code without classifying it as content"
-  (let [coalesce? @#'state/coalesce-delta?
-        prior {[:tool-preview 1] {:ms 1000 :len 3}}]
-    (expect (true? (coalesce? prior {:phase :tool-preview :iteration 1 :code "prin"} 1200)))
-    (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print\n"} 1200)))
-    (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print" :done? true} 1200))))))
+      (let
+        [coalesce?
+         @#'state/coalesce-delta?
+
+         prior
+         {[:tool-preview 1] {:ms 1000 :len 3}}]
+
+        (expect (true? (coalesce? prior {:phase :tool-preview :iteration 1 :code "prin"} 1200)))
+        (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print\n"} 1200)))
+        (expect (false? (coalesce? prior
+                                   {:phase :tool-preview :iteration 1 :code "print" :done? true}
+                                   1200))))))
 
 (defdescribe volatile-queue-reconciliation-test
              (it "marks orphaned running turns interrupted without reconstructing messages"
@@ -898,3 +910,55 @@
       (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}
                  (:error-data payload)))
       (expect (not (contains? (:error-data payload) :mini-trace)))))
+
+(defdescribe
+  running-turn-start-cursor-test
+  "A live-only join to a session with a turn already running (started in the TUI
+   or another client) must be able to replay the WHOLE in-flight turn, not only
+   the deltas after connect — that is what lets the companion paint the same live
+   'Vis is running: …' bubble instead of a bare 'running' row."
+  (it "returns the cursor just below the running turn's start seq"
+      (let
+        [sid
+         (str (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         saved
+         @registry]
+
+        (try (reset! registry {sid {:next-seq 12
+                                    :current-turn "t-run"
+                                    :turns {"t-run" {:event_start_seq 7}}}})
+             ;; rewinds to replay the in-flight turn from its `turn.started`
+             (expect (= 6 (state/running-turn-start-cursor sid)))
+             (finally (reset! registry saved)))))
+  (it "is nil with no running turn (a live-only join stays live-only)"
+      (let
+        [sid
+         (str (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         saved
+         @registry]
+
+        (try (reset! registry {sid {:next-seq 4 :current-turn nil :turns {}}})
+             (expect (nil? (state/running-turn-start-cursor sid)))
+             (finally (reset! registry saved)))))
+  (it "is nil when the running turn has no recorded start seq (foreign, unhydrated)"
+      (let
+        [sid
+         (str (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         saved
+         @registry]
+
+        (try (reset! registry {sid {:next-seq 4 :current-turn "t-x" :turns {"t-x" {}}}})
+             (expect (nil? (state/running-turn-start-cursor sid)))
+             (finally (reset! registry saved))))))

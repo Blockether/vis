@@ -457,7 +457,7 @@
      now
      (System/currentTimeMillis)]
 
-    (cond-> {:authenticated? (some? detected)}
+    (cond-> {:is-authenticated (some? detected)}
       detected
       (assoc :source
         (:source detected) :account-id

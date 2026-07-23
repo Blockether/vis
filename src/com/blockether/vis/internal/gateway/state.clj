@@ -70,10 +70,18 @@
   "The cumulative text carried by a streaming chunk."
   [{:keys [phase thinking content text code]}]
   (case phase
-    :reasoning thinking
-    :content content
-    :assistant-prose text
-    :tool-preview code
+    :reasoning
+    thinking
+
+    :content
+    content
+
+    :assistant-prose
+    text
+
+    :tool-preview
+    code
+
     nil))
 
 (defn- sentence-closed-in-suffix?
@@ -346,6 +354,28 @@
    as the cursor yields a live-only stream (empty replay)."
   [sid]
   (get-in @registry [sid :next-seq] 0))
+
+(defn running-turn-start-cursor
+  "For a live-only subscriber joining a session mid-turn: the cursor (one below
+   the currently-running turn's `turn.started` seq) that replays the WHOLE
+   in-flight turn — user bubble, thinking, forms, activity — instead of only the
+   deltas that happen after connect. This is what lets a companion/web client
+   that OPENS a session already driven from the TUI paint the same live 'Vis is
+   running: …' bubble the originating channel shows. nil when no turn is running
+   locally or its start seq wasn't recorded (a foreign turn is handled instead by
+   `subscribe!`'s hydrate, which appends it above the live-only cursor)."
+  [sid]
+  (let
+    [entry
+     (get @registry sid)
+
+     tid
+     (:current-turn entry)
+
+     start-seq
+     (get-in entry [:turns tid :event_start_seq])]
+
+    (when (pos-int? start-seq) (dec (long start-seq)))))
 
 (defn events-since
   "Read-only peek at the replay ring: stored canonical (string-keyed) events
@@ -761,8 +791,11 @@
            ;; redundant invocation code WHILE the tool runs.
            (form/->display (form/with-display-code chunk))
            (cond-> {:block_id position :code code}
-             (:vis/tool-name chunk) (assoc :tool_name (:vis/tool-name chunk))
-             (:svar/tool-call-id chunk) (assoc :tool_call_id (:svar/tool-call-id chunk))))
+             (:vis/tool-name chunk)
+             (assoc :tool_name (:vis/tool-name chunk))
+
+             (:svar/tool-call-id chunk)
+             (assoc :tool_call_id (:svar/tool-call-id chunk))))
 
          :form-result
          (merge
@@ -1418,8 +1451,7 @@
                     delta))]
 
                (when streaming?
-                 (when (and (not= phase :tool-preview)
-                            (not (contains? @started-blocks block-id)))
+                 (when (and (not= phase :tool-preview) (not (contains? @started-blocks block-id)))
                    (vswap! started-blocks conj block-id)
                    (append-event! sid
                                   "content.block.started"
@@ -1710,8 +1742,8 @@
                              {:status "running" :cancel-token token :started_at started-at})))
             entry))))
     (when-let
-      [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body turn-features
-               workspace engine-opts attachments]}
+      [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
+               turn-features workspace engine-opts attachments]}
        @decision]
       ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
       ;; attached channel drops its mirrored entry on this, and a replayed
@@ -2456,23 +2488,27 @@
    one elapsed baseline without trusting their device wall clock."
   [sid]
   (when-let [session (lp/by-id sid)]
-    (let [entry (get @registry sid)
-          current-turn-id (:current-turn entry)
-          current-turn (get-in entry [:turns current-turn-id])
-          last-turn (some->> (:turn-order entry)
-                             peek
-                             (get (:turns entry)))
-          server-time-ms (System/currentTimeMillis)]
+    (let
+      [entry (get @registry sid)
+       current-turn-id (:current-turn entry)
+       current-turn (get-in entry [:turns current-turn-id])
+       last-turn (some->> (:turn-order entry)
+                          peek
+                          (get (:turns entry)))
+       server-time-ms (System/currentTimeMillis)]
+
       (wire/canonical
         (cond->
           {:id (str (:id session))
-           :channel (some-> (:channel session) name)
+           :channel (some-> (:channel session)
+                            name)
            :title (:title session)
            :model (:model session)
            :external_id (:external-id session)
            :created_at (:created-at session)
            :owner_id (:owner-id session)
-           :project_id (some-> (:project-id session) str)
+           :project_id (some-> (:project-id session)
+                               str)
            :project_name (:project-name session)
            :project_position (:project-position session)
            :status (cond current-turn-id "running"
@@ -2543,7 +2579,8 @@
   [sessions]
   (->> sessions
        (sort-by (fn [session]
-                  [(if (true? (get session "live")) 0 1) (unchecked-negate (long (session-recency-ms session)))
+                  [(if (true? (get session "live")) 0 1)
+                   (unchecked-negate (long (session-recency-ms session)))
                    (str (get session "id"))]))
        vec))
 

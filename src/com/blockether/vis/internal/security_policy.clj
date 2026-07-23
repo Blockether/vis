@@ -151,6 +151,16 @@
                              (resolve-cache-entry entry base-dir home)))
                      %))
 
+      jail
+      (update jail
+              :path-descriptions
+              (fn [m]
+                (into {}
+                      (keep (fn [[k v]]
+                              (when-let [rp (nearest-real-path k base-dir home)]
+                                [rp v])))
+                      m)))
+
       policy
       {:sandbox (not= false (get config "sandbox")) :network network :process-jail jail}
 
@@ -214,7 +224,12 @@
      (mapv #(home-relative % home) (:deny-write jail))
 
      caches
-     (mapv #(cache-view % home) (:language-cache-dirs jail))]
+     (mapv #(cache-view % home) (:language-cache-dirs jail))
+
+     descriptions
+     (into {}
+           (map (fn [[k v]] [(home-relative k home) v]))
+           (:path-descriptions jail))]
 
     {"generation" (:generation policy)
      "sandboxed" (boolean (:sandbox policy))
@@ -222,7 +237,8 @@
                    "process_read_only" ro
                    "deny_read" deny-read
                    "deny_write" deny-write
-                   "process_only" {"language_caches" caches}}
+                   "process_only" {"language_caches" caches}
+                   "descriptions" descriptions}
      "network" {"enabled" true
                 "allowed_domains" (vec (:allowed-domains network))
                 "denied_domains" (vec (:denied-domains network))

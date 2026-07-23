@@ -2516,6 +2516,25 @@
                                            "/vis-safe-path-probe.txt"))))
             ;; ...but a NON-temp path outside every root is still rejected.
             (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
+  (it "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
+      (let
+        [safe-path
+         (private-fn "safe-path")
+
+         home
+         (.getCanonicalPath (java.io.File. (System/getProperty "user.home")))]
+        (binding
+          [workspace/*workspace-root*
+           home
+
+           workspace/*filesystem-roots*
+           nil]
+          ;; ~/x and <home>/x must resolve to the SAME real path, NOT <home>/~/x
+          (expect (= (.getCanonicalPath ^java.io.File (safe-path (str home "/some-file.txt")))
+                     (.getCanonicalPath ^java.io.File (safe-path "~/some-file.txt"))))
+          (expect (not (string/includes? (.getPath ^java.io.File (safe-path "~/some-file.txt")) "~")))
+          ;; bare ~ resolves to home itself
+          (expect (= home (.getCanonicalPath ^java.io.File (safe-path "~")))))))
   (it
     "ISOLATED filesystem root: address by trunk → edits land in clone, display shows trunk"
     (let
@@ -3148,6 +3167,22 @@
         (expect (= sweep (rsr ["   "])))
         ;; a blank mixed with a real path still means everything
         (expect (= sweep (rsr ["src" ""])))))
+    (it
+      "the DEFAULT sweep PRUNES vis's own ~/.vis home (its drafts/ repo mirrors + cache/ CPython are search noise) yet keeps the primary + sibling roots; the primary is NEVER pruned even when it IS ~/.vis"
+      (let [rsr @#'editing/resolve-search-roots
+            home (System/getProperty "user.home")
+            vis-home (str home "/.vis")
+            primary (str home "/proj")
+            other (str home "/lib")]
+        (with-redefs [workspace/allowed-roots (constantly [primary other vis-home])]
+          (let [roots (mapv str (:roots (rsr ["."])))]
+            ;; ~/.vis pruned from the default sweep …
+            (expect (not (some #(clojure.string/starts-with? % vis-home) roots)))
+            ;; … while the primary and sibling roots survive, in order
+            (expect (= [primary other] roots))))
+        ;; the primary is exempt: cwd == ~/.vis still scans
+        (with-redefs [workspace/allowed-roots (constantly [vis-home primary])]
+          (expect (= [vis-home primary] (mapv str (:roots (rsr ["."]))))))))
     (it
       "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
       (let

@@ -137,3 +137,30 @@ hard requirements when you add or change one:
 - **Test all three surfaces.** Cover the registry/spec, the vis.yml hydrate +
   coercion, and the settings wire (TUI dialog / gateway `/v1/settings`) so a
   new toggle appears and round-trips everywhere, not just in code.
+
+## Gateway wire contract
+
+The HTTP/SSE gateway wire has ONE dumb, deterministic boundary
+(`gateway/wire.clj`). Treat it as a hard requirement:
+
+- **Wire keys are snake_case STRINGS, never keywords.** `wire/->wire`
+  encodes every engine value; keyword/symbol map keys become snake_case
+  strings. Never hand-emit keyword keys onto the wire, and never JSON-encode
+  around `wire/json-str`.
+- **Boolean flags are `is_<foo>` on the wire and `:is-<foo>` in engine EDN — a
+  plain mechanical `_`↔`-` mirror.** `is_authenticated` ↔ `:is-authenticated`,
+  `is_unlimited` ↔ `:is-unlimited`. So the ONE shared connection verdict is
+  `is_authenticated`/`:is-authenticated` end-to-end (dot, status dialog,
+  routing, every provider). NEVER invent a `:foo?` alias for a wire flag and
+  NEVER translate `is_foo`→`:foo?` at the gateway boundary — that asymmetry is
+  exactly what drifts and makes a live-connected provider read red.
+- **No bespoke per-endpoint `<-wire` restore that renames individual fields.**
+  Inbound, keywordize the canonical string-keyed map with the uniform
+  mechanical `_`→`-` (the exact inverse of `wire-key`), or read the string keys
+  directly. A hand-written restore that must mirror `wire-key` by hand will
+  drift from it.
+- **Grep guard.** `:authenticated?` (or any `:foo?` that shadows a wire flag)
+  must not reappear for a wire field; the gateway/TUI/routing all read the
+  `:is-<foo>` mirror. (The Python-extension `py-key->kw` adapter is a SEPARATE
+  boundary — Python identifiers can't carry `?` — and keeps `is_authenticated`
+  verbatim as `:is-authenticated`.)

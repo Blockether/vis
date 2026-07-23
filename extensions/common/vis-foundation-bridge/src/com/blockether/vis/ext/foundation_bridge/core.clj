@@ -12,7 +12,11 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]))
 
-(def ^:private default-profile-paths [".bridge/profile.edn" ".bridge/persistent/profile.edn"])
+(def ^:private default-profile-paths
+  ;; Bridge 0.2.x writes YAML profiles; keep the legacy `.edn` names as
+  ;; fallbacks so older workspaces still resolve. Order = discovery priority.
+  [".bridge/profile.yaml" ".bridge/persistent/profile.yaml" ".bridge/profile.edn"
+   ".bridge/persistent/profile.edn"])
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
@@ -146,7 +150,7 @@
               "No Bridge profile is configured for this workspace.")
    :hint
    (str
-     "Initialize Bridge with bare `br_init()`, or pass `{\"profile\": \"/abs/path/to/.bridge/profile.edn\"}`. "
+     "Initialize Bridge with bare `br_init()`, or pass `{\"profile\": \"/abs/path/to/.bridge/profile.yaml\"}`. "
      "Workspace root: "
      workspace-root)
    :details {:profile-path profile-path :searched-paths searched-paths}})
@@ -747,7 +751,7 @@
     :cmd/usage "vis ext bridge <init|profile|check|next|list-evidence|run-evidence> [flags]"
     :cmd/subcommands
     [{:cmd/name "init"
-      :cmd/doc "Bootstrap Bridge for this workspace (.bridge/profile.edn etc)."
+      :cmd/doc "Bootstrap Bridge for this workspace (.bridge/profile.yaml etc)."
       :cmd/usage "vis ext bridge init"
       :cmd/run-fn cli-init!}
      {:cmd/name "profile"

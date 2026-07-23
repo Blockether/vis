@@ -151,7 +151,7 @@
 ;; (e.g. one that reads a static API key from env) doesn't need to
 ;; ship a no-op stub for every slot. Whoever calls them handles the
 ;; absent case (`(when-let [f (:provider/status-fn p)] (f))`).
-(s/def :provider/status-fn ifn?)  ;; () -> {:authenticated? bool ...}
+(s/def :provider/status-fn ifn?)  ;; () -> {:is-authenticated bool ...}
 
 (s/def :provider/logout-fn ifn?)  ;; () -> nil  (clear creds)
 

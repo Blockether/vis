@@ -165,12 +165,87 @@ function syntaxClass(token: Prism.Token): string {
   return 'text-code-foreground';
 }
 
-function renderSyntaxToken(token: string | Prism.Token, key: string): ReactNode {
-  if (typeof token === 'string') return token;
-  const content = Array.isArray(token.content)
-    ? token.content.map((child, index) => renderSyntaxToken(child, `${key}-${index}`))
-    : renderSyntaxToken(token.content, `${key}-content`);
-  return <span className={syntaxClass(token)} key={key}>{content}</span>;
+type SyntaxSegment = { text: string; className: string };
+
+function flattenSyntax(
+  tokens: (string | Prism.Token)[],
+  inherited: string,
+  out: SyntaxSegment[],
+): void {
+  for (const token of tokens) {
+    if (typeof token === 'string') {
+      if (token) out.push({ text: token, className: inherited });
+      continue;
+    }
+    const className = syntaxClass(token);
+    if (Array.isArray(token.content)) {
+      flattenSyntax(token.content as (string | Prism.Token)[], className, out);
+    } else if (typeof token.content === 'string') {
+      if (token.content) out.push({ text: token.content, className });
+    } else {
+      flattenSyntax([token.content as Prism.Token], className, out);
+    }
+  }
+}
+
+function highlightSegments(value: string, language: string): SyntaxSegment[] {
+  const normalized = languageAliases[language] ?? language;
+  const grammar = Prism.languages[normalized];
+  if (!grammar) return [{ text: value, className: 'text-code-foreground' }];
+  const out: SyntaxSegment[] = [];
+  flattenSyntax(Prism.tokenize(value, grammar), 'text-code-foreground', out);
+  return out;
+}
+
+// Split a flat segment stream into per-line segment arrays, preserving the
+// class of tokens (e.g. block comments) that span multiple newlines.
+function segmentsToLines(segments: SyntaxSegment[]): SyntaxSegment[][] {
+  const lines: SyntaxSegment[][] = [[]];
+  for (const segment of segments) {
+    const parts = segment.text.split('\n');
+    parts.forEach((part, index) => {
+      if (index > 0) lines.push([]);
+      if (part) lines[lines.length - 1].push({ text: part, className: segment.className });
+    });
+  }
+  return lines;
+}
+
+const GUTTER_LINE = /^(\s*\d+) {2}(.*)$/;
+const GUTTER_DIVIDER = /^(\s*\u22ef)\s*$/;
+
+// `cat` bodies arrive as a numbered gutter (`  12  <code>`) fenced with the
+// file language. Feeding those line numbers to Prism poisons the grammar, so
+// peel the gutter off, highlight the code, and restore the gutter uncolored —
+// exactly what the TUI does.
+function splitGutter(value: string): { gutters: string[]; code: string } | null {
+  const rawLines = value.split('\n');
+  const gutters: string[] = [];
+  const codeLines: string[] = [];
+  let numbered = 0;
+  for (const line of rawLines) {
+    const match = GUTTER_LINE.exec(line);
+    if (match) {
+      numbered += 1;
+      gutters.push(match[1]);
+      codeLines.push(match[2]);
+      continue;
+    }
+    const divider = GUTTER_DIVIDER.exec(line);
+    if (divider) {
+      gutters.push(divider[1]);
+      codeLines.push('');
+      continue;
+    }
+    if (line === '') {
+      gutters.push('');
+      codeLines.push('');
+      continue;
+    }
+    return null;
+  }
+  if (numbered < 2) return null;
+  return { gutters, code: codeLines.join('\n') };
 }
 
 function SyntaxCodeBlock({
@@ -182,16 +257,33 @@ function SyntaxCodeBlock({
   language: string;
   compact: boolean;
 }) {
-  const normalized = languageAliases[language] ?? language;
-  const grammar = Prism.languages[normalized];
-  const tokens = grammar ? Prism.tokenize(value, grammar) : [value];
+  const gutter = splitGutter(value);
+  const source = gutter ? gutter.code : value;
+  const lines = segmentsToLines(highlightSegments(source, language));
 
   return (
     <div className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden border border-code-edge bg-code`}>
-      <CopyButton value={value} />
-      <pre className={`${compact ? 'p-2.5 text-[10px] leading-4' : 'p-3 text-[11px] leading-5'} m-0 max-w-full overflow-x-auto font-mono text-code-foreground`}>
-        <code className="block min-w-max pr-10 [tab-size:2]">
-          {tokens.map((token, index) => renderSyntaxToken(token, `${normalized || 'text'}-${index}`))}
+      <CopyButton value={source} />
+      <pre className={`${compact ? 'py-2 text-[10px] leading-4' : 'py-2.5 text-[11px] leading-5'} m-0 max-w-full overflow-x-auto font-mono text-code-foreground`}>
+        <code className="block min-w-max [tab-size:2]">
+          {lines.map((segments, index) => (
+            <div key={index} className="flex w-fit min-w-full whitespace-pre px-3 first:pr-16">
+              {gutter && (
+                <span className="mr-3 shrink-0 select-none text-right text-code-duration" aria-hidden="true">
+                  {gutter.gutters[index] ?? ''}
+                </span>
+              )}
+              <span className="min-w-0">
+                {segments.length === 0
+                  ? ' '
+                  : segments.map((segment, segmentIndex) => (
+                      <span className={segment.className} key={segmentIndex}>
+                        {segment.text}
+                      </span>
+                    ))}
+              </span>
+            </div>
+          ))}
         </code>
       </pre>
     </div>
@@ -725,6 +817,24 @@ function fallbackAnswer(turn: TranscriptTurn): string {
   return '';
 }
 
+function runningTurnPhase(turn: TranscriptTurn): string {
+  const iterations = turn.iterations ?? [];
+  const iteration = iterations.length;
+  const request = (turn.user_request ?? turn.request ?? '').trim();
+  if (iteration === 0) {
+    if (request.startsWith('!&')) return 'Vis is starting a command';
+    if (request.startsWith('!')) return 'Vis is running a command';
+    if (request.startsWith('/')) return `Vis is running: ${request.split(/\s+/, 1)[0]}`;
+    return 'Vis is calling the provider';
+  }
+  const last = iterations.at(-1);
+  const suffix = `(iter ${iteration})`;
+  if (last?.error != null) return `Vis is retrying ${suffix}`;
+  if (last?.forms?.length) return `Vis is running code ${suffix}`;
+  if (last?.thinking?.trim()) return `Vis is thinking ${suffix}`;
+  return `Vis is working ${suffix}`;
+}
+
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 function LiveProgress({ phase, startedAt }: { phase: string; startedAt?: number }) {
@@ -777,14 +887,18 @@ export const AssistantMessage = memo(function AssistantMessage({
       <div className={`mb-1 font-mono text-[10px] font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
       <div className="min-w-0">
         <IterationTrace iterations={turn.iterations ?? []} />
-        <div className={`bg-answer text-[13px] leading-6 ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
+        <div className={`bg-answer text-[12px] leading-5 ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
           {blocks.map((block) => <ContentBlockView key={block.id} block={block} />)}
           {fallback && <Markdown>{fallback}</Markdown>}
-          {!streaming && !blocks.length && !fallback && turn.status !== 'completed' && (
+          {!streaming && !blocks.length && !fallback && turn.status !== 'completed' && turn.status !== 'running' && (
             <span>{cancelled ? 'Cancelled by user.' : turn.status ?? 'No response'}</span>
           )}
         </div>
-        {streaming && <LiveProgress phase={activity ?? 'Vis is working'} startedAt={startedAt} />}
+        {streaming ? (
+          <LiveProgress phase={activity ?? 'Vis is working'} startedAt={startedAt} />
+        ) : turn.status === 'running' ? (
+          <LiveProgress phase={runningTurnPhase(turn)} startedAt={turn.created_at} />
+        ) : null}
         {meta && (
           <footer className="mt-5 min-w-0 text-right font-mono text-[9px] leading-4 text-footer-muted">
             <div className="overflow-hidden text-ellipsis whitespace-nowrap" title={meta}>{meta}</div>
@@ -805,7 +919,7 @@ export const UserMessage = memo(function UserMessage({ children }: { children: s
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-[10px] font-bold text-you-role">You</div>
-      <div className="inline-block max-w-full whitespace-pre-wrap break-words bg-you-message px-3 py-2.5 text-[13px] leading-5 text-you-message">
+      <div className="inline-block max-w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-[12px] leading-5 text-you-message-foreground">
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : (

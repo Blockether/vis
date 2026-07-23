@@ -25,7 +25,7 @@ export function App() {
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>('sessions');
-  const [openTarget, setOpenTarget] = useState<{ conn: GatewayConn; sid: string } | null>(null);
+  const [openTarget, setOpenTarget] = useState<{ conn: GatewayConn; sid: string; fresh?: boolean } | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(null);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
@@ -66,12 +66,12 @@ export function App() {
     setTab('sessions');
   }, []);
 
-  const openGatewaySession = useCallback(async (conn: GatewayConn, sid: string) => {
+  const openGatewaySession = useCallback(async (conn: GatewayConn, sid: string, fresh = false) => {
     await setActiveUrl(conn.url);
     const ids = await rememberSubscribedSession(conn.url, sid);
     setSubscribedIds(new Set(ids));
     setActive(conn);
-    setOpenTarget({ conn, sid });
+    setOpenTarget({ conn, sid, fresh });
   }, []);
 
   useEffect(() => {
@@ -154,8 +154,9 @@ export function App() {
             client={client}
             subscriptions={subscriptions}
             sid={openTarget.sid}
+            fresh={openTarget.fresh}
             onBack={() => setOpenTarget(null)}
-            onOpenSession={(sid) => void openGatewaySession(openTarget.conn, sid)}
+            onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
           />
         ) : (
           <SessionsScreen

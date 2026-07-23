@@ -166,7 +166,7 @@
   (when-let [r (TerminalImage/transcodePng (str path) (int cols) (int rows))]
     {:data (aget ^objects r 0) :w (aget ^objects r 1) :h (aget ^objects r 2)}))
 
-(defn- kitty-png
+(defn kitty-png
   "PNG base64 + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
    file rides through verbatim — transmitted at its intrinsic `width`×`height`
    (and works in the native image too); anything else is transcoded via ImageIO."
@@ -202,6 +202,116 @@
         (encode-iterm2 data box))
 
       nil)))
+
+(def ^:private kitty-chunk
+  "Kitty caps a single `\\x1b_G` escape's base64 payload at 4096 bytes; longer data
+   rides `m=1`…`m=0` continuation chunks. Mirrors the fork encoder's KITTY_CHUNK."
+  4096)
+
+(defn kitty-transmit
+  "Kitty `a=t` transmit-ONLY sequence: upload base64 PNG `data` under client image
+   id `id` WITHOUT displaying it, chunked into `m=1`…`m=0` pieces like the fork's
+   `encodeKitty`. A later `kitty-place` draws it with NO re-upload — the key to
+   flicker-free scrolling (transmit once, then re-place cheaply)."
+  [^String data id]
+  (let
+    [esc
+     "\u001b"
+
+     n
+     (long (count data))
+
+     chunk
+     (long kitty-chunk)
+
+     control
+     (str "a=t,i=" id ",f=100,q=2")]
+
+    (if (<= n chunk)
+      (str esc "_G" control ";" data esc "\\")
+      (let [sb (StringBuilder.)]
+        (loop
+          [off 0
+           first? true]
+
+          (when (< off n)
+            (let
+              [end (min n (+ off chunk))
+               chunk (subs data off end)
+               last? (>= end n)
+               ctrl (cond first? (str control ",m=1")
+                          last? "m=0"
+                          :else "m=1")]
+
+              (.append sb esc)
+              (.append sb "_G")
+              (.append sb ctrl)
+              (.append sb ";")
+              (.append sb chunk)
+              (.append sb esc)
+              (.append sb "\\")
+              (recur (long end) false))))
+        (.toString sb)))))
+
+(defn kitty-place
+  "Kitty `a=p` placement sequence for an ALREADY-transmitted image `id` at the
+   cursor: draw it into a `cols`×`rows` cell box, optionally cropped to the visible
+   vertical slice (`crop-top`/`crop-bottom` cell rows over an `img-w`×`img-h` px
+   image) via the protocol's source rectangle — the SAME `x/y/w/h` math the fork's
+   crop `encodeKitty` uses. Reusing placement id `p=1` REPLACES the prior placement,
+   so a scroll moves the picture atomically: no delete-all, no re-upload, no flash."
+  [{:keys [id cols rows crop-top crop-bottom img-w img-h]}]
+  (let
+    [ct
+     (max 0 (long (or crop-top 0)))
+
+     cb
+     (max 0 (long (or crop-bottom 0)))
+
+     rows
+     (long (or rows 0))
+
+     cols
+     (long (or cols 0))
+
+     ih
+     (long (or img-h 0))
+
+     vis
+     (max 1 (- rows ct cb))
+
+     base
+     (str "\u001b_Ga=p,i=" id ",p=1,C=1,q=2" (when (pos? cols) (str ",c=" cols)))]
+
+    (if (and (pos? rows) (pos? ih) (or (pos? ct) (pos? cb)))
+      (let
+        [src-y
+         (Math/round (/ (* (double ih) ct) (double rows)))
+
+         src-h0
+         (max 1 (Math/round (/ (* (double ih) vis) (double rows))))
+
+         ;; Clamp the source rectangle inside the image like the fork's
+         ;; encodeKitty: an out-of-bounds y+h makes Kitty reject the placement,
+         ;; which would blank the image mid-scroll and reintroduce the flicker.
+         src-h
+         (if (> (+ src-y src-h0) ih) (- ih src-y) src-h0)]
+
+        (str base ",r=" vis ",x=0,y=" src-y ",w=" (long (or img-w 0)) ",h=" src-h "\u001b\\"))
+      (str base ",r=" vis "\u001b\\"))))
+
+(defn kitty-delete-placement
+  "Kitty sequence removing image `id`'s placement while KEEPING its uploaded data,
+   so an image scrolled off screen leaves no ghost yet needs no re-upload if it
+   scrolls back into view."
+  [id]
+  (str "\u001b_Ga=d,d=i,i=" id ",q=2\u001b\\"))
+
+(defn kitty-free-image
+  "Kitty sequence deleting image `id` AND freeing its uploaded data — used when the
+   transmit cache evicts a long-off-screen image to bound terminal-side memory."
+  [id]
+  (str "\u001b_Ga=d,d=I,i=" id ",q=2\u001b\\"))
 
 (defn probe-paste-image
   "Detect the FIRST image the pasted `text` points at (a dropped file path).

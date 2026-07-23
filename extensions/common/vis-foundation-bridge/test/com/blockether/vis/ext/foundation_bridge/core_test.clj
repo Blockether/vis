@@ -160,7 +160,7 @@
        {:workspace/root root}
 
        profile-path
-       (str root "/.bridge/profile.edn")]
+       (str root "/.bridge/profile.yaml")]
 
       (bridge/init env)
       (.mkdirs (java.io.File. project-root ".bridge"))
@@ -216,12 +216,12 @@
       (expect (true? (:success? init-result)))
       (expect (= true (get-in (result-of init-result) ["configured"])))
       (expect (= false (get-in (result-of init-result) ["already_configured"])))
-      (expect (= [".bridge/profile.edn" ".bridge/verification-policy.yaml"]
+      (expect (= [".bridge/profile.yaml" ".bridge/verification-policy.yaml"]
                  (get-in (result-of init-result) ["created"])))
       (expect (= [".gitignore"] (get-in (result-of init-result) ["updated"])))
       (expect (= "br/check" (get-in (result-of init-result) ["next_step" "op" "tool"])))
       (expect (str/includes? (or (get-in (result-of init-result) ["profile_path"]) "")
-                             ".bridge/profile.edn"))
+                             ".bridge/profile.yaml"))
       (expect (true? (:success? profile-result)))
       (expect (= true (get-in (result-of profile-result) ["configured"])))
       (expect (true? (:success? check-result)))

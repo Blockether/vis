@@ -556,7 +556,7 @@
 
 (defn status
   "Return a status map describing the current auth state.
-   {:authenticated? bool :source keyword :oauth-token-preview str
+   {:is-authenticated bool :source keyword :oauth-token-preview str
     :account-type keyword :copilot-token-valid? bool :expires-in-ms long}"
   ([] (status nil))
   ([opts]
@@ -573,7 +573,7 @@
       now
       (System/currentTimeMillis)]
 
-     (cond-> {:authenticated? (some? detected) :account-type account-type}
+     (cond-> {:is-authenticated (some? detected) :account-type account-type}
        detected
        (assoc :source
          (:source detected) :oauth-token-preview
@@ -638,7 +638,7 @@
        :kind :requests
        :precision :exact
        :source :provider-api
-       :unlimited? false}
+       :is-unlimited false}
       (number? remaining)
       (assoc :remaining (double remaining))
 

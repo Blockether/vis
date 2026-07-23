@@ -45,7 +45,8 @@
                          "deny-read" ["~/private"]
                          "deny-write" ["~/locked"]
                          "language-caches" ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]}
-           "inbound-ports" [5273 8080]}
+           "inbound-ports" [5273 8080]
+           "env" ["CI" "MY_TOKEN"]}
    "network" {"allowed-domains" ["github.com"]
               "denied-domains" ["example.invalid"]
               "exclude-domains" ["opaque.example"]
@@ -96,6 +97,26 @@
                                          [{"path" "rel" "access" "ro"}]))))
       (expect (config-spec/valid?
                 (assoc-in full-config ["jail" "filesystem" "allow-write"] ["/abs/ok" "~/home-ok"])))
+      ;; Grants may be {path, description}; the description surfaces in the session view.
+      (expect (config-spec/valid?
+                (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
+                          ["/opt/svar" {"path" "~/repo" "description" "a sibling repo"}])))
+      ;; A grant map still requires a rooted path and rejects unknown keys / blank text.
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
+                               [{"path" "rel" "description" "bad"}]))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
+                               [{"path" "~/ok" "note" "unknown-key"}]))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
+                               [{"path" "~/ok" "description" ""}]))))
+      ;; Descriptions flow into the derived process-jail policy, keyed by grant path.
+      (expect (= {"~/repo" "why"}
+                 (:path-descriptions
+                  (config-spec/process-jail-config
+                   (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
+                             ["/opt/svar" {"path" "~/repo" "description" "why"}])))))
       ;; Network is policy data, never an independent on/off escape hatch.
       (expect (not (config-spec/valid? (assoc-in full-config ["network" "enabled"] false))))
       (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "oops"] true))))
@@ -110,7 +131,9 @@
                   :deny-read ["~/private"]
                   :deny-write ["~/locked"]
                   :language-cache-dirs ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]
-                  :inbound-ports [5273 8080]}
+                  :inbound-ports [5273 8080]
+                  :env-passthrough ["CI" "MY_TOKEN"]
+                  :path-descriptions {}}
                  (config-spec/process-jail-config full-config)))
       (expect (true? (:disabled? (config-spec/process-jail-config (assoc full-config
                                                                     "sandbox" false)))))

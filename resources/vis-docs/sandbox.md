@@ -66,6 +66,28 @@ would resolve against the gateway process directory rather than a session root.
 session root. Those roots participate in draft isolation and the same policy;
 they are not a second permission store.
 
+## Environment scrubbing
+
+A confined child does **not** inherit the operator's environment. Only an
+allowlist of non-secret variables is passed through (`PATH`, `HOME`, `USER`,
+`SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, …) plus this session's
+proxy and CA variables; every `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`
+and other operator credential is dropped before the process starts. This covers
+`shell_run`, `shell_bg`, Python `subprocess`, and every managed language REPL /
+test runner.
+
+To pass a specific extra variable through to confined children, list its exact
+name under `jail.env`:
+
+```yaml
+jail:
+  env: [CI, MY_BUILD_TOKEN]   # exact var names; everything else stays dropped
+```
+
+File **metadata** (existence, size, mtime) is likewise scoped: a child may stat
+its granted roots and the directory ancestors it needs to resolve paths, but not
+read the size/mtime of files beneath `$HOME` such as `~/.ssh/id_ed25519`.
+
 ## Network policy
 
 Every confined child is denied direct sockets except the gateway proxy and any
@@ -143,6 +165,98 @@ vis.extension(
 Filters run in the gateway at the decrypted request/response boundary and fail
 closed on an exception. They receive request method, host, path, and headers;
 response phases also include status. Tunnelled hosts are intentionally opaque.
+
+## Denying a command, then re-allowing it through a trusted extension
+
+A common policy is "the model's shell and its agent tools must never run `aws`,
+but a reviewed extension may proxy specific AWS calls." The sandbox supports this
+because confinement is applied **per spawn**, not ambiently, and the two callers
+take different code paths to the OS.
+
+**Deny the binary in the jail.** There is no argv denylist; a command is blocked
+by denying read on its executable, because macOS requires read access to exec a
+binary. Point `jail.filesystem.deny-read` at the CLI's path:
+
+```yaml
+jail:
+  filesystem:
+    deny-read:
+      - /opt/homebrew/bin/aws
+      - /usr/local/aws-cli
+```
+
+Every process spawned through the jail — the managed shell (`shell_run` /
+`shell_bg`), agent tool commands, managed REPLs, and project test runners — is
+wrapped with `sandbox-exec` and inherits `(deny file-read*)` on those paths, so
+`aws …` fails to exec. Deny wins over allow, so this holds even inside an
+otherwise readable directory.
+
+**Re-allow it inside a trusted extension.** A Python extension runs in its own
+context with real process creation, and its subprocesses are **not** routed
+through `wrap-argv`, so they are never `sandbox-exec`-wrapped. A reviewed
+extension can therefore shell out to the same denied binary and expose it as a
+narrow, audited tool. The whole thing is one file dropped into
+`~/.vis/extensions/` (global) or `<project>/.vis/extensions/` (project-local) —
+no rebuild, `/reload`-live. See [Python extensions](python-extensions.md) for
+the full authoring surface; here is a complete, buildable proxy:
+
+```python
+# ~/.vis/extensions/aws_proxy.py
+"""aws-proxy — audited, read-only AWS access that bypasses the jail's aws deny."""
+import subprocess
+
+import vis
+
+# Scope the hole as tightly as the policy it re-opens: an allowlist, read-only
+# verbs, no shell string, an explicit timeout. This tool IS the audit surface.
+_ALLOWED_BUCKETS = {"acme-public-assets", "acme-reports"}
+
+
+def aws_s3_ls(bucket):
+    """await aws_s3_ls(bucket) -> {"listing"} — list one allowlisted S3 bucket."""
+    if bucket not in _ALLOWED_BUCKETS:
+        # Raising is the failure path — the message surfaces to the model.
+        raise ValueError(f"bucket {bucket!r} not in allowlist {sorted(_ALLOWED_BUCKETS)}")
+    # Runs UNCONFINED: this subprocess is not routed through wrap-argv, so it is
+    # never sandbox-exec-wrapped and the jail's deny-read on the aws binary
+    # never applies here. argv form (no shell) — the model never shapes a string.
+    out = subprocess.run(
+        ["aws", "s3", "ls", f"s3://{bucket}"],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    vis.log("info", f"aws-proxy: s3 ls {bucket}")
+    return {"listing": out.stdout}
+
+
+vis.extension(
+    name="aws-proxy",
+    description="Audited, read-only AWS access.",
+    kind="integration",
+    alias="aws",
+    symbols=[vis.symbol(aws_s3_ls, tag="observation")],
+)
+```
+
+The model calls `await aws_s3_ls("acme-reports")`. The sandbox name is
+`f"{alias}_{name}"`, but a leading `"{alias}_"` on the function name is stripped
+first, so `alias="aws"` + `def aws_s3_ls` lands as `aws_s3_ls`, not doubled. Raw
+`aws` from the model's shell stays denied.
+
+The result: the *capability* to exec the binary stays open at the OS layer, while
+*authorization* moves to the tool layer. Raw `aws` from the model is denied; the
+extension's `aws_s3_ls` tool — which you wrote, reviewed, and scoped — is the
+only way that binary runs. Treat such an extension as privileged: it is a
+deliberate hole in the jail, so review it like an executable build file and keep
+its surface as narrow as the policy it bypasses.
+
+**Caveat — an inherited kernel Seatbelt closes the hole.** This asymmetry exists
+only when Vis's own JVM is not itself launched under an ambient Seatbelt profile.
+When it is (`VIS_SEATBELT_ACTIVE=1`, as in a sandboxed harness session), the
+kernel enforces the parent profile on the **entire** process tree; Seatbelt
+inheritance is one-way, so children — extension subprocesses included — can only
+tighten it, never loosen it. In that mode no extension can escape, because the
+kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
+(`inherited-jail?`) since a nested `sandbox-exec` is rejected.
 
 ## Trust boundaries and exceptions
 

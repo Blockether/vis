@@ -2335,7 +2335,7 @@
 (defn- gateway-provider-status-safe
   [provider-id]
   (try (gateway-client/provider-status provider-id)
-       (catch Throwable e {:authenticated? false :error (or (ex-message e) (str e))})))
+       (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))})))
 
 (defn- gateway-provider-limits-safe
   [provider-id]
@@ -2390,10 +2390,10 @@
            (str ", resets " (fmt/format-date (java.util.Date. (long resets-at-ms))))))))
 
 (defn- format-limit-row
-  [{:keys [label scope kind unlimited? used limit remaining note window]}]
+  [{:keys [label scope kind is-unlimited used limit remaining note window]}]
   (let
     [quota
-     (cond unlimited? "unlimited"
+     (cond is-unlimited "unlimited"
            (number? limit) (str (when (number? used) (str used "/"))
                                 limit
                                 (when (number? remaining) (str " (" remaining " left)")))
@@ -2447,7 +2447,7 @@
   [provider]
   (let
     [status
-     (or (configured-provider-status provider) {:authenticated? false})
+     (or (configured-provider-status provider) {:is-authenticated false})
 
      provider-id
      (:provider/id provider)
@@ -2458,13 +2458,13 @@
      rows
      (->> status
           (remove (fn [[k _]]
-                    (= k :authenticated?)))
+                    (= k :is-authenticated)))
           (sort-by (comp str key)))]
 
     (stdout! (str "\n  " (:provider/label provider) " Provider Status"))
     (stdout! "  ─────────────────────────────────")
     (when base-url (stdout! (str "  Base URL:       " base-url)))
-    (stdout! (str "  Authenticated:  " (if (:authenticated? status) "yes" "no")))
+    (stdout! (str "  Authenticated:  " (if (:is-authenticated status) "yes" "no")))
     (doseq [[k v] rows]
       (stdout! (str "  "
                     (commandline/pad-right (str (status-entry-label k) ":") 15)
@@ -2499,7 +2499,7 @@
 
              {:id (name (:provider/id provider))
               :label (:provider/label provider)
-              :auth (if (:authenticated? status) "yes" "no")
+              :auth (if (:is-authenticated status) "yes" "no")
               :rpm (or (some-> report
                                :static
                                :rpm
@@ -2957,29 +2957,28 @@
   (let
     [{:keys [running? host port token loopback?]}
      ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))]
-    (cond (not running?)
-          (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
-                               "  vis gateway start --host 0.0.0.0 --require-token --pair")
-                          {:vis/user-error true}))
-          loopback?
-          (throw (ex-info
-                   (let
-                     [ts (first ((requiring-resolve
-                                   'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
-                     (str
-                       "the running gateway is bound to " host
-                       " (loopback) \u2014 a phone cannot reach it.\n"
-                       "Restart it on a reachable host:\n"
-                       "  vis gateway stop\n"
-                       (if ts
-                         (str
-                           "  vis gateway start --host " ts
-                           " --require-token --pair"
-                           "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
-                         "  vis gateway start --host 0.0.0.0 --require-token --pair")))
-                   {:vis/user-error true}))
-          :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
-                  {:host host :port port :token token :require-token? (boolean token) :emit stdout!}))))
+    (cond
+      (not running?) (throw (ex-info
+                              (str "no gateway is running for this DB. Start one reachable first:\n"
+                                   "  vis gateway start --host 0.0.0.0 --require-token --pair")
+                              {:vis/user-error true}))
+      loopback?
+      (throw
+        (ex-info
+          (let
+            [ts (first ((requiring-resolve
+                          'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
+            (str "the running gateway is bound to " host
+                 " (loopback) \u2014 a phone cannot reach it.\n" "Restart it on a reachable host:\n"
+                 "  vis gateway stop\n"
+                 (if ts
+                   (str "  vis gateway start --host " ts
+                        " --require-token --pair"
+                        "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
+                   "  vis gateway start --host 0.0.0.0 --require-token --pair")))
+          {:vis/user-error true}))
+      :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
+              {:host host :port port :token token :require-token? (boolean token) :emit stdout!}))))
 
 (defn- cli-gateway-stop!
   [parsed _residual]

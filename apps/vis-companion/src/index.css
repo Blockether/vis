@@ -112,6 +112,8 @@
   --color-accent: var(--primary);
   --color-accent-foreground: var(--primary-fg);
   --color-accent-2: var(--accent);
+  /* Legible amber for accent TEXT on surfaces (button bg amber is illegible as text). */
+  --color-accent-ink: var(--tool-edit);
   --color-ok: var(--ok);
   --color-warn: var(--warning);
   --color-warn-strong: var(--warning-border);
@@ -193,7 +195,7 @@
   }
 
   body {
-    @apply m-0 overflow-hidden bg-ink font-sans text-[13px] leading-[1.55] text-white antialiased;
+    @apply m-0 overflow-hidden bg-ink font-sans text-[12px] leading-[1.5] text-white antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     text-rendering: optimizeLegibility;
     overscroll-behavior: none;
@@ -209,7 +211,33 @@
     color: var(--primary-fg);
   }
 
-  button {
-    @apply touch-manipulation cursor-pointer select-none disabled:cursor-default;
+  button,
+  input,
+  textarea,
+  select {
+    @apply appearance-none rounded-none;
+    -webkit-appearance: none;
+    border-radius: 0;
+  }
+
+  button,
+  summary,
+  label,
+  select,
+  a[href],
+  [role="button"],
+  [role="tab"],
+  [role="option"] {
+    @apply cursor-pointer;
+  }
+
+  button,
+  [role="button"] {
+    @apply touch-manipulation select-none disabled:cursor-default;
+  }
+
+  button:disabled,
+  [aria-disabled="true"] {
+    @apply cursor-default;
   }
 }

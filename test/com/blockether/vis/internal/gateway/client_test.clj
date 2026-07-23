@@ -25,25 +25,32 @@
                @request))))))
 
 (deftest ensure-client-registers-once-from-canonical-string-keyed-response
-  (let [client-id-atom @(rv 'client-id)
-        previous @client-id-atom
-        calls (atom 0)
-        ensure-client (rv 'ensure-client!)]
-    (try
-      (reset! client-id-atom nil)
-      (with-redefs-fn {(rv 'send-json-with-entry!)
-                       (fn [_entry method path body]
-                         (swap! calls inc)
-                         (is (= "POST" method))
-                         (is (= "/v1/clients" path))
-                         (is (integer? (:pid body)))
-                         {"client_id" "lease-1"})
-                       (rv 'ensure-release-hook!) (fn [])}
-        (fn []
-          (is (= "lease-1" (ensure-client fake-entry)))
-          (is (= "lease-1" (ensure-client fake-entry)))
-          (is (= 1 @calls))))
-      (finally (reset! client-id-atom previous)))))
+  (let
+    [client-id-atom
+     @(rv 'client-id)
+
+     previous
+     @client-id-atom
+
+     calls
+     (atom 0)
+
+     ensure-client
+     (rv 'ensure-client!)]
+
+    (try (reset! client-id-atom nil)
+         (with-redefs-fn {(rv 'send-json-with-entry!) (fn [_entry method path body]
+                                                        (swap! calls inc)
+                                                        (is (= "POST" method))
+                                                        (is (= "/v1/clients" path))
+                                                        (is (integer? (:pid body)))
+                                                        {"client_id" "lease-1"})
+                          (rv 'ensure-release-hook!) (fn [])}
+           (fn []
+             (is (= "lease-1" (ensure-client fake-entry)))
+             (is (= "lease-1" (ensure-client fake-entry)))
+             (is (= 1 @calls))))
+         (finally (reset! client-id-atom previous)))))
 
 (deftest provider-limits-restores-engine-shape-from-gateway-wire
   (let [request (atom nil)]
@@ -76,6 +83,31 @@
           (is (= :rolling (get-in report [:dynamic :limits 0 :window :kind])))
           (is (= :hour (get-in report [:dynamic :limits 0 :window :unit])))
           (is (= 1234 (get-in report [:dynamic :limits 0 :window :resets-at-ms]))))))))
+
+(deftest provider-status-reads-is-authenticated-from-gateway-wire
+  ;; The gateway emits snake_case wire keys (`is_authenticated`). The client
+  ;; reads that boolean straight into `:is-authenticated` — otherwise an
+  ;; authenticated provider paints RED forever.
+  (let [request (atom nil)]
+    (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
+                                                     (reset! request path)
+                                                     fake-entry)
+                     (rv 'ensure-client!) (constantly "client-id")
+                     (rv 'send-json-with-entry!) (fn [_ method path]
+                                                   (is (= "GET" method))
+                                                   (is (= @request path))
+                                                   {"status" {"is_authenticated" true
+                                                              "source" "auth-file"
+                                                              "oauth_token_preview" "sk-ant-o..."
+                                                              "expires_in_ms" 10859960}})}
+      (fn []
+        (let [status (client/provider-status :anthropic-coding-plan)]
+          (is (= "/v1/providers/anthropic-coding-plan/status" @request))
+          (is (every? keyword? (keys status)))
+          (is (true? (:is-authenticated status)))
+          (is (= "auth-file" (:source status)))
+          (is (= "sk-ant-o..." (:oauth-token-preview status)))
+          (is (= 10859960 (:expires-in-ms status))))))))
 
 (defn- run-serving!
   "Drive ensure-gateway-serving! with a scripted `probe-route` (a seq of results,

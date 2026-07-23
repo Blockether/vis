@@ -535,41 +535,47 @@
                                 (-> st
                                     (assoc :saw-client? true)
                                     (update :sse-clients (fnil conj #{}) sub-id))))
-          (try (when proxied?
-                 (.write out
-                         (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                    StandardCharsets/UTF_8))
-                 (.flush out))
-               (doseq [[sid requested-cursor] sid+cursors]
-                 ;; A negative cursor means live-only. It lets a client restore a
-                 ;; bounded visited-session watch list without replaying every
-                 ;; ring buffer or issuing N `/seq` requests first.
-                 (let
-                   [cursor (if (neg? (long requested-cursor))
-                             (long (state/current-seq sid))
-                             (long requested-cursor))]
-                   ;; Seed the guard before atomic registration. A ready control
-                   ;; frame returns the effective cursor so a live-only client can
-                   ;; resume losslessly after its first connection.
-                   (swap! last-seqs assoc (str sid) cursor)
-                   (let [replay (state/subscribe! sid sub-id sink cursor)]
-                     (.write out
-                             (.getBytes (wire/sse-frame (wire/canonical
-                                                          {:type "subscription.ready"
-                                                           :session_id (str sid)
-                                                           :cursor cursor
-                                                           :server_time_ms
-                                                           (System/currentTimeMillis)}))
-                                        StandardCharsets/UTF_8))
-                     (.flush out)
-                     (doseq [event replay]
-                       (write! event)))))
-               (pump-sse! out queue dead? write!)
-               (catch Throwable _ nil)
-               (finally (unsubscribe-all!)
-                        (swap! server-state update :sse-clients disj sub-id)
-                        (maybe-stop-when-idle!)
-                        (try (.close out) (catch Throwable _ nil))))))))
+          (try
+            (when proxied?
+              (.write out
+                      (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                 StandardCharsets/UTF_8))
+              (.flush out))
+            (doseq [[sid requested-cursor] sid+cursors]
+              ;; A negative cursor means live-only. It lets a client restore a
+              ;; bounded visited-session watch list without replaying every
+              ;; ring buffer or issuing N `/seq` requests first.
+              (let
+                [cursor (if (neg? (long requested-cursor))
+                          ;; A live-only join to a session with a turn already
+                          ;; running (started in the TUI or another client)
+                          ;; rewinds to that turn's `turn.started` so the
+                          ;; in-flight bubble replays in full — same live
+                          ;; 'Vis is running: …' the originating channel shows —
+                          ;; not a bare post-connect tail.
+                          (long (or (state/running-turn-start-cursor sid) (state/current-seq sid)))
+                          (long requested-cursor))]
+                ;; Seed the guard before atomic registration. A ready control
+                ;; frame returns the effective cursor so a live-only client can
+                ;; resume losslessly after its first connection.
+                (swap! last-seqs assoc (str sid) cursor)
+                (let [replay (state/subscribe! sid sub-id sink cursor)]
+                  (.write out
+                          (.getBytes (wire/sse-frame (wire/canonical {:type "subscription.ready"
+                                                                      :session_id (str sid)
+                                                                      :cursor cursor
+                                                                      :server_time_ms
+                                                                      (System/currentTimeMillis)}))
+                                     StandardCharsets/UTF_8))
+                  (.flush out)
+                  (doseq [event replay]
+                    (write! event)))))
+            (pump-sse! out queue dead? write!)
+            (catch Throwable _ nil)
+            (finally (unsubscribe-all!)
+                     (swap! server-state update :sse-clients disj sub-id)
+                     (maybe-stop-when-idle!)
+                     (try (.close out) (catch Throwable _ nil))))))))
 
 (defn- multi-events-handler
   "GET /v1/events?sids=a:10,b,c:3 — ONE SSE stream carrying every listed
@@ -1962,6 +1968,51 @@
            (tel/log! :error ["gateway: unhandled request error" (:uri request) (ex-message t)])
            (error-response 500 :engine-error (or (ex-message t) "internal error"))))))
 
+(def ^:private cors-allow-methods "GET, POST, PATCH, DELETE, OPTIONS")
+
+(defn- cors-headers
+  "CORS headers for a cross-origin browser request. The bearer token is the
+   real authorization gate (§3); CORS only tells the browser the response is
+   readable. We echo the request Origin — so `Access-Control-Allow-Credentials`
+   is legal for the web channel's cookie — and fall back to `*` for callers
+   that send no Origin (curl, native clients)."
+  [request]
+  (let
+    [origin
+     (get-in request [:headers "origin"])
+
+     req-headers
+     (get-in request [:headers "access-control-request-headers"])]
+
+    (cond->
+      {"Access-Control-Allow-Methods" cors-allow-methods
+       "Access-Control-Allow-Headers" (or req-headers
+                                          "Authorization, Content-Type, X-Vis-Gateway-Secret")
+       "Access-Control-Max-Age" "600"
+       "Vary" "Origin"}
+      origin
+      (assoc "Access-Control-Allow-Origin"
+        origin "Access-Control-Allow-Credentials"
+        "true")
+
+      (not origin)
+      (assoc "Access-Control-Allow-Origin" "*"))))
+
+(defn- wrap-cors
+  "Outermost middleware. A cross-origin browser client (the Companion web/mobile
+   app hitting a Tailscale/cloudflared gateway URL) sends a CORS preflight
+   `OPTIONS` carrying NO Authorization header; answer it here with 204 + CORS
+   headers BEFORE [[wrap-auth]] can 401 it, and stamp the same headers on every
+   real response so the browser may read it. CORS is not auth — the bearer token
+   remains the sole authorization check."
+  [handler]
+  (fn [request]
+    (if (= :options (:request-method request))
+      {:status 204 :headers (cors-headers request) :body ""}
+      (let [response (handler request)]
+        (some-> response
+                (update :headers merge (cors-headers request)))))))
+
 (defn- router
   [^String token contribs]
   (rr/router
@@ -2109,7 +2160,8 @@
     (wrap-scoped-params contribs)
     (wrap-scoped-multipart contribs)
     (ring-cookies/wrap-cookies)
-    (wrap-errors)))
+    (wrap-errors)
+    (wrap-cors)))
 
 (defonce ^:private live-app
   ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty

@@ -266,7 +266,7 @@
                             :used 25.0
                             :limit 100.0
                             :remaining 75.0
-                            :unlimited? false
+                            :is-unlimited false
                             :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
                            {:id :zai-coding-plan-7d
                             :label "Z.ai coding plan 7d token quota"
@@ -274,7 +274,7 @@
                             :used 50.0
                             :limit 100.0
                             :remaining 50.0
-                            :unlimited? false
+                            :is-unlimited false
                             :window {:resets-at-ms (+ now-ms (* 3 24 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []
@@ -303,19 +303,19 @@
        report
        {:provider-id :github-copilot
         :dynamic {:limits
-                  [{:id :chat :label "Chat" :used 0.0 :limit 0.0 :remaining 0.0 :unlimited? false}
+                  [{:id :chat :label "Chat" :used 0.0 :limit 0.0 :remaining 0.0 :is-unlimited false}
                    {:id :completions
                     :label "Completions"
                     :used 0.0
                     :limit 0.0
                     :remaining 0.0
-                    :unlimited? false}
+                    :is-unlimited false}
                    {:id :premium_interactions
                     :label "Premium interactions"
                     :used 60.0
                     :limit 300.0
                     :remaining 240.0
-                    :unlimited? false
+                    :is-unlimited false
                     :window {:resets-at-ms (+ now-ms (* 2 24 60 60 1000))}}]}}]
 
       (with-redefs-fn {#'footer/chosen-model-info (fn []

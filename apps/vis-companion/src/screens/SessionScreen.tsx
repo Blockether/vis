@@ -346,24 +346,53 @@ function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+const LOADING_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+// Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner that
+// advances every 100ms next to "Loading session…" while an existing session
+// hydrates. New-session creation never mounts this — it opens straight to the
+// empty transcript, matching the TUI (which suppresses the spinner for a
+// still-building `:build-id` tab).
+function LoadingSession() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, []);
+  const frame = LOADING_SPINNER_FRAMES[Math.floor(now / 100) % LOADING_SPINNER_FRAMES.length];
+  return (
+    <div
+      className="flex min-h-[55vh] items-center justify-center font-mono text-[12px] text-white"
+      role="status"
+      aria-label="Loading session"
+    >
+      <span className="motion-reduce:hidden">{frame}</span>
+      <span className="hidden motion-reduce:inline">●</span>
+      <span>&nbsp;&nbsp;Loading session…</span>
+    </div>
+  );
+}
+
 export function SessionScreen({
   client,
   subscriptions,
   sid,
   onBack,
   onOpenSession,
+  fresh = false,
 }: {
   client: GatewayClient;
   subscriptions: SessionSubscriptionHub;
   sid: string;
   onBack: () => void;
-  onOpenSession: (sid: string) => void;
+  onOpenSession: (sid: string, fresh?: boolean) => void;
+  fresh?: boolean;
 }) {
   const [session, setSession] = useState<Session | null>(null);
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!fresh);
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
@@ -390,12 +419,14 @@ export function SessionScreen({
   const prependScrollHeightRef = useRef<number | null>(null);
   const followingRef = useRef(true);
   const showJumpRef = useRef(false);
+  const liveTurnRef = useRef<LiveTurn | null>(null);
 
   useEffect(() => {
     void recordingRef.current?.cancel();
     recordingRef.current = null;
     setTurns([]);
     setLiveTurn(null);
+    liveTurnRef.current = null;
     setSession(null);
     setAttachments([]);
     setPastes(new Map());
@@ -403,11 +434,11 @@ export function SessionScreen({
     setComposerNotice(null);
     setVoicePhase('idle');
     setVoiceRequested(false);
-    setLoading(true);
+    setLoading(!fresh);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
     followingRef.current = true;
     showJumpRef.current = false;
-  }, [sid]);
+  }, [sid, fresh]);
 
   const scrollToEnd = useCallback((behavior: ScrollBehavior = 'auto') => {
     const viewport = scrollRef.current;
@@ -425,10 +456,10 @@ export function SessionScreen({
       const next = await client.transcript(sid);
       setTurns(next);
       setError(null);
-      return true;
+      return next;
     } catch (cause) {
       setError((cause as Error).message);
-      return false;
+      return null;
     } finally {
       setLoading(false);
     }
@@ -498,8 +529,21 @@ export function SessionScreen({
     async function settle(event: SseEvent) {
       const type = event.type;
       setRunning(false);
-      const loaded = await loadTranscript();
-      if (loaded) setLiveTurn(null);
+      // Keep the streamed live turn on screen until the finished turn is
+      // actually persisted in the transcript, otherwise it vanishes for a frame
+      // (the persisted row lags the terminal event) and the view jumps.
+      const finishedId = stringField(event, 'turn_id') || liveTurnRef.current?.id || '';
+      let next = await loadTranscript();
+      const has = (turns: TranscriptTurn[] | null) =>
+        !finishedId || !!turns?.some((turn) => (turn.id ?? turn.turn_id) === finishedId);
+      if (next && !has(next)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        next = await loadTranscript();
+      }
+      if (next && has(next)) {
+        setLiveTurn(null);
+        liveTurnRef.current = null;
+      }
       if (type === 'turn.failed') {
         setError(stringField(event, 'message') || stringField(event, 'error') || 'The turn failed.');
       }
@@ -516,7 +560,11 @@ export function SessionScreen({
       if (!batch.length) return;
 
       if (batch.some((event) => event.type === 'turn.started')) setRunning(true);
-      setLiveTurn((turn) => batch.reduce(reduceLiveEvent, turn));
+      setLiveTurn((turn) => {
+        const reduced = batch.reduce(reduceLiveEvent, turn);
+        liveTurnRef.current = reduced;
+        return reduced;
+      });
 
       let terminal: SseEvent | undefined;
       for (let index = batch.length - 1; index >= 0; index -= 1) {
@@ -721,7 +769,7 @@ export function SessionScreen({
       try {
         const created = await client.createSession({ channel: 'web' });
         if (command === '/new-session' && args) await client.submitTurn(created.id, args);
-        onOpenSession(created.id);
+        onOpenSession(created.id, true);
       } catch (cause) {
         setPrompt(request);
         setError((cause as Error).message);
@@ -868,7 +916,23 @@ export function SessionScreen({
   const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
   const title = session?.title?.trim() || 'Chat';
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
-  const visibleTurns = turns.slice(visibleStart);
+  const liveTurnId = liveTurn?.id;
+  // While a live turn streams, drop the transcript's own copy of that same turn
+  // (a running turn is persisted as a bare 'running' row) so it isn't rendered
+  // twice — the live bubble owns it until `settle` confirms the finished row.
+  const visibleTurns = turns
+    .slice(visibleStart)
+    .filter((turn) => {
+      if (!liveTurn) return true;
+      const id = turn.id ?? turn.turn_id;
+      // Same turn by id — the live bubble owns it.
+      if (liveTurnId && id === liveTurnId) return false;
+      // The persisted 'running' row is the very turn being streamed live, even
+      // when its id can't be matched (e.g. turn.started replayed without a
+      // turn_id). Only one turn runs per session, so drop it to avoid a dup.
+      if (turn.status === 'running') return false;
+      return true;
+    });
   const loadEarlierTurns = () => {
     const viewport = scrollRef.current;
     if (viewport) prependScrollHeightRef.current = viewport.scrollHeight;
@@ -913,11 +977,7 @@ export function SessionScreen({
           {error && <Banner kind="err">{error}</Banner>}
 
           {loading && !turns.length ? (
-            <div className="flex justify-center gap-1.5 py-20" aria-label="Loading conversation">
-              <span className="size-1.5 animate-bounce rounded-full bg-accent motion-reduce:animate-none" />
-              <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms] motion-reduce:animate-none" />
-              <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms] motion-reduce:animate-none" />
-            </div>
+            <LoadingSession />
           ) : !turns.length && !liveTurn ? (
             <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
               <div className="grid size-11 place-items-center border border-dialog-edge bg-panel-2 shadow-[3px_3px_0_var(--dialog-shadow)]" aria-hidden="true">
@@ -1004,7 +1064,7 @@ export function SessionScreen({
                 type="button"
                 role="option"
                 aria-selected={index === slashIndex}
-                className={`flex w-full items-start gap-3 border-t border-dialog-edge px-3 py-2.5 text-left transition-colors ${
+                className={`grid w-full grid-cols-[8.5rem_1fr] items-start gap-3 border-t border-dialog-edge px-3 py-2.5 text-left transition-colors sm:grid-cols-[11rem_1fr] ${
                   index === slashIndex
                     ? 'bg-accent text-accent-foreground'
                     : 'text-dialog-foreground hover:bg-hover'
@@ -1012,7 +1072,7 @@ export function SessionScreen({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeSlash(command)}
               >
-                <code className="min-w-32 shrink-0 font-mono text-xs font-semibold text-accent">
+                <code className="break-words font-mono text-xs font-semibold text-accent-ink">
                   {command.name}
                 </code>
                 <span className="line-clamp-2 text-xs leading-5 text-dialog-hint">{command.doc}</span>
@@ -1021,11 +1081,11 @@ export function SessionScreen({
           </div>
         )}
 
-        <div className="border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
+        <div className="relative border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
           {activePastes.length > 0 && (
             <div className="flex gap-1 overflow-x-auto border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
               {activePastes.map((paste) => (
-                <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-[9px] text-accent">
+                <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-[9px] text-accent-ink">
                   <span className="max-w-56 truncate px-2">{paste.token}</span>
                   <button
                     type="button"
@@ -1068,7 +1128,7 @@ export function SessionScreen({
           )}
 
           {(composerNotice || voicePhase !== 'idle' || (voiceRequested && voiceModel?.status !== 'ready')) && (
-            <div className="flex min-h-6 items-center gap-1.5 border-b border-dialog-edge px-2 font-mono text-[9px] text-dialog-hint">
+            <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-[9px] text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
               {voicePhase === 'recording' ? (
                 <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
               ) : voicePhase === 'transcribing' ? (
@@ -1110,7 +1170,7 @@ export function SessionScreen({
                 aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
                 title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
               >
-                <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                   <rect x="9" y="3" width="6" height="11" rx="3" />
                   <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
                 </svg>

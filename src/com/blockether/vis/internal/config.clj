@@ -587,7 +587,7 @@
           :max-retries :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost
           :check-context? :pricing :context-limits :output-reserve :failure-threshold :recovery-ms
           :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write :allow-read
-          :allow-write :deny-read :deny-write :language-caches :path :access :inbound-ports
+          :allow-write :deny-read :deny-write :language-caches :path :access :description :inbound-ports
           :allowed-domains :denied-domains :exclude-domains :allow-private :rules :host :methods
           :allow :method :text :replace? :include-gitignored-paths :always-exclude :backend
           :theme-name :contributors-disabled :servers :transport :command :args :cwd :env :url

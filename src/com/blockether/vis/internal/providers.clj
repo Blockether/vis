@@ -183,16 +183,16 @@
    (falling back to `:provider/detect-fn`). Never throws."
   [provider]
   (try (cond (:provider/status-fn provider) ((:provider/status-fn provider))
-             (:provider/detect-fn provider) {:authenticated? (boolean ((:provider/detect-fn
-                                                                         provider)))}
+             (:provider/detect-fn provider) {:is-authenticated (boolean ((:provider/detect-fn
+                                                                           provider)))}
              :else nil)
-       (catch Throwable e {:authenticated? false :error (or (ex-message e) (str e))})))
+       (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))})))
 
 (defn probe-local-reachable
   "Probe a local OpenAI-compatible provider (Ollama / LM Studio) by
    GETting its `<base-url>/models` endpoint with a short timeout.
-   Reachable → `{:authenticated? true …}`; refused / timeout / other →
-   `{:authenticated? false :error \"<human hint>\"}` so the channel can
+   Reachable → `{:is-authenticated true …}`; refused / timeout / other →
+   `{:is-authenticated false :error \"<human hint>\"}` so the channel can
    SAY why the dot is red. Blocking ≤ ~2.5s — call off the render path."
   [provider]
   (let
@@ -203,7 +203,7 @@
      (config/display-label (:id provider))
 
      base*
-     {:authenticated? false :source :local :provider-id (:id provider) :base-url base}]
+     {:is-authenticated false :source :local :provider-id (:id provider) :base-url base}]
 
     (if (str/blank? base)
       (assoc base* :error (str label ": no base URL configured"))
@@ -244,7 +244,7 @@
                ;; Any answer below 500 means the server is up — even a
                ;; 401/404 proves the port is live. 5xx is the server failing.
                (if (< code 500)
-                 (assoc base* :authenticated? true)
+                 (assoc base* :is-authenticated true)
                  (assoc base* :error (str label " returned HTTP " code " at " host))))
              (catch ConnectException _
                (assoc base* :error (str "Can't reach " label " at " host " — is it running?")))
@@ -267,9 +267,9 @@
       ;; endpoint for real.
       (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
       (some? (:api-key provider))
-      {:authenticated? true :source :config :config-path config/state-path}
-      registered (or (safe-provider-status registered) {:authenticated? false})
-      :else {:authenticated? false})))
+      {:is-authenticated true :source :config :config-path config/state-path}
+      registered (or (safe-provider-status registered) {:is-authenticated false})
+      :else {:is-authenticated false})))
 
 (defn provider-reachable?
   "Cheap ROUTING-time liveness verdict: local providers (Ollama /
@@ -279,7 +279,7 @@
    remote backend would tax every turn."
   [provider]
   (if (contains? local-no-auth-provider-ids (:id provider))
-    (boolean (:authenticated? (probe-local-reachable provider)))
+    (boolean (:is-authenticated (probe-local-reachable provider)))
     true))
 
 (defn demote-unreachable-providers
@@ -318,8 +318,8 @@
   "Placeholder status while a real probe runs in the background."
   [provider]
   (if (some? (:api-key provider))
-    {:authenticated? true :source :config :config-path config/state-path}
-    {:authenticated? nil :loading? true}))
+    {:is-authenticated true :source :config :config-path config/state-path}
+    {:is-authenticated nil :loading? true}))
 
 (defn initial-provider-limits
   "Placeholder limits report while the real fetch runs."
@@ -347,10 +347,10 @@
          (when resets-at-ms (str ", resets " (format/format-date (Date. (long resets-at-ms))))))))
 
 (defn format-limit-row
-  [{:keys [label scope kind unlimited? used limit remaining note window]}]
+  [{:keys [label scope kind is-unlimited used limit remaining note window]}]
   (let
     [quota
-     (cond unlimited? "unlimited"
+     (cond is-unlimited "unlimited"
            (number? limit) (str (when (number? used) (str used "/"))
                                 limit
                                 (when (number? remaining) (str " (" remaining " left)")))
@@ -388,7 +388,7 @@
       rows
       (->> status
            (remove (fn [[k _]]
-                     (= k :authenticated?)))
+                     (= k :is-authenticated)))
            (sort-by (comp str key))
            (map (fn [[k v]]
                   (str (status-entry-label k) ": " (format-status-value v)))))
@@ -400,7 +400,7 @@
        "\n"
        (concat
          [title "" (str "Base URL: " (or (config/provider-base-url provider) "-"))
-          (str "Authenticated: " (if (:authenticated? status) "yes" "no"))]
+          (str "Authenticated: " (if (:is-authenticated status) "yes" "no"))]
          (when-let [e (:error status)]
            ["" (str "Error: " e)])
          (when (seq rows) (concat [""] rows))
@@ -429,11 +429,11 @@
       str/trim))
 
 (defn- status-detail-rows
-  "Status-map detail entries (minus :authenticated?/:error) as md list rows."
+  "Status-map detail entries (minus :is-authenticated/:error) as md list rows."
   [status]
   (->> status
        (remove (fn [[k _]]
-                 (contains? #{:authenticated? :error :loading?} k)))
+                 (contains? #{:is-authenticated :error :loading?} k)))
        (sort-by (comp str key))
        (map (fn [[k v]]
               (str "- **" (status-entry-label k) ":** " (format-status-value v))))))
@@ -456,7 +456,7 @@
       (config/display-label (:id provider))
 
       ok?
-      (boolean (:authenticated? status))
+      (boolean (:is-authenticated status))
 
       dynamic
       (get-in limits [:dynamic :limits])

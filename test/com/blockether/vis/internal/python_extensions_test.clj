@@ -932,7 +932,7 @@ vis.extension(
                      ((:provider/get-token-fn p))))
           ;; status-fn: kebab keys + enum values coerced to keywords
           (let [s ((:provider/status-fn p))]
-            (expect (true? (:authenticated? s)))
+            (expect (true? (:is-authenticated s)))
             (expect (= :env-var (:source s)))
             (expect (= :acme (:provider-id s))))
           ;; detect-fn works and coerces :source

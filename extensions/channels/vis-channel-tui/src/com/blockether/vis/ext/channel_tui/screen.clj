@@ -1440,45 +1440,130 @@
   ;; not on every spinner heartbeat.
   (atom nil))
 
+(defonce ^:private kitty-image-state
+  ;; Transmit-once bookkeeping for the Kitty graphics protocol. Each unique image
+  ;; (keyed by path + transmitted box) uploads its PNG ONCE under a client image id;
+  ;; every later frame RE-PLACES it (`a=p`) instead of re-transmitting the whole PNG
+  ;; and deleting every image (`a=T` + `d=A`). That removes the upload gap that made
+  ;; scrolling flicker AND makes the cheap scroll fast-path affordable for image
+  ;; sessions. Shape: {:transmits {[path cols rows] {:id :img-w :img-h}}
+  ;;                   :order [key…] (insertion order for eviction)
+  ;;                   :placed #{id…} (ids with a live placement)
+  ;;                   :next-id n}.
+  (atom {:transmits {} :order [] :placed #{} :next-id 1}))
+
+(def ^:private kitty-max-transmits
+  "Cap on distinct images kept uploaded in the terminal before the oldest
+   off-screen one is freed — bounds terminal-side image memory over a long session."
+  32)
+
+(defn- emit-iterm2-images!
+  "Append the iTerm2 inline-image sequences for `regions` to `sb`. iTerm2 images are
+   cell-bound (repainting the cells erases them), so there is no transmit/placement
+   split — each region re-emits its full sequence at its cursor, as before."
+  [^StringBuilder sb regions]
+  (doseq [{:keys [row col img]} regions]
+    (when-let [seqstr (timg/render-sequence (:path img)
+                                            (:mime img)
+                                            {:cols (:cols img)
+                                             :rows (:rows img)
+                                             :crop-top (:crop-top img)
+                                             :crop-bottom (:crop-bottom img)
+                                             :width (:width img)
+                                             :height (:height img)})]
+      (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
+      (.append sb seqstr))))
+
+(defn- emit-kitty-images!
+  "Append Kitty graphics for `regions` to `sb`, transmitting each unique image ONCE
+   and RE-PLACING it every frame. Walks `kitty-image-state`: a first sight uploads
+   the PNG (`a=t`) under a fresh id; every region then emits only a cursor move +
+   placement (`a=p`, which replaces the prior placement in place). Placements gone
+   from view are deleted (data kept); the transmit cache is capped so a long session
+   can't pin unbounded terminal image memory. Mutates `kitty-image-state`."
+  [^StringBuilder sb regions]
+  (let [st @kitty-image-state]
+    (loop [rs regions
+           transmits (:transmits st)
+           order (:order st)
+           placed #{}
+           next-id (long (:next-id st))]
+      (if-let [{:keys [row col img]} (first rs)]
+        (let [tkey [(:path img) (:cols img) (:rows img)]
+              [transmits order next-id entry]
+              (if-let [e (get transmits tkey)]
+                [transmits order next-id e]
+                (if-let [{:keys [data w h]}
+                         (timg/kitty-png (:path img)
+                                         (:mime img)
+                                         {:cols (:cols img)
+                                          :rows (:rows img)
+                                          :width (:width img)
+                                          :height (:height img)})]
+                  (let [id next-id
+                        e {:id id :img-w w :img-h h}]
+                    (.append sb ^String (timg/kitty-transmit data id))
+                    [(assoc transmits tkey e) (conj order tkey) (inc next-id) e])
+                  [transmits order next-id nil]))]
+          (if entry
+            (do
+              (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
+              (.append sb ^String (timg/kitty-place {:id (:id entry)
+                                                     :cols (:cols img)
+                                                     :rows (:rows img)
+                                                     :crop-top (:crop-top img)
+                                                     :crop-bottom (:crop-bottom img)
+                                                     :img-w (:img-w entry)
+                                                     :img-h (:img-h entry)}))
+              (recur (rest rs) transmits order (conj placed (long (:id entry))) next-id))
+            (recur (rest rs) transmits order placed next-id)))
+        ;; All regions emitted. Delete placements that left the viewport (keep data),
+        ;; then evict the oldest off-screen transmits if we're over the cap.
+        (do
+          (doseq [id (:placed st)]
+            (when-not (placed id)
+              (.append sb ^String (timg/kitty-delete-placement id))))
+          (let [[transmits order]
+                (loop [transmits transmits
+                       order order]
+                  (let [victim (when (> (count order) kitty-max-transmits)
+                                 (first (remove #(placed (:id (get transmits %))) order)))]
+                    (if victim
+                      (do (.append sb ^String (timg/kitty-free-image (:id (get transmits victim))))
+                          (recur (dissoc transmits victim) (vec (remove #(= % victim) order))))
+                      [transmits order])))]
+            (reset! kitty-image-state {:transmits transmits
+                                       :order order
+                                       :placed placed
+                                       :next-id next-id})))))))
+
 (defn- paint-terminal-images!
   "Draw every region from `image-regions` onto the terminal's graphics layer,
    AFTER Lanterna's delta refresh has painted the reserved blank cells. Wrapped
    in DECSC/DECRC so the shell cursor lands back where Lanterna left it. Kitty
-   placements are cleared first (`d=A`) so scrolling doesn't stack ghosts. Skips
-   the whole write when the signature matches the last paint."
+   images transmit once and re-place (no delete-all, no re-upload), so a scroll
+   moves them without the flicker the old delete+retransmit caused. Skips the
+   whole write when the signature matches the last paint."
   [regions]
-  (let
-    [proto
-     (timg/images-protocol)
+  (let [proto
+        (timg/images-protocol)
 
-     signature
-     (mapv (fn [{:keys [row col img]}]
-             [row col (:path img) (:cols img) (:rows img) (:crop-top img) (:crop-bottom img)])
-           regions)]
+        signature
+        (mapv (fn [{:keys [row col img]}]
+                [row col (:path img) (:cols img) (:rows img) (:crop-top img) (:crop-bottom img)])
+              regions)]
 
     (when (and proto (not= signature @image-paint-state))
-      (let
-        [^java.io.OutputStream out
-         @vis/tty-out
+      (let [^java.io.OutputStream out
+            @vis/tty-out
 
-         sb
-         (StringBuilder.)]
+            sb
+            (StringBuilder.)]
 
         (.append sb "\u001b7") ;; DECSC save cursor
-        (when (and (= proto :kitty) (seq @image-paint-state))
-          (.append sb "\u001b_Ga=d,d=A,q=2\u001b\\")) ;; drop prior kitty images
-        (doseq [{:keys [row col img]} regions]
-          (when-let
-            [seqstr (timg/render-sequence (:path img)
-                                          (:mime img)
-                                          {:cols (:cols img)
-                                           :rows (:rows img)
-                                           :crop-top (:crop-top img)
-                                           :crop-bottom (:crop-bottom img)
-                                           :width (:width img)
-                                           :height (:height img)})]
-            (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
-            (.append sb seqstr)))
+        (if (= proto :kitty)
+          (emit-kitty-images! sb regions)
+          (emit-iterm2-images! sb regions))
         (.append sb "\u001b8") ;; DECRC restore cursor
         (try (when out (.write out (.getBytes (.toString sb) "UTF-8")) (.flush out))
              (catch Throwable _ nil)))
@@ -1499,7 +1584,10 @@
     (let [^java.io.OutputStream out @vis/tty-out]
       (try (when out (.write out (.getBytes "\u001b_Ga=d,d=A,q=2\u001b\\" "UTF-8")) (.flush out))
            (catch Throwable _ nil))))
-  (reset! image-paint-state nil))
+  (reset! image-paint-state nil)
+  ;; `d=A` above freed the uploaded data too, so forget the transmit cache — the
+  ;; next full frame re-uploads and re-places every visible image.
+  (reset! kitty-image-state {:transmits {} :order [] :placed #{} :next-id 1}))
 
 (defn- bubble-copy-hit
   [point regions]
@@ -1758,6 +1846,38 @@
       (.setCursorPosition screen nil)
       (.setCursorPosition screen (TerminalPosition. cx cy)))))
 
+(defn- tab-content-loading?
+  "True when the ACTIVE tab is still hydrating/building with an EMPTY transcript
+   — a freshly focused pending tab or an optimistic 'Starting…' new session. A
+   real turn always carries the user's message, so this never fires
+   mid-conversation. Drives the in-content loading spinner."
+  [db]
+  (and (:loading? db)
+       (empty? (:messages db))
+       ;; A brand-new session whose env is still building carries `:build-id` on
+       ;; its active tab entry (`:open-building-tab`; cleared by
+       ;; `:bind-built-session`). That is CREATION, not hydration, so show the
+       ;; empty transcript rather than a "Loading session…" spinner. Existing
+       ;; sessions hydrating on focus (`:pending?`/`:session-id`, no build-id)
+       ;; still spin.
+       (let [active-id (or (:active-tab-id db)
+                           (:id (some #(when (:active? %) %) (:tabs db))))]
+         (not (some #(and (= (:id %) active-id) (:build-id %)) (:tabs db))))))
+
+(defn- paint-content-loading!
+  "Center an animated spinner + 'Loading session…' in the transcript band while
+   a freshly focused tab hydrates, so switching to a not-yet-loaded tab shows
+   motion INSIDE the tab content instead of a blank void. Mirrors
+   `paint-boot-splash!` but scoped to the messages area. Caller holds
+   `draw-lock`."
+  [g cols messages-top messages-bottom now-ms]
+  (let [messages-top (long messages-top)
+        messages-bottom (long messages-bottom)
+        row (max messages-top (quot (+ messages-top messages-bottom) 2))
+        label (str (render/spinner-frame (long now-ms)) "  Loading session…")]
+    (p/set-colors! g t/text-fg t/terminal-bg)
+    (p/put-str! g 0 row (p/center-text label (long cols)))))
+
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
    echo-area row, and two footer rows.
@@ -1970,6 +2090,13 @@
        messages-end-ns
        (System/nanoTime)
 
+       ;; Freshly focused pending/building tab with an empty transcript: paint a
+       ;; centered animated spinner in the messages band so a tab switch shows
+       ;; motion instead of a blank void until its history hydrates.
+       _
+       (when (tab-content-loading? db)
+         (paint-content-loading! g cols messages-top messages-bottom now-ms))
+
        _
        (header/draw-header! g db header-top cols)
 
@@ -2141,11 +2268,9 @@
        :eff-scroll (:eff-scroll layout)
        :heights (:heights layout)
        :offsets (:offsets layout)
-       ;; Did this frame place any inline terminal images? The scroll fast
-       ;; path repaints only the messages band and does NOT re-place images
-       ;; (they ride the terminal's own graphics layer, outside Lanterna's
-       ;; cell model), so it bails to a full frame whenever this is true and
-       ;; lets the full painter re-anchor the images to the scrolled rows.
+       ;; Did this frame place any inline terminal images? Carried for downstream
+       ;; state; both the full and scroll paths now re-place images (transmit-once
+       ;; + placement), so this no longer forces a full frame.
        :has-images? (boolean (seq @image-sink))
        :screen-cells screen-cells
        :selectable-ranges selectable-ranges
@@ -2845,7 +2970,10 @@
      (System/nanoTime)
 
      anchored-scroll
-     (:anchored-scroll layout)]
+     (:anchored-scroll layout)
+
+     image-sink
+     (atom [])]
 
     ;; Anchor correction, exactly as render-frame! — estimate→real height fixes
     ;; keep the scrolled content visually put instead of lurching.
@@ -2854,7 +2982,8 @@
                (not= anchored-scroll messages-scroll))
       (state/dispatch [:reanchor-scroll anchored-scroll
                        (- (long anchored-scroll) (long messages-scroll))]))
-    (render/draw-messages-area! g layout messages-top messages-bottom cols)
+    (binding [render/*image-placements* image-sink]
+      (render/draw-messages-area! g layout messages-top messages-bottom cols))
     ;; Carry over chrome click regions (rows OUTSIDE the messages band). The
     ;; transcript regions in-band were just re-registered by draw-messages-area!
     ;; at their new scrolled rows, so they are deliberately NOT carried.
@@ -2884,6 +3013,11 @@
                           :visible (count (:visible layout))
                           :total-h (long (:total-h layout))})
         (record-frame! "scroll" total-ms)))
+    ;; Re-anchor inline images to the scrolled rows. Transmit-once + placement means
+    ;; this is a handful of tiny `a=p` escapes, not a per-tick re-upload — so image
+    ;; sessions get the cheap scroll path instead of a forced full frame.
+    (paint-terminal-images!
+      (fitting-image-placements @image-sink messages-top messages-bottom))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -2894,6 +3028,7 @@
             :eff-scroll (:eff-scroll layout)
             :heights (:heights layout)
             :offsets (:offsets layout)
+            :has-images? (boolean (seq @image-sink))
             :visible (:visible layout)})))
 
 (defn- render-input-frame!
@@ -3037,7 +3172,10 @@
    path decision is unit-testable in isolation. `eligible?` is the shared
    guard (no forced full frame, no locking overlay, not recovering from a
    dialog block); `with-layout?` additionally needs a stable size + a prior
-   published layout to diff against."
+   published layout to diff against.
+
+   A hydrating tab with an EMPTY transcript (`tab-content-loading?`) forces the
+   FULL path every tick so the centered in-content loading spinner animates."
   [{:keys [last-db db last-layout last-hover current-hover cols same-size? animate? loading?
            scroll-anim? overlay-open? was-blocked?]}]
   (let
@@ -3047,24 +3185,31 @@
      with-layout?
      (and eligible? same-size? last-layout)]
 
-    {;; Only header hover chrome changed.
-     :header-hover-only? (and with-layout?
-                              (not animate?)
-                              (header-hover-only-change? last-db db last-hover current-hover))
-     ;; Live streaming bubble tick — recompute layout but repaint only the live band.
-     :partial-live? (and eligible? (partial-live-frame? last-db db same-size? last-layout))
-     ;; ONLY a background spinner tick — the active view is byte-for-byte unchanged.
-     :header-spinner-only? (and with-layout?
-                                (not loading?)
-                                (not scroll-anim?)
-                                (active-view-unchanged? last-db db)
-                                (state/any-background-loading? db))
-     ;; Pure history scroll: repaint messages band + scrollbar, skip static chrome.
-     ;; Excludes image sessions (images ride the terminal graphics layer).
-     :scroll-frame?
-     (and with-layout? (not (:has-images? last-layout)) (scroll-only-change? last-db db))
-     ;; Pure input-text edit: only the bottom chrome changed, box height held.
-     :input-only? (and with-layout? (not animate?) (input-only-change? last-db db cols))}))
+    (if (tab-content-loading? db)
+      {:header-hover-only? false
+       :partial-live? false
+       :header-spinner-only? false
+       :scroll-frame? false
+       :input-only? false}
+      {;; Only header hover chrome changed.
+       :header-hover-only? (and with-layout?
+                                (not animate?)
+                                (header-hover-only-change? last-db db last-hover current-hover))
+       ;; Live streaming bubble tick — recompute layout but repaint only the live band.
+       :partial-live? (and eligible? (partial-live-frame? last-db db same-size? last-layout))
+       ;; ONLY a background spinner tick — the active view is byte-for-byte unchanged.
+       :header-spinner-only? (and with-layout?
+                                  (not loading?)
+                                  (not scroll-anim?)
+                                  (active-view-unchanged? last-db db)
+                                  (state/any-background-loading? db))
+       ;; Pure history scroll: repaint messages band + scrollbar, skip static chrome.
+       ;; Inline images ride along: `render-scroll-frame!` re-places them with cheap
+       ;; transmit-once placement escapes, so image sessions keep the fast path too.
+       :scroll-frame?
+       (and with-layout? (scroll-only-change? last-db db))
+       ;; Pure input-text edit: only the bottom chrome changed, box height held.
+       :input-only? (and with-layout? (not animate?) (input-only-change? last-db db cols))})))
 
 (defn- choose-frame-path
   "Pick the cheapest repaint path from the precomputed `frame-change-flags`.

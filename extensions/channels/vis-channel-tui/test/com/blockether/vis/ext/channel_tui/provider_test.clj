@@ -113,30 +113,30 @@
   (it "routes configured provider status through the gateway"
       (with-redefs
         [vis/gateway-provider-status (fn [provider-id]
-                                       {:authenticated? true
+                                       {:is-authenticated true
                                         :source :gateway
                                         :provider-id provider-id
                                         :config-path vis/state-path})]
         (expect
           (=
-            {:authenticated? true :source :gateway :provider-id :openai :config-path vis/state-path}
+            {:is-authenticated true :source :gateway :provider-id :openai :config-path vis/state-path}
             (select-keys (@#'provider/configured-provider-status
                           {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
-                         [:authenticated? :source :provider-id :config-path])))))
+                         [:is-authenticated :source :provider-id :config-path])))))
   (it "routes local no-auth provider status through the gateway instead of probing locally"
       (let [local-probed? (atom false)]
         (with-redefs
           [providers/probe-local-reachable
            (fn [_]
              (reset! local-probed? true)
-             {:authenticated? true :source :local :provider-id :ollama})
+             {:is-authenticated true :source :local :provider-id :ollama})
            vis/gateway-provider-status
            (fn [provider-id]
-             {:authenticated? true :source :gateway :provider-id provider-id})]
+             {:is-authenticated true :source :gateway :provider-id provider-id})]
 
-          (expect (= {:authenticated? true :source :gateway :provider-id :ollama}
+          (expect (= {:is-authenticated true :source :gateway :provider-id :ollama}
                      (select-keys (@#'provider/configured-provider-status {:id :ollama})
-                                  [:authenticated? :source :provider-id])))
+                                  [:is-authenticated :source :provider-id])))
           (expect (= false @local-probed?))))))
 
 (defdescribe
@@ -153,14 +153,14 @@
           [vis/gateway-provider-status
            (fn [_]
              (reset! status-called? true)
-             {:authenticated? true})
+             {:is-authenticated true})
 
            vis/gateway-provider-limits
            (fn [_]
              (reset! limits-called? true)
              {:status :ok})]
 
-          (expect (= {:authenticated? nil :loading? true}
+          (expect (= {:is-authenticated nil :loading? true}
                      (@#'provider/initial-provider-status {:id :slow})))
           (expect (= {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
                      (@#'provider/initial-provider-limits {:id :slow})))
@@ -189,7 +189,7 @@
          (fn [provider-id]
            (deliver status-entered provider-id)
            @release
-           {:authenticated? true :source :gateway})
+           {:is-authenticated true :source :gateway})
 
          vis/gateway-provider-limits
          (fn [provider-id]
@@ -204,7 +204,7 @@
         (expect (= :slow (deref limits-entered 500 nil)))
         (expect (= true (@#'provider/provider-diagnostics-loading? @statuses @limits)))
         (deliver release true)
-        (expect (eventually #(= true (get-in @statuses [:slow :authenticated?]))))
+        (expect (eventually #(= true (get-in @statuses [:slow :is-authenticated]))))
         (expect (eventually #(= :ok (get-in @limits [:slow :status]))))
         (expect (= false (@#'provider/provider-diagnostics-loading? @statuses @limits)))))))
 
@@ -216,16 +216,16 @@
          (fn [provider-id]
            (case provider-id
              :openai
-             {:provider/status-fn (constantly {:authenticated? true})}
+             {:provider/status-fn (constantly {:is-authenticated true})}
 
              :ollama
-             {:provider/status-fn (constantly {:authenticated? true})}
+             {:provider/status-fn (constantly {:is-authenticated true})}
 
              nil))
 
          vis/gateway-provider-status
          (fn [provider-id]
-           (if (= :openai provider-id) {:authenticated? true} {:authenticated? false}))]
+           (if (= :openai provider-id) {:is-authenticated true} {:is-authenticated false}))]
 
         (expect (= [:models :authenticate :status :logout]
                    (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
@@ -363,7 +363,7 @@
           (let
             [text (providers/status-text
                     {:id :slow}
-                    {:authenticated? nil :loading? true}
+                    {:is-authenticated nil :loading? true}
                     {:provider-id :slow :status :loading :static {} :dynamic {:limits []}})]
             (expect (str/includes? text "Authenticated: no"))
             (expect (str/includes? text "Loading?: true"))

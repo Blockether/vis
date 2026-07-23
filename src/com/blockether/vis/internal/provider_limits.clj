@@ -64,7 +64,7 @@
 
 (s/def ::remaining number?)
 
-(s/def ::unlimited? boolean?)
+(s/def ::is-unlimited boolean?)
 
 (s/def ::note string?)
 
@@ -76,7 +76,7 @@
          #(or (nil? (:resets-at-ms %)) (integer? (:resets-at-ms %)))))
 
 (s/def ::limit-row
-  (s/keys :req-un [::id ::label ::scope ::kind ::precision ::source ::unlimited?]
+  (s/keys :req-un [::id ::label ::scope ::kind ::precision ::source ::is-unlimited]
           :opt-un [::subject ::window ::used ::limit ::remaining ::note]))
 
 (s/def ::limits (s/coll-of ::limit-row :kind vector?))
