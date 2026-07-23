@@ -12,6 +12,10 @@
      :reasoning        LLM is streaming reasoning text. Updates the
                        iteration entry's `:thinking` field.
 
+     :tool-preview     LLM is streaming a native call. Carries tool identity
+                       and cumulative code separately from reasoning/content;
+                       the first real form replaces this ephemeral slot.
+
      :form-start       One block is about to evaluate. Carries
                        `:position` and `:code`. The tracker writes the
                        code immediately so channels can show the
@@ -402,6 +406,7 @@
     ;; stale reasoning/content/parse state and keep only the retry recap.
     (-> entry
         (assoc :activity :provider-call
+               :forms []
                :error (merge (when (map? (:error chunk)) (:error chunk))
                              (select-keys chunk [:attempt :max-retries :delay-ms])))
         (dissoc :thinking :content-stream :response-parse)
@@ -409,6 +414,12 @@
                 conj
                 (or (:event chunk)
                     (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
+
+    :tool-preview
+    ;; The model has selected a native call but execution has not begun. Reuse
+    ;; the form display contract in slot 0 so channels render the native badge
+    ;; and code immediately; :form-start replaces this preview in place.
+    (assoc (assoc-form entry 0 (chunk->form-start chunk)) :activity nil)
 
     :form-start
     (let

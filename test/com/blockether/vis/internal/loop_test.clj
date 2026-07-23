@@ -2817,25 +2817,6 @@
                (it "keeps escaped quotes/backslashes inside the code intact"
                    (expect (= "print(\"x\\y\")" (decode "{\"code\":\"print(\\\"x\\\\y\\\")\"}"))))))
 
-(defdescribe live-tool-code-markdown-test
-             (it "keeps cumulative tool-code frames append-only until the terminal fence"
-                 (let
-                   [render
-                    @#'lp/live-tool-code-markdown
-
-                    first-frame
-                    (render "print" false)
-
-                    next-frame
-                    (render "print(1)" false)
-
-                    terminal-frame
-                    (render "print(1)" true)]
-
-                   (expect (= "```python\nprint" first-frame))
-                   (expect (str/starts-with? next-frame first-frame))
-                   (expect (str/starts-with? terminal-frame next-frame))
-                   (expect (str/ends-with? terminal-frame "\n```")))))
 
 (defdescribe
   strip-echo-diffs-test

@@ -4077,13 +4077,6 @@
                                    (do (.append sb e) (recur (+ i 2))))))
                     :else (do (.append sb c) (recur (inc i)))))))))))
 
-(defn- live-tool-code-markdown
-  "Append-only Markdown projection for cumulative native-tool code. While the
-   provider is still streaming, leave the fence open; append the closing fence
-   only on the terminal frame. Closing and reopening it on every cumulative
-   chunk moves the suffix and corrupts append-only gateway delta math."
-  [code done?]
-  (str "```python\n" code (when done? "\n```")))
 
 (defn- prose-beyond-code
   "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool
@@ -4166,14 +4159,16 @@
        content-len-volatile (volatile! 0)
        tool-code-len-volatile (volatile! 0)
        tool-code-volatile (volatile! nil)
+       tool-call-preview-volatile (volatile! nil)
        reset-stream-state! (fn []
                              (vreset! reasoning-len-volatile 0)
                              (vreset! content-len-volatile 0)
                              (vreset! tool-code-len-volatile 0)
-                             (vreset! tool-code-volatile nil))
+                             (vreset! tool-code-volatile nil)
+                             (vreset! tool-call-preview-volatile nil))
        streaming-fn
        (when on-chunk
-         (fn [{:keys [reasoning content tool-input done?] :as chunk}]
+         (fn [{:keys [reasoning content tool-input tool-call-preview done?] :as chunk}]
            (cond (:event/type chunk)
                  (on-chunk {:phase :provider-fallback :iteration iteration-position :event chunk})
                  :else (do (when (or (some? reasoning) done?)
@@ -4215,34 +4210,38 @@
                                           :content content-s
                                           :delta delta
                                           :done? (boolean done?)})))
-                           ;; Native tool calling: the model's Python is the
-                           ;; tool-call arguments, not text content. Decode the
-                           ;; live `code` value and stream it as content (a
-                           ;; python code block) so the live bubble paints the
-                           ;; code being written. Skipped once real text content
-                           ;; (a plain-text answer reply) is present.
-                           (when (and (str/blank? (or content ""))
-                                      (or (some? tool-input)
-                                          (and done? (some? @tool-code-volatile))))
-                             (when-let
-                               [code (or (some-> tool-input
-                                                 live-code-from-tool-input)
-                                         @tool-code-volatile)]
-                               (when-not (str/blank? code)
-                                 (let
-                                   [prev-len (long @tool-code-len-volatile)
-                                    cur-len (long (count code))
-                                    delta (cond (< cur-len prev-len) code
-                                                (= cur-len prev-len) ""
-                                                :else (subs code prev-len))]
-
-                                   (vreset! tool-code-len-volatile cur-len)
-                                   (vreset! tool-code-volatile code)
-                                   (on-chunk {:phase :content
-                                              :iteration iteration-position
-                                              :content (live-tool-code-markdown code done?)
-                                              :delta delta
-                                              :done? (boolean done?)})))))))))
+                           ;; Native tool input is neither assistant prose nor
+                           ;; reasoning. Svar identifies the call before its argument
+                           ;; deltas; preserve that identity in a dedicated preview
+                           ;; phase so every client labels the code as a native call
+                           ;; from its first streamed byte.
+                           (when tool-call-preview
+                             (vreset! tool-call-preview-volatile tool-call-preview))
+                           (let [preview (or tool-call-preview @tool-call-preview-volatile)
+                                 code (or (some-> tool-input live-code-from-tool-input)
+                                          @tool-code-volatile)]
+                             (when (and (str/blank? (or content ""))
+                                        preview
+                                        (or tool-call-preview (some? tool-input)
+                                            (and done? (some? code))))
+                               (let [code (or code "")
+                                     prev-len (long @tool-code-len-volatile)
+                                     cur-len (long (count code))
+                                     delta (cond (< cur-len prev-len) code
+                                                 (= cur-len prev-len) ""
+                                                 :else (subs code prev-len))]
+                                 (vreset! tool-code-len-volatile cur-len)
+                                 (vreset! tool-code-volatile (not-empty code))
+                                 (on-chunk {:phase :tool-preview
+                                            :iteration iteration-position
+                                            :position 0
+                                            :code code
+                                            :delta delta
+                                            :vis/tool-name "native_call"
+                                            :tool-color-role :tool-color/meta
+                                            :result-summary (or (:name preview) "Native call")
+                                            :svar/tool-call-id (:id preview)
+                                            :done? (boolean done?)}))))))))
        copilot-initiator (copilot-initiator-for-iteration iteration)
        effective-llm-headers
        (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
