@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { GatewayConn } from '../lib/types';
-import { GatewayClient } from '../lib/gateway';
+import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
 import { removeConnection } from '../lib/storage';
 import { scanQr } from '../lib/scan';
@@ -28,6 +28,42 @@ export function ConnectScreen({
   const [token, setToken] = useState('');
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [health, setHealth] = useState<Record<string, GwHealth>>({});
+
+  const probe = useCallback(async (list: GatewayConn[]) => {
+    await Promise.all(
+      list.map(async (conn) => {
+        setHealth((h) => ({
+          ...h,
+          [conn.url]: { state: h[conn.url]?.state ?? 'checking', ms: h[conn.url]?.ms },
+        }));
+        const started = Date.now();
+        try {
+          const reachable = await new GatewayClient(conn).ping();
+          setHealth((h) => ({
+            ...h,
+            [conn.url]: { state: reachable ? 'online' : 'offline', ms: Date.now() - started },
+          }));
+        } catch (e) {
+          const unauthorized = e instanceof GatewayError && e.status === 401;
+          setHealth((h) => ({
+            ...h,
+            [conn.url]: { state: unauthorized ? 'auth' : 'offline', ms: Date.now() - started },
+          }));
+        }
+      }),
+    );
+  }, []);
+
+  // Live reachability: probe every saved gateway on mount, then every 6s, so the
+  // list shows which gateways are actually online, offline, or unauthorized —
+  // not just which one is selected.
+  useEffect(() => {
+    if (conns.length === 0) return;
+    void probe(conns);
+    const id = window.setInterval(() => void probe(conns), 6000);
+    return () => window.clearInterval(id);
+  }, [conns, probe]);
 
   async function tryConn(conn: GatewayConn) {
     setBusy(true);
@@ -81,7 +117,7 @@ export function ConnectScreen({
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
+    <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
       <header className="border-b border-dialog-edge pb-3">
         <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent">
           Connections
@@ -114,6 +150,7 @@ export function ConnectScreen({
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
               const selected = active?.url === conn.url;
+              const hv = healthView(health[conn.url]);
               return (
                 <div
                   key={conn.url}
@@ -128,10 +165,11 @@ export function ConnectScreen({
                     aria-current={selected ? 'true' : undefined}
                   >
                     <span
-                      className={`shrink-0 font-mono text-sm ${selected ? 'text-ok' : 'text-dialog-hint'}`}
+                      className={`shrink-0 font-mono text-sm ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
                       aria-hidden="true"
+                      title={hv.label}
                     >
-                      {selected ? '●' : '○'}
+                      {hv.glyph}
                     </span>
                     <span className="min-w-0">
                       <span className="flex min-w-0 items-center gap-2">
@@ -144,8 +182,14 @@ export function ConnectScreen({
                           </span>
                         )}
                       </span>
-                      <span className="block truncate font-mono text-[9px] text-dialog-hint">
-                        {conn.url}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="block truncate font-mono text-[9px] text-dialog-hint">
+                          {conn.url}
+                        </span>
+                        <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-wider ${hv.textClass}`}>
+                          {hv.label}
+                          {hv.ms != null && hv.state === 'online' ? ` \u00b7 ${hv.ms}ms` : ''}
+                        </span>
                       </span>
                     </span>
                   </button>
@@ -186,7 +230,7 @@ export function ConnectScreen({
           <span className="h-px flex-1 bg-dialog-edge" />
         </div>
 
-        <div className="grid min-w-0 gap-3 md:grid-cols-2">
+        <div className="grid min-w-0 items-start gap-3 md:grid-cols-2">
           <div className="overflow-hidden border border-dialog-edge bg-panel transition-colors focus-within:border-accent">
             <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
               <h3 className="font-mono text-xs font-bold text-white">Pairing link</h3>
@@ -251,5 +295,34 @@ function hostOf(url: string): string {
     return new URL(url).host;
   } catch {
     return url;
+  }
+}
+
+type GwState = 'checking' | 'online' | 'offline' | 'auth';
+interface GwHealth {
+  state: GwState;
+  ms?: number;
+}
+
+interface GwHealthView {
+  state: GwState;
+  glyph: string;
+  label: string;
+  ms?: number;
+  dotClass: string;
+  textClass: string;
+}
+
+function healthView(h?: GwHealth): GwHealthView {
+  const state = h?.state ?? 'checking';
+  switch (state) {
+    case 'online':
+      return { state, glyph: '\u25cf', label: 'Online', ms: h?.ms, dotClass: 'text-ok', textClass: 'text-ok' };
+    case 'offline':
+      return { state, glyph: '\u25cf', label: 'Offline', ms: h?.ms, dotClass: 'text-err', textClass: 'text-err' };
+    case 'auth':
+      return { state, glyph: '\u25cf', label: 'Unauthorized', ms: h?.ms, dotClass: 'text-warn-strong', textClass: 'text-warn-strong' };
+    default:
+      return { state, glyph: '\u25cc', label: 'Checking\u2026', ms: h?.ms, dotClass: 'text-dialog-hint', textClass: 'text-dialog-hint' };
   }
 }

@@ -157,13 +157,13 @@ sandbox: true
 jail:
   filesystem:
     allow-read-write:
-      - ../sibling-repository
+      - ~/sibling-repository
     allow-read:
       - ~/shared-reference
     allow-write:
-      - ./generated
+      - /srv/generated
     deny-write:
-      - ./generated/locked
+      - /srv/generated/locked
     # Managed REPL/test-runner dependency caches are opt-in.
     language-caches:
       - ~/.m2
@@ -181,23 +181,20 @@ network:
   allow-private: false
 ```
 
-Filesystem roots under `jail.filesystem` use last-match-wins deny carve-outs:
-session roots and `allow-read-write` have full access, `allow-write` is the
-legacy equivalent, `allow-read` is read-only, and `deny-write`/`deny-read` take
-precedence. A bare `language-caches` path is readable and writable; `access:
-read-only` permits dependency resolution without cache mutation, and no cache is
-exposed unless listed. `network.allowed-domains` restricts public hosts while
-`denied-domains` wins over it; `jail.inbound-ports` allowlists extra local ports
-a confined shell child may **accept** on (for example `5273`, so a jailed Vite
-server is reachable from a browser or phone).
+[Process sandbox and gateway egress](sandbox.md) is the single authoritative
+reference for this boundary: filesystem precedence (last-match-wins deny
+carve-outs, `allow-read-write`/`allow-read`/`allow-write`/`deny-*`, opt-in
+`language-caches`), the network model (HTTPS method/path policy, MITM behavior,
+SSRF denial, programmable filters), `jail.inbound-ports`, snapshot inheritance
+and `/reload`, and the read-only `session["access"]` view. Every filesystem path
+must be absolute or home-relative (`~`); a bare-relative path is rejected when
+the config is read.
 
-These permissions are snapshotted when a session environment is built, so editing
-a model-writable project `vis.yml` alone cannot widen a live session. `/reload`
-applies the change across **every** active session, lazily on each session's next
-message. For the complete filesystem precedence, network model (HTTPS method/path
-policy, MITM behavior, SSRF denial, programmable filters), inbound sockets,
-snapshot inheritance, the read-only `session["access"]` view, `repl_connect`, and
-the macOS test matrix, see [Process sandbox and gateway egress](sandbox.md).
+One exception is called out there and worth repeating: **`repl_connect` is not
+jailed.** It attaches to an already-running, user-owned external process that
+Vis did not spawn, so Seatbelt cannot be applied retroactively; stopping the
+resource only detaches. Everything Vis *starts* — shells, `subprocess`, managed
+REPLs, test runners — is confined.
 
 ### macOS native-image startup failures
 

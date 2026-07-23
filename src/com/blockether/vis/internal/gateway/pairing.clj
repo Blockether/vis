@@ -128,7 +128,11 @@
                             :else " "))))))))
 
 (defn print-pairing!
-  [{:keys [require-token?] :as opts}]
+  "Emit the companion pairing block (title, reachable hosts, `vis://` URL, and a
+   terminal QR). Each line goes through `emit` (default `println`); CLI callers
+   whose stdout is redirected to the log file pass a real-terminal writer so the
+   QR is actually visible. Returns the pairing URL payload."
+  [{:keys [require-token? emit] :or {emit println} :as opts}]
   (let
     [payload
      (pairing-url (cond-> opts
@@ -138,13 +142,13 @@
      hosts
      (candidate-hosts (:host opts))]
 
-    (println)
-    (println "VIS companion pairing")
-    (println "scan this in iOS Settings → Gateway → Scan QR")
-    (when (seq hosts) (println (str "reachable hosts: " (str/join ", " hosts))))
-    (println payload)
-    (println (terminal-qr payload))
+    (emit "")
+    (emit "VIS companion pairing")
+    (emit "scan this in iOS Settings → Gateway → Scan QR")
+    (when (seq hosts) (emit (str "reachable hosts: " (str/join ", " hosts))))
+    (emit payload)
+    (emit (terminal-qr payload))
     (when (= "127.0.0.1" (str (:host opts)))
-      (println
+      (emit
         "note: 127.0.0.1 is phone-local; for device pairing start with --host 0.0.0.0 --require-token or use a Tailscale host."))
     payload))

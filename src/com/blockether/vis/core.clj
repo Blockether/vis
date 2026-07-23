@@ -456,6 +456,8 @@
              [provider-status-md providers/status-md]
              [configured-providers providers/configured-providers]
              [configured-providers-cached providers/configured-providers-cached]
+             [picker-fleet providers/picker-fleet]
+             [authenticated-preset-providers providers/authenticated-preset-providers]
              [provider-presets-available providers/available-presets]
              [provider-ensure-base-url providers/ensure-base-url]
              [provider-persisted-config providers/persisted-provider-config]

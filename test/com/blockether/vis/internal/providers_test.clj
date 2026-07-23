@@ -5,7 +5,8 @@
    every same-process fleet mutation must invalidate the snapshot."
   (:require [clojure.test :refer [deftest is]]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.providers :as providers]))
+            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.registry :as registry]))
 
 (defn- rv
   "Resolve a (possibly private) var in the providers namespace."
@@ -94,3 +95,34 @@
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/remove-provider! :warm nil)
       (is (nil? @@cache) "remove-provider! drops the snapshot"))))
+
+(deftest picker-fleet-appends-authenticated-but-unconfigured-oauth-providers
+  ;; The model picker must list providers whose OAuth creds live OUTSIDE config
+  ;; (token files / keychain) even before they're saved into `:providers` — the
+  ;; whole point of `picker-fleet` vs `configured-providers`.
+  (let [detected (atom true)]
+    (with-redefs
+      [config/load-config (constantly {:providers [{:id :openai :models [{:name "gpt-x"}]}]})
+       registry/registered-providers
+       (constantly [{:provider/id :anthropic-coding-plan
+                     :provider/detect-fn (fn [] (when @detected {:access-token "tok"}))}
+                    {:provider/id :openai
+                     :provider/detect-fn (fn [] {:access-token "tok"})}])
+       config/provider-template
+       (fn [pid] (when (= pid :anthropic-coding-plan)
+                   {:id pid :api-style :anthropic
+                    :default-models ["claude-opus-4-8"]}))]
+      (providers/invalidate-configured-providers!)
+      (let [extra (providers/authenticated-preset-providers)]
+        (is (= [:anthropic-coding-plan] (mapv :id extra))
+            "authenticated OAuth provider not in the fleet is surfaced")
+        (is (= [{:name "claude-opus-4-8"}] (:models (first extra)))
+            "its preset default catalog models are attached"))
+      (is (= [:openai :anthropic-coding-plan] (mapv :id (providers/picker-fleet)))
+          "picker-fleet = configured fleet first, authenticated extras appended")
+      ;; No stored creds -> not surfaced.
+      (reset! detected false)
+      (is (empty? (providers/authenticated-preset-providers))
+          "a provider with no detected creds is skipped")
+      (is (= [:openai] (mapv :id (providers/picker-fleet))))))
+  (providers/invalidate-configured-providers!))

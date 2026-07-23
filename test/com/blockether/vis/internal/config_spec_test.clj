@@ -39,11 +39,11 @@
              "max-wait-ms" 30000}
    "system-prompt" {"text" "Project rules" "replace?" false}
    "sandbox" true
-   "jail" {"filesystem" {"allow-read-write" ["../svar"]
+   "jail" {"filesystem" {"allow-read-write" ["/opt/svar"]
                          "allow-read" ["~/reference"]
-                         "allow-write" ["./generated"]
-                         "deny-read" ["./private"]
-                         "deny-write" ["./locked"]
+                         "allow-write" ["~/generated"]
+                         "deny-read" ["~/private"]
+                         "deny-write" ["~/locked"]
                          "language-caches" ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]}
            "inbound-ports" [5273 8080]}
    "network" {"allowed-domains" ["github.com"]
@@ -80,6 +80,22 @@
       (expect (not (config-spec/valid?
                      (assoc-in full-config ["jail" "filesystem" "allow_reed"] ["../escape"]))))
       (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound-ports"] [0]))))
+      ;; Filesystem grants must be absolute or home-rooted — bare-relative
+      ;; resolves against the gateway cwd (silent mis-grant / invalid deny).
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "filesystem" "allow-write"] ["./relative"]))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "filesystem" "deny-read"] ["relative"]))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "filesystem" "allow-read"] ["../escape"]))))
+      (expect (not (config-spec/valid? (assoc-in full-config
+                                         ["jail" "filesystem" "language-caches"]
+                                         ["relative-cache"]))))
+      (expect (not (config-spec/valid? (assoc-in full-config
+                                         ["jail" "filesystem" "language-caches"]
+                                         [{"path" "rel" "access" "ro"}]))))
+      (expect (config-spec/valid?
+                (assoc-in full-config ["jail" "filesystem" "allow-write"] ["/abs/ok" "~/home-ok"])))
       ;; Network is policy data, never an independent on/off escape hatch.
       (expect (not (config-spec/valid? (assoc-in full-config ["network" "enabled"] false))))
       (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "oops"] true))))
@@ -88,11 +104,11 @@
       (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource-cache"] "")))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
-                  :allow-read-write ["../svar"]
+                  :allow-read-write ["/opt/svar"]
                   :allow-read ["~/reference"]
-                  :allow-write ["./generated"]
-                  :deny-read ["./private"]
-                  :deny-write ["./locked"]
+                  :allow-write ["~/generated"]
+                  :deny-read ["~/private"]
+                  :deny-write ["~/locked"]
                   :language-cache-dirs ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]
                   :inbound-ports [5273 8080]}
                  (config-spec/process-jail-config full-config)))
@@ -206,8 +222,7 @@
         [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db-spec")))]
         [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui-settings")))]
         [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
-        [config-spec/python-keys config-spec/python-schema
-         (set (keys (get full-config "python")))]
+        [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
         [config-spec/mcp-server-keys config-spec/mcp-server-schema
          (into #{} (mapcat keys) servers)]]]
 

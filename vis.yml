@@ -3,9 +3,9 @@ jail:
   filesystem:
     # Sibling repositories available for full source/edit access.
     allow-read-write:
-      - ../spel
-      - ../tree-sitter-language-pack
-      - ../svar
+      - ~/spel
+      - ~/tree-sitter-language-pack
+      - ~/svar
       # Vis' own state/config/log dir, so the agent can read ~/.vis/state.yml,
       # inspect logs, and diagnose config/provider issues in-session.
       - ~/.vis
