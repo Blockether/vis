@@ -9,11 +9,16 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
+    "cap:config": "node scripts/gen-capacitor-config.mjs",
     "sync": "cap sync",
+    "presync": "npm run cap:config",
     "android": "cap run android",
+    "preandroid": "npm run cap:config",
     "ios": "cap run ios",
+    "preios": "npm run cap:config",
     "add:android": "cap add android",
-    "add:ios": "cap add ios"
+    "add:ios": "cap add ios",
+    "build:ios": "npm run build && npm run sync"
   },
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "8.1.0",
@@ -41,6 +46,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.4",
     "tailwindcss": "4.3.3",
+    "jiti": "2.7.0",
     "typescript": "7.0.2",
     "vite": "8.1.5"
   }
