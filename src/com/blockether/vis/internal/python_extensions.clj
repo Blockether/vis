@@ -1389,11 +1389,8 @@ def __vis_registration__():
    `{:scheme s :ctx m}` or `{:error msg}`."
   [argv]
   (let
-    [toks
+    [[a b]
      (remove str/blank? argv)
-
-     [a b]
-     toks
 
      [method target]
      (if (and a b (contains? http-methods (str/upper-case a))) [(str/upper-case a) b] ["GET" a])]
@@ -1414,9 +1411,17 @@ def __vis_registration__():
                   (let [p (.getPort u)]
                     (if (pos? p) p (if (= "https" scheme) 443 80)))
 
+                  raw
+                  (.getRawPath u)
+
+                  query
+                  (.getRawQuery u)
+
+                  base
+                  (if (str/blank? raw) "/" raw)
+
                   path
-                  (let [p (.getPath u)]
-                    (if (str/blank? p) "/" p))]
+                  (if (str/blank? query) base (str base "?" query))]
 
                  (if (str/blank? host)
                    {:error (str "Can't parse a host out of " target)}
@@ -1424,18 +1429,18 @@ def __vis_registration__():
                     :ctx {:phase :http :method method :host host :path path :port port}}))
                (catch Exception e {:error (str "Bad URL: " (ex-message e))}))
           :else (let
-                  [[h ps]
+                  [[host ports]
                    (str/split target #":" 2)
 
                    port
-                   (some-> ps
+                   (some-> ports
                            str/trim
                            parse-long)]
 
-                  (if (str/blank? h)
+                  (if (str/blank? host)
                     {:error (str "Can't parse a host out of " target)}
                     {:scheme "socks"
-                     :ctx {:phase :socks :method nil :host h :path nil :port (or port 0)}})))))
+                     :ctx {:phase :socks :method nil :host host :path nil :port (or port 0)}})))))
 
 (defn- session-network-policy
   "The live compiled egress policy for the current merged config (the same path

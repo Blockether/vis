@@ -168,22 +168,41 @@
 
         (on {:phase :reasoning :thinking "orphan"})
         (expect (= [] ((:get-timeline tracker))))))
-  (it "keeps native-call preview out of thinking and replaces it at form start"
-  (let [tracker (progress/make-progress-tracker)
-        on (:on-chunk tracker)]
-    (on {:phase :reasoning :iteration 1 :thinking "checking"})
-    (on {:phase :tool-preview :iteration 1 :position 0
-         :code "print(4" :vis/tool-name "native_call"
-         :tool-color-role :tool-color/meta :result-summary "run_python"
-         :svar/tool-call-id "call_1"})
-    (let [entry (first ((:get-timeline tracker)))
-          preview (first (:forms entry))]
-      (expect (= "checking" (:thinking entry)))
-      (expect (nil? (:content-stream entry)))
-      (expect (= "print(4" (:code preview)))
-      (expect (= "native_call" (:vis/tool-name preview)))
-      (expect (= "call_1" (:svar/tool-call-id preview))))
-    (on {:phase :form-start :iteration 1 :position 0 :code "print(42)"})
-    (let [form (-> ((:get-timeline tracker)) first :forms first)]
-      (expect (= "print(42)" (:code form)))
-      (expect (nil? (:vis/tool-name form)))))))
+  (it
+    "keeps native-call preview out of thinking and replaces it at form start"
+    (let
+      [tracker
+       (progress/make-progress-tracker)
+
+       on
+       (:on-chunk tracker)]
+
+      (on {:phase :reasoning :iteration 1 :thinking "checking"})
+      (on {:phase :tool-preview
+           :iteration 1
+           :position 0
+           :code "print(4"
+           :vis/tool-name "native_call"
+           :tool-color-role :tool-color/meta
+           :result-summary "run_python"
+           :svar/tool-call-id "call_1"})
+      (let
+        [entry
+         (first ((:get-timeline tracker)))
+
+         preview
+         (first (:forms entry))]
+
+        (expect (= "checking" (:thinking entry)))
+        (expect (nil? (:content-stream entry)))
+        (expect (= "print(4" (:code preview)))
+        (expect (= "native_call" (:vis/tool-name preview)))
+        (expect (= "call_1" (:svar/tool-call-id preview))))
+      (on {:phase :form-start :iteration 1 :position 0 :code "print(42)"})
+      (let
+        [form (-> ((:get-timeline tracker))
+                  first
+                  :forms
+                  first)]
+        (expect (= "print(42)" (:code form)))
+        (expect (nil? (:vis/tool-name form)))))))

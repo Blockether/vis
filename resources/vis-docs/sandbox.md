@@ -10,19 +10,27 @@ exceptions. See [Configuration](configuration.md) for all other `vis.yml` keys.
 
 ## One master switch
 
-The sandbox is on by default. There is no shell toggle and no independent
-network-enabled toggle. On a supported host, the only user-configurable process
-escape hatch is:
+**The sandbox is OFF by default.** It is opt-in via one boolean. There is no
+shell toggle and no independent network-enabled toggle.
 
 ```yaml
-sandbox: false
+sandbox: true
 ```
 
-That value disables the OS process jail and the forced gateway egress path for
-managed child processes. Use it only when intentionally granting those children
-the gateway user's full host permissions. A missing policy, failed policy
-function, unknown session, or disposed session does **not** disable confinement;
-managed process launch fails closed.
+> **Strongly recommended.** When the sandbox is off, every model-started shell,
+> subprocess, and managed REPL runs with the gateway user's **full host
+> permissions** — it can read your SSH keys, exfiltrate secrets, and reach any
+> network host. Enable `sandbox: true` on any project where the model runs
+> untrusted code. Leave it off only when you deliberately want that unrestricted
+> access (e.g. a fully trusted local workflow).
+
+With `sandbox: true` on a supported host (macOS), the OS process jail and the
+forced gateway egress path are active for managed child processes. A missing
+policy, failed policy function, unknown session, or disposed session does
+**not** silently disable confinement; managed process launch fails closed.
+
+Absent the key (or `sandbox: false`) confinement is off. Setting it back to
+`true` and running `/reload` re-enables it with no restart.
 
 `sandbox: false` does not turn the in-process GraalPy context into a trusted
 context. `python_execution` still has its Truffle filesystem and host/socket
@@ -211,6 +219,33 @@ It reports the Tier-1 host/port/SSRF verdict, then **each** filter individually
 filter crashed, the fail-closed marker plus the Python **traceback**. The dev loop
 is: edit the extension `.py`, `/reload`, `/net-probe …`.
 
+### Authoring + probing a filter inside `python_execution`
+
+The same loop is available **without an extension file or `/reload`**, right in the
+Python sandbox, via two baseline builtins:
+
+```python
+def block_writes(ctx):
+    # ctx = {phase, method, host, path, port, headers}
+    if ctx.get('method') in ('POST', 'PUT', 'DELETE', 'PATCH'):
+        return 'mutations blocked'          # a str reason (or {'reason': ...}) DENIES
+    return None                             # None ALLOWS; a raise FAILS CLOSED
+
+network_filter(block_writes)                # register a local (session-scoped) guard
+network_probe('POST', 'https://api.github.com/repos')   # http: verb + path
+network_probe('db.host:5432')               # bare host[:port] -> SOCKS phase
+```
+
+`network_probe` is **guard-only** — it runs the gateway's Tier-1 host/port/SSRF gate
+**+ every registered gateway filter + your local `network_filter`s** against a
+*synthetic* request and prints each verdict (with the Python traceback for a crash).
+It **never opens a socket and never sends anything** — it exercises only the
+decision. Two honest limits: a `network_filter` registered here is **local to the
+session probe** (it does not affect live egress — author a `.py` extension for that),
+and these are bare names in the sandbox (there is no `vis.` module inside
+`python_execution`).
+
+
 ## Denying a command, then re-allowing it through a trusted extension
 
 A common policy is "the model's shell and its agent tools must never run `aws`,
@@ -369,7 +404,7 @@ The focused suites cover:
 - session token attribution, network filters, and SSRF denial;
 - PTY/background input and attach bridge behavior;
 - managed process launch, fail-closed session lookup, CA/truststore injection;
-- config validation and `sandbox: false` as the explicit opt-out.
+- config validation and `sandbox: true` opt-in / `sandbox: false` (or absent) as the off default.
 
 Run the relevant namespaces through the Clojure language pack or the full macOS
 CI job. A test JVM already started by a sandboxed session validates its inherited

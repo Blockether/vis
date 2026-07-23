@@ -71,7 +71,8 @@
   (it "returns nil when no usage signal is present" (expect (nil? (lfmt/format-limit-usage {})))))
 
 (defdescribe generic-limit-has-signal?-test
-             (it "true on :is-unlimited" (expect (lfmt/generic-limit-has-signal? {:is-unlimited true})))
+             (it "true on :is-unlimited"
+                 (expect (lfmt/generic-limit-has-signal? {:is-unlimited true})))
              (it "true on any positive numeric field"
                  (expect (lfmt/generic-limit-has-signal? {:remaining 47}))
                  (expect (lfmt/generic-limit-has-signal? {:limit 100}))

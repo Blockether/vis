@@ -386,7 +386,8 @@
           (when-not (.isFile f)
             (java.nio.file.Files/write (.toPath f)
                                        ^bytes (.decode (java.util.Base64/getDecoder) b64)
-                                       ^"[Ljava.nio.file.OpenOption;" (make-array java.nio.file.OpenOption 0)))
+                                       ^"[Ljava.nio.file.OpenOption;"
+                                       (make-array java.nio.file.OpenOption 0)))
           (let
             [path
              (.getAbsolutePath f)

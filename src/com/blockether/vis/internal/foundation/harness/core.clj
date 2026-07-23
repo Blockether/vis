@@ -60,8 +60,7 @@
 
 (defn- same-activation?
   [activation digest]
-  (and (= digest (get activation "digest"))
-       (not (str/blank? (str (get activation "scope"))))))
+  (and (= digest (get activation "digest")) (not (str/blank? (str (get activation "scope"))))))
 
 (defn- skill-result
   "Return a skill body only when it is not already present on the live provider
@@ -73,41 +72,26 @@
   [env nm]
   (if-let [s (d/skill-by-name nm)]
     (let
-      [skill-name
-       (:name s)
-
-       digest
-       (extension/sha256-hex (:body s))
-
-       scope
-       (current-iter-scope env)
-
-       ctx
-       (some-> (:ctx-atom env)
-               deref)
-
-       live
-       (get-in ctx ["engine_live_skill_activations" skill-name])
-
-       pending
-       (get-in ctx ["session_active_skills" skill-name])
-
-       already-live?
-       (or (same-activation? live digest)
-           (and (same-activation? pending digest)
-                (= scope (get pending "scope"))))]
+      [skill-name (:name s)
+       digest (extension/sha256-hex (:body s))
+       scope (current-iter-scope env)
+       ctx (some-> (:ctx-atom env)
+                   deref)
+       live (get-in ctx ["engine_live_skill_activations" skill-name])
+       pending (get-in ctx ["session_active_skills" skill-name])
+       already-live? (or (same-activation? live digest)
+                         (and (same-activation? pending digest) (= scope (get pending "scope"))))]
 
       (if already-live?
         {"name" skill-name
          "status" "already-active"
          "scope" (or (get live "scope") (get pending "scope"))
          "note" "Instructions already remain on the live provider tape; body not repeated."}
-        (do
-          (when-let [ca (:ctx-atom env)]
-            (swap! ca assoc-in
-              ["session_active_skills" skill-name]
-              {"name" skill-name "digest" digest "scope" scope}))
-          (skill-payload s))))
+        (do (when-let [ca (:ctx-atom env)]
+              (swap! ca assoc-in
+                ["session_active_skills" skill-name]
+                {"name" skill-name "digest" digest "scope" scope}))
+            (skill-payload s))))
     {"error" (str "No skill named " (pr-str (str nm)) ".") "available" (mapv :name (d/skills))}))
 
 (defn skill-tool

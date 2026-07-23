@@ -568,9 +568,14 @@
         (expect (true? (get-in result [:result :launch?]))))))
 
 (defdescribe repl-connect-trust-boundary-test
-  (it "advertises external ownership and detach-only lifecycle"
-      (let [description (:ext.symbol/description language-surface/connect-repl-symbol)
-            stop-description (:ext.symbol/description language-surface/repl-stop-symbol)]
-        (expect (str/includes? description "external"))
-        (expect (str/includes? description "never owns or kills"))
-        (expect (str/includes? stop-description "detached")))))
+             (it "advertises external ownership and detach-only lifecycle"
+                 (let
+                   [description
+                    (:ext.symbol/description language-surface/connect-repl-symbol)
+
+                    stop-description
+                    (:ext.symbol/description language-surface/repl-stop-symbol)]
+
+                   (expect (str/includes? description "external"))
+                   (expect (str/includes? description "never owns or kills"))
+                   (expect (str/includes? stop-description "detached")))))

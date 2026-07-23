@@ -84,10 +84,13 @@
   [host port timeout-ms]
   (try
     (let
-      [^String h (or host "localhost")
-       sock (doto (Socket.)
-              (.connect (InetSocketAddress. h (int port))
-                        (int (max 1 (long (or timeout-ms 1000))))))]
+      [^String h
+       (or host "localhost")
+
+       sock
+       (doto (Socket.)
+         (.connect (InetSocketAddress. h (int port)) (int (max 1 (long (or timeout-ms 1000))))))]
+
       (transport/bencode sock))
     (catch Throwable t
       (throw
@@ -676,7 +679,10 @@
          (mapcat (fn [i]
                    (let [row (str (format (str "%" pad "d") i) ": " (nth lines (dec (long i))))]
                      (if (= i line)
-                       [row (str (apply str (repeat (+ pad 2 (dec (long col))) \space)) "^--- " message)]
+                       [row
+                        (str (apply str (repeat (+ pad 2 (dec (long col))) \space))
+                             "^--- "
+                             message)]
                        [row])))
                  (range lo (inc (long hi))))]
 

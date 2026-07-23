@@ -94,8 +94,13 @@
       (let [s (timg/kitty-transmit "AAAA" 7)]
         (expect (= "\u001b_Ga=t,i=7,f=100,q=2;AAAA\u001b\\" s))))
   (it "a transmit payload over one chunk splits into m=1 … m=0 chunks"
-      (let [big (apply str (repeat 5000 \A))
-            s (timg/kitty-transmit big 3)]
+      (let
+        [big
+         (apply str (repeat 5000 \A))
+
+         s
+         (timg/kitty-transmit big 3)]
+
         (expect (str/starts-with? s "\u001b_Ga=t,i=3,f=100,q=2,m=1;"))
         (expect (str/includes? s "\u001b_Gm=0;"))))
   (it "a full placement references the image id and cell box, no source crop"
@@ -104,8 +109,8 @@
   (it "a cropped placement carries the source rectangle (same math as encode-kitty)"
       ;; crop-top 2 of 6 rows over a 120px-tall image => y=40, visible 3 rows => h=60.
       (expect (= "\u001b_Ga=p,i=5,p=1,C=1,q=2,c=10,r=3,x=0,y=40,w=100,h=60\u001b\\"
-                 (timg/kitty-place {:id 5 :cols 10 :rows 6 :crop-top 2 :crop-bottom 1
-                                    :img-w 100 :img-h 120}))))
+                 (timg/kitty-place
+                   {:id 5 :cols 10 :rows 6 :crop-top 2 :crop-bottom 1 :img-w 100 :img-h 120}))))
   (it "delete-placement keeps data (lowercase d=i); free-image frees it (d=I)"
       (expect (= "\u001b_Ga=d,d=i,i=5,q=2\u001b\\" (timg/kitty-delete-placement 5)))
       (expect (= "\u001b_Ga=d,d=I,i=5,q=2\u001b\\" (timg/kitty-free-image 5)))))

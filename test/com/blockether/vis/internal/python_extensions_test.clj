@@ -4,6 +4,7 @@
    GraalPy contexts (on the shared engine), no model in the loop."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.python-extensions :as pyx]
@@ -1015,3 +1016,43 @@ vis.extension(
                  "finally:\n" "    try: os.unlink(p)\n"
                  "    except FileNotFoundError: pass\n" "_ok")))]
           (expect ok))))))
+
+(defdescribe
+  net-probe-report-test
+  "The in-sandbox `network_probe` host callback: guard-only report over the
+   gateway policy + registered filters. Pure — no socket, no egress."
+  (let
+    [pol
+     (egress/compile-policy {:allowed-domains ["example.com"]
+                             :rules [{:host "example.com" :access "read-only"}]})
+
+     report
+     (fn [method target]
+       ;; redef INSIDE the thunk — lazytest runs `it` bodies after
+       ;; the surrounding form, so a `with-redefs` wrapping the `it`s
+       ;; would already be unwound.
+       (with-redefs [pyx/session-network-policy (constantly pol)]
+         (pyx/net-probe-report method target)))]
+
+    (it "allows a GET to an allowed host and sees a registered gateway filter"
+        (try (egress/register-network-filter! ::npr
+                                              (fn [_ctx]
+                                                nil))
+             (let [s (report "GET" "https://example.com/data")]
+               (expect (re-find #"\"allow\":true" s)) ; tier1 allow
+               (expect (re-find #"npr" s))            ; the registered filter shows up
+               (expect (re-find #"\"phase\":\"http\"" s)))
+             (finally (egress/unregister-network-filters-for-owner! ::npr))))
+    (it "denies POST at tier-1 for a read-only host"
+        (let [s (report "POST" "https://example.com/data")]
+          (expect (re-find #"\"allow\":false" s))
+          (expect (re-find #"not allowed for host example.com" s))))
+    (it "denies a host outside the allow-list"
+        (let [s (report nil "https://google.com/")]
+          (expect (re-find #"host not permitted: google.com" s))))
+    (it "preserves the query string in the probed ctx path"
+        (let [s (report "GET" "https://example.com/get?token=abc")]
+          (expect (re-find #"\?token=abc" s))))
+    (it "reports a parse error for a blank target"
+        (let [s (report nil "   ")]
+          (expect (re-find #"\"error\"" s))))))

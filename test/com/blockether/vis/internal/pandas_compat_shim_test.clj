@@ -16,18 +16,19 @@
      [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
-(defdescribe pandas-module-test
-             (it "publishes pandas under sys.modules"
-                 (with-python-context
-                   (expect (true? (ev python-context
-                                      "import pandas\n__import__('sys').modules.get('pandas') is not None")))))
-             (it "autoloads pandas onto builtins (no import needed)"
-                 (with-python-context (expect (true? (ev python-context
-                                                         "pandas.Series([1,2,3]).sum() == 6")))))
-             (it "supports `import pandas as pd` with a version string"
-                 (with-python-context
-                   (expect (true? (ev python-context
-                                      "import pandas as pd\nisinstance(pd.__version__, str)"))))))
+(defdescribe
+  pandas-module-test
+  (it "publishes pandas under sys.modules"
+      (with-python-context
+        (expect (true? (ev python-context
+                           "import pandas\n__import__('sys').modules.get('pandas') is not None")))))
+  (it "autoloads pandas onto builtins (no import needed)"
+      (with-python-context (expect (true? (ev python-context
+                                              "pandas.Series([1,2,3]).sum() == 6")))))
+  (it "supports `import pandas as pd` with a version string"
+      (with-python-context (expect
+                             (true? (ev python-context
+                                        "import pandas as pd\nisinstance(pd.__version__, str)"))))))
 
 (defdescribe
   pandas-dataframe-test

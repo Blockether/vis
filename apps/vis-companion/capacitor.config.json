@@ -1,0 +1,11 @@
+{
+  "appId": "com.blockether.viscompanion",
+  "appName": "Vis",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "scheme": "vis"
+  }
+}

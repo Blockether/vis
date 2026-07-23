@@ -522,11 +522,11 @@
   (if (nil? s)
     0
     (let [^String s (str s)]
-      (TerminalTextUtils/displayColumns (if (or (>= (.indexOf s (int 0xE11A)) 0)
-                                                (>= (.indexOf s (int 0xE11B)) 0))
-                                          (let [^String stripped (.replace s ^String INLINE_ERR_ON "")]
-                                            (.replace stripped ^String INLINE_ERR_OFF ""))
-                                          s)))))
+      (TerminalTextUtils/displayColumns
+        (if (or (>= (.indexOf s (int 0xE11A)) 0) (>= (.indexOf s (int 0xE11B)) 0))
+          (let [^String stripped (.replace s ^String INLINE_ERR_ON "")]
+            (.replace stripped ^String INLINE_ERR_OFF ""))
+          s)))))
 
 (def ^:const tab-width
   "Columns the lanterna fork's `putString` advances a hard TAB to. The fork

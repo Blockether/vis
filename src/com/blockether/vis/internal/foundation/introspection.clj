@@ -642,11 +642,9 @@
           "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from session_state()[\"failures\"] and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
-        (conj
-          (str
-            "find_files takes a term or a list of terms (OR), not regex strings. "
-            "Use find_files([\"foo\", \"bar\"]) for OR; filter complex matches in Python. "
-            "Add \"paths\" and \"include\" in the same dict."))
+        (conj (str "find_files takes a term or a list of terms (OR), not regex strings. "
+                   "Use find_files([\"foo\", \"bar\"]) for OR; filter complex matches in Python. "
+                   "Add \"paths\" and \"include\" in the same dict."))
 
         (contains? classes :regex-unescaped-quote)
         (conj

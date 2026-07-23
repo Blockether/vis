@@ -16,17 +16,18 @@
      [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
-(defdescribe tabulate-module-test
-             (it "publishes tabulate under sys.modules"
-                 (with-python-context
-                   (expect (true? (ev python-context
-                                      "import tabulate\n__import__('sys').modules.get('tabulate') is not None")))))
-             (it "supports `from tabulate import tabulate`"
-                 (with-python-context
-                   (expect (true?
-                             (ev python-context
-                                 (str "from tabulate import tabulate\n"
-                                      "isinstance(tabulate([[1,2]], tablefmt='plain'), str)")))))))
+(defdescribe
+  tabulate-module-test
+  (it "publishes tabulate under sys.modules"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      "import tabulate\n__import__('sys').modules.get('tabulate') is not None")))))
+  (it "supports `from tabulate import tabulate`"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from tabulate import tabulate\n"
+                                "isinstance(tabulate([[1,2]], tablefmt='plain'), str)")))))))
 
 (defdescribe
   tabulate-format-test

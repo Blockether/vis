@@ -400,7 +400,7 @@
             (grant-descriptions (get fs "allow-read"))
             (grant-descriptions (get fs "allow-write")))]
 
-    (assert-process-jail-config! {:disabled? (= false (get config "sandbox"))
+    (assert-process-jail-config! {:disabled? (not (true? (get config "sandbox")))
                                   :allow-read-write
                                   (into [] (keep grant-path) (get fs "allow-read-write"))
                                   :allow-read (into [] (keep grant-path) (get fs "allow-read"))
