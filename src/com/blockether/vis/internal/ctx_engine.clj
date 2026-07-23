@@ -718,14 +718,12 @@
       (into #{} (mapcat #(get % "turns")) resolved)
 
       qa-toks
-      (when (seq turn-weights)
-        (reduce + 0 (keep #(get turn-weights %) folded-turns)))
+      (when (seq turn-weights) (reduce + 0 (keep #(get turn-weights %) folded-turns)))
 
       saved-toks
-      (let [s (+ (long (or (when (seq weights)
-                             (reduce + 0 (keep #(get weights %) collapsed-live)))
-                           0))
-                 (long (or qa-toks 0)))]
+      (let
+        [s (+ (long (or (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live))) 0))
+              (long (or qa-toks 0)))]
         (when (pos? s) s))
 
       sat
@@ -747,8 +745,7 @@
                                 " ("
                                 (Math/round (* 100.0 (/ (double c) total)))
                                 "%"
-                                (when saved-toks
-                                  (str ", ~" (fmt-toks saved-toks) " tok"))
+                                (when saved-toks (str ", ~" (fmt-toks saved-toks) " tok"))
                                 ")")) (when (seq live-str) (str "live " live-str))])))]
 
      (cond-> {}

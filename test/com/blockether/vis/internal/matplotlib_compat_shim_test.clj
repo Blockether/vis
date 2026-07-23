@@ -39,22 +39,28 @@
 
 (defdescribe
   matplotlib-module-test
-  (it "publishes matplotlib + matplotlib.pyplot under sys.modules"
-      (with-python-context
-        (expect (true? (ev python-context
-                           "import matplotlib.pyplot\n__import__('sys').modules.get('matplotlib.pyplot') is not None")))
-        (expect (true? (ev python-context
-                           "__import__('sys').modules.get('matplotlib') is not None")))))
+  (it
+    "publishes matplotlib + matplotlib.pyplot under sys.modules"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            "import matplotlib.pyplot\n__import__('sys').modules.get('matplotlib.pyplot') is not None")))
+      (expect (true? (ev python-context
+                         "__import__('sys').modules.get('matplotlib') is not None")))))
   (it "autoloads `matplotlib` onto builtins (no import needed)"
       (with-python-context
         ;; deliberately NO import
         (expect (true? (ev python-context "matplotlib.pyplot is not None")))))
   (it "autoloads a bare `pyplot` and the `plt` alias onto builtins (no import)"
-      (with-python-context (expect (true? (ev python-context "pyplot is not None")))
-                           (expect (true? (ev python-context "plt is not None")))
-                           ;; all three names resolve to the same module object
-                           (expect (true? (ev python-context
-                                              "import matplotlib.pyplot\nplt is pyplot and plt is matplotlib.pyplot")))))
+      (with-python-context
+        (expect (true? (ev python-context "pyplot is not None")))
+        (expect (true? (ev python-context "plt is not None")))
+        ;; all three names resolve to the same module object
+        (expect (true? (ev
+                         python-context
+                         "import matplotlib.pyplot\nplt is pyplot and plt is matplotlib.pyplot")))))
   (it "exposes a version string"
       (with-python-context (expect (= "3.0-vis-java2d"
                                       (ev python-context "__import__('matplotlib').__version__")))))

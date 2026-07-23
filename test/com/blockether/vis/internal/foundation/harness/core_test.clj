@@ -16,69 +16,63 @@
    {:ctx-atom (atom ctx)
     :turn-state-atom (atom {:turn-position turn :iteration iter :form-idx 0})}))
 
-(defdescribe skill-result-test
-             (it "an unknown name returns {\"error\" \"available\"}"
-                 (let [r (skill-result {} "definitely-not-a-real-skill-zzz")]
-                   (expect (string? (get r "error")))
-                   (expect (vector? (get r "available")))))
-             (it "returns the full body once, then a compact receipt in the same live iteration"
-                 (with-redefs
-                   [d/skill-by-name
-                    (fn [_]
-                      {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
-                   (let
-                     [env (skill-env {})
-                      r1 (skill-result env "demo")
-                      r2 (skill-result env "demo")]
+(defdescribe
+  skill-result-test
+  (it "an unknown name returns {\"error\" \"available\"}"
+      (let [r (skill-result {} "definitely-not-a-real-skill-zzz")]
+        (expect (string? (get r "error")))
+        (expect (vector? (get r "available")))))
+  (it "returns the full body once, then a compact receipt in the same live iteration"
+      (with-redefs
+        [d/skill-by-name (fn [_]
+                           {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
+        (let
+          [env (skill-env {})
+           r1 (skill-result env "demo")
+           r2 (skill-result env "demo")]
 
-                     (expect (= "BODY" (get r1 "body")))
-                     (expect (= "already-active" (get r2 "status")))
-                     (expect (not (contains? r2 "body")))
-                     (expect (= "t1/i1" (get r2 "scope"))))))
-             (it "dedupes only from the post-fold live-wire index, not a stale durable pointer"
-                 (with-redefs
-                   [d/skill-by-name
-                    (fn [_]
-                      {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
-                   (let
-                     [digest (extension/sha256-hex "BODY")
-                      stale {"session_active_skills"
-                             {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}}
-                      env (skill-env stale 2 1)
-                      r (skill-result env "demo")]
+          (expect (= "BODY" (get r1 "body")))
+          (expect (= "already-active" (get r2 "status")))
+          (expect (not (contains? r2 "body")))
+          (expect (= "t1/i1" (get r2 "scope"))))))
+  (it "dedupes only from the post-fold live-wire index, not a stale durable pointer"
+      (with-redefs
+        [d/skill-by-name (fn [_]
+                           {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
+        (let
+          [digest (extension/sha256-hex "BODY")
+           stale {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}}
+           env (skill-env stale 2 1)
+           r (skill-result env "demo")]
 
-                     ;; The old DB pointer is not on this turn's wire. Rehydrate
-                     ;; exactly once and move the durable pointer to this scope.
-                     (expect (= "BODY" (get r "body")))
-                     (expect (= "t2/i1"
-                                (get-in @(get env :ctx-atom)
-                                        ["session_active_skills" "demo" "scope"]))))))
-             (it "a matching post-fold live activation returns a receipt; a changed digest reactivates"
-                 (let
-                   [body (atom "BODY")
-                    digest (extension/sha256-hex "BODY")
-                    env (skill-env {"engine_live_skill_activations"
-                                    {"demo"
-                                     {"name" "demo" "digest" digest "scope" "t1/i1"}}
-                                    "session_active_skills"
-                                    {"demo"
-                                     {"name" "demo" "digest" digest "scope" "t1/i1"}}}
-                                   1
-                                   2)]
-                   (with-redefs
-                     [d/skill-by-name
-                      (fn [_]
-                        {:name "demo"
-                         :description "d"
-                         :body @body
-                         :dir "/x"
-                         :resources []})]
-                     (expect (= "already-active" (get (skill-result env "demo") "status")))
-                     (reset! body "BODY v2")
-                     (expect (= "BODY v2" (get (skill-result env "demo") "body")))
-                     (expect (= (extension/sha256-hex "BODY v2")
-                                (get-in @(get env :ctx-atom)
-                                        ["session_active_skills" "demo" "digest"])))))))
+          ;; The old DB pointer is not on this turn's wire. Rehydrate
+          ;; exactly once and move the durable pointer to this scope.
+          (expect (= "BODY" (get r "body")))
+          (expect (= "t2/i1"
+                     (get-in @(get env :ctx-atom) ["session_active_skills" "demo" "scope"]))))))
+  (it "a matching post-fold live activation returns a receipt; a changed digest reactivates"
+      (let
+        [body
+         (atom "BODY")
+
+         digest
+         (extension/sha256-hex "BODY")
+
+         env
+         (skill-env
+           {"engine_live_skill_activations" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}
+            "session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}}
+           1
+           2)]
+
+        (with-redefs
+          [d/skill-by-name (fn [_]
+                             {:name "demo" :description "d" :body @body :dir "/x" :resources []})]
+          (expect (= "already-active" (get (skill-result env "demo") "status")))
+          (reset! body "BODY v2")
+          (expect (= "BODY v2" (get (skill-result env "demo") "body")))
+          (expect (= (extension/sha256-hex "BODY v2")
+                     (get-in @(get env :ctx-atom) ["session_active_skills" "demo" "digest"])))))))
 
 (defdescribe skill-template-text-test
              (it "slash skill expansion injects the body and bundled resource paths"

@@ -103,17 +103,24 @@ export function ConnectScreen({
   }
 
   async function scan() {
-    const raw = await scanQr();
-    if (!raw) {
-      setMsg({ kind: 'err', text: 'Scan cancelled or camera unavailable' });
-      return;
+    try {
+      const raw = await scanQr();
+      if (!raw) {
+        setMsg({ kind: 'err', text: 'No QR code found — try again or paste the link' });
+        return;
+      }
+      const conn = parsePairing(raw);
+      if (!conn) {
+        setMsg({ kind: 'err', text: 'QR is not a Vis pairing code' });
+        return;
+      }
+      await tryConn(conn);
+    } catch (cause) {
+      const text = (cause as Error).message || '';
+      // A user-dismissed camera is not an error — stay silent.
+      if (/cancel/i.test(text)) return;
+      setMsg({ kind: 'err', text: text || 'Camera unavailable' });
     }
-    const conn = parsePairing(raw);
-    if (!conn) {
-      setMsg({ kind: 'err', text: 'QR is not a Vis pairing code' });
-      return;
-    }
-    await tryConn(conn);
   }
 
   return (

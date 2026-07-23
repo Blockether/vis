@@ -103,15 +103,18 @@
   (let [detected (atom true)]
     (with-redefs
       [config/load-config (constantly {:providers [{:id :openai :models [{:name "gpt-x"}]}]})
-       registry/registered-providers
-       (constantly [{:provider/id :anthropic-coding-plan
-                     :provider/detect-fn (fn [] (when @detected {:access-token "tok"}))}
-                    {:provider/id :openai
-                     :provider/detect-fn (fn [] {:access-token "tok"})}])
+       registry/registered-providers (constantly [{:provider/id :anthropic-coding-plan
+                                                   :provider/detect-fn (fn []
+                                                                         (when @detected
+                                                                           {:access-token "tok"}))}
+                                                  {:provider/id :openai
+                                                   :provider/detect-fn (fn []
+                                                                         {:access-token "tok"})}])
        config/provider-template
-       (fn [pid] (when (= pid :anthropic-coding-plan)
-                   {:id pid :api-style :anthropic
-                    :default-models ["claude-opus-4-8"]}))]
+       (fn [pid]
+         (when (= pid :anthropic-coding-plan)
+           {:id pid :api-style :anthropic :default-models ["claude-opus-4-8"]}))]
+
       (providers/invalidate-configured-providers!)
       (let [extra (providers/authenticated-preset-providers)]
         (is (= [:anthropic-coding-plan] (mapv :id extra))

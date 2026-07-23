@@ -1379,16 +1379,27 @@
    Unnamed members retain their relative order after those names. Two parking
    phases avoid transient collisions with the unique project-position index."
   [tx-info pid session-ids]
-  (let [members (mapv (comp str :id)
-                      (query! tx-info
-                              {:select [:id]
-                               :from :session_soul
-                               :where [:= :project_id pid]
-                               :order-by [[:project_position :asc] [:created_at :desc]]}))
-        member? (set members)
-        wanted (distinct (filter member? (map str session-ids)))
-        wanted-set (set wanted)
-        ordered (into (vec wanted) (remove wanted-set members))]
+  (let
+    [members
+     (mapv (comp str :id)
+           (query! tx-info
+                   {:select [:id]
+                    :from :session_soul
+                    :where [:= :project_id pid]
+                    :order-by [[:project_position :asc] [:created_at :desc]]}))
+
+     member?
+     (set members)
+
+     wanted
+     (distinct (filter member? (map str session-ids)))
+
+     wanted-set
+     (set wanted)
+
+     ordered
+     (into (vec wanted) (remove wanted-set members))]
+
     (doseq [[pos sid] (map-indexed vector ordered)]
       (execute! tx-info
                 {:update :session_soul
@@ -1424,24 +1435,32 @@
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (let [pid (->id project-id)
-              wanted (vec (distinct (map str session-ids)))
-              loose? (if (seq wanted)
-                       (set (map (comp str :id)
-                                 (query! tx-info
-                                         {:select [:id]
-                                          :from :session_soul
-                                          :where [:and [:in :id (mapv ->id wanted)]
-                                                  [:= :project_id nil]]})))
-                       #{})
-              loose (filterv loose? wanted)]
+        (let
+          [pid
+           (->id project-id)
+
+           wanted
+           (vec (distinct (map str session-ids)))
+
+           loose?
+           (if (seq wanted)
+             (set (map (comp str :id)
+                       (query! tx-info
+                               {:select [:id]
+                                :from :session_soul
+                                :where [:and [:in :id (mapv ->id wanted)] [:= :project_id nil]]})))
+             #{})
+
+           loose
+           (filterv loose? wanted)]
+
           (when (seq loose)
-            (let [maxpos (long (or (:maxpos (query-one! tx-info
-                                                        {:select [[[:max :project_position]
-                                                                   :maxpos]]
-                                                         :from :session_soul
-                                                         :where [:= :project_id pid]}))
-                                   -1))]
+            (let
+              [maxpos (long (or (:maxpos (query-one! tx-info
+                                                     {:select [[[:max :project_position] :maxpos]]
+                                                      :from :session_soul
+                                                      :where [:= :project_id pid]}))
+                                -1))]
               (doseq [[offset sid] (map-indexed vector loose)]
                 (execute! tx-info
                           {:update :session_soul
@@ -2620,30 +2639,47 @@
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (let [soul-id-s (->ref session-id)
-              src-soul (query-one! tx-info
-                                   {:select [:channel :owner_id]
-                                    :from :session_soul
-                                    :where [:= :id soul-id-s]})
-              current (latest-state-for tx-info soul-id-s)
-              turns (db-list-session-turns tx-info session-id)
-              through-s (str through-turn-id)
-              ;; Transcript-ordered turns from the start THROUGH the picked one.
-              cut (reduce (fn [acc t]
-                            (let [acc' (conj acc t)]
-                              (if (= (str (:id t)) through-s)
-                                (reduced acc')
-                                acc')))
-                          [] turns)]
+        (let
+          [soul-id-s
+           (->ref session-id)
+
+           src-soul
+           (query-one! tx-info
+                       {:select [:channel :owner_id] :from :session_soul :where [:= :id soul-id-s]})
+
+           current
+           (latest-state-for tx-info soul-id-s)
+
+           turns
+           (db-list-session-turns tx-info session-id)
+
+           through-s
+           (str through-turn-id)
+
+           ;; Transcript-ordered turns from the start THROUGH the picked one.
+           cut
+           (reduce (fn [acc t]
+                     (let [acc' (conj acc t)]
+                       (if (= (str (:id t)) through-s) (reduced acc') acc')))
+                   []
+                   turns)]
+
           ;; Only fork when the picked turn actually belongs to the session
           ;; (`reduce` without a hit returns ALL turns — reject that case).
-          (when (and src-soul current
-                     (seq cut)
-                     (= (str (:id (peek cut))) through-s))
-            (let [new-soul-id (str (new-uuid))
-                  new-state-id (str (new-uuid))
-                  now (now-ms)
-                  fork-title (or title (str (:title current) " (fork)"))]
+          (when (and src-soul current (seq cut) (= (str (:id (peek cut))) through-s))
+            (let
+              [new-soul-id
+               (str (new-uuid))
+
+               new-state-id
+               (str (new-uuid))
+
+               now
+               (now-ms)
+
+               fork-title
+               (or title (str (:title current) " (fork)"))]
+
               ;; Fresh INDEPENDENT session soul (claimed = a real conversation).
               (execute! tx-info
                         {:insert-into :session_soul
@@ -2670,66 +2706,72 @@
                                       (name (->kw (:llm_root_provider current)))))]})
               ;; Deep-copy each source turn into the fork's root state.
               (doseq [[idx turn] (map-indexed vector cut)]
-                (let [old-soul-s (->ref (:id turn))
-                      new-turn-soul-id (str (new-uuid))
-                      soul-row (query-one! tx-info
-                                           {:select [:*]
-                                            :from :session_turn_soul
-                                            :where [:= :id old-soul-s]})
-                      ts-row (query-one! tx-info
-                                         {:select [:*]
-                                          :from :session_turn_state
-                                          :where [:and
-                                                  [:= :session_turn_soul_id old-soul-s]
-                                                  [:= :version
-                                                   {:select [[[:max :version]]]
-                                                    :from :session_turn_state
-                                                    :where [:= :session_turn_soul_id old-soul-s]}]]})
-                      new-ts-id (str (new-uuid))
-                      iters (when ts-row
-                              (query! tx-info
+                (let
+                  [old-soul-s (->ref (:id turn))
+                   new-turn-soul-id (str (new-uuid))
+                   soul-row (query-one!
+                              tx-info
+                              {:select [:*] :from :session_turn_soul :where [:= :id old-soul-s]})
+                   ts-row (query-one! tx-info
                                       {:select [:*]
-                                       :from :session_turn_iteration
-                                       :where [:= :session_turn_state_id (:id ts-row)]
-                                       :order-by [[:position :asc]]}))
-                      iter-id-map (into {} (map (fn [it] [(:id it) (str (new-uuid))]) iters))
-                      atts (query! tx-info
+                                       :from :session_turn_state
+                                       :where [:and [:= :session_turn_soul_id old-soul-s]
+                                               [:= :version
+                                                {:select [[[:max :version]]]
+                                                 :from :session_turn_state
+                                                 :where [:= :session_turn_soul_id old-soul-s]}]]})
+                   new-ts-id (str (new-uuid))
+                   iters (when ts-row
+                           (query! tx-info
                                    {:select [:*]
-                                    :from :session_attachment
-                                    :where [:= :session_turn_soul_id old-soul-s]})]
+                                    :from :session_turn_iteration
+                                    :where [:= :session_turn_state_id (:id ts-row)]
+                                    :order-by [[:position :asc]]}))
+                   iter-id-map (into {}
+                                     (map (fn [it]
+                                            [(:id it) (str (new-uuid))])
+                                          iters))
+                   atts (query! tx-info
+                                {:select [:*]
+                                 :from :session_attachment
+                                 :where [:= :session_turn_soul_id old-soul-s]})]
+
                   (when soul-row
                     (execute! tx-info
                               {:insert-into :session_turn_soul
                                :values [(assoc soul-row
-                                               :id new-turn-soul-id
-                                               :session_state_id new-state-id
-                                               :position (inc (long idx)))]}))
+                                          :id new-turn-soul-id
+                                          :session_state_id new-state-id
+                                          :position (inc (long idx)))]}))
                   (when ts-row
                     (execute! tx-info
                               {:insert-into :session_turn_state
                                :values [(assoc ts-row
-                                               :id new-ts-id
-                                               :session_turn_soul_id new-turn-soul-id
-                                               :version 0
-                                               :forked_from_session_turn_state_id nil)]}))
+                                          :id new-ts-id
+                                          :session_turn_soul_id new-turn-soul-id
+                                          :version 0
+                                          :forked_from_session_turn_state_id nil)]}))
                   (doseq [it iters]
                     (execute! tx-info
                               {:insert-into :session_turn_iteration
                                :values [(assoc it
-                                               :id (get iter-id-map (:id it))
-                                               :session_turn_state_id new-ts-id)]}))
+                                          :id (get iter-id-map (:id it))
+                                          :session_turn_state_id new-ts-id)]}))
                   ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail
                   ;; rows copy only when their iteration was copied (latest state), with
                   ;; the iteration FK remapped. Skip tool rows from older versions.
-                  (doseq [a atts
-                          :let [it-id (:session_turn_iteration_id a)]
-                          :when (or (nil? it-id) (contains? iter-id-map it-id))]
+                  (doseq
+                    [a atts
+                     :let [it-id (:session_turn_iteration_id a)]
+                     :when (or (nil? it-id) (contains? iter-id-map it-id))]
+
                     (execute! tx-info
                               {:insert-into :session_attachment
                                :values [(assoc a
-                                               :id (str (new-uuid))
-                                               :session_turn_soul_id new-turn-soul-id
-                                               :session_turn_iteration_id (some-> it-id iter-id-map))]}))))
+                                          :id (str (new-uuid))
+                                          :session_turn_soul_id new-turn-soul-id
+                                          :session_turn_iteration_id (some-> it-id
+                                                                             iter-id-map))]}))))
               new-state-id)))))))
 
 (defn- normalize-routing-event

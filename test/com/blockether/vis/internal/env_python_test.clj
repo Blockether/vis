@@ -246,7 +246,8 @@
         (let
           [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"
                          "'len='+str('len' in a)," "'cat='+str('cat' in a),"
-                         "'find_files='+str('find_files' in a)," "'struct_patch='+str('struct_patch' in a))"))]
+                         "'find_files='+str('find_files' in a),"
+                         "'struct_patch='+str('struct_patch' in a))"))]
           (expect (re-find #"asyncio=False" out))
           (expect (re-find #"len=False" out))
           (expect (re-find #"cat=True" out))

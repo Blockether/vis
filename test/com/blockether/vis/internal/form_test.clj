@@ -144,4 +144,4 @@
       (expect (= {} (form/->display {:result nil :vis/tool-name nil})))
       (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil}))))
   (it "labels the streaming placeholder as a native call"
-  (expect (= "NATIVE CALL" (form/tool-label "native_call")))))
+      (expect (= "NATIVE CALL" (form/tool-label "native_call")))))

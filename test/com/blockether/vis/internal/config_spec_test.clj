@@ -151,6 +151,8 @@
                                                                     "sandbox" false)))))
       (expect (false? (:disabled? (config-spec/process-jail-config (assoc full-config
                                                                      "sandbox" true)))))
+      ;; DEFAULT is OFF: absent `sandbox` key ⇒ jail disabled (opt-in).
+      (expect (true? (:disabled? (config-spec/process-jail-config (dissoc full-config "sandbox")))))
       (expect (= {:allowed-domains ["github.com"]
                   :denied-domains ["example.invalid"]
                   :exclude-domains ["opaque.example"]

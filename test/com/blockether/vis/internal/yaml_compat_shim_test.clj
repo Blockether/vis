@@ -70,4 +70,5 @@
             "\ntry:\n    yaml.safe_load('foo: [1, 2')\n    _r = 'NO-ERROR'\nexcept yaml.YAMLError:\n    _r = 'YAMLError'\n_r")))))
   (it "publishes the module under sys.modules so `import yaml` resolves"
       (let [{:keys [^Context python-context]} (ep/create-python-context {})]
-        (expect (true? (ev python-context "import yaml\n__import__('sys').modules.get('yaml') is not None"))))))
+        (expect (true? (ev python-context
+                           "import yaml\n__import__('sys').modules.get('yaml') is not None"))))))

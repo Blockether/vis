@@ -146,10 +146,13 @@ Omit it and built-in defaults apply. Unknown keys are rejected by the configurat
 
 ## Sandbox, filesystem, and network
 
-The process sandbox is enabled by default. On macOS, shell commands and managed
-language processes run under Seatbelt and use the gateway egress proxy. There is
-no separate shell or network toggle: `sandbox: false` is the sole explicit
-process-jail escape hatch. Unsupported hosts currently have no OS boundary.
+The process sandbox is **off by default** and opt-in via `sandbox: true`.
+**Strongly recommended** whenever the model runs untrusted code: without it,
+managed shells and language processes run with the gateway user's full host
+permissions. On macOS with it enabled, shell commands and managed language
+processes run under Seatbelt and use the gateway egress proxy. There is no
+separate shell or network toggle. Unsupported hosts currently have no OS
+boundary.
 
 ```yaml
 # vis.yml
