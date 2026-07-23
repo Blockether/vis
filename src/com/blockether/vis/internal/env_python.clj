@@ -1589,14 +1589,13 @@ def __vis_native_result_scan__(__vis_tree__):
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
 # TOOLS (`shell_run` / `shell_bg` / `shell_logs` / `resource_stop`), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
-# and still rides the same toggle gate, workspace-cwd containment, timeout,
+# and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
 #
 # It is tool-AGNOSTIC by construction: the tool callables are looked up in
 # globals() at CALL time, not bound at import. So if the shell tool is absent
-# (extension not installed) or OFF (:shell/enabled toggle), the shim raises a
-# clear \"enable the shell tool\" message instead of a confusing spawn failure —
-# and the instant the toggle flips on, the same code starts working.
+# (extension not installed), the shim raises a clear message instead of a
+# confusing spawn failure; when present, subprocess/os.system route to it.
 #
 # Installed once per sandbox context (main + every sub_loop fork) by
 # env_python/build-agent-context, right after the apropos/doc introspection.
@@ -1608,11 +1607,8 @@ def __vis_install_posix_compat__():
     import time
 
     _SHELL_DISABLED = (
-        \"Shell is not enabled in this vis sandbox, so subprocess / os.system \"
-        \"cannot run. Ask the user to turn on the 'Shell commands' toggle \"
-        \"(:shell/enabled); then subprocess.run / check_output / os.system route \"
-        \"to the shell tool. Prefer shell_run(cmd) directly (returns a dict with \"
-        \"exit/stdout/stderr); use shell_bg(id, cmd) for long-running commands.\"
+        \"Shell tools are not available in this vis sandbox (the shell extension \"
+        \"is not installed), so subprocess / os.system / os.popen cannot run.\"
     )
 
     def _shell_run():
@@ -1895,8 +1891,8 @@ del __vis_posix_lazy__
   "Python names installed into builtins for every `python_execution` context.
    This is the model-facing inventory; keep it synchronized with
    `auto-imports-python` and its real-context regression test."
-  ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "pathlib" "Path" "textwrap"
-   "base64" "math" "socket" "builtins"])
+  ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib"
+   "Path" "textwrap" "base64" "math" "socket" "builtins"])
 
 (def ^:private auto-imports-python
   "Install tiny convenience imports as Python builtins so agents can use them
@@ -1904,7 +1900,7 @@ del __vis_posix_lazy__
    builtins self-ref) are bound EAGERLY - they are cheap, load anyway via engine
    internals, and are the hottest names. Every OTHER name is a `_LazyStd` proxy
    on builtins: the real stdlib module is imported on the FIRST bare touch
-   (`hashlib.md5(...)`, `Path(...)`, `socket.socket(...)`, ...) and then REPLACES
+   (`hashlib.md5(...)`, `Counter(...)`, `Path(...)`, `socket.socket(...)`, ...) and then REPLACES
    the proxy, so a session that never touches base64/textwrap/socket/... never
    pays their import at context build OR at every `sub_loop` fork. An explicit
    `import <name>` always works too (normal stdlib path). The model-facing
@@ -1936,6 +1932,7 @@ del __vis_posix_lazy__
         ('hashlib', 'hashlib', None),
         ('glob', 'glob', None),
         ('collections', 'collections', None),
+        ('Counter', 'collections', 'Counter'),
         ('pathlib', 'pathlib', None),
         ('Path', 'pathlib', 'Path'),
         ('textwrap', 'textwrap', None),
@@ -1949,7 +1946,7 @@ del __vis_auto_imports__
 ")
 
 (defn- install-auto-imports!
-  "Make selected stdlib modules available as builtin names in every sandbox.
+  "Make selected stdlib modules and symbols available as builtins in every sandbox.
    os/sys/json/re are eager; the rest are lazy proxies materialized on first
    touch. Keep the inventory tiny: only safe, pure, repeatedly-useful glue."
   [^Context ctx]
@@ -2394,7 +2391,7 @@ del __vis_init_lazy__
    tamper-proof boundary. It patches Python's `socket` in the SAME interpreter the
    model controls, so a determined model can defeat it (e.g. `importlib.reload
    (socket)`, or the low-level `_socket`). The ONLY hard network control is the
-   binary capability `allowHostSocketAccess` (the `:network/enabled` toggle): off ⇒
+   binary capability `allowHostSocketAccess` (always ON now): host sockets are always
    no sockets at all. Use the allow/deny lists to steer normal code, not to contain
    an adversary. (Filesystem confinement, by contrast, IS enforced below Python at
    the Truffle FileSystem layer and cannot be patched away — see `sandbox-fs`.)
@@ -2449,141 +2446,31 @@ del __vis_init_lazy__
     "        _s.create_connection = _wrap_create(_s.create_connection)\n" "    except Exception:\n"
     "        pass\n" "__vis_install_net_guard__()\n"))
 
-(def ^:private method-guard-python
-  "Best-effort per-host HTTP METHOD + PATH allowlist for the sandbox's network.
+(def ^:private proxy-env-python
+  "Point the sandbox interpreter's HTTP stack at the gateway egress proxy.
 
-   Same THREAT MODEL as `network-guard-python` — a GUARDRAIL for cooperative /
-   accidental egress, NOT adversary-proof. It patches
-   `urllib.request.OpenerDirector.open` in the model's OWN interpreter, so it is
-   STRICTLY WEAKER than the host allow/deny lists: a raw socket carries no HTTP
-   method, so this can only steer code that goes THROUGH urllib — which every
-   built-in HTTP shim (requests / httpx / urllib3) and stdlib `urllib.request`
-   do, but a hand-rolled `socket` does not. The host guard remains the real
-   network boundary; this just refines *which verbs + paths* reach an allowed host.
+   Routes urllib / requests / httpx / urllib3 through the ONE shared gateway proxy
+   (loopback, `__vis_proxy_url__`) and trusts the shared ephemeral MITM CA
+   (`__vis_ca_file__`, written under $TMPDIR so the confined FS can read it). The
+   gateway proxy becomes the SINGLE policy engine: declarative `:network :rules`
+   AND programmable `network_filter`s enforce host + verb + path over both HTTP and
+   (MITM'd) HTTPS — the SAME boundary shell children and managed REPLs use. This
+   RETIRES the old in-interpreter urllib method-guard (one engine, not two).
 
-   Consumes `__vis_network_rules__` — a LIST of `{host, methods:[…], allow:[{method,
-   path}]}` dicts (see `normalize-network-rules`). Specificity mirrors the host
-   guard: an exact/suffix host match wins over a `*` entry (longest suffix first).
-   A host with NO matching rule is UNRESTRICTED (opt-in / purely additive). For a
-   matched host a request passes iff its verb is in `methods` (a `*` method = any
-   verb), OR it matches an `allow` grant (verb + `fnmatch` path glob, `*` path =
-   any); otherwise `open` raises PermissionError before the request leaves the
-   interpreter."
+   Same THREAT MODEL as the socket host guard: COOPERATIVE (an env-var proxy), so a
+   hand-rolled raw `socket` bypasses it — the host allow/deny guard remains the raw
+   floor. Loopback is left DIRECT (`no_proxy`) so local dev servers keep working."
   (str
-    "def __vis_install_method_guard__():\n" "    import urllib.request as _ur\n"
-    "    import urllib.parse as _up\n" "    import fnmatch as _fn\n"
-    "    _rules = []\n" "    for _r in list(__vis_network_rules__):\n"
-    "        _r = dict(_r)\n" "        _h = str(_r.get('host','')).strip().lower().rstrip('.')\n"
-    "        if not _h:\n" "            continue\n"
-    "        _ms = set(str(_m).strip().upper() for _m in _r.get('methods', []) if str(_m).strip())\n"
-    "        _al = []\n"
-    "        for _a in list(_r.get('allow', [])):\n" "            _a = dict(_a)\n"
-    "            _am = str(_a.get('method', '')).strip().upper()\n"
-    "            _ap = str(_a.get('path', '')).strip() or '*'\n"
-    "            if _am:\n" "                _al.append((_am, _ap))\n"
-    "        if _ms or _al:\n" "            _rules.append((_h, _ms, _al))\n"
-    "    if not _rules:\n" "        return\n"
-    "    def _host_of(u):\n" "        try:\n"
-    "            return (_up.urlsplit(str(u)).hostname or '').strip().lower().rstrip('.')\n"
-    "        except Exception:\n"
-    "            return ''\n" "    def _path_of(u):\n"
-    "        try:\n" "            return _up.urlsplit(str(u)).path or '/'\n"
-    "        except Exception:\n" "            return '/'\n"
-    "    def _match(host):\n" "        _best = None\n"
-    "        _star = None\n" "        for _e in _rules:\n"
-    "            if _e[0] == '*':\n" "                _star = _e\n"
-    "            elif host == _e[0] or host.endswith('.' + _e[0]):\n"
-    "                if _best is None or len(_e[0]) > len(_best[0]):\n"
-    "                    _best = _e\n" "        return _best or _star\n"
-    "    def _path_ok(path, pat):\n" "        if pat in ('', '*', '/*', '**', '/**'):\n"
-    "            return True\n"
-    "        return _fn.fnmatchcase(path, pat) or _fn.fnmatchcase(path, pat.rstrip('/') + '/*')\n"
-    "    def _check(host, method, path):\n" "        _e = _match(host)\n"
-    "        if _e is None:\n" "            return\n"
-    "        _h, _ms, _al = _e\n" "        m = str(method).upper()\n"
-    "        if m in _ms or '*' in _ms:\n" "            return\n"
-    "        for _am, _ap in _al:\n"
-    "            if (_am == m or _am in ('*', 'ANY')) and _path_ok(path, _ap):\n"
-    "                return\n"
-    "        raise PermissionError(\"vis: HTTP method '%s' not allowed for host '%s' path '%s'\" % (m, host, path))\n"
-    "    _orig = _ur.OpenerDirector.open\n" "    def _open(self, fullurl, data=None, *a, **k):\n"
-    "        if isinstance(fullurl, _ur.Request):\n"
-    "            host = _host_of(fullurl.full_url)\n"
-    "            path = _path_of(fullurl.full_url)\n" "            method = fullurl.get_method()\n"
-    "        else:\n" "            host = _host_of(fullurl)\n"
-    "            path = _path_of(fullurl)\n"
-    "            method = 'GET' if data is None else 'POST'\n"
-    "        _check(host, method, path)\n" "        return _orig(self, fullurl, data, *a, **k)\n"
-    "    _ur.OpenerDirector.open = _open\n" "__vis_install_method_guard__()\n"))
+    "def __vis_install_proxy_env__():\n" "    import os as _o\n"
+    "    _u = __vis_proxy_url__\n" "    _ca = __vis_ca_file__\n"
+    "    for _k in ('http_proxy','https_proxy','HTTP_PROXY','HTTPS_PROXY','all_proxy','ALL_PROXY'):\n"
+    "        _o.environ[_k] = _u\n"
+    "    for _k in ('no_proxy','NO_PROXY'):\n"
+    "        _o.environ[_k] = 'localhost,127.0.0.1,::1'\n"
+    "    if _ca:\n"
+    "        for _k in ('REQUESTS_CA_BUNDLE','SSL_CERT_FILE','CURL_CA_BUNDLE','PIP_CERT'):\n"
+    "            _o.environ[_k] = _ca\n" "__vis_install_proxy_env__()\n"))
 
-(defn- normalize-network-rules
-  "Normalize the `:rules` list —
-   `[{:host h :access preset :methods [M…] :allow [{:method M :path P}…]}]` — into a
-   normalized VECTOR of `{\"host\" h \"methods\" [UPPER…] \"allow\" [{\"method\" M
-   \"path\" P}…]}` for `->py` / `method-guard-python`.
-
-   Hosts are trimmed + lower-cased (trailing dots stripped), methods upper-cased,
-   paths kept verbatim (default `*` = any). `:access` presets expand to method sets:
-   `read-only` ⇒ GET/HEAD/OPTIONS, `read-write`/`full` ⇒ `*` (any verb), `none` ⇒
-   none. A method value `*` means any verb. Keyword or string hosts/methods/access
-   are all accepted; a lone method value is treated as a one-element list. Entries
-   whose host is blank, or that carry neither a method nor an allow-rule, are
-   dropped; an empty result yields `[]` (⇒ no guard installed)."
-  [{:keys [rules]}]
-  (letfn
-    [(nm [x]
-       (some-> (if (keyword? x) (name x) (str x))
-               str/trim
-               not-empty))
-     (host-key [x]
-       (some-> (nm x)
-               str/lower-case
-               (str/replace #"\.+$" "")))
-     (methods-of [ms]
-       (into #{}
-             (keep #(some-> (nm %)
-                            str/upper-case))
-             (if (coll? ms) ms [ms])))
-     (access-of [a]
-       (case
-         (some-> (nm a)
-                 str/lower-case)
-         ("read-only" "readonly" "ro")
-         #{"GET" "HEAD" "OPTIONS"}
-
-         ("read-write" "readwrite" "rw" "full" "all")
-         #{"*"}
-
-         ("none" "deny" "closed")
-         #{}
-
-         #{}))
-     (allow-of [al]
-       (vec (keep (fn [a]
-                    (when-let
-                      [m (some-> (nm (:method a))
-                                 str/upper-case)]
-                      {"method" m "path" (or (nm (:path a)) "*")}))
-                  al)))
-     (add [m h ms al]
-       (cond-> m
-         (and h (or (seq ms) (seq al)))
-         (update h
-                 (fn [e]
-                   (-> (or e {:methods #{} :allow []})
-                       (update :methods into ms)
-                       (update :allow into al))))))]
-    (let
-      [acc (reduce (fn [m r]
-                     (add m
-                          (host-key (:host r))
-                          (into (access-of (:access r)) (methods-of (:methods r)))
-                          (allow-of (:allow r))))
-                   {}
-                   rules)]
-      (mapv (fn [[h {:keys [methods allow]}]]
-              {"host" h "methods" (vec (sort methods)) "allow" allow})
-            acc))))
 
 (defn- make-outbox
   "Create a fresh per-context OUTBOX directory under the system temp dir and return
@@ -2681,6 +2568,15 @@ del __vis_init_lazy__
      net?
      (boolean (:enabled? network-opts))
 
+     ;; When the session routes interpreter egress through the gateway proxy (net on
+     ;; + jail possible), these carry its loopback port + the shared MITM CA PEM (in
+     ;; $TMPDIR, so the confined FS can read it). See `proxy-env-python`.
+     proxy-port
+     (:proxy-port network-opts)
+
+     ca-file
+     (:ca-file network-opts)
+
      allowed
      (vec (:allowed-domains network-opts))
 
@@ -2697,25 +2593,21 @@ del __vis_init_lazy__
      guard?
      (and net? (or (seq denied) (not allow-all?)))
 
-     ;; Best-effort per-host HTTP METHOD + PATH allowlist (config `:network :rules`,
-     ;; opt-in). Normalized to a list of
-     ;; {host, methods, allow} rules; installed only when net is on AND at least one
-     ;; rule is present (it patches urllib, so it needs sockets to matter).
-     network-rules
-     (normalize-network-rules network-opts)
-
-     method-guard?
-     (and net? (seq network-rules))
+     ;; When proxying, urllib must reach the loopback proxy even under a restrictive
+     ;; allowlist — so the host guard always permits loopback (the proxy itself
+     ;; enforces the real host/verb/path policy). Raw sockets keep the full policy.
+     guard-allowed
+     (if proxy-port (into allowed ["127.0.0.1" "::1" "localhost"]) allowed)
 
      ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
      ;; REAL filesystem access CONFINED to the current filesystem roots (Python
      ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
      ;; it (tests / no workspace) the sandbox stays IO-NONE; the file tools do
      ;; the I/O on the Clojure side regardless.
-     ;; NETWORK capability: OFF by default. When the `:network/enabled` toggle is
-     ;; on, host sockets are allowed (urllib/requests/socket work); a non-empty
-     ;; `:network/allowed-domains` allowlist further confines connections (guard
-     ;; installed below). Empty allowlist + enabled = unrestricted network.
+     ;; NETWORK capability: host sockets are ALWAYS allowed (urllib/requests/socket
+     ;; work). Containment is the gateway egress proxy the interpreter is pointed at
+     ;; (see `proxy-env-python`), not an on/off capability; a non-empty
+     ;; `:network/allowed-domains` allowlist further confines the guard installed below.
      outbox
      (when roots-fn (make-outbox))
 
@@ -2889,15 +2781,19 @@ del __vis_init_lazy__
     ;; patch socket DNS resolution to refuse hosts outside the allowlist. Eval'd
     ;; before the snapshot so the guard's names are BASELINE (not model-visible).
     (when guard?
-      (.putMember g "__vis_allowed_domains__" (->py allowed))
+      (.putMember g "__vis_allowed_domains__" (->py guard-allowed))
       (.putMember g "__vis_denied_domains__" (->py (vec denied)))
       (.eval ctx "python" network-guard-python))
-    ;; NETWORK method policy: when sockets are on AND a per-host method allowlist is
-    ;; configured, patch `urllib.request` to refuse disallowed verbs. Eval'd before the
-    ;; snapshot so the guard's names are BASELINE (not model-visible).
-    (when method-guard?
-      (.putMember g "__vis_network_rules__" (->py network-rules))
-      (.eval ctx "python" method-guard-python))
+    ;; NETWORK EGRESS ROUTING: point the interpreter's HTTP stack at the gateway
+    ;; proxy + trust the shared MITM CA, so declarative :rules AND programmable
+    ;; network_filters enforce host + verb + path (retires the urllib method-guard —
+    ;; ONE policy engine). Eval'd before the snapshot so the env names stay baseline.
+    (when (and net? proxy-port)
+      (.putMember g "__vis_proxy_url__" (str "http://127.0.0.1:" proxy-port))
+      (.putMember g "__vis_ca_file__" ^String (or ca-file ""))
+      (.eval ctx "python" proxy-env-python)
+      (.putMember g "__vis_proxy_url__" nil)
+      (.putMember g "__vis_ca_file__" nil))
     (let
       [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]]
@@ -3316,8 +3212,7 @@ del __vis_init_lazy__
            (str "`"
                 undefined-name
                 "` is not defined. If it's a TOOL you expected, it is "
-                "likely an extension toggled OFF — its symbols are removed while disabled "
-                "(e.g. `shell_run`/`shell_bg` need the `:shell/enabled` toggle). Run "
+                "likely an extension that is inactive — its symbols are removed while off. Run "
                 "`apropos(\""
                 undefined-name
                 "\")`; if it isn't listed, ask the USER to enable "

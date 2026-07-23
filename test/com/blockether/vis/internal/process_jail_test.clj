@@ -17,6 +17,8 @@
     (let [p (pj/macos-profile {:rw [] :net-enabled? false})]
       (is (str/includes? p "(deny default)"))
       (is (str/includes? p "(import \"system.sb\")"))))
+  (testing "native-image signal delivery may open its POSIX semaphore"
+    (is (str/includes? (pj/macos-profile {:rw [] :net-enabled? false}) "(allow ipc-posix-sem)")))
   (testing "resolvable RW roots become subpath rules on their REAL path"
     (let
       [dir
@@ -59,6 +61,33 @@
       (io/delete-file sub true)
       (io/delete-file dir true))))
 
+(deftest inbound-ports-gate-accept
+  (testing "no inbound ports: a jailed shell child cannot accept on any port"
+    (let [p (pj/macos-profile {:rw [] :net-enabled? false})]
+      (is (str/includes? p "(deny network*)"))
+      (is (not (str/includes? p "network-inbound"))
+          "without an allowlist there is no inbound rule at all")))
+  (testing "allowlisted ports emit one port-gated inbound rule each; bind is local-only"
+    (let [p (pj/macos-profile {:rw [] :net-enabled? false :inbound-ports [5273 4200]})]
+      (is (str/includes? p "(allow network-bind (local ip))"))
+      (is (str/includes? p "(allow network-inbound (local ip \"*:5273\"))"))
+      (is (str/includes? p "(allow network-inbound (local ip \"*:4200\"))"))
+      (is (not (str/includes? p "network-outbound"))
+          "an inbound allowlist never grants outbound egress")))
+  (testing "the managed nREPL loopback port and inbound ports coexist, de-duplicated"
+    (let
+      [p (pj/macos-profile
+           {:rw [] :net-enabled? false :loopback-port 5273 :inbound-ports [5273 6000]})]
+      (is (= 2 (count (re-seq #"network-inbound" p)))
+          "duplicate loopback/inbound port collapses to one rule")
+      (is (str/includes? p "(allow network-inbound (local ip \"*:6000\"))"))))
+  (testing "compile-policy sanitizes to distinct legal integers, dropping junk/out-of-range"
+    (let
+      [resolved (pj/compile-policy {:roots-fn (constantly [])
+                                    :inbound-ports [5273 "4200" 0 70000 "nope" 5273 nil]})]
+      (is (= [5273 4200] (:inbound-ports resolved))))))
+
+
 (deftest compile-policy-resolves-live-roots
   (testing "session roots-fn + tmp become the RW set, allow-read → :ro"
     (let
@@ -77,6 +106,23 @@
       (is (some #(str/includes? % "tmp") (:rw resolved)) "tmp dirs are always writable")
       (is (true? (:net-enabled? resolved)))
       (io/delete-file dir true))))
+
+(deftest compile-policy-supports-concise-read-write-grants
+  (testing "allow-read-write grants the path through both canonical access sets"
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-rw-" (System/nanoTime)))
+         (.mkdirs))
+
+       canon
+       (.getCanonicalPath dir)
+
+       resolved
+       (pj/compile-policy {:roots-fn (constantly []) :allow-read-write [(.getPath dir)]})]
+
+      (try (is (contains? (set (:rw resolved)) canon))
+           (is (contains? (set (:ro resolved)) canon))
+           (finally (io/delete-file dir true))))))
 
 (deftest wrap-argv-is-off-by-default
   (testing "nil policy => argv passes through untouched"
@@ -97,11 +143,20 @@
     {:exit (.waitFor p) :out out}))
 
 (defn- sandbox-applicable?
-  "False when this test JVM already runs inside Seatbelt, which rejects nested
-   sandbox_apply with EPERM even though sandbox-exec is installed."
+  "True only when this JVM may apply a fresh Seatbelt profile.
+
+   Managed test JVMs already inherit Seatbelt (`VIS_SEATBELT_ACTIVE=1`), and a
+   nested profile cannot strengthen or replace that kernel policy. macOS CI and
+   an ordinary host JVM run the real enforcement branch; inherited runs exercise
+   the pure compiler/launch contract without pretending nested enforcement ran."
   []
-  (zero? (:exit (run-jailed (pj/wrap-argv ["/usr/bin/true"]
-                                          {:roots-fn (constantly ["/tmp"]) :net-enabled? false})))))
+  (and (pj/supported?) (not= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))))
+
+(deftest macos-e2e-runner-contract
+  (when (= "1" (System/getenv "VIS_REQUIRE_MACOS_SANDBOX_E2E"))
+    (is (pj/supported?) "required macOS E2E runner must provide sandbox-exec")
+    (is (sandbox-applicable?)
+        "required macOS E2E runner must be an unconfined host JVM, not a managed jailed child")))
 
 (deftest real-containment
   ;; sandbox-exec cannot apply a nested profile from an already Seatbelt-confined
@@ -239,10 +294,32 @@
       (is (= "/repl-ca.pem" (:ca-file rp)))
       (is (= 54321 (:loopback-port rp)))
       (is (nil? (:loopback-port tool)))
-      (is (some #{"~/.m2"} (:allow-write rp)))
+      (is (not (some #{"~/.m2"} (:allow-write rp)))) ; caches are opt-in, no default
       (is (some #{"~/.vis/logs"} (:allow-write rp)))
       (is (some #{"~/.vis/logs"} (:allow-read tool)))
       (is (some #{"/w"} (:allow-write rp)))))
+  (testing "language caches are OPT-IN with per-entry read-only/read-write access"
+    (let
+      [base
+       {:repl-proxy-port 1000
+        :repl-ca-file "/repl-ca.pem"
+        :allow-write ["/w"]
+        :allow-read ["/r"]
+        :language-cache-dirs ["/rw/cache" {:path "/ro/cache" :access "read-only"}]}
+
+       pol
+       (pj/language-process-policy base nil)]
+
+      ;; a bare string grants read+write
+      (is (some #{"/rw/cache"} (:allow-write pol)))
+      (is (some #{"/rw/cache"} (:allow-read pol)))
+      ;; access read-only grants read but NOT write
+      (is (not (some #{"/ro/cache"} (:allow-write pol))))
+      (is (some #{"/ro/cache"} (:allow-read pol)))
+      ;; nothing writable is granted by default — no ~/.m2 unless configured
+      (let [none (pj/language-process-policy (dissoc base :language-cache-dirs) nil)]
+        (is (not (some #{"~/.m2"} (:allow-write none))))
+        (is (not (some #{"~/.m2"} (:allow-read none)))))))
   (testing "unknown and disposed sessions fail closed before spawn"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"session jail is not registered"
@@ -265,7 +342,7 @@
            (is (re-find #"-Djava\.net\.preferIPv4Stack=true" (get env "JAVA_TOOL_OPTIONS")))
            (is (re-find #"-Djavax\.net\.ssl\.trustStore=/tmp/repl-ca\.p12"
                         (get env "JAVA_TOOL_OPTIONS")))
-           (if (pj/supported?)
+           (if (sandbox-applicable?)
              (do (is (= "sandbox-exec" (first argv)))
                  (is (not (re-find #"\(allow network\*\)" (nth argv 2))))
                  (is (re-find #"network-bind \(local ip\)" (nth argv 2)))

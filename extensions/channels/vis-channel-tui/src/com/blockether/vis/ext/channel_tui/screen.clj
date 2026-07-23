@@ -420,27 +420,37 @@
 
 (def ^:private status-error-ttl-ms 5000)
 
+(defn- copy-text-async!
+  [worker-name text success-message]
+  (vis/worker-future
+    worker-name
+    #(let [copied? (try (true? (input/clipboard-copy! (or text "")))
+                        (catch Throwable _ false))]
+       (vis/notify! (if copied?
+                      success-message
+                      "Copy failed — terminal clipboard unavailable")
+                    :level (if copied? :success :error)
+                    :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms))
+       copied?)))
+
 (defn- copy-session-id!
   [text]
-  (vis/worker-future "vis-tui-copy-session-id"
-                     #(try (input/clipboard-copy! text) (catch Throwable _ nil)))
-  (vis/notify! "✓ Copied session ID" :level :success :ttl-ms copy-success-ttl-ms))
+  (copy-text-async! "vis-tui-copy-session-id" text "✓ Copied session ID"))
 
 (defn- copy-selection!
   ([text] (copy-selection! text :transcript))
   ([text source]
-   (vis/worker-future "vis-tui-copy-selection"
-                      #(try (input/clipboard-copy! (or text "")) (catch Throwable _ nil)))
-   (vis/notify! (if (= source :input) "✓ Copied input selection" "✓ Copied selection")
-                :level :success
-                :ttl-ms copy-success-ttl-ms)))
+   (copy-text-async! "vis-tui-copy-selection"
+                     text
+                     (if (= source :input)
+                       "✓ Copied input selection"
+                       "✓ Copied selection"))))
 
 (defn- copy-bubble!
   [text]
-  (let [text (selection/clean-copied-text text)]
-    (vis/worker-future "vis-tui-copy-bubble"
-                       #(try (input/clipboard-copy! text) (catch Throwable _ nil)))
-    (vis/notify! "✓ Copied bubble" :level :success :ttl-ms copy-success-ttl-ms)))
+  (copy-text-async! "vis-tui-copy-bubble"
+                    (selection/clean-copied-text text)
+                    "✓ Copied bubble"))
 
 (defn- copy-bubble-hit!
   "Copy a whole-bubble copy-region hit. The region's `:text` is a DELAY
@@ -652,7 +662,7 @@
                     (when (= target (vec (concat (:slash/parent s) [(:slash/name s)]))) s))
                   (vis/registered-slashes))]
 
-      (when (#{:navigator :dir-picker :clear-session} (get-in spec [:slash/ui :kind])) spec))))
+      (when (#{:navigator :clear-session} (get-in spec [:slash/ui :kind])) spec))))
 
 (defn- prompt-arg-slash-for-input
   "When the typed text is EXACTLY a registered slash that declares
@@ -4250,7 +4260,7 @@
           (vis/toggle-add-listener!
             (fn [_event]
               (try (let [raw (or (vis/load-config-raw) {})]
-                     (vis/save-config! (assoc raw :toggles (vis/toggles-snapshot))))
+                     (vis/save-config! (assoc raw "toggles" (vis/toggles-snapshot))))
                    (catch Throwable t
                      (tel/log!
                        {:level :warn :id ::toggle-persist-failed :data {:error (ex-message t)}}
@@ -4875,56 +4885,6 @@
                                      (vis/notify! "Cleared session"
                                                   :level :success
                                                   :ttl-ms copy-success-ttl-ms)))))
-              ;; Mint a trunk workspace rooted at `d`, create a session
-              ;; pinned to it, and open it in a new tab — a session in
-              ;; another project, focused, alongside the current ones.
-              open-dir-tab! (fn [d]
-                              (let [f (java.io.File. ^String d)]
-                                (if (and (.exists f) (.isDirectory f))
-                                  (when-let [config (:config @state/app-db)]
-                                    (let
-                                      [session-result
-                                       (try (chat/make-session config {:root (.getCanonicalPath f)})
-                                            (catch Throwable _ nil))]
-                                      (if session-result
-                                        (open-session-tab! session-result true)
-                                        (vis/notify! "Could not open a session there"
-                                                     :level :warn
-                                                     :ttl-ms copy-success-ttl-ms))))
-                                  (vis/notify! (str "Not a directory: " d)
-                                               :level :warn
-                                               :ttl-ms copy-success-ttl-ms))))
-              ;; `/fs` (a `:slash/ui {:kind :dir-picker}` slash): browse to
-              ;; a directory in the modal picker, then open a focused session
-              ;; tab there. Starts at the active tab's working dir.
-              pick-dir!
-              (fn pick-dir! [& [purpose]]
-                (when-not (:dialog-open? @state/app-db)
-                  (let
-                    [start (or (:workspace/root @state/app-db) (System/getProperty "user.dir"))
-                     sid (current-session-id)
-                     ws (when sid (session-workspace sid))]
-
-                    (when-let
-                      [chosen (with-dialog-lock #(dlg/directory-picker-dialog! screen
-                                                                               start
-                                                                               :sid sid
-                                                                               :workspace-info ws
-                                                                               :purpose purpose))]
-                      (open-dir-tab! chosen))
-                    ;; A filesystem add/remove or root change may have happened
-                    ;; inside the picker; re-sync the workspace so the footer
-                    ;; dir count and header reflect it immediately.
-                    (when sid
-                      (try (when-let [ws (session-workspace sid)]
-                             (state/dispatch [:set-workspace ws]))
-                           (catch Throwable _ nil))
-                      ;; The footer's `filesystem N` / git / resources chips read
-                      ;; EXTERNAL caches (filesystem roots, git status) that aren't
-                      ;; part of the active-view db slice, so a same-shaped `:workspace`
-                      ;; wouldn't wake the painter — the change then only appeared on
-                      ;; the next keystroke. Force exactly one repaint so it lands now.
-                      (state/dispatch [:bump-render-version])))))
               ;; Managed-resources dialog (C-x s + the footer's `res N`
               ;; Magit-style status buffer (C-x g + the footer's git button).
               ;; Same one-dialog-at-a-time discipline as the resources modal;
@@ -5554,9 +5514,6 @@
                                      (do (state/dispatch [:reset-input])
                                          (switch-session! {:action :new}))
 
-                                     :footer-dirs
-                                     (pick-dir!)
-
                                      :footer-resources
                                      (open-resources!)
 
@@ -5843,9 +5800,6 @@
                                  (do (state/dispatch [:reset-input])
                                      (switch-session! {:action :new}))
 
-                                 :footer-dirs
-                                 (pick-dir!)
-
                                  :footer-resources
                                  (open-resources!)
 
@@ -5958,9 +5912,6 @@
 
                                :header-new-session
                                (do (state/dispatch [:reset-input]) (switch-session! {:action :new}))
-
-                               :footer-dirs
-                               (pick-dir!)
 
                                :footer-resources
                                (open-resources!)
@@ -6252,10 +6203,6 @@
                               ;; live vs. resume.
                               (= :navigator (get-in cmd-map [:slash/spec :slash/ui :kind]))
                               (when-not (:dialog-open? @state/app-db) (show-sessions!))
-                              ;; `/fs`: open the directory picker, then a
-                              ;; focused session tab in the chosen directory.
-                              (= :dir-picker (get-in cmd-map [:slash/spec :slash/ui :kind]))
-                              (pick-dir! (get-in cmd-map [:slash/spec :slash/ui :purpose]))
                               ;; `/clear`: wipe this session and start a
                               ;; fresh one in the same tab.
                               (= :clear-session (get-in cmd-map [:slash/spec :slash/ui :kind]))
@@ -6370,9 +6317,6 @@
 
                                   :switch-project
                                   (switch-project!)
-
-                                  :open-dirs
-                                  (pick-dir!)
 
                                   :recenter
                                   (state/dispatch [:scroll-to-bottom])
@@ -6697,11 +6641,6 @@
                                  (state/dispatch [:force-provider-limits-refresh])))
                              (recur))
 
-                         ;; Ctrl+G: filesystem / directory picker (also the `/fs`
-                         ;; slash's rich-channel realization).
-                         :open-dirs
-                         (do (pick-dir!) (recur))
-
                          :pick-file
                          (do (state/dispatch [:update-input (input/paste-text state "@")]) (recur))
 
@@ -6751,10 +6690,6 @@
                                [kind (get-in (navigator-slash-for-input state) [:slash/ui :kind])]
                                (when-not (:dialog-open? @state/app-db)
                                  (case kind
-                                   :dir-picker
-                                   (pick-dir! (get-in (navigator-slash-for-input state)
-                                                      [:slash/ui :purpose]))
-
                                    :clear-session
                                    (clear-session!)
 

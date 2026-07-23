@@ -12,6 +12,12 @@
            (java.net InetSocketAddress ServerSocket Socket)
            (java.util Base64)))
 
+(defn- run-wire-test
+  [f]
+  (if (= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
+    (is true "conditional skip: inherited Seatbelt forbids test listeners")
+    (f)))
+
 ;; ---------------------------------------------------------------------------
 ;; Registry + resolver — pure, cross-platform (runs on Linux CI too)
 ;; ---------------------------------------------------------------------------
@@ -116,21 +122,23 @@
       (str (.readLine (BufferedReader. (InputStreamReader. (.getInputStream s))))))))
 
 (deftest wire-token-attribution
-  (let
-    [origin
-     (start-origin!)
+  (run-wire-test
+    (fn []
+      (let
+        [origin
+         (start-origin!)
 
-     tok
-     (str (java.util.UUID/randomUUID))]
+         tok
+         (str (java.util.UUID/randomUUID))]
 
-    (gs/register-session! tok
-                          (fn []
-                            (ep/compile-policy {:allowed-domains ["localhost"]})))
-    (let [port (gs/ensure-proxy!)]
-      (try (testing "registered token ⇒ its policy applies; allowed host forwarded (200)"
-             (is (str/includes? (get-status port (:port origin) tok) "200")))
-           (testing "unknown token ⇒ fail-closed auth challenge (407), never reaches origin"
-             (is (str/includes? (get-status port (:port origin) "bogus-token") "407")))
-           (testing "missing token ⇒ fail-closed auth challenge (407)"
-             (is (str/includes? (get-status port (:port origin) nil) "407")))
-           (finally ((:stop! origin)) (gs/shutdown!))))))
+        (gs/register-session! tok
+                              (fn []
+                                (ep/compile-policy {:allowed-domains ["localhost"]})))
+        (let [port (gs/ensure-proxy!)]
+          (try (testing "registered token ⇒ its policy applies; allowed host forwarded (200)"
+                 (is (str/includes? (get-status port (:port origin) tok) "200")))
+               (testing "unknown token ⇒ fail-closed auth challenge (407), never reaches origin"
+                 (is (str/includes? (get-status port (:port origin) "bogus-token") "407")))
+               (testing "missing token ⇒ fail-closed auth challenge (407)"
+                 (is (str/includes? (get-status port (:port origin) nil) "407")))
+               (finally ((:stop! origin)) (gs/shutdown!))))))))

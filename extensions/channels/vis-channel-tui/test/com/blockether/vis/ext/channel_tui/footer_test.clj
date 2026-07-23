@@ -15,7 +15,7 @@
    they stay focused on git. Keys on the stable `:kind` tag, not the
    icon glyph or the platform-conditional chord label."
   [{:keys [kind]}]
-  (boolean (#{:footer-resources :footer-dirs} kind)))
+  (boolean (#{:footer-resources} kind)))
 
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
@@ -113,7 +113,7 @@
                                   (filter #(= :footer-resources (:kind %)))
                                   first
                                   :text)]
-              (expect (str/includes? resource-text "(C-x s)"))
+              (expect (str/includes? resource-text "(C-x b)"))
               (expect (not (str/includes? resource-text keymap/palette-chord))))))))
   (it "leaves voice recording status out of the footer because header owns channel statuses"
       (let [build-segments @#'footer/build-segments]
@@ -470,6 +470,35 @@
             (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
                                  (filter #(= :right (:region %)))
                                  (mapv :text))))))))
+  (it "hides the Codex verbosity knob when the session routes through non-Codex"
+      ;; Verbosity is Codex-only. Even when the GLOBAL router default is Codex,
+      ;; a session that picked Claude must NOT show `verbosity:` in the footer.
+      (let [build-segments @#'footer/build-segments]
+        (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                      {:name "gpt-5.5" :provider :openai-codex})}
+          (fn []
+            (let
+              [texts (->> (build-segments {:messages []
+                                           :settings {:openai-codex-verbosity :high}
+                                           :session-model-pref {:provider "anthropic-coding-plan"
+                                                                :model "claude-opus-4-8"}}
+                                          0)
+                          (mapv :text))]
+              (expect (not-any? #(str/starts-with? % "verbosity:") texts)))))))
+  (it "shows the Codex verbosity knob when the session routes through Codex"
+      (let [build-segments @#'footer/build-segments]
+        (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                      {:name "claude-opus-4-8"
+                                                       :provider :anthropic-coding-plan})}
+          (fn []
+            (let
+              [texts (->> (build-segments {:messages []
+                                           :settings {:openai-codex-verbosity :high}
+                                           :session-model-pref {:provider "openai-codex"
+                                                                :model "gpt-5.5"}}
+                                          0)
+                          (mapv :text))]
+              (expect (some #(= "verbosity: high" %) texts)))))))
   (it "joins shortcuts to their labels without separator dots"
       (let [spans-width @#'footer/spans-width]
         (expect (= (count "model (C-x m) / reasoning: deep (C-x r)")
@@ -491,9 +520,9 @@
        (<= (total segs sepa) cols))
 
      row
-     [{:text "openai-codex/gpt-5.5 (C-x o) (cycle 1/3 C-x m)" :region :left :priority 2}
+     [{:text "openai-codex/gpt-5.5 (C-x c) (cycle 1/3 C-x m)" :region :left :priority 2}
       {:text "reasoning: deep" :region :left :priority 3}
-      {:text " resources 0 (C-x s) " :region :right :priority 2}]
+      {:text " resources 0 (C-x b) " :region :right :priority 2}]
 
      limits
      [{:text "limits: 5h 1200/2000  7d 40000/50000 resets in 3h" :region :left :priority 1}]]

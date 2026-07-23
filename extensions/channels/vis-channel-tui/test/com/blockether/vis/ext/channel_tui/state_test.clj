@@ -8,12 +8,12 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; The `:openai-codex/verbosity` enum toggle is registered by the OpenAI Codex
+;; The `"openai_codex_verbosity"` enum toggle is registered by the OpenAI Codex
 ;; PROVIDER extension in production (it lives next to the backend it tunes), a
 ;; module this channel-tui test suite does not load. Register it here so the
 ;; `:settings` projection and the verbosity-cycle events resolve against a real
 ;; `:enum` toggle, mirroring production.
-(vis/register-toggle! {:id :openai-codex/verbosity
+(vis/register-toggle! {:id "openai_codex_verbosity"
                        :label "Verbosity"
                        :description "Output detail hint passed to the OpenAI Codex backend."
                        :type :enum
@@ -62,8 +62,8 @@
                    (expect (true? (:show-iterations s)))
                    (expect (true? (:show-silent s)))
                    (expect (true? (:show-timestamps s))))
-                 (expect (nil? (vis/toggle-spec :vis/show-thinking)))
-                 (expect (nil? (vis/toggle-spec :vis/show-timestamps)))))
+                 (expect (nil? (vis/toggle-spec "show_thinking")))
+                 (expect (nil? (vis/toggle-spec "show_timestamps")))))
 
 (defdescribe
   detail-toggle-test
@@ -156,7 +156,7 @@
 (defdescribe
   resync-toggle-settings-test
   (it "busts BOTH render caches so a registry toggle (show-thinking) repaints without a restart"
-      ;; Regression: flipping a registry-only toggle (e.g. `:vis/show-thinking`)
+      ;; Regression: flipping a registry-only toggle (e.g. `"show_thinking"`)
       ;; resolved live in the registry but the painter kept handing back
       ;; cached bubble lines (`render/fmt-cache`, keyed on message identity)
       ;; and stale row counts (the `virtual` height cache, whose
@@ -391,13 +391,13 @@
       ;; off the registry. (In production `screen/run-chat!` runs
       ;; hydration AFTER `init!` and then dispatches
       ;; `:resync-toggle-settings` — see the regression test below.)
-      (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :deep}})
+      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
       (try (with-redefs
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
              (expect (= :deep (get-in @state/app-db [:settings :reasoning-level]))))
-           (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "resync repairs the projection when hydration runs AFTER init! (production order)"
       ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
       ;; registry DEFAULTS into `:settings` — and only THEN hydrates the toggles
@@ -411,34 +411,34 @@
                                     {})]
              (state/init!)                              ;; projects default :balanced
              (vis/toggles-hydrate-from-config!          ;; toggle -> persisted :quick
-               {:toggles {:vis/reasoning-level :quick}})
+               {:toggles {"reasoning_level" :quick}})
              (expect (= :balanced                       ;; stale projection, pre-resync
                         (get-in @state/app-db [:settings :reasoning-level])))
              (state/dispatch [:resync-toggle-settings]) ;; the fix
              (expect (= :quick (get-in @state/app-db [:settings :reasoning-level]))))
-           (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "hydrates Codex verbosity from the toggles registry"
-      (vis/toggles-hydrate-from-config! {:toggles {:openai-codex/verbosity :medium}})
+      (vis/toggles-hydrate-from-config! {:toggles {"openai_codex_verbosity" :medium}})
       (try (with-redefs
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
              (expect (= :medium (get-in @state/app-db [:settings :openai-codex-verbosity]))))
-           (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))
+           (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))
   (it "drops invalid persisted enum values back to registered defaults"
       ;; `hydrate-from-config!` routes through `set-value!` which
       ;; validates against `:choices`. Invalid entries are silently
       ;; skipped — the registered default stands.
-      (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :turbo
-                                                   :openai-codex/verbosity :loud}})
+      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo
+                                                   "openai_codex_verbosity" :loud}})
       (try (with-redefs
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
              (expect (= :balanced (get-in @state/app-db [:settings :reasoning-level])))
              (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity]))))
-           (finally (vis/toggle-reset-to-default! :vis/reasoning-level)
-                    (vis/toggle-reset-to-default! :openai-codex/verbosity)))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level")
+                    (vis/toggle-reset-to-default! "openai_codex_verbosity")))))
 
 (defdescribe
   settings-shortcut-test
@@ -447,7 +447,7 @@
       ;; `:settings` projection is rebuilt synchronously in the same
       ;; FX :db so notification listeners observe the new value the
       ;; moment they fire.
-      (vis/toggle-set-value! :vis/reasoning-level :deep)
+      (vis/toggle-set-value! "reasoning_level" :deep)
       (try (with-redefs
              [vis/load-config-raw
               (fn []
@@ -471,11 +471,11 @@
                                    :render-version 0})
              (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
                (expect (= :done (deref result 1000 :timeout)))
-               (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
+               (expect (= :quick (vis/toggle-value "reasoning_level")))
                (expect (= :quick (get-in @state/app-db [:settings :reasoning-level])))))
-           (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "wraps reasoning level from deep back to quick"
-      (vis/toggle-set-value! :vis/reasoning-level :deep)
+      (vis/toggle-set-value! "reasoning_level" :deep)
       (try (with-redefs
              [vis/load-config-raw
               (fn []
@@ -497,9 +497,9 @@
              (reset! state/app-db {:settings {:reasoning-level :deep :openai-codex-verbosity :low}
                                    :render-version 0})
              (state/dispatch [:cycle-reasoning-level])
-             (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
+             (expect (= :quick (vis/toggle-value "reasoning_level")))
              (expect (= :quick (get-in @state/app-db [:settings :reasoning-level]))))
-           (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
       (let [notified (atom nil)]
         (with-redefs
@@ -559,7 +559,7 @@
       ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
       ;; to its :low default so a value another test left in the shared
       ;; registry can't shift where the first step lands (order-dependent flake).
-      (vis/toggle-reset-to-default! :openai-codex/verbosity)
+      (vis/toggle-reset-to-default! "openai_codex_verbosity")
       (try (reset! state/app-db {:settings {:reasoning-level :balanced :openai-codex-verbosity :low}
                                  :render-version 0})
            (state/dispatch [:cycle-codex-verbosity])
@@ -568,7 +568,7 @@
            (expect (= :high (get-in @state/app-db [:settings :openai-codex-verbosity])))
            (state/dispatch [:cycle-codex-verbosity])
            (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity])))
-           (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))))
+           (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))))
 
 (defdescribe
   model-shortcut-test

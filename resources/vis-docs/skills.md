@@ -3,14 +3,13 @@
 Vis can discover and load the **skills** you (or other AI coding harnesses)
 leave on disk — no vis-specific format required. This is a built-in
 compatibility layer, the `foundation-harness` foundation module (ships in core,
-gated by a toggle). It is the sibling of the shell layer's POSIX compatibility, but for the
+always available). It is the sibling of the shell layer's POSIX compatibility, but for the
 skill markdown that Claude Code, pi, opencode, and the
 [agents standard](https://agentskills.io) already define.
 
 Skills are exposed through a model-facing verb, **`skill(name)`**, and a
 user-facing invocation, **`/<name> [task]`** (see
-[Context files & prompts](context-and-prompts.md)) — both gated by the
-`:vis/harness-skills` feature toggle (**ON** by default).
+[Context files & prompts](context-and-prompts.md)).
 
 ## What a skill is
 
@@ -50,19 +49,25 @@ line.
 
 Skills are **progressive**, so they cost almost nothing until used:
 
-1. While `:vis/harness-skills` is ON, the system prompt lists every skill as
-   `name — description` (descriptions clipped to ~180 chars). This is the only
-   always-present cost.
+1. The system prompt lists every skill as `name — description` (descriptions
+   clipped to ~180 chars). This is the only always-present cost.
 2. When a task matches, the model calls `skill("name")`, which loads the **full
    `SKILL.md` body** plus the absolute paths of every bundled resource.
 3. The model reads those resource paths with its normal file tools and follows
    the instructions.
 
-A skill loads **once per session**. The load is recorded on the durable session
-context (`:session/loaded-skills`), which rides the session snapshot in the
-database — so it survives resume. A second `skill("name")` call acknowledges
-"already-loaded" without re-injecting the body (a ✓ marks loaded skills in the
-prompt listing).
+The first activation returns the **full `SKILL.md` body**. While that exact body
+remains on the provider-visible tape, another `skill("name")` call returns only
+a compact `already-active` receipt. The original tool call and result are left
+byte-for-byte in their append-only position, so deduplication does not rewrite
+the cached prefix.
+
+The activation index is rebuilt from the post-fold provider wire, not inferred
+from the mere existence of a database row. If a legacy fold removed the body,
+if a new user turn no longer replays that tool result, or if the file's digest
+changed, the next call returns the full body exactly once and establishes a new
+live activation. `session_fold` excludes a currently active skill iteration
+from broad fold targets; other selected iterations still compact normally.
 
 ## Where skills come from
 
@@ -101,22 +106,17 @@ Drop a skill dir straight into your repo under `.vis/skills/<name>/SKILL.md` and
 it takes precedence over anything with the same name from a global or
 other-harness location — the natural place for skills specific to one project.
 
-## Toggle
+## Availability
 
-The feature lives in **Settings → Feature Toggles** (owned by this layer, so
-removing the jar removes the toggle):
-
-- **`:vis/harness-skills`** — discover + load skills. ON by default.
-
-When the toggle is OFF the prompt listing and the `skill(name)` verb both
-disappear, costing zero tokens.
+Skill discovery, the prompt catalog, and `skill(name)` are built in and always
+available. There is no skills feature toggle.
 
 ## Invoking a skill yourself
 
 The model picks skills from the prompt listing on its own, but you can force
 one: every skill is also a prompt template named `<name>`, so typing
 `/setup-pre-commit for husky` in any channel loads that skill's full
-`SKILL.md` (once per session) and runs your task with it. Details in
+`SKILL.md` directly into that user message and runs your task with it. Details in
 [Context files & prompts](context-and-prompts.md).
 
 ## Using skills from other harnesses

@@ -1,0 +1,40 @@
+# vis.yml — project sandbox config (snapshotted when an environment is created).
+jail:
+  filesystem:
+    # Sibling repositories available for full source/edit access.
+    allow-read-write:
+      - ../spel
+      - ../tree-sitter-language-pack
+      - ../svar
+    # Managed REPL / test-runner dependency caches. OPT-IN only: nothing writable
+    # is granted by default anymore. Each entry is either a bare path (read+write)
+    # or {path: .., access: read-only}. read-only lets a jailed JVM RESOLVE
+    # already-cached artifacts without being able to modify the cache.
+    language-caches:
+      - ~/.m2
+      # Includes ~/.clojure/deps.edn required by tools.deps startup.
+      - ~/.clojure
+      # Extracted tree-sitter native library loaded by structural tools/tests.
+      - ~/.cache/clj-tslp
+      # GraalVM installed by SDKMAN; the jailed JVM must read its runtime dylibs.
+      - path: ~/.sdkman/candidates/java/25.1.3-graal
+        access: read-only
+      # Node/Vite/Capacitor cache for the apps/vis-companion universal build, so a
+      # jailed `npm install` / `npm run build` resolves without a project-local
+      # --cache workaround.
+      - ~/.npm
+
+  # Extra local ports on which a confined shell child may accept connections.
+  # Empty / unset = no extra inbound ports (the secure default).
+  inbound-ports:
+    - 5273
+
+# Outbound egress allowlist for the sandbox. A bare host also matches its
+# subdomains, so `github.com` covers `api.github.com` and `githubusercontent.com`
+# covers `raw.githubusercontent.com`. Empty/unset allowlist = any host (minus the
+# SSRF deny-floor).
+network:
+  allowed-domains:
+    - github.com
+    - githubusercontent.com
+    - exa.ai

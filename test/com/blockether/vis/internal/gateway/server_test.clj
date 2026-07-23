@@ -9,7 +9,9 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
+            [com.blockether.vis.internal.toggles :as toggles]
             [reitit.ring :as rr]
             [ring.middleware.params :as ring-params]))
 
@@ -117,43 +119,55 @@
 
 (deftest client-count-is-constant-time-and-does-not-probe-pids
   (testing "status reads the already-reaped lease map without OS liveness work"
-    (with-server-state! {:clients {"c1" {:pid 10} "c2" {:pid 11}}
-                         :sse-clients #{"s1"}}
+    (with-server-state! {:clients {"c1" {:pid 10} "c2" {:pid 11}} :sse-clients #{"s1"}}
                         (fn []
-                          (with-redefs [discovery/pid-alive-cached?
-                                        (fn [_] (throw (ex-info "must not probe" {})))]
+                          (with-redefs
+                            [discovery/pid-alive-cached? (fn [_]
+                                                           (throw (ex-info "must not probe" {})))]
                             (is (= 3 ((rv 'client-count)))))))))
 
 (deftest compact-client-leases-removes-dead-and-duplicate-pids
   (testing "one sweep probes each pid once, keeps nil-pid leases, and preserves identity when clean"
-    (let [checks (atom [])
-          clients {"live-old" {:pid 10}
-                   "live-duplicate" {:pid 10}
-                   "dead" {:pid 20}
-                   "browser" {:pid nil}}
-          compact (rv 'compact-client-leases)]
-      (with-redefs [discovery/pid-alive-cached?
-                    (fn [pid] (swap! checks conj pid) (= 10 pid))]
+    (let
+      [checks
+       (atom [])
+
+       clients
+       {"live-old" {:pid 10} "live-duplicate" {:pid 10} "dead" {:pid 20} "browser" {:pid nil}}
+
+       compact
+       (rv 'compact-client-leases)]
+
+      (with-redefs
+        [discovery/pid-alive-cached? (fn [pid]
+                                       (swap! checks conj pid)
+                                       (= 10 pid))]
         (let [{after :clients :keys [dead duplicates]} (compact clients)]
           (is (= 1 dead))
           (is (= 1 duplicates))
           (is (= #{"browser"} (set (filter #(nil? (get-in after [% :pid])) (keys after)))))
           (is (= 2 (count after)))
           (is (= #{10 20} (set @checks))))
-        (let [clean {"live" {:pid 10} "browser" {:pid nil}}
-              {after :clients :keys [dead duplicates]} (compact clean)]
+        (let
+          [clean {"live" {:pid 10} "browser" {:pid nil}}
+           {after :clients :keys [dead duplicates]} (compact clean)]
+
           (is (identical? clean after))
           (is (zero? dead))
           (is (zero? duplicates)))))))
 
 (deftest registering-a-pid-upserts-its-single-process-lease
   (testing "re-registration replaces the old opaque id but preserves other processes and browsers"
-    (let [register (rv 'register-client-lease)
-          before {"old" {:pid 10}
-                  "other" {:pid 20}
-                  "browser" {:pid nil}}
-          {after :clients :keys [replaced]}
-          (register before "new" {:pid 10 :kind "clojure-client"})]
+    (let
+      [register
+       (rv 'register-client-lease)
+
+       before
+       {"old" {:pid 10} "other" {:pid 20} "browser" {:pid nil}}
+
+       {after :clients :keys [replaced]}
+       (register before "new" {:pid 10 :kind "clojure-client"})]
+
       (is (= 1 replaced))
       (is (= #{"new" "other" "browser"} (set (keys after))))
       (is (= 10 (get-in after ["new" :pid]))))))
@@ -184,11 +198,48 @@
   [m]
   (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str m) "UTF-8")))
 
+(deftest capabilities-advertise-gateway-voice-and-attachment-contract
+  (testing "a gateway without the optional voice extension reports it honestly"
+    (with-redefs-fn {(rv 'voice-asr-resolve) (constantly nil)}
+      (fn []
+        (let
+          [response
+           ((rv 'capabilities-handler) {})
+
+           body
+           (wire/parse-json (:body response))]
+
+          (is (= 200 (:status response)))
+          (is (= 1 (get body "version")))
+          (is (true? (get-in body ["features" "attachments" "enabled"])))
+          (is (= 8 (get-in body ["features" "attachments" "max_files"])))
+          (is (= (* 5 1024 1024) (get-in body ["features" "attachments" "max_file_bytes"])))
+          (is (false? (get-in body ["features" "voice" "enabled"])))
+          (is (= "unavailable" (get-in body ["features" "voice" "model" "status"])))))))
+  (testing "voice support includes the current model state without starting a download"
+    (with-redefs-fn {(rv 'voice-asr-resolve) (fn [fn-name]
+                                               (case fn-name
+                                                 "model-state"
+                                                 (constantly {:state :ready})
+
+                                                 "transcribe-file!"
+                                                 identity
+
+                                                 nil))}
+      (fn []
+        (let
+          [body (-> ((rv 'capabilities-handler) {})
+                    :body
+                    wire/parse-json)]
+          (is (true? (get-in body ["features" "voice" "enabled"])))
+          (is (= "audio/wav" (get-in body ["features" "voice" "transport"])))
+          (is (= "ready" (get-in body ["features" "voice" "model" "status"]))))))))
+
 (deftest theme-handler-shares-the-tui-palette-and-persistence
   (let [saved (atom nil)]
     (with-redefs
-      [config/load-config-raw (constantly {:providers [{:id :demo}]
-                                           :tui-settings {:theme-name :solarized-dark}})
+      [config/load-config-raw (constantly {"providers" [{"id" "demo"}]
+                                           "tui-settings" {"theme-name" "solarized-dark"}})
        config/save-config! #(reset! saved %)]
 
       (let
@@ -199,6 +250,16 @@
         (is (= "solarized-dark" (get current "id")))
         (is (= (get (theme/theme->web-css-vars (theme/theme "solarized-dark")) "--bg")
                (get-in current ["css_vars" "--bg"])))
+        (doseq
+          [css-var ["--dialog-title-bg" "--dialog-title-fg" "--dialog-border" "--dialog-shadow"
+                    "--dialog-hint" "--input-field-bg" "--button-bg" "--button-fg"
+                    "--user-bubble-bg" "--user-bubble-fg" "--user-role-fg" "--ai-bubble-bg"
+                    "--ai-bubble-fg" "--ai-role-fg" "--iteration-header-fg" "--iteration-header-bg"
+                    "--answer-bg" "--answer-fg" "--md-h1-fg" "--md-h2-fg" "--md-h3-fg" "--code-bg"
+                    "--code-fg" "--code-ok-bg" "--code-err-bg" "--code-success" "--code-error"
+                    "--code-syntax-keyword" "--result-bg" "--code-result" "--code-duration"
+                    "--footer-fg" "--footer-muted" "--footer-spinner"]]
+          (is (string? (get-in current ["css_vars" css-var])) css-var))
         (is (some #(= "vis-dark" (get % "id")) (get current "themes"))))
       (let
         [set-response ((rv 'set-theme-handler) {:body (body-stream {:id "vis-dark"})})
@@ -206,8 +267,8 @@
 
         (is (= 200 (:status set-response)))
         (is (= "vis-dark" (get updated "id")))
-        (is (= "vis-dark" (get-in @saved [:tui-settings :theme-name])))
-        (is (= [{:id :demo}] (:providers @saved)))))))
+        (is (= "vis-dark" (get-in @saved ["tui-settings" "theme-name"])))
+        (is (= [{"id" "demo"}] (get @saved "providers")))))))
 
 (deftest theme-handler-rejects-unknown-themes
   (let [saved? (atom false)]
@@ -219,6 +280,21 @@
       (let [response ((rv 'set-theme-handler) {:body (body-stream {:id "not-a-theme"})})]
         (is (= 404 (:status response)))
         (is (false? @saved?))))))
+
+(deftest slashes-handler-uses-the-web-palette-and-includes-native-commands
+  (let [seen (atom nil)]
+    (with-redefs
+      [slash/slash-palette (fn [channel extra]
+                             (reset! seen [channel extra])
+                             (conj (vec extra) {:name "/rename" :doc "Rename"}))]
+      (let
+        [response ((rv 'slashes-handler) {})
+         body (wire/parse-json (:body response))]
+
+        (is (= 200 (:status response)))
+        (is (= :web (first @seen)))
+        (is (some #(= "/help" (:name %)) (second @seen)))
+        (is (some #(= "/rename" (get % "name")) (get body "commands")))))))
 
 (def ^:private fake-startables
   ;; one options-based (nREPL) + one fields-based (MCP) startable
@@ -460,8 +536,14 @@
                   (is (re-find (re-pattern sid-b) s))
                   (is (re-find #"test.alpha2" s)))
                 (testing "per-session dedup keeps each session's own monotonic run"
-                  (is (= 2 (count (re-seq (re-pattern sid-a) s))))
-                  (is (= 1 (count (re-seq (re-pattern sid-b) s)))))))))))))
+                  ;; Each session rides ONE subscription.ready control frame
+                  ;; (carrying its :session_id in the JSON data) plus one frame per
+                  ;; distinct event. The sid appears only in each frame's data, so its
+                  ;; count is the reliable per-session dedup signal:
+                  ;; sid-a: ready + test.alpha + test.alpha2 = 3; sid-b: ready + test.beta = 2.
+                  (is (re-find #"subscription.ready" s))
+                  (is (= 3 (count (re-seq (re-pattern sid-a) s))))
+                  (is (= 2 (count (re-seq (re-pattern sid-b) s)))))))))))))
 
 ;; ── Resource rid rides the QUERY STRING, not a path segment (issue #14) ──
 ;; A resource id can embed an absolute path — an nREPL id is `nrepl:/Users/…/ws`.
@@ -599,3 +681,17 @@
         (is (= 200 (:status resp))))
       (testing "the handler sees the sid and the FULL slash-embedding rid, decoded"
         (is (= {:sid sid :rid nrepl-rid} @seen))))))
+
+(deftest toggle-id-wire-contract-test
+  (testing "settings rows expose the canonical string id unchanged"
+    (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
+    (is (= "server_test_toggle"
+           (:id ((rv 'toggle-json) (toggles/toggle-spec "server_test_toggle"))))))
+  (testing "the settings mutation endpoint rejects keyword-like, namespaced, and kebab ids"
+    (doseq [id [":server_test_toggle" "vis/server_test_toggle" "server-test-toggle"]]
+      (is (= 400
+             (:status ((rv 'set-setting-handler) {:query-params {"id" id "action" "toggle"}}))))))
+  (testing "a canonical but unknown string id remains a distinct 404"
+    (is (= 404
+           (:status ((rv 'set-setting-handler)
+                      {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))

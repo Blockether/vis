@@ -7,15 +7,20 @@
 // prompt a re-pair.
 
 import type {
+  GatewayAttachment,
+  GatewayCapabilities,
   GatewayConn,
   GatewayStatus,
   GatewayTheme,
   Session,
   SettingsResponse,
+  SlashCommand,
   SseEvent,
   SubmittedTurn,
   Toggle,
   TranscriptTurn,
+  VoiceModelState,
+  VoiceTranscript,
 } from './types';
 
 export class GatewayError extends Error {
@@ -102,6 +107,49 @@ export class GatewayClient {
     }
   }
 
+  capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
+    return this.request<GatewayCapabilities>('GET', '/v1/capabilities', undefined, signal);
+  }
+
+  voiceModel(sid: string, start = false, signal?: AbortSignal): Promise<VoiceModelState> {
+    return this.request<VoiceModelState>(
+      start ? 'POST' : 'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/voice/model`,
+      undefined,
+      signal,
+    );
+  }
+
+  async transcribeVoice(sid: string, wav: Blob, signal?: AbortSignal): Promise<VoiceTranscript> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'audio/wav' }),
+        body: wav,
+        signal,
+      });
+    } catch (cause) {
+      throw new GatewayError(0, `network error: ${(cause as Error).message}`);
+    }
+
+    const text = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = text ? JSON.parse(text) : undefined;
+    } catch {
+      parsed = text;
+    }
+    if (!response.ok) {
+      const message =
+        (parsed as { error?: string | { message?: string } })?.error instanceof Object
+          ? (parsed as { error: { message?: string } }).error.message
+          : (parsed as { error?: string })?.error;
+      throw new GatewayError(response.status, message || `HTTP ${response.status}`, parsed);
+    }
+    return parsed as VoiceTranscript;
+  }
+
   // ── Settings (shared feature-toggle registry, same as TUI) ──────
   settings(signal?: AbortSignal): Promise<SettingsResponse> {
     return this.request<SettingsResponse>(
@@ -127,6 +175,16 @@ export class GatewayClient {
 
   setTheme(id: string): Promise<GatewayTheme> {
     return this.request<GatewayTheme>('POST', '/v1/theme', { id });
+  }
+
+  async slashes(signal?: AbortSignal): Promise<SlashCommand[]> {
+    const response = await this.request<{ commands: SlashCommand[] }>(
+      'GET',
+      '/v1/slashes',
+      undefined,
+      signal,
+    );
+    return response.commands ?? [];
   }
 
   // ── Sessions ────────────────────────────────────────────────────
@@ -190,11 +248,20 @@ export class GatewayClient {
     return text;
   }
 
-  submitTurn(sid: string, request: string, model?: string): Promise<SubmittedTurn> {
+  submitTurn(
+    sid: string,
+    request: string,
+    options: { model?: string; displayRequest?: string; attachments?: GatewayAttachment[] } = {},
+  ): Promise<SubmittedTurn> {
     return this.request<SubmittedTurn>(
       'POST',
       `/v1/sessions/${encodeURIComponent(sid)}/turns`,
-      { request, model },
+      {
+        request,
+        display_request: options.displayRequest,
+        model: options.model,
+        attachments: options.attachments,
+      },
     );
   }
 
@@ -210,6 +277,92 @@ export class GatewayClient {
   // GET /v1/sessions/:sid/events streams `data: {json}\n\n` frames. We read the
   // response body as a stream and parse SSE frames by hand so it works in every
   // Capacitor webview (native EventSource can't attach the bearer header).
+
+  /**
+   * Multiplex many watched sessions over one SSE connection. A cursor of -1
+   * requests live-only delivery; reconnects resume each session independently.
+   */
+  streamSessionEvents(
+    cursors: Map<string, number>,
+    onEvent: (event: SseEvent) => void,
+    opts: {
+      signal?: AbortSignal;
+      onOpen?: () => void;
+      onError?: (error: unknown) => void;
+    } = {},
+  ): () => void {
+    const controller = new AbortController();
+    const signal = opts.signal
+      ? anySignal([opts.signal, controller.signal])
+      : controller.signal;
+
+    void (async () => {
+      let retryMs = 400;
+      while (!signal.aborted && cursors.size > 0) {
+        try {
+          const spec = Array.from(cursors, ([sid, cursor]) => `${sid}:${cursor}`).join(',');
+          const response = await fetch(
+            `${this.base}/v1/events?sids=${encodeURIComponent(spec)}`,
+            { headers: this.headers({ Accept: 'text/event-stream' }), signal },
+          );
+          if (!response.ok || !response.body) {
+            throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
+          }
+
+          opts.onOpen?.();
+          retryMs = 400;
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+            let boundary: number;
+            while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+              const frame = buffer.slice(0, boundary);
+              buffer = buffer.slice(boundary + 2);
+              for (const line of frame.split('\n')) {
+                const trimmed = line.trimStart();
+                if (!trimmed.startsWith('data:')) continue;
+                const json = trimmed.slice(5).trim();
+                if (!json) continue;
+                try {
+                  const event = JSON.parse(json) as SseEvent;
+                  const sid = typeof event.session_id === 'string'
+                    ? event.session_id
+                    : typeof event.sid === 'string' ? event.sid : '';
+                  if (sid && event.type === 'subscription.ready' && typeof event.cursor === 'number') {
+                    cursors.set(sid, event.cursor);
+                  } else if (sid && typeof event.seq === 'number') {
+                    cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+                  }
+                  onEvent(event);
+                } catch {
+                  // Ignore one malformed frame without ending sibling sessions.
+                }
+              }
+            }
+          }
+          if (!signal.aborted) throw new GatewayError(0, 'event stream closed');
+        } catch (error) {
+          if (signal.aborted) return;
+          opts.onError?.(error);
+          if (
+            error instanceof GatewayError
+            && error.status >= 400
+            && error.status < 500
+          ) return;
+          await abortableDelay(retryMs, signal);
+          retryMs = Math.min(retryMs * 2, 5_000);
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }
+
   streamEvents(
     sid: string,
     onEvent: (event: SseEvent) => void,

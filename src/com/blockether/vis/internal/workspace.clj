@@ -94,18 +94,26 @@
         {:trunk t :clone (or c t) :fork-ms (:fork-ms e) :backend (backend-id (:backend e))}))))
 
 (defn env-filesystem-roots
-  "Canonical `[{:trunk :clone}]` pairs for the current tool call's extra
-   filesystem roots, beyond the primary. Reads `:workspace/filesystem-roots` from an
-   env map (or a raw coll). `:trunk` is the real dir the model addresses;
-   `:clone` is the backend working copy edits land in (== trunk when live).
-   The channel layer binds `*filesystem-roots*` from this per turn; the editing
-   layer confines to the clones and transparently remaps trunk↔clone."
+  "Canonical `[{:trunk :clone}]` pairs available to the current tool call.
+   Includes the workspace's live extra roots plus immutable read/write roots from
+   the environment security snapshot. Configured roots map to themselves (no
+   draft clone); the process jail and GraalPy consume the same resolved paths."
   [env-or-roots]
-  (let [roots (if (map? env-or-roots) (:workspace/filesystem-roots env-or-roots) env-or-roots)]
-    (vec (keep (fn [e]
-                 (when-let [{:keys [trunk clone]} (root-entry e)]
-                   {:trunk trunk :clone clone}))
-               roots))))
+  (let
+    [workspace-roots
+     (if (map? env-or-roots) (:workspace/filesystem-roots env-or-roots) env-or-roots)
+
+     configured-roots
+     (when (map? env-or-roots) (:security/filesystem-roots env-or-roots))]
+
+    (vec (distinct (concat (keep (fn [e]
+                                   (when-let [{:keys [trunk clone]} (root-entry e)]
+                                     {:trunk trunk :clone clone}))
+                                 workspace-roots)
+                           (keep (fn [path]
+                                   (when-let [root (normalize-root path)]
+                                     {:trunk root :clone root}))
+                                 configured-roots))))))
 
 (defn cwd
   "Resolve the current workspace cwd. In production the channel

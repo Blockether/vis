@@ -5,6 +5,8 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(toggles/register-toggle!
+  {:id "main_test_flag" :label "CLI toggle test flag" :default false :settings? false})
 
 (defdescribe
   root-help-test
@@ -59,11 +61,10 @@
 
 (defdescribe parse-run-args-test
              (it "parses --toggles as a run-scoped override list"
-                 (expect (= {:toggles "vis/mouse-selection-copy=true,vis/reasoning-level=deep"
-                             :prompt "run tests"}
-                            (#'main/parse-run-args
-                             ["--toggles" "vis/mouse-selection-copy=true,vis/reasoning-level=deep"
-                              "run" "tests"]))))
+                 (expect
+                   (= {:toggles "main_test_flag=true,reasoning_level=deep" :prompt "run tests"}
+                      (#'main/parse-run-args
+                       ["--toggles" "main_test_flag=true,reasoning_level=deep" "run" "tests"]))))
              (it "parses --session-id as persistent continuation"
                  (expect (= {:session-id "abc123"
                              :persist? true
@@ -106,36 +107,36 @@
 
 (defdescribe toggle-overrides-test
              (it "parses NAME=VALUE pairs against the registry"
-                 (expect (= {:vis/mouse-selection-copy true :vis/reasoning-level :deep}
+                 (expect (= {"main_test_flag" true "reasoning_level" :deep}
                             (#'main/parse-toggle-overrides
-                             "vis/mouse-selection-copy=true,vis/reasoning-level=deep"))))
+                             "main_test_flag=true,reasoning_level=deep"))))
              (it "rejects unknown toggles as user error"
-                 (try (#'main/parse-toggle-overrides "nope/missing=true")
+                 (try (#'main/parse-toggle-overrides "nope-missing=true")
                       (expect false)
                       (catch clojure.lang.ExceptionInfo e
                         (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
                         (expect (true? (:vis/user-error (ex-data e)))))))
              (it "rejects enum values outside the registered choices"
-                 (try (#'main/parse-toggle-overrides "vis/reasoning-level=bogus")
+                 (try (#'main/parse-toggle-overrides "reasoning_level=bogus")
                       (expect false)
                       (catch clojure.lang.ExceptionInfo e
                         (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
              (it "rejects non-boolean values on boolean toggles"
-                 (try (#'main/parse-toggle-overrides "vis/mouse-selection-copy=maybe")
+                 (try (#'main/parse-toggle-overrides "main_test_flag=maybe")
                       (expect false)
                       (catch clojure.lang.ExceptionInfo e
                         (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
              (it "applies overrides only while the one-shot body runs"
-                 (toggles/set-enabled! :vis/mouse-selection-copy false)
+                 (toggles/set-enabled! "main_test_flag" false)
                  (try (expect (= [true :deep]
                                  (#'main/call-with-toggle-overrides
-                                  {:vis/mouse-selection-copy true :vis/reasoning-level :deep}
-                                  #(vector (toggles/enabled? :vis/mouse-selection-copy)
-                                           (toggles/value-of :vis/reasoning-level)))))
-                      (expect (false? (toggles/enabled? :vis/mouse-selection-copy)))
-                      (expect (= :balanced (toggles/value-of :vis/reasoning-level)))
-                      (finally (toggles/reset-to-default! :vis/mouse-selection-copy)
-                               (toggles/reset-to-default! :vis/reasoning-level)))))
+                                  {"main_test_flag" true "reasoning_level" :deep}
+                                  #(vector (toggles/enabled? "main_test_flag")
+                                           (toggles/value-of "reasoning_level")))))
+                      (expect (false? (toggles/enabled? "main_test_flag")))
+                      (expect (= :balanced (toggles/value-of "reasoning_level")))
+                      (finally (toggles/reset-to-default! "main_test_flag")
+                               (toggles/reset-to-default! "reasoning_level")))))
 
 (defdescribe
   root-run-shortcut-test
@@ -181,27 +182,20 @@
                         (expect (true? (:vis/user-error (ex-data e))))))))
 
 (defdescribe
-  toggle-bare-names-test
-  (it "resolves bare names when unambiguous across the registry"
-      (expect (= {:vis/mouse-selection-copy true :vis/reasoning-level :deep}
-                 (#'main/parse-toggle-overrides "mouse-selection-copy=true,reasoning-level=deep"))))
-  (it "still accepts the fully namespaced form"
-      (expect (= {:vis/mouse-selection-copy false}
-                 (#'main/parse-toggle-overrides "vis/mouse-selection-copy=false"))))
-  (it "rejects unknown bare names as user error"
-      (try (#'main/parse-toggle-overrides "definitely-not-a-toggle=true")
+  toggle-name-parsing-test
+  (it "accepts exact snake_case ids"
+      (expect (= {"main_test_flag" true "reasoning_level" :deep}
+                 (#'main/parse-toggle-overrides "main_test_flag=true,reasoning_level=deep"))))
+  (it "rejects leading-colon, kebab-case, and namespaced aliases"
+      (doseq [input [":main_test_flag=true" "main-test-flag=true" "vis/reasoning_level=deep"]]
+        (try (#'main/parse-toggle-overrides input)
+             (expect false)
+             (catch clojure.lang.ExceptionInfo e
+               (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
+               (expect (true? (:vis/user-error (ex-data e))))))))
+  (it "rejects an unknown snake_case name as user error"
+      (try (#'main/parse-toggle-overrides "definitely_not_a_toggle=true")
            (expect false)
            (catch clojure.lang.ExceptionInfo e
              (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
-             (expect (true? (:vis/user-error (ex-data e)))))))
-  (it "rejects ambiguous bare names listing every candidate"
-      (toggles/register-toggle!
-        {:id :main-test/mouse-selection-copy :label "Collision probe" :default false})
-      (try (#'main/parse-toggle-overrides "mouse-selection-copy=true")
-           (expect false)
-           (catch clojure.lang.ExceptionInfo e
-             (expect (= :vis.cli/ambiguous-toggle (:type (ex-data e))))
-             (expect (true? (:vis/user-error (ex-data e))))
-             (expect (= #{:vis/mouse-selection-copy :main-test/mouse-selection-copy}
-                        (set (:candidates (ex-data e))))))
-           (finally (swap! @#'toggles/registry dissoc :main-test/mouse-selection-copy)))))
+             (expect (true? (:vis/user-error (ex-data e))))))))

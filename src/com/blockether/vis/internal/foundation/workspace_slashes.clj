@@ -15,12 +15,13 @@
      /draft-blank <label>  like /draft new, but the draft starts EMPTY —
                            no files from the current HEAD are carried in
 
-   Filesystem permissions (`/fs`, `/root`) — session-scoped, every channel:
+   Filesystem (`/cd`, `/fs`) — session-scoped, every channel. What the jail
+   ALLOWS is derived from config (`jail.filesystem` in vis.yml, global or project);
+   these commands move / widen the session's LIVE roots:
 
-     /root [path]          show / CHANGE the session's filesystem root
+     /cd [path]            show / CHANGE the session's filesystem root
      /fs                   list the session's filesystem permissions
-     /fs root <path>       same as /root <path>
-     /fs add <path>        also let the session operate under <path>
+     /fs add <path>        also let the session operate under <path> (temporary)
      /fs remove <path>     drop an added directory
      /fs create <path>     mkdir + add it
 
@@ -50,7 +51,7 @@
 (defn- sync-confinement!
   "Push the freshly-mutated workspace `ws` into the live sandbox confinement
    pointer (`:workspace-atom`, deref'd by the gateway's `sandbox-roots-fn` on
-   every real-fs access) so a `/fs`/`/root` change takes effect THIS turn — not
+   every real-fs access) so a `/fs`/`/cd` change takes effect THIS turn — not
    only from the next `run-turn!` workspace re-resolve. No-op when the ctx has no
    atom (other channels build their own ctx). Returns `ws` for threading."
   [ctx ws]
@@ -354,7 +355,7 @@
 
 (defn- expand-home
   "Expand a leading `~` in a typed path to the user's home dir, so
-   `/root ~/code/proj` works the way a shell user expects. Everything else
+   `/cd ~/code/proj` works the way a shell user expects. Everything else
    passes through untouched."
   [path]
   (let [p (str path)]
@@ -379,7 +380,7 @@
   (handle-fs-list ctx))
 
 (defn- handle-fs-root
-  "`/fs root <path>` (also top-level `/root <path>`) — change the session's
+  "`/cd <path>` — change the session's
    PRIMARY filesystem root. The session then works in <path>: shell cwd,
    relative paths, file tools, and search all follow. Additional filesystem
    roots carry over. Bare (no path) shows the current root."
@@ -401,9 +402,9 @@
           {:slash/status :ok
            :slash/title (str "Root: " (or (:root current) "(none)"))
            :slash/body
-           "/root <path> to work in a different directory. Additional filesystem roots carry over."
+           "/cd <path> to work in a different directory. Additional filesystem roots carry over."
            :slash/data {:root (:root current)}}
-          (nil? state-id) (err "Send a message first, then /root <path> (session not ready yet)")
+          (nil? state-id) (err "Send a message first, then /cd <path> (session not ready yet)")
           :else (try
                   (let
                     [ws
@@ -542,8 +543,8 @@
                    :slash/data {:filesystem-roots roots}}))))
 
 (defn- handle-fs-list
-  "`/fs list` (also bare `/fs`) - show the session's filesystem permissions.
-   The ROOT (changeable via /root <path>) is always #1 — vis reads/edits
+  "Bare `/fs` — show the session's filesystem permissions.
+   The ROOT (changeable via /cd <path>) is always #1 — vis reads/edits
    there by default; added roots are extra grants. Enumerated so the listing
    matches the web rail's `Filesystem` section (root first)."
   [ctx]
@@ -570,13 +571,13 @@
        "):\n"
        (str/join "\n"
                  (remove nil?
-                   (cons (when base (str "  " base "   (root — /root <path> to change)"))
+                   (cons (when base (str "  " base "   (root — /cd <path> to change)"))
                          (map #(str "  "
                                     (:trunk %)
                                     (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
                                       " (isolated draft copy — lands on /draft apply)"))
                               roots))))
-       "\n\n/fs add <path> to widen, /fs remove <path> to drop one, /root <path> to change the root.")
+       "\n\n/fs add <path> to widen, /fs remove <path> to drop one, /cd <path> to change the root.")
      :slash/data {:filesystem-roots roots :root base}}))
 ;; =============================================================================
 ;; Specs vec
@@ -635,29 +636,21 @@
       :slash/prompt-arg "Draft label (e.g. feature-x)"
       :slash/requires #{:session}
       :slash/run-fn handle-new-blank}]
-    ;; Filesystem permissions — available on EVERY channel: rich channels keep
-    ;; their pickers (TUI directory dialog, web rail), but /root and /fs work
-    ;; typed anywhere, which is how a web session moves to a different project.
-    [{:slash/name "root"
+    ;; Filesystem — session-scoped, every channel. What the jail ALLOWS is
+    ;; derived from config (`jail.filesystem`); these commands change/widen the
+    ;; session's LIVE roots. Standalone /cd plus the /fs subcommand tree.
+    [{:slash/name "cd"
       :slash/doc "Show or change the session's filesystem root (the directory vis works in)."
-      :slash/usage "/root [path]"
+      :slash/usage "/cd [path]"
       :slash/run-fn handle-fs-root}
      {:slash/name "fs"
       :slash/doc "Filesystem permissions — the directories this session may read and edit."
       :slash/usage "/fs"
-      ;; Rich channels realize bare `/fs` as their directory picker UI
-      ;; (the TUI's Ctrl+G dialog); text channels run the list handler.
-      :slash/ui {:kind :dir-picker}
       :slash/run-fn handle-fs}
-     {:slash/name "root"
-      :slash/parent ["fs"]
-      :slash/doc "Change the session's filesystem root to <path>."
-      :slash/usage "/fs root <path>"
-      :slash/requires #{:session}
-      :slash/run-fn handle-fs-root}
      {:slash/name "add"
       :slash/parent ["fs"]
-      :slash/doc "Let the session also operate on files under <path>."
+      :slash/doc
+      "Let the session also operate on files under <path> (temporary — this session only)."
       :slash/usage "/fs add <path>"
       :slash/requires #{:session}
       :slash/run-fn handle-fs-add}
@@ -672,12 +665,7 @@
       :slash/doc "Stop letting the session operate under <path>."
       :slash/usage "/fs remove <path>"
       :slash/requires #{:session}
-      :slash/run-fn handle-fs-remove}
-     {:slash/name "list"
-      :slash/parent ["fs"]
-      :slash/doc "Show the session's filesystem permissions."
-      :slash/usage "/fs list"
-      :slash/run-fn handle-fs-list}]))
+      :slash/run-fn handle-fs-remove}]))
 
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."

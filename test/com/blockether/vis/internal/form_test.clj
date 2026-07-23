@@ -132,6 +132,14 @@
       ;; An errored tool form keeps its code so the inline error has context.
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false}))))
+  (it "removes redundant mutation verbs from new and persisted tool summaries"
+      (doseq
+        [[tool summary expected] [["patch" "update `a.clj` · add `b.clj`" "`a.clj`, `b.clj`"]
+                                  ["struct_patch" "update `src/app.clj`" "`src/app.clj`"]
+                                  ["write" "(no change) `README.md`" "`README.md`"]
+                                  ["cat" "update `literal.txt`" "update `literal.txt`"]]]
+        (expect (= expected
+                   (:summary (form/result-card {:vis/tool-name tool :result-summary summary}))))))
   (it "->display drops nils so a merge never stamps empty keys"
       (expect (= {} (form/->display {:result nil :vis/tool-name nil})))
       (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil}))))

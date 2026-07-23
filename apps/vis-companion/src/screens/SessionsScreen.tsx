@@ -1,90 +1,597 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { GatewayClient } from '../lib/gateway';
-import type { Session } from '../lib/types';
-import { Banner, Button, Card, Input } from '../components/ui';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Banner, Button, DialogFrame, Input } from '../components/ui';
+import { GatewayClient } from '../lib/gateway';
+import { SessionSubscriptionHub } from '../lib/subscriptions';
+import type { GatewayConn, Session } from '../lib/types';
+import { homeifyPath } from '../lib/path';
 
-export function SessionsScreen({
-  client,
-  onOpen,
-}: {
-  client: GatewayClient;
-  onOpen: (sid: string) => void;
-}) {
+const SESSION_LIST_EVENTS = new Set([
+  'turn.started',
+  'turn.completed',
+  'turn.failed',
+  'turn.cancelled',
+  'session.title_updated',
+]);
+
+
+interface Props {
+  active: GatewayConn | null;
+  client: GatewayClient | null;
+  subscriptions: SessionSubscriptionHub | null;
+  subscribedIds: ReadonlySet<string>;
+  onOpen: (conn: GatewayConn, sid: string) => void | Promise<void>;
+}
+
+export function SessionsScreen({ active, client, subscriptions, subscribedIds, onOpen }: Props) {
   const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [showEmpty, setShowEmpty] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createTitle, setCreateTitle] = useState('');
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const pollInFlight = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const refreshAnchorRef = useRef<{ id: string; top: number } | null>(null);
+  const activeRef = useRef(active);
+  const clientRef = useRef(client);
+  activeRef.current = active;
+  clientRef.current = client;
+  const activeKey = active ? `${active.url}\u0000${active.token ?? ''}` : '';
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      setSessions(await client.listSessions());
-    } catch (e) {
-      setErr((e as Error).message);
-      setSessions([]);
-    }
-  }, [client]);
+  const load = useCallback(
+    async (signal?: AbortSignal, background = false) => {
+      const connection = activeRef.current;
+      if (!connection) {
+        setSessions([]);
+        setLoadError(null);
+        return;
+      }
+      if (background && pollInFlight.current) return;
+      if (background) pollInFlight.current = true;
+      try {
+        const next = await (clientRef.current ?? new GatewayClient(connection)).listSessions(signal);
+        if (!signal?.aborted) {
+          if (background) refreshAnchorRef.current = visibleListAnchor(listRef.current);
+          setSessions((current) => reconcileSessions(current, next));
+          setLoadError(null);
+        }
+      } catch (cause) {
+        if (!signal?.aborted && !background) {
+          setLoadError((cause as Error).message);
+        }
+      } finally {
+        if (background) pollInFlight.current = false;
+      }
+    },
+    [activeKey],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const controller = new AbortController();
+    const refreshLiveStates = () => {
+      if (document.visibilityState === 'visible') void load(controller.signal, true);
+    };
 
-  async function create() {
-    setBusy(true);
+    setLoadError(null);
+    if (sessions === null || !active) void load(controller.signal);
+    else void load(controller.signal, true);
+    const timer = window.setInterval(refreshLiveStates, 5_500);
+    document.addEventListener('visibilitychange', refreshLiveStates);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshLiveStates);
+    };
+    // A connection identity change should preserve the existing frame until its data arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey, load]);
+
+  useEffect(() => {
+    if (!subscriptions) return;
+    let refreshTimer: number | null = null;
+    const unsubscribe = subscriptions.subscribeFleet((event) => {
+      if (!SESSION_LIST_EVENTS.has(event.type)) return;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      // Coalesce lifecycle bursts, then ask the gateway for its canonical order.
+      refreshTimer = window.setTimeout(() => void load(undefined, true), 120);
+    });
+    return () => {
+      unsubscribe();
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    };
+  }, [load, subscriptions]);
+
+  useLayoutEffect(() => {
+    const anchor = refreshAnchorRef.current;
+    const viewport = listRef.current;
+    refreshAnchorRef.current = null;
+    if (!anchor || !viewport || viewport.scrollTop <= 2) return;
+    const row = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-id]'))
+      .find((element) => element.dataset.sessionId === anchor.id);
+    if (row) viewport.scrollTop += row.getBoundingClientRect().top - anchor.top;
+  }, [sessions]);
+
+
+  const visible = useMemo(() => {
+    if (!sessions) return null;
+    const needle = query.trim().toLowerCase();
+    return sessions.filter((session) => {
+      if (!showEmpty && emptyUntitled(session)) return false;
+      return !needle || sessionSearchText(session).includes(needle);
+    });
+  }, [query, sessions, showEmpty]);
+
+  const totals = useMemo(() => {
+    const all = sessions?.length ?? 0;
+    const shown = visible?.length ?? 0;
+    const hiddenEmpty = sessions?.filter(emptyUntitled).length ?? 0;
+    const projects = new Set(sessions?.map(projectLabel) ?? []).size;
+    const live = sessions?.filter(sessionIsLive).length ?? 0;
+    return { all, shown, hiddenEmpty, projects, live };
+  }, [sessions, visible]);
+
+  async function createSession() {
+    if (!active) return;
+    setCreateBusy(true);
+    setCreateError(null);
     try {
-      const s = await client.createSession({ title: title.trim() || undefined });
-      setTitle('');
+      const session = await (client ?? new GatewayClient(active)).createSession({
+        title: createTitle.trim() || undefined,
+      });
+      setCreateTitle('');
+      setCreating(false);
       await load();
-      if (s.id) onOpen(s.id);
-    } catch (e) {
-      setErr((e as Error).message);
+      if (session.id) await onOpen(active, session.id);
+    } catch (cause) {
+      setCreateError((cause as Error).message);
     } finally {
-      setBusy(false);
+      setCreateBusy(false);
     }
   }
 
+  const groups = groupByProject(visible ?? []);
+
   return (
-    <div className="space-y-4 p-4">
-      <Card className="space-y-3">
-        <Input
-          placeholder="New session title (optional)"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <Button onClick={create} disabled={busy}>
-          New session
-        </Button>
-      </Card>
+    <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel shadow-none sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)]">
+        <header className="relative flex min-h-11 items-center justify-center bg-dialog-title px-4 py-2 text-dialog-title-foreground sm:min-h-10">
+          <h1 className="truncate font-mono text-[11px] font-black uppercase tracking-[0.1em]">Session navigator</h1>
+        </header>
 
-      {err && <Banner kind="err">{err}</Banner>}
+        <div className="border-t border-dialog-edge bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-mono text-xs font-bold text-white">Projects</p>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1 font-mono text-[10px] text-dialog-hint">
+                {sessions === null ? (
+                  'Reading sessions...'
+                ) : (
+                  <>
+                    <span>{totals.projects} projects&nbsp; | &nbsp;{totals.all} sessions&nbsp; |</span>
+                    <span className={totals.live > 0 ? 'font-bold text-ok' : ''}>
+                      {totals.live > 0 ? '●' : '○'} {totals.live} live
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="grid shrink-0 grid-cols-2 gap-1.5">
+              <Button
+                variant="ghost"
+                className="px-2.5 py-1 font-mono text-[10px]"
+                onClick={() => void load()}
+              >
+                Refresh
+              </Button>
+              <Button className="px-2.5 py-1 font-mono text-[10px]" onClick={() => setCreating(true)}>
+                New
+                <span className="hidden min-[390px]:inline"> session</span>
+              </Button>
+            </div>
+          </div>
+        </div>
 
-      {sessions === null ? (
-        <p className="p-2 text-sm text-white/40">loading…</p>
-      ) : sessions.length === 0 ? (
-        <p className="p-2 text-sm text-white/40">No sessions yet — create one above.</p>
-      ) : (
-        <div className="space-y-2">
-          {sessions.map((s) => (
-            <button key={s.id} className="w-full text-left" onClick={() => onOpen(s.id)}>
-              <Card className="hover:border-accent/50">
-                <div className="truncate text-sm text-white/90">
-                  {s.title || <span className="text-white/40">untitled</span>}
-                </div>
-                <div className="mt-1 flex items-center gap-2 font-mono text-xs text-white/35">
-                  <span className="truncate">{s.id}</span>
-                  {s.channel && <span className="text-white/25">· {s.channel}</span>}
-                </div>
-              </Card>
-            </button>
-          ))}
+        <div className="flex min-h-12 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-11 sm:px-4">
+          <span className="shrink-0 font-mono text-xs text-accent">›</span>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="min-w-0 flex-1 bg-transparent px-2 py-3 font-mono text-base text-white outline-none placeholder:text-dialog-hint sm:text-xs"
+            placeholder="Filter title, project, or session"
+            aria-label="Filter sessions"
+          />
+          <button
+            type="button"
+            className={`ml-1 min-h-10 shrink-0 border-l border-dialog-edge px-2 font-mono text-[9px] transition-colors sm:ml-3 sm:px-3 sm:text-[10px] ${
+              showEmpty ? 'bg-accent text-accent-foreground' : 'text-dialog-hint hover:text-white'
+            }`}
+            onClick={() => setShowEmpty((value) => !value)}
+          >
+            empty:{showEmpty ? 'on' : 'off'} ({totals.hiddenEmpty})
+          </button>
+        </div>
+
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
+        {sessions === null ? (
+          <NavigatorSkeleton />
+        ) : loadError ? (
+          <div className="flex items-center justify-between gap-4 px-4 py-8">
+            <div className="min-w-0">
+              <p className="font-mono text-xs font-bold text-err">Sessions unavailable</p>
+              <p className="mt-1 truncate font-mono text-[10px] text-dialog-hint" title={loadError}>
+                {loadError}
+              </p>
+            </div>
+            <Button variant="ghost" className="shrink-0 px-3 py-1.5 text-xs" onClick={() => void load()}>
+              Retry
+            </Button>
+          </div>
+        ) : visible?.length === 0 ? (
+          <div className="px-5 py-16 text-center">
+            <p className="font-mono text-xs font-bold text-white/70">
+              {query ? 'No matching sessions' : 'No sessions yet'}
+            </p>
+            <p className="mt-2 font-mono text-[11px] text-dialog-hint">
+              {query ? 'Clear the filter or reveal empty sessions.' : 'Use New session to get started.'}
+            </p>
+          </div>
+        ) : (
+          <div className="border-t border-dialog-edge">
+            <div className="hidden grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] bg-ink/45 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-dialog-hint md:grid">
+              <div className="border-r border-dialog-edge px-3 py-2">Title</div>
+              <div className="border-r border-dialog-edge px-3 py-2">Session</div>
+              <div className="border-r border-dialog-edge px-3 py-2">Status</div>
+              <div className="px-3 py-2 text-right">Modified</div>
+            </div>
+            {groups.map(([project, projectSessions]) => (
+              <ProjectGroup
+                key={project}
+                project={project}
+                sessions={projectSessions}
+                conn={active!}
+                subscribedIds={subscribedIds}
+                onOpen={onOpen}
+              />
+            ))}
+          </div>
+        )}
+        </div>
+
+        <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-[10px] text-dialog-hint sm:flex sm:px-4">
+          <span>{sessions ? `${totals.shown} of ${totals.all} sessions` : 'Reading sessions...'}</span>
+        </footer>
+      </div>
+
+      {creating && (
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:grid sm:place-items-center sm:p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCreating(false);
+          }}
+        >
+          <DialogFrame
+            title="New session"
+            onClose={() => {
+              setCreating(false);
+              setCreateError(null);
+            }}
+            className="w-full max-w-2xl"
+          >
+            <form
+              className="space-y-4 p-4 sm:p-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createSession();
+              }}
+            >
+              <label className="block space-y-1.5">
+                <span className="font-mono text-[11px] font-bold text-white/75">Title</span>
+                <Input
+                  autoFocus
+                  value={createTitle}
+                  onChange={(event) => setCreateTitle(event.target.value)}
+                  placeholder="Optional session title"
+                  aria-label="New session title"
+                />
+              </label>
+              {createError && <Banner kind="err">{createError}</Banner>}
+              <div className="flex justify-end gap-2 border-t border-dialog-edge pt-4">
+                <Button type="button" variant="ghost" onClick={() => setCreating(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createBusy || !active}>
+                  {createBusy ? 'Creating...' : 'Create session'}
+                </Button>
+              </div>
+            </form>
+          </DialogFrame>
         </div>
       )}
+    </section>
+  );
+}
 
-      <div className="pt-1">
-        <Button variant="ghost" onClick={load} className="w-full">
-          Refresh
-        </Button>
+
+function ProjectGroup({
+  project,
+  sessions,
+  conn,
+  subscribedIds,
+  onOpen,
+}: {
+  project: string;
+  sessions: Session[];
+  conn: GatewayConn;
+  subscribedIds: ReadonlySet<string>;
+  onOpen: Props['onOpen'];
+}) {
+  const root = projectRoot(sessions);
+  const liveCount = sessions.filter(sessionIsLive).length;
+
+  return (
+    <section className="border-t border-dialog-edge first:border-t-0">
+      <header className="grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+        <div className="hidden min-w-20 place-items-center bg-dialog-title px-3 font-mono text-[9px] font-black tracking-[0.14em] text-dialog-title-foreground sm:grid">
+          PROJECT
+        </div>
+        <div className="min-w-0 border-l-2 border-accent px-3 py-2 sm:border-l-0 sm:border-r sm:border-dialog-edge">
+          <h2 className="truncate font-mono text-[13px] font-bold leading-tight text-white">{project}</h2>
+          <p className="mt-1 truncate font-mono text-[10px] text-dialog-hint" title={root}>
+            {root || 'No workspace path'}
+          </p>
+        </div>
+        <div className="grid min-w-[4.5rem] place-items-center border-l border-dialog-edge px-2 text-center font-mono sm:min-w-20 sm:border-l-0 sm:px-3">
+          <span>
+            <strong className="text-xs text-white">{sessions.length}</strong>
+            <span className="ml-1 text-[9px] text-dialog-hint sm:block sm:ml-0">
+              {sessions.length === 1 ? 'session' : 'sessions'}
+            </span>
+          </span>
+          {liveCount > 0 && (
+            <span className="-mt-2 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ok sm:mt-0">
+              <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
+              {liveCount} live
+            </span>
+          )}
+        </div>
+      </header>
+      <div className="border-t border-dialog-edge">
+        {sessions.map((session) => (
+          <SessionRow
+            key={session.id}
+            session={session}
+            conn={conn}
+            subscribed={subscribedIds.has(session.id)}
+            onOpen={onOpen}
+          />
+        ))}
       </div>
+    </section>
+  );
+}
+
+function SessionRow({
+  session,
+  conn,
+  subscribed,
+  onOpen,
+}: {
+  session: Session;
+  conn: GatewayConn;
+  subscribed: boolean;
+  onOpen: Props['onOpen'];
+}) {
+  const status = statusLabel(session);
+  const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
+  const title = session.title?.trim() || 'Untitled session';
+  const live = sessionIsLive(session);
+
+  return (
+    <button
+      type="button"
+      className="group grid min-h-14 w-full text-left transition-[background-color,transform] duration-150 active:translate-x-0.5 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none md:min-h-11 md:grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] md:active:translate-x-0 [&+&]:border-t [&+&]:border-dialog-edge"
+      data-session-id={session.id}
+      onClick={() => void onOpen(conn, session.id)}
+    >
+      <span className="relative min-w-0 px-3 py-2.5 sm:px-4 md:border-r md:border-dialog-edge md:py-3">
+        <span className="absolute inset-y-2 left-0 w-0.5 bg-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+        <span
+          className={`block truncate font-mono text-xs font-semibold ${
+            session.title?.trim() ? 'text-white' : 'text-white/45'
+          }`}
+        >
+          {title}
+        </span>
+        <span className="mt-1 flex items-center gap-x-2 overflow-hidden font-mono text-[9px] text-dialog-hint md:hidden">
+          <span className="shrink-0">{shortId(session.id)}</span>
+          {subscribed && (
+            <span className="inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] text-accent">
+              <span className="size-1 bg-accent" /> SUB
+            </span>
+          )}
+          <span className={`inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] ${statusTone(session)}`}>
+            <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
+            {status}
+          </span>
+          <span className="truncate">{relativeTime(timestamp)}</span>
+          <span className="ml-auto text-accent opacity-60" aria-hidden="true">›</span>
+        </span>
+      </span>
+      <span className="hidden items-center border-r border-dialog-edge px-3 font-mono text-[10px] text-white/55 md:flex">
+        {shortId(session.id)}
+      </span>
+      <span
+        className={`hidden items-center gap-2 border-r border-dialog-edge px-3 font-mono text-[10px] font-bold tracking-[0.08em] md:flex ${statusTone(session)}`}
+        title={`${Number(session.turn_count ?? 0)} turns`}
+      >
+        <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
+        {status}
+      </span>
+      <span
+        className="hidden items-center justify-end px-3 font-mono text-[10px] text-dialog-hint md:flex"
+        title={formatExact(timestamp)}
+      >
+        {relativeTime(timestamp)}
+      </span>
+    </button>
+  );
+}
+
+function NavigatorSkeleton() {
+  return (
+    <div className="animate-pulse motion-reduce:animate-none" aria-label="Loading sessions">
+      {[0, 1].map((index) => (
+        <div key={index} className="border-t border-dialog-edge first:border-t-0">
+          <div className="h-14 bg-panel-2" />
+          <div className="h-11 border-t border-dialog-edge" />
+          <div className="h-11 border-t border-dialog-edge" />
+        </div>
+      ))}
     </div>
   );
+}
+
+function visibleListAnchor(viewport: HTMLDivElement | null): { id: string; top: number } | null {
+  if (!viewport || viewport.scrollTop <= 2) return null;
+  const viewportTop = viewport.getBoundingClientRect().top;
+  const row = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-id]'))
+    .find((element) => element.getBoundingClientRect().bottom > viewportTop);
+  return row?.dataset.sessionId ? { id: row.dataset.sessionId, top: row.getBoundingClientRect().top } : null;
+}
+
+function sessionViewFingerprint(session: Session): string {
+  return JSON.stringify([
+    session.id,
+    session.title,
+    session.status,
+    session.live,
+    session.current_turn_id,
+    session.turn_count,
+    session.modified_at,
+    session.last_active_at,
+    session.created_at,
+    session.project_id,
+    session.project_name,
+    session.project_position,
+    session.workspace?.root,
+    session.workspace?.repo_root,
+    session.workspace?.label,
+  ]);
+}
+
+function reconcileSessions(current: Session[] | null, incoming: Session[]): Session[] {
+  if (!current) return incoming;
+  const previousById = new Map(current.map((session) => [session.id, session]));
+  const next = incoming.map((session) => {
+    const previous = previousById.get(session.id);
+    return previous && sessionViewFingerprint(previous) === sessionViewFingerprint(session)
+      ? previous
+      : session;
+  });
+  return current.length === next.length && current.every((session, index) => session === next[index])
+    ? current
+    : next;
+}
+
+function shortId(id: string): string {
+  return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
+}
+
+function projectLabel(session: Session): string {
+  const named = session.project_name?.trim() || session.workspace?.label?.trim();
+  if (named) return homeifyPath(named);
+  const root = session.workspace?.root?.replace(/\/+$/, '');
+  if (root) return root.split('/').pop() || homeifyPath(root);
+  return 'No project';
+}
+
+function projectRoot(sessions: Session[]): string {
+  const workspace = sessions.find(
+    (session) => session.workspace?.root || session.workspace?.repo_root,
+  )?.workspace;
+  return homeifyPath(workspace?.root || workspace?.repo_root);
+}
+
+function sessionIsLive(session: Session): boolean {
+  return session.live ?? session.status === 'running';
+}
+
+function statusLabel(session: Session): string {
+  if (sessionIsLive(session)) return 'LIVE';
+  if (session.status === 'suspended') return 'WAITING';
+  return 'IDLE';
+}
+
+function statusTone(session: Session): string {
+  if (sessionIsLive(session)) return 'text-ok';
+  if (session.status === 'suspended') return 'text-warn';
+  return 'text-dialog-hint';
+}
+
+function statusDot(session: Session): string {
+  if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
+  if (session.status === 'suspended') return 'bg-warn';
+  return 'border border-dialog-hint';
+}
+
+function emptyUntitled(session: Session): boolean {
+  return (
+    !session.title?.trim() &&
+    Number(session.turn_count ?? 0) === 0 &&
+    !sessionIsLive(session)
+  );
+}
+
+function sessionSearchText(session: Session): string {
+  return [
+    session.title,
+    session.id,
+    session.project_name,
+    session.workspace?.label,
+    session.workspace?.root,
+    session.status,
+    sessionIsLive(session) ? 'live running' : 'idle',
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function groupByProject(sessions: Session[]): Array<[string, Session[]]> {
+  const groups = new Map<string, Session[]>();
+  for (const session of sessions) {
+    const key = projectLabel(session);
+    const group = groups.get(key) ?? [];
+    group.push(session);
+    groups.set(key, group);
+  }
+
+  // Map insertion order preserves the gateway's canonical live-first order.
+  return [...groups.entries()];
+}
+
+function dateMillis(value?: string): number {
+  if (!value) return 0;
+  const millis = new Date(value).getTime();
+  return Number.isFinite(millis) ? millis : 0;
+}
+
+function relativeTime(value?: string): string {
+  const millis = dateMillis(value);
+  if (!millis) return '-';
+  const seconds = Math.round((millis - Date.now()) / 1000);
+  const absolute = Math.abs(seconds);
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  if (absolute < 60) return formatter.format(seconds, 'second');
+  if (absolute < 3_600) return formatter.format(Math.round(seconds / 60), 'minute');
+  if (absolute < 86_400) return formatter.format(Math.round(seconds / 3_600), 'hour');
+  if (absolute < 604_800) return formatter.format(Math.round(seconds / 86_400), 'day');
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(millis);
+}
+
+function formatExact(value?: string): string {
+  const millis = dateMillis(value);
+  return millis ? new Date(millis).toLocaleString() : '';
 }

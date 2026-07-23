@@ -19,10 +19,10 @@
    token-refresh policy stays inside each provider implementation
    instead of leaking up here."
   (:require [clojure+.error]
-            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.registry :as registry]
             [taoensso.telemere :as tel]
             [yamlstar.core :as yamlstar])
@@ -32,12 +32,6 @@
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (def config-dir (str (System/getProperty "user.home") "/.vis"))
-
-(def config-path
-  "Legacy machine store `~/.vis/config.edn`. Vis no longer WRITES EDN; this path
-   is read THROUGH only, for a one-time migration of an existing install into
-   `state-path`."
-  (str config-dir "/config.edn"))
 
 (def state-path
   "Machine-owned RMW config store `~/.vis/state.yml` (YAML). Vis read-modify-writes
@@ -572,63 +566,77 @@
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
-(defn- read-config-map
-  [path]
-  (let [f (io/file path)]
-    (when (.exists f)
-      (try (let [raw (edn/read-string (slurp f))]
-             (when (map? raw) raw))
-           (catch Exception _ nil)))))
-
 (def ^:private verbatim-key-subtrees
-  "Config subtrees whose MAP KEYS are user-owned strings — env var names,
-   HTTP header names, provider wire fields. YAML keywordization must never
-   touch them: `ANTHROPIC_API_KEY` under `:environment` stays a verbatim
-   string key, never `:anthropic-api-key`."
-  #{:environment :llm-headers :extra-body})
+  "String-keyed subtrees owned by users or wire protocols. Their keys stay exact."
+  #{"environment" "env" "headers" "llm-headers" "extra-body" "toggles" "pricing" "context-limits"})
 
 (def ^:private keyword-valued-keys
-  "Config keys whose VALUES are keywords in the EDN shape. YAML has no keyword
-   literal, so `id: anthropic` arrives as the string \"anthropic\" — coerce it
-   to `:anthropic` so a YAML provider block behaves exactly like its EDN twin."
-  #{:id :backend :api-style})
+  "Known scalar fields whose internal runtime representation is a keyword."
+  #{"id" "backend" "api-style"})
 
-(defn- yaml-key->keyword
-  "Normalize one YAML map key onto the config's keyword vocabulary: both
-   `snake_case` and `kebab-case` spellings land on the SAME kebab keyword
-   (`system_prompt` ≡ `system-prompt` ≡ `:system-prompt`)."
-  [k]
-  (if (string? k) (keyword (str/replace k "_" "-")) k))
+(def ^:private runtime-keywords
+  "Finite YAML key vocabulary used by internal keyword-keyed domain maps.
+   Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
+  (into {}
+        (map (juxt name identity))
+        #{:providers :router :system-prompt :sandbox :filesystem :jail :network :environment
+          :db-spec :search :toggles :tui-settings :mcp :name :context :output-limit :tool-call? :id
+          :api-key :models :base-url :api-style :responses-path :llm-headers :extra-body :rate-limit
+          :budget :tokens :same-provider-delays-ms :fallback-after-ms :respect-retry-after?
+          :fallback-provider? :timeout-ms :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms
+          :max-retries :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost
+          :check-context? :pricing :context-limits :output-reserve :failure-threshold :recovery-ms
+          :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write :allow-read
+          :allow-write :deny-read :deny-write :language-caches :path :access :inbound-ports
+          :allowed-domains :denied-domains :exclude-domains :allow-private :rules :host :methods
+          :allow :method :text :replace? :include-gitignored-paths :always-exclude :backend
+          :theme-name :contributors-disabled :servers :transport :command :args :cwd :env :url
+          :headers}))
 
-(defn- keywordize-yaml
-  "Recursively map a YAMLStar-parsed value (string keys — the YAML boundary
-   contract) onto the EDN config shape: keys → kebab keywords, the few
-   `keyword-valued-keys` provider fields coerced from their plain string
-   (`id: anthropic` → :anthropic), and `verbatim-key-subtrees` kept EXACTLY as
-   parsed. Every OTHER value stays a plain string — no `:`-prefix smuggling."
+(defn runtime-config
+  "Adapt an already-validated string-keyed YAML map to Vis' internal domain maps.
+   Only the finite keys in `runtime-keywords` become keywords. User-defined map keys
+   remain strings, and parsing/validation never uses this adapter."
   [v]
   (cond (map? v) (into {}
                        (map (fn [[k val]]
-                              (let [kw (yaml-key->keyword k)]
-                                [kw
-                                 (cond (contains? verbatim-key-subtrees kw) val
-                                       (and (string? val) (contains? keyword-valued-keys kw))
+                              (let [runtime-key (get runtime-keywords k k)]
+                                [runtime-key
+                                 (cond (contains? verbatim-key-subtrees k) val
+                                       (and (string? val) (contains? keyword-valued-keys k))
                                        (keyword val)
-                                       :else (keywordize-yaml val))])))
+                                       :else (runtime-config val))])))
                        v)
-        (sequential? v) (mapv keywordize-yaml v)
+        (sequential? v) (mapv runtime-config v)
         :else v))
 
 (defn- read-yaml-config-map
-  "Parse one YAML config file into the EDN config shape (kebab keywords,
-   verbatim string subtrees), or nil when absent / malformed / not a map —
-   the same failure contract as `read-config-map`."
+  "Parse one YAML file and validate its original string-keyed representation.
+   No keys or values are keywordized before clojure.spec sees them. Absent,
+   malformed, and non-map documents return nil; invalid maps throw."
   [path]
   (let [f (io/file path)]
     (when (.exists f)
-      (try (let [raw (yamlstar/load (slurp f))]
-             (when (map? raw) (keywordize-yaml raw)))
-           (catch Exception _ nil)))))
+      (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))
+            normalized (when (map? raw)
+                         (if-let [legacy-filesystem (get raw "filesystem")]
+                           (let [legacy-jail (or (get raw "jail") {})
+                                 legacy-jail* (if (map? legacy-jail)
+                                               legacy-jail
+                                               {})]
+                             (-> raw
+                                 (dissoc "filesystem")
+                                 (assoc "jail"
+                                        (assoc legacy-jail*
+                                               "filesystem"
+                                               (if (map? (get legacy-jail* "filesystem"))
+                                                 (merge (get legacy-jail* "filesystem")
+                                                        legacy-filesystem)
+                                                 legacy-filesystem)))))
+                           raw))]
+        (when (map? normalized)
+          (config-spec/assert-config! normalized path))))))
+
 
 (defn- project-config-yaml-paths
   "YAML candidates for the hidden `.vis/` project overlay tier."
@@ -644,9 +652,8 @@
 
 (defn- global-config-yaml-paths
   "YAML candidates for the hand-written global tier under `~/.vis`:
-   `config.yml` / `config.yaml` (the `config.edn` twins) plus `vis.yml` /
-   `vis.yaml` for symmetry with the project-root spelling. First existing
-   file wins."
+   `config.yml` / `config.yaml` plus `vis.yml` / `vis.yaml` for symmetry with the
+   project-root spelling. First existing file wins."
   []
   (mapv (fn [n]
           (str config-dir "/" n))
@@ -662,23 +669,18 @@
     (reduce merge* nil maps)))
 
 (defn load-global-config-raw
-  "Load the machine-written global store as a config map (or nil). Prefers
-   `~/.vis/state.yml` — the YAML file Vis read-modify-writes. When it is absent but
-   the legacy `~/.vis/config.edn` still exists, that EDN is read THROUGH so an
-   existing install keeps working; the next `save-config!` migrates it to YAML.
-   Machine-owned on purpose: kept out of the hand-written YAML merge so the RMW
-   cycle never clobbers user files."
+  "Load the machine-written global store as a config map (or nil): `~/.vis/state.yml`,
+   the YAML file Vis read-modify-writes. Machine-owned on purpose — kept out of the
+   hand-written YAML merge so the RMW cycle never clobbers user files."
   []
-  (or (read-yaml-config-map state-path) (read-config-map config-path)))
+  (read-yaml-config-map state-path))
 
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
-   `~/.vis/config.yml` / `config.yaml` / `vis.yml` / `vis.yaml`, or nil.
-   Unlike the project tiers, this file COEXISTS with `~/.vis/config.edn`
-   instead of being shadowed by it: the EDN file there is machine-written
-   (OAuth tokens, TUI-added providers), the YAML file is user-written —
-   different authors, not two spellings of one file — so `load-config-raw`
-   deep-merges them with the EDN file winning per key."
+   `~/.vis/config.yml` / `config.yaml` / `vis.yml` / `vis.yaml`, or nil. This
+   hand-written base is deep-merged UNDER the machine-written `~/.vis/state.yml`
+   store (`state.yml` wins per key), keeping user-authored config separate from
+   the RMW machine file."
   []
   (some read-yaml-config-map (global-config-yaml-paths)))
 
@@ -705,8 +707,7 @@
    1. `~/.vis/config.yml` (or `.yaml` / `vis.yml` / `vis.yaml`) — hand-written
       global base
    2. `~/.vis/state.yml` — machine-written global store (OAuth tokens, TUI-added
-      providers); wins over the hand-written base. A legacy `~/.vis/config.edn`
-      is read THROUGH here only until the next `save-config!` migrates it.
+      providers); wins over the hand-written base
    3. `<cwd>/vis.yml` (or `vis.yaml`) — visible project root, the committed team
       config
    4. `<cwd>/.vis/config.yml` (or `.yaml`) — hidden project overlay; the NESTED
@@ -727,14 +728,19 @@
    ".next/" "out/"])
 
 (defn search-overlay
-  "The `:search` overlay from raw config (issue #23), or nil when unset.
-   Returns `{:include-gitignored-paths [pattern…] :always-exclude [pattern…]}`
-   with patterns in `.gitignore` syntax. `:always-exclude` falls back to
-   `default-search-always-exclude` when include patterns are set without an
-   explicit exclude list. nil ⇒ no overlay: search behaves exactly as before
-   (this is what keeps the feature zero-cost for unconfigured projects)."
+  "Return the search overlay as an internal keyword-keyed map, or nil when unset.
+   The source configuration remains string-keyed and spec-validated."
   []
-  (let [{:keys [include-gitignored-paths always-exclude]} (:search (load-config-raw))]
+  (let
+    [search
+     (get (load-config-raw) "search")
+
+     include-gitignored-paths
+     (get search "include-gitignored-paths")
+
+     always-exclude
+     (get search "always-exclude")]
+
     (when (or (seq include-gitignored-paths) (seq always-exclude))
       {:include-gitignored-paths (mapv str include-gitignored-paths)
        :always-exclude
@@ -755,18 +761,21 @@
 (defn- apply-config-metadata [config] (update config :providers #(mapv apply-provider-metadata %)))
 
 (defn load-config
-  "Load provider config in svar-native syntax from the merged YAML config."
+  "Load the validated YAML config and adapt its finite schema keys to internal
+   keyword-keyed domain maps. `load-config-raw` retains the original string keys."
   []
   (some-> (load-config-raw)
           ((fn [raw]
-             (when (seq (:providers raw)) raw)))
+             (when (seq (get raw "providers")) raw)))
+          runtime-config
           apply-config-metadata))
 
-(defn- active-provider-entry [config] (first (:providers config)))
+(defn- active-provider-entry [config] (first (or (:providers config) (get config "providers"))))
 
 (defn- provider-selection-changed?
   [previous-provider selected-provider]
-  (and selected-provider (not= (:id previous-provider) (:id selected-provider))))
+  (letfn [(provider-id [provider] (or (:id provider) (get provider "id")))]
+    (and selected-provider (not= (provider-id previous-provider) (provider-id selected-provider)))))
 
 (defn- emit-provider-selected!
   [{:keys [previous-provider provider config source]}]
@@ -823,10 +832,8 @@
                 (catch Throwable _ nil))))))
 
 (defn- ->yaml-safe
-  "Deep-stringify a config map for YAML emission: keyword map keys and keyword
-   VALUES become plain strings (kebab spelling preserved), everything else passes
-   through. The inverse of `keywordize-yaml`, so a machine RMW round-trips
-   losslessly — the few keyword-valued provider fields re-coerce on load."
+  "Convert an internal domain map to the string-keyed YAML contract.
+   Existing string keys remain exact; keyword keys/values become plain strings."
   [v]
   (cond (map? v) (into {}
                        (map (fn [[k val]]
@@ -837,34 +844,31 @@
         :else v))
 
 (defn save-config!
-  "Persist provider config to `~/.vis/state.yml` (YAML).
-
-   When the first provider (the active provider) changes, the newly
-   selected provider's optional `:provider/on-selected-fn` is invoked
-   after the file write. Hook failures are logged and never prevent
-   config persistence."
+  "Persist configuration to `~/.vis/state.yml` using the string-keyed YAML contract.
+   Callers may supply internal keyword-keyed domain maps; validation always runs on
+   the exact string-keyed map that is written."
   ([config] (save-config! config nil))
   ([config source]
-   (let
-     [previous-provider
-      (active-provider-entry (load-global-config-raw))
+   (let [wire-config (->yaml-safe config)]
+     (config-spec/assert-config! wire-config state-path)
+     (let
+       [previous-provider (some-> (active-provider-entry (load-global-config-raw))
+                                  runtime-config)
+        selected-provider (some-> (active-provider-entry wire-config)
+                                  runtime-config)
+        runtime-config (runtime-config wire-config)]
 
-      selected-provider
-      (active-provider-entry config)]
-
-     (ensure-private-dir! config-dir)
-     (spit-private! state-path (yamlstar/dump (->yaml-safe config)))
-     (when (provider-selection-changed? previous-provider selected-provider)
-       (emit-provider-selected! {:previous-provider previous-provider
-                                 :provider selected-provider
-                                 :config config
-                                 :source source})))))
+       (ensure-private-dir! config-dir)
+       (spit-private! state-path (yamlstar/dump wire-config))
+       (when (provider-selection-changed? previous-provider selected-provider)
+         (emit-provider-selected! {:previous-provider previous-provider
+                                   :provider selected-provider
+                                   :config runtime-config
+                                   :source source}))))))
 
 (defn remove-config-provider!
-  "Remove every persisted provider entry for `provider-id` from
-   `~/.vis/state.yml`, preserving unrelated global config keys. Project-local
-   `.vis/config.yml` is an overlay and is not edited by this writer. Returns
-   true when the global file changed."
+  "Remove every persisted provider entry for `provider-id` from the string-keyed
+   machine config, preserving unrelated keys."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
    (let
@@ -872,14 +876,18 @@
       (or (load-global-config-raw) {})
 
       providers
-      (vec (:providers raw))
+      (vec (get raw "providers"))
+
+      provider-id'
+      (if (keyword? provider-id) (name provider-id) (str provider-id))
 
       providers*
-      (vec (remove #(= provider-id (:id %)) providers))]
+      (vec (remove #(= provider-id' (get % "id")) providers))]
 
      (when (not= providers providers*)
-       (save-config! (if (seq providers*) (assoc raw :providers providers*) (dissoc raw :providers))
-                     source)
+       (save-config!
+         (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
+         source)
        true))))
 
 (defn resolve-config
@@ -902,13 +910,11 @@
 
 (defn first-run?
   "True on a genuine FIRST run: no provider configured AND no global machine store
-   (`~/.vis/state.yml`, nor the legacy `~/.vis/config.edn`) has ever been written.
-   Distinguishes the full welcome (brand-new user) from a returning user who merely
-   has no provider right now (e.g. removed their only one)."
+   (`~/.vis/state.yml`) has ever been written. Distinguishes the full welcome
+   (brand-new user) from a returning user who merely has no provider right now
+   (e.g. removed their only one)."
   []
-  (and (not (provider-configured?))
-       (not (.exists (io/file state-path)))
-       (not (.exists (io/file config-path)))))
+  (and (not (provider-configured?)) (not (.exists (io/file state-path)))))
 
 (def ^:private router-opts-keys
   "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
@@ -942,7 +948,7 @@
   (let [block (:router config)]
     (if (map? block) (select-keys block router-opts-keys) {})))
 
-(def ^:private extension-env-config-key :environment)
+(def ^:private extension-env-config-key "environment")
 
 (defn extension-env-overrides
   "Persisted extension environment overrides from `~/.vis/state.yml`
@@ -1018,8 +1024,7 @@
     (extension-env-status name')))
 
 (defn resolve-db-spec
-  "Resolve DB spec: explicit -> `vis.db.path` JVM property -> VIS_DB_PATH env ->
-   `:db-spec` from config -> default sqlite at `~/.vis/vis.mdb`."
+  "Resolve DB spec: explicit -> JVM property -> environment -> validated YAML -> default."
   ([] (resolve-db-spec nil))
   ([explicit-db-spec]
    (or explicit-db-spec
@@ -1027,7 +1032,8 @@
          {:backend :sqlite :path prop-path})
        (when-let [env-path (System/getenv "VIS_DB_PATH")]
          {:backend :sqlite :path env-path})
-       (:db-spec (load-config-raw))
+       (some-> (get (load-config-raw) "db-spec")
+               runtime-config)
        default-db-spec)))
 
 ;; =============================================================================

@@ -149,6 +149,14 @@ Because a non-loopback bind always requires the token, keep
 `--require-token` on for any remote/Tailscale exposure — the bearer token is
 the only thing standing between the tailnet and your sessions.
 
+## Shared slash commands
+
+`GET /v1/slashes` returns the channel-safe command palette used by web clients.
+The daemon derives it from the same extension slash registry and prompt templates
+as the TUI, then adds client-native navigation commands such as `/new-session`
+and `/sessions`. Sending an engine command as a normal turn still uses the
+canonical slash dispatcher and does not call an LLM.
+
 ## Draft workspaces
 
 The gateway also owns each session's current workspace and the repo-scoped draft

@@ -56,6 +56,36 @@
                        first
                        (get "thinking")))))))
 
+(defdescribe transcript-bubble-footer-test
+             (it "ships the exact shared TUI footer and routing note to remote channels"
+                 (with-redefs
+                   [persistance/db-list-session-turns
+                    (fn [_ sid]
+                      [{:id sid
+                        :status :success
+                        :provider :openai
+                        :model "gpt/5.4"
+                        :input-tokens 11461
+                        :input-cache-read-tokens 4096
+                        :output-tokens 35
+                        :total-cost 0.007
+                        :duration-ms 2300}])
+
+                    persistance/db-list-session-turn-iterations
+                    (fn [_ _]
+                      [{:llm-selected {:provider :anthropic :model "claude/opus"}
+                        :llm-actual {:provider :openai :model "gpt/5.4"}
+                        :llm-fallback? true
+                        :llm-routing-trace [{:event/type :llm.routing/provider-retry}
+                                            {:event/type :llm.routing/provider-fallback
+                                             :status 429}]}])]
+
+                   (let [turn (first (state/transcript :session-1))]
+                     (expect (= "openai/gpt-5.4  ·  11.5k→35 (cached 4.1k)  ·  ~$0.0070  ·  2.3s"
+                                (get turn "meta_summary")))
+                     (expect (= "↳ from anthropic/claude-opus — 429, retried 1×"
+                                (get turn "meta_fallback_note")))))))
+
 (defdescribe
   form-result-error-wire-test
   ;; Op cards are gone, so there is no op-dedup: a form error ALWAYS surfaces
@@ -646,7 +676,8 @@
         (expect (false?
                   (coalesce? {[:reasoning 0] {:ms 1000 :len 0}} {:phase :form-result} 1050)))))
   (it "coalesces native-call code without classifying it as content"
-  (let [prior {[:tool-preview 1] {:ms 1000 :len 3}}]
+  (let [coalesce? @#'state/coalesce-delta?
+        prior {[:tool-preview 1] {:ms 1000 :len 3}}]
     (expect (true? (coalesce? prior {:phase :tool-preview :iteration 1 :code "prin"} 1200)))
     (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print\n"} 1200)))
     (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print" :done? true} 1200))))))
@@ -771,6 +802,21 @@
               (expect (false? (await-cancel token 1200))))
             (expect (nil? (:stalled? @stall)))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+
+(defdescribe gateway-session-order-test
+             (it "returns live sessions first and orders each state by recency"
+                 (let
+                   [order-summaries
+                    #'state/order-session-summaries
+
+                    sessions
+                    [{"id" "idle-new" "live" false "modified_at" 4000}
+                     {"id" "live-old" "live" true "modified_at" 1000}
+                     {"id" "idle-old" "live" false "modified_at" 2000}
+                     {"id" "live-new" "live" true "last_active_at" (java.util.Date. 3000)}]]
+
+                   (expect (= ["live-new" "live-old" "idle-new" "idle-old"]
+                              (mapv #(get % "id") (order-summaries sessions)))))))
 
 (defdescribe
   gateway-prewarm-pool-test

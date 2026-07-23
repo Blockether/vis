@@ -52,51 +52,42 @@
 ;; =============================================================================
 
 (defn previous-turn-context-block
-  "Cross-process RESUME context: every prior ANSWERED turn rendered oldest→newest
-   as `user asked → what you ran → you answered`, so a fresh process reconstructs
-   the conversation. Every prior answer is rendered in FULL — history is
-   never truncated. nil when there are no prior turns.
-
-   Takes a VEC of `{:user-request :answer :interrupted? :results}` (results =
-   `[{:scope :src}]`). An `:interrupted?` turn was cut off mid-flight (e.g. a
-   process restart) with no answer — it's surfaced so a follow-up `continue`
-   knows the pending work."
+  "Render prior-turn RESUME entries. Normal entries retain their stable turn
+   number and Q/A/result index. A `:checkpoint?` entry is the sole materialized
+   replacement for all complete turns covered by one broader fold."
   [turns]
   (when (seq turns)
-    (let
-      [render-turn
-       (fn [i {:keys [user-request answer interrupted? results]}]
-         (let
-           [req (some-> user-request
-                        str
-                        str/trim
-                        not-empty)
-            ans (some-> answer
-                        str
-                        str/trim
-                        not-empty)]
-
-           (when (or req ans (seq results))
-             (str
-               "# ── turn "
-               (inc (long i))
-               " ──\n"
-               (when req (str "user asked:\n" req "\n"))
-               (when (seq results)
-                 (str "you ran:\n"
-                      (str/join "\n"
-                                (map (fn [r]
-                                       (str "  "
-                                            (cond (:gist r) (str "(folded) " (:gist r))
-                                                  (:dropped? r) (str "(dropped)"
-                                                                     (when (:note r)
-                                                                       (str " " (:note r))))
-                                                  :else (:src r))))
-                                     results))
-                      "\n"))
-               (when ans (str "you answered:\n" ans))
-               (when (and interrupted? (not ans))
-                 "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
+    (let [render-turn
+          (fn [i {:keys [turn user-request answer interrupted? results
+                         checkpoint? turns gist]}]
+            (if checkpoint?
+              (str "# ⋯ folded turn"
+                   (when (< 1 (count turns)) "s")
+                   " "
+                   (str/join ", " turns)
+                   "\n"
+                   gist)
+              (let [req (some-> user-request str str/trim not-empty)
+                    ans (some-> answer str str/trim not-empty)
+                    turn-no (or turn (inc (long i)))]
+                (when (or req ans (seq results))
+                  (str "# ── turn " turn-no " ──\n"
+                       (when req (str "user asked:\n" req "\n"))
+                       (when (seq results)
+                         (str "you ran:\n"
+                              (str/join "\n"
+                                        (map (fn [r]
+                                               (str "  "
+                                                    (cond (:gist r) (str "(folded) " (:gist r))
+                                                          (:dropped? r) (str "(dropped)"
+                                                                             (when (:note r)
+                                                                               (str " " (:note r))))
+                                                          :else (:src r))))
+                                             results))
+                              "\n"))
+                       (when ans (str "you answered:\n" ans))
+                       (when (and interrupted? (not ans))
+                         "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it."))))))]
       (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
 
 (defn- attached-images-block
@@ -142,59 +133,41 @@
                                  skipped))))))))
 
 (defn assemble-initial-messages
-  "Initial provider messages for one turn. Deliberately excludes full prior
-   dialog transcript: Vis state flows through persisted iterations,
-   defs, and DB-backed tools. The current user message is tagged as
-   `CURRENT-USER-MESSAGE`.
+  "Initial provider messages for one turn.
 
-   One full previous-turn context block may be prepended so short follow-ups
-   can inspect the prior exchange without replaying the whole session.
-
-   `:user-images` (from `attachments/collect-user-images`) turns the user
-   message multimodal: svar image blocks ride ahead of the text block and
-   an `ATTACHED-IMAGES` manifest inside the text names each one.
-   `:skipped-images` entries appear in the manifest only.
-
-   `:vision?` (default true) gates the image blocks on the resolved model's
-   capability: a text-only model NEVER receives `image_url` blocks it cannot
-   consume. When false, every collected image is DEMOTED into the skipped
-   manifest with a reason — the model still learns a mentioned image exists
-   but is honestly told it cannot see it (never a silent drop, never a lying
-   \"you can SEE these images\")."
-  [{:keys [stable-prompt-messages initial-user-content previous-turn-context user-images
-           skipped-images vision?]
+   Prior RESUME entries are emitted as one stable user message per turn (or
+   materialized fold checkpoint), so adding a turn appends a message instead of
+   rewriting one monolithic conversation recap. `:turn-context` is the current
+   append-only turn/utilization assignment block and rides immediately before
+   the current user request."
+  [{:keys [stable-prompt-messages initial-user-content previous-turn-context
+           turn-context user-images skipped-images vision?]
     :or {vision? true}}]
-  (let
-    [previous-block
-     (previous-turn-context-block previous-turn-context)
-
-     user-block
-     (when initial-user-content (prompt-block "current-user-message" initial-user-content))
-
-     ;; Vision gate: only a vision-capable model gets real image blocks; for a
-     ;; text-only target attach NONE and fold every image into the skipped
-     ;; manifest so the model is told the truth instead of an invisible payload.
-     attached-images
-     (if vision? (vec user-images) [])
-
-     manifest-skipped
-     (if vision?
-       skipped-images
-       (into (vec skipped-images)
-             (map (fn [{:keys [path]}]
-                    {:path path
-                     :reason "the active model has no vision — image not attached"
-                     :readable-blind? true})
-                  user-images)))
-
-     images-block
-     (when user-block (attached-images-block attached-images manifest-skipped))
-
-     text
-     (str/join "\n\n" (keep identity [previous-block user-block images-block]))]
-
+  (let [prior-messages
+        (into []
+              (keep (fn [entry]
+                      (when-let [block (previous-turn-context-block [entry])]
+                        {:role "user" :content block})))
+              previous-turn-context)
+        turn-block (prompt-block "turn-system-context" turn-context)
+        user-block (when initial-user-content
+                     (prompt-block "current-user-message" initial-user-content))
+        attached-images (if vision? (vec user-images) [])
+        manifest-skipped
+        (if vision?
+          skipped-images
+          (into (vec skipped-images)
+                (map (fn [{:keys [path]}]
+                       {:path path
+                        :reason "the active model has no vision — image not attached"
+                        :readable-blind? true})
+                     user-images)))
+        images-block (when user-block
+                       (attached-images-block attached-images manifest-skipped))
+        text (str/join "\n\n" (keep identity [turn-block user-block images-block]))]
     (vec (concat (or stable-prompt-messages [])
-                 (when user-block
+                 prior-messages
+                 (when (or turn-block user-block)
                    [(if (seq attached-images)
                       (apply svar/user
                         text
@@ -209,14 +182,14 @@
   "Cross-tool contract for an autonomous agent. Native descriptions and JSON
    Schemas own tool-specific routing and inputs."
   (str
-    "You are vis. Complete the task autonomously.\n\n"
-    "## 1. Identity + Epistemic stance\n"
+    "You are vis. Complete the task autonomously.\n\n" "## 1. Identity + Epistemic stance\n"
     "- Work on the host project by default. For vis tasks, inspect `await vis_docs()` and relevant\n"
     "  page; verify against runtime/source.\n"
     "- Route vis issues upstream to `blockether/vis`; open one only when requested.\n"
     "- Trust order: runtime > source > docs > assumption. Inspect; never fabricate tool output.\n"
     "- Native descriptions and JSON Schemas are authoritative. Obey routing,\n"
-    "  hard preconditions, and inputs; never guess contracts.\n\n" "## 2. Execution surfaces\n"
+    "  hard preconditions, and inputs; never guess contracts.\n\n"
+    "## 2. Execution surfaces\n"
     "- Prefer `python_execution` for anything complicated—batches, chains, filtering, multi-step\n"
     "  logic: `await gather(...)` independent calls, then filter/print;\n"
     "  use direct native tools for single operations.\n"
@@ -227,7 +200,8 @@
     "- Before `repl_eval` or lifecycle changes, use live REPL state in\n"
     "  `session[\"resources\"][\"repls\"][language][dir]` (`\".\"` is root); follow `repl_start`.\n"
     "- Reuse managed REPLs across turns; after verification, stop only those you\n"
-    "  started. External REPLs are user-owned: detach, never kill.\n\n" "## 3. Inspect\n"
+    "  started. External REPLs are user-owned: detach, never kill.\n\n"
+    "## 3. Inspect\n"
     "- Repository tasks: inspect first; answer pure knowledge directly without tools.\n"
     "- Bugs: reproduce before editing if feasible. Prefer an up project `repl_eval` for\n"
     "  isolated behavior; otherwise run the smallest failing test/command. Capture the\n"
@@ -244,23 +218,25 @@
     "- Make surgical in-scope changes; preserve unrelated work. Create no unrequested\n"
     "  scratch, debug, notes, or report files.\n"
     "- Verify the smallest relevant check and obvious boundaries; read output—a diff is not\n"
-    "  proof. If verification is impossible, say why.\n\n" "## 5. Act autonomously\n"
+    "  proof. If verification is impossible, say why.\n\n"
+    "## 5. Act autonomously\n"
     "- Make non-destructive in-scope changes without asking permission or offering optional\n"
     "  follow-ups. Never expose or log secrets.\n"
     "- Do not commit, push, publish, message people, or mutate external systems unless requested.\n"
     "- Ask one question only if ambiguity changes the result. Read errors; change approach.\n"
-    "  Never decide from pending or unseen results.\n\n" "## 6. Manage context\n"
+    "  Never decide from pending or unseen results.\n\n"
+    "## 6. Manage context\n"
     "- Runtime state is read-only `session`; never use `ctx` or `context`.\n"
     "- New turn: first understand intent; retry any prior blocked fold before new work.\n"
     "- Before every `session_fold`, read `session[\"turn\"]`. Each target `tN` must satisfy\n"
     "  `N < session[\"turn\"]`; never target current/future turns, even after verification.\n"
-    "- Fold completed prior-turn wire steps (spent edits/reads first); keep a durable gist.\n"
+    "- Fold completed prior-turn wire steps. Drop spent reads/catalogs/errors with no gist;\n"
+    "  preserve only decisions, findings, edits, and verification.\n"
     "  Recover one native result via `ntr[tool_id]`; its breadcrumb lists accessors and\n"
     "  survives restart. Otherwise use `await session_state()` →\n"
     "  `transcript/turns/iterations/blocks` (`code`/`result`).\n"
     "- If the user cites a session UID, resolve it via `await sessions()`.\n"
-    "  Broader/newer folds replace covered breadcrumbs.\n\n"
-    "## 7. Style and finish\n"
+    "  Broader/newer folds replace covered breadcrumbs.\n\n" "## 7. Style and finish\n"
     "- Lead with the answer or next action. Use short plain sentences; default ≤120 words,\n"
     "  ≤3 bullets. No preamble, recap, pleasantries, or tangents. Before sending, make one\n"
     "  pass for figurative verbs — abstractions treated as physical things (\"features\n"
@@ -275,31 +251,19 @@
     "  never offer a menu.\n"))
 
 (defn- config-system-prompt
-  "Optional `:system-prompt` from Vis config, read from the deep-merged config
-   (project `vis.edn` layered over `.vis/config.edn` and the global
-   `~/.vis/config.edn`).
-
-   Two shapes are accepted:
-
-   - a **string** — an addendum appended after `CORE_SYSTEM_PROMPT`.
-   - a **map** `{:text ... :replace? true}` — when `:replace?` is truthy the
-     text fully *replaces* `CORE_SYSTEM_PROMPT` (a full rewrite); otherwise it
-     is treated as an addendum, same as the string form.
-
-   Returns `{:text <normalized-non-blank-string> :replace? <bool>}` or nil.
-   Tolerant: any read/parse failure yields nil so prompt assembly never breaks
-   on a malformed config."
+  "Read the optional string-keyed `system-prompt` YAML setting.
+   Returns an internal `{:text ... :replace? ...}` map or nil."
   []
   (try (let
          [raw
           (config/load-config-raw)
 
           sp
-          (when (map? raw) (:system-prompt raw))
+          (when (map? raw) (get raw "system-prompt"))
 
           [s replace?]
           (cond (string? sp) [sp false]
-                (map? sp) [(:text sp) (boolean (:replace? sp))]
+                (map? sp) [(get sp "text") (boolean (get sp "replace?"))]
                 :else [nil false])]
 
          (when (string? s)
@@ -602,9 +566,12 @@
            auto-imports
            "`."
            (when (seq shim-names)
-             (str "\nPreinstalled shims (import normally; no pip): `"
+             (str "\nPreinstalled shims (always import before use; no pip): `"
                   (str/join "`, `" shim-names)
-                  "`."))
+                  "`."
+                  "\nImport shims and aliases in the same block before first use "
+                  "(for example, `import numpy as np`); aliases such as `np` and `pd` "
+                  "are not auto-created or inferred from source."))
            "\nUse `apropos(\"\")` to discover and `doc(name)` for exact support and limits."))))
 
 (defn- turn-system-context-block

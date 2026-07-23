@@ -214,7 +214,14 @@
      (resources/model-view rsrc
                            {:root (or (:workspace/root env)
                                       (get-in ext-ctx ["session_workspace" "root"]))
-                            :languages (keys (get ext-ctx "session_language_tools"))})]
+                            :languages (keys (get ext-ctx "session_language_tools"))})
+
+     access-view
+     (try (when-let [f (:access-view-fn env)]
+            (f))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::access-view-failed :data {:error (ex-message t)}})
+            nil))]
 
     (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
       (seq env-block)
@@ -222,6 +229,9 @@
 
       (seq rsrc-view)
       (assoc "session_resources" rsrc-view)
+
+      (seq access-view)
+      (assoc "session_access" access-view)
 
       ;; current model + available models, so the agent can route a sub_loop
       ;; child by cost (read-only). `:routing env` is loop-internal; its VALUE

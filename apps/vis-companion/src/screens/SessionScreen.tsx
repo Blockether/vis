@@ -1,20 +1,57 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AssistantMessage, Markdown, UserMessage } from '../components/ChatContent';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import { AssistantMessage, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
+import { pickImageAttachments, type PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
-import type { Session, SseEvent, TranscriptTurn } from '../lib/types';
+import type { SessionSubscriptionHub } from '../lib/subscriptions';
+import {
+  collapsePastePlaceholders,
+  createComposerPaste,
+  expandPastePlaceholders,
+  shouldCollapsePaste,
+  type ComposerPaste,
+} from '../lib/paste';
+import type {
+  GatewayCapabilities,
+  Session,
+  SlashCommand,
+  SseEvent,
+  TranscriptForm,
+  TranscriptIteration,
+  TranscriptTurn,
+  VoiceModelState,
+} from '../lib/types';
+import { startWavRecording, type WavRecording } from '../lib/voice';
+
+interface LiveActivity {
+  kind: string;
+  iteration?: number;
+  command?: string;
+  operation?: string;
+}
 
 interface LiveTurn {
   id?: string;
   request: string;
-  prose: string;
-  reasoning: string;
-  operation?: string;
-  operationCount: number;
+  answer: string;
+  iterations: TranscriptIteration[];
+  activity?: LiveActivity;
+  startedAt: number;
+  cancelling?: boolean;
   status: 'running' | 'failed' | 'cancelled';
 }
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
+const LIVE_BODY_THROTTLE_MS = 150;
+const INITIAL_VISIBLE_TURNS = 24;
 
 function stringField(event: SseEvent, key: string): string {
   const value = event[key];
@@ -26,14 +63,301 @@ function applyText(current: string, event: SseEvent): string {
   return cumulative || current + stringField(event, 'text');
 }
 
+function eventIteration(event: SseEvent): number {
+  const value = event.iteration;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compactLabel(value: string, fallback: string): string {
+  const label = value.split('\n', 1)[0].trim();
+  if (!label) return fallback;
+  return label.length > 64 ? `${label.slice(0, 61)}…` : label;
+}
+
+function commandPhase(request: string): string | null {
+  const text = request.trim();
+  if (text.startsWith('!&')) {
+    return `Vis is starting: ${compactLabel(text.slice(2), '…')}`;
+  }
+  if (text.startsWith('!')) {
+    return `Vis is running: ${compactLabel(text.slice(1), '…')}`;
+  }
+  if (text.startsWith('/')) {
+    return `Vis is running: ${compactLabel(text.split(/\s+/, 1)[0], 'command')}`;
+  }
+  return null;
+}
+
+function liveProgressPhase(turn: LiveTurn): string {
+  if (turn.cancelling) return 'Vis is cancelling';
+
+  const last = turn.iterations.at(-1);
+  const activity = turn.activity;
+  const iteration = Math.max(
+    turn.iterations.length,
+    activity?.iteration == null ? 0 : activity.iteration + 1,
+  );
+
+  if (last?.error != null) return 'Vis is retrying';
+  if (iteration === 0) return commandPhase(turn.request) ?? 'Vis is calling the provider';
+
+  const suffix = `(iter ${iteration})`;
+  switch (activity?.kind) {
+    case 'shell-run':
+      return `Vis is running: ${compactLabel(activity.command ?? '', '…')}`;
+    case 'shell-bg':
+      return `Vis is starting: ${compactLabel(activity.command ?? '', '…')}`;
+    case 'slash':
+      return `Vis is running: ${compactLabel(activity.command ?? '', 'command')}`;
+    case 'provider-call':
+      return `Vis is calling the provider ${suffix}`;
+    case 'response-parse':
+      return `Vis is parsing model response ${suffix}`;
+    case 'tool':
+    case 'tool-call':
+      return `Vis is running: ${activity.operation || 'tool'} ${suffix}`;
+    default:
+      break;
+  }
+
+  if (last?.thinking?.trim()) return `Vis is thinking ${suffix}`;
+  if (last?.forms?.length) return `Vis is running code ${suffix}`;
+  return `Vis is working ${suffix}`;
+}
+
+function updateLiveIteration(
+  turn: LiveTurn,
+  position: number,
+  update: (iteration: TranscriptIteration) => TranscriptIteration,
+): LiveTurn {
+  const index = turn.iterations.findIndex((iteration) => iteration.position === position);
+  if (index < 0) {
+    return {
+      ...turn,
+      iterations: [...turn.iterations, update({ position, forms: [] })].sort(
+        (a, b) => (a.position ?? 0) - (b.position ?? 0),
+      ),
+    };
+  }
+
+  const iterations = [...turn.iterations];
+  iterations[index] = update(iterations[index]);
+  return { ...turn, iterations };
+}
+
+function formFromEvent(event: SseEvent, running = false): TranscriptForm {
+  const cards = Array.isArray(event.cards) ? (event.cards as TranscriptForm[]) : undefined;
+  return {
+    block_id: stringField(event, 'block_id'),
+    scope: stringField(event, 'scope') || undefined,
+    code: stringField(event, 'code') || undefined,
+    display_code: stringField(event, 'display_code') || undefined,
+    comment: stringField(event, 'comment') || undefined,
+    tool_name: stringField(event, 'tool_name') || undefined,
+    tool_color_role: stringField(event, 'tool_color_role') || undefined,
+    result_summary: stringField(event, 'result_summary') || (running ? 'Running…' : undefined),
+    result_render: stringField(event, 'result_render') || undefined,
+    result_kind: stringField(event, 'result_kind') || undefined,
+    result: event.result as TranscriptForm['result'],
+    error: event.error as TranscriptForm['error'],
+    stdout: stringField(event, 'stdout') || undefined,
+    cards,
+    silent: event.silent === true,
+    duration_ms: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
+  };
+}
+
+function upsertLiveForm(iteration: TranscriptIteration, next: TranscriptForm): TranscriptIteration {
+  const forms = [...(iteration.forms ?? [])];
+  const blockId = next.block_id;
+  const index = forms.findIndex((form) => blockId && form.block_id === blockId);
+  if (index < 0) forms.push(next);
+  else {
+    const defined = Object.fromEntries(
+      Object.entries(next).filter(([, value]) => value !== undefined),
+    ) as TranscriptForm;
+    forms[index] = { ...forms[index], ...defined };
+  }
+  return { ...iteration, forms };
+}
+
+function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | null {
+  const type = event.type;
+  if (type === 'turn.started') {
+    return {
+      id: stringField(event, 'turn_id'),
+      request: stringField(event, 'request'),
+      answer: '',
+      iterations: [],
+      startedAt: typeof event.started_at === 'number' ? event.started_at : Date.now(),
+      status: 'running',
+    };
+  }
+  if (!turn) return turn;
+
+  if (type === 'content.block.delta') {
+    const field = stringField(event, 'field');
+    const blockId = stringField(event, 'block_id');
+    const position = eventIteration(event);
+    if (field === 'text') {
+      const next = updateLiveIteration(turn, position, (iteration) => ({
+        ...iteration,
+        thinking: applyText(iteration.thinking ?? '', event),
+      }));
+      return { ...next, activity: undefined };
+    }
+    if (field === 'markdown' && blockId.includes(':assistant-prose:')) {
+      const next = updateLiveIteration(turn, position, (iteration) => ({
+        ...iteration,
+        assistant_prose: applyText(iteration.assistant_prose ?? '', event),
+      }));
+      return { ...next, activity: undefined };
+    }
+    if (field === 'markdown') {
+      return { ...turn, answer: applyText(turn.answer, event), activity: undefined };
+    }
+    return turn;
+  }
+
+  if (type === 'iteration.completed') {
+    const position = eventIteration(event);
+    const next = updateLiveIteration(turn, position, (iteration) => ({
+      ...iteration,
+      thinking: stringField(event, 'thinking') || iteration.thinking,
+      assistant_prose: stringField(event, 'assistant_prose') || iteration.assistant_prose,
+      error: undefined,
+    }));
+    return { ...next, activity: undefined };
+  }
+
+  if (type === 'block.preview') {
+    const position = eventIteration(event);
+    const form = formFromEvent(event, false);
+    const next = updateLiveIteration(turn, position, (iteration) => upsertLiveForm(iteration, form));
+    return { ...next, activity: undefined };
+  }
+
+  if (type === 'block.started' || type === 'block.output') {
+    const position = eventIteration(event);
+    const form = formFromEvent(event, type === 'block.started');
+    const next = updateLiveIteration(turn, position, (iteration) => upsertLiveForm(iteration, form));
+    if (type === 'block.output') return { ...next, activity: undefined };
+    return {
+      ...next,
+      activity: {
+        kind: form.tool_name ? 'tool' : 'code',
+        iteration: position,
+        operation: form.tool_name || form.scope,
+      },
+    };
+  }
+
+  if (type === 'activity') {
+    const kind = stringField(event, 'activity');
+    const rawIteration = event.iteration;
+    const iteration = typeof rawIteration === 'number'
+      ? rawIteration
+      : typeof rawIteration === 'string' && rawIteration.trim()
+        ? Number(rawIteration)
+        : undefined;
+    return {
+      ...turn,
+      activity: kind ? {
+        kind,
+        iteration: Number.isFinite(iteration) ? iteration : undefined,
+        command: stringField(event, 'cmd') || undefined,
+        operation: stringField(event, 'op') || undefined,
+      } : undefined,
+    };
+  }
+
+  if (type === 'iteration.error' || type === 'provider.retry') {
+    const position = eventIteration(event);
+    const next = updateLiveIteration(turn, position, (iteration) => ({
+      ...iteration,
+      error: (event.error_data ?? event.error ?? event.detail ?? 'retrying') as TranscriptIteration['error'],
+    }));
+    return { ...next, activity: undefined };
+  }
+
+  return turn;
+}
+
+function coalesceLiveEvents(events: SseEvent[]): SseEvent[] {
+  const merged: SseEvent[] = [];
+  for (const event of events) {
+    const previous = merged.at(-1);
+    const sameDelta = previous?.type === 'content.block.delta'
+      && event.type === 'content.block.delta'
+      && stringField(previous, 'field') === stringField(event, 'field')
+      && stringField(previous, 'block_id') === stringField(event, 'block_id')
+      && eventIteration(previous) === eventIteration(event);
+
+    if (!previous || !sameDelta) {
+      merged.push(event);
+      continue;
+    }
+
+    const currentCumulative = stringField(event, 'cumulative');
+    const previousCumulative = stringField(previous, 'cumulative');
+    if (currentCumulative) {
+      merged[merged.length - 1] = event;
+    } else if (previousCumulative) {
+      merged[merged.length - 1] = {
+        ...previous,
+        ...event,
+        cumulative: previousCumulative + stringField(event, 'text'),
+        text: '',
+      };
+    } else {
+      merged[merged.length - 1] = {
+        ...previous,
+        ...event,
+        cumulative: '',
+        text: stringField(previous, 'text') + stringField(event, 'text'),
+      };
+    }
+  }
+  return merged;
+}
+
+const FALLBACK_SLASHES: SlashCommand[] = [
+  { name: '/help', doc: 'Show the available slash commands.' },
+  { name: '/new-session', doc: 'Create a new session. Optional text starts its first turn.' },
+  { name: '/sessions', doc: 'Return to the session list.' },
+  { name: '/clear', doc: 'Start a fresh session without deleting this transcript.' },
+  { name: '/rename', doc: "Rename this session's title." },
+  { name: '/export', doc: 'Export this session transcript to Markdown or HTML.' },
+  { name: '/export-html', doc: 'Export this session transcript as styled HTML.' },
+  { name: '/root', doc: 'Show or change the session filesystem root.' },
+  { name: '/draft new', doc: 'Create an isolated draft workspace.' },
+  { name: '/draft apply', doc: 'Apply the active draft workspace.' },
+  { name: '/draft abandon', doc: 'Abandon the active draft workspace.' },
+  { name: '/draft list', doc: 'List draft workspaces.' },
+  { name: '/fs list', doc: 'List filesystem permissions.' },
+  { name: '/fs add', doc: 'Add an allowed filesystem root.' },
+  { name: '/reload', doc: 'Reload extensions, skills, prompts, and context files.' },
+];
+
+function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
+  const byName = new Map<string, SlashCommand>();
+  for (const command of [...FALLBACK_SLASHES, ...remote]) byName.set(command.name, command);
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function SessionScreen({
   client,
+  subscriptions,
   sid,
   onBack,
+  onOpenSession,
 }: {
   client: GatewayClient;
+  subscriptions: SessionSubscriptionHub;
   sid: string;
   onBack: () => void;
+  onOpenSession: (sid: string) => void;
 }) {
   const [session, setSession] = useState<Session | null>(null);
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
@@ -44,16 +368,56 @@ export function SessionScreen({
   const [running, setRunning] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
   const [showJump, setShowJump] = useState(false);
+  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(() => new Map());
+  const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(null);
+  const [voicePhase, setVoicePhase] = useState<'idle' | 'recording' | 'transcribing'>('idle');
+  const [voiceRequested, setVoiceRequested] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const recordingRef = useRef<WavRecording | null>(null);
+  const pasteCounterRef = useRef(0);
+  const resizeScrollFrameRef = useRef<number | null>(null);
+  const disclosureScrollFrameRef = useRef<number | null>(null);
+  const prependScrollHeightRef = useRef<number | null>(null);
   const followingRef = useRef(true);
+  const showJumpRef = useRef(false);
 
-  const scrollToEnd = useCallback((behavior: ScrollBehavior = 'smooth') => {
+  useEffect(() => {
+    void recordingRef.current?.cancel();
+    recordingRef.current = null;
+    setTurns([]);
+    setLiveTurn(null);
+    setSession(null);
+    setAttachments([]);
+    setPastes(new Map());
+    pasteCounterRef.current = 0;
+    setComposerNotice(null);
+    setVoicePhase('idle');
+    setVoiceRequested(false);
+    setLoading(true);
+    setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
+    followingRef.current = true;
+    showJumpRef.current = false;
+  }, [sid]);
+
+  const scrollToEnd = useCallback((behavior: ScrollBehavior = 'auto') => {
     const viewport = scrollRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior });
     followingRef.current = true;
-    setShowJump(false);
+    if (showJumpRef.current) {
+      showJumpRef.current = false;
+      setShowJump(false);
+    }
   }, []);
 
   const loadTranscript = useCallback(async () => {
@@ -80,6 +444,57 @@ export function SessionScreen({
   }, [client, sid, loadTranscript]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    void client
+      .slashes(controller.signal)
+      .then((commands) => setSlashCommands(mergeSlashCommands(commands)))
+      .catch(() => setSlashCommands(mergeSlashCommands([])));
+    return () => controller.abort();
+  }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    void (async () => {
+      try {
+        const next = await client.capabilities(controller.signal);
+        if (!active) return;
+        setCapabilities(next);
+        setVoiceSupported(next.features.voice.enabled);
+        setVoiceModel(next.features.voice.model);
+      } catch {
+        try {
+          const model = await client.voiceModel(sid, false, controller.signal);
+          if (!active) return;
+          setVoiceSupported(model.status !== 'unavailable');
+          setVoiceModel(model);
+        } catch {
+          if (!active) return;
+          setVoiceSupported(false);
+          setVoiceModel({ status: 'unavailable' });
+        }
+      }
+    })();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [client, sid]);
+
+  useEffect(() => {
+    if (!voiceSupported || voiceModel?.status !== 'downloading') return;
+    const timer = window.setInterval(() => {
+      void client.voiceModel(sid).then(setVoiceModel).catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [client, sid, voiceModel?.status, voiceSupported]);
+
+  useEffect(() => () => {
+    void recordingRef.current?.cancel();
+    recordingRef.current = null;
+  }, []);
+
+  useEffect(() => {
     async function settle(event: SseEvent) {
       const type = event.type;
       setRunning(false);
@@ -90,161 +505,411 @@ export function SessionScreen({
       }
     }
 
-    const stop = client.streamEvents(
+
+    // Match the TUI's 150 ms live-body throttle. One reducer pass and one React
+    // state update replace hundreds of token-level updates during fast streams.
+    const eventQueue: SseEvent[] = [];
+    let timerId: number | null = null;
+    const flushEvents = () => {
+      timerId = null;
+      const batch = coalesceLiveEvents(eventQueue.splice(0));
+      if (!batch.length) return;
+
+      if (batch.some((event) => event.type === 'turn.started')) setRunning(true);
+      setLiveTurn((turn) => batch.reduce(reduceLiveEvent, turn));
+
+      let terminal: SseEvent | undefined;
+      for (let index = batch.length - 1; index >= 0; index -= 1) {
+        if (TERMINAL_EVENTS.has(batch[index].type)) {
+          terminal = batch[index];
+          break;
+        }
+      }
+      if (terminal) void settle(terminal);
+    };
+
+    const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
+    const unsubscribeEvents = subscriptions.subscribeSession(
       sid,
       (event) => {
-        const type = event.type;
-        if (type === 'turn.started') {
-          setRunning(true);
-          setLiveTurn({
-            id: stringField(event, 'turn_id'),
-            request: stringField(event, 'request'),
-            prose: '',
-            reasoning: '',
-            operationCount: 0,
-            status: 'running',
-          });
-          return;
-        }
-
-        if (type === 'content.block.delta') {
-          const field = stringField(event, 'field');
-          setLiveTurn((turn) => {
-            if (!turn) return turn;
-            if (field === 'markdown') return { ...turn, prose: applyText(turn.prose, event) };
-            if (field === 'text') return { ...turn, reasoning: applyText(turn.reasoning, event) };
-            return turn;
-          });
-          return;
-        }
-
-        if (type === 'iteration.completed') {
-          setLiveTurn((turn) => {
-            if (!turn) return turn;
-            return {
-              ...turn,
-              prose: stringField(event, 'assistant_prose') || turn.prose,
-              reasoning: stringField(event, 'thinking') || turn.reasoning,
-              operation: undefined,
-            };
-          });
-          return;
-        }
-
-        if (type === 'block.preview' || type === 'block.started') {
-          setLiveTurn((turn) => turn ? {
-            ...turn,
-            operation: type === 'block.preview'
-              ? `Native call: ${stringField(event, 'result_summary') || stringField(event, 'tool_name') || 'tool'}`
-              : stringField(event, 'tool_name') || stringField(event, 'scope') || 'Running operation',
-            operationCount: type === 'block.started' ? turn.operationCount + 1 : turn.operationCount,
-          } : turn);
-          return;
-        }
-
-        if (type === 'block.output') {
-          setLiveTurn((turn) => turn ? { ...turn, operation: undefined } : turn);
-          return;
-        }
-
-        if (TERMINAL_EVENTS.has(type)) void settle(event);
-      },
-      {
-        onOpen: () => setConnected(true),
-        onError: () => setConnected(false),
+        eventQueue.push(event);
+        if (timerId !== null) return;
+        const delay = TERMINAL_EVENTS.has(event.type) ? 0 : LIVE_BODY_THROTTLE_MS;
+        timerId = window.setTimeout(flushEvents, delay);
       },
     );
 
     return () => {
-      stop();
+      if (timerId !== null) window.clearTimeout(timerId);
+      eventQueue.length = 0;
+      unsubscribeEvents();
+      unsubscribeConnection();
       setConnected(false);
     };
-  }, [client, sid, loadTranscript]);
+  }, [loadTranscript, sid, subscriptions]);
 
+  useLayoutEffect(() => {
+    const viewport = scrollRef.current;
+    const previousHeight = prependScrollHeightRef.current;
+    if (viewport && previousHeight !== null) {
+      viewport.scrollTop += viewport.scrollHeight - previousHeight;
+      prependScrollHeightRef.current = null;
+      return;
+    }
+    if (followingRef.current) scrollToEnd('auto');
+  }, [turns, visibleTurnCount, liveTurn?.id, scrollToEnd]);
+
+  // Deferred Markdown, fonts, and content-visibility can change the transcript's
+  // measured height after React commits. Keep a newly opened/followed session at
+  // its actual bottom as those measurements settle.
   useEffect(() => {
-    if (followingRef.current) requestAnimationFrame(() => scrollToEnd('auto'));
-  }, [turns, liveTurn, scrollToEnd]);
+    const transcript = transcriptRef.current;
+    if (!transcript || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      if (!followingRef.current || resizeScrollFrameRef.current !== null) return;
+      resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
+        resizeScrollFrameRef.current = null;
+        if (followingRef.current) scrollToEnd('auto');
+      });
+    });
+    observer.observe(transcript);
+
+    return () => {
+      observer.disconnect();
+      if (resizeScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeScrollFrameRef.current);
+        resizeScrollFrameRef.current = null;
+      }
+      if (disclosureScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(disclosureScrollFrameRef.current);
+        disclosureScrollFrameRef.current = null;
+      }
+    };
+  }, [scrollToEnd, sid]);
 
   useEffect(() => {
     const textarea = composerRef.current;
     if (!textarea) return;
-    textarea.style.height = '0px';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+    textarea.style.height = '36px';
+    textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 36), 112)}px`;
   }, [prompt]);
 
-  async function send() {
-    const request = prompt.trim();
-    if (!request || running) return;
+  async function addAttachments() {
+    const limits = capabilities?.features.attachments;
+    const maximum = limits?.max_files ?? 8;
+    const remaining = maximum - attachments.length;
+    if (remaining <= 0) {
+      setComposerNotice(`You can attach up to ${maximum} images`);
+      return;
+    }
 
+    try {
+      const result = await pickImageAttachments({
+        maxFiles: remaining,
+        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        mediaTypes: limits?.media_types,
+      });
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+    } catch (cause) {
+      const message = (cause as Error).message;
+      if (!/cancel|dismiss/i.test(message)) setComposerNotice(message);
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+    setComposerNotice(null);
+  }
+
+  function removePaste(id: number) {
+    const paste = pastes.get(id);
+    if (!paste) return;
+    setPrompt((current) => current.replace(paste.token, '').replace(/ {2,}/g, ' '));
+    setPastes((current) => {
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    const content = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+    if (!content || !shouldCollapsePaste(content)) return;
+    event.preventDefault();
+
+    const id = ++pasteCounterRef.current;
+    const paste = createComposerPaste(id, content);
+    const input = event.currentTarget;
+    const start = input.selectionStart ?? prompt.length;
+    const end = input.selectionEnd ?? start;
+    const nextPrompt = `${prompt.slice(0, start)}${paste.token}${prompt.slice(end)}`;
+    setPastes((current) => new Map(current).set(id, paste));
+    setPrompt(nextPrompt);
+    window.requestAnimationFrame(() => {
+      const caret = start + paste.token.length;
+      composerRef.current?.setSelectionRange(caret, caret);
+    });
+  }
+
+  async function toggleVoice() {
+    setVoiceRequested(true);
+    setComposerNotice(null);
+
+    if (recordingRef.current) {
+      const recording = recordingRef.current;
+      recordingRef.current = null;
+      setVoicePhase('transcribing');
+      try {
+        const wav = await recording.stop();
+        const transcript = await client.transcribeVoice(sid, wav);
+        const text = transcript.text.trim();
+        if (text) setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+        requestAnimationFrame(() => composerRef.current?.focus());
+      } catch (cause) {
+        setComposerNotice((cause as Error).message);
+      } finally {
+        setVoicePhase('idle');
+      }
+      return;
+    }
+
+    if (voiceModel?.status === 'downloading') return;
+    try {
+      let model = voiceModel;
+      if (model?.status !== 'ready') {
+        model = await client.voiceModel(sid, true);
+        setVoiceModel(model);
+        if (model.status !== 'ready') return;
+      }
+      recordingRef.current = await startWavRecording();
+      setVoicePhase('recording');
+    } catch (cause) {
+      setVoicePhase('idle');
+      setComposerNotice((cause as Error).message);
+    }
+  }
+
+  async function send() {
+    const authoredRequest = prompt.trim();
+    const request = expandPastePlaceholders(authoredRequest, pastes)
+      || (attachments.length ? 'Please inspect the attached image(s).' : '');
+    const displayRequest = collapsePastePlaceholders(authoredRequest, pastes) || request;
+    if (!request || running || voicePhase !== 'idle') return;
+
+    const [command = '', ...argParts] = authoredRequest.split(/\s+/);
+    const args = argParts.join(' ');
+
+    if (command === '/help') {
+      setPrompt('/');
+      setSlashDismissed(false);
+      setSlashIndex(0);
+      return;
+    }
+
+    if (command === '/sessions') {
+      setPrompt('');
+      onBack();
+      return;
+    }
+
+    if (command === '/new-session' || command === '/clear') {
+      setPrompt('');
+      setError(null);
+      setRunning(true);
+      try {
+        const created = await client.createSession({ channel: 'web' });
+        if (command === '/new-session' && args) await client.submitTurn(created.id, args);
+        onOpenSession(created.id);
+      } catch (cause) {
+        setPrompt(request);
+        setError((cause as Error).message);
+      } finally {
+        setRunning(false);
+      }
+      return;
+    }
+
+    const pendingAttachments = attachments;
+    const pendingPastes = pastes;
     setPrompt('');
+    setAttachments([]);
+    setPastes(new Map());
+    setComposerNotice(null);
+    setSlashDismissed(false);
     setError(null);
     setRunning(true);
-    setLiveTurn({ request, prose: '', reasoning: '', operationCount: 0, status: 'running' });
+    setLiveTurn({
+      request: displayRequest,
+      answer: '',
+      iterations: [],
+      startedAt: Date.now(),
+      status: 'running',
+    });
     followingRef.current = true;
     requestAnimationFrame(() => scrollToEnd());
 
     try {
-      const submitted = await client.submitTurn(sid, request);
+      const submitted = await client.submitTurn(sid, request, {
+        displayRequest,
+        attachments: pendingAttachments.map(({ filename, media_type, base64 }) => ({
+          filename,
+          media_type,
+          base64,
+        })),
+      });
       setLiveTurn((turn) => turn ? { ...turn, id: submitted.turn_id ?? submitted.id } : turn);
     } catch (cause) {
       setRunning(false);
       setLiveTurn(null);
-      setPrompt(request);
+      setPrompt(authoredRequest);
+      setPastes(pendingPastes);
+      setAttachments((current) => current.length ? current : pendingAttachments);
       setError((cause as Error).message);
       requestAnimationFrame(() => composerRef.current?.focus());
     }
   }
 
   async function cancel() {
+    setLiveTurn((turn) => turn ? { ...turn, cancelling: true, activity: undefined } : turn);
     try {
       await client.cancelCurrentTurn(sid);
-      setLiveTurn((turn) => turn ? { ...turn, status: 'cancelled', operation: undefined } : turn);
     } catch (cause) {
+      setLiveTurn((turn) => turn ? { ...turn, cancelling: false } : turn);
       setError((cause as Error).message);
     }
+  }
+
+  function handleDisclosureClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target;
+    const viewport = scrollRef.current;
+    if (!(target instanceof Element) || !viewport) return;
+
+    const disclosure = target.closest('summary, [data-disclosure-toggle]');
+    if (!disclosure || !viewport.contains(disclosure)) return;
+
+    const anchorTop = disclosure.getBoundingClientRect().top;
+    followingRef.current = false;
+    if (disclosureScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(disclosureScrollFrameRef.current);
+    }
+
+    const preserveAnchor = () => {
+      const activeViewport = scrollRef.current;
+      if (!activeViewport || !disclosure.isConnected) return;
+      const shift = disclosure.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(shift) > 0.5) activeViewport.scrollTop += shift;
+    };
+
+    disclosureScrollFrameRef.current = window.requestAnimationFrame(() => {
+      preserveAnchor();
+      disclosureScrollFrameRef.current = window.requestAnimationFrame(() => {
+        disclosureScrollFrameRef.current = null;
+        preserveAnchor();
+        const activeViewport = scrollRef.current;
+        if (!activeViewport) return;
+        const distance =
+          activeViewport.scrollHeight - activeViewport.scrollTop - activeViewport.clientHeight;
+        const following = distance < 64;
+        followingRef.current = following;
+        if (showJumpRef.current !== !following) {
+          showJumpRef.current = !following;
+          setShowJump(!following);
+        }
+      });
+    });
   }
 
   function handleScroll() {
     const viewport = scrollRef.current;
     if (!viewport) return;
     const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    followingRef.current = distance < 96;
-    setShowJump(!followingRef.current);
+    const following = distance < 64;
+    followingRef.current = following;
+    if (showJumpRef.current !== !following) {
+      showJumpRef.current = !following;
+      setShowJump(!following);
+    }
   }
 
+  useEffect(() => {
+    if (!running) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      void cancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [running]);
+
+  const slashText = prompt.trimStart();
+  const slashOpen =
+    !running &&
+    !slashDismissed &&
+    slashText.startsWith('/') &&
+    !slashText.startsWith('//') &&
+    !slashText.includes('\n');
+  const slashQuery = slashText.toLowerCase();
+  const slashMatches = slashOpen
+    ? slashCommands.filter((command) => command.name.toLowerCase().startsWith(slashQuery)).slice(0, 8)
+    : [];
+  const selectedSlash = slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
+
+  function completeSlash(command: SlashCommand) {
+    const noArgs = new Set(['/help', '/sessions', '/clear']);
+    setPrompt(command.name + (noArgs.has(command.name) ? '' : ' '));
+    setSlashIndex(0);
+    setSlashDismissed(noArgs.has(command.name));
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
+  const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
   const title = session?.title?.trim() || 'Chat';
+  const visibleStart = Math.max(0, turns.length - visibleTurnCount);
+  const visibleTurns = turns.slice(visibleStart);
+  const loadEarlierTurns = () => {
+    const viewport = scrollRef.current;
+    if (viewport) prependScrollHeightRef.current = viewport.scrollHeight;
+    followingRef.current = false;
+    setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
+  };
 
   return (
-    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink">
-      <header className="z-10 flex min-h-15 shrink-0 items-center gap-3 border-b border-edge/70 bg-panel/90 px-3.5 py-2 backdrop-blur-xl max-sm:min-h-13 max-sm:pl-2.5">
+    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none">
+      <header className="z-10 flex min-h-12 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
         <button
           type="button"
-          className="grid size-10 place-items-center rounded-xl border border-transparent bg-transparent text-3xl leading-none text-white/70 transition hover:border-edge hover:bg-panel-2 hover:text-white"
+          className="grid w-12 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-xl font-bold leading-none text-dialog-title-foreground transition-[background-color,transform] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-10"
           onClick={onBack}
           aria-label="Back to sessions"
         >
           <span aria-hidden="true">‹</span>
         </button>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold">{title}</h1>
-          <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+        <div className="min-w-0 flex-1 self-center px-3">
+          <h1 className="truncate font-mono text-xs font-bold text-white">{title}</h1>
+          <div className="flex items-center gap-1.5 font-mono text-[10px] text-dialog-hint">
             <span
-              className={`size-1.5 rounded-full ${connected ? 'bg-ok shadow-[0_0_0.5rem_var(--ok)]' : 'bg-white/20'}`}
+              className={`size-1.5 ${connected ? 'bg-ok' : 'animate-pulse bg-turn-edge motion-reduce:animate-none'}`}
             />
             {connected ? 'Gateway connected' : 'Reconnecting'}
           </div>
         </div>
-        <span className="hidden max-w-[30%] truncate font-mono text-[10px] text-white/25 sm:block">{sid}</span>
+        <span className="hidden max-w-[30%] self-center truncate px-3 font-mono text-[9px] text-dialog-hint sm:block">{sid}</span>
       </header>
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-smooth motion-reduce:scroll-auto"
+        className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]"
+        onClickCapture={handleDisclosureClick}
         onScroll={handleScroll}
         role="log"
-        aria-live="polite"
       >
-        <div className="mx-auto min-h-full w-full max-w-4xl px-4 pb-12 pt-6 sm:px-8 sm:pt-10">
+        <div
+          ref={transcriptRef}
+          className="mx-auto min-h-full w-full max-w-3xl px-[max(0.875rem,env(safe-area-inset-left))] pb-10 pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:px-6 sm:pt-6"
+        >
           {error && <Banner kind="err">{error}</Banner>}
 
           {loading && !turns.length ? (
@@ -254,24 +919,36 @@ export function SessionScreen({
               <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms] motion-reduce:animate-none" />
             </div>
           ) : !turns.length && !liveTurn ? (
-            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
-              <div
-                className="grid size-11 place-items-center rounded-xl border border-accent/35 bg-accent/10 font-mono text-lg font-bold text-accent shadow-lg shadow-accent/10"
-                aria-hidden="true"
-              >
-                v
+            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
+              <div className="grid size-11 place-items-center border border-dialog-edge bg-panel-2 shadow-[3px_3px_0_var(--dialog-shadow)]" aria-hidden="true">
+                <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
               </div>
-              <h2 className="mb-1 mt-4 text-lg font-semibold">Start a conversation</h2>
-              <p className="max-w-sm text-sm leading-6 text-white/45">
+              <h2 className="mb-1 mt-3 text-base font-semibold">Start a conversation</h2>
+              <p className="max-w-sm text-xs leading-5 text-dialog-hint">
                 This session is ready. Ask Vis to inspect, explain, or change your project.
               </p>
             </div>
           ) : null}
 
-          {turns.map((turn, index) => {
+          {visibleStart > 0 && (
+            <div className="mb-5 flex justify-center">
+              <button
+                type="button"
+                className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-[9px] font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
+                onClick={loadEarlierTurns}
+              >
+                ↑ Load {Math.min(INITIAL_VISIBLE_TURNS, visibleStart)} earlier · {visibleStart} remaining
+              </button>
+            </div>
+          )}
+
+          {visibleTurns.map((turn, index) => {
             const request = turn.user_request ?? turn.request ?? '';
             return (
-              <div className={index === 0 ? '' : 'mt-14'} key={turn.id ?? turn.turn_id}>
+              <div
+                className={`${index === 0 ? '' : 'mt-10'} [content-visibility:auto] [contain-intrinsic-size:auto_480px]`}
+                key={turn.id ?? turn.turn_id}
+              >
                 {request && <UserMessage>{request}</UserMessage>}
                 <AssistantMessage turn={turn} />
               </div>
@@ -279,50 +956,22 @@ export function SessionScreen({
           })}
 
           {liveTurn && (
-            <div className={turns.length ? 'mt-14' : ''} data-live="true">
+            <div className={turns.length ? 'mt-10' : ''} data-live="true">
               {liveTurn.request && <UserMessage>{liveTurn.request}</UserMessage>}
-              <article className="mt-6 flex items-start gap-3 max-sm:gap-2.5">
-                <div
-                  className="grid size-7 shrink-0 place-items-center rounded-lg border border-accent/35 bg-accent/10 font-mono text-xs font-bold text-accent shadow-lg shadow-accent/10 max-sm:size-6 max-sm:rounded-md max-sm:text-[10px]"
-                  aria-hidden="true"
-                >
-                  v
-                </div>
-                <div className="min-w-0 flex-1">
-                  {liveTurn.reasoning && (
-                    <details className="group mb-3 text-xs text-white/60">
-                      <summary className="flex list-none cursor-pointer select-none items-center gap-2 py-1 hover:text-white/80 [&::-webkit-details-marker]:hidden">
-                        <span className="font-mono text-accent">⌁</span>
-                        Reasoning
-                        <span className="inline-block transition-transform duration-150 group-open:rotate-90">›</span>
-                      </summary>
-                      <div className="mb-3 ml-2 mt-2 border-l border-edge py-0.5 pl-4 text-[13px] leading-relaxed text-white/55">
-                        <Markdown>{liveTurn.reasoning}</Markdown>
-                      </div>
-                    </details>
-                  )}
-                  {liveTurn.prose ? (
-                    <div className="text-[15px] leading-7 text-white/95">
-                      <Markdown>{liveTurn.prose}</Markdown>
-                      <span className="ml-1 inline-block h-[1em] w-1.5 translate-y-[0.15em] animate-pulse rounded-sm bg-accent motion-reduce:animate-none" />
-                    </div>
-                  ) : (
-                    <div className="flex min-h-7 items-center gap-2.5 text-sm text-white/50">
-                      <span className="flex gap-1">
-                        <i className="size-1.5 animate-bounce rounded-full bg-accent motion-reduce:animate-none" />
-                        <i className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms] motion-reduce:animate-none" />
-                        <i className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms] motion-reduce:animate-none" />
-                      </span>
-                      <span>{liveTurn.operation ?? (liveTurn.status === 'cancelled' ? 'Stopping…' : 'Thinking…')}</span>
-                    </div>
-                  )}
-                  {liveTurn.operationCount > 0 && (
-                    <div className="mt-3 font-mono text-[10px] text-white/30">
-                      {liveTurn.operationCount} {liveTurn.operationCount === 1 ? 'operation' : 'operations'}
-                    </div>
-                  )}
-                </div>
-              </article>
+              <AssistantMessage
+                turn={{
+                  id: liveTurn.id ?? 'live',
+                  request: liveTurn.request,
+                  status: liveTurn.status,
+                  iterations: liveTurn.iterations,
+                  content: liveTurn.answer
+                    ? [{ id: 'live-answer', type: 'prose', markdown: liveTurn.answer }]
+                    : [],
+                }}
+                streaming={liveTurn.status === 'running'}
+                activity={liveProgressPhase(liveTurn)}
+                startedAt={liveTurn.startedAt}
+              />
             </div>
           )}
         </div>
@@ -331,55 +980,209 @@ export function SessionScreen({
       {showJump && (
         <button
           type="button"
-          className="absolute bottom-24 left-1/2 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel-2/95 px-3 py-1.5 text-xs text-white/75 shadow-xl shadow-black/40 backdrop-blur-xl transition hover:text-white max-sm:bottom-20"
-          onClick={() => scrollToEnd()}
+          className="absolute bottom-24 left-1/2 z-20 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-[10px] font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none max-sm:bottom-24"
+          onClick={() => scrollToEnd('smooth')}
         >
-          ↓ Newest
+          ↓ Latest
         </button>
       )}
 
-      <footer className="z-10 shrink-0 border-t border-edge/70 bg-ink/90 px-3 pb-2 pt-3 backdrop-blur-xl sm:px-[max(1.5rem,calc((100%_-_50rem)/2))] max-sm:pb-1.5 max-sm:pt-2">
-        <div className="flex items-end gap-2 rounded-2xl border border-edge bg-panel/90 p-2 shadow-2xl shadow-black/30 transition focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/10">
-          <textarea
-            ref={composerRef}
-            rows={1}
-            value={prompt}
-            disabled={running}
-            placeholder={running ? 'Vis is working…' : 'Message Vis'}
-            aria-label="Message Vis"
-            className="min-h-9 max-h-40 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2 text-[15px] leading-5 text-white outline-none placeholder:text-white/30 disabled:opacity-60"
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-          />
-          {running ? (
-            <button
-              type="button"
-              className="grid size-9 shrink-0 place-items-center rounded-xl bg-err/15 transition hover:bg-err/25"
-              onClick={cancel}
-              aria-label="Stop response"
-            >
-              <span className="size-2.5 rounded-sm bg-err" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="grid size-9 shrink-0 place-items-center rounded-xl bg-accent font-bold text-ink transition hover:-translate-y-px hover:brightness-110 disabled:translate-y-0 disabled:opacity-30"
-              onClick={send}
-              disabled={!prompt.trim()}
-              aria-label="Send message"
-            >
-              ↑
-            </button>
+      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.4rem,env(safe-area-inset-bottom))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
+        {slashMatches.length > 0 && (
+          <div
+            id="slash-command-list"
+            role="listbox"
+            aria-label="Slash commands"
+            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+          >
+            <div className="bg-dialog-title px-3 py-2 font-mono text-[10px] font-bold text-dialog-title-foreground">
+              Slash commands
+            </div>
+            {slashMatches.map((command, index) => (
+              <button
+                key={command.name}
+                type="button"
+                role="option"
+                aria-selected={index === slashIndex}
+                className={`flex w-full items-start gap-3 border-t border-dialog-edge px-3 py-2.5 text-left transition-colors ${
+                  index === slashIndex
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-dialog-foreground hover:bg-hover'
+                }`}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => completeSlash(command)}
+              >
+                <code className="min-w-32 shrink-0 font-mono text-xs font-semibold text-accent">
+                  {command.name}
+                </code>
+                <span className="line-clamp-2 text-xs leading-5 text-dialog-hint">{command.doc}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
+          {activePastes.length > 0 && (
+            <div className="flex gap-1 overflow-x-auto border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
+              {activePastes.map((paste) => (
+                <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-[9px] text-accent">
+                  <span className="max-w-56 truncate px-2">{paste.token}</span>
+                  <button
+                    type="button"
+                    className="grid min-h-7 w-7 place-items-center border-l border-code-edge text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                    onClick={() => removePaste(paste.id)}
+                    aria-label={`Remove pasted block ${paste.id}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
+          {attachments.length > 0 && (
+            <div className="flex gap-1.5 overflow-x-auto border-b border-dialog-edge px-1.5 py-1.5 [scrollbar-width:thin]">
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-6 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                >
+                  <img
+                    src={attachment.previewUrl}
+                    alt=""
+                    className="size-8 shrink-0 object-cover"
+                  />
+                  <span className="truncate font-mono text-[9px] text-dialog-hint-key">
+                    {attachment.filename}
+                  </span>
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 grid w-6 place-items-center text-xs text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                    onClick={() => removeAttachment(attachment.id)}
+                    aria-label={`Remove ${attachment.filename}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {(composerNotice || voicePhase !== 'idle' || (voiceRequested && voiceModel?.status !== 'ready')) && (
+            <div className="flex min-h-6 items-center gap-1.5 border-b border-dialog-edge px-2 font-mono text-[9px] text-dialog-hint">
+              {voicePhase === 'recording' ? (
+                <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
+              ) : voicePhase === 'transcribing' ? (
+                <><span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" /> Transcribing on the gateway…</>
+              ) : composerNotice ? composerNotice : voiceModel?.status === 'downloading' ? (
+                <>Downloading voice model{voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}</>
+              ) : voiceModel?.status === 'failed' ? (
+                <>Voice model failed{voiceModel.error ? ` · ${voiceModel.error}` : ''}</>
+              ) : voiceModel?.status === 'absent' ? (
+                <>Tap the microphone to install the local voice model</>
+              ) : null}
+            </div>
+          )}
+
+          <div className="flex items-end gap-1 p-1">
+            <button
+              type="button"
+              className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
+              onClick={() => void addAttachments()}
+              disabled={running || attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
+              aria-label="Add images"
+              title="Add images"
+            >
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" strokeLinecap="square" />
+              </svg>
+            </button>
+
+            {voiceSupported && (
+              <button
+                type="button"
+                className={`grid size-11 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9 ${
+                  voicePhase === 'recording'
+                    ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
+                    : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
+                }`}
+                onClick={() => void toggleVoice()}
+                disabled={running || voicePhase === 'transcribing' || voiceModel?.status === 'downloading'}
+                aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+                title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+              >
+                <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
+                </svg>
+              </button>
+            )}
+
+            <textarea
+              ref={composerRef}
+              rows={1}
+              value={prompt}
+              disabled={running}
+              placeholder={running ? 'Vis is working…' : voicePhase === 'recording' ? 'Listening…' : 'Message Vis or type /'}
+              aria-label="Message Vis"
+              aria-controls={slashMatches.length ? 'slash-command-list' : undefined}
+              aria-expanded={slashMatches.length > 0}
+              className="h-11 min-h-11 max-h-28 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-base leading-6 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-9 sm:min-h-9 sm:py-2 sm:text-[12px] sm:leading-5"
+              onPaste={handlePaste}
+              onChange={(event) => {
+                setPrompt(event.target.value);
+                setSlashIndex(0);
+                setSlashDismissed(false);
+              }}
+              onKeyDown={(event) => {
+                if (slashMatches.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+                  event.preventDefault();
+                  const delta = event.key === 'ArrowDown' ? 1 : -1;
+                  setSlashIndex((current) => (current + delta + slashMatches.length) % slashMatches.length);
+                  return;
+                }
+                if (slashMatches.length && event.key === 'Tab' && selectedSlash) {
+                  event.preventDefault();
+                  completeSlash(selectedSlash);
+                  return;
+                }
+                if (slashMatches.length && event.key === 'Escape') {
+                  event.preventDefault();
+                  setSlashDismissed(true);
+                  return;
+                }
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  if (selectedSlash && slashText.toLowerCase() !== selectedSlash.name.toLowerCase()) {
+                    completeSlash(selectedSlash);
+                  } else {
+                    void send();
+                  }
+                }
+              }}
+            />
+
+            {running ? (
+              <button
+                type="button"
+                className="grid size-11 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-9"
+                onClick={cancel}
+                aria-label="Stop response"
+              >
+                <span className="size-2.5 bg-err" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="grid size-11 shrink-0 place-items-center border border-dialog-edge bg-dialog-title font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-9"
+                onClick={send}
+                disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
+                aria-label="Send message"
+              >
+                ↑
+              </button>
+            )}
+          </div>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-white/25 max-sm:hidden">
-          Enter to send · Shift+Enter for a new line
-        </p>
       </footer>
     </section>
   );

@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
@@ -758,14 +759,16 @@
          (merge
            ;; Carry the native-tool badge identity so a client can hide the
            ;; redundant invocation code WHILE the tool runs.
-           (form/->display chunk)
-           {:block_id position :code code})
+           (form/->display (form/with-display-code chunk))
+           (cond-> {:block_id position :code code}
+             (:vis/tool-name chunk) (assoc :tool_name (:vis/tool-name chunk))
+             (:svar/tool-call-id chunk) (assoc :tool_call_id (:svar/tool-call-id chunk))))
 
          :form-result
          (merge
            ;; The native-tool op-card fields (pre-rendered card + badge label
            ;; + colour) — projected from ONE canonical list.
-           (form/->display chunk)
+           (form/->display (form/with-display-code chunk))
            {:block_id position
             :code code
             :result result
@@ -1079,6 +1082,101 @@
     ;; chat thread renders top-to-bottom with no reverse.
     (wire/canonical (vec (concat persisted live)))))
 
+(defn- with-display-iteration
+  "Normalize reasoning and attach the same cached ruff-formatted Python that the
+   local TUI paints. The wire therefore remains identical after reconnects."
+  [iteration]
+  (cond-> (update iteration :thinking normalize-thinking-text)
+    (seq (:forms iteration))
+    (update :forms #(mapv form/with-display-code %))))
+
+(defn- transcript-turn
+  "Hydrate one persisted turn and attach the canonical TUI/CLI bubble-footer
+   strings. Remote channels consume these verbatim; older clients can still use
+   the underlying usage/routing fields."
+  [db att-by-soul turn]
+  (let
+    [iterations
+     (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
+               (mapv with-display-iteration))
+          (catch Throwable t
+            (tel/log! :warn ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
+            []))
+
+     last-it
+     (last iterations)
+
+     tokens
+     (cond-> {}
+       (:input-tokens turn)
+       (assoc "input" (:input-tokens turn))
+
+       (:input-regular-tokens turn)
+       (assoc "input_regular" (:input-regular-tokens turn))
+
+       (:input-cache-write-tokens turn)
+       (assoc "cache_created" (:input-cache-write-tokens turn))
+
+       (:input-cache-read-tokens turn)
+       (assoc "cached" (:input-cache-read-tokens turn))
+
+       (:output-tokens turn)
+       (assoc "output" (:output-tokens turn))
+
+       (:output-reasoning-tokens turn)
+       (assoc "reasoning" (:output-reasoning-tokens turn)))
+
+     cost
+     (when-let [total-cost (or (:total-cost turn) (:cost turn))]
+       (cond-> {"total_cost" total-cost}
+         (:provider turn)
+         (assoc "provider" (:provider turn))
+
+         (:model turn)
+         (assoc "model" (:model turn))))
+
+     meta-source
+     (cond-> {:duration-ms (:duration-ms turn)}
+       (seq tokens)
+       (assoc :tokens tokens)
+
+       cost
+       (assoc :cost cost)
+
+       (:provider turn)
+       (assoc :provider (:provider turn))
+
+       (:model turn)
+       (assoc :model (:model turn))
+
+       (:llm-selected last-it)
+       (assoc :llm-selected (:llm-selected last-it))
+
+       (:llm-actual last-it)
+       (assoc :llm-actual (:llm-actual last-it))
+
+       (contains? last-it :llm-fallback?)
+       (assoc :llm-fallback? (:llm-fallback? last-it))
+
+       (seq (:llm-routing-trace last-it))
+       (assoc :llm-routing-trace (:llm-routing-trace last-it)))
+
+     meta-summary
+     (fmt/meta-summary-line meta-source)
+
+     fallback-note
+     (fmt/meta-fallback-note meta-source)]
+
+    (cond-> (assoc turn :iterations iterations)
+      (seq (get att-by-soul (str (:id turn))))
+      (assoc :attachments (get att-by-soul (str (:id turn))))
+
+      meta-summary
+      (assoc :meta-summary meta-summary)
+
+      fallback-note
+      (assoc :meta-fallback-note fallback-note))))
+
 (defn transcript
   "Rich persisted transcript rows for `sid` in THE canonical wire shape
   (`wire/canonical`): turns oldest-first, each carrying its persisted iteration
@@ -1097,21 +1195,7 @@
           att-by-soul
           (try (persistance/db-list-turns-attachments db (map :id turns)) (catch Throwable _ {}))]
 
-         (wire/canonical
-           (mapv (fn [turn]
-                   (cond->
-                     (assoc turn
-                       :iterations
-                       (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
-                                 (mapv #(update % :thinking normalize-thinking-text)))
-                            (catch Throwable t
-                              (tel/log! :warn
-                                        ["gateway: turn-iteration hydration failed" (:id turn)
-                                         (ex-message t)])
-                              [])))
-                     (seq (get att-by-soul (str (:id turn))))
-                     (assoc :attachments (get att-by-soul (str (:id turn))))))
-                 turns)))
+         (wire/canonical (mapv (partial transcript-turn db att-by-soul) turns)))
        (catch Throwable t
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))
@@ -1132,7 +1216,7 @@
          (let
            [db (lp/db-info)
             iters (->> (persistance/db-list-session-turn-iterations db turn-id)
-                       (mapv #(update % :thinking normalize-thinking-text)))
+                       (mapv with-display-iteration))
             atts-by-iter (when (seq iters)
                            (try (into {}
                                       (map (fn [[iter-id rows]]
@@ -1276,7 +1360,7 @@
   turn record and a `turn.failed` event."
   [sid tid request
    {:keys [messages model reasoning-default cancel-token extra-body turn-features workspace
-           engine-opts attachments stall]}]
+           engine-opts attachments display-request stall]}]
   (let
     [caller-on-chunk
      (get-in engine-opts [:hooks :on-chunk])
@@ -1358,6 +1442,9 @@
              :cancel-token cancel-token)
            model
            (assoc :model model)
+
+           display-request
+           (assoc :display-text display-request)
 
            reasoning-default
            (assoc :reasoning-default reasoning-default)
@@ -1503,7 +1590,7 @@
 (defn- launch-turn-worker!
   [sid tid request
    {:keys [messages model reasoning-default cancel-token queued? extra-body turn-features workspace
-           engine-opts attachments]}]
+           engine-opts attachments display-request]}]
   (append-event! sid
                  "turn.started"
                  ;; Carry the CANONICAL run-start clock (stamped into the registry
@@ -1512,7 +1599,8 @@
                  ;; submit/drain/attach stamp drifts from the actual run start.
                  (cond->
                    {:turn_id tid
-                    :request request
+                    :request (or display-request request)
+                    :display_request display-request
                     :started_at (or (get-in @registry [sid :turns tid :started_at])
                                     (System/currentTimeMillis))}
                    queued?
@@ -1533,6 +1621,7 @@
                                                           :workspace workspace
                                                           :engine-opts engine-opts
                                                           :attachments attachments
+                                                          :display-request display-request
                                                           :stall stall})))
     (start-turn-stall-watchdog! sid tid cancel-token stall)))
 
@@ -1594,7 +1683,7 @@
           (if-let
             [[tid
               {:keys [request messages model reasoning-default cancel-token extra-body turn-features
-                      workspace engine-opts attachments]}]
+                      workspace engine-opts attachments display_request]}]
              (first-queued-turn entry)]
             (let
               [token (or cancel-token (cancellation/cancellation-token))
@@ -1603,6 +1692,7 @@
               (vreset! decision
                        {:tid tid
                         :request request
+                        :display-request display_request
                         :messages messages
                         :model model
                         :reasoning-default reasoning-default
@@ -1620,7 +1710,7 @@
                              {:status "running" :cancel-token token :started_at started-at})))
             entry))))
     (when-let
-      [{:keys [tid request messages model reasoning-default cancel-token extra-body turn-features
+      [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body turn-features
                workspace engine-opts attachments]}
        @decision]
       ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
@@ -1640,7 +1730,8 @@
                             :turn-features turn-features
                             :workspace workspace
                             :engine-opts engine-opts
-                            :attachments attachments})
+                            :attachments attachments
+                            :display-request display-request})
       (get-turn sid tid))))
 
 (defn drain-idle!
@@ -2360,33 +2451,44 @@
 
 (defn soul
   "Canonical (string-keyed) wire soul for one session: persisted record + live
-   gateway status."
+   gateway status. Running sessions include their request, start timestamp, and
+   the gateway clock sampled in the same response so remote channels can derive
+   one elapsed baseline without trusting their device wall clock."
   [sid]
   (when-let [session (lp/by-id sid)]
-    (let
-      [entry (get @registry sid)
-       last-turn (some->> (:turn-order entry)
-                          peek
-                          (get (:turns entry)))]
-
+    (let [entry (get @registry sid)
+          current-turn-id (:current-turn entry)
+          current-turn (get-in entry [:turns current-turn-id])
+          last-turn (some->> (:turn-order entry)
+                             peek
+                             (get (:turns entry)))
+          server-time-ms (System/currentTimeMillis)]
       (wire/canonical
-        {:id (str (:id session))
-         :channel (some-> (:channel session)
-                          name)
-         :title (:title session)
-         :model (:model session)
-         :external_id (:external-id session)
-         :created_at (:created-at session)
-         :owner_id (:owner-id session)
-         :project_id (some-> (:project-id session)
-                             str)
-         :project_name (:project-name session)
-         :project_position (:project-position session)
-         :status (cond (:current-turn entry) "running"
-                       (= "suspended" (:status last-turn)) "suspended"
-                       :else "idle")
-         :current_turn_id (:current-turn entry)
-         :last_active_at (:last-active entry)}))))
+        (cond->
+          {:id (str (:id session))
+           :channel (some-> (:channel session) name)
+           :title (:title session)
+           :model (:model session)
+           :external_id (:external-id session)
+           :created_at (:created-at session)
+           :owner_id (:owner-id session)
+           :project_id (some-> (:project-id session) str)
+           :project_name (:project-name session)
+           :project_position (:project-position session)
+           :status (cond current-turn-id "running"
+                         (= "suspended" (:status last-turn)) "suspended"
+                         :else "idle")
+           ;; Explicit wire-level liveness keeps clients from reverse-engineering
+           ;; status/current_turn_id. It changes synchronously with :current-turn.
+           :live (boolean current-turn-id)
+           :current_turn_id current-turn-id
+           :last_active_at (:last-active entry)
+           :server_time_ms server-time-ms}
+          (and current-turn-id (:request current-turn))
+          (assoc :running_request (:request current-turn))
+
+          (and current-turn-id (nat-int? (:started_at current-turn)))
+          (assoc :running_started_at (:started_at current-turn)))))))
 
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
@@ -2425,10 +2527,33 @@
                 (assoc "workspace" ws))))
           souls)))
 
+(defn- session-recency-ms
+  [session]
+  (let
+    [value
+     (or (get session "modified_at") (get session "last_active_at") (get session "created_at"))]
+    (cond (number? value) (long value)
+          (instance? java.time.Instant value) (.toEpochMilli ^java.time.Instant value)
+          (instance? java.util.Date value) (.getTime ^java.util.Date value)
+          :else 0)))
+
+(defn- order-session-summaries
+  "Gateway-owned navigator order: live sessions first, then most recently
+   active. The id tie-breaker keeps repeated polls deterministic."
+  [sessions]
+  (->> sessions
+       (sort-by (fn [session]
+                  [(if (true? (get session "live")) 0 1) (unchecked-negate (long (session-recency-ms session)))
+                   (str (get session "id"))]))
+       vec))
+
 (defn list-sessions
   "Wire souls for every persisted session, each decorated with the bulk
    summary facts (`turn_count`, `modified_at`, lean `workspace`) so ONE
    `GET /v1/sessions` is enough to paint a session picker.
+
+   The gateway owns navigator ordering: live sessions first, followed by idle
+   sessions in most-recently-active order. Clients must preserve this order.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
    in one channel is visible in the others and vice-versa. Pass a specific
@@ -2439,7 +2564,8 @@
    (->> (lp/by-channel channel)
         (keep (comp soul :id))
         vec
-        session-summary-extras)))
+        session-summary-extras
+        order-session-summaries)))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 

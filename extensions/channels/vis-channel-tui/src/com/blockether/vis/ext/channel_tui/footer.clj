@@ -60,6 +60,25 @@
   (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
     (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
 
+(defn- session-effective-provider
+  "Provider keyword the SESSION actually routes through — the per-session pick
+   (`:session-model-pref` / gateway session model) first, falling back to the
+   GLOBAL router default only when the session made no explicit choice. Codex-only
+   footer knobs (e.g. verbosity) must gate on THIS, not on `chosen-model-info`,
+   or they leak onto Claude/other sessions whenever the router default is Codex."
+  [db]
+  (or (some-> (:session-model-pref db)
+              :provider
+              not-empty
+              keyword)
+      (when-let [sid (get-in db [:session :id])]
+        (some-> (lp/gateway-session-model-cached sid)
+                :provider
+                not-empty
+                keyword))
+      (some-> (chosen-model-info)
+              :provider)))
+
 (defn- reasoning-effort-configurable?
   [info]
   (and (boolean (:reasoning? info))
@@ -540,22 +559,17 @@
      info
      (chosen-model-info)
 
-     provider
-     (:provider info)
-
-     ;; Past life: `model` + `model-display` strings were also
-     ;; destructured here for a footer label that no longer exists.
-     ;; Resurrect via `(let [model (:name info) ...] ...)` if a
-     ;; future renderer needs them. `provider` stays — used by
-     ;; `codex-provider?` below.
      reasoning?
      (reasoning-effort-configurable? info)
 
      reasoning-level
      (or (:reasoning-level settings) default-reasoning-level)
 
+     ;; Verbosity is a Codex-only knob: gate on the provider the SESSION routes
+     ;; through, not `chosen-model-info` (the global router default), or it leaks
+     ;; onto Claude/other sessions whenever the router default happens to be Codex.
      codex-provider?
-     (= :openai-codex provider)
+     (= :openai-codex (session-effective-provider db))
 
      codex-verbosity
      (or (:openai-codex-verbosity settings) default-codex-verbosity)
@@ -592,14 +606,7 @@
      ;; session owns ≥1.
      res-count
      (count (try (lp/gateway-list-resources-cached (get-in db [:session :id]))
-                 (catch Throwable _ nil)))
-
-     ;; Filesystem: the session root + any extra dirs granted via /fs or the picker.
-     ;; Surfaced in the footer (BOTH channels) so the add-directory
-     ;; affordance is discoverable here, not buried; /fs and /root manage it
-     ;; (the web twin is the clickable footer dirs button).
-     dir-count
-     (inc (count (get ws "filesystem_roots")))]
+                 (catch Throwable _ nil)))]
 
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -645,21 +652,7 @@
              :bold? true
              :region :right
              :priority 2
-             :kind :footer-resources})
-
-      ;; ── RIGHT: filesystem-root count as a CLICKABLE button (web-footer parity).
-      ;; Clicking it — or pressing C-x d — opens the file-explorer picker; the
-      ;; binding rides ON the chip so it's discoverable. `/fs` opens the same
-      ;; picker; `/root <path>` changes the session's root by typing.
-      ;; Rendered as a bare "filesystem N (C-x d)" button — no glyph (the word
-      ;; is the affordance).
-      true
-      (conj {:text (str " filesystem " dir-count " (" (keymap/label-for :open-dirs) ") ")
-             :fg t/footer-fg-strong
-             :bold? true
-             :region :right
-             :priority 3
-             :kind :footer-dirs}))
+             :kind :footer-resources}))
     ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
     ;; The bubble's `progress->text` already carries live activity, and
     ;; user-facing cancellation feedback is emitted as a host notification.

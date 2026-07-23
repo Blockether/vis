@@ -493,6 +493,20 @@
             (and (.exists cur) (.isDirectory cur)) cur
             :else (recur (.getParentFile cur))))))
 
+(defn- normalize-find-dir-path
+  "Normalize one find_files scope to a directory. Existing files become their
+   parent directory; missing paths climb to the nearest existing confined
+   directory. The model-facing value uses the same round-trippable address as
+   every search result."
+  [path]
+  (let [p (str/trim (str path))
+        p (if (str/blank? p) "." p)
+        ^File f (safe-path p)
+        ^File dir (cond (.isDirectory f) f
+                        (.isFile f) (.getParentFile f)
+                        :else (nearest-existing-dir f))]
+    (if dir (rel-path dir) p)))
+
 (defn- resolve-search-roots
   "Resolve rg/find `paths` into `{:roots [File …] :resolutions [{…} …]}`.
 
@@ -611,26 +625,18 @@
 
 (defn- find-arg-paths
   [args]
-  (let
-    [a
-     (first args)
-
-     opts
-     (second args)
-
-     spec
-     (cond (map? a) a
-           (map? opts) opts
-           :else nil)
-
-     paths
-     (cond (contains? spec "paths") (get spec "paths")
-           (contains? spec "path") (get spec "path")
-           :else nil)]
-
-    (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
-          (sequential? paths) paths
-          :else [paths])))
+  (let [a (first args)
+        opts (second args)
+        spec (cond (map? a) a
+                   (map? opts) opts
+                   :else nil)
+        paths (cond (contains? spec "paths") (get spec "paths")
+                    (contains? spec "path") (get spec "path")
+                    :else nil)
+        paths (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
+                    (sequential? paths) paths
+                    :else [paths])]
+    (mapv normalize-find-dir-path paths)))
 
 (defn- protected-target
   [path kind]
@@ -1123,6 +1129,24 @@
                    " — start/end must be line numbers like 10 or \"10\", not variables/expressions")
                  {:type :ext.foundation.editing/invalid-cat-args :range pair :invalid bad}))))))
 
+(defn- cat-flat-ranges-error!
+  "Throw a specific error when `ranges` is a flat list of line numbers
+   (`[108 120 130]`) that should have been nested `[[108 120] [130 140]]` —
+   the per-item error would misleadingly blame the first scalar (`got 108`)."
+  [ranges items]
+  (let
+    [nums
+     (mapv cat-range-scalar items)
+
+     suggestion
+     (if (and (even? (count nums)) (every? some? nums))
+       (pr-str (mapv vec (partition 2 nums)))
+       "[[10, 40], [80, 120]]")]
+
+    (throw (ex-info (str "cat \"ranges\" looks like a flat list of line numbers " (pr-str ranges)
+                         "; nest them as [start, end] pairs, e.g. " suggestion)
+                    {:type :ext.foundation.editing/invalid-cat-args :ranges ranges}))))
+
 (defn- normalize-cat-ranges
   [ranges]
   (let
@@ -1138,9 +1162,15 @@
      flat-attempt?
      (and items (= 2 (count items)) (not-any? sequential? items))
 
+     ;; a flat list of 3+ line numbers (`[108 120 130]`) instead of nested
+     ;; pairs — the per-item error would misleadingly blame the first scalar.
+     flat-list?
+     (and (sequential? ranges) (> (count items) 2) (not-any? sequential? items))
+
      pairs
      (cond flat [flat]
            flat-attempt? (cat-pair-error! ranges)
+           flat-list? (cat-flat-ranges-error! ranges items)
            (sequential? ranges) (vec ranges)
            :else (throw (ex-info "cat \"ranges\" expects [[start, end], ...]"
                                  {:type :ext.foundation.editing/invalid-cat-args :ranges ranges})))]
@@ -1545,86 +1575,63 @@
 
 (defn- coerce-find-spec
   [args]
-  (let
-    [[a b]
-     args
-
-     spec
-     (cond
-       (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
-       (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b)) (assoc b "query" a)
-       (and (= 1 (count args)) (map? a)) a
-       :else
-       (throw
-         (ex-info
-           "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
-           {:type :ext.foundation.editing/invalid-find-args
-            :expected '([query] [query opts] [spec-map])
-            :got args})))
-
-     allowed-keys
-     #{"query" "paths" "path" "limit" "include" "context" "is_hidden" "is_respect_gitignore"}
-
-     unknown-keys
-     (seq (remove allowed-keys (keys spec)))]
-
+  (let [[a b] args
+        spec (cond
+               (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
+               (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b))
+               (assoc b "query" a)
+               (and (= 1 (count args)) (map? a)) a
+               :else
+               (throw
+                 (ex-info
+                   "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
+                   {:type :ext.foundation.editing/invalid-find-args
+                    :expected '([query] [query opts] [spec-map])
+                    :got args})))
+        allowed-keys #{"query" "paths" "path" "limit" "include" "is_hidden"
+                       "is_respect_gitignore"}
+        unknown-keys (seq (remove allowed-keys (keys spec)))]
     (when unknown-keys
       (throw
         (ex-info
           (str "find spec has unknown keys: "
                (str/join ", " (map str unknown-keys))
-               ". Allowed: query, paths, limit, include, context, is_hidden, is_respect_gitignore.")
+               ". Allowed: query, paths, limit, include, is_hidden, is_respect_gitignore.")
           {:type :ext.foundation.editing/invalid-find-args
            :unknown (vec unknown-keys)
            :allowed (vec (sort allowed-keys))})))
-    (let
-      [raw-query
-       (get spec "query")
-
-       _
-       (when-not (or (and (string? raw-query) (not (str/blank? raw-query)))
-                     (and (sequential? raw-query)
-                          (seq raw-query)
-                          (every? #(and (string? %) (not (str/blank? %))) raw-query)))
-         (throw
-           (ex-info
-             "find \"query\" must be a non-blank string or a non-empty vector of non-blank strings"
-             {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
-
-       query
-       (if (sequential? raw-query) (str/join " " raw-query) raw-query)
-
-       _
-       (when (and (contains? spec "paths") (contains? spec "path"))
-         (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
+    (let [raw-query (get spec "query")
+          _ (when-not (or (and (string? raw-query) (not (str/blank? raw-query)))
+                          (and (sequential? raw-query)
+                               (seq raw-query)
+                               (every? #(and (string? %) (not (str/blank? %))) raw-query)))
+              (throw
+                (ex-info
+                  "find \"query\" must be a non-blank string or a non-empty vector of non-blank strings"
+                  {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
+          query (if (sequential? raw-query) (str/join " " raw-query) raw-query)
+          _ (when (and (contains? spec "paths") (contains? spec "path"))
+              (throw
+                (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
                          {:type :ext.foundation.editing/invalid-find-args :spec spec})))
-
-       raw-paths
-       (cond (contains? spec "paths") (get spec "paths")
-             (contains? spec "path") (get spec "path")
-             :else ["."])
-
-       paths
-       (cond (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths))) ["."]
-             (string? raw-paths) [raw-paths]
-             (sequential? raw-paths) (vec raw-paths)
-             :else raw-paths)
-
-       _
-       (when-not (and (vector? paths) (seq paths) (every? string? paths))
-         (throw
-           (ex-info
-             "find \"paths\" must be a string or vector of strings (empty defaults to current directory)"
-             {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
-
-       limit
-       (or (get spec "limit") default-find-limit)
-
-       _
-       (when-not (and (integer? limit) (pos? (long limit)))
-         (throw (ex-info "find \"limit\" must be a positive integer"
-                         {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
-
+          raw-paths (cond (contains? spec "paths") (get spec "paths")
+                          (contains? spec "path") (get spec "path")
+                          :else ["."])
+          paths (cond (or (nil? raw-paths)
+                          (and (sequential? raw-paths) (empty? raw-paths))) ["."]
+                      (string? raw-paths) [raw-paths]
+                      (sequential? raw-paths) (vec raw-paths)
+                      :else raw-paths)
+          _ (when-not (and (vector? paths) (seq paths) (every? string? paths))
+              (throw
+                (ex-info
+                  "find \"paths\" must be a string or vector of directory strings (empty defaults to current directory)"
+                  {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
+          paths (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
+          limit (or (get spec "limit") default-find-limit)
+          _ (when-not (and (integer? limit) (pos? (long limit)))
+              (throw (ex-info "find \"limit\" must be a positive integer"
+                              {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
       {:query query
        :paths paths
        :limit limit
@@ -1945,144 +1952,90 @@
 (declare ^:private rg-search ^:private coerce-rg-spec)
 
 (defn- find-args->content-spec
-  "Reconstruct a string-keyed CONTENT-search spec from find_files args
-   (`[query]` / `[query opts]` / `[spec-map]`) — forwarding the query and scope
-   plus the content-only opts (`include`/`context`), and mapping the `path` alias
-   onto `paths`. Fed to `rg-search` so find_files greps file CONTENT on every call."
+  "Build find_files' CONTENT-search spec from its public args. Scope paths come
+   from `coerce-find-spec`, so content search receives directories even when a
+   caller supplied a filename. find_files intentionally exposes no context-lines
+   option; each hit contains only its matching line and patch anchor."
   [args]
-  (let
-    [[a b]
-     args
-
-     spec
-     (cond (and (= 1 (count args)) (map? a)) a
-           (and (= 2 (count args)) (map? b)) (assoc b "query" a)
-           (= 1 (count args)) {"query" a}
-           :else {})
-
-     spec
-     (if (and (contains? spec "path") (not (contains? spec "paths")))
-       (assoc spec "paths" (get spec "path"))
-       spec)]
-
-    (select-keys spec ["query" "paths" "include" "context" "is_hidden" "is_respect_gitignore"])))
+  (let [[a b] args
+        spec (cond (and (= 1 (count args)) (map? a)) a
+                   (and (= 2 (count args)) (map? b)) (assoc b "query" a)
+                   (= 1 (count args)) {"query" a}
+                   :else {})
+        {:keys [paths]} (coerce-find-spec args)]
+    (cond-> {"query" (get spec "query") "paths" paths}
+      (contains? spec "include") (assoc "include" (get spec "include"))
+      (contains? spec "is_hidden") (assoc "is_hidden" (get spec "is_hidden"))
+      (contains? spec "is_respect_gitignore")
+      (assoc "is_respect_gitignore" (get spec "is_respect_gitignore")))))
 
 (defn- content-result
-  "Build find_files' CONTENT block from a `rg-search` result: an ordered
-   `{path {\"lineno:hash\" {\"text\" line}}}` matches map (each anchor key is a patch
-   `from_anchor`; WITH context it also carries `before`/`after` anchor maps), plus
-   `hit_count`/`file_count`, a hottest-first `file_counts`, `first_hit`, the echoed
-   `needles`, and breadth flags when more files match than are shown."
-  [out needles context]
-  (let
-    [hits
-     (vec (:hits out))
-
-     ordered-paths
-     (distinct (map :path hits))
-
-     by-path
-     (group-by :path hits)
-
-     total-files
-     (:total-file-count out)
-
-     more-files?
-     (> (long total-files) (count ordered-paths))
-
-     matches
-     (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
-       (doseq [p ordered-paths]
-         (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
-           (doseq [{:keys [line text before after]} (get by-path p)]
-             (.put fm
-                   (patch/line-anchor line text)
-                   (cond-> {"text" text}
-                     (seq before)
-                     (assoc "before" (patch/lines->anchor-map before))
-
-                     (seq after)
-                     (assoc "after" (patch/lines->anchor-map after)))))
-           (.put mm p fm)))
-       mm)
-
-     file-counts
-     (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
-       (doseq
-         [p (sort-by (fn [p]
-                       [(- (count (get by-path p))) p])
-                     ordered-paths)]
-         (.put fc p (count (get by-path p))))
-       fc)]
-
-    (cond->
-      {"needles" needles
-       "matches" matches
-       "hit_count" (count hits)
-       "file_count" (count ordered-paths)
-       "first_hit" (when (pos? (count hits))
-                     (let [{:keys [path line]} (nth hits 0)]
-                       (str path ":" line)))
-       "context" (when (pos? (long context)) {"before" context "after" context})}
-      (> (count ordered-paths) 1)
-      (assoc "file_counts" file-counts)
-
-      more-files?
-      (assoc "total_file_count" total-files)
-
-      (and more-files? (not (:total-file-count-exact? out)))
-      (assoc "total_file_count_is_exact" false))))
+  "Build find_files' CONTENT block from an `rg-search` result: an ordered
+   `{path {\"lineno:hash\" {\"text\" line}}}` matches map (each anchor key is a
+   patch `from_anchor`), plus hit/file counts, first hit, echoed needles, and
+   breadth flags when more files match than are shown. The compatibility arity
+   ignores its former context argument."
+  ([out needles]
+   (let [hits (vec (:hits out))
+         ordered-paths (distinct (map :path hits))
+         by-path (group-by :path hits)
+         total-files (:total-file-count out)
+         more-files? (> (long total-files) (count ordered-paths))
+         matches (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
+                   (doseq [p ordered-paths]
+                     (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
+                       (doseq [{:keys [line text]} (get by-path p)]
+                         (.put fm (patch/line-anchor line text) {"text" text}))
+                       (.put mm p fm)))
+                   mm)
+         file-counts (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
+                       (doseq [p (sort-by (fn [p] [(- (count (get by-path p))) p])
+                                          ordered-paths)]
+                         (.put fc p (count (get by-path p))))
+                       fc)]
+     (cond-> {"needles" needles
+              "matches" matches
+              "hit_count" (count hits)
+              "file_count" (count ordered-paths)
+              "first_hit" (when (pos? (count hits))
+                            (let [{:keys [path line]} (nth hits 0)]
+                              (str path ":" line)))}
+       (> (count ordered-paths) 1) (assoc "file_counts" file-counts)
+       more-files? (assoc "total_file_count" total-files)
+       (and more-files? (not (:total-file-count-exact? out)))
+       (assoc "total_file_count_is_exact" false))))
+  ([out needles _former-context]
+   (content-result out needles)))
 
 (defn- find-tool
-  "Find files by NAME/PATH and search their CONTENT in ONE call — find_files always
-   does BOTH (bound as `find_files`, `find` is a back-compat alias).
+  "Find files by NAME/PATH and search their CONTENT in one call (bound as
+   `find_files`; `find` is a compatibility alias).
 
      await find_files(\"render\")
      await find_files(\"channel_tui render\", {\"paths\": [\"src\"], \"limit\": 20})
-     await find_files([\"TODO\", \"FIXME\"], {\"include\": [\"**/*.clj\"], \"context\": 2})
+     await find_files([\"TODO\", \"FIXME\"], {\"include\": [\"**/*.clj\"]})
 
-   NAME match is fuzzy subsequence over the file TREE (fff). CONTENT match is
-   smart-case literal substring over file text; a LIST `query` is OR for content.
-   Each content hit is keyed by a `lineno:hash` anchor — pass it straight to `patch`
-   as `from_anchor`, no follow-up `cat`.
-
-   Returns {\"items\", \"paths\", \"item_count\", ...name-match fields..., \"content\":
-   {\"matches\": {path {\"lineno:hash\": {\"text\": line}}}, \"hit_count\", \"file_count\",
-   \"file_counts\", \"first_hit\"}, \"searched_paths\", \"missing_paths\"} — plus a
-   \"hint\" only when NEITHER a name NOR content matched."
+   `paths` is directory scope. Existing filename inputs normalize to their parent
+   directory, and missing paths normalize to the nearest existing confined
+   directory. NAME matching is fuzzy subsequence over the file tree. CONTENT
+   matching is smart-case literal substring; a query list is OR for content.
+   Content hits contain only matching lines, each keyed by a patch-ready
+   `lineno:hash` anchor; find_files has no surrounding-context option."
   [& args]
-  (let
-    [{:strs [query searched_paths limit item_count truncated_by] :as name-out}
-     (find-search args)
-
-     ;; find_files ALWAYS greps file CONTENT too, over the same query + scope —
-     ;; anchored per-line hits that feed straight into `patch`.
-     content-spec
-     (find-args->content-spec args)
-
-     {:keys [needles context]}
-     (coerce-rg-spec content-spec)
-
-     content
-     (content-result (rg-search content-spec) needles context)
-
-     content-hits
-     (long (or (get content "hit_count") 0))
-
-     multiword?
-     (> (count (str/split (str/trim (str query)) #"\s+")) 2)
-
-     out
-     (cond-> (assoc name-out "content" content)
-       (and (zero? (long (or item_count 0))) (zero? content-hits))
-       (assoc "hint"
-         (str
-           "No file NAME or CONTENT matched \"" query
-           "\". "
-           (if multiword?
-             "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
-             "Try a different term, a real symbol/string, or widen the scope."))))]
-
+  (let [{:strs [query searched_paths limit item_count truncated_by] :as name-out}
+        (find-search args)
+        content-spec (find-args->content-spec args)
+        {:keys [needles]} (coerce-rg-spec content-spec)
+        content (content-result (rg-search content-spec) needles)
+        content-hits (long (or (get content "hit_count") 0))
+        multiword? (> (count (str/split (str/trim (str query)) #"\s+")) 2)
+        out (cond-> (assoc name-out "content" content)
+              (and (zero? (long (or item_count 0))) (zero? content-hits))
+              (assoc "hint"
+                (str "No file NAME or CONTENT matched \"" query "\". "
+                     (if multiword?
+                       "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
+                       "Try a different term, a real symbol/string, or widen the scope."))))]
     (tool-success {:op :find_files
                    :path (first searched_paths)
                    :kind :dir
@@ -2848,53 +2801,64 @@
 
 (defn- explain-failure
   [{:keys [edit-index path reason hash-error message path-error]}]
-  (or message
-      (:message path-error)
-      (let [head (str "edit " edit-index " in " path)]
-        (case reason
-          :hashline-malformed
-          (str head
-               ": malformed "
-               (name (:which hash-error))
-               "_anchor "
-               (pr-str (:anchor hash-error))
-               "; use a fresh `lineno:hash` from `cat`.")
+  (or
+    message
+    (:message path-error)
+    (let [head (str "edit " edit-index " in " path)]
+      (case reason
+        :hashline-malformed
+        (str head
+             ": malformed "
+             (name (:which hash-error))
+             "_anchor "
+             (pr-str (:anchor hash-error))
+             "; use a fresh `lineno:hash` from `cat`.")
 
-          :hashline-line-out-of-range
-          (str head
-               ": anchor line "
-               (:line hash-error)
-               " is outside the "
-               (:lines hash-error)
-               "-line file; refresh it with `cat`.")
+        :hashline-line-out-of-range
+        (str head
+             ": anchor line "
+             (:line hash-error)
+             " is outside the "
+             (:lines hash-error)
+             "-line file; refresh it with `cat`.")
 
-          :hashline-not-found
-          (str head
-               ": stale " (name (:which hash-error))
-               "_anchor" (if-let [ca (:current-anchor hash-error)]
-                           (str "; line " (:stated-line hash-error) " is now `" ca "`.")
-                           "; refresh the target with `cat`."))
+        :hashline-not-found
+        (str head
+             ": stale " (name (:which hash-error))
+             "_anchor" (if-let [ca (:current-anchor hash-error)]
+                         (let
+                           [text (str (:current-text hash-error))
+                            preview (if (> (count text) 80) (str (subs text 0 80) "…") text)]
 
-          :hashline-misplaced
-          (str head
-               ": anchor says line "
-               (:stated-line hash-error)
-               " but matches line(s) "
-               (pr-str (:found-lines hash-error))
-               "; refresh the target before editing.")
+                           (str "; line "
+                                (:stated-line hash-error)
+                                " changed — now `"
+                                ca
+                                "`: "
+                                (pr-str preview)
+                                ". Confirm this is your target before reusing the anchor."))
+                         "; refresh the target with `cat`."))
 
-          :overlapping-edits
-          (str head ": overlapping targets; merge them or use separate patch calls.")
+        :hashline-misplaced
+        (str head
+             ": anchor says line "
+             (:stated-line hash-error)
+             " but matches line(s) "
+             (pr-str (:found-lines hash-error))
+             "; refresh the target before editing.")
 
-          :hashline-range-inverted
-          (str head
-               ": to_anchor line "
-               (:to-line hash-error)
-               " precedes from_anchor line "
-               (:from-line hash-error)
-               ".")
+        :overlapping-edits
+        (str head ": overlapping targets; merge them or use separate patch calls.")
 
-          (str head " failed.")))))
+        :hashline-range-inverted
+        (str head
+             ": to_anchor line "
+             (:to-line hash-error)
+             " precedes from_anchor line "
+             (:from-line hash-error)
+             ".")
+
+        (str head " failed.")))))
 
 (defn- failure-family
   "Group anchor-resolution failures that share one stale-target cause."
@@ -2933,7 +2897,7 @@
   ;; patch is ATOMIC — a single failed edit rejects the WHOLE batch and writes
   ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
   ;; must not assume a partial application and must not re-read to "repair" it.
-  (let [atomic "No changes: patch is atomic. "]
+  (let [atomic "No changes (atomic): "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
       ;; Group related failures into one cause plus compact affected-edit refs.
@@ -2995,11 +2959,9 @@
                    {:edit-index 0
                     :path path
                     :reason :syntax-error
-                    :message (str "patch refused: this edit would leave "
+                    :message (str "edit would break syntax in "
                                   path
-                                  " with a SYNTAX ERROR (unbalanced delimiters / a broken form) — "
-                                  "it parsed cleanly before. NOTHING was written. Re-cat for fresh "
-                                  "anchors and fix the replacement, or use struct_patch.")})))
+                                  ". Fix the replacement or use struct_patch.")})))
              plans)))
 
 (defn- commit-patch-plans!
@@ -4400,13 +4362,13 @@
 
 
 (defn- render-patch-result
-  "patch → `{:summary :body}`: the summary NAMES each file with its op
-   (`update `path` · add `path`` …) so a single-file patch and a multi-file
-   patch read the SAME way; only a large fan-out collapses to `first two +N
-   more`. The body is the unified diff(s); for a SINGLE file it omits the
-   per-file `op `path`` header (the summary already states it) and for
-   MULTI-file it prefixes each diff with `op `path`` to disambiguate. `r` is a
-   vector of per-file summaries `[{:path :op :changed :diff}]`."
+  "patch/write/struct_patch → `{:summary :body}`. The badge already states the
+   operation, so the compact headline contains only affected paths
+   (`` `a.clj`, `b.clj` ``), never redundant `update`/`add` verbs. Large fan-out
+   collapses to the first two paths plus a count. The body is the unified diff(s);
+   a single-file body omits a repeated path heading, while multi-file bodies use
+   path-only headings to disambiguate each diff. `r` is a vector of per-file
+   summaries `[{:path :op :changed :diff}]`."
   [r]
   (let
     [summaries
@@ -4419,16 +4381,16 @@
      (count summaries)
 
      file-label
-     (fn [{:strs [path op changed]}]
-       (str (if changed (str (or op "update") " ") "(no change) ") "`" (disp-path path) "`"))
+     (fn [{:strs [path]}]
+       (str "`" (disp-path path) "`"))
 
      labels
      (mapv file-label summaries)]
 
     {:summary (if (<= n 3)
-                (str/join " · " labels)
-                (str (str/join " · " (take 2 labels))
-                     " · +"
+                (str/join ", " labels)
+                (str (str/join ", " (take 2 labels))
+                     ", +"
                      (- n 2)
                      " more ("
                      (count changed)
@@ -4436,25 +4398,22 @@
                      n
                      " changed)"))
      :body (some->> (str/join "\n\n"
-                              (for [{:strs [path op changed diff]} summaries]
+                              (for [{:strs [path changed diff]} summaries]
                                 (let
                                   [diff-block (when (and changed (seq (str diff)))
                                                 (str "```diff\n" diff "\n```"))]
                                   (if (= n 1)
-                                    ;; single file: summary already names it — show just the diff
                                     (or diff-block "")
-                                    (str (if changed (str (or op "update") " ") "(no change) ")
-                                         "`" (disp-path path)
+                                    (str "`" (disp-path path)
                                          "`" (when diff-block (str "\n" diff-block)))))))
                     not-empty
-                    ;; leading blank = op-card BREATHE spacer (see tool-card-entries head-gap?)
                     (str "\n"))}))
 
 (defn- render-find-result
-  "find_files → `{:summary :body}`: file-NAME matches (ranked paths) AND file-CONTENT
-   hits (anchored per-file lines). `r` is `{:paths :item_count :query}` plus a
-   `:content` `{:matches :hit_count :file_count :needles}` block. 0 results keep the
-   steer/hint body so the user sees WHY nothing matched."
+  "find_files → `{:summary :body}`: file-NAME matches (ranked paths) ONLY. The
+   transcript is about FILES, so content hits are NEVER shown here — they stay in
+   the raw tool result for the model/patch anchors. 0 results keep the steer/hint
+   body so the user sees WHY nothing matched."
   [r]
   (let
     [n
@@ -4473,18 +4432,6 @@
      paths
      (get r "paths")
 
-     content
-     (get r "content")
-
-     c-needles
-     (seq (get content "needles"))
-
-     c-hits
-     (long (or (get content "hit_count") 0))
-
-     c-fc
-     (long (or (get content "file_count") 0))
-
      terms
      (when (get r "fuzzy")
        (seq (keep #(some-> %
@@ -4500,39 +4447,18 @@
 
      head
      (str n
-          " name match"
+          " match"
           (when (not= 1 n) "es")
-          (when (pos? c-hits)
-            (str " · " c-hits
-                 " content hit" (when (not= 1 c-hits) "s")
-                 " in " c-fc
-                 " file" (when (not= 1 c-fc) "s")))
           (when q (str " for \"" q "\""))
           (when terms (str " · terms: " (str/join ", " terms)))
-          (when scope-chip (str " · " scope-chip)))
-
-     content-block
-     (when-let [ms (seq (get content "matches"))]
-       (str/join "\n\n"
-                 (for [[path hits] ms]
-                   (let [width (rg-gutter-width hits)]
-                     (str (md-inline-code (disp-path (kw->str path)))
-                          "\n\n```\n"
-                          (str/join "\n"
-                                    (mapcat (fn [[k v]]
-                                              (rg-hit-rows c-needles width k v))
-                                            (sort-by (comp rg-anchor-lineno-long key) hits)))
-                          "\n```")))))]
+          (when scope-chip (str " · " scope-chip)))]
 
     {:summary head
      :body (-> (cond-> ""
                  (seq paths)
                  (str "\n```\n" (str/join "\n" (map (comp disp-path kw->str) paths)) "\n```")
 
-                 content-block
-                 (str "\n\n" content-block)
-
-                 (and (not (seq paths)) (not content-block) hint)
+                 (and (not (seq paths)) hint)
                  (str "\n" hint))
                not-empty)}))
 
@@ -4593,7 +4519,9 @@
                 (for [d defs]
                   (let
                     [depth (long (or (get d "depth") 0))
-                     nm (str (apply str (repeat depth "· ")) (kw->str (get d "name")))
+                     nm (str (apply str (repeat depth "\u00a0\u00a0"))
+                             (when (pos? depth) "· ")
+                             (kw->str (get d "name")))
                      sig (some-> (get d "signature")
                                  kw->str
                                  not-empty)
@@ -4900,9 +4828,8 @@
      :native-tool? true
      :description
      (str
-       "Find files by NAME/PATH (fuzzy subsequence) AND search their CONTENT (smart-case literal) "
-       "in one call. Returns ranked paths plus anchored per-line content hits — each `lineno:hash` "
-       "key is a patch `from_anchor`. Then `cat` a path, or `patch` a content anchor.")
+       "Find files by NAME/PATH (fuzzy subsequence) and search their CONTENT (smart-case literal) "
+       "in one call. Returns ranked paths plus patch-ready anchored content hits without surrounding lines.")
      :render render-find-result
      :color-role :tool-color/search
      :schema
@@ -4912,22 +4839,25 @@
        {:oneOf [{:type "string" :minLength 1}
                 {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
         :description
-        "What to find: a filename fragment / partial path (fuzzy NAME match) that is ALSO grepped as a literal CONTENT term. A LIST is OR for the content search."}
-       "paths" {:type "array"
-                :items {:type "string"}
-                :description "Restrict the search to these paths (default the whole tree)."}
+        "A filename fragment or partial path for fuzzy name matching; also a literal content term. A list is OR for content search."}
+       "paths"
+       {:type "array"
+        :items {:type "string" :minLength 1}
+        :description
+        "Directory scopes only (default: whole tree). Existing file values are normalized to their parent directory."}
+       "limit" {:type "integer"
+                 :minimum 1
+                 :description "Maximum ranked filename matches (default 50)."}
        "include"
        {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
         :description
         "Content search only: restrict to files matching these globs, e.g. [\"**/*.clj\"]."}
-       "context" {:type "integer"
-                  :description "Content search only: lines of context around each hit."}
        "is_hidden" {:type "boolean"
                     :description "Also match dotfiles / hidden dirs (default false)."}
        "is_respect_gitignore"
        {:type "boolean"
         :description
-        "Honor .gitignore (default true). Set FALSE to discover files inside gitignored dirs (e.g. vendored / corporate repos the project ignores)."}}
+        "Honor .gitignore (default true). Set false to include files inside gitignored directories."}}
       :required ["query"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
@@ -5023,6 +4953,56 @@
    "append_child" :append-child
    "prepend_child" :prepend-child})
 
+(defn- definition-path
+  "Resolve one structural definition NAME (+ optional canonical kind) to the
+   tree-sitter zipper path of its outer node. A unique name tolerates a stale or
+   over-specific kind, matching the name-based StructuralApi behavior."
+  [lang source target kind]
+  (let
+    [defs
+     (index/definitions source lang target)
+
+     requested-kind
+     (some-> kind
+             name
+             str/lower-case
+             keyword)
+
+     same-kind
+     (when requested-kind (filterv #(= requested-kind (:kind %)) defs))
+
+     candidates
+     (cond (seq same-kind) same-kind
+           (= 1 (count defs)) defs
+           requested-kind []
+           :else defs)]
+
+    (cond
+      (empty? defs)
+      (throw (ex-info
+               (str "No definition named '" target "' found. Use struct_index to see valid names.")
+               {:type :ext.foundation.editing/struct-target-not-found :target target}))
+      (empty? candidates) (throw (ex-info (str "No definition named '"
+                                               target
+                                               "' of kind "
+                                               kind
+                                               " found. Use struct_index to see valid kinds.")
+                                          {:type :ext.foundation.editing/struct-target-not-found
+                                           :target target
+                                           :kind kind}))
+      (> (count candidates) 1)
+      (throw
+        (ex-info
+          (str (count candidates) " definitions named '" target "' — pass kind to disambiguate.")
+          {:type :ext.foundation.editing/struct-target-ambiguous :target target :kind kind}))
+      :else (let [resolved (zipper/path-at-anchor lang source (:anchor (first candidates)))]
+              (if (:ok? resolved)
+                (:path resolved)
+                (throw (ex-info
+                         (get-in resolved [:error :message] "definition anchor did not resolve")
+                         {:type :ext.foundation.editing/struct-anchor-error
+                          :reason (get-in resolved [:error :reason])})))))))
+
 (defn- struct-patch-tool
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
    NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
@@ -5030,8 +5010,10 @@
    code; reach for patch(...) only for non-code text or unsupported languages.
      by name:  await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})
      by path:  await struct_patch({\"path\": P, \"op\": \"replace\", \"at\": [2, 1], \"code\": S})
-   ops (by NAME/`target`): replace | delete | insert_before | insert_after | append |
-     add_doc | replace_doc | replace_node | rename | move_before | move_after.
+   ops (by NAME/`target`): replace | delete | insert_before | insert_after |
+     append_child | prepend_child | add_doc | replace_doc | replace_node | rename |
+     move_before | move_after. `append_child`/`prepend_child` insert inside the named
+     definition; `append` alone appends at end-of-file and ignores `target`.
      `delete` drops the named def entirely (= replace it with \"\"); it also works
      by PATH (`at`).
      `rename` rewrites identifier `target` to `code` EVERYWHERE it occurs — a
@@ -5043,7 +5025,7 @@
      `kind` (function/class/method/…) disambiguates same-named defs; `replace_node`
      swaps the UNIQUE sub-expr equal to `match` (scope with `target`).
    ops (by PATH/`at`/node anchor): replace | replace_node (alias) | insert_before |
-     insert_after | append_child | prepend_child (append/prepend = inside the node,
+     insert_after | append_child | prepend_child (child ops insert inside the node,
      after last / before first child; delete = replace with \"\"). `at` is the
      struct_node(path); `nav` adds relative moves — the full clojure.zip vocabulary:
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
@@ -5061,27 +5043,29 @@
          (throw (ex-info (str "struct_patch: unknown op " (pr-str (get args "op")))
                          {:type :ext.foundation.editing/struct-unknown-op :op (get args "op")})))
 
-     path-locator?
+     explicit-path-locator?
      (or (contains? args "at")
          ;; For moves, `anchor` is a definition NAME rather than a node handle.
          (and (contains? args "anchor") (not (#{:move-before :move-after} raw-op))))
 
-     ;; STEERING — `append_child`/`prepend_child` are PATH-only (they add a form
-     ;; INSIDE a located container node). Paired with a NAME `target` and no
-     ;; `at`/node `anchor` they would fall through to the name-based op map and
-     ;; throw a cryptic "Unknown structural op". Catch it up front with a fix.
+     ;; Child insertion can enter a container by its structural definition name;
+     ;; resolve that name to a zipper path below. This keeps `append` distinct:
+     ;; StructuralApi APPEND means end-of-file and ignores `target`.
+     name-child-locator?
+     (and (#{:append-child :prepend-child} raw-op)
+          (not explicit-path-locator?)
+          (not (str/blank? (str (get args "target")))))
+
+     path-locator?
+     (or explicit-path-locator? name-child-locator?)
+
      _
      (when (and (#{:append-child :prepend-child} raw-op) (not path-locator?))
-       (throw (ex-info
-                (str "struct_patch: "
-                     (str/replace (name raw-op) "-" "_")
-                     " is a PATH-based op — pass `at` or a node `anchor` to enter"
-                     " the container node. To add a form into a def located by NAME,"
-                     " use op `append` (name-based) instead.")
-                {:type :ext.foundation.editing/struct-op-needs-path
-                 :op (str/replace (name raw-op) "-" "_")
-                 :hint
-                 "append_child/prepend_child need `at`/`anchor`; use `append` for name-based"})))
+       (throw (ex-info (str "struct_patch: " (str/replace (name raw-op) "-" "_")
+                            " needs a container locator — pass definition `target`, `at`,"
+                            " or a node `anchor`.")
+                       {:type :ext.foundation.editing/struct-op-needs-container
+                        :op (str/replace (name raw-op) "-" "_")})))
 
      ;; LENIENCY — do the obvious thing instead of erroring:
      ;;  • `delete` (by name OR path) = replace the located node with "" (there was
@@ -5116,16 +5100,18 @@
           (slurp (safe-path path))
 
           base
-          (if (contains? args "at")
-            (get args "at")
-            ;; `lineno:hash` anchor → the path of the node starting there
-            ;; (staleness-guarded); `nav` then composes on top.
-            (let [ra (zipper/path-at-anchor lang source (get args "anchor"))]
-              (if (:ok? ra)
-                (:path ra)
-                (throw (ex-info (get-in ra [:error :message] "anchor did not resolve")
-                                {:type :ext.foundation.editing/struct-anchor-error
-                                 :reason (get-in ra [:error :reason])})))))
+          (cond (contains? args "at") (get args "at")
+                name-child-locator?
+                (definition-path lang source (get args "target") (get args "kind"))
+                :else
+                ;; `lineno:hash` anchor → the path of the node starting there
+                ;; (staleness-guarded); `nav` then composes on top.
+                (let [ra (zipper/path-at-anchor lang source (get args "anchor"))]
+                  (if (:ok? ra)
+                    (:path ra)
+                    (throw (ex-info (get-in ra [:error :message] "anchor did not resolve")
+                                    {:type :ext.foundation.editing/struct-anchor-error
+                                     :reason (get-in ra [:error :reason])})))))
 
           nav
           (zipper/navigate lang source base (get args "nav"))
@@ -5206,8 +5192,11 @@
         :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
                "replace_node" "rename" "move_before" "move_after" "append_child" "prepend_child"]
         :description
-        "Edit operation; name-based and path-based operations use only their applicable subset."}
-       "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
+        "Edit operation. append means end-of-file; append_child/prepend_child accept a definition target or a node path/anchor."}
+       "target"
+       {:type "string"
+        :description
+        "Definition NAME to locate; also accepted by append_child/prepend_child to enter that definition."}
        "code" {:type "string"
                :description "Replacement/insertion source (or the new name for rename)."}
        "kind" {:type "string"

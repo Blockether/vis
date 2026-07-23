@@ -1128,51 +1128,54 @@
          (promise)
 
          notified
-         (atom nil)]
+         (promise)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
                          #'vis/notify! (fn [text & kvs]
-                                         (reset! notified [text kvs]))}
+                                         (deliver notified [text kvs]))}
           (fn []
             (copy-session-id! "123e4567-e89b-12d3-a456-426614174000")
             (expect (= "123e4567-e89b-12d3-a456-426614174000" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]] @notified))))))
+            (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]]
+                       (deref notified 1000 ::timeout)))))))
   (it "mouse selection copy uses the shared success notification contract"
       (let
         [copied
          (promise)
 
          notified
-         (atom nil)]
+         (promise)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
                          #'vis/notify! (fn [text & kvs]
-                                         (reset! notified [text kvs]))}
+                                         (deliver notified [text kvs]))}
           (fn []
             (copy-selection! "selected text")
             (expect (= "selected text" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]] @notified))))))
+            (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]]
+                       (deref notified 1000 ::timeout)))))))
   (it "single-click bubble copy uses the shared success notification contract"
       (let
         [copied
          (promise)
 
          notified
-         (atom nil)]
+         (promise)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
                          #'vis/notify! (fn [text & kvs]
-                                         (reset! notified [text kvs]))}
+                                         (deliver notified [text kvs]))}
           (fn []
             (copy-bubble! "whole bubble")
             (expect (= "whole bubble" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied bubble" [:level :success :ttl-ms 1500]] @notified))))))
+            (expect (= ["✓ Copied bubble" [:level :success :ttl-ms 1500]]
+                       (deref notified 1000 ::timeout)))))))
   (it "single-click bubble copy strips ANSI/control-picture artifacts"
       (let [copied (promise)]
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
@@ -1189,17 +1192,18 @@
          (promise)
 
          notified
-         (atom nil)]
+         (promise)]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
                          #'vis/notify! (fn [text & kvs]
-                                         (reset! notified [text kvs]))}
+                                         (deliver notified [text kvs]))}
           (fn []
             (copy-selection! "typed mistake" :input)
             (expect (= "typed mistake" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied input selection" [:level :success :ttl-ms 1500]] @notified))))))
+            (expect (= ["✓ Copied input selection" [:level :success :ttl-ms 1500]]
+                       (deref notified 1000 ::timeout)))))))
   (it "file click targets open through the editor path, not the generic URL opener"
       (let
         [editor-opened
@@ -1218,6 +1222,16 @@
             (open-click-target! {:kind :file :url "deps.edn#L42"})
             (expect (= "deps.edn#L42" (deref editor-opened 1000 ::timeout)))
             (expect (= ::timeout (deref url-opened 100 ::timeout)))))))
+  (it "reports clipboard failure instead of claiming the selection was copied"
+      (let [notified (promise)]
+        (with-redefs-fn {#'input/clipboard-copy! (constantly false)
+                         #'vis/notify! (fn [text & kvs]
+                                         (deliver notified [text kvs]))}
+          (fn []
+            (copy-selection! "selected text")
+            (expect (= ["Copy failed — terminal clipboard unavailable"
+                        [:level :error :ttl-ms 5000]]
+                       (deref notified 1000 ::timeout)))))))
   (it "URL click targets keep using the generic opener"
       (let [url-opened (promise)]
         (with-redefs-fn {#'opener/open! (fn [target]

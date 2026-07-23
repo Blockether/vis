@@ -1,34 +1,186 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
 @import 'tailwindcss';
 
-/* Fallback until a gateway is connected; /v1/theme replaces these variables. */
+/* Exact blockether-dark fallback. /v1/theme replaces every variable below. */
 :root {
-  --bg: #0b0b0f;
-  --fg: #e7e7ef;
-  --surface: #14141b;
-  --panel2: #1c1c26;
-  --line: #2a2a38;
-  --primary: #7c9cff;
-  --primary-fg: #0b0b0f;
-  --accent: #a684ff;
+  color-scheme: dark;
+  --bg: #0f1117;
+  --fg: #f3f4f6;
+  --box-bg: #161820;
+  --box-fg: #f3f4f6;
+  --surface: #161820;
+  --panel2: #161820;
+  --line: #2b2d34;
+  --line2: #464a54;
+  --hover: #1b1d23;
+  --dim: #86878b;
+  --primary: #ffc420;
+  --primary-fg: #0f1117;
+  --accent: #ffc420;
   --ok: #4ade80;
-  --warning: #fbbf24;
+  --warning: #fbdc82;
+  --warning-bg: #3c2e08;
+  --warning-border: #fbbf24;
   --err: #f87171;
+  --dialog-fg: #f3f4f6;
+  --dialog-title-bg: #ffc420;
+  --dialog-title-fg: #0f1117;
+  --dialog-border: #464a54;
+  --dialog-shadow: #040508;
+  --dialog-hint: #9ca3af;
+  --dialog-hint-key: #f3f4f6;
+  --input-field-bg: #0c0e12;
+  --button-bg: #282b36;
+  --button-fg: #f3f4f6;
+  --user-bubble-bg: #0f1117;
+  --user-bubble-fg: #f3f4f6;
+  --user-role-fg: #9ca3af;
+  --turn-separator-bg: #14161e;
+  --turn-separator-fg: #464a54;
+  --ai-bubble-bg: #0f1117;
+  --ai-bubble-fg: #f3f4f6;
+  --ai-role-fg: #4ade80;
+  --iteration-header-fg: #787878;
+  --iteration-header-bg: #161820;
+  --answer-bg: #0f1117;
+  --answer-fg: #f3f4f6;
+  --answer-sep-bg: #0f1117;
+  --answer-sep-fg: #464a54;
+  --md-h1-fg: #f3f4f6;
+  --md-h2-fg: #d1d5db;
+  --md-h3-fg: #9ca3af;
+  --md-summary-bg: #3c2e08;
+  --md-summary-fg: #ffdc96;
+  --code-bg: #1e2028;
+  --code-fg: #f3f4f6;
+  --code-ok-bg: #143223;
+  --code-err-bg: #451a22;
+  --code-success: #4ade80;
+  --code-error: #f87171;
+  --code-syntax-special: #d8b4fe;
+  --code-syntax-keyword: #5eead4;
+  --code-syntax-string: #fdba74;
+  --code-syntax-number: #93c5fd;
+  --code-syntax-comment: #94a3b8;
+  --code-border: #464a54;
+  --code-duration: #9ca3af;
+  --code-result: #f3f4f6;
+  --code-error-result: #fca5a5;
+  --result-bg: #161820;
+  --result-path-bg: #253354;
+  --result-path-fg: #93c5fd;
+  --result-highlight-fg: #d8b4fe;
+  --cancelled-bg: #1e2028;
+  --cancelled-fg: #9ca3af;
+  --link-fg: #22d3ee;
+  --link-arrow-fg: #9ca3af;
+  --link-url-fg: #82c8dc;
+  --link-hover-bg: #1e2832;
+  --link-hover-fg: #8ce6fa;
+  --footer-fg: #d1d5db;
+  --footer-muted: #9ca3af;
+  --footer-strong: #f3f4f6;
+  --footer-spinner: #4ade80;
+  --footer-warning: #fbbf24;
+  --footer-error: #f87171;
+  --tool-read: #38bdf8;
+  --tool-search: #d8b4fe;
+  --tool-preview: #94a3b8;
+  --tool-edit: #fbbf24;
+  --tool-create: #4ade80;
+  --tool-delete: #f87171;
+  --tool-move: #fb923c;
+  --tool-shell: #94a3b8;
+  --tool-meta: #2dd4bf;
+  --tool-test: #818cf8;
 }
 
 /* Tailwind utilities resolve directly to the gateway's shared TUI palette. */
 @theme inline {
   --color-ink: var(--bg);
+  --color-white: var(--fg);
+  --color-box: var(--box-bg);
+  --color-box-foreground: var(--box-fg);
   --color-panel: var(--surface);
   --color-panel-2: var(--panel2);
   --color-edge: var(--line);
+  --color-edge-strong: var(--line2);
+  --color-hover: var(--hover);
+  --color-muted: var(--dim);
   --color-accent: var(--primary);
   --color-accent-foreground: var(--primary-fg);
   --color-accent-2: var(--accent);
   --color-ok: var(--ok);
   --color-warn: var(--warning);
+  --color-warn-surface: var(--warning-bg);
+  --color-warn-edge: var(--warning-border);
   --color-err: var(--err);
-  --color-white: var(--fg);
-  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+  --color-dialog-title: var(--dialog-title-bg);
+  --color-dialog-title-foreground: var(--dialog-title-fg);
+  --color-dialog-edge: var(--dialog-border);
+  --color-dialog-foreground: var(--dialog-fg);
+  --color-dialog-hint: var(--dialog-hint);
+  --color-dialog-hint-key: var(--dialog-hint-key);
+  --color-input: var(--input-field-bg);
+  --color-button: var(--button-bg);
+  --color-button-foreground: var(--button-fg);
+  --color-thinking: var(--iteration-header-fg);
+  --color-thinking-surface: var(--iteration-header-bg);
+  --color-you-message: var(--user-bubble-bg);
+  --color-you-message-foreground: var(--user-bubble-fg);
+  --color-you-role: var(--user-role-fg);
+  --color-vis-surface: var(--ai-bubble-bg);
+  --color-vis-message: var(--ai-bubble-fg);
+  --color-vis-role: var(--ai-role-fg);
+  --color-turn-surface: var(--turn-separator-bg);
+  --color-turn-edge: var(--turn-separator-fg);
+  --color-answer: var(--answer-bg);
+  --color-answer-foreground: var(--answer-fg);
+  --color-answer-edge: var(--answer-sep-fg);
+  --color-heading-1: var(--md-h1-fg);
+  --color-heading-2: var(--md-h2-fg);
+  --color-heading-3: var(--md-h3-fg);
+  --color-code: var(--code-bg);
+  --color-code-foreground: var(--code-fg);
+  --color-code-ok: var(--code-ok-bg);
+  --color-code-err: var(--code-err-bg);
+  --color-code-success: var(--code-success);
+  --color-code-error: var(--code-error);
+  --color-code-syntax-special: var(--code-syntax-special);
+  --color-code-syntax-keyword: var(--code-syntax-keyword);
+  --color-code-syntax-string: var(--code-syntax-string);
+  --color-code-syntax-number: var(--code-syntax-number);
+  --color-code-syntax-comment: var(--code-syntax-comment);
+  --color-code-edge: var(--code-border);
+  --color-code-duration: var(--code-duration);
+  --color-code-result: var(--code-result);
+  --color-code-error-result: var(--code-error-result);
+  --color-result: var(--result-bg);
+  --color-result-path: var(--result-path-bg);
+  --color-result-path-foreground: var(--result-path-fg);
+  --color-link: var(--link-fg);
+  --color-link-hover: var(--link-hover-fg);
+  --color-footer: var(--footer-fg);
+  --color-footer-muted: var(--footer-muted);
+  --color-footer-strong: var(--footer-strong);
+  --color-footer-spinner: var(--footer-spinner);
+  --color-footer-warning: var(--footer-warning);
+  --color-footer-error: var(--footer-error);
+  --color-cancelled: var(--cancelled-bg);
+  --color-cancelled-foreground: var(--cancelled-fg);
+  --color-tool-read: var(--tool-read);
+  --color-tool-search: var(--tool-search);
+  --color-tool-preview: var(--tool-preview);
+  --color-tool-edit: var(--tool-edit);
+  --color-tool-create: var(--tool-create);
+  --color-tool-delete: var(--tool-delete);
+  --color-tool-move: var(--tool-move);
+  --color-tool-shell: var(--tool-shell);
+  --color-tool-meta: var(--tool-meta);
+  --color-tool-test: var(--tool-test);
+  --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
 }
 
 @layer base {
@@ -39,16 +191,23 @@
   }
 
   body {
-    @apply m-0 bg-ink text-white antialiased;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right)
-      env(safe-area-inset-bottom) env(safe-area-inset-left);
+    @apply m-0 overflow-hidden bg-ink font-sans text-[13px] leading-[1.55] text-white antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
   }
 
   * {
     -webkit-tap-highlight-color: transparent;
+    scrollbar-color: var(--dialog-border) var(--bg);
+  }
+
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-fg);
   }
 
   button {
-    @apply cursor-pointer disabled:cursor-default;
+    @apply touch-manipulation cursor-pointer select-none disabled:cursor-default;
   }
 }

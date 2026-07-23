@@ -984,34 +984,80 @@
 
 (def web-css-palette-tokens
   "The shared TUI/HTML theme contract: CSS custom property -> palette token.
-   The HTML transcript export renders these straight from the SAME palette
-   the TUI paints with, so every registered theme works in both places."
+   Browser channels consume exact semantic colors instead of approximating them
+   with opacity or brightness filters."
   {"--bg" :terminal-bg
    "--fg" :text-fg
-   "--panel2" :dialog-bg
-   "--code-bg" :code-block-bg
-   ;; Semantic accent/status vars (renamed from the legacy color-named
-   ;; --gold/--gold2/--amber/--indigo the stylesheet used to carry). Values
-   ;; still come STRAIGHT from the shared palette, so every theme tracks:
-   ;;   --primary   the accent (active-tab slab)   --primary-fg its on-accent label
-   ;;   --accent    the lighter accent companion   --surface    the neutral panel ground
-   ;;   --secondary emphasis ink  --warning/-bg warn text+ground  --ok/--err status.
+   "--box-bg" :box-bg
+   "--box-fg" :box-fg
    "--surface" :dialog-bg
-   ;; Dialog title stripe — the amber accent bar (blockether.com / spel report
-   ;; signature) the TUI dialog paints, so web modals wear the SAME header.
+   "--panel2" :dialog-bg
+   "--dialog-fg" :dialog-fg
    "--dialog-title-bg" :dialog-title-bg
    "--dialog-title-fg" :dialog-title-fg
    "--dialog-border" :dialog-border
+   "--dialog-shadow" :dialog-shadow
+   "--dialog-hint" :dialog-hint
+   "--dialog-hint-key" :dialog-hint-key
+   "--input-field-bg" :input-field-bg
+   "--button-bg" :button-bg
+   "--button-fg" :button-fg
+   "--user-bubble-bg" :user-bubble-bg
+   "--user-bubble-fg" :user-bubble-fg
+   "--user-role-fg" :user-role-fg
+   "--turn-separator-bg" :turn-separator-bg
+   "--turn-separator-fg" :turn-separator-fg
+   "--ai-bubble-bg" :ai-bubble-bg
+   "--ai-bubble-fg" :ai-bubble-fg
+   "--ai-role-fg" :ai-role-fg
+   "--iteration-header-fg" :iteration-header-fg
+   "--iteration-header-bg" :iteration-header-bg
+   "--answer-bg" :answer-bg
+   "--answer-fg" :answer-fg
+   "--answer-sep-bg" :answer-sep-bg
+   "--answer-sep-fg" :answer-sep-fg
+   "--md-h1-fg" :md-h1-fg
+   "--md-h2-fg" :md-h2-fg
+   "--md-h3-fg" :md-h3-fg
+   "--md-summary-bg" :md-summary-bg
+   "--md-summary-fg" :md-summary-fg
+   "--code-bg" :code-block-bg
+   "--code-fg" :code-block-fg
+   "--code-ok-bg" :code-ok-bg
+   "--code-err-bg" :code-err-bg
+   "--code-success" :code-success-fg
+   "--code-error" :code-error-fg
+   "--code-syntax-keyword" :code-syntax-keyword-fg
+   "--code-border" :code-border-fg
+   "--code-duration" :code-duration-fg
+   "--code-result" :code-result-fg
+   "--code-error-result" :code-error-result-fg
+   "--result-bg" :result-bg
+   "--result-path-bg" :result-path-bg
+   "--result-path-fg" :result-path-fg
+   "--result-highlight-fg" :result-highlight-fg
+   "--warning" :warning-fg
+   "--warning-bg" :warning-bg
+   "--warning-border" :warning-border
+   "--cancelled-bg" :cancelled-bg
+   "--cancelled-fg" :cancelled-fg
+   "--ok" :status-ok
+   "--err" :status-bad
    "--primary" :header-active-tab-bg
    "--primary-fg" :header-active-tab-fg
    "--accent" :header-active-tab-accent
    "--secondary" :code-result-fg
-   "--warning" :warning-fg
-   "--warning-bg" :warning-bg
-   "--ok" :status-ok
-   "--err" :status-bad
-   ;; Per-tool BADGE colors — the SAME palette tokens the TUI paints native
-   ;; tool op-cards with, so the web badge tracks every theme (light/dark/…).
+   "--link-fg" :link-chrome-fg
+   "--link-arrow-fg" :link-chrome-arrow-fg
+   "--link-url-fg" :link-chrome-url-fg
+   "--link-hover-bg" :link-chrome-hover-bg
+   "--link-hover-fg" :link-chrome-hover-fg
+   "--footer-fg" :footer-fg
+   "--footer-muted" :footer-fg-muted
+   "--footer-strong" :footer-fg-strong
+   "--footer-spinner" :footer-spinner-fg
+   "--footer-warning" :footer-warning-fg
+   "--footer-error" :footer-error-fg
    "--tool-read" :tool-color-read
    "--tool-search" :tool-color-search
    "--tool-preview" :tool-color-preview

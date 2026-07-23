@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.foundation.shell
   "`shell/` compatibility extension — a DROPPABLE classpath plug-in (drop the
-   jar, drop the feature), gated behind the user-owned `:shell/enabled` toggle
-   (OFF by default; every call short-circuits into a refusal envelope until the
-   user flips it in settings).
+   jar, drop the feature). Bound only when the user-owned `shell` toggle is ON
+   (default ON; flip it OFF in Settings or in `vis.yml` via `toggles: {shell: false}`
+   to drop the tools). The OS process jail is the containment layer while active.
 
    Three model-facing bindings under alias `shell` (the flat Python sandbox
    renders `alias/name` as `<alias>_<name>`, so the calls are
@@ -33,15 +33,13 @@
    3. `shell_logs(id)` / `shell_logs(id, n)` — tail of a background shell's
       captured output as `[seq, line]` tuples plus status/exit/uptime.
 
-   The `:shell/enabled` toggle is registered HERE, extension-owned under the
-   extension's own namespace."
+   The `shell` toggle is registered HERE, extension-owned under the vis namespace."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
@@ -50,23 +48,6 @@
            (java.lang ProcessHandle)
            (java.util HashMap)
            (java.util.concurrent TimeUnit)))
-
-;; =============================================================================
-;; Toggle (extension-owned)
-;; =============================================================================
-
-(toggles/register-toggle! {:id :shell/enabled
-                           :label "Shell commands (compatibility layer)"
-                           :description (str "When ON the agent can run shell commands from the"
-                                             " sandbox: sync shell_run(cmd) plus background"
-                                             " shell_bg(id, cmd) registered as session resources"
-                                             " (footer count, F4 dialog, resource_stop). OFF by"
-                                             " default - every shell call is refused with a hint"
-                                             " until you enable it.")
-                           :default false
-                           :owner "foundation-shell"
-                           :group :tools
-                           :persist? true})
 
 ;; =============================================================================
 ;; Limits
@@ -173,89 +154,92 @@
            str/trim)]
     (if (> (count s) limit) (str (subs s 0 limit) "…") s)))
 
-(defn- contains-dir?
-  "When `rel` names an existing directory under canonical `root` (or IS the
-   root), the canonical File for it; otherwise nil. `nil` too when it resolves
-   OUTSIDE the root (containment guard, same rule the editing tools enforce).
-   An ABSOLUTE `rel` is taken as-is (not joined onto root), so a path the model
-   can already see/edit — e.g. the workspace root itself — is runnable verbatim."
-  ^File [^File root rel]
-  (let
-    [f
-     (io/file rel)
-
-     dir
-     (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel)))]
-
-    (when (and (or (= dir root)
-                   (str/starts-with? (.getPath dir) (str (.getPath root) File/separator)))
-               (.isDirectory dir))
-      dir)))
 
 (defn- resolve-cwd
-  "Directory the command runs in: the workspace root (bound per-call by the
-   extension wrapper), optionally narrowed by a RELATIVE opts `cwd` that must
-   stay inside a root — same containment rule the editing tools enforce.
-
-   The relative `cwd` is resolved against the primary root FIRST, then each
-   bound filesystem-root `:trunk` (the real dirs the model addresses), so a
-   path the model can see/edit is also runnable here even when the primary
-   root differs (forked/trunk-clone workspaces, or an unbound root falling
-   back to the process cwd)."
+  "Resolve a command cwd against the primary workspace, then authorize the
+   canonical result against every filesystem root in the immutable environment
+   snapshot plus the live workspace overlay. A configured sibling such as
+   `../svar` is therefore valid when that canonical sibling is an allowed root;
+   arbitrary traversal remains denied. Absolute paths follow the same rule."
   ^File [opts]
   (let
-    [root
+    [env
+     (::environment opts)
+
+     root
      (.getCanonicalFile (workspace/cwd))
 
+     env-roots
+     (workspace/env-filesystem-roots env)
+
      roots
-     (into [root]
-           (comp (keep :trunk) (map #(.getCanonicalFile (io/file %))))
-           workspace/*filesystem-roots*)
+     (->> (concat [{:trunk (.getPath root) :clone (.getPath root)}]
+                  env-roots
+                  workspace/*filesystem-roots*)
+          (mapcat (juxt :trunk :clone))
+          (keep #(some-> %
+                         io/file
+                         .getCanonicalFile))
+          distinct
+          vec)
 
-     rel
-     (let [c (get opts "cwd")]
-       (when-not (str/blank? (str (or c ""))) (str c)))]
+     cwd-value
+     (get opts "cwd")
 
-    (if-not rel
+     requested
+     (when-not (str/blank? (str (or cwd-value ""))) (str cwd-value))]
+
+    (if-not requested
       root
-      (or (some #(contains-dir? % rel) roots)
-          ;; Nothing matched — build the most useful diagnostic we can: report
-          ;; the base(s) tried and the absolute path we looked for, and say
-          ;; WHY (escapes / is-a-file / missing) against the primary root.
-          (let
-            [dir
-             (let [f (io/file rel)]
-               (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel))))
+      (let
+        [requested-file
+         (cond (= requested "~") (io/file (System/getProperty "user.home"))
+               (str/starts-with? requested "~/") (io/file (System/getProperty "user.home")
+                                                          (subs requested 2))
+               :else (io/file requested))
 
-             bases
-             (str/join ", " (distinct (map #(.getPath ^File %) roots)))]
+         dir
+         (.getCanonicalFile
+           (if (.isAbsolute requested-file) requested-file (io/file root requested)))
 
-            (throw
-              (ex-info
-                (cond (not (or (= dir root)
-                               (str/starts-with? (.getPath dir)
-                                                 (str (.getPath root) File/separator))))
-                      (str "shell cwd '"
-                           rel
-                           "' escapes the workspace root;"
-                           " relative paths must stay inside it (base "
-                           bases
-                           ").")
-                      (.exists dir)
-                      (str "shell cwd '" rel "' is a file, not a directory (" (.getPath dir) ").")
-                      :else (str "shell cwd '"
-                                 rel
-                                 "' does not exist under the workspace"
-                                 " root — looked for "
-                                 (.getPath dir)
-                                 " (base "
-                                 bases
-                                 ")."))
-                {:type ::cwd-unresolved
-                 :cwd rel
-                 :resolved (.getPath dir)
-                 :exists (.exists dir)
-                 :roots (mapv #(.getPath ^File %) roots)})))))))
+         allowed?
+         (some (fn [^File allowed-root]
+                 (or (= dir allowed-root)
+                     (str/starts-with? (.getPath dir)
+                                       (str (.getPath allowed-root) File/separator))))
+               roots)
+
+         root-paths
+         (mapv #(.getPath ^File %) roots)]
+
+        (cond (not allowed?) (throw (ex-info (str
+                                               "shell cwd '"
+                                               requested
+                                               "' resolves outside the allowed filesystem roots ("
+                                               (str/join ", " root-paths)
+                                               ").")
+                                             {:type ::cwd-unresolved
+                                              :cwd requested
+                                              :resolved (.getPath dir)
+                                              :exists (.exists dir)
+                                              :roots root-paths}))
+              (not (.exists dir))
+              (throw (ex-info (str "shell cwd '" requested "' does not exist (" (.getPath dir) ").")
+                              {:type ::cwd-unresolved
+                               :cwd requested
+                               :resolved (.getPath dir)
+                               :exists false
+                               :roots root-paths}))
+              (not (.isDirectory dir))
+              (throw
+                (ex-info
+                  (str "shell cwd '" requested "' is a file, not a directory (" (.getPath dir) ").")
+                  {:type ::cwd-unresolved
+                   :cwd requested
+                   :resolved (.getPath dir)
+                   :exists true
+                   :roots root-paths}))
+              :else dir)))))
 
 (defn- lf
   "Normalize CRLF to LF so captured output is byte-identical on every OS."
@@ -325,13 +309,16 @@
   (if (windows?*) (or (find-git-bash) "bash") "bash"))
 
 (defn- jail-policy
-  "The live per-session jail policy VALUE (or nil) carried by `env`. Built by the
-   loop from vis.yml `:filesystem` (fs carve-outs) + `:network` + the session roots;
-   read fresh here so it
-   reflects the current config/roots at spawn time. nil ⇒ argv unwrapped."
+  "Resolve the per-session jail policy carried by `env`.
+
+   A present policy function is security-critical: failures propagate and deny the
+   spawn instead of silently returning nil/unwrapped argv. `sandbox: false` is
+   represented explicitly by `{:disabled? true}` and remains the sole escape hatch."
   [env]
   (when-let [f (:jail-policy-fn env)]
-    (try (f) (catch Throwable _ nil))))
+    (or (f)
+        (throw (ex-info "Shell process denied: session jail policy is unavailable"
+                        {:type ::jail-policy-missing :session-id (:session-id env)})))))
 
 (defn- spawn!
   ^Process [cmd ^File dir merge-err? policy]
@@ -469,7 +456,7 @@
      (let
        [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
         cwd-opt? (not (str/blank? (str (or (get opts "cwd") ""))))
-        dir (resolve-cwd opts)
+        dir (resolve-cwd (assoc (or opts {}) ::environment env))
         t0 (now-ms)
         p (spawn! cmd dir false (jail-policy env))
         empty-tail {:text "" :truncated false}
@@ -666,7 +653,7 @@
         (do (resources/unregister! session id) (drop-bg-entry! session id))))
     (let
       [dir
-       (resolve-cwd nil)
+       (resolve-cwd {::environment env})
 
        p
        (pty-spawn! cmd dir (jail-policy env))
@@ -882,7 +869,7 @@
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; =============================================================================
-;; Toggle gate + env injection (one before-fn does both)
+;; Env injection — the before-fn hands the impl its env as first arg
 ;; =============================================================================
 
 (defn- op-label
@@ -890,29 +877,13 @@
   [op]
   (if (namespace op) (str (namespace op) "_" (name op)) (name op)))
 
-(def ^:private disabled-hint
-  (str "The shell layer is OFF. Only the USER can enable it: settings dialog ->"
-       " 'Shell commands (compatibility layer)' toggle. Tell the user instead of"
-       " retrying; use cat/ls/rg/patch/write for file work meanwhile."))
-
 (defn- shell-gate-before-fn
-  "Compose the `:shell/enabled` toggle gate with env injection: when the
-   toggle is ON the underlying impl receives `env` as its first arg (the
-   model never sees it); when OFF the call short-circuits into a refusal
-   envelope the loop surfaces as a readable tool error."
-  [op]
+  "Inject `env` as the impl's first arg (the model never sees it). Availability is
+   gated by the `shell` toggle at the extension boundary; once bound, the OS process
+   jail is the containment layer."
+  [_op]
   (fn [env f args]
-    (if (toggles/enabled? :shell/enabled)
-      {:env env :fn f :args (into [env] args)}
-      (let [t (now-ms)]
-        {:result (extension/failure {:result nil
-                                     :op op
-                                     :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
-                                     :error {:message (str (op-label op) " blocked: " disabled-hint)
-                                             :type ::disabled
-                                             :reason :shell-disabled
-                                             :hint disabled-hint
-                                             :loop-hint disabled-hint}})}))))
+    {:env env :fn f :args (into [env] args)}))
 
 (defn- shell-on-error
   "Failure envelope for thrown impl errors; mirrors editing's interrupted-vs-
@@ -953,7 +924,7 @@ await shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})
 
 Run a command via bash -lc in the workspace root.
 Returns {\"cmd\", \"stdout\", \"duration_ms\"} plus, only when meaningful (use .get): \"exit\", \"timed_out\"+\"timeout_secs\", \"stderr\", \"stdout_truncated\"/\"stderr_truncated\", \"cwd\".
-opts: {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}.
+opts: {\"timeout_secs\": N (default 120, max 600), \"cwd\": dir-under-an-allowed-filesystem-root}.
 Gotcha: a non-zero \"exit\" is DATA to read, not a tool failure. On timeout there is NO \"exit\" key."
     :arglists '([cmd] [cmd opts])}
   shell-run
@@ -1299,19 +1270,22 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
      :call {:pos ["cmd"] :rest :opt}
      :render render-shell-run-result
      :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties
-              {"cmd" {:type "string"
-                      :minLength 1
-                      :description "Command line, run via bash -lc in the workspace root."}
-               "timeout_secs" {:type "integer"
-                               :minimum 1
-                               :maximum 600
-                               :description "Sync timeout seconds (default 120, max 600)."}
-               "cwd" {:type "string"
-                      :description "Relative directory inside the workspace to run in."}}
-              :required ["cmd"]
-              :additionalProperties false}
+     :schema
+     {:type "object"
+      :properties
+      {"cmd" {:type "string"
+              :minLength 1
+              :description "Command line, run via bash -lc in the workspace root."}
+       "timeout_secs" {:type "integer"
+                       :minimum 1
+                       :maximum 600
+                       :description "Sync timeout seconds (default 120, max 600)."}
+       "cwd"
+       {:type "string"
+        :description
+        "Directory under any allowed filesystem root; relative paths resolve from the workspace."}}
+      :required ["cmd"]
+      :additionalProperties false}
      :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
      :on-error-fn (shell-on-error :shell/run)}))
@@ -1434,25 +1408,32 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
       :cmd/examples ["vis ext shell attach slack-auth" "vis ext shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])
 
+(vis/register-toggle!
+  {:id "shell"
+   :label "Shell tools"
+   :description (str "Expose shell_run / shell_bg / shell_logs / shell_send. When OFF the shell "
+                     "compatibility layer is not bound at all. Contained by the OS process jail "
+                     "whenever it is ON.")
+   :default true
+   :owner :vis
+   :persist? true
+   :group :sandbox})
+
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "Shell compatibility layer (toggle :shell/enabled, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail."
+     "Shell compatibility layer: sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail. Bound when the `shell` toggle is ON (default); contained by the OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     ;; The toggle IS the activation gate: when OFF the extension is
-     ;; inactive, so `sync-active-extension-symbols!` (per-env install +
-     ;; every turn start) REMOVES shell_run/shell_bg/shell_logs from the
-     ;; sandbox globals — `apropos` doesn't list them, calling raises a
-     ;; plain NameError, and the prompt fragment is gone. The before-fn
-     ;; refusal below stays as defense-in-depth for the same-turn window
-     ;; where the toggle flips after symbols were already bound.
+     ;; Gated by the user-owned `shell` toggle (default ON). The OS process jail is
+     ;; the containment layer while shell is active; flipping the toggle OFF unbinds
+     ;; shell_run/shell_bg/shell_logs/shell_send on the next env build / reload.
      :ext/activation-fn (fn [_env]
-                          (toggles/enabled? :shell/enabled))
+                          (vis/toggle-enabled? "shell"))
      :ext/engine {:ext.engine/alias 'shell :ext.engine/symbols shell-symbols}
      :ext/cli shell-cli}))
 

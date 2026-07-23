@@ -40,21 +40,20 @@ jobs:
             ~/.clojure/.cpcache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
-      # Several unit tests resolve the provider router, which reads
-      # `~/.vis/config.edn` (the dev machine always has one). Seed a minimal
-      # provider so `resolve-config` doesn't throw "No AI provider is
-      # configured yet." — replicating the local green state. No network: the
-      # tests that touch a provider mock the transport.
+      # Several unit tests resolve the provider router. Seed the machine-owned
+      # YAML state store with a minimal provider; transport-facing tests mock IO.
       - name: Seed a minimal AI provider config + harness fixtures
         shell: bash
         run: |
           mkdir -p "$HOME/.vis"
-          cat > "$HOME/.vis/config.edn" <<'EDN'
-          {:providers [{:id :anthropic-coding-plan
-                        :models [{:name "claude-opus-4-8"}]
-                        :base-url "https://api.anthropic.com/v1"
-                        :api-key "ci-dummy-key"}]}
-          EDN
+          cat > "$HOME/.vis/state.yml" <<'YAML'
+          providers:
+            - id: anthropic-coding-plan
+              models:
+                - name: claude-opus-4-8
+              base-url: https://api.anthropic.com/v1
+              api-key: ci-dummy-key
+          YAML
           # Harness discovery scans ~/.claude/{agents,skills}; the dev machine
           # always has some. Seed the fixtures the harness tests expect.
           mkdir -p "$HOME/.claude/agents" "$HOME/.claude/skills/ci-skill"
@@ -74,6 +73,10 @@ jobs:
           Do the thing.
           MD
       - name: Run test suite
+        env:
+          # Prevent a vacuous green: macOS must execute fresh Seatbelt/socket E2E,
+          # while Linux runs the cross-platform policy/compiler assertions.
+          VIS_REQUIRE_MACOS_SANDBOX_E2E: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale

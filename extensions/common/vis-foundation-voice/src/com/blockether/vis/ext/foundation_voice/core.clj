@@ -3,8 +3,6 @@
   (:require [babashka.process :as process]
             [com.blockether.vis.core :as vis]))
 
-(def parakeet-model-dir-env "VIS_PARAKEET_MODEL_DIR")
-
 (defn- cli-out! [s] (.println ^java.io.PrintStream vis/original-stdout (str s)))
 
 (defn- voice-asr-var
@@ -99,12 +97,6 @@
      :ext/license "Apache-2.0"
      :ext/kind "voice"
      :ext/doctor-fn doctor-fn
-     :ext/env
-     [{:name parakeet-model-dir-env
-       :label "Parakeet model directory"
-       :description
-       "Directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt. Missing files can be downloaded with vis extensions voice models download --parakeet."
-       :required? false}]
      :ext/cli
      [{:cmd/name "voice"
        :cmd/doc "Voice extension commands."

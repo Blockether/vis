@@ -128,6 +128,10 @@
         (expect (nil? (:error r)))
         ;; strings-only boundary: dict keys come back as VERBATIM strings
         (expect (= {"a" 2 "b" 1} (:result r)))))
+  (it "makes Counter available without an import in run_python code"
+      (let [r (ep/run-python-block @py-ctx "dict(Counter('abb'))")]
+        (expect (nil? (:error r)))
+        (expect (= {"a" 1 "b" 2} (:result r)))))
   (it "makes pathlib and Path available without an import in run_python code"
       (let
         [r (ep/run-python-block @py-ctx
@@ -162,7 +166,7 @@
         [r
          (ep/run-python-block
            @py-ctx
-           "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']) & set().union(*(set(apropos(m)) for m in ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins'])))")]
+           "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']) & set().union(*(set(apropos(m)) for m in ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins'])))")]
         (expect (nil? (:error r)))
         (expect (= false (:result r)))))))
 
@@ -642,42 +646,40 @@ await patch({'path': css})" "t1/i1")]
                                  [:error :message])
                                "`file_exists` is not defined")))))
 
-(defdescribe
-  run-python-block-form-eval-test
-  ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
-  ;; line uses ordinary Python variables, not an r[] dict.)
-  (it "E1 — comment is not a form; assign + bare expr; last value is the result"
-      (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
-        (expect (= 41 (:result r)))
-        (expect (nil? (:error r)))))
-  (it "E2 — a single value-returning expression echoes its value"
-      (let [r (ep/run-python-block @py-ctx "40 + 2")]
-        (expect (= 42 (:result r)))))
-  (it "E3 — multiple statements; the trailing tuple echoes both"
-      (let [r (ep/run-python-block @py-ctx "e3a = 1\ne3b = 2\n(e3a, e3b)")]
-        (expect (= [1 2] (:result r)))))
-  (it "E6 — a call expression echoes its return value"
-      (let [r (ep/run-python-block @py-ctx "str(99)")]
-        (expect (= "99" (:result r)))))
-  (it "a def is one form; a following call evaluates"
-      (let [r (ep/run-python-block @py-ctx "def e_f():\n    return 7\ne_f()")]
-        (expect (= 7 (:result r)))))
-  (it "E7 — evaluation stops at the first erroring form; later forms do not run"
-      (let [r (ep/run-python-block @py-ctx "e7x = 1\ne7_boom\ne7y = 2")]
-        (expect (nil? (:result r)))
-        (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
-  (it "E7b — a NameError for an undefined TOOL gets an enrichment hint (toggled-off extension)"
-      (let
-        [r
-         (ep/run-python-block @py-ctx "shell_run(\"echo hi\")")
+(defdescribe run-python-block-form-eval-test
+             ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
+             ;; line uses ordinary Python variables, not an r[] dict.)
+             (it "E1 — comment is not a form; assign + bare expr; last value is the result"
+                 (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
+                   (expect (= 41 (:result r)))
+                   (expect (nil? (:error r)))))
+             (it "E2 — a single value-returning expression echoes its value"
+                 (let [r (ep/run-python-block @py-ctx "40 + 2")]
+                   (expect (= 42 (:result r)))))
+             (it "E3 — multiple statements; the trailing tuple echoes both"
+                 (let [r (ep/run-python-block @py-ctx "e3a = 1\ne3b = 2\n(e3a, e3b)")]
+                   (expect (= [1 2] (:result r)))))
+             (it "E6 — a call expression echoes its return value"
+                 (let [r (ep/run-python-block @py-ctx "str(99)")]
+                   (expect (= "99" (:result r)))))
+             (it "a def is one form; a following call evaluates"
+                 (let [r (ep/run-python-block @py-ctx "def e_f():\n    return 7\ne_f()")]
+                   (expect (= 7 (:result r)))))
+             (it "E7 — evaluation stops at the first erroring form; later forms do not run"
+                 (let [r (ep/run-python-block @py-ctx "e7x = 1\ne7_boom\ne7y = 2")]
+                   (expect (nil? (:result r)))
+                   (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
+             (it "E7b — a NameError for an undefined TOOL gets an enrichment hint"
+                 (let
+                   [r
+                    (ep/run-python-block @py-ctx "definitely_not_a_tool_zzz(\"x\")")
 
-         err
-         (:error r)]
+                    err
+                    (:error r)]
 
-        (expect (true? (get-in err [:data :name-undefined?])))
-        (expect (= "shell_run" (get-in err [:data :undefined-name])))
-        (expect (str/includes? (:message err) "apropos"))
-        (expect (str/includes? (:message err) ":shell/enabled")))))
+                   (expect (true? (get-in err [:data :name-undefined?])))
+                   (expect (= "definitely_not_a_tool_zzz" (get-in err [:data :undefined-name])))
+                   (expect (str/includes? (:message err) "apropos")))))
 
 (defdescribe
   sanitize-cause-data-test

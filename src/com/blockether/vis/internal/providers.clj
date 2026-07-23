@@ -624,12 +624,8 @@
     (assoc :base-url (:base-url preset))))
 
 (defn save-providers!
-  "Replace the `:providers` vec in the GLOBAL config file (project
-   overlay files are never edited), preserving unrelated keys, then
-   reload the in-memory config so the running router sees the change.
-   Invalidates the fleet snapshot so `configured-providers-cached`
-   readers (the TUI footer) pick the change up on their next read.
-   Returns the persisted vec."
+  "Replace the provider vector in the global string-keyed config while preserving
+   unrelated keys, then refresh runtime provider state."
   ([providers] (save-providers! providers nil))
   ([providers source]
    (let
@@ -640,27 +636,25 @@
       (mapv persisted-provider-config providers)]
 
      (config/save-config!
-       (if (seq providers*) (assoc raw :providers providers*) (dissoc raw :providers))
+       (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
        source)
      (try (config/reload-config!) (catch Throwable _ nil))
      (invalidate-configured-providers!)
      providers*)))
 
 (defn add-config-provider!
-  "Append a provider config to the persisted fleet (no-op when the id
-   is already configured). Returns the new fleet or nil on no-op."
+  "Append a provider config to the persisted fleet (no-op when its id exists)."
   ([provider-cfg] (add-config-provider! provider-cfg nil))
   ([provider-cfg source]
-   (let [current (vec (:providers (config/load-global-config-raw)))]
+   (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
      (when-not (some #(= (:id provider-cfg) (:id %)) current)
        (save-providers! (conj current provider-cfg) source)))))
 
 (defn update-config-provider!
-  "Apply `f` to the persisted provider entry with `provider-id` and
-   save. Returns the new fleet."
+  "Apply `f` to one persisted provider and save the resulting fleet."
   ([provider-id f] (update-config-provider! provider-id f nil))
   ([provider-id f source]
-   (let [current (vec (:providers (config/load-global-config-raw)))]
+   (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
      (save-providers! (mapv #(if (= provider-id (:id %)) (f %) %) current) source))))
 
 (defn remove-provider!

@@ -16,17 +16,22 @@
    without any TUI patch.
 
    Persistence is opt-in: `register-toggle!` accepts `:persist? true`
-   and on `set!` the wrapper file writes `{:toggles {id bool}}` into
-   `~/.vis/config.edn` via `vis.config/save-config!`. Hydration
-   happens at process start (call `hydrate-from-config!` once after
-   `config/load-config-raw`).
+   and on `set!` the wrapper writes `{:toggles {id value}}` into the
+   machine store `~/.vis/state.yml` via `vis.config/save-config!`.
+   Hand-authored `vis.yml` / `config.yml` may ALSO declare a `toggles:`
+   block. Ids are plain snake_case strings there (`reasoning_level: deep`),
+   identical to the registered id. `coerce-config-value` maps YAML strings
+   onto each toggle's type, so a config-declared toggle behaves exactly like
+   a UI flip. Hydration happens at process start (call
+   `hydrate-from-config!` once after `config/load-config-raw`).
 
    Contract:
-     - Toggle ids are namespaced keywords (`:vis/show-thinking`,
-       `:foundation-git/auto-commit`, ...).
-     - `enabled?` is cheap (single atom deref + keyword lookup),
-       called per-paint per-row by the render layer; do not turn it
-       into a function-call indirection.
+     - Toggle ids are non-blank snake_case strings (`reasoning_level`,
+       `mcp_enabled`, ...) — no keywords, namespaces, slashes, or kebab-case.
+       YAML config uses the same string verbatim (`reasoning_level: deep`).
+     - `enabled?` is cheap (single atom deref + string lookup), called
+       per-paint per-row by the render layer; do not turn it into a
+       function-call indirection.
      - Defaults are immutable once registered. Re-registering the
        same id is allowed (idempotent boot path) and merges over
        prior metadata; the live VALUE in `state` is left alone so a
@@ -38,7 +43,14 @@
 ;; Specs
 ;; =============================================================================
 
-(s/def :toggle/id qualified-keyword?)
+(defn toggle-id?
+  "True only for canonical toggle ids: plain lower-case snake_case strings.
+   Keywords, namespaces/slashes, kebab-case, uppercase, blanks, and leading
+   underscores are rejected at the registry boundary."
+  [v]
+  (and (string? v) (boolean (re-matches #"[a-z][a-z0-9]*(?:_[a-z0-9]+)*" v))))
+
+(s/def :toggle/id toggle-id?)
 
 (s/def :toggle/label (s/and string? #(not (str/blank? %))))
 
@@ -121,7 +133,7 @@
    Two kinds of toggles share the same registry:
      `:boolean` (default) -- simple ON/OFF.
      `:enum`              -- a closed set of named values
-                             (e.g. `:vis/reasoning-level` cycles
+                             (e.g. `reasoning_level` cycles
                              `:quick -> :balanced -> :deep`).
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
@@ -409,24 +421,49 @@
                {}
                reg)))
 
+(defn coerce-config-value
+  "Coerce a raw config value (from hand-written `vis.yml`, where YAML has no
+   keyword literal, or from the machine `state.yml` round-trip) onto the
+   REGISTERED toggle's type so a config-declared toggle behaves like a UI flip:
+     `:boolean` — real booleans pass through; strings map by truthy token
+                  (`true`/`1`/`yes`/`on` → true, anything else → false).
+     `:enum`    — a string matches the choice whose `name` equals it,
+                  case-insensitively (`reasoning_level: deep` → `:deep`); an
+                  already-legal value passes through unchanged.
+   Unregistered / untyped ids return the value unchanged (hydrate then drops
+   the orphan)."
+  [id v]
+  (let [spec (get @registry id)]
+    (case (:type spec)
+      :boolean
+      (cond (boolean? v) v
+            (string? v) (contains? #{"true" "1" "yes" "on"} (str/lower-case (str/trim v)))
+            :else (boolean v))
+
+      :enum
+      (if (string? v)
+        (let [target (str/lower-case (str/trim v))]
+          (or (some (fn [c]
+                      (when (= target (str/lower-case (name c))) c))
+                    (:choices spec))
+              v))
+        v)
+
+      v)))
+
 (defn hydrate-from-config!
-  "Bulk-apply persisted toggle values from `(:toggles config-map)`. Silently
-   skips ids not in the registry so a stale config file from a
-   previous install can't break boot. Routes through `set-value!`
-   so enum entries get validated; individual invalid values are
-   dropped (logged via the listener) instead of aborting the whole
-   hydrate."
+  "Bulk-apply values from the string-keyed YAML `toggles` map. Keyword-keyed
+   internal maps remain accepted for callers that do not originate at YAML."
   [config-map]
-  (let
-    [persisted (some-> config-map
-                       :toggles)]
+  (let [persisted (or (get config-map "toggles") (:toggles config-map))]
     (when (map? persisted)
       (let [reg @registry]
         (doseq
           [[id v] persisted
-           :when (contains? reg id)]
+           :when (and (string? id) (contains? reg id))]
 
-          (try (set-value! id v) (catch clojure.lang.ExceptionInfo _ nil)))))))
+          (try (set-value! id (coerce-config-value id v))
+               (catch clojure.lang.ExceptionInfo _ nil)))))))
 
 ;; =============================================================================
 ;; Listener ops
@@ -493,51 +530,11 @@
     ;; ALWAYS shown in both channels (same call as `:vis/show-raw-code`: the
     ;; trace IS the transcript, nothing to hide). The settings projection and
     ;; web `role-time` hardcode these on.
-    (register-toggle! {:id :vis/mouse-selection-copy
-                       :label "Mouse selection auto-copy"
-                       :description
-                       "Drag-select visible text; copied automatically on mouse release."
-                       ;; ALWAYS ON — no longer a user-facing setting. Kept registered so the
-                       ;; screen consumer + CLI overrides still resolve it, but `:settings? false`
-                       ;; keeps it out of every Settings dialog.
-                       :default true
-                       :settings? false
-                       :owner :vis
-                       :group :tui-display
-                       :channels #{:tui}
-                       :persist? true})
-    (register-toggle!
-      {:id :network/enabled
-       :label "Network access (Python sandbox)"
-       :description
-       (str "Let the Python sandbox open sockets (urllib/requests/socket). "
-            "ALWAYS ON — the sandbox always has host socket access. "
-            "Host policy in vis.yml network: is a best-effort GUARDRAIL for "
-            "cooperative code (not adversary-proof): allowed-domains: [\"example.com\"] "
-            "(empty or [\"*\"] = allow all), denied-domains: [...] on top of the "
-            "cloud-metadata SSRF defaults, and rules: [{host: api.example.com, "
-            "access: read-only, allow: [{method: POST, path: /v1/**}]}] to allow "
-            "per-host HTTP verbs + paths (preset read-only = GET/HEAD/OPTIONS; unlisted "
-            "hosts unrestricted). "
-            "The SHELL is ALWAYS jailed: shell children (curl/wget/scripts) are confined to "
-            "the workspace roots + tmp, and filesystem: {allow-write: [...], deny-write: [...], "
-            "allow-read: [...], deny-read: [...]} adds carve-outs. These SAME domain+verb rules "
-            "are enforced for shell children too: the jail walls the child to a loopback egress "
-            "proxy (net-off-except-proxy) that applies them — real containment, not a hint. HTTPS "
-            "verb/path is read via the MITM CA; exclude-domains: [...] tunnels pinned/Go clients "
-            "that reject the CA (host allow/deny only). "
-            "The proxy blocks cloud-metadata / link-local and the internal LAN even under "
-            "allowed-domains: [\"*\"]; the LAN opts back in with allow-private: true (RFC1918/"
-            "CGNAT/ULA). Loopback dev servers are reachable by default — only the gateway's own "
-            "control-plane and proxy ports can never be reached.")
-       ;; A host capability, not a display concern. ON by default and out of the
-       ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
-       :default true
-       :settings? false
-       :owner :vis
-       :group :capabilities
-       :persist? true})
-    (register-toggle! {:id :vis/reasoning-level
+    ;; NOTE: there is intentionally NO `:network/enabled` toggle. The Python sandbox
+    ;; + shell/subprocess/managed children ALWAYS have host sockets; containment is the
+    ;; OS process jail + gateway egress proxy, turned off as a whole by `sandbox: false`
+    ;; in vis.yml. Per-host/verb policy lives under vis.yml `network:` (see below).
+    (register-toggle! {:id "reasoning_level"
                        :label "Reasoning effort"
                        :description "Reasoning budget hint passed to reasoning-capable models."
                        :type :enum
@@ -550,7 +547,7 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
-    ;; NOTE: provider-specific knobs (e.g. :openai-codex/verbosity)
+    ;; NOTE: provider-specific knobs (e.g. "openai_codex_verbosity")
     ;; are registered by their PROVIDER EXTENSIONS, not here — a knob
     ;; belongs next to the backend it tunes, and its `:visible-fn`
     ;; keeps it out of Settings until that provider is configured.

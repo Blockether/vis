@@ -16,6 +16,7 @@
    is doing via `start!`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.loop :as lp]
@@ -31,6 +32,7 @@
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.toggles :as toggles]
             [reitit.ring :as rr]
             [ring.adapter.jetty :as jetty]
@@ -538,15 +540,30 @@
                          (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
                                     StandardCharsets/UTF_8))
                  (.flush out))
-               (doseq [[sid cursor] sid+cursors]
-                 ;; seed the guard at the requested cursor BEFORE registering the
-                 ;; live sink, so a live event racing replay still dedups cleanly.
-                 ;; `sid` is a UUID (parse-multi-sids); events demux by the
-                 ;; STRING :session_id, so seed the dedup guard under the
-                 ;; string key `write!` reads back.
-                 (swap! last-seqs assoc (str sid) (long cursor))
-                 (doseq [event (state/subscribe! sid sub-id sink cursor)]
-                   (write! event)))
+               (doseq [[sid requested-cursor] sid+cursors]
+                 ;; A negative cursor means live-only. It lets a client restore a
+                 ;; bounded visited-session watch list without replaying every
+                 ;; ring buffer or issuing N `/seq` requests first.
+                 (let
+                   [cursor (if (neg? (long requested-cursor))
+                             (long (state/current-seq sid))
+                             (long requested-cursor))]
+                   ;; Seed the guard before atomic registration. A ready control
+                   ;; frame returns the effective cursor so a live-only client can
+                   ;; resume losslessly after its first connection.
+                   (swap! last-seqs assoc (str sid) cursor)
+                   (let [replay (state/subscribe! sid sub-id sink cursor)]
+                     (.write out
+                             (.getBytes (wire/sse-frame (wire/canonical
+                                                          {:type "subscription.ready"
+                                                           :session_id (str sid)
+                                                           :cursor cursor
+                                                           :server_time_ms
+                                                           (System/currentTimeMillis)}))
+                                        StandardCharsets/UTF_8))
+                     (.flush out)
+                     (doseq [event replay]
+                       (write! event)))))
                (pump-sse! out queue dead? write!)
                (catch Throwable _ nil)
                (finally (unsubscribe-all!)
@@ -750,6 +767,19 @@
                                 {:id (name id) :label (config/display-label id) :models names}))))
                     (providers/configured-providers))}))
 
+(def ^:private web-native-slashes
+  [{:name "/help" :doc "Show the available slash commands."}
+   {:name "/new-session" :doc "Create and open a new session. Optional text starts its first turn."}
+   {:name "/sessions" :doc "Return to the session list."}
+   {:name "/clear" :doc "Start a fresh session without deleting this transcript."}])
+
+(defn- slashes-handler
+  "GET /v1/slashes — the canonical engine/template slash palette for the web
+   channel plus commands implemented by the companion UI. Function-valued slash
+   specs never cross the wire."
+  [_]
+  (json-response {:commands (slash/slash-palette :web web-native-slashes)}))
+
 (defn- configured-provider
   [provider-id]
   (or (some (fn [provider]
@@ -771,8 +801,6 @@
                          keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
 
-(defn- toggle-wire-id [id] (str (namespace id) "/" (name id)))
-
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
    `toggle-row` hiccup: boolean rows carry `enabled`, enum rows carry
@@ -790,9 +818,7 @@
        (if (keyword? v) (name v) (str v)))
 
      base
-     {:id (toggle-wire-id id)
-      :label (str (or label id))
-      :type (name (or type (if (seq choices) :enum :boolean)))}]
+     {:id id :label (str (or label id)) :type (name (or type (if (seq choices) :enum :boolean)))}]
 
     (cond-> base
       description
@@ -853,16 +879,14 @@
      raw-value
      (or (get body "value") (get-in request [:query-params "value"]))
 
-     [ns* n]
-     (when id-str (str/split (str id-str) #"/" 2))
-
      id
-     (when (and ns* (seq (str n))) (keyword ns* n))
+     (when (string? id-str) (str/trim id-str))
 
      spec
-     (when id (toggles/toggle-spec id))]
+     (when (seq id) (toggles/toggle-spec id))]
 
-    (cond (nil? id) (error-response 400 :bad-setting-id "settings id must be <ns>/<name>")
+    (cond (not (toggles/toggle-id? id))
+          (error-response 400 :bad-setting-id "settings id must be a snake_case string")
           (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
           :else (do (cond (= action "value")
                           ;; Set an EXACT choice. The wire carries an enum choice as its
@@ -888,7 +912,7 @@
   []
   (let
     [saved
-     (get-in (or (config/load-config-raw) {}) [:tui-settings :theme-name])
+     (get-in (or (config/load-config-raw) {}) ["tui-settings" "theme-name"])
 
      id
      (cond (keyword? saved) (name saved)
@@ -935,7 +959,7 @@
           (not (contains? (theme/theme-registry) id))
           (error-response 404 :unknown-theme "no such theme" :id id)
           :else (let [raw (or (config/load-config-raw) {})]
-                  (config/save-config! (assoc-in raw [:tui-settings :theme-name] id))
+                  (config/save-config! (assoc-in raw ["tui-settings" "theme-name"] id))
                   (json-response (theme-json id))))))
 
 (defn- create-session-handler
@@ -1111,18 +1135,25 @@
    LOOSE sessions named in `order` are ADOPTED into the project atomically; guests
    owned by another project are never stolen."
   [request]
-  (let [pid-str (get-in request [:path-params :pid])
-        pid (path-pid request)
-        order (->> (get (body-json request) "order")
-                   (keep #(some-> % str parse-uuid))
-                   vec)]
-    (cond
-      (not pid) (project-404 pid-str)
-      (empty? order)
-      (error-response 400 :invalid-request "order must be a non-empty array of session ids")
-      :else
-      (let [count (state/reorder-project-sessions! pid order)]
-        (json-response {:project_id (str pid) :count count})))))
+  (let
+    [pid-str
+     (get-in request [:path-params :pid])
+
+     pid
+     (path-pid request)
+
+     order
+     (->> (get (body-json request) "order")
+          (keep #(some-> %
+                         str
+                         parse-uuid))
+          vec)]
+
+    (cond (not pid) (project-404 pid-str)
+          (empty? order)
+          (error-response 400 :invalid-request "order must be a non-empty array of session ids")
+          :else (let [count (state/reorder-project-sessions! pid order)]
+                  (json-response {:project_id (str pid) :count count})))))
 
 
 (defn- submit-turn-handler
@@ -1618,6 +1649,45 @@
     (:error st)
     (assoc :error (:error st))))
 
+(defn- capabilities-handler
+  "GET /v1/capabilities — stable feature negotiation for remote/native clients.
+   Availability describes what THIS gateway can accept; device-side permissions
+   remain the client's responsibility. Voice reports the local model state without
+   starting its download."
+  [_]
+  (let
+    [model-state
+     (voice-asr-resolve "model-state")
+
+     transcribe
+     (voice-asr-resolve "transcribe-file!")
+
+     voice
+     (if (and model-state transcribe)
+       (try {:enabled true
+             :transport "audio/wav"
+             :transcription "gateway-local"
+             :model (voice-state->json (model-state))}
+            (catch Throwable t
+              {:enabled false
+               :transport "audio/wav"
+               :transcription "gateway-local"
+               :model {:status "unavailable" :error (or (ex-message t) "voice unavailable")}}))
+       {:enabled false
+        :transport "audio/wav"
+        :transcription "gateway-local"
+        :model {:status "unavailable"}})]
+
+    (json-response {:version 1
+                    :features {:chat {:enabled true}
+                               :attachments {:enabled true
+                                             :transport "inline-base64"
+                                             :media-types ["image/jpeg" "image/png" "image/gif"
+                                                           "image/webp" "image/bmp"]
+                                             :max-files attachments/max-image-count
+                                             :max-file-bytes attachments/max-image-bytes}
+                               :voice voice}})))
+
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length — the CHEAP pre-filter that turns an
    obviously-not-audio body into a clear 400 without waking the ASR. sherpa-onnx's
@@ -1909,8 +1979,10 @@
         {:get (fn [req]
                 (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
        ["/v1" ["/models" {:get models-handler}] ["/events" {:get multi-events-handler}]
+        ["/capabilities" {:get capabilities-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
+        ["/slashes" {:get slashes-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
         ["/clients" {:post client-register-handler}]
@@ -2082,7 +2154,7 @@
          (toggles/add-listener!
            (fn [_event]
              (try (let [raw (or (config/load-config-raw) {})]
-                    (config/save-config! (assoc raw :toggles (toggles/snapshot))))
+                    (config/save-config! (assoc raw "toggles" (toggles/snapshot))))
                   (catch Throwable t
                     (tel/log!
                       {:level :warn :id ::toggle-persist-failed :data {:error (ex-message t)}}
