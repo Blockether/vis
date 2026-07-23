@@ -1220,6 +1220,26 @@
                      :result)
                  (-> (cat-tool path {"range" "2, 4"})
                      :result)))
+      ;; a WHOLE stringified nested list (the reported failure shape) parses its
+      ;; digit runs into windows, tolerating extra/mismatched brackets
+      (expect (= [[2 4] [6 8]]
+                 (mapv #(get % "range")
+                       (get (-> (cat-tool path {"ranges" "[[2, 4]], [[6, 8]]"})
+                                :result)
+                            "ranges"))))
+      ;; multi-window string ranges preserve each window
+      ;; a VECTOR whose entries are each a stringified pair (bracketed or
+      ;; comma-joined) — `flat` can't read it as one pair, but each entry coerces
+      (expect (= [[2 4] [6 8]]
+                 (mapv #(get % "range")
+                       (get (-> (cat-tool path {"ranges" ["[2, 4]" "[6, 8]"]})
+                                :result)
+                            "ranges"))))
+      (expect (= [[2 4] [6 8]]
+                 (mapv #(get % "range")
+                       (get (-> (cat-tool path {"ranges" ["2,4" "6,8"]})
+                                :result)
+                            "ranges"))))
       ;; multi-window string ranges preserve each window
       (expect (= [[2 4] [6 8]]
                  (mapv #(get % "range")
@@ -2516,25 +2536,28 @@
                                            "/vis-safe-path-probe.txt"))))
             ;; ...but a NON-temp path outside every root is still rejected.
             (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
-  (it "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
-      (let
-        [safe-path
-         (private-fn "safe-path")
+  (it
+    "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
+    (let
+      [safe-path
+       (private-fn "safe-path")
 
+       home
+       (.getCanonicalPath (java.io.File. (System/getProperty "user.home")))]
+
+      (binding
+        [workspace/*workspace-root*
          home
-         (.getCanonicalPath (java.io.File. (System/getProperty "user.home")))]
-        (binding
-          [workspace/*workspace-root*
-           home
 
-           workspace/*filesystem-roots*
-           nil]
-          ;; ~/x and <home>/x must resolve to the SAME real path, NOT <home>/~/x
-          (expect (= (.getCanonicalPath ^java.io.File (safe-path (str home "/some-file.txt")))
-                     (.getCanonicalPath ^java.io.File (safe-path "~/some-file.txt"))))
-          (expect (not (string/includes? (.getPath ^java.io.File (safe-path "~/some-file.txt")) "~")))
-          ;; bare ~ resolves to home itself
-          (expect (= home (.getCanonicalPath ^java.io.File (safe-path "~")))))))
+         workspace/*filesystem-roots*
+         nil]
+
+        ;; ~/x and <home>/x must resolve to the SAME real path, NOT <home>/~/x
+        (expect (= (.getCanonicalPath ^java.io.File (safe-path (str home "/some-file.txt")))
+                   (.getCanonicalPath ^java.io.File (safe-path "~/some-file.txt"))))
+        (expect (not (string/includes? (.getPath ^java.io.File (safe-path "~/some-file.txt")) "~")))
+        ;; bare ~ resolves to home itself
+        (expect (= home (.getCanonicalPath ^java.io.File (safe-path "~")))))))
   (it
     "ISOLATED filesystem root: address by trunk → edits land in clone, display shows trunk"
     (let
@@ -2687,27 +2710,32 @@
                                 (set (keys fields))))))))
 
 (defdescribe editing-native-schema-shape-test
-  (it "find_files' query is a scalar-or-list contract (name + content OR)"
-      (let [query (get-in editing/find-symbol [:ext.symbol/schema :properties "query"])]
-        (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
-  (it "advertises directory-only paths and no context-lines argument"
-      (let [properties (get-in editing/find-symbol [:ext.symbol/schema :properties])
-            paths (get properties "paths")]
-        (expect (contains? properties "paths"))
-        (expect (string/includes? (:description paths) "Directory scopes only"))
-        (expect (not (contains? properties "context")))))
-  (it "rejects ambiguous cat selectors at the native boundary"
-      (let [schema (:ext.symbol/schema editing/cat-symbol)]
-        (expect (= 2 (:maxProperties schema)))
-        (expect (= 2 (get-in schema [:properties "range" :minItems])))
-        (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
-  (it "uses one portable patch shape with a path on every edit"
-      (let [schema (:ext.symbol/schema editing/patch-symbol)]
-        (expect (= "object" (:type schema)))
-        (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-        (expect (= #{"edits"} (set (keys (:properties schema)))))
-        (expect (= ["path" "from_anchor" "replace"]
-                   (get-in schema [:properties "edits" :items :required]))))))
+             (it "find_files' query is a scalar-or-list contract (name + content OR)"
+                 (let [query (get-in editing/find-symbol [:ext.symbol/schema :properties "query"])]
+                   (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
+             (it "advertises directory-only paths and no context-lines argument"
+                 (let
+                   [properties
+                    (get-in editing/find-symbol [:ext.symbol/schema :properties])
+
+                    paths
+                    (get properties "paths")]
+
+                   (expect (contains? properties "paths"))
+                   (expect (string/includes? (:description paths) "Directory scopes only"))
+                   (expect (not (contains? properties "context")))))
+             (it "rejects ambiguous cat selectors at the native boundary"
+                 (let [schema (:ext.symbol/schema editing/cat-symbol)]
+                   (expect (= 2 (:maxProperties schema)))
+                   (expect (= 2 (get-in schema [:properties "range" :minItems])))
+                   (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
+             (it "uses one portable patch shape with a path on every edit"
+                 (let [schema (:ext.symbol/schema editing/patch-symbol)]
+                   (expect (= "object" (:type schema)))
+                   (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
+                   (expect (= #{"edits"} (set (keys (:properties schema)))))
+                   (expect (= ["path" "from_anchor" "replace"]
+                              (get-in schema [:properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test
@@ -3047,7 +3075,32 @@
           (let [r (index {"path" f "range" [1 3] "ranges" [["2" "2"]]})]
             (expect (= ["b"] (names r)))
             (expect (= [[2 2]] (get-in r [:result "ranges"])))
-            (expect (nil? (get-in r [:result "range"]))))))))
+            (expect (nil? (get-in r [:result "range"]))))))
+    (it "the render summary surfaces the narrowing window(s)"
+        (let
+          [render
+           (private-fn "render-index-result")
+
+           base
+           {"path" "src/x.clj"
+            "language" "clojure"
+            "line_count" 3
+            "definitions" [{"name" "b"
+                            "kind" "function"
+                            "visibility" "public"
+                            "anchor" "2:aa"
+                            "end_anchor" "2:bb"
+                            "depth" 0}]}]
+
+          ;; whole-file index: no window suffix
+          (expect (not (clojure.string/includes? (:summary (render base)) "window")))
+          (expect (not (clojure.string/includes? (:summary (render base)) "lines ")))
+          ;; single range → "lines A–B"
+          (expect (clojure.string/includes? (:summary (render (assoc base "range" [2 2])))
+                                            "lines 2–2"))
+          ;; several windows → "N windows"
+          (expect (clojure.string/includes? (:summary (render (assoc base "ranges" [[1 1] [3 3]])))
+                                            "2 windows"))))))
 
 (defdescribe
   rg-tool-e2e-test
@@ -3169,11 +3222,22 @@
         (expect (= sweep (rsr ["src" ""])))))
     (it
       "the DEFAULT sweep PRUNES vis's own ~/.vis home (its drafts/ repo mirrors + cache/ CPython are search noise) yet keeps the primary + sibling roots; the primary is NEVER pruned even when it IS ~/.vis"
-      (let [rsr @#'editing/resolve-search-roots
-            home (System/getProperty "user.home")
-            vis-home (str home "/.vis")
-            primary (str home "/proj")
-            other (str home "/lib")]
+      (let
+        [rsr
+         @#'editing/resolve-search-roots
+
+         home
+         (System/getProperty "user.home")
+
+         vis-home
+         (str home "/.vis")
+
+         primary
+         (str home "/proj")
+
+         other
+         (str home "/lib")]
+
         (with-redefs [workspace/allowed-roots (constantly [primary other vis-home])]
           (let [roots (mapv str (:roots (rsr ["."])))]
             ;; ~/.vis pruned from the default sweep …
@@ -3400,18 +3464,34 @@
 (defdescribe
   empty-search-paths-default-test
   "find_files scopes are directories; empty scope still means the workspace root."
-  (let [coerce-find (private-fn "coerce-find-spec")
-        coerce-rg (private-fn "coerce-rg-spec")
-        find-paths (private-fn "find-arg-paths")]
+  (let
+    [coerce-find
+     (private-fn "coerce-find-spec")
+
+     coerce-rg
+     (private-fn "coerce-rg-spec")
+
+     find-paths
+     (private-fn "find-arg-paths")]
+
     (it "find_files defaults empty paths to current directory in validation and path protection"
         (let [spec {"query" "resource-config" "paths" []}]
           (expect (= ["."] (:paths (coerce-find [spec]))))
           (expect (= ["."] (find-paths [spec])))))
     (it "normalizes an existing filename scope to its parent directory everywhere"
-        (let [dir (temp-dir-path "find-dir-scope")
-              file (str dir "/one.clj")
-              expected ((private-fn "rel-path") (fs/file dir))
-              spec {"query" "needle" "paths" [file]}]
+        (let
+          [dir
+           (temp-dir-path "find-dir-scope")
+
+           file
+           (str dir "/one.clj")
+
+           expected
+           ((private-fn "rel-path") (fs/file dir))
+
+           spec
+           {"query" "needle" "paths" [file]}]
+
           (spit (fs/file file) "needle\n")
           (expect (= [expected] (:paths (coerce-find [spec]))))
           (expect (= [expected] (find-paths [spec])))))
@@ -3422,19 +3502,21 @@
         (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
           (expect (= ["."] (:paths (coerce-rg spec))))))))
 
-(defdescribe find-files-directory-scope-test
+(defdescribe
+  find-files-directory-scope-test
   (let [find-files (private-fn "find-tool")]
     (it "widens a filename scope to its parent and returns matching lines without context"
-        (let [dir (temp-dir-path "find-file-parent")
-              scoped-file (str dir "/scope.clj")
-              sibling-file (str dir "/sibling.clj")
-              _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
-              _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
-              result (:result (find-files {"query" "sibling-only-needle"
-                                          "paths" [scoped-file]}))
-              expected-dir ((private-fn "rel-path") (fs/file dir))
-              expected-file ((private-fn "rel-path") (fs/file sibling-file))
-              hit (first (vals (get-in result ["content" "matches" expected-file])))]
+        (let
+          [dir (temp-dir-path "find-file-parent")
+           scoped-file (str dir "/scope.clj")
+           sibling-file (str dir "/sibling.clj")
+           _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
+           _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
+           result (:result (find-files {"query" "sibling-only-needle" "paths" [scoped-file]}))
+           expected-dir ((private-fn "rel-path") (fs/file dir))
+           expected-file ((private-fn "rel-path") (fs/file sibling-file))
+           hit (first (vals (get-in result ["content" "matches" expected-file])))]
+
           (expect (= [expected-dir] (get result "searched_paths")))
           (expect (= "sibling-only-needle" (get hit "text")))
           (expect (= #{"text"} (set (keys hit))))

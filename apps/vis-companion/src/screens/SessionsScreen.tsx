@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Banner, Button, DialogFrame, Input } from '../components/ui';
+import { Banner, Button } from '../components/ui';
 import { GatewayClient } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session } from '../lib/types';
@@ -27,8 +27,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [showEmpty, setShowEmpty] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createTitle, setCreateTitle] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const pollInFlight = useRef(false);
@@ -137,11 +135,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     setCreateBusy(true);
     setCreateError(null);
     try {
-      const session = await (client ?? new GatewayClient(active)).createSession({
-        title: createTitle.trim() || undefined,
-      });
-      setCreateTitle('');
-      setCreating(false);
+      const session = await (client ?? new GatewayClient(active)).createSession({});
       await load();
       if (session.id) await onOpen(active, session.id, true);
     } catch (cause) {
@@ -185,12 +179,26 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               >
                 Refresh
               </Button>
-              <Button className="px-2.5 py-1 font-mono text-[10px]" onClick={() => setCreating(true)}>
-                New
-                <span className="hidden min-[390px]:inline"> session</span>
+              <Button
+                className="px-2.5 py-1 font-mono text-[10px]"
+                disabled={createBusy || !active}
+                onClick={() => void createSession()}
+              >
+                {createBusy ? (
+                  'Creating...'
+                ) : (
+                  <>
+                    New<span className="hidden min-[390px]:inline"> session</span>
+                  </>
+                )}
               </Button>
             </div>
           </div>
+          {createError && (
+            <div className="mt-2">
+              <Banner kind="err">{createError}</Banner>
+            </div>
+          )}
         </div>
 
         <div className="flex min-h-12 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-11 sm:px-4">
@@ -263,52 +271,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
           <span>{sessions ? `${totals.shown} of ${totals.all} sessions` : 'Reading sessions...'}</span>
         </footer>
       </div>
-
-      {creating && (
-        <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:grid sm:place-items-center sm:p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setCreating(false);
-          }}
-        >
-          <DialogFrame
-            title="New session"
-            onClose={() => {
-              setCreating(false);
-              setCreateError(null);
-            }}
-            className="w-full max-w-2xl"
-          >
-            <form
-              className="space-y-4 p-4 sm:p-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void createSession();
-              }}
-            >
-              <label className="block space-y-1.5">
-                <span className="font-mono text-[11px] font-bold text-white/75">Title</span>
-                <Input
-                  autoFocus
-                  value={createTitle}
-                  onChange={(event) => setCreateTitle(event.target.value)}
-                  placeholder="Optional session title"
-                  aria-label="New session title"
-                />
-              </label>
-              {createError && <Banner kind="err">{createError}</Banner>}
-              <div className="flex justify-end gap-2 border-t border-dialog-edge pt-4">
-                <Button type="button" variant="ghost" onClick={() => setCreating(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createBusy || !active}>
-                  {createBusy ? 'Creating...' : 'Create session'}
-                </Button>
-              </div>
-            </form>
-          </DialogFrame>
-        </div>
-      )}
     </section>
   );
 }

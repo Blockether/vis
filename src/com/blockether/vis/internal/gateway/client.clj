@@ -898,16 +898,10 @@
      (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (let [status (get (send-json-with-entry! entry "GET" path) "status")]
-      (when (map? status)
-        ;; Canonical wire → engine keys: snake_case JSON strings become kebab
-        ;; keywords VERBATIM, so `is_authenticated` reads back as `:is-authenticated`
-        ;; (the ONE connection-verdict key the dot, status dialog, and routing all
-        ;; share). No bespoke restore, no `authenticated?` rename.
-        (into {}
-              (map (fn [[k v]]
-                     [(keyword (str/replace k "_" "-")) v]))
-              status)))))
+    ;; Canonical wire shape: the status map keeps its snake_case STRING keys
+    ;; (`is_authenticated`, `source`, …) exactly as it crossed the wire — NO
+    ;; keyword restoration. Consumers read `(get status "is_authenticated")`.
+    (get (send-json-with-entry! entry "GET" path) "status")))
 
 (defn- wire-enum [x] (if (string? x) (keyword x) x))
 
@@ -1007,6 +1001,23 @@
 
     (ensure-client! entry)
     (provider-limits<-wire (get (send-json-with-entry! entry "GET" path) "report"))))
+
+(defn router
+  "GET /v1/router — the unified router dialog payload assembled by the gateway:
+   `{\"providers\" [{\"id\" … \"label\" … \"base_url\" … \"models\" [...]
+   \"status\" {\"is_authenticated\" …} \"limits\" {…}} …]}`. Returned VERBATIM with
+   snake_case STRING keys — NO keyword restoration. Consumers read the string
+   keys directly (`(get status \"is_authenticated\")`)."
+  []
+  (let
+    [path
+     "/v1/router"
+
+     entry
+     (ensure-gateway-serving! path)]
+
+    (ensure-client! entry)
+    (get (send-json-with-entry! entry "GET" path) "providers")))
 
 (defn current-seq [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq")) "seq"))
 

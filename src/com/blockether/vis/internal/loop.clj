@@ -2775,32 +2775,6 @@
                (string? v) (parse-long (str/trim v))
                :else nil)))
 
-     scope-turn
-     (fn [scope]
-       (or (some-> (ctx-engine/scope-key scope)
-                   first)
-           (ctx-engine/turn-key scope)))
-
-     selected-turns
-     (fn [intent]
-       (let
-         [ctx
-          (some-> ctx-atom
-                  deref)
-
-          universe
-          (get ctx "engine_iter_universe")
-
-          resolved
-          (first (ctx-engine/expand-through [intent] (or universe [])))
-
-          refs
-          (concat (get resolved "scopes")
-                  (get intent "scopes")
-                  (keep #(get intent %) ["through" "since" "from" "to"]))]
-
-         (into #{} (keep scope-turn) refs)))
-
      record!
      (fn [intent]
        (when ctx-atom
@@ -2845,7 +2819,10 @@
 
      fmt-tok
      (fn [t]
-       (if (>= (long t) 1000) (str (long (Math/round (/ (double t) 1000.0))) "k") (str (long t))))
+       (let [t (long t)]
+         (cond (>= t 1000000) (str (/ (Math/round (/ (double t) 100000.0)) 10.0) "M")
+               (>= t 1000) (str (long (Math/round (/ (double t) 1000.0))) "k")
+               :else (str t))))
 
      ;; Human-facing enrichment for the fold card: how much wire THIS fold
      ;; reclaims — in ~tokens (summed from `engine_iter_weights`) AND as a
@@ -2905,21 +2882,26 @@
               (long (Math/round (/ (* 100.0 (double toks)) (double lim)))))
 
             sat
-            (get util "saturation")]
+            (get util "saturation")
 
-           (let [saved (when (pos? (long toks))
-                         (str " · saved ~"
-                              (fmt-tok toks)
-                              " tokens"
-                              (when pct (str " · ~" pct "% of window"))))
-                 ;; Even a fold that reclaims no NEW wire (every covered scope
-                 ;; already collapsed on a prior turn — a whole-session
-                 ;; `{"through" "tN"}` re-fold) should still tell the human where
-                 ;; the window stands, so the card is never a bare `folded …`.
-                 ;; `context <U>%` is the provider's absolute saturation, not the
-                 ;; fold's own reduction, so it's honest even when `saved` is nil.
-                 ctx-pct (when (and sat (pos? (long sat))) (str " · context " sat "%"))]
-             (str saved ctx-pct)))
+            saved
+            (when (pos? (long toks))
+              (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of window"))))
+
+            ;; Even a fold that reclaims no NEW wire (every covered scope
+            ;; already collapsed on a prior turn — a whole-session
+            ;; `{"through" "tN"}` re-fold) should still tell the human where
+            ;; the window stands, so the card is never a bare `folded …`.
+            ;; `context <U>%` is the provider's absolute saturation, not the
+            ;; fold's own reduction, so it's honest even when `saved` is nil.
+            ctx-pct
+            (when (and sat (pos? (long sat)))
+              (let [lrt (get util "last_request_tokens")]
+                (str " · context " sat
+                     "%" (when (and lrt lim (pos? (long lrt)) (pos? (long lim)))
+                           (str " (" (fmt-tok lrt) "/" (fmt-tok lim) " tokens)")))))]
+
+           (str saved ctx-pct))
          (catch Throwable _ "")))
 
      recover-hint
@@ -2948,22 +2930,45 @@
        (if-let [[base label] (target scopes)]
          (let
            [turn (current-turn)
-            blocked-turns
-            (when turn
-              (into (sorted-set) (filter #(>= (long %) (long turn))) (selected-turns base)))]
+            uni (some-> ctx-atom
+                        deref
+                        (get "engine_iter_universe"))
+            universe (set uni)
+            ;; Resolve the selector against the SETTLED wire. `universe` is every
+            ;; iteration already on THIS request's trailer: all prior turns PLUS
+            ;; the current turn's COMPLETED iterations. Bare-turn / range / cursor
+            ;; selectors are universe-bounded, so they can only ever name settled
+            ;; steps; an EXPLICIT `tN/iN` literal is the one shape that survives
+            ;; resolution verbatim, so it is the only way to point at the live
+            ;; iteration still being emitted (present on no trailer, absent here).
+            resolved (first (ctx-engine/expand-through [base] (or uni [])))
+            ;; The live iteration is any CURRENT-turn (or future) scope not yet
+            ;; settled. Prior turns are always foldable, AND so is every finished
+            ;; iteration of the current turn — only the in-flight iteration is
+            ;; off-limits, because folding it would collapse steps this very turn
+            ;; is still producing.
+            live-scopes (when turn
+                          (into (sorted-set)
+                                (filter (fn [sc]
+                                          (when-let [k (ctx-engine/scope-key sc)]
+                                            (and (>= (long (first k)) (long turn))
+                                                 (not (contains? universe sc))))))
+                                (get resolved "scopes")))]
 
            (when-not turn
              (throw (ex-info "session_fold cannot prove the current turn; folding is blocked."
                              {:type :vis/session-fold-turn-unknown})))
-           (when (seq blocked-turns)
+           (when (seq live-scopes)
              (throw (ex-info
-                      (str "session_fold blocked: every target tN must satisfy "
-                           "N < session[\"turn\"]. Do not retry during this turn, even after "
-                           "verification. Retry only at the next turn's start, after understanding "
-                           "its intent and before new work.")
+                      (str
+                        "session_fold blocked: " (str/join ", " live-scopes)
+                        " name the live iteration you are emitting right now — not yet a "
+                        "settled wire step. Fold only COMPLETED steps: every prior turn AND "
+                        "the current turn's finished iterations (e.g. {\"through\": \"tN/iK\"} "
+                        "up to the last settled iteration). Do not retry THESE scopes this turn.")
                       {:type :vis/session-fold-active-turn
                        :current-turn turn
-                       :blocked-turns blocked-turns})))
+                       :blocked-scopes live-scopes})))
            (let
              [[base omitted] (exclude-protected base)
               kept-note (when (seq omitted)
@@ -3962,10 +3967,12 @@
   {:name "session_fold"
    :description
    (str
-     "HARD PRECONDITION: read `session[\"turn\"]`; every target `tN` must satisfy "
-     "`N < session[\"turn\"]`. Never call for current/future turns, even after "
-     "verification. At the next turn's start, understand its intent, then retry "
-     "before new work. Fold only completed prior-turn wire steps, preserving a "
+     "Read `session[\"turn\"]`, then fold any SETTLED wire step: every PRIOR turn, "
+     "AND the CURRENT turn's already-completed iterations. The one thing off-limits "
+     "is the live iteration you are emitting right now (and any future step) — it "
+     "isn't settled, so a fold naming it is blocked. To trim the current turn, fold "
+     "up to the last finished iteration (e.g. {\"through\": \"tN/iK\"}); a blocked "
+     "attempt names only the live scope, so drop it and keep the settled ones. " "Preserve a "
      "durable takeaway when useful. Folding changes rendering, not storage: the cheap "
      "recovery is `ntr[tool_id]` (one native result, no re-run, survives a restart) — the "
      "fold breadcrumb lists its accessors; only if that id isn't in "

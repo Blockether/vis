@@ -6,6 +6,7 @@
    Session data is persisted in `~/.vis/vis.mdb` so you can come back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.internal.iteration :as iteration]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
@@ -386,6 +387,63 @@
    (let [blocks (vec (or blocks []))]
      {:role :assistant :content blocks :text (content->markdown blocks) :timestamp timestamp})))
 
+(def ^:private vis-image-fence-re
+  ;; A whole `vis-image` fenced block (the shape input/collapse-paste-placeholders
+  ;; emits). Matched so a resume can drop STALE fences whose source path is gone
+  ;; before re-emitting durable, DB-backed ones.
+  #"(?s)\n?````vis-image\n.*?\n````\n?")
+
+(defn- strip-image-fences
+  "Remove every `vis-image` fenced block from `md` - a stale one points at a
+   source path that may have vanished; the durable DB-backed fences replace it."
+  [md]
+  (str/replace (str md) vis-image-fence-re "\n"))
+
+(defn- attachment-image-fence
+  "One `vis-image` fenced block pointing at a DURABLE cache file materialized from
+   a persisted attachment, so a resumed session re-renders the picture from
+   DB-owned bytes even after the original (OS-temp) source path is gone. `n` is
+   the 1-based caption index; `desc` a `terminal-image/materialize-attachment`
+   descriptor. Body lines mirror `input/collapse-paste-placeholders`: summary,
+   path, mime, `WxH`, size-label."
+  [n {:keys [path mime filename width height size-label]}]
+  (str "\n````vis-image\n"
+       "[Image #"
+       n
+       ": "
+       filename
+       "]"
+       "\n"
+       path
+       "\n"
+       (or mime "")
+       "\n"
+       (if (and width height) (str width "x" height) "")
+       "\n"
+       (or size-label "")
+       "\n````\n"))
+
+(defn- user-request-with-images
+  "Re-render a persisted turn's user images from DB-owned bytes: strip any stale
+   `vis-image` fences from `user-request` and append one durable fence per
+   persisted USER image attachment (`attachments` are canonical wire maps). The
+   bytes live in the DB, so the picture survives a TUI restart even after the
+   original clipboard/temp file is purged. Returns `user-request` unchanged when
+   the turn carried no usable user image."
+  [user-request attachments]
+  (let
+    [descs (->> attachments
+                (filter #(= "user" (str (get % "source"))))
+                (keep timg/materialize-attachment)
+                vec)]
+    (if (empty? descs)
+      (str user-request)
+      (str (str/trimr (strip-image-fences user-request))
+           (str/join ""
+                     (map-indexed (fn [i d]
+                                    (attachment-image-fence (inc (long i)) d))
+                                  descs))))))
+
 (defn- rebuild-history
   "Reconstruct message history from DB for a session.
    Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}.
@@ -404,7 +462,9 @@
         (mapcat
           (fn [q]
             (let
-              [user-message (assoc (user-message (or (get q "user_request") "")
+              [user-message (assoc (user-message (user-request-with-images
+                                                   (or (get q "user_request") "")
+                                                   (get q "attachments"))
                                                  (or (some-> (get q "created_at")
                                                              long
                                                              ((fn [^long ms]
@@ -966,12 +1026,12 @@
          running-request (or (get soul "running_request") (get running-turn "request"))
          running-started-at (or (get soul "running_started_at") (get running-turn "started_at"))
          server-time-ms (get soul "server_time_ms")
-         local-running-started-at
-         (when (nat-int? running-started-at)
-           (if (nat-int? server-time-ms)
-             (- (System/currentTimeMillis)
-                (max 0 (- (long server-time-ms) (long running-started-at))))
-             running-started-at))
+         local-running-started-at (when (nat-int? running-started-at)
+                                    (if (nat-int? server-time-ms)
+                                      (- (System/currentTimeMillis)
+                                         (max 0
+                                              (- (long server-time-ms) (long running-started-at))))
+                                      running-started-at))
          queued-turns (->> turns
                            (filter (fn [t]
                                      (= "queued" (str (get t "status")))))

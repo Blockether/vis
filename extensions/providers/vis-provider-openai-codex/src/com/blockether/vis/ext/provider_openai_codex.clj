@@ -290,6 +290,7 @@
    HTTP 400. Returns the provider-token map."
   (oauth/make-file-refresher
     {:load load-auth-file
+     :lock-path (str AUTH_FILE ".lock")
      :saved-at :saved-at
      :refresh-token :refresh-token
      :exchange! refresh-access-token!

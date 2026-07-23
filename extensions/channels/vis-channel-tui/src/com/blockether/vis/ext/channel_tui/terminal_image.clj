@@ -14,7 +14,8 @@
    refresh (the screen loop owns that), placed over rows the renderer
    reserved as blanks. Lanterna never sees the graphics bytes, so its cell
    diff stays intact and the image survives subsequent delta frames."
-  (:require [com.blockether.vis.internal.attachments :as attach])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.attachments :as attach])
   (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]))
 
 ;; =============================================================================
@@ -330,3 +331,77 @@
             :width w
             :height h}))
        (catch Throwable _ nil)))
+
+;; =============================================================================
+;; Persisted-attachment materialization (durable history re-render)
+;; =============================================================================
+
+(defn attachment-cache-dir
+  "Durable cache dir (`~/.vis/cache/tui-attachments`) for persisted image
+   attachments, so a re-rendered history image survives its original (often
+   OS-temp) source path vanishing. Created on demand."
+  ^java.io.File []
+  (let
+    [dir (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
+                                       "cache")
+                        "tui-attachments")]
+    (.mkdirs dir)
+    dir))
+
+(def ^:private media-type->ext
+  {"image/png" ".png"
+   "image/jpeg" ".jpg"
+   "image/gif" ".gif"
+   "image/webp" ".webp"
+   "image/bmp" ".bmp"})
+
+(defn materialize-attachment
+  "Decode ONE persisted user image attachment (canonical wire map, STRING keys
+   `id`/`base64`/`media_type`/`filename`) into a STABLE cache file keyed by its
+   row id and return the descriptor a `vis-image` fence needs -
+   `{:path :mime :filename :size :size-label :width :height}` - or nil when it is
+   not a usable still image. Idempotent: an already-written cache file is reused,
+   never rewritten, so a resumed session re-renders the picture from DB-owned
+   bytes even after the original source path is gone. Never throws."
+  [att]
+  (try
+    (let
+      [media
+       (str (get att "media_type"))
+
+       b64
+       (str (get att "base64"))]
+
+      (when (and (str/starts-with? media "image/") (not (str/blank? b64)))
+        (let
+          [ext
+           (get media-type->ext media ".png")
+
+           id
+           (or (not-empty (str (get att "id"))) (str (java.util.UUID/randomUUID)))
+
+           f
+           (java.io.File. (attachment-cache-dir) (str id ext))]
+
+          (when-not (.isFile f)
+            (java.nio.file.Files/write (.toPath f)
+                                       ^bytes (.decode (java.util.Base64/getDecoder) b64)
+                                       ^"[Ljava.nio.file.OpenOption;" (make-array java.nio.file.OpenOption 0)))
+          (let
+            [path
+             (.getAbsolutePath f)
+
+             size
+             (.length f)
+
+             {:keys [w h]}
+             (or (probe-dimensions path media) {})]
+
+            {:path path
+             :mime media
+             :filename (or (not-empty (str (get att "filename"))) "image")
+             :size size
+             :size-label (attach/size-label size)
+             :width w
+             :height h}))))
+    (catch Throwable _ nil)))

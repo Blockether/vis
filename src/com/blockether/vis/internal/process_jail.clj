@@ -166,7 +166,9 @@
    order: allow reads (system + rw + ro), allow writes (rw), then the deny carve-
    outs so `:deny-write`/`:deny-read` win over the allows. One-line string for
    `sandbox-exec -p`."
-  ^String [{:keys [rw ro deny-write deny-read net-enabled? proxy-port loopback-port inbound-ports]}]
+  ^String
+  [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port
+           inbound-ports]}]
   (let
     [rw
      (->> rw
@@ -188,6 +190,12 @@
 
      dr
      (->> deny-read
+          (keep deny-path)
+          distinct
+          vec)
+
+     dex
+     (->> deny-exec
           (keep deny-path)
           distinct
           vec)]
@@ -218,6 +226,11 @@
       ")"
       (when (seq dw) (str "(deny file-write*" (subpaths dw) ")"))
       (when (seq dr) (str "(deny file-read*" (subpaths dr) ")"))
+      ;; Block EXECUTION of specific binaries (`jail.deny-exec`). Overrides the
+      ;; blanket `(allow process-fork process-exec)` above; a plain file-read deny
+      ;; does NOT stop exec on macOS (the kernel maps a signed/allowed binary
+      ;; without a file-read* check), so this is the real command block.
+      (when (seq dex) (str "(deny process-exec*" (subpaths dex) ")"))
       ;; Network: a proxy endpoint is the sole outbound destination. A managed
       ;; nREPL — and any explicitly allowlisted dev/server port — additionally
       ;; needs to bind a server socket. Seatbelt's `network-bind` accepts the
@@ -256,7 +269,7 @@
    model-writable project config. `:allow-read-write` is the concise equivalent of
    granting the same path through both legacy allow lists."
   [{:keys [roots-fn net-enabled? allow-read-write allow-write allow-read deny-write deny-read
-           proxy-port loopback-port inbound-ports]}]
+           deny-exec proxy-port loopback-port inbound-ports]}]
   (let
     [session-roots
      (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
@@ -293,6 +306,7 @@
      :ro ro
      :deny-write (vec deny-write)
      :deny-read (vec deny-read)
+     :deny-exec (vec deny-exec)
      :net-enabled? (boolean net-enabled?)
      :proxy-port proxy-port
      :loopback-port loopback-port
@@ -349,6 +363,11 @@
         (let
           [token (:proxy-token policy)
            url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
+           ;; SOCKS5 shares the SAME loopback port (multiplexed by first byte).
+           ;; `ALL_PROXY` is the fallback for non-HTTP schemes (ssh/git+ssh/db/raw
+           ;; TCP) — it points at the SOCKS lane, while `http(s)_proxy` keep the
+           ;; HTTP proxy so HTTPS verb/path MITM is preserved for web traffic.
+           socks-url (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port)
            ca (:ca-file policy)
            java-opts (java-proxy-options policy)]
 
@@ -356,10 +375,10 @@
             (merge jail-env
                    {"http_proxy" url
                     "https_proxy" url
-                    "all_proxy" url
+                    "all_proxy" socks-url
                     "HTTP_PROXY" url
                     "HTTPS_PROXY" url
-                    "ALL_PROXY" url
+                    "ALL_PROXY" socks-url
                     "no_proxy" ""
                     "NO_PROXY" ""})
             ca

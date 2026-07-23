@@ -18,6 +18,7 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.format :as format]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry])
@@ -317,9 +318,9 @@
 (defn initial-provider-status
   "Placeholder status while a real probe runs in the background."
   [provider]
-  (if (some? (:api-key provider))
-    {:is-authenticated true :source :config :config-path config/state-path}
-    {:is-authenticated nil :loading? true}))
+  (wire/canonical (if (some? (:api-key provider))
+                    {:is-authenticated true :source :config :config-path config/state-path}
+                    {:is-authenticated nil :loading? true})))
 
 (defn initial-provider-limits
   "Placeholder limits report while the real fetch runs."
@@ -331,7 +332,7 @@
 (defn- status-entry-label
   [k]
   (-> (name k)
-      (str/replace #"-" " ")
+      (str/replace #"[-_]" " ")
       (str/capitalize)))
 
 (defn- format-status-value
@@ -377,7 +378,7 @@
   ([provider status limits]
    (let
      [status
-      (or status (initial-provider-status provider))
+      (wire/canonical (or status (initial-provider-status provider)))
 
       limits
       (or limits (initial-provider-limits provider))
@@ -388,7 +389,7 @@
       rows
       (->> status
            (remove (fn [[k _]]
-                     (= k :is-authenticated)))
+                     (= k "is_authenticated")))
            (sort-by (comp str key))
            (map (fn [[k v]]
                   (str (status-entry-label k) ": " (format-status-value v)))))
@@ -400,8 +401,8 @@
        "\n"
        (concat
          [title "" (str "Base URL: " (or (config/provider-base-url provider) "-"))
-          (str "Authenticated: " (if (:is-authenticated status) "yes" "no"))]
-         (when-let [e (:error status)]
+          (str "Authenticated: " (if (get status "is_authenticated") "yes" "no"))]
+         (when-let [e (get status "error")]
            ["" (str "Error: " e)])
          (when (seq rows) (concat [""] rows))
          ["" "Limits" (str "Status: " (name (:status limits)))]
@@ -433,7 +434,7 @@
   [status]
   (->> status
        (remove (fn [[k _]]
-                 (contains? #{:is-authenticated :error :loading?} k)))
+                 (contains? #{"is_authenticated" "error" "is_loading"} k)))
        (sort-by (comp str key))
        (map (fn [[k v]]
               (str "- **" (status-entry-label k) ":** " (format-status-value v))))))
@@ -447,7 +448,7 @@
   ([provider status limits]
    (let
      [status
-      (or status (initial-provider-status provider))
+      (wire/canonical (or status (initial-provider-status provider)))
 
       limits
       (or limits (initial-provider-limits provider))
@@ -456,7 +457,7 @@
       (config/display-label (:id provider))
 
       ok?
-      (boolean (:is-authenticated status))
+      (boolean (get status "is_authenticated"))
 
       dynamic
       (get-in limits [:dynamic :limits])
@@ -476,7 +477,7 @@
                "  ·  **Base URL:** `"
                (or (config/provider-base-url provider) "-")
                "`")]
-         (when-let [e (:error status)]
+         (when-let [e (get status "error")]
            ["" (str "> ⚠ " e)])
          (let [rows (status-detail-rows status)]
            (when (seq rows) (concat [""] rows)))

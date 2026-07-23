@@ -681,10 +681,15 @@
       (long box-h)
 
       box-left
-      (quot (- cols box-w) 2)
+      ;; Nudge the whole box LEFT of dead-centre so the drop shadow (+2 cols
+      ;; right) no longer butts against the window edge — this buys a clear
+      ;; RIGHT margin. Clamped so full-bleed dialogs keep a sane left inset.
+      (max 3 (- (quot (- cols box-w) 2) 3))
 
       box-top
-      (quot (- rows box-h) 2)
+      ;; Same idea vertically: lift the box so the shadow (+1 row down) leaves
+      ;; a clear BOTTOM margin instead of hugging the footer.
+      (max 2 (- (quot (- rows box-h) 2) 2))
 
       box-right
       (+ box-left box-w -1)
@@ -5391,7 +5396,12 @@
          ;; just the footer. golden-dialog-size already insets 3 rows top/bottom
          ;; inside that window, so the top margin matches the 3-row header band
          ;; and a clean gap sits above the composer.
-         (draw-dialog-chrome! g cols (- (long rows-n) 6) "Sessions" (- cols 4) (+ (long (count rows)) 6))
+         (draw-dialog-chrome! g
+                              cols
+                              (- (long rows-n) 6)
+                              "Sessions"
+                              (- cols 4)
+                              (+ (long (count rows)) 6))
 
          {:keys [left right inner-w]}
          bounds
@@ -6033,8 +6043,7 @@
    {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
    {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
    {:id :fork-at-turn :label "Fork Session at Turn…"} {:id :close-tab :label "Close Tab"}
-   {:id :providers :label "Configure Providers"} {:id :settings :label "Settings"}
-   {:id :toggle-all-details :label "Fold / Unfold All"}
+   {:id :providers :label "Router"} {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
 

@@ -1205,6 +1205,26 @@
                          "; nest them as [start, end] pairs, e.g. " suggestion)
                     {:type :ext.foundation.editing/invalid-cat-args :ranges ranges}))))
 
+(defn- cat-ranges-from-string
+  "Lenient parse of a whole `ranges` STRING a model stringified instead of
+   passing a nested list — e.g. \"[[985, 1030]], [[236, 322]]\" or \"[10, 40]\".
+   Pulls every run of digits in order; when there is an even count (>= 2)
+   returns them partitioned into `[start end]` long pairs, else nil."
+  [s]
+  (let [nums (mapv parse-long (re-seq #"\d+" s))]
+    (when (and (seq nums) (even? (count nums))) (mapv vec (partition 2 nums)))))
+
+(defn- cat-entry->pair
+  "Coerce ONE `ranges` entry to a `[start end]` long pair, or nil. Extends
+   `normalize-cat-pair` with a lenient parse of a single stringified/bracketed
+   pair like \"[985, 1030]\" or \"985,1030\", so a VECTOR whose elements are each
+   a stringified pair (`[\"[985, 1030]\" \"[236, 322]\"]`) still normalizes."
+  [entry]
+  (or (normalize-cat-pair entry)
+      (when (string? entry)
+        (let [pairs (cat-ranges-from-string entry)]
+          (when (= 1 (count pairs)) (first pairs))))))
+
 (defn- normalize-cat-ranges
   [ranges]
   (let
@@ -1225,8 +1245,23 @@
      flat-list?
      (and (sequential? ranges) (> (count items) 2) (not-any? sequential? items))
 
+     ;; a whole `ranges` passed as a STRING (`"[[985, 1030]], [[236, 322]]"`) —
+     ;; parse the digit runs into pairs so a stringified nested list still works.
+     str-pairs
+     (when (string? ranges) (cat-ranges-from-string ranges))
+
+     ;; a sequential `ranges` whose entries each coerce to a pair — including a
+     ;; VECTOR of stringified pairs (`["[985, 1030]" "[236, 322]"]` or
+     ;; `["985,1030" "236,322"]`) that `flat` cannot read as one pair.
+     entry-pairs
+     (when (sequential? ranges)
+       (let [ps (mapv cat-entry->pair items)]
+         (when (and (seq ps) (every? some? ps)) ps)))
+
      pairs
      (cond flat [flat]
+           str-pairs str-pairs
+           entry-pairs entry-pairs
            flat-attempt? (cat-pair-error! ranges)
            flat-list? (cat-flat-ranges-error! ranges items)
            (sequential? ranges) (vec ranges)
@@ -4383,113 +4418,17 @@
   [k]
   (str k))
 
-(defn- md-inline-code
-  "CommonMark-safe inline code span for `s`. A naive `` `s` `` breaks when `s`
-   itself contains backticks (e.g. a regex rg needle like `` \\`` ``): the inner
-   backtick closes the span early, corrupting every following span on the line
-   (the `parse-inlineORinline` chip-glue bug). Pick a fence one longer than the
-   longest backtick run in `s`, and pad with a space when `s` starts/ends with a
-   backtick (CommonMark strips a single symmetric leading+trailing space), so the
-   term renders as ONE clean chip."
-  [s]
-  (let
-    [s
-     (str s)
-
-     longest
-     (transduce (map count) max 0 (re-seq #"`+" s))
-
-     fence
-     (apply str (repeat (inc (long longest)) \`))
-
-     pad
-     (if (or (str/starts-with? s "`") (str/ends-with? s "`")) " " "")]
-
-    (str fence pad s pad fence)))
 
 (defn- rg-anchor-lineno
   "The leading line number from an `<lineno>:<hash>` anchor key (string form)."
   [k]
   (first (str/split (kw->str k) #":")))
 
-(defn- rg-anchor-lineno-long
-  "Numeric line number from an anchor key — for ORDERING. The result round-trips
-   through GraalPy (`LinkedHashMap` → plain Clojure map), which drops insertion
-   order, so the renderer must re-sort by line number itself."
-  ^long [k]
-  (try (Long/parseLong (rg-anchor-lineno k)) (catch Exception _ 0)))
 
-(defn- rg-needle-re
-  "Literal regex fragment for ONE OR `needle`, honoring rg smart-case: an
-   all-lowercase needle matches any case (scoped inside `(?i:…)`) so its
-   case-insensitivity can't leak into a sibling alternative; one carrying an
-   uppercase letter stays exact. `Pattern/quote` makes metacharacters literal."
-  [needle]
-  (let [quoted (java.util.regex.Pattern/quote needle)]
-    (if (re-find #"[A-Z]" needle) quoted (str "(?i:" quoted ")"))))
 
-(defn- highlight-needles
-  "Wrap every occurrence of any OR `needle` in `text` with reverse-video SGR
-   (\u001B[7m … \u001B[0m) so BOTH channels paint the matched search term: the
-   TUI's `paint-ansi-line!` maps the code to a fg, the web's `ansi->hiccup`
-   turns it into a `.rg-hit` span (client `colorizeAnsi` re-applies it after the
-   `marked` re-render). One non-overlapping pass, longest needle first, so a
-   short needle can't re-wrap a longer one's match."
-  [needles ^String text]
-  (if (or (not (seq needles)) (str/blank? text))
-    text
-    (let
-      [frags (into []
-                   (keep (fn [n]
-                           (when (seq n) (try (rg-needle-re n) (catch Exception _ nil)))))
-                   (sort-by #(- (count %)) needles))]
-      (if (seq frags)
-        (str/replace text
-                     (re-pattern (str/join "|" frags))
-                     (fn [m]
-                       (str "\u001B[7m" m "\u001B[0m")))
-        text))))
 
-(defn- rg-gutter-width
-  "Widest line-number column across a file's hits AND their context lines, so
-   every gutter row in the block right-aligns. Mixed 1- and 4-digit line
-   numbers otherwise stagger the text column (the same cat-card margin bug)."
-  [hits]
-  (reduce (fn [^long w [k v]]
-            (let [ctx (when (map? v) (concat (keys (get v "before")) (keys (get v "after"))))]
-              (reduce (fn [^long w2 a]
-                        (max w2 (count (rg-anchor-lineno a))))
-                      (max w (count (rg-anchor-lineno k)))
-                      ctx)))
-          1
-          hits))
 
-(defn- rg-row
-  "One `  <lineno>  <text>` gutter row for a match or a context line, the line
-   number right-aligned to `width` (the file's widest). Any OR `needle`
-   occurrence in the text is wrapped for highlight (see `highlight-needles`)."
-  [needles width k txt]
-  (str "  " (format (str "%" width "s") (rg-anchor-lineno k))
-       "  " (str/trimr (highlight-needles needles (str txt)))))
 
-(defn- rg-hit-rows
-  "Rows for ONE match anchor `k` → value `v`. `v` is a `{:text <match> :before
-   {anchor→{\"text\"}} :after {anchor→{\"text\"}}}` map (before/after only with a context
-   window) — render the before-context, then the matched line, then the
-   after-context, each as a line-numbered gutter row (sorted by line number),
-   the gutter right-aligned to `width`. A bare string `v` is tolerated and
-   rendered as the lone matched line."
-  [needles width k v]
-  (if (map? v)
-    (let
-      [ctx-rows (fn [m]
-                  (map (fn [[ck cv]]
-                         (rg-row needles width ck (patch/anchor-value-text cv)))
-                       (sort-by (comp rg-anchor-lineno-long key) m)))]
-      (concat (ctx-rows (get v "before"))
-              [(rg-row needles width k (get v "text"))]
-              (ctx-rows (get v "after"))))
-    [(rg-row needles width k v)]))
 
 
 (defn- render-patch-result
@@ -4632,7 +4571,22 @@
      (get r "line_count")
 
      n
-     (count defs)]
+     (count defs)
+
+     ;; When the caller narrowed with `range`/`ranges`, surface the window(s) in
+     ;; the headline so the card shows the index was SCOPED, not whole-file.
+     win
+     (let
+       [rng
+        (get r "range")
+
+        rngs
+        (get r "ranges")]
+
+       (cond (and (sequential? rng) (= 2 (count rng))) (str " · lines " (first rng)
+                                                            "–" (second rng))
+             (seq rngs) (str " · " (count rngs) " window" (when (not= 1 (count rngs)) "s"))
+             :else nil))]
 
     (if (seq defs)
       {:summary (str (or loc "struct_index")
@@ -4641,7 +4595,8 @@
                      " def"
                      (when (not= 1 n) "s")
                      (when lang (str " · " lang))
-                     (when lc (str " · " lc " line" (when (not= 1 (long lc)) "s"))))
+                     (when lc (str " · " lc " line" (when (not= 1 (long lc)) "s")))
+                     win)
        :body (let
                [header
                 ["| Def | Arity | Kind | Anchor | Doc |" "|-----|-------|------|--------|-----|"]
@@ -4680,8 +4635,8 @@
         [sk (some-> (get r "skeleton")
                     kw->str
                     not-empty)]
-        {:summary (or loc "struct_index") :body (str "\n```\n" sk "\n```")}
-        {:summary (str (or loc "struct_index") " · no structural index")}))))
+        {:summary (str (or loc "struct_index") win) :body (str "\n```\n" sk "\n```")}
+        {:summary (str (or loc "struct_index") " · no structural index" win)}))))
 
 (defn- render-occurrences-result
   "struct_occurrences → `{:summary :body}`: a `N · K defs in M files of `name` · <scope>`

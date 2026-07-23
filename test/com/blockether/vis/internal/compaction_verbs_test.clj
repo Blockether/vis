@@ -232,7 +232,7 @@
 
         (expect (nil? (get @ca "session_summaries")))
         (expect (re-find #"nothing to fold" out))))
-  (it "rejects current and future turns before recording any fold"
+  (it "blocks only the LIVE (unsettled) iteration of the current turn and any future turn"
       (let
         [ca
          (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t2/i1"]})
@@ -240,13 +240,32 @@
          sf
          (get (compaction-verbs ca) 'session-fold)]
 
-        (doseq [target [["t2/i1"] ["t2"] {"through" "t2/i1"} ["t3/i1"]]]
+        ;; `t2/i2` is the iteration being emitted right now (absent from the
+        ;; settled universe); `t3/i1` is a future step. Both are off-limits.
+        (doseq [[target blocked] [[["t2/i2"] #{"t2/i2"}] [["t3/i1"] #{"t3/i1"}]]]
           (let [ex (try (sf target "unsafe") nil (catch clojure.lang.ExceptionInfo e e))]
             (expect (= :vis/session-fold-active-turn (:type (ex-data ex))))
             (expect (= 2 (:current-turn (ex-data ex))))
-            (expect (str/includes? (ex-message ex) "N < session[\"turn\"]"))
-            (expect (str/includes? (ex-message ex) "Do not retry during this turn"))))
+            (expect (= blocked (:blocked-scopes (ex-data ex))))
+            (expect (str/includes? (ex-message ex) "live iteration"))
+            (expect (str/includes? (ex-message ex) "COMPLETED steps"))))
         (expect (nil? (get @ca "session_summaries")))))
+  (it "allows folding a SETTLED iteration of the current turn (finer-grained than the whole turn)"
+      (let
+        [ca
+         (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t2/i1"]})
+
+         sf
+         (get (compaction-verbs ca) 'session-fold)]
+
+        ;; `t2/i1` is a completed iteration of the current turn — foldable, even
+        ;; while turn 2 is still being produced. A bare `t2` and a `through`
+        ;; cursor resolve against the universe, so they too fold only settled
+        ;; steps (never the live iteration).
+        (expect (re-find #"^folded t2/i1" (sf ["t2/i1"] "settled")))
+        (expect (re-find #"^folded t2\b" (sf ["t2"] "whole-so-far")))
+        (expect (re-find #"^folded through t2/i1" (sf {"through" "t2/i1"} "upto")))
+        (expect (seq (get @ca "session_summaries")))))
   (it "allows completed prior turns after the new turn has started"
       (let
         [ca
@@ -481,9 +500,9 @@
   (it "the native schema advertises session_fold with a target property"
       (let [t (session-fold-tool)]
         (expect (= "session_fold" (:name t)))
-        (expect (str/starts-with? (:description t) "HARD PRECONDITION"))
-        (expect (str/includes? (:description t) "N < session[\"turn\"]"))
-        (expect (str/includes? (:description t) "even after verification"))
+        (expect (str/starts-with? (:description t) "Read `session[\"turn\"]`"))
+        (expect (str/includes? (:description t) "the live iteration you are emitting right now"))
+        (expect (str/includes? (:description t) "already-completed iterations"))
         (expect (str/includes? (:description t) "Folding changes rendering, not storage"))
         (expect (str/includes? (:description t) "`await session_state()`"))
         (expect (str/includes? (:description t) "`transcript/turns/iterations/blocks`"))
@@ -746,81 +765,94 @@
   ;; Alongside it the card ALSO surfaces the live window fullness as `context <U>%`,
   ;; taken straight from the provider's authoritative `saturation` — a separate,
   ;; absolute reading, omitted when no `saturation` is stamped.
-  (it "an explicit scope card prices its ~tokens + the reduction as % of window"
-      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% → big cat dump"
-                   (sf ["t1/i1"] "big cat dump")))))
-  (it "a `through` selector sums the weight of EVERY scope it resolves"
-      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
-        (expect (=
-                  "folded through t1/i2 · saved ~15k tokens · ~16% of window · context 44% → traced"
-                  (sf {"through" "t1/i2"} "traced")))))
+  (it
+    "an explicit scope card prices its ~tokens + the reduction as % of window"
+    (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+      (expect
+        (=
+          "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens) → big cat dump"
+          (sf ["t1/i1"] "big cat dump")))))
+  (it
+    "a `through` selector sums the weight of EVERY scope it resolves"
+    (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+      ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
+      (expect
+        (=
+          "folded through t1/i2 · saved ~15k tokens · ~16% of window · context 44% (42k/96k tokens) → traced"
+          (sf {"through" "t1/i2"} "traced")))))
   (it "a gist-less fold still shows the tokens + reduction suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44%"
-                   (sf ["t1/i1"])))))
-  (it "a scope with NO stamped weight reclaims nothing, so the card drops the saved figure but still surfaces the live window fullness"
-      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        ;; t2/i9 is not in the weights map (created this iteration, unsent) — a fold
-        ;; that frees no wire honestly shows no phantom SAVINGS, but the absolute
-        ;; `context <U>%` (provider saturation) still tells the human where the
-        ;; window stands, so a whole-session re-fold is never a bare `folded …`.
-        (expect (= "folded t2/i9 · context 44% → fresh" (sf ["t2/i9"] "fresh")))))
-  (it "a later, bigger request can't inflate the card — the reduction is the fold's own"
-      ;; The scary regression (fold → tool call → fold → % climbs): a projected
-      ;; level subtracts cumulative-saved from the GROWING `last_request_tokens`, so
-      ;; the second card would RISE. The per-fold reduction is immune — it prices
-      ;; only the scope THIS fold reclaims, never the live request size.
-      (let
-        [ca
-         (priced-ctx)
+        (expect (=
+                  "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens)"
+                  (sf ["t1/i1"])))))
+  (it
+    "a scope with NO stamped weight reclaims nothing, so the card drops the saved figure but still surfaces the live window fullness"
+    (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+      ;; t2/i9 is not in the weights map (created this iteration, unsent) — a fold
+      ;; that frees no wire honestly shows no phantom SAVINGS, but the absolute
+      ;; `context <U>%` (provider saturation) still tells the human where the
+      ;; window stands, so a whole-session re-fold is never a bare `folded …`.
+      (expect (= "folded t2/i9 · context 44% (42k/96k tokens) → fresh" (sf ["t2/i9"] "fresh")))))
+  (it
+    "a later, bigger request can't inflate the card — the reduction is the fold's own"
+    ;; The scary regression (fold → tool call → fold → % climbs): a projected
+    ;; level subtracts cumulative-saved from the GROWING `last_request_tokens`, so
+    ;; the second card would RISE. The per-fold reduction is immune — it prices
+    ;; only the scope THIS fold reclaims, never the live request size.
+    (let
+      [ca
+       (priced-ctx)
 
-         sf
-         (get (compaction-verbs ca) 'session-fold)
+       sf
+       (get (compaction-verbs ca) 'session-fold)
 
-         card1
-         (sf ["t1/i1"] "first")
+       card1
+       (sf ["t1/i1"] "first")
 
-         ;; one iteration passes: a big tool result lands, the request grows,
-         ;; and t1/i1 is now collapsed on the wire so its weight drops to 0.
-         _
-         (swap! ca assoc
-           "engine_iter_weights" {"t1/i1" 0 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
-           "engine_utilization" {"last_request_tokens" 90000 "model_input_limit" 96000})
+       ;; one iteration passes: a big tool result lands, the request grows,
+       ;; and t1/i1 is now collapsed on the wire so its weight drops to 0.
+       _
+       (swap! ca assoc
+         "engine_iter_weights" {"t1/i1" 0 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
+         "engine_utilization" {"last_request_tokens" 90000 "model_input_limit" 96000})
 
-         card2
-         (sf ["t1/i2"] "second")]
+       card2
+       (sf ["t1/i2"] "second")]
 
-        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% → first" card1))
-        ;; second fold reclaims only its own 3.4k regardless of the 90k request
-        (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of window → second" card2))))
-  (it "the note ALSO lands in the persistent breadcrumb, not just the tool card"
-      ;; regression: the saved-tokens + projected suffix must ride the durable
-      ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
-      ;; transient tool-return confirmation.
-      (let
-        [ctx
-         (priced-ctx)
+      (expect
+        (=
+          "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens) → first"
+          card1))
+      ;; second fold reclaims only its own 3.4k regardless of the 90k request
+      (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of window → second" card2))))
+  (it
+    "the note ALSO lands in the persistent breadcrumb, not just the tool card"
+    ;; regression: the saved-tokens + projected suffix must ride the durable
+    ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
+    ;; transient tool-return confirmation.
+    (let
+      [ctx
+       (priced-ctx)
 
-         sf
-         (get (compaction-verbs ctx) 'session-fold)
+       sf
+       (get (compaction-verbs ctx) 'session-fold)
 
-         _
-         (sf ["t1/i1"] "big cat dump")
+       _
+       (sf ["t1/i1"] "big cat dump")
 
-         trailer
-         [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
+       trailer
+       [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
 
-         out
-         (apply-summaries trailer (get @ctx "session_summaries"))
+       out
+       (apply-summaries trailer (get @ctx "session_summaries"))
 
-         line
-         (:content (irm (second (first out))))]
+       line
+       (:content (irm (second (first out))))]
 
-        (expect
-          (= "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% · big cat dump"
-             line))))
+      (expect
+        (=
+          "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens) · big cat dump"
+          line))))
   (it "a fold breadcrumb carries its folded steps' ntr[...] recovery accessors"
       ;; The scope→accessor index rides the DURABLE breadcrumb so a harness
       ;; restart (which drops the per-call `# saved: ntr[…]` lines) can't strip

@@ -216,6 +216,32 @@
                        "curl -sS --max-time 4 https://example.com -o /dev/null && echo GOTNET"]
                       policy))]
                (is (not (str/includes? (:out r) "GOTNET")))))
+           (testing "deny-exec blocks execution of a binary while a sibling still runs"
+             (let
+               [blocked
+                (io/file ws "blocked-bin")
+
+                allowed
+                (io/file ws "allowed-bin")]
+
+               (io/copy (io/file "/bin/date") blocked)
+               (io/copy (io/file "/bin/date") allowed)
+               (.setExecutable blocked true)
+               (.setExecutable allowed true)
+               (let
+                 [pol
+                  (assoc policy :deny-exec [(.getPath blocked)])
+
+                  rb
+                  (run-jailed (pj/wrap-argv [(.getCanonicalPath blocked) "+%Y"] pol))
+
+                  ra
+                  (run-jailed (pj/wrap-argv [(.getCanonicalPath allowed) "+%Y"] pol))]
+
+                 (is (not (zero? (:exit rb))) "deny-exec must block the named binary")
+                 (is (zero? (:exit ra)) "a sibling binary still executes"))
+               (io/delete-file blocked true)
+               (io/delete-file allowed true)))
            (finally (io/delete-file (io/file ws "inside.txt") true)
                     (io/delete-file (io/file ws "w.txt") true)
                     (io/delete-file secret true)
@@ -233,10 +259,17 @@
        (pj/proxy-env {:proxy-port 4321})
 
        url
-       "http://127.0.0.1:4321"]
+       "http://127.0.0.1:4321"
 
-      (doseq [k ["http_proxy" "https_proxy" "all_proxy" "HTTP_PROXY" "HTTPS_PROXY" "ALL_PROXY"]]
+       socks
+       "socks5h://127.0.0.1:4321"]
+
+      ;; http(s) keep the HTTP proxy (MITM verb/path); all_proxy = the SOCKS lane
+      ;; for non-HTTP schemes (ssh/git+ssh/db/raw TCP) on the same loopback port.
+      (doseq [k ["http_proxy" "https_proxy" "HTTP_PROXY" "HTTPS_PROXY"]]
         (is (= url (get e k)) k))
+      (doseq [k ["all_proxy" "ALL_PROXY"]]
+        (is (= socks (get e k)) k))
       (when (pj/supported?) (is (= "1" (get e "VIS_SEATBELT_ACTIVE"))))
       (is (not (contains? e "CURL_CA_BUNDLE")))
       (is (not (contains? e "SSL_CERT_FILE")))))
@@ -246,10 +279,15 @@
        (pj/proxy-env {:proxy-port 4321 :proxy-token "tok-123"})
 
        url
-       "http://tok-123@127.0.0.1:4321"]
+       "http://tok-123@127.0.0.1:4321"
 
-      (doseq [k ["http_proxy" "https_proxy" "all_proxy" "HTTP_PROXY" "HTTPS_PROXY" "ALL_PROXY"]]
-        (is (= url (get e k)) k))))
+       socks
+       "socks5h://tok-123@127.0.0.1:4321"]
+
+      (doseq [k ["http_proxy" "https_proxy" "HTTP_PROXY" "HTTPS_PROXY"]]
+        (is (= url (get e k)) k))
+      (doseq [k ["all_proxy" "ALL_PROXY"]]
+        (is (= socks (get e k)) k))))
   (testing "with a :ca-file EVERY common CA-trust var points at the ephemeral CA PEM"
     ;; The MITM tier mints per-host leaves off an ephemeral CA; each runtime reads a
     ;; different trust var, so the full set (sandbox-runtime's nine) must be covered

@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
@@ -740,3 +741,37 @@
     (is (= 404
            (:status ((rv 'set-setting-handler)
                       {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
+
+(deftest router-handler-assembles-string-keyed-fleet-with-status
+  (testing
+    "GET /v1/router returns the whole fleet in ONE payload; wire keys are snake_case STRINGS and the connection verdict rides as is_authenticated"
+    (with-redefs-fn
+      {#'providers/picker-fleet (constantly [{:id :anthropic-coding-plan
+                                              :base-url "https://api.anthropic.com/v1"
+                                              :models [{:name "claude-opus-4-8"}
+                                                       {:name "claude-sonnet-5"}]}])
+       #'providers/provider-status (constantly {:is-authenticated true :source :auth-file})
+       #'providers/provider-limits-safe
+       (constantly
+         {:provider-id :anthropic-coding-plan :status :ok :static {} :dynamic {:limits []}})}
+      (fn []
+        (let
+          [resp
+           ((rv 'router-handler) {})
+
+           provs
+           (get (wire/parse-json (:body resp)) "providers")
+
+           p0
+           (first provs)]
+
+          (is (= 200 (:status resp)))
+          (is (= "anthropic-coding-plan" (get p0 "id")))
+          (is (= "https://api.anthropic.com/v1" (get p0 "base_url")))
+          (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get p0 "models")))
+          ;; connection verdict is the snake_case STRING key — no keyword restore
+          (is (true? (get-in p0 ["status" "is_authenticated"])))
+          (is (= "auth-file" (get-in p0 ["status" "source"])))
+          (is (every? string? (keys (get p0 "status"))))
+          ;; limits ride embedded, string-keyed too
+          (is (= "ok" (get-in p0 ["limits" "status"]))))))))

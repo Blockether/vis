@@ -9,7 +9,12 @@ import {
 } from 'react';
 import { AssistantMessage, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
-import { pickImageAttachments, type PendingAttachment } from '../lib/attachments';
+import { Capacitor } from '@capacitor/core';
+import {
+  captureCameraAttachment,
+  pickImageAttachments,
+  type PendingAttachment,
+} from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -36,6 +41,7 @@ interface LiveActivity {
   iteration?: number;
   command?: string;
   operation?: string;
+  label?: string;
 }
 
 interface LiveTurn {
@@ -116,7 +122,7 @@ function liveProgressPhase(turn: LiveTurn): string {
       return `Vis is parsing model response ${suffix}`;
     case 'tool':
     case 'tool-call':
-      return `Vis is running: ${activity.operation || 'tool'} ${suffix}`;
+      return `Vis is running: ${activity.operation || 'tool'}${activity.label ? ` ${compactLabel(activity.label, '')}` : ''} ${suffix}`;
     default:
       break;
   }
@@ -168,10 +174,40 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
   };
 }
 
+function formIsRunningPlaceholder(form: TranscriptForm): boolean {
+  return (
+    form.result == null &&
+    form.error == null &&
+    form.duration_ms == null &&
+    (!form.result_summary || form.result_summary === 'Running…')
+  );
+}
+
+function formHasOutcome(form: TranscriptForm): boolean {
+  return (
+    form.result != null ||
+    form.error != null ||
+    form.duration_ms != null ||
+    (!!form.result_summary && form.result_summary !== 'Running…')
+  );
+}
+
 function upsertLiveForm(iteration: TranscriptIteration, next: TranscriptForm): TranscriptIteration {
   const forms = [...(iteration.forms ?? [])];
   const blockId = next.block_id;
-  const index = forms.findIndex((form) => blockId && form.block_id === blockId);
+  let index = forms.findIndex((form) => blockId && form.block_id === blockId);
+  // Fallback: a completed form supersedes the still-running placeholder for the
+  // same tool when block_id didn't line up (gateway replay / a started event
+  // that shipped no block_id). Without this the 'X Running…' placeholder and the
+  // finished card both render — the same op shown twice.
+  if (index < 0 && formHasOutcome(next)) {
+    index = forms.findIndex(
+      (form) =>
+        formIsRunningPlaceholder(form) &&
+        (form.tool_name ?? '') === (next.tool_name ?? '') &&
+        (form.scope ?? '') === (next.scope ?? ''),
+    );
+  }
   if (index < 0) forms.push(next);
   else {
     const defined = Object.fromEntries(
@@ -268,6 +304,7 @@ function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | nul
         iteration: Number.isFinite(iteration) ? iteration : undefined,
         command: stringField(event, 'cmd') || undefined,
         operation: stringField(event, 'op') || undefined,
+        label: stringField(event, 'label') || undefined,
       } : undefined,
     };
   }
@@ -373,6 +410,80 @@ function LoadingSession() {
   );
 }
 
+// The session id is the durable handle a user pastes into `vis`/tools, so it is
+// tap-to-copy rather than inert text — shown short with the full id on hover.
+function CopyableId({ id, className }: { id: string; className: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_200);
+    } catch {
+      // Clipboard access can be unavailable in an untrusted mobile webview.
+    }
+  }
+  const short = id.length > 8 ? id.slice(0, 8) : id;
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={`Copy session id\n${id}`}
+      aria-label="Copy session id"
+      className={`group inline-flex min-w-0 items-center gap-1 border border-dialog-edge px-2 py-1 font-mono text-[10px] leading-none transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
+    >
+      <span aria-hidden="true" className="opacity-50 transition-opacity group-hover:opacity-100">#</span>
+      <span className="truncate">{copied ? 'Copied' : short}</span>
+    </button>
+  );
+}
+
+// Copies the current shareable URL (origin + #/s/<sid>?gw=<gateway>) so another
+// user can open the same session in their own paired app. Prefers the native
+// iOS/Android share sheet, falling back to a clipboard copy with confirmation.
+function ShareLink({ className }: { className: string }) {
+  const [copied, setCopied] = useState(false);
+  async function share() {
+    const url = window.location.href;
+    try {
+      if (typeof navigator.share === 'function') {
+        await navigator.share({ title: 'Vis session', url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_500);
+    } catch {
+      // User dismissed the native share sheet, or clipboard is unavailable.
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={share}
+      title="Share this session"
+      aria-label="Share this session"
+      className={`group inline-flex shrink-0 items-center gap-1.5 border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
+    >
+      {copied ? (
+        <>
+          <svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M5 10.5l3.5 3.5L15 6.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span>Copied</span>
+        </>
+      ) : (
+        <>
+          <svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+            <path d="M7.5 10.5l5-3M7.5 9.5l5 3M6 10a2 2 0 11-4 0 2 2 0 014 0zM16 5a2 2 0 11-4 0 2 2 0 014 0zM16 15a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span>Share</span>
+        </>
+      )}
+    </button>
+  );
+}
+
 export function SessionScreen({
   client,
   subscriptions,
@@ -420,6 +531,10 @@ export function SessionScreen({
   const followingRef = useRef(true);
   const showJumpRef = useRef(false);
   const liveTurnRef = useRef<LiveTurn | null>(null);
+  const runningRef = useRef(false);
+  const turnsRef = useRef<TranscriptTurn[]>([]);
+  runningRef.current = running;
+  turnsRef.current = turns;
 
   useEffect(() => {
     void recordingRef.current?.cancel();
@@ -472,6 +587,48 @@ export function SessionScreen({
       client.session(sid, controller.signal).then(setSession).catch(() => undefined),
     ]);
     return () => controller.abort();
+  }, [client, sid, loadTranscript]);
+
+  // Reconcile against the gateway's authoritative liveness. A streamed live turn
+  // is only cleared by a terminal SSE event, but that event can be missed — the
+  // turn finished in the TUI/another client before we subscribed, the ring
+  // rewound past the completion, or the socket dropped mid-turn. Left alone the
+  // bubble spins "working" forever while the session is actually idle. Poll the
+  // session every few seconds; when the gateway says it is no longer live but we
+  // still show a running turn, reload the transcript and drop the live bubble.
+  useEffect(() => {
+    let cancelled = false;
+    const reconcile = async () => {
+      if (document.visibilityState === 'hidden') return;
+      let next: Session;
+      try {
+        next = await client.session(sid);
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      setSession(next);
+      const gatewayLive =
+        next.live !== undefined ? next.live : next.status === 'running';
+      const showsWork = liveTurnRef.current !== null || runningRef.current;
+      if (!gatewayLive && showsWork) {
+        await loadTranscript();
+        if (cancelled) return;
+        setRunning(false);
+        setLiveTurn(null);
+        liveTurnRef.current = null;
+      }
+    };
+    const timer = window.setInterval(() => void reconcile(), 5000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void reconcile();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [client, sid, loadTranscript]);
 
   useEffect(() => {
@@ -663,6 +820,27 @@ export function SessionScreen({
     } catch (cause) {
       const message = (cause as Error).message;
       if (!/cancel|dismiss/i.test(message)) setComposerNotice(message);
+    }
+  }
+
+  async function captureCamera() {
+    const limits = capabilities?.features.attachments;
+    const maximum = limits?.max_files ?? 8;
+    if (attachments.length >= maximum) {
+      setComposerNotice(`You can attach up to ${maximum} images`);
+      return;
+    }
+    try {
+      const shot = await captureCameraAttachment({
+        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+      });
+      if (shot) {
+        setAttachments((current) => [...current, shot].slice(0, maximum));
+        setComposerNotice(null);
+      }
+    } catch (cause) {
+      const message = (cause as Error).message;
+      if (!/cancel|dismiss|no image|user cancelled/i.test(message)) setComposerNotice(message);
     }
   }
 
@@ -960,7 +1138,10 @@ export function SessionScreen({
             {connected ? 'Gateway connected' : 'Reconnecting'}
           </div>
         </div>
-        <span className="hidden max-w-[30%] self-center truncate px-3 font-mono text-[9px] text-dialog-hint sm:block">{sid}</span>
+        <div className="flex shrink-0 items-center gap-1.5 self-center pr-2 pl-1 sm:pr-3">
+          <CopyableId id={sid} className="hidden max-w-[9rem] sm:inline-flex" />
+          <ShareLink className="" />
+        </div>
       </header>
 
       <div
@@ -1009,7 +1190,9 @@ export function SessionScreen({
                 className={`${index === 0 ? '' : 'mt-10'} [content-visibility:auto] [contain-intrinsic-size:auto_480px]`}
                 key={turn.id ?? turn.turn_id}
               >
-                {request && <UserMessage>{request}</UserMessage>}
+                {(request || (turn.attachments?.length ?? 0) > 0) && (
+                  <UserMessage attachments={turn.attachments}>{request}</UserMessage>
+                )}
                 <AssistantMessage turn={turn} />
               </div>
             );
@@ -1156,6 +1339,22 @@ export function SessionScreen({
                 <path d="M12 5v14M5 12h14" strokeLinecap="square" />
               </svg>
             </button>
+
+            {Capacitor.isNativePlatform() && (
+              <button
+                type="button"
+                className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
+                onClick={() => void captureCamera()}
+                disabled={running || attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
+                aria-label="Take photo"
+                title="Take photo"
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <path d="M3 8h3l1.5-2h9L17 8h4v11H3z" strokeLinejoin="round" />
+                  <circle cx="12" cy="13" r="3.2" />
+                </svg>
+              </button>
+            )}
 
             {voiceSupported && (
               <button

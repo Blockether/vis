@@ -2992,26 +2992,6 @@
           (expect (str/includes? m "#"))
           (expect (not (str/includes? m ";;")))))))
 
-(defdescribe live-code-from-tool-input-test
-             ;; Native tool calling streams the model's Python as the run_python tool
-             ;; call's `{"code": …}` argument JSON. The live bubble decodes the `code`
-             ;; value (possibly mid-stream / truncated) so it can paint the code as it is
-             ;; written instead of showing only reasoning.
-             (let [decode @#'lp/live-code-from-tool-input]
-               (it "decodes a complete code argument, unescaping JSON string escapes"
-                   (expect (= "(git/status)\nprint(1)"
-                              (decode "{\"code\": \"(git/status)\\nprint(1)\"}"))))
-               (it "returns the partial value when the args JSON is truncated mid-stream"
-                   (expect (= "(git/sta" (decode "{\"code\": \"(git/sta"))))
-               (it "returns nil before the code key/opening quote has streamed"
-                   (expect (nil? (decode "{\"co")))
-                   (expect (nil? (decode "")))
-                   (expect (nil? (decode "   "))))
-               (it "decodes \\uXXXX escapes and stops at the closing quote"
-                   (expect (= "aAb" (decode "{\"code\":\"a\\u0041b\"}"))))
-               (it "keeps escaped quotes/backslashes inside the code intact"
-                   (expect (= "print(\"x\\y\")" (decode "{\"code\":\"print(\\\"x\\\\y\\\")\"}"))))))
-
 
 (defdescribe
   strip-echo-diffs-test
@@ -3095,7 +3075,7 @@
                    "errors surface"]]
             (expect (str/includes? python-description fact))))
         (expect (str/includes? (get-in by-name ["session_fold" :description])
-                               "understand its intent"))))
+                               "already-completed iterations"))))
   (it "does not advertise retry_native when no active tool owns a replay policy"
       (expect (= ["apropos" "doc" "session_fold" "python_execution"]
                  (mapv :name (@#'lp/native-tools [] nil nil)))))

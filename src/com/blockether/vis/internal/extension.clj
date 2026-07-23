@@ -1854,15 +1854,53 @@
     (str alias "/" sym)
     (str sym)))
 
+(defn- tool-start-label
+  "Short one-line human label for the PRIMARY argument of a tool call, so a
+   long-running tool's live ticker can read `Vis is running: <op> <label>`
+   instead of just the bare op. Best-effort: the first string positional arg,
+   or a common key (cmd/path/query/code/name/id) of a leading map arg. First
+   line only, trimmed, truncated to 64 chars. nil when nothing sensible."
+  [args]
+  (let
+    [primary
+     (first args)
+
+     pick
+     (cond (string? primary) primary
+           (map? primary) (some (fn [k]
+                                  (let [v (or (get primary k) (get primary (name k)))]
+                                    (when (string? v) v)))
+                                [:cmd :command :path :query :code :name :id])
+           :else nil)
+
+     line
+     (some-> pick
+             str
+             str/split-lines
+             first
+             str/trim)]
+
+    (when-not (str/blank? (or line ""))
+      (if (> (count line) 64) (str (subs line 0 61) "\u2026") line))))
+
 (defn- tool-start-event
-  [ext sym-entry started-at-ms]
-  (let [sym (:ext.symbol/symbol sym-entry)]
-    {:phase :tool-start
-     :status :running
-     :op (keyword (tool-call-name ext sym))
-     :extension (:ext/name ext)
-     :symbol sym
-     :started-at-ms (long started-at-ms)}))
+  [ext sym-entry args started-at-ms]
+  (let
+    [sym
+     (:ext.symbol/symbol sym-entry)
+
+     label
+     (tool-start-label args)]
+
+    (cond->
+      {:phase :tool-start
+       :status :running
+       :op (keyword (tool-call-name ext sym))
+       :extension (:ext/name ext)
+       :symbol sym
+       :started-at-ms (long started-at-ms)}
+      label
+      (assoc :label label))))
 
 (defn- default-tool-op-keyword
   [ext sym-entry]
@@ -2370,6 +2408,12 @@
           [{call-env :env f :fn call-args :args}
            before-out
 
+           ;; PRE-injection user args — the live ticker's `Vis is running:
+           ;; <op> <label>` reads the primary arg (cmd/path/query), not the
+           ;; env map a later `:inject-env?` prepends.
+           clean-args
+           call-args
+
            ;; :inject-env? prepends the live env as the first arg — decoupled
            ;; from before-fn, which is now a pure hook (not a gate / injector).
            call-args
@@ -2386,7 +2430,7 @@
               call-started-at-ms
               (now-ms)]
 
-             (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
+             (record-tool-event! (tool-start-event ext sym-entry clean-args call-started-at-ms))
              (try (let
                     [r
                      (run-op-around op-kw call-env f call-args)

@@ -558,13 +558,13 @@
      (url-host (or (vis/provider-base-url provider) ""))
 
      loading-status?
-     (:loading? status)
+     (get status "is_loading")
 
      loading-limits?
      (= :loading (:status limits))
 
      ok?
-     (boolean (:is-authenticated status))
+     (boolean (get status "is_authenticated"))
 
      label
      (vis/display-label (:id provider))
@@ -987,7 +987,7 @@
 (defn- gateway-provider-status-safe
   [provider]
   (try (vis/gateway-provider-status (:id provider))
-       (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))})))
+       (catch Throwable e {"is_authenticated" false "error" (or (ex-message e) (str e))})))
 
 (defn- gateway-provider-limits-safe
   [provider]
@@ -1024,11 +1024,12 @@
 
 (defn- provider-diagnostics-loading?
   [statuses limits]
-  (boolean (or (some :loading? (vals statuses)) (some #(= :loading (:status %)) (vals limits)))))
+  (boolean (or (some #(get % "is_loading") (vals statuses))
+               (some #(= :loading (:status %)) (vals limits)))))
 
 (defn- provider-authenticated?
-  ([provider] (boolean (:is-authenticated (configured-provider-status provider))))
-  ([_provider status] (boolean (:is-authenticated status))))
+  ([provider] (boolean (get (configured-provider-status provider) "is_authenticated")))
+  ([_provider status] (boolean (get status "is_authenticated"))))
 
 (defn show-provider-status!
   "Status + limits as the RICH canonical markdown form, painted through the IR
@@ -1200,10 +1201,10 @@
               (let [status (safe-provider-status provider)]
                 {:provider-id (:provider/id provider)
                  :provider provider
-                 :label (str
-                          (:provider/label provider)
-                          " / "
-                          (if (:is-authenticated status) "authenticated" "not authenticated"))})))
+                 :label
+                 (str (:provider/label provider)
+                      " / "
+                      (if (get status "is_authenticated") "authenticated" "not authenticated"))})))
        (sort-by :label)
        vec))
 
@@ -1261,7 +1262,7 @@
    "• vis sends your prompts and the files you ask it to read"
    "  directly to the provider you choose. Nothing else."
    "• No vis servers sit in between. No telemetry of your code."
-   "• Remove a provider any time from the Router (C-x C-p → Configure Providers)." ""
+   "• Remove a provider any time from the Router (C-x C-p → Router)." ""
    "Local providers (Ollama / LM Studio) keep everything on-device."])
 
 (defn show-welcome!
@@ -1363,10 +1364,14 @@
   "Provider manager dialog.
    Esc saves and closes, returning {:providers [...]} in priority order.
    Optional `current-config` seeds the dialog with current state."
-  ([^TerminalScreen screen] (show-provider-dialog! screen nil))
-  ([^TerminalScreen screen current-config]
+  ([^TerminalScreen screen] (show-provider-dialog! screen nil nil))
+  ([^TerminalScreen screen current-config] (show-provider-dialog! screen current-config nil))
+  ([^TerminalScreen screen current-config opts]
    (let
-     [seed
+     [open-settings
+      (:open-settings opts)
+
+      seed
       (or current-config (vis/load-config) {:providers []})
 
       items
@@ -1501,12 +1506,17 @@
                            :total-h total
                            :inner-h (card-visible-count content-h)
                            :scroll @scroll})
-         (dlg/draw-hint-bar! g
-                             left
-                             hint-row
-                             inner-w
-                             [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"]
-                              ["Enter" "actions"] ["Esc" "done"]])
+         (dlg/draw-hint-bar!
+           g
+           left
+           hint-row
+           inner-w
+           (cond-> [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"]]
+             open-settings
+             (conj ["S" "settings"])
+
+             :always
+             (conj ["Esc" "done"])))
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
          (let
@@ -1646,5 +1656,7 @@
                                (swap! limits dissoc provider-id)
                                (swap! selected #(p/clamp % 0 (max 0 (dec (count @items)))))))
                            (recur))
+                       ;; S - open Settings without leaving the Router hub
+                       (and open-settings (= c \s)) (do (open-settings) (recur))
                        :else (recur)))
                    :else (recur)))))))))))

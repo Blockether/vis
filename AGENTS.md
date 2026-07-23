@@ -164,3 +164,118 @@ The HTTP/SSE gateway wire has ONE dumb, deterministic boundary
   `:is-<foo>` mirror. (The Python-extension `py-key->kw` adapter is a SEPARATE
   boundary — Python identifiers can't carry `?` — and keeps `is_authenticated`
   verbatim as `:is-authenticated`.)
+
+## Rendering TUI dialogs to ASCII (headless virtual terminal)
+
+To SEE what a dialog actually looks like — real geometry, margins, shadow,
+scrollbar — never eyeball it. Render the real paint code into a headless
+Lanterna `DefaultVirtualTerminal` in the `vis-channel-tui` REPL and dump the
+back-buffer. This is the source of truth for every layout question.
+
+Key facts:
+
+- Every dialog routes through `dialogs/draw-dialog-chrome!` (background, drop
+  shadow, border, title bar, separators) → returns
+  `{:left :top :right :bottom :inner-w :inner-h}`.
+- Full-bleed dialogs (magit, sessions, theme, copy) size via
+  `render/golden-dialog-size`, clamped to `(- cols 8) × (- rows 9)`. Magit's
+  call site is `(draw-dialog-chrome! g cols (dec term-rows) title (- cols 4)
+  (max 1 (- term-rows 5)))` (`dialogs.clj` ~3201).
+- `box-left = (max 3 (- (quot (- cols box-w) 2) 3))`,
+  `box-top = (max 2 (- (quot (- rows box-h) 2) 2))`; shadow is +2 cols / +1 row.
+- The shadow paints as a background color only (glyph stays a space), so dump it
+  by comparing `(.getBackgroundColor tc)` against `t/dialog-shadow` and emitting
+  `░`. Scrollbar via `scrollbar/draw!`; body text via `primitives/put-str!`.
+
+Recipe (run in the `vis-channel-tui` REPL):
+
+```clojure
+(require '[com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+         '[com.blockether.vis.ext.channel-tui.header :as header]
+         '[com.blockether.vis.ext.channel-tui.footer :as footer]
+         '[com.blockether.vis.ext.channel-tui.render :as render]
+         '[com.blockether.vis.ext.channel-tui.primitives :as p]
+         '[com.blockether.vis.ext.channel-tui.scrollbar :as sb]
+         '[com.blockether.vis.ext.channel-tui.theme :as t])
+(import '[com.googlecode.lanterna TerminalSize]
+        '[com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]
+        '[com.googlecode.lanterna.screen TerminalScreen])
+
+(let [cols 120 rows 40
+      scr  (doto (TerminalScreen.
+                   (DefaultVirtualTerminal. (TerminalSize. cols rows)))
+             (.startScreen))
+      g    (.newTextGraphics scr)
+      ;; EXACTLY magit's call site — real geometry, not a guess
+      {:keys [left top right bottom]}
+      (dlg/draw-dialog-chrome! g cols (dec rows) "Git — main"
+                               (- cols 4) (max 1 (- rows 5)))]
+  (sb/draw! g {:col (dec right) :top (+ top 3) :track-h (- bottom top 5)
+               :total-h 60 :inner-h (- bottom top 5) :scroll 6})
+  (.refresh scr)
+  (println
+    (clojure.string/join "\n"
+      (for [y (range rows)]
+        (clojure.string/replace
+          (apply str
+            (for [x (range cols)]
+              (let [tc (.getBackCharacter scr (int x) (int y))
+                    ch (or (some-> tc .getCharacterString) " ")]
+                (if (and (= ch " ") tc
+                         (.equals t/dialog-shadow (.getBackgroundColor tc)))
+                  "░" ch))))
+          #"\s+$" ""))))
+  (.stopScreen scr))
+```
+
+At 120×40 this yields a 112×30 box at left 3 / top 2 (right margin 5, 8 rows
+below the box), the `░` drop shadow trailing +2/+1, and the live scrollbar
+thumb — the exact pixels the user sees.
+
+### Full frame — outer chrome around the dialog
+
+The dialog is only the middle band. To render EVERYTHING the user sees — the
+header tab bar on top, the input composer and the two footer rows on the bottom
+— paint the real chrome fns into the SAME buffer with a minimal app-db, then
+dump. Restrict the shadow glyph to the box's own shadow zone so legit dim
+header/footer chips (which share `t/dialog-shadow`) are not painted `░`:
+
+```clojure
+(let [cols 120 rows 42
+      scr (doto (TerminalScreen.
+                  (DefaultVirtualTerminal. (TerminalSize. cols rows)))
+            (.startScreen))
+      g   (.newTextGraphics scr)
+      ;; Minimal db: header synthesises a placeholder "Untitled session"
+      ;; workspace; footer reads model/limits chips; input is {:lines :crow :ccol}.
+      db  {:session (java.util.UUID/randomUUID) :messages [] :settings {}
+           :input {:lines ["git status is clean"] :crow 0 :ccol 0}}]
+  (header/draw-header! g db 0 cols)                       ; top tab bar
+  (let [{:keys [left top right bottom] :as b}            ; magit's real geometry
+        (dlg/draw-dialog-chrome! g cols (dec rows) "Git — main"
+                                 (- cols 4) (max 1 (- rows 5)))]
+    (p/put-str! g (+ left 2) (+ top 3) "Head:  main")     ; body rows…
+    (sb/draw! g {:col (dec right) :top (+ top 3) :track-h (- bottom top 5)
+                 :total-h 60 :inner-h (- bottom top 5) :scroll 6})
+    (render/draw-input-box! g (:input db) (- rows 4) 1 cols nil) ; composer
+    (footer/draw-footer! g db (- rows 2) cols (System/currentTimeMillis))
+    (.refresh scr)
+    (println
+      (clojure.string/join "\n"
+        (for [y (range rows)]
+          (clojure.string/replace
+            (apply str
+              (for [x (range cols)]
+                (let [tc (.getBackCharacter scr (int x) (int y))
+                      ch (or (some-> tc .getCharacterString) " ")]
+                  (if (and (= ch " ") tc
+                           (.equals t/dialog-shadow (.getBackgroundColor tc))
+                           (<= left x (+ right 1)) (<= top y (+ bottom 1)))
+                    "░" ch))))
+            #"\s+$" ""))))
+    (.stopScreen scr)))
+```
+
+At 120×42 the magit box is 112×30 (left 3 / top 3 / bottom 32), the header tab
+bar rides rows 0–2, and the composer + two footer rows sit below the shadow —
+the full frame, every pixel from the real paint code.

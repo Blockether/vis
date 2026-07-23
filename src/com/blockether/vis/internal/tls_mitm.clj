@@ -48,7 +48,7 @@
 (def ^:private ^SecureRandom secure-rng (SecureRandom.))
 
 (def ^:private day-ms 86400000)
-(def ^:private validity-ms (* 825 day-ms)) ; 825 days: the CA/browser leaf ceiling.
+(def ^:private validity-ms (* 825 (long day-ms))) ; 825 days: the CA/browser leaf ceiling.
 
 (defn- gen-keypair
   "A fresh 2048-bit RSA key pair."
@@ -77,8 +77,8 @@
      builder
      (doto (JcaX509v3CertificateBuilder. nm
                                          (rand-serial)
-                                         (Date. (- now day-ms))
-                                         (Date. (+ now validity-ms))
+                                         (Date. (- now (long day-ms)))
+                                         (Date. (+ now (long validity-ms)))
                                          nm
                                          (.getPublic kp))
        (.addExtension Extension/basicConstraints true (BasicConstraints. true))
@@ -107,15 +107,16 @@
      (boolean (re-matches ipv4-re host))
 
      san
-     (GeneralNames. (into-array GeneralName
+     (GeneralNames. ^"[Lorg.bouncycastle.asn1.x509.GeneralName;"
+                    (into-array GeneralName
                                 [(GeneralName. (if ip? GeneralName/iPAddress GeneralName/dNSName)
                                                host)]))
 
      builder
      (doto (JcaX509v3CertificateBuilder. issuer
                                          (rand-serial)
-                                         (Date. (- now day-ms))
-                                         (Date. (+ now validity-ms))
+                                         (Date. (- now (long day-ms)))
+                                         (Date. (+ now (long validity-ms)))
                                          subject
                                          (.getPublic leaf-kp))
        (.addExtension Extension/basicConstraints true (BasicConstraints. false))
@@ -124,7 +125,8 @@
                       (KeyUsage. (int (bit-or KeyUsage/digitalSignature KeyUsage/keyEncipherment))))
        (.addExtension Extension/extendedKeyUsage
                       false
-                      (ExtendedKeyUsage. (into-array KeyPurposeId [KeyPurposeId/id_kp_serverAuth])))
+                      (ExtendedKeyUsage. ^"[Lorg.bouncycastle.asn1.x509.KeyPurposeId;"
+                                         (into-array KeyPurposeId [KeyPurposeId/id_kp_serverAuth])))
        (.addExtension Extension/subjectAlternativeName false san))]
 
     (->x509 (.build builder (signer ca-key)))))

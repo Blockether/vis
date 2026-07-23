@@ -75,6 +75,8 @@
 
 (def ^:private release-selection-focus (deref #'screen/release-selection-focus))
 
+(def ^:private selection-copy-payload (deref #'screen/selection-copy-payload))
+
 (def ^:private input-selectable-ranges (deref #'screen/input-selectable-ranges))
 
 (def ^:private session-summary (deref #'screen/session-summary))
@@ -1158,6 +1160,21 @@
             (expect (= "selected text" (deref copied 1000 ::timeout)))
             (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]]
                        (deref notified 1000 ::timeout)))))))
+  (it "a transcript drag whose document rebuild comes back blank falls back to the painted cells"
+      ;; Regression: an expanded / live disclosure bubble can desync the
+      ;; virtual-document rebuild from the on-screen paint, so it returns blank
+      ;; while the user sees a highlight. Without the fallback the release cond
+      ;; silently no-ops — no copy, no notification. The visible cells must win.
+      (expect (= "visible highlighted body"
+                 (selection-copy-payload :transcript "" (constantly "visible highlighted body"))))
+      (expect
+        (= "visible highlighted body"
+           (selection-copy-payload :transcript "   \n  " (constantly "visible highlighted body"))))
+      ;; A non-blank rebuild is authoritative (survives auto-scroll off-screen rows).
+      (expect (= "document rebuild"
+                 (selection-copy-payload :transcript "document rebuild" (constantly "visible"))))
+      ;; Non-transcript sources already extract from cells; pass the value through.
+      (expect (= "" (selection-copy-payload :input "" (constantly "visible")))))
   (it "single-click bubble copy uses the shared success notification contract"
       (let
         [copied
@@ -1229,8 +1246,7 @@
                                          (deliver notified [text kvs]))}
           (fn []
             (copy-selection! "selected text")
-            (expect (= ["Copy failed — terminal clipboard unavailable"
-                        [:level :error :ttl-ms 5000]]
+            (expect (= ["Copy failed — terminal clipboard unavailable" [:level :error :ttl-ms 5000]]
                        (deref notified 1000 ::timeout)))))))
   (it "URL click targets keep using the generic opener"
       (let [url-opened (promise)]
@@ -1426,19 +1442,30 @@
                                     :was-blocked? true})]
         (expect (every? false? (map boolean (vals flags)))))))
 
-(defdescribe
-  tab-order-persistence-test
-  (it
-    "persists through one adopt-and-reorder call without listing or assigning tabs"
-    (let [pid (random-uuid)
-          ids [(random-uuid) (random-uuid)]
-          calls (atom [])]
-      (with-redefs [vis/gateway-list-sessions
-                    (fn [& _] (swap! calls conj :list))
-                    vis/gateway-assign-project!
-                    (fn [& _] (swap! calls conj :assign))
-                    vis/gateway-reorder-project-sessions!
-                    (fn [actual-pid actual-ids]
-                      (swap! calls conj [:reorder actual-pid actual-ids]))]
-        ((deref #'screen/persist-tabs-order!) pid ids))
-      (expect (= [[:reorder pid ids]] @calls)))))
+(defdescribe tab-order-persistence-test
+             (it "persists through one adopt-and-reorder call without listing or assigning tabs"
+                 (let
+                   [pid
+                    (random-uuid)
+
+                    ids
+                    [(random-uuid) (random-uuid)]
+
+                    calls
+                    (atom [])]
+
+                   (with-redefs
+                     [vis/gateway-list-sessions
+                      (fn [& _]
+                        (swap! calls conj :list))
+
+                      vis/gateway-assign-project!
+                      (fn [& _]
+                        (swap! calls conj :assign))
+
+                      vis/gateway-reorder-project-sessions!
+                      (fn [actual-pid actual-ids]
+                        (swap! calls conj [:reorder actual-pid actual-ids]))]
+
+                     ((deref #'screen/persist-tabs-order!) pid ids))
+                   (expect (= [[:reorder pid ids]] @calls)))))

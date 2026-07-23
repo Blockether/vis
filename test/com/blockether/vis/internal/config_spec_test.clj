@@ -46,7 +46,8 @@
                          "deny-write" ["~/locked"]
                          "language-caches" ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]}
            "inbound-ports" [5273 8080]
-           "env" ["CI" "MY_TOKEN"]}
+           "env" ["CI" "MY_TOKEN"]
+           "deny-exec" ["definitely-not-a-real-binary-xyz"]}
    "network" {"allowed-domains" ["github.com"]
               "denied-domains" ["example.invalid"]
               "exclude-domains" ["opaque.example"]
@@ -54,6 +55,7 @@
               "rules" [{"host" "api.example.com"
                         "access" "read-only"
                         "methods" ["POST"]
+                        "ports" [443]
                         "allow" [{"method" "POST" "path" "/v1/**"}]}]}
    "environment" {"ANTHROPIC_API_KEY" "secret"}
    "db-spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
@@ -75,54 +77,63 @@
   (it "registers a complete string-keyed clojure.spec contract"
       (expect (s/get-spec :com.blockether.vis.internal.config-spec/config))
       (expect (config-spec/valid? full-config)))
-  (it "rejects keyword keys, aliases, unknown keys, and invalid security values"
-      (expect (not (config-spec/valid? {:filesystem {}})))
-      (expect (not (config-spec/valid? {"filesystem" {}})))
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "allow_reed"] ["../escape"]))))
-      (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound-ports"] [0]))))
-      ;; Filesystem grants must be absolute or home-rooted — bare-relative
-      ;; resolves against the gateway cwd (silent mis-grant / invalid deny).
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "allow-write"] ["./relative"]))))
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "deny-read"] ["relative"]))))
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "allow-read"] ["../escape"]))))
-      (expect (not (config-spec/valid? (assoc-in full-config
-                                         ["jail" "filesystem" "language-caches"]
-                                         ["relative-cache"]))))
-      (expect (not (config-spec/valid? (assoc-in full-config
-                                         ["jail" "filesystem" "language-caches"]
-                                         [{"path" "rel" "access" "ro"}]))))
-      (expect (config-spec/valid?
-                (assoc-in full-config ["jail" "filesystem" "allow-write"] ["/abs/ok" "~/home-ok"])))
-      ;; Grants may be {path, description}; the description surfaces in the session view.
-      (expect (config-spec/valid?
-                (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
-                          ["/opt/svar" {"path" "~/repo" "description" "a sibling repo"}])))
-      ;; A grant map still requires a rooted path and rejects unknown keys / blank text.
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
-                               [{"path" "rel" "description" "bad"}]))))
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
-                               [{"path" "~/ok" "note" "unknown-key"}]))))
-      (expect (not (config-spec/valid?
-                     (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
-                               [{"path" "~/ok" "description" ""}]))))
-      ;; Descriptions flow into the derived process-jail policy, keyed by grant path.
-      (expect (= {"~/repo" "why"}
-                 (:path-descriptions
-                  (config-spec/process-jail-config
-                   (assoc-in full-config ["jail" "filesystem" "allow-read-write"]
-                             ["/opt/svar" {"path" "~/repo" "description" "why"}])))))
-      ;; Network is policy data, never an independent on/off escape hatch.
-      (expect (not (config-spec/valid? (assoc-in full-config ["network" "enabled"] false))))
-      (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "oops"] true))))
-      ;; GraalPy resource cache: closed block, non-blank path only.
-      (expect (not (config-spec/valid? (assoc-in full-config ["python" "cache"] "/x"))))
-      (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource-cache"] "")))))
+  (it
+    "rejects keyword keys, aliases, unknown keys, and invalid security values"
+    (expect (not (config-spec/valid? {:filesystem {}})))
+    (expect (not (config-spec/valid? {"filesystem" {}})))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "filesystem" "allow_reed"] ["../escape"]))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound-ports"] [0]))))
+    ;; Filesystem grants must be absolute or home-rooted — bare-relative
+    ;; resolves against the gateway cwd (silent mis-grant / invalid deny).
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "filesystem" "allow-write"] ["./relative"]))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "filesystem" "deny-read"] ["relative"]))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "filesystem" "allow-read"] ["../escape"]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["jail" "filesystem" "language-caches"]
+                                       ["relative-cache"]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["jail" "filesystem" "language-caches"]
+                                       [{"path" "rel" "access" "ro"}]))))
+    (expect (config-spec/valid?
+              (assoc-in full-config ["jail" "filesystem" "allow-write"] ["/abs/ok" "~/home-ok"])))
+    ;; deny-exec: a list of executable names (or rooted paths) to block by read.
+    (expect (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] ["curl" "ssh"])))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] "curl"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] [""]))))
+    ;; Grants may be {path, description}; the description surfaces in the session view.
+    (expect (config-spec/valid? (assoc-in full-config
+                                  ["jail" "filesystem" "allow-read-write"]
+                                  ["/opt/svar" {"path" "~/repo" "description" "a sibling repo"}])))
+    ;; A grant map still requires a rooted path and rejects unknown keys / blank text.
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["jail" "filesystem" "allow-read-write"]
+                                       [{"path" "rel" "description" "bad"}]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["jail" "filesystem" "allow-read-write"]
+                                       [{"path" "~/ok" "note" "unknown-key"}]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["jail" "filesystem" "allow-read-write"]
+                                       [{"path" "~/ok" "description" ""}]))))
+    ;; Descriptions flow into the derived process-jail policy, keyed by grant path.
+    (expect (= {"~/repo" "why"}
+               (:path-descriptions (config-spec/process-jail-config
+                                     (assoc-in full-config
+                                       ["jail" "filesystem" "allow-read-write"]
+                                       ["/opt/svar" {"path" "~/repo" "description" "why"}])))))
+    ;; Network is policy data, never an independent on/off escape hatch.
+    (expect (not (config-spec/valid? (assoc-in full-config ["network" "enabled"] false))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "oops"] true))))
+    ;; :ports is a list of valid port integers.
+    (expect (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] [22 443])))
+    (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] [70000]))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] ["443"]))))
+    ;; GraalPy resource cache: closed block, non-blank path only.
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "cache"] "/x"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource-cache"] "")))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
                   :allow-read-write ["/opt/svar"]
@@ -133,7 +144,8 @@
                   :language-cache-dirs ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]
                   :inbound-ports [5273 8080]
                   :env-passthrough ["CI" "MY_TOKEN"]
-                  :path-descriptions {}}
+                  :path-descriptions {}
+                  :deny-exec []}
                  (config-spec/process-jail-config full-config)))
       (expect (true? (:disabled? (config-spec/process-jail-config (assoc full-config
                                                                     "sandbox" false)))))
@@ -146,8 +158,26 @@
                   :rules [{:host "api.example.com"
                            :access "read-only"
                            :methods ["POST"]
+                           :ports [443]
                            :allow [{:method "POST" :path "/v1/**"}]}]}
                  (config-spec/network-config full-config))))
+  (it
+    "resolves jail.deny-exec into a separate deny-exec list (rooted passthrough, drops unresolvable)"
+    (let
+      [pol
+       (config-spec/process-jail-config (assoc-in full-config
+                                          ["jail" "deny-exec"]
+                                          ["/opt/nope/curl" "definitely-not-a-real-binary-xyz"]))
+
+       denied
+       (set (:deny-exec pol))]
+
+      ;; absolute/home entries pass through verbatim (deny fails safe)
+      (expect (contains? denied "/opt/nope/curl"))
+      ;; an unresolvable bare name contributes nothing
+      (expect (not (contains? denied "definitely-not-a-real-binary-xyz")))
+      ;; deny-exec does NOT pollute the filesystem deny-read list
+      (expect (= ["~/private"] (:deny-read pol)))))
   (it "redacts credentials from validation failures"
       (let
         [bad

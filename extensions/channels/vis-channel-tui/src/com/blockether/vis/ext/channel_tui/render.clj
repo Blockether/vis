@@ -448,8 +448,9 @@
      (max box-h 7)
 
      ;; Clamp to terminal - hard constraint, always final so the frame can
-     ;; never leave the screen. The inset is deliberately generous (4 cols /
-     ;; 3 rows each side once centered) so full-bleed dialogs — the magit
+     ;; never leave the screen. The inset is deliberately generous — 4 cols each
+     ;; side and, after the upward box-top nudge, ~3 rows above / ~7 below — so
+     ;; full-bleed dialogs — the magit
      ;; buffer, session/copy browsers, theme picker — float with a clear
      ;; margin instead of butting flush against the window frame, header
      ;; tab bar, and footer.
@@ -457,7 +458,7 @@
      (min box-w (- cols 8))
 
      box-h
-     (min box-h (- rows 6))]
+     (min box-h (- rows 11))]
 
     [box-w box-h]))
 ;;; ── Box drawing ────────────────────────────────────────────────────────────
@@ -4510,8 +4511,7 @@
           ;; upstream, so a blank `code` is the only thing that drops the row
           ;; (`hide-code-chrome?`).
           code-text
-          (str/trim (str (or (not-empty (str display-code))
-                             (vis/beautify-python code))))
+          (str/trim (str (or (not-empty (str display-code)) (vis/beautify-python code))))
 
           ;; Syntax-color the executed source (always Python in the engine
           ;; loop) with the tree-sitter highlighter — the SAME ANSI-SGR run
@@ -5026,6 +5026,13 @@
      tool-op
      (:tool/op last-iteration)
 
+     tool-label
+     (let
+       [s (some-> (:tool/label last-iteration)
+                  str
+                  str/trim)]
+       (when-not (str/blank? (or s "")) (if (> (count s) 64) (str (subs s 0 61) "\u2026") s)))
+
      errored?
      (some? err)
 
@@ -5066,7 +5073,12 @@
           (= :slash activity) (str "Vis is running: " slash-label)
           (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
-          (= :tool-call activity) (str "Vis is running: " (or tool-op "tool") " (iter " n ")")
+          (= :tool-call activity) (str "Vis is running: "
+                                       (or tool-op "tool")
+                                       (when tool-label (str " " tool-label))
+                                       " (iter "
+                                       n
+                                       ")")
           thinking? (str "Vis is thinking (iter " n ")")
           executing? (str "Vis is running code (iter " n ")")
           :else (str "Vis is working (iter " n ")"))))

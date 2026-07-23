@@ -70,6 +70,43 @@
       (is (:allow? (ep/decide pol "GET" "h.example.com" "/")))
       (is (not (:allow? (ep/decide pol "POST" "h.example.com" "/")))))))
 
+(deftest decide-port-rules
+  (testing "a rule's :ports restricts which ports reach the host (CONNECT/SOCKS path)"
+    (let
+      [pol (ep/compile-policy {:allowed-domains ["*"]
+                               :rules [{:host "github.com" :ports [22 443]}]})]
+      (is (:allow? (ep/decide pol nil "github.com" nil 443)))
+      (is (:allow? (ep/decide pol nil "github.com" nil 22)))
+      (is (not (:allow? (ep/decide pol nil "github.com" nil 6379))))
+      (is (not (:allow? (ep/decide pol nil "github.com" nil 80))))))
+  (testing "a ports-only rule leaves verbs unrestricted on an allowed port"
+    (let
+      [pol (ep/compile-policy {:allowed-domains ["*"]
+                               :rules [{:host "db.internal" :ports [5432]}]})]
+      (is (:allow? (ep/decide pol "POST" "db.internal" "/" 5432)))
+      (is (not (:allow? (ep/decide pol "POST" "db.internal" "/" 3306))))))
+  (testing "no :ports ⇒ any port (backward compatible)"
+    (let [pol (ep/compile-policy {:allowed-domains ["gh.example"]})]
+      (is (:allow? (ep/decide pol nil "gh.example" nil 22)))
+      (is (:allow? (ep/decide pol nil "gh.example" nil 443)))))
+  (testing "4-arity decide ignores ports (legacy callers unaffected)"
+    (let
+      [pol (ep/compile-policy {:allowed-domains ["*"] :rules [{:host "github.com" :ports [443]}]})]
+      (is (:allow? (ep/decide pol nil "github.com" nil)))))
+  (testing ":ports combine with verb rules on the same host"
+    (let
+      [pol (ep/compile-policy {:allowed-domains ["*"]
+                               :rules
+                               [{:host "api.example.com" :access "read-only" :ports [443]}]})]
+      (is (:allow? (ep/decide pol "GET" "api.example.com" "/x" 443)))
+      (is (not (:allow? (ep/decide pol "POST" "api.example.com" "/x" 443)))) ; verb denied
+      (is (not (:allow? (ep/decide pol "GET" "api.example.com" "/x" 8443)))))) ; port denied
+  (testing ":ports accepts numeric strings"
+    (let
+      [pol (ep/compile-policy {:allowed-domains ["*"] :rules [{:host "h.example" :ports ["443"]}]})]
+      (is (:allow? (ep/decide pol nil "h.example" nil 443)))
+      (is (not (:allow? (ep/decide pol nil "h.example" nil 80)))))))
+
 (deftest exclude-domains-tunnel
   ;; `:exclude-domains` is the honest escape hatch for clients MITM cannot serve —
   ;; cert-pinned tools and mTLS upstreams (gh/Go-on-macOS, statically-trusted
@@ -477,3 +514,175 @@
     (let [elapsed-ms (/ (- (System/nanoTime) started) 1000000.0)]
       (is (< elapsed-ms 5000.0)
           (str "50k policy decisions exceeded the 5s regression budget: " elapsed-ms "ms")))))
+
+;; ---------------------------------------------------------------------------
+;; SOCKS5 lane — generic-TCP door (ssh / git+ssh / db / raw TCP), multiplexed on
+;; the SAME loopback port as the HTTP proxy (first byte 0x05). Host allow/deny +
+;; SSRF floor + token attribution, no verb/path.
+;; ---------------------------------------------------------------------------
+
+(defn- socks5-http
+  "Through the SOCKS5 lane at `proxy-port`, negotiate (no-auth, or user/pass when
+   `:token` is given → RFC 1929) then CONNECT to `host`:`origin-port` and do a bare
+   HTTP/1.0 GET. Returns {:rep <socks-reply-code> :status <http-status-or-nil>}."
+  [proxy-port host origin-port & {:keys [token]}]
+  (with-open [s (Socket. "127.0.0.1" (int proxy-port))]
+    (.setSoTimeout s 4000)
+    (let
+      [in (.getInputStream s)
+       out (.getOutputStream s)
+       rd2 (fn []
+             (let [b (byte-array 2)]
+               (.read in b)
+               b))]
+
+      (if token
+        (let [ub (.getBytes ^String token "UTF-8")]
+          (.write out (byte-array (map unchecked-byte [0x05 0x01 0x02])))
+          (.flush out)
+          (rd2)
+          (.write out (byte-array (concat [0x01 (count ub)] (map unchecked-byte ub) [0x00])))
+          (.flush out)
+          (rd2))
+        (do (.write out (byte-array (map unchecked-byte [0x05 0x01 0x00]))) (.flush out) (rd2)))
+      (let [hb (.getBytes ^String host "UTF-8")]
+        (.write out
+                (byte-array (concat [0x05 0x01 0x00 0x03 (count hb)]
+                                    (map unchecked-byte hb)
+                                    [(bit-and 0xff (bit-shift-right (int origin-port) 8))
+                                     (bit-and 0xff (int origin-port))])))
+        (.flush out))
+      (let [^bytes rep (byte-array 10)]
+        (.read in rep)
+        (let [code (bit-and 0xff (long (aget rep 1)))]
+          (if (zero? code)
+            (do (.write out (.getBytes "GET / HTTP/1.0\r\n\r\n" "UTF-8"))
+                (.flush out)
+                (let
+                  [b (byte-array 64)
+                   n (.read in b)]
+
+                  {:rep 0 :status (when (re-find #"\b200\b" (String. b 0 (max 0 n) "UTF-8")) 200)}))
+            {:rep code}))))))
+
+(deftest socks5-lane-wire
+  (run-wire-test
+    (fn []
+      (let [origin (start-origin!)]
+        (try
+          (testing "no-auth CONNECT to an allowed loopback origin relays raw TCP (HTTP over SOCKS)"
+            (let
+              [proxy (ep/start! {:policy-fn (fn [_]
+                                              (ep/compile-policy {:allowed-domains ["*"]}))})]
+              (try (let [r (socks5-http (:port proxy) "localhost" (:port origin))]
+                     (is (= 0 (:rep r)) "SOCKS5 CONNECT succeeded")
+                     (is (= 200 (:status r)) "bytes relayed end to end"))
+                   (finally ((:stop! proxy))))))
+          (testing "token attributes the session (RFC 1929 username) — unknown token fails closed"
+            (let
+              [proxy (ep/start! {:policy-fn (fn [t]
+                                              (if (= t "sess")
+                                                (ep/compile-policy {:allowed-domains ["*"]})
+                                                {:deny-all? true}))})]
+              (try
+                (is (= 0
+                       (:rep (socks5-http (:port proxy) "localhost" (:port origin) :token "sess"))))
+                (is (= 2
+                       (:rep (socks5-http (:port proxy) "localhost" (:port origin) :token "nope"))))
+                (finally ((:stop! proxy))))))
+          (testing "host allow/deny is enforced (denied host ⇒ REP 0x02 not-allowed)"
+            (let
+              [proxy (ep/start! {:policy-fn (fn [_]
+                                              (ep/compile-policy {:allowed-domains ["*"]
+                                                                  :denied-domains
+                                                                  ["localhost"]}))})]
+              (try (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin)))))
+                   (finally ((:stop! proxy))))))
+          (testing "the SSRF floor applies: a reserved gateway/proxy port is refused"
+            (let
+              [proxy (ep/start! {:policy-fn (fn [_]
+                                              {:reserved-loopback-ports #{(:port origin)}})})]
+              (try (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin)))))
+                   (finally ((:stop! proxy))))))
+          (testing
+            "a registered network_filter intercepts SOCKS (same guard as HTTP): denies on :phase :socks, allows when it doesn't match"
+            (let
+              [owner (gensym "socks-filter")
+               proxy (ep/start! {:policy-fn (fn [_]
+                                              (ep/compile-policy {:allowed-domains ["*"]}))})]
+
+              (try (ep/register-network-filter! owner
+                                                (fn [ctx]
+                                                  (when (= :socks (:phase ctx))
+                                                    {:allow? false
+                                                     :reason "socks denied by filter"})))
+                   (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
+                       "filter denies the SOCKS connection ⇒ REP 0x02")
+                   (ep/unregister-network-filters-for-owner! owner)
+                   (is (= 0 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
+                       "no matching filter ⇒ SOCKS connection allowed")
+                   (finally (ep/unregister-network-filters-for-owner! owner) ((:stop! proxy))))))
+          (finally ((:stop! origin))))))))
+
+(deftest probe-engine
+  (testing "probe runs tier-1 + each filter individually, no collapse, surfaces per-filter error"
+    (let
+      [pol
+       (ep/compile-policy {:allowed-domains ["*"]})
+
+       o1
+       (gensym "ok")
+
+       o2
+       (gensym "blk")
+
+       o3
+       (gensym "bug")]
+
+      (try (ep/register-network-filter! o1
+                                        (fn [_]
+                                          nil))
+           (ep/register-network-filter! o2
+                                        (fn [c]
+                                          (when (= "POST" (:method c))
+                                            {"marker" "block" "reason" "no POST"})))
+           (ep/register-network-filter! o3
+                                        (fn [_]
+                                          (throw (ex-info "boom" {}))))
+           (let
+             [{:keys [tier1 filters final]}
+              (ep/probe pol
+                        {:phase :http :method "POST" :host "api.example.com" :path "/x" :port 443})
+
+              by
+              (into {} (map (juxt :owner identity)) filters)]
+
+             (is (:allow? tier1) "host allowed at tier-1")
+             (is (= 3 (count filters)) "every registered filter reported, not collapsed")
+             (is (:allow? (by o1)) "clean filter allows")
+             (is (false? (:allow? (by o2))) "blocker denies")
+             (is (= "no POST" (:reason (by o2))))
+             (is (nil? (:error (by o2))) "an intentional block carries no :error")
+             (is (false? (:allow? (by o3))) "throwing filter denies (fail-closed)")
+             (is (some? (:error (by o3))) "a crash surfaces a structured :error")
+             (is (false? (:allow? final)) "final = first deny wins"))
+           (finally (doseq [o [o1 o2 o3]]
+                      (ep/unregister-network-filters-for-owner! o))))))
+  (testing "tier-1 deny short-circuits: filters never run"
+    (let
+      [pol
+       (ep/compile-policy {:allowed-domains ["github.com"]})
+
+       o
+       (gensym "should-not-run")]
+
+      (try (ep/register-network-filter! o
+                                        (fn [_]
+                                          (throw (ex-info "must-not-run" {}))))
+           (let
+             [{:keys [tier1 filters final]}
+              (ep/probe pol {:phase :http :method "GET" :host "evil.com" :path "/" :port 443})]
+             (is (false? (:allow? tier1)) "host denied at tier-1")
+             (is (empty? filters) "no filter runs once tier-1 denies")
+             (is (false? (:allow? final))))
+           (finally (ep/unregister-network-filters-for-owner! o))))))

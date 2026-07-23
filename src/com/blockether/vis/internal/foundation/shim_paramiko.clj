@@ -366,11 +366,12 @@
   "Coerce a polyglot return `Value` (or a plain value) to a Clojure scalar."
   [r]
   (if (instance? Value r)
-    (cond (.isNull r) nil
-          (.isBoolean r) (.asBoolean r)
-          (.isNumber r) (.asInt r)
-          (.isString r) (.asString r)
-          :else (.as r Object))
+    (let [^Value v r]
+      (cond (.isNull v) nil
+            (.isBoolean v) (.asBoolean v)
+            (.isNumber v) (.asInt v)
+            (.isString v) (.asString v)
+            :else (.as v Object)))
     r))
 
 (defn- guest-call

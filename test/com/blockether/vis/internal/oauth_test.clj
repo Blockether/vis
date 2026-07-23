@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.oauth-test
-  (:require [com.blockether.vis.internal.oauth :as oauth]
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.oauth :as oauth]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe
@@ -183,4 +184,43 @@
                                                   {:token (:access-token c)})
                                        :no-token! #(throw (ex-info "no refresh token"
                                                                    {:type :test/no-token}))})]
-        (expect (throws? clojure.lang.ExceptionInfo r)))))
+        (expect (throws? clojure.lang.ExceptionInfo r))))
+  (it
+    "make-file-refresher with :lock-path collapses a burst into ONE exchange and creates the lock file"
+    (let
+      [lock-path
+       (str (System/getProperty "java.io.tmpdir") "/vis-oauth-lock-test-" (System/nanoTime) ".lock")
+
+       exchanges
+       (atom 0)
+
+       saved
+       (atom nil)
+
+       r
+       (oauth/make-file-refresher
+         {:load (fn []
+                  (or @saved {:refresh-token "R"}))
+          :lock-path lock-path
+          :saved-at :saved-at-ms
+          :refresh-token :refresh-token
+          :exchange! (fn [_]
+                       (swap! exchanges inc)
+                       (Thread/sleep 40)
+                       {:access-token "T"})
+          :persist! (fn [c]
+                      (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
+          :->token (fn [c]
+                     {:token (:access-token c)})
+          :no-token! #(throw (ex-info "no token" {}))})
+
+       results
+       (mapv deref
+             (mapv (fn [_]
+                     (future (r)))
+                   (range 20)))]
+
+      (expect (= 1 @exchanges))
+      (expect (every? #(= {:token "T"} %) results))
+      (expect (.exists (io/file lock-path)))
+      (.delete (clojure.java.io/file lock-path)))))
