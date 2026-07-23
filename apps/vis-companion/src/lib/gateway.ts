@@ -107,6 +107,20 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * The gateway's stable, opaque instance id — names WHICH gateway this is
+   * (deterministic across restarts and independent of LAN/Tailscale/cloudflared
+   * host), never grants access. Used to build clean shareable session links.
+   */
+  async identify(signal?: AbortSignal): Promise<string | null> {
+    try {
+      const h = await this.request<{ id?: string }>('GET', '/healthz', undefined, signal);
+      return h?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
     return this.request<GatewayCapabilities>('GET', '/v1/capabilities', undefined, signal);
   }

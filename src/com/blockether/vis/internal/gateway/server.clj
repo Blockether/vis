@@ -176,6 +176,27 @@
 
 (defn- running-turn-count [] (state/running-turn-count))
 
+(defn- gateway-instance-id
+  "Stable, opaque identity for THIS gateway's data store, derived from the db
+   target. Deterministic across restarts and independent of the bind host
+   (loopback vs LAN vs Tailscale / cloudflared), so a shared session link
+   resolves to the SAME gateway no matter which URL a client reached it on.
+   Distinct data stores (distinct machines/homes) get distinct ids. Opaque and
+   non-secret: it only names *which* gateway, never grants access."
+  [db host port]
+  (let
+    [seed
+     (or (some-> db
+                 discovery/db-target
+                 str)
+         (str host ":" port))
+
+     raw
+     (.digest (MessageDigest/getInstance "SHA-256")
+              (.getBytes ^String seed StandardCharsets/UTF_8))]
+
+    (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 16)))
+
 (defn- status-map
   []
   (let
@@ -188,6 +209,7 @@
      (gateway-client-metrics)]
 
     {:status (if @server-state "running" "stopped")
+     :id (gateway-instance-id db host port)
      :pid (discovery/current-pid)
      :host host
      :port port
@@ -806,6 +828,29 @@
     [provider-id (some-> (get-in request [:path-params :provider-id])
                          keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
+
+(defn- router-provider-entry
+  "One row of the unified router payload for `provider` (a configured or
+   authenticated-preset fleet entry): display label, base URL, model names, live
+   auth status, and limits report. Emitted as EDN; `json-response` snake_cases
+   every key to a wire STRING (`is_authenticated`, `base_url`, …)."
+  [provider]
+  (let [id (:id provider)]
+    {:id (name id)
+     :label (config/display-label id)
+     :base-url (or (config/provider-base-url provider) (:base-url provider))
+     :models (into [] (keep :name) (:models provider))
+     :status (providers/provider-status provider)
+     :limits (providers/provider-limits-safe provider)}))
+
+(defn- router-handler
+  "GET /v1/router — the WHOLE router dialog payload assembled server-side in ONE
+   call: the never-nil unified fleet (configured providers first, then
+   authenticated-but-unsaved OAuth presets), each row carrying label, base URL,
+   model names, live auth status, and limits. No per-provider round trips, no
+   channel-side config re-parse. Wire keys are snake_case STRINGS throughout."
+  [_]
+  (json-response {:providers (mapv router-provider-entry (providers/picker-fleet))}))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
@@ -2037,7 +2082,7 @@
         ["/slashes" {:get slashes-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
-        ["/clients" {:post client-register-handler}]
+        ["/router" {:get router-handler}] ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]

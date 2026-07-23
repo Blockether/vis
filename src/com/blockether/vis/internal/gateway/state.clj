@@ -752,6 +752,9 @@
        (some-> (:op (:tool-event chunk))
                name)
 
+       label
+       (:label (:tool-event chunk))
+
        activity
        (if (= phase :tool-start) "tool" (name phase))]
 
@@ -764,7 +767,10 @@
          (assoc :cmd (str cmd))
 
          (some? op)
-         (assoc :op op))])))
+         (assoc :op op)
+
+         (some? label)
+         (assoc :label (str label)))])))
 
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a

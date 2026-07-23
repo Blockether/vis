@@ -25,6 +25,7 @@ import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
 import type {
   ContentBlock,
+  GatewayAttachment,
   JsonValue,
   TranscriptForm,
   TranscriptIteration,
@@ -584,15 +585,31 @@ function ToolCard({ form }: { form: TranscriptForm }) {
   const role = toolRole(form.tool_color_role);
   const body = resultBody(form);
   const failed = form.error != null;
-  const rawSummary = form.result_summary?.trim() || (failed ? 'Failed' : '');
+  // Once any real outcome has arrived (body/result/render/duration) a stale
+  // "Running…" placeholder from the gateway must not linger — the op is done.
+  const hasOutcome =
+    body !== '' ||
+    form.result != null ||
+    form.result_render != null ||
+    form.duration_ms != null;
+  const placeholderSummary = form.result_summary?.trim() === 'Running…';
+  const rawSummary =
+    placeholderSummary && hasOutcome
+      ? ''
+      : form.result_summary?.trim() || (failed ? 'Failed' : '');
+  const running =
+    !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
   const summary = compactToolSummary(form.tool_name, rawSummary);
   const duration = formatDuration(form.duration_ms);
+  // The running placeholder stays readable: the tool role colour is low-contrast
+  // on the light surface, so a running summary uses the neutral result colour.
+  const summaryClass = failed ? 'text-err' : running ? 'text-code-result' : role.text;
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
       <span className={`shrink-0 font-mono text-[8px] font-extrabold tracking-[0.06em] ${failed ? 'text-err' : role.text}`}>
         {toolLabel(form.tool_name)}
       </span>
-      {summary && <ToolSummary className={failed ? 'text-err' : role.text}>{summary}</ToolSummary>}
+      {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
       {duration && <span className="shrink-0 font-mono text-[8px] tabular-nums text-code-duration">{duration}</span>}
     </div>
   );
@@ -606,12 +623,12 @@ function ToolCard({ form }: { form: TranscriptForm }) {
   }
 
   return (
-    <details className={`group border-l-2 ${failed ? 'border-err' : role.border} bg-result`}>
+    <details className={`group min-w-0 border-l-2 ${failed ? 'border-err' : role.border} bg-result`}>
       <summary className="flex min-h-6 list-none cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden">
         <span className={`${disclosureClass} ${failed ? 'text-err' : role.text}`} aria-hidden="true">›</span>
         {headline}
       </summary>
-      <div className={`border-t border-code-edge bg-result px-3 py-2 text-[11px] text-code-result ${failed ? 'text-code-error-result' : ''}`}>
+      <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-3 py-2 text-[11px] text-code-result ${failed ? 'text-code-error-result' : ''}`}>
         {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4">{body}</pre> : <Markdown compact>{body}</Markdown>}
       </div>
     </details>
@@ -647,7 +664,7 @@ function FormTrace({ form }: { form: TranscriptForm }) {
       {showCode && <SyntaxCodeBlock value={code} language="python" compact />}
       {cards.length > 0 && (
         <div
-          className="grid gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"
+          className="grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"
           aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
         >
           {cards.map((card, cardIndex) => (
@@ -914,8 +931,16 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
-export const UserMessage = memo(function UserMessage({ children }: { children: string }) {
+export const UserMessage = memo(function UserMessage(
+  { children, attachments }: { children: string; attachments?: GatewayAttachment[] },
+) {
   const parts = parseUserMessage(children);
+  // Persisted user images re-render from DB-owned base64 (survives a restart even
+  // after the original clipboard/temp source file is gone). Tool artifacts render
+  // in the assistant trace, so only the `user` rail belongs in the user bubble.
+  const imageAttachments = (attachments ?? []).filter(
+    (a) => (a.source ?? 'user') === 'user' && !!a.base64 && !!a.media_type?.startsWith('image/'),
+  );
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-[10px] font-bold text-you-role">You</div>
@@ -934,6 +959,18 @@ export const UserMessage = memo(function UserMessage({ children }: { children: s
           </details>
         ))}
       </div>
+      {imageAttachments.length > 0 && (
+        <div className="mt-2 flex flex-col items-start gap-2">
+          {imageAttachments.map((att, i) => (
+            <img
+              key={att.id ?? `att-${i}`}
+              src={att.base64.startsWith('data:') ? att.base64 : `data:${att.media_type};base64,${att.base64}`}
+              alt={att.filename ?? 'attachment'}
+              className="max-h-[min(28rem,60dvh)] max-w-full w-auto rounded border border-code-edge object-contain"
+            />
+          ))}
+        </div>
+      )}
     </article>
   );
 });

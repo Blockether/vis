@@ -227,6 +227,7 @@
    HTTP 400. Returns `{:token <access-token>}`."
   (oauth/make-file-refresher
     {:load load-auth-file
+     :lock-path (str auth-file ".lock")
      :saved-at :saved-at-ms
      :refresh-token :refresh-token
      :exchange! refresh-access-token!

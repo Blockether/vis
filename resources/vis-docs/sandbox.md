@@ -112,6 +112,8 @@ network:
           path: /v1/issues/**
     - host: "*"
       access: read-only
+    - host: db.internal
+      ports: [5432]           # only Postgres; every other port on this host is denied
 
 jail:
   inbound-ports:
@@ -120,7 +122,21 @@ jail:
 
 Host denies win over allows. `read-only` means `GET`, `HEAD`, and `OPTIONS`;
 `full` allows every method; `none` denies every method. `allow` entries add
-method/path exceptions. Paths use glob matching.
+method/path exceptions. Paths use glob matching. A rule's optional `ports` list
+restricts which destination ports reach that host for EVERY protocol (HTTP(S)
+CONNECT and the SOCKS5 lane) — e.g. `ports: [22, 443]` allows only ssh + https
+to a host, `ports: [5432]` only Postgres. A rule with no `ports` allows any port
+(the default); a rule that lists only `ports` leaves verbs unrestricted.
+
+`denied-domains` under an `allowed-domains: ["*"]` (allow-all) posture is
+name-level and best-effort: a determined child can still reach a denied host by
+connecting to its resolved IP literal, since host filtering sees only the
+address it is handed. For a hard boundary, use a strict `allowed-domains`
+allowlist — it is enforced against IP-literal targets too (a non-listed IP is
+denied), and combine it with the always-on SSRF floor, which validates every
+*resolved* address (loopback reserved ports, link-local/metadata, private
+ranges) and cannot be bypassed by IP literal or DNS rebinding. This applies
+identically to HTTP(S) and the SOCKS5 lane — both share one host gate.
 
 HTTPS verb and path enforcement uses a gateway-owned ephemeral CA and TLS
 termination. Common clients receive CA environment variables, and managed JVMs
@@ -128,6 +144,15 @@ receive a temporary PKCS12 truststore. Hosts in `exclude-domains` are opaque TLS
 tunnels for certificate-pinned or otherwise incompatible clients; host policy
 still applies, but methods, paths, and plaintext network filters cannot be
 inspected there.
+
+Non-HTTP TCP (ssh, git-over-ssh, databases, arbitrary raw TCP) traverses a SOCKS5
+lane on the SAME loopback port — the proxy multiplexes it by the first byte, so
+the jail needs no extra opening. `ALL_PROXY` points non-HTTP clients at
+`socks5h://…` while `http_proxy`/`https_proxy` keep the HTTP proxy so web verb and
+path policy still apply. The SOCKS lane carries the session token in the RFC 1929
+username and enforces the same host allow/deny and SSRF floor, but no method or
+path (those protocols carry none). Tools that read no proxy environment (`ssh`
+itself) still need an explicit `ProxyCommand`.
 
 Loopback development services are reachable except Vis's reserved gateway and
 proxy ports. Link-local, cloud metadata, wildcard, and multicast destinations
@@ -163,8 +188,28 @@ vis.extension(
 ```
 
 Filters run in the gateway at the decrypted request/response boundary and fail
-closed on an exception. They receive request method, host, path, and headers;
-response phases also include status. Tunnelled hosts are intentionally opaque.
+closed on an exception. HTTP and MITM'd HTTPS pass method, host, path, and headers
+(response phases also include status). The **SOCKS5 lane runs the same filters** at
+connect time with `phase="socks"` plus host and port (no method/path — raw TCP
+carries no verb), so one guard covers both HTTP and SOCKS. Tunnelled hosts are
+intentionally opaque.
+
+### Debugging filters with `/net-probe`
+
+A filter runs in the gateway's trusted context, so a bug shows up only as "traffic
+ denied" — never a stack trace at the call site (a filter that throws **fails
+closed**). Use `/net-probe` to see, without touching the network, exactly what the
+host gate and every registered filter decide for a synthetic request:
+
+```
+/net-probe POST https://api.github.com/repos    # HTTP: method + path visible
+/net-probe github.com:22                         # bare host:port -> SOCKS phase
+```
+
+It reports the Tier-1 host/port/SSRF verdict, then **each** filter individually
+(never collapsing on the first deny) with its allow/deny reason — and, when a
+filter crashed, the fail-closed marker plus the Python **traceback**. The dev loop
+is: edit the extension `.py`, `/reload`, `/net-probe …`.
 
 ## Denying a command, then re-allowing it through a trusted extension
 
@@ -173,23 +218,36 @@ but a reviewed extension may proxy specific AWS calls." The sandbox supports thi
 because confinement is applied **per spawn**, not ambiently, and the two callers
 take different code paths to the OS.
 
-**Deny the binary in the jail.** There is no argv denylist; a command is blocked
-by denying read on its executable, because macOS requires read access to exec a
-binary. Point `jail.filesystem.deny-read` at the CLI's path:
+**Block a command with `jail.deny-exec`.** There is no argv denylist; a command
+is blocked by forbidding EXECUTION of its binary. List the command names and Vis
+resolves each on `PATH` at config-read, emitting a Seatbelt `(deny process-exec*)`
+for **every** matching executable — kernel-enforced, no leaky argv parsing:
 
 ```yaml
 jail:
-  filesystem:
-    deny-read:
-      - /opt/homebrew/bin/aws
-      - /usr/local/aws-cli
+  deny-exec: [curl, wget, ssh]
 ```
 
-Every process spawned through the jail — the managed shell (`shell_run` /
-`shell_bg`), agent tool commands, managed REPLs, and project test runners — is
-wrapped with `sandbox-exec` and inherits `(deny file-read*)` on those paths, so
-`aws …` fails to exec. Deny wins over allow, so this holds even inside an
-otherwise readable directory.
+An absolute or `~`-rooted entry (e.g. `/opt/homebrew/bin/aws`) is denied
+verbatim; an unresolvable name is a no-op. Every process spawned through the jail
+— the managed shell (`shell_run` / `shell_bg`), agent tool commands, managed
+REPLs, and project test runners — inherits the profile, so `curl …` fails to
+exec with `Operation not permitted`.
+
+This overrides the jail's blanket exec allow. Note that
+`jail.filesystem.deny-read` on a binary blocks reading its *contents* but does
+**not** stop execution on macOS (the kernel maps an allowed binary without a
+file-read check) — use `deny-exec` to actually block the command.
+
+**`deny-exec` is convenience, not containment.** It blocks a *named* binary and
+its symlinks — not the *capability*. An interpreter already on the allow-list
+substitutes trivially: with `curl` denied, `python3 -c "import urllib.request; …"`
+or `bash`'s `/dev/tcp` do the same job, and a script the child writes into a
+writable root and runs is never on your list. Treat `deny-exec` as a guardrail
+that stops the obvious/lazy invocation and trims the tool surface — the real
+egress boundary is the **network** layer (net-off, or proxy-filtered
+allow-domains + verb rules), which contains *whatever* binary tries to reach out.
+Never rely on `deny-exec` alone to keep a capability away from the child.
 
 **Re-allow it inside a trusted extension.** A Python extension runs in its own
 context with real process creation, and its subprocesses are **not** routed
@@ -307,7 +365,7 @@ The focused suites cover:
 
 - Seatbelt read/write/deny rules and nested-process inheritance;
 - direct-network denial and proxy-only egress;
-- HTTP and HTTPS MITM method/path policy;
+- HTTP and HTTPS MITM method/path policy, and the SOCKS5 lane for raw TCP;
 - session token attribution, network filters, and SSRF denial;
 - PTY/background input and attach bridge behavior;
 - managed process launch, fail-closed session lookup, CA/truststore injection;

@@ -342,7 +342,8 @@
     (assoc entry
       :activity :tool-call
       :tool/op (some-> (:op (:tool-event chunk))
-                       name))
+                       name)
+      :tool/label (:label (:tool-event chunk)))
 
     :response-parse
     (if (= :done (:status chunk))

@@ -50,7 +50,8 @@
               (let
                 [real (try (.toRealPath ancestor no-link-options)
                            (catch Throwable _ (.toAbsolutePath ancestor)))]
-                (.toString (.normalize (reduce (fn [^Path p ^String segment]
+                (.toString (.normalize ^Path
+                                       (reduce (fn [^Path p ^String segment]
                                                  (.resolve p segment))
                                                real
                                                tail))))
@@ -116,7 +117,7 @@
   (let
     [digest (.digest (MessageDigest/getInstance "SHA-256")
                      (.getBytes (pr-str (stable-value value)) StandardCharsets/UTF_8))]
-    (str "sha256:" (apply str (map #(format "%02x" (bit-and 0xff %)) digest)))))
+    (str "sha256:" (apply str (map #(format "%02x" (bit-and 0xff (long %))) digest)))))
 
 (defn snapshot
   "Build the immutable canonical security policy from validated string-keyed
@@ -228,7 +229,8 @@
 
      descriptions
      (into {}
-           (map (fn [[k v]] [(home-relative k home) v]))
+           (map (fn [[k v]]
+                  [(home-relative k home) v]))
            (:path-descriptions jail))]
 
     {"generation" (:generation policy)

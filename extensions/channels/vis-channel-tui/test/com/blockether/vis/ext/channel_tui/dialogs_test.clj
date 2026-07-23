@@ -1017,7 +1017,7 @@
              (.addInput terminal (KeyStroke. KeyType/Enter))
              (expect (= "ws-b" (:workspace-id (dlg/draft-picker! screen drafts))))
              (finally (.stopScreen screen)))))
-  (it "command palette exposes the frequent app verbs, providers distinct from settings"
+  (it "command palette exposes the frequent app verbs; Router is the single provider/settings hub"
       (let
         [palette-commands
          (var-get #'dlg/palette-commands)
@@ -1028,9 +1028,11 @@
          ids
          (set (mapv :id palette-commands))]
 
-        ;; Configure Providers and Settings stay distinct entries.
-        (expect (some #{"Configure Providers"} labels))
-        (expect (some #{"Settings"} labels))
+        ;; Providers + Settings are merged into one "Router" hub entry.
+        (expect (some #{"Router"} labels))
+        (expect (not (some #{"Configure Providers" "Settings"} labels)))
+        (expect (contains? ids :providers))
+        (expect (not (contains? ids :settings)))
         ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids

@@ -36,16 +36,19 @@
    prompt assembly, slash dispatch, `vis extensions list` all just work).
    A file that fails to load becomes a load-failure warning (surfaced via
    `vis doctor`), never a crash."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.extension-aggregate :as aggregate]
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.security-policy :as security-policy]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [org.graalvm.polyglot Context Engine EnvironmentAccess PolyglotAccess Source Value]
@@ -559,16 +562,24 @@ def __vis_registration__():
          (contains? c :status)
          (assoc "status" (:status c)))
 
+       err
+       (atom nil)
+
        res
        (try (call-py-ext ext-name nil ctx pyfn [pyctx])
             (catch Throwable t
-              (tel/log! {:level :warn
-                         :id ::network-filter-failed
-                         :data {:extension ext-name :error (ex-message t)}})
-              {"marker" "block" "reason" (str "network filter error in '" ext-name "'")}))]
+              (let [e (extension/normalize-error t)]
+                (reset! err e)
+                (tel/log! {:level :warn
+                           :id ::network-filter-failed
+                           :data {:extension ext-name :error (:message e)}})
+                {"marker" "block"
+                 "reason" (str "network filter error in '" ext-name "': " (:message e))})))]
 
       (if (and (map? res) (= "block" (get res "marker")))
-        {:allow? false :reason (str (or (get res "reason") "blocked by network filter"))}
+        (cond-> {:allow? false :reason (str (or (get res "reason") "blocked by network filter"))}
+          @err
+          (assoc :error @err))
         {:allow? true}))))
 
 ;; =============================================================================
@@ -1368,6 +1379,155 @@ def __vis_registration__():
                                             (str " — hook failures: "
                                                  (str/join ", " (map str failed-hooks)))))}))
 
+(def ^:private http-methods
+  #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})
+
+(defn- parse-probe-target
+  "Parse `/net-probe` argv `[METHOD] <url | host[:port]>` into a synthetic egress
+   `ctx`. An http(s) URL → an HTTP-phase ctx (method + path visible); a bare
+   host[:port] → a SOCKS-phase ctx (host + port only, like ssh/db). Returns
+   `{:scheme s :ctx m}` or `{:error msg}`."
+  [argv]
+  (let
+    [toks
+     (remove str/blank? argv)
+
+     [a b]
+     toks
+
+     [method target]
+     (if (and a b (contains? http-methods (str/upper-case a))) [(str/upper-case a) b] ["GET" a])]
+
+    (cond (str/blank? target) {:error "Usage: /net-probe [METHOD] <url | host[:port]>"}
+          (re-find #"(?i)^https?://" target)
+          (try (let
+                 [u
+                  (java.net.URI. target)
+
+                  host
+                  (.getHost u)
+
+                  scheme
+                  (str/lower-case (str (.getScheme u)))
+
+                  port
+                  (let [p (.getPort u)]
+                    (if (pos? p) p (if (= "https" scheme) 443 80)))
+
+                  path
+                  (let [p (.getPath u)]
+                    (if (str/blank? p) "/" p))]
+
+                 (if (str/blank? host)
+                   {:error (str "Can't parse a host out of " target)}
+                   {:scheme scheme
+                    :ctx {:phase :http :method method :host host :path path :port port}}))
+               (catch Exception e {:error (str "Bad URL: " (ex-message e))}))
+          :else (let
+                  [[h ps]
+                   (str/split target #":" 2)
+
+                   port
+                   (some-> ps
+                           str/trim
+                           parse-long)]
+
+                  (if (str/blank? h)
+                    {:error (str "Can't parse a host out of " target)}
+                    {:scheme "socks"
+                     :ctx {:phase :socks :method nil :host h :path nil :port (or port 0)}})))))
+
+(defn- session-network-policy
+  "The live compiled egress policy for the current merged config (the same path
+   the loop feeds the proxy), or nil when no network restriction is declared."
+  []
+  (try (some-> (security-policy/snapshot (or (config/load-config-raw) {}))
+               :network
+               egress/compile-policy)
+       (catch Throwable _ nil)))
+
+(defn- render-probe
+  [{:keys [scheme ctx]} {:keys [tier1 filters final]}]
+  (let
+    [{:keys [host port method path]}
+     ctx
+
+     row
+     (fn [{:keys [owner allow? reason error]}]
+       (str "  • "
+            owner
+            " → "
+            (if allow? "ALLOW" "DENY")
+            (when (and (not allow?) reason (not error)) (str " — " reason))
+            (when error
+              (str "\n      ⚠ CRASHED (fail-closed): "
+                   (:message error)
+                   (when (:trace error) (str "\n" (:trace error)))))))]
+
+    (str "Target: "
+         (str/upper-case (str scheme))
+         " "
+         (when method (str method " "))
+         host
+         ":"
+         port
+         (when path path)
+         "\n\n"
+         "Tier-1 (host / port / SSRF): "
+         (if (:allow? tier1) "ALLOW" (str "DENY — " (:reason tier1)))
+         "\n"
+         "network_filters (" (count filters)
+         "):\n" (if (seq filters) (str/join "\n" (map row filters)) "  (none registered)")
+         "\n\nFINAL: " (if (:allow? final) "ALLOW" (str "DENY — " (:reason final))))))
+
+(defn net-probe-report
+  "Guard-only egress probe for the in-sandbox `network_probe(...)` tool. Parses
+   `target` (an http(s) URL or a bare `host[:port]`), then runs the gateway's
+   Tier-1 host/port/SSRF gate + EVERY registered network filter over a SYNTHETIC
+   ctx via [[egress/probe]] — PURE: no socket, no egress, nothing is sent. Returns
+   a JSON string `{scheme, ctx, tier1, filters}` (or `{error}`) — the strings-only
+   boundary the sandbox glue `json.loads`es before merging its own local
+   `network_filter`s and printing the verdict. `method` may be blank/nil."
+  [method target]
+  (let [parsed (parse-probe-target (remove str/blank? [method target]))]
+    (if-let [e (:error parsed)]
+      (json/write-json-str {"error" e})
+      (let
+        [{:keys [scheme ctx]} parsed
+         {:keys [tier1 filters]} (egress/probe (session-network-policy) ctx)]
+
+        (json/write-json-str {"scheme" scheme
+                              "ctx" {"phase" (name (:phase ctx))
+                                     "method" (:method ctx)
+                                     "host" (:host ctx)
+                                     "path" (:path ctx)
+                                     "port" (:port ctx)
+                                     "headers" {}}
+                              "tier1" {"allow" (boolean (:allow? tier1)) "reason" (:reason tier1)}
+                              "filters" (mapv (fn [{:keys [owner allow? reason error]}]
+                                                {"owner" (str owner)
+                                                 "allow" (boolean allow?)
+                                                 "reason" reason
+                                                 "error" (when error
+                                                           {"message" (:message error)
+                                                            "trace" (:trace error)})})
+                                              filters)})))))
+
+(defn- net-probe-slash
+  "Dev/debug: run the host allow/deny gate + EVERY registered `network_filter`
+   over a synthetic request WITHOUT touching the network, and show each verdict
+   plus any Python traceback. The one loop for developing filters in-place:
+   edit the extension `.py`, `/reload`, `/net-probe …`."
+  [ctx]
+  (let [parsed (parse-probe-target (:command/argv ctx))]
+    (if-let [e (:error parsed)]
+      {:slash/status :error :slash/title "Net probe" :slash/body e}
+      (let [report (egress/probe (session-network-policy) (:ctx parsed))]
+        {:slash/status (if (:allow? (:final report)) :ok :error)
+         :slash/title (str "Net probe — " (if (:allow? (:final report)) "ALLOW" "DENY"))
+         :slash/body (render-probe parsed report)
+         :slash/data report}))))
+
 (defn- doctor-fn
   [_env]
   (vec (concat (for [{:keys [file error]} @failures]
@@ -1409,7 +1569,12 @@ def __vis_registration__():
            :slash/run-fn reload-slash}
           {:slash/name "test"
            :slash/doc "Run Python extension tests (test_*.py / *_test.py) and report pass/fail."
-           :slash/run-fn test-slash}]
+           :slash/run-fn test-slash}
+          {:slash/name "net-probe"
+           :slash/doc
+           "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."
+           :slash/usage "/net-probe [METHOD] <url | host[:port]>"
+           :slash/run-fn net-probe-slash}]
          :ext/cli
          [{:cmd/name "test"
            :cmd/internal? true

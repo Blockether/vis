@@ -8,7 +8,14 @@ export interface GatewayConn {
   /** Bearer token; required for any non-loopback / --require-token gateway. */
   token?: string;
   /** Human label shown in the connection list. */
+  /** Human label shown in the connection list. */
   label?: string;
+  /**
+   * Stable, opaque gateway instance id reported by `/healthz`. Captured on
+   * connect and used to build clean shareable links (`#/s/<sid>?gw=<id>`)
+   * instead of embedding the full gateway URL. Never a secret.
+   */
+  id?: string;
 }
 
 export interface Session {
@@ -99,6 +106,9 @@ export interface VoiceModelState {
 }
 
 export interface GatewayAttachment {
+  id?: string;
+  source?: string;
+  size?: number;
   filename: string;
   media_type: string;
   base64: string;
@@ -226,6 +236,7 @@ export interface TranscriptTurn {
   status?: string;
   prior_outcome?: string;
   content?: ContentBlock[];
+  attachments?: GatewayAttachment[];
   iterations?: TranscriptIteration[];
   model?: string;
   provider?: string;

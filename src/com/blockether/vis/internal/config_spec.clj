@@ -16,6 +16,7 @@
 (defn- positive-int? [x] (and (integer? x) (pos? (long x))))
 (defn- non-negative-number? [x] (and (number? x) (not (neg? (double x)))))
 (defn- port? [x] (and (integer? x) (<= 1 x 65535)))
+(defn- port-list? [x] (and (or (vector? x) (set? x)) (every? port? x)))
 (defn- scalar? [x] (or (string? x) (boolean? x) (number? x) (nil? x)))
 (defn- string-list? [x] (and (vector? x) (every? non-blank-string? x)))
 (def ^:private env-var-name-re #"[A-Za-z_][A-Za-z0-9_]*")
@@ -168,9 +169,9 @@
 (def cache-keys #{"path" "access"})
 (def filesystem-keys
   #{"allow-read-write" "allow-read" "allow-write" "deny-read" "deny-write" "language-caches"})
-(def jail-keys #{"filesystem" "inbound-ports" "env"})
+(def jail-keys #{"filesystem" "inbound-ports" "env" "deny-exec"})
 (def network-rule-allow-keys #{"method" "path"})
-(def network-rule-keys #{"host" "access" "methods" "allow"})
+(def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
 (def network-keys #{"allowed-domains" "denied-domains" "exclude-domains" "allow-private" "rules"})
 
 (def cache-schema
@@ -219,7 +220,8 @@
 (def jail-schema
   {"filesystem" (spec-pred ::filesystem)
    "inbound-ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
-   "env" env-var-name-list?})
+   "env" env-var-name-list?
+   "deny-exec" string-list?})
 (s/def ::jail #(closed-map? jail-schema %))
 
 (def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
@@ -231,6 +233,7 @@
    "access" (one-of #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw" "full" "all" "none"
                       "deny" "closed"})
    "methods" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))
+   "ports" port-list?
    "allow" (spec-pred ::network-rule-allows)})
 (s/def ::network-rule #(closed-map? network-rule-schema #{"host"} %))
 (s/def ::network-rules (s/coll-of ::network-rule :kind vector?))
@@ -329,7 +332,7 @@
                                       (::s/problems (explain-data config)))})))))
 
 (def process-jail-config-keys
-  #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write
+  #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write :deny-exec
     :language-cache-dirs :inbound-ports :env-passthrough :path-descriptions})
 
 (s/def ::process-jail-config
@@ -339,9 +342,14 @@
          #(every? rooted-path-list?
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
          #(s/valid? ::caches (:language-cache-dirs %))
+         #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get jail-schema "inbound-ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
-         #(let [d (:path-descriptions %)] (or (nil? d) (string-map? d)))))
+         #(let
+            [d
+             (:path-descriptions %)]
+
+            (or (nil? d) (string-map? d)))))
 
 (defn assert-process-jail-config!
   "Validate and return the exact internal policy consumed by process-jail."
@@ -353,6 +361,28 @@
                      :problems (mapv #(update % :val redact)
                                      (::s/problems (s/explain-data ::process-jail-config
                                                                    policy)))}))))
+
+(defn- resolve-exec-denies
+  "Resolve `jail.deny-exec` entries into absolute executable paths that the jail
+   forbids from being EXECUTED (a Seatbelt `(deny process-exec* ...)`, which
+   overrides the blanket exec allow — kernel-enforced, no leaky argv parsing).
+   A bare name is looked up on every PATH directory (all matches denied); an
+   absolute/home path is denied verbatim."
+  [names]
+  (let
+    [dirs (some-> (System/getenv "PATH")
+                  (str/split (re-pattern java.io.File/pathSeparator)))]
+    (into []
+          (comp (mapcat (fn [n]
+                          (let [n (str n)]
+                            (if (or (str/starts-with? n "/") (str/starts-with? n "~"))
+                              [n]
+                              (into []
+                                    (comp (map #(str % java.io.File/separator n))
+                                          (filter #(.canExecute (java.io.File. ^String %))))
+                                    dirs)))))
+                (distinct))
+          names)))
 
 (defn process-jail-config
   "Derive the internal process-jail policy from validated string-keyed config."
@@ -371,11 +401,13 @@
             (grant-descriptions (get fs "allow-write")))]
 
     (assert-process-jail-config! {:disabled? (= false (get config "sandbox"))
-                                  :allow-read-write (into [] (keep grant-path) (get fs "allow-read-write"))
+                                  :allow-read-write
+                                  (into [] (keep grant-path) (get fs "allow-read-write"))
                                   :allow-read (into [] (keep grant-path) (get fs "allow-read"))
                                   :allow-write (into [] (keep grant-path) (get fs "allow-write"))
                                   :deny-read (vec (get fs "deny-read"))
                                   :deny-write (vec (get fs "deny-write"))
+                                  :deny-exec (resolve-exec-denies (get jail "deny-exec"))
                                   :language-cache-dirs (vec (get fs "language-caches"))
                                   :inbound-ports (vec (get jail "inbound-ports"))
                                   :env-passthrough (vec (get jail "env"))
@@ -395,6 +427,9 @@
 
     (contains? rule "methods")
     (assoc :methods (get rule "methods"))
+
+    (contains? rule "ports")
+    (assoc :ports (get rule "ports"))
 
     (contains? rule "allow")
     (assoc :allow (mapv network-allow->runtime (get rule "allow")))))

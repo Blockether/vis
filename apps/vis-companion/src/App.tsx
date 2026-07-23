@@ -18,6 +18,7 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
+import { parseRoute, sessionHash, tabHash } from './lib/router';
 
 type Tab = 'sessions' | 'connect';
 
@@ -74,6 +75,59 @@ export function App() {
     setOpenTarget({ conn, sid, fresh });
   }, []);
 
+  // Hash routing: a session is a shareable URL (#/s/<sid>?gw=<gateway-url>).
+  // Apply the current hash to view state, and follow browser back/forward and
+  // pasted links via `hashchange`. Opening still needs the gateway paired
+  // locally (its bearer token is never in the link).
+  const applyRoute = useCallback(
+    (hash: string) => {
+      const route = parseRoute(hash);
+      if (route.name === 'session') {
+        const conn =
+          (route.gw && conns.find((c) => c.id === route.gw || c.url === route.gw)) || active;
+        if (conn) {
+          void openGatewaySession(conn, route.sid);
+          return;
+        }
+        setOpenTarget(null);
+        setTab('connect');
+        return;
+      }
+      setOpenTarget(null);
+      setTab(route.name === 'connect' ? 'connect' : 'sessions');
+    },
+    [conns, active, openGatewaySession],
+  );
+
+  // Apply the initial hash once connections are loaded, then track hashchange.
+  const [routeApplied, setRouteApplied] = useState(false);
+  useEffect(() => {
+    if (!ready) return;
+    if (!routeApplied) {
+      applyRoute(window.location.hash);
+      setRouteApplied(true);
+    }
+    const onHash = () => applyRoute(window.location.hash);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [ready, routeApplied, applyRoute]);
+
+  // Reflect view state back into the URL so the address bar is always shareable.
+  useEffect(() => {
+    if (!ready || !routeApplied) return;
+    // Prefer the freshest captured gateway id (backfilled after open) over the
+    // one snapshotted into openTarget, so the shareable URL cleans up in place.
+    const gwId =
+      conns.find((c) => c.url === openTarget?.conn.url)?.id ?? openTarget?.conn.id;
+    const desired = openTarget
+      ? sessionHash(openTarget.sid, gwId)
+      : tabHash(tab === 'connect' ? 'connect' : 'sessions');
+    const current = window.location.hash || '#/';
+    if (current !== desired) {
+      history.replaceState(null, '', desired);
+    }
+  }, [openTarget, tab, ready, routeApplied, conns]);
+
   useEffect(() => {
     void refresh().finally(() => setReady(true));
   }, [refresh]);
@@ -106,6 +160,36 @@ export function App() {
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [active]);
+
+  // Backfill each paired gateway's stable id (from /healthz) so a shareable link
+  // can name its gateway by id instead of leaking the gateway URL. Cheap: it
+  // only probes a connection that has no id captured yet, then converges.
+  useEffect(() => {
+    const missing = conns.filter((c) => !c.id);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    const ctrl = new AbortController();
+    void (async () => {
+      let changed = false;
+      for (const conn of missing) {
+        const id = await new GatewayClient(conn).identify(ctrl.signal).catch(() => null);
+        if (id) {
+          await upsertConnection({ ...conn, id });
+          changed = true;
+        }
+      }
+      if (changed && !cancelled) {
+        const next = await loadConnections();
+        if (cancelled) return;
+        setConns(next);
+        setActive(await getActiveConnection());
+      }
+    })();
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
+  }, [conns]);
 
   // Restore the bounded, per-gateway watch list. One multiplexed SSE stream
   // keeps every visited session live even while another view is open.

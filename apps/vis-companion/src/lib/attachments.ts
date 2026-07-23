@@ -94,3 +94,40 @@ export async function pickImageAttachments({
   }
   return { attachments, rejected };
 }
+
+// Native camera capture (iOS/Android) via the official @capacitor/camera plugin.
+// This is SPM-compatible, so it links into the Capacitor 8 iOS project cleanly —
+// unlike the ML Kit barcode scanner, whose GoogleMLKit dependency is CocoaPods-only.
+export async function captureCameraAttachment({
+  maxFileBytes = 5 * 1024 * 1024,
+}: { maxFileBytes?: number } = {}): Promise<PendingAttachment | null> {
+  const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+  const permission = await Camera.requestPermissions({ permissions: ['camera'] });
+  if (permission.camera === 'denied') {
+    throw new Error('Camera access was denied — enable it in Settings');
+  }
+  const photo = await Camera.getPhoto({
+    quality: 82,
+    allowEditing: false,
+    resultType: CameraResultType.Base64,
+    source: CameraSource.Camera,
+    saveToGallery: false,
+  });
+  if (!photo.base64String) return null;
+  const format = (photo.format || 'jpeg').toLowerCase();
+  const media_type = `image/${format === 'jpg' ? 'jpeg' : format}`;
+  const previewUrl = `data:${media_type};base64,${photo.base64String}`;
+  // base64String is raw (no data: prefix); size approximates decoded bytes.
+  const size = Math.floor((photo.base64String.length * 3) / 4);
+  if (size > maxFileBytes) {
+    throw new Error(`Photo is larger than ${Math.round(maxFileBytes / 1024 / 1024)} MB`);
+  }
+  return {
+    id: crypto.randomUUID(),
+    filename: `camera-${Date.now()}.${format === 'jpeg' ? 'jpg' : format}`,
+    media_type,
+    base64: previewUrl,
+    previewUrl,
+    size,
+  };
+}

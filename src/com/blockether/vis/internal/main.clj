@@ -2335,7 +2335,7 @@
 (defn- gateway-provider-status-safe
   [provider-id]
   (try (gateway-client/provider-status provider-id)
-       (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))})))
+       (catch Throwable e {"is_authenticated" false "error" (or (ex-message e) (str e))})))
 
 (defn- gateway-provider-limits-safe
   [provider-id]
@@ -2447,7 +2447,7 @@
   [provider]
   (let
     [status
-     (or (configured-provider-status provider) {:is-authenticated false})
+     (or (configured-provider-status provider) {"is_authenticated" false})
 
      provider-id
      (:provider/id provider)
@@ -2458,13 +2458,13 @@
      rows
      (->> status
           (remove (fn [[k _]]
-                    (= k :is-authenticated)))
+                    (= k "is_authenticated")))
           (sort-by (comp str key)))]
 
     (stdout! (str "\n  " (:provider/label provider) " Provider Status"))
     (stdout! "  ─────────────────────────────────")
     (when base-url (stdout! (str "  Base URL:       " base-url)))
-    (stdout! (str "  Authenticated:  " (if (:is-authenticated status) "yes" "no")))
+    (stdout! (str "  Authenticated:  " (if (get status "is_authenticated") "yes" "no")))
     (doseq [[k v] rows]
       (stdout! (str "  "
                     (commandline/pad-right (str (status-entry-label k) ":") 15)
@@ -2499,7 +2499,7 @@
 
              {:id (name (:provider/id provider))
               :label (:provider/label provider)
-              :auth (if (:is-authenticated status) "yes" "no")
+              :auth (if (get status "is_authenticated") "yes" "no")
               :rpm (or (some-> report
                                :static
                                :rpm

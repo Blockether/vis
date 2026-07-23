@@ -86,32 +86,45 @@
                  {"method" m "path" (or (nm (:path a)) "*")}))
              al)))
 
+(defn- ports-of
+  "Normalize a rule's `:ports` (scalar or coll of ints / numeric strings) to a set of longs."
+  [ps]
+  (into #{}
+        (keep (fn [p]
+                (cond (integer? p) (long p)
+                      (string? p) (try (Long/parseLong (str/trim p)) (catch Exception _ nil))
+                      :else nil)))
+        (if (coll? ps) ps [ps])))
+
 (defn normalize-rules
   "Normalize the `:rules` list into a vector of
-   `{\"host\" h \"methods\" #{UPPER…} \"allow\" [{\"method\" M \"path\" P}…]}`."
+   `{\"host\" h \"methods\" #{UPPER…} \"allow\" [{\"method\" M \"path\" P}…] \"ports\" #{int…}}`.
+   Multiple rules for one host merge (union) their methods, allow-exceptions, and ports."
   [{:keys [rules]}]
   (let
     [add
-     (fn [m h ms al]
+     (fn [m h ms al ps]
        (cond-> m
-         (and h (or (seq ms) (seq al)))
+         (and h (or (seq ms) (seq al) (seq ps)))
          (update h
                  (fn [e]
-                   (-> (or e {:methods #{} :allow []})
+                   (-> (or e {:methods #{} :allow [] :ports #{}})
                        (update :methods into ms)
-                       (update :allow into al))))))
+                       (update :allow into al)
+                       (update :ports into ps))))))
 
      acc
      (reduce (fn [m r]
                (add m
                     (host-key (:host r))
                     (into (access->methods (:access r)) (methods-of (:methods r)))
-                    (allow-of (:allow r))))
+                    (allow-of (:allow r))
+                    (ports-of (:ports r))))
              {}
              rules)]
 
-    (mapv (fn [[h {:keys [methods allow]}]]
-            {"host" h "methods" methods "allow" allow})
+    (mapv (fn [[h {:keys [methods allow ports]}]]
+            {"host" h "methods" methods "allow" allow "ports" ports})
           acc)))
 
 
@@ -208,32 +221,40 @@
      allow
      (get rule "allow")]
 
-    (or (contains? methods "*")
+    ;; A rule that declares NO verb constraint (only `:ports`) never restricts verbs.
+    (or (and (empty? methods) (empty? allow))
+        (contains? methods "*")
         (contains? methods method)
         (boolean (some (fn [a]
                          (and (or (= (get a "method") "*") (= (get a "method") method))
                               (path-matches? (get a "path") path)))
                        allow)))))
 
+(defn- port-ok?
+  "Nil/empty rule `:ports` ⇒ any port. Otherwise `port` must be listed."
+  [rule port]
+  (let [ports (get rule "ports")]
+    (or (empty? ports) (nil? port) (contains? ports (long port)))))
+
 (defn decide
-  "Decide a request. `method`/`path` nil ⇒ HTTPS CONNECT (host-only). Returns
-   `{:allow? bool :reason str}`."
-  [policy method host path]
-  (cond (nil? policy) {:allow? true}
-        (:deny-all? policy) {:allow? false :reason (:reason policy "vis: egress denied")}
-        (not (host-ok? policy host)) {:allow? false :reason (str "host not permitted: " host)}
-        (nil? method) {:allow? true} ; CONNECT: host-only
-        :else (let
-                [m
-                 (str/upper-case (str method))
-
-                 rule
-                 (rule-for-host (:rules policy) host)]
-
-                (if (or (nil? rule) (method-path-ok? rule m path))
-                  {:allow? true}
-                  {:allow? false
-                   :reason (str "method " m " " path " not allowed for host " host)}))))
+  "Decide a request. `method`/`path` nil ⇒ HTTPS CONNECT / SOCKS (host+port only).
+   The 5-arity `port` is enforced against the matched host rule's `:ports` (when the
+   rule declares any) for EVERY protocol. Returns `{:allow? bool :reason str}`."
+  ([policy method host path] (decide policy method host path nil))
+  ([policy method host path port]
+   (cond (nil? policy) {:allow? true}
+         (:deny-all? policy) {:allow? false :reason (:reason policy "vis: egress denied")}
+         (not (host-ok? policy host)) {:allow? false :reason (str "host not permitted: " host)}
+         :else (let [rule (rule-for-host (:rules policy) host)]
+                 (cond (and rule (not (port-ok? rule port)))
+                       {:allow? false :reason (str "port " port " not allowed for host " host)}
+                       (nil? method) {:allow? true} ; CONNECT/SOCKS: host+port only
+                       :else (let [m (str/upper-case (str method))]
+                               (if (or (nil? rule) (method-path-ok? rule m path))
+                                 {:allow? true}
+                                 {:allow? false
+                                  :reason
+                                  (str "method " m " " path " not allowed for host " host)})))))))
 
 (defn mitm-excluded?
   "True when `host` matches the policy's `:exclude-domains` — a client MITM cannot
@@ -408,11 +429,61 @@
 
 (defn decide+filter
   "Tier-1 `decide` then, only if allowed, the Tier-2 registered request filters.
-   `req` = `{:phase :method :host :path :headers}`."
-  [policy {:keys [method host path] :as req}]
-  (let [d (decide policy method host path)]
+   `req` = `{:phase :method :host :path :port :headers}`."
+  [policy {:keys [method host path port] :as req}]
+  (let [d (decide policy method host path port)]
     (if (:allow? d) (apply-network-filters req) d)))
 
+(defn- filter-error
+  "Pull a structured error out of a filter's RAW return (the network-filter
+   adapter carries `:error {:message :trace}` when a Python filter threw)."
+  [raw]
+  (when (map? raw) (or (get raw :error) (get raw "error"))))
+
+(defn probe
+  "DEV/DEBUG probe: run Tier-1 `decide` then EACH registered network filter
+   individually over a synthetic `ctx`, WITHOUT collapsing on the first deny —
+   so you see every filter's verdict AND its Python traceback. Pure: no socket,
+   no egress, no MITM. `ctx` = `{:phase :method :host :path :port :headers}`.
+   Returns
+     {:tier1   {:allow? … :reason …}                 ; host allow/deny + SSRF + port
+      :filters [{:owner o :allow? b :reason s :error {:message :trace}}] ; per filter
+      :final   {:allow? b :reason s}}                 ; the verdict egress would use"
+  [policy {:keys [method host path port] :as ctx}]
+  (let
+    [tier1
+     (decide policy method host path port)
+
+     per
+     (when (:allow? tier1)
+       (vec (for
+              [[owner fs]
+               @network-filters
+
+               f
+               fs]
+
+              (let
+                [r (try (let
+                          [raw (f ctx)
+                           d (filter-decision raw)]
+
+                          (assoc d :error (filter-error raw)))
+                        (catch Throwable t
+                          {:allow? false
+                           :reason (str "filter threw: " (.getMessage t))
+                           :error {:message (.getMessage t)}}))]
+                {:owner owner :allow? (:allow? r) :reason (:reason r) :error (:error r)}))))
+
+     denied
+     (first (filter #(false? (:allow? %)) per))
+
+     final
+     (cond (not (:allow? tier1)) tier1
+           denied (select-keys denied [:allow? :reason])
+           :else {:allow? true})]
+
+    {:tier1 tier1 :filters (or per []) :final final}))
 
 ;; ============================================================================
 ;; Wire protocol helpers
@@ -736,7 +807,7 @@
      (try (Integer/parseInt (str/trim (or port-s "443"))) (catch Exception _ 443))
 
      {:keys [allow? reason]}
-     (decide policy nil host nil)]
+     (decide policy nil host nil port)]
 
     (if-not allow?
       (do (on-log {:phase :connect :host host :allow? false :reason reason})
@@ -782,7 +853,7 @@
        (str (if (str/blank? p) "/" p) (when q (str "?" q))))
 
      req
-     {:phase :http :method method :host host :path path :headers (headers->map headers)}
+     {:phase :http :method method :host host :path path :port port :headers (headers->map headers)}
 
      {:keys [allow? reason]}
      (decide+filter policy req)
@@ -837,45 +908,203 @@
                               (catch Throwable _ nil)))
                        (finally (try (.close upstream) (catch Throwable _ nil))))))))
 
+;; ============================================================================
+;; SOCKS5 lane (RFC 1928 + RFC 1929) — the generic-TCP door for ssh / git+ssh /
+;; databases / any raw TCP the jail's net-off-except-loopback wall would block.
+;; Multiplexed on the SAME loopback port as the HTTP proxy: the first byte of a
+;; SOCKS5 greeting is 0x05, never a printable HTTP method letter (G/P/C/…), so
+;; ONE listener serves both and the jail profile needs only one allowed port.
+;; Enforcement = host-level allow/deny + the SSRF floor (same policy as an HTTPS
+;; CONNECT). No verb/path — ssh/postgres/raw TCP carry none.
+;; ============================================================================
+
+(defn- read-n
+  "Read exactly `n` bytes from `in` into a fresh array, or nil on early EOF."
+  ^bytes [^InputStream in ^long n]
+  (let [buf (byte-array n)]
+    (loop [off 0]
+      (if (= off n)
+        buf
+        (let [r (.read in buf off (- n off))]
+          (if (neg? r) nil (recur (+ off r))))))))
+
+(defn- socks-reply
+  "Write a SOCKS5 reply (RFC 1928 §6) with code `rep` and a null BND (0.0.0.0:0)."
+  [^OutputStream out rep]
+  (.write out (byte-array (map unchecked-byte [0x05 rep 0x00 0x01 0 0 0 0 0 0])))
+  (.flush out))
+
+(defn- socks-connect
+  "Read the SOCKS5 CONNECT request, apply host+port allow/deny, the registered
+   network filters (Tier-2, host+port ctx — same guard as HTTP), and the SSRF
+   floor under the token's `policy`, then a raw byte relay on success. `token` came from the
+   RFC 1929 username (nil ⇒ no-auth ⇒ fails closed if the policy needs a token)."
+  [^ExecutorService pool ^Socket client ^InputStream cin ^OutputStream cout policy-fn on-log token]
+  (let
+    [ver
+     (.read cin)
+
+     cmd
+     (.read cin)
+
+     _rsv
+     (.read cin)
+
+     atyp
+     (.read cin)
+
+     host
+     (case atyp
+       1
+       (when-let [b (read-n cin 4)]
+         (.getHostAddress (InetAddress/getByAddress b)))
+
+       4
+       (when-let [b (read-n cin 16)]
+         (.getHostAddress (InetAddress/getByAddress b)))
+
+       3
+       (let [l (.read cin)]
+         (when (and l (pos? l))
+           (when-let [b (read-n cin l)]
+             (String. ^bytes b "UTF-8"))))
+
+       nil)
+
+     ^bytes pb
+     (read-n cin 2)
+
+     port
+     (when pb
+       (bit-or (bit-shift-left (bit-and 0xff (long (aget pb 0))) 8)
+               (bit-and 0xff (long (aget pb 1)))))
+
+     policy
+     (try (policy-fn token) (catch Throwable _ nil))]
+
+    (cond (not= ver 5) nil
+          (not= cmd 1) (socks-reply cout 0x07) ; command not supported
+          (nil? host) (socks-reply cout 0x08) ; address type not supported
+          (:proxy-auth-required? policy)
+          (do (on-log {:phase :socks :host host :allow? false :reason "auth required"})
+              (socks-reply cout 0x02))
+          :else
+          (let
+            [{:keys [allow? reason]} (decide+filter policy {:phase :socks :host host :port port})]
+            (if-not allow?
+              (do (on-log {:phase :socks :host host :allow? false :reason reason})
+                  (socks-reply cout 0x02)) ; connection not allowed by ruleset
+              (let [{:keys [addr blocked]} (safe-upstream-address host port policy)]
+                (if blocked
+                  (do (on-log {:phase :socks :host host :allow? false :reason blocked})
+                      (socks-reply cout 0x02))
+                  (let [upstream (Socket.)]
+                    (try (.connect upstream (InetSocketAddress. ^InetAddress addr (int port)) 15000)
+                         (on-log {:phase :socks :host host :port port :allow? true})
+                         (socks-reply cout 0x00)
+                         (splice pool client upstream)
+                         (catch Throwable _ (try (socks-reply cout 0x05) (catch Throwable _ nil)))
+                         (finally (try (.close upstream) (catch Throwable _ nil))))))))))))
+
+(defn- handle-socks5
+  "Serve one SOCKS5 exchange: method negotiation (RFC 1928 §3) with optional
+   username/password auth (RFC 1929) carrying the session token, then CONNECT.
+   Prefers user/pass when offered so the token attributes the connection; falls
+   back to no-auth (nil token ⇒ fails closed under a token-required policy)."
+  [^ExecutorService pool ^Socket client ^InputStream cin ^OutputStream cout policy-fn on-log]
+  (let [ver (.read cin)] ; 0x05, peeked + unread in handle-client
+    (when (= ver 5)
+      (let
+        [nm (.read cin)
+         methods (when (and nm (pos? nm)) (read-n cin nm))
+         offered (set (map #(bit-and 0xff (long %)) (or methods [])))]
+
+        (cond (contains? offered 0x02)
+              (do (.write cout (byte-array (map unchecked-byte [0x05 0x02])))
+                  (.flush cout)
+                  (let
+                    [_av (.read cin) ; auth version 0x01
+                     ulen (.read cin)
+                     uname (when (and ulen (pos? ulen)) (read-n cin ulen))
+                     plen (.read cin)
+                     _pw (when (and plen (pos? plen)) (read-n cin plen))
+                     token (when uname (String. ^bytes uname "UTF-8"))]
+
+                    (.write cout (byte-array (map unchecked-byte [0x01 0x00]))) ; auth OK
+                    (.flush cout)
+                    (socks-connect pool
+                                   client
+                                   cin
+                                   cout
+                                   policy-fn
+                                   on-log
+                                   (when-not (str/blank? token) token))))
+              (contains? offered 0x00) (do
+                                         (.write cout (byte-array (map unchecked-byte [0x05 0x00])))
+                                         (.flush cout)
+                                         (socks-connect pool client cin cout policy-fn on-log nil))
+              :else (do (.write cout (byte-array (map unchecked-byte [0x05 0xFF]))) ; no acceptable method
+                        (.flush cout)))))))
+
 (defn- handle-client
   [^ExecutorService pool ^Socket client policy-fn mitm on-log]
   (try (.setSoTimeout client 30000)
        (let
          [cin
-          (.getInputStream client)
+          (java.io.PushbackInputStream. (.getInputStream client) 1)
 
           cout
           (.getOutputStream client)
 
-          line
-          (read-line-bytes cin)
+          b0
+          (.read cin)]
 
-          rl
-          (parse-request-line line)]
+         (cond (neg? b0) nil
+               ;; SOCKS5 greeting starts 0x05 — the generic-TCP lane (ssh/db/raw TCP).
+               (= b0 0x05) (do (.unread cin b0)
+                               (handle-socks5 pool client cin cout policy-fn on-log))
+               :else (do
+                       (.unread cin b0)
+                       (let
+                         [line
+                          (read-line-bytes cin)
 
-         (if-not rl
-           nil
-           (let
-             [[method target version]
-              rl
+                          rl
+                          (parse-request-line line)]
 
-              ;; Read headers ONCE, up front, for both CONNECT and plain HTTP:
-              ;; the session token lives in `Proxy-Authorization`, so the policy
-              ;; can only be resolved AFTER the headers are in hand.
-              headers
-              (read-headers cin)
+                         (if-not rl
+                           nil
+                           (let
+                             [[method target version]
+                              rl
 
-              token
-              (proxy-auth-token headers)
+                              ;; Read headers ONCE, up front, for both CONNECT and plain HTTP:
+                              ;; the session token lives in `Proxy-Authorization`, so the policy
+                              ;; can only be resolved AFTER the headers are in hand.
+                              headers
+                              (read-headers cin)
 
-              policy
-              (try (policy-fn token) (catch Throwable _ nil))]
+                              token
+                              (proxy-auth-token headers)
 
-             (if (:proxy-auth-required? policy)
-               (proxy-auth-response cout (:reason policy "vis: proxy authentication required"))
-               (if (= (str/upper-case method) "CONNECT")
-                 (handle-connect pool client cout target policy mitm on-log)
-                 (handle-http pool client cout method target version headers policy on-log))))))
+                              policy
+                              (try (policy-fn token) (catch Throwable _ nil))]
+
+                             (if (:proxy-auth-required? policy)
+                               (proxy-auth-response cout
+                                                    (:reason policy
+                                                             "vis: proxy authentication required"))
+                               (if (= (str/upper-case method) "CONNECT")
+                                 (handle-connect pool client cout target policy mitm on-log)
+                                 (handle-http pool
+                                              client
+                                              cout
+                                              method
+                                              target
+                                              version
+                                              headers
+                                              policy
+                                              on-log)))))))))
        (catch Throwable _ nil)
        (finally (try (.close client) (catch Throwable _ nil)))))
 

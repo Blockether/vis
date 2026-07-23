@@ -462,6 +462,24 @@
   (let [text (force (:text hit))]
     (when-not (str/blank? text) (copy-bubble! text))))
 
+(defn- selection-copy-payload
+  "Text for a released transcript drag selection.
+
+   The virtual-document rebuild (`doc-text`) is preferred because it survives
+   auto-scroll — rows dragged off-screen before release still copy. But that
+   rebuild can desync from the on-screen paint (an `:idx` miss or coordinate
+   drift on a live / expanded-disclosure bubble) and return blank while the
+   user still sees a highlight. When that happens, fall back to the exact
+   painted cells the highlight was drawn from (`screen-cell-text-fn`) so a
+   VISIBLE selection ALWAYS copies instead of silently no-op'ing.
+
+   Only the transcript source has the two-path split; other sources already
+   extract straight from screen cells, so `doc-text` is returned as-is."
+  [source doc-text screen-cell-text-fn]
+  (if (and (= source :transcript) (str/blank? doc-text))
+    (screen-cell-text-fn)
+    doc-text))
+
 (defn- handle-channel-event!
   [{:keys [op id text level ttl-ms] :as event}]
   (case op
@@ -2298,6 +2316,28 @@
 
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
+
+(defn- open-settings-modal!
+  "Open Settings as a sub-modal of the Router hub.
+
+   The Router (`provider/show-provider-dialog!`) hands this in as its
+   `:open-settings` callback and invokes it from INSIDE its own dialog loop,
+   which already holds `draw-lock` via `with-dialog-lock`; so this must NOT
+   re-grab the lock. Top-level callers (command palette) wrap it in
+   `with-dialog-lock` themselves. Live `:on-change` and the returned value
+   both dispatch `:update-settings`, so a tweak applies whether the user
+   edits a row or just closes. Repaints the chat frame so a live theme change
+   shows immediately. Returns nil."
+  [^TerminalScreen screen]
+  (when-let [s (dlg/settings-dialog!
+                 screen
+                 (:settings @state/app-db)
+                 {:on-change
+                  (fn [settings]
+                    (state/dispatch [:update-settings settings])
+                    (repaint-chat-frame! screen))})]
+    (state/dispatch [:update-settings s]))
+  nil)
 
 (def ^:private view-churn-keys
   "app-db keys the render thread mutates as bookkeeping only — never part of the
@@ -4830,23 +4870,42 @@
                   (if-let [current-id (or (:id choice) (current-session-id))]
                     (let
                       [db (vis/db-info)
-                       ;; Each fork gets its own workspace pin (1:1).
-                       ;; Mint a fresh rift clone of cwd for the new state.
-                       ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                       ;; A whole-session fork must become a NEW independent
+                       ;; session (its own soul -> its own tab). db-fork-session!
+                       ;; keeps the SAME soul (a prompt/model branch surfaced in
+                       ;; the fork tree), which can NEVER open as a distinct tab:
+                       ;; resume-session resolves it back to the source soul and
+                       ;; :open-session-tab just refocuses the source tab. So fork
+                       ;; THROUGH the last turn instead - exactly like fork-at-turn
+                       ;; with no picker - which mints a fresh soul + copies every
+                       ;; turn.
+                       turns (try (vis/db-list-session-turns db current-id)
                                   (catch Throwable _ nil))
-                       fork-state-id (try (vis/db-fork-session! db current-id {:workspace-id ws-id})
-                                          (catch Throwable _ nil))]
+                       through-turn-id (:id (last turns))]
 
-                      (if fork-state-id
-                        (if-let [session-result (chat/resume-session fork-state-id)]
-                          (do (open-session-tab! session-result false)
-                              (vis/notify! "Forked current session"
-                                           :level :success
+                      (if through-turn-id
+                        (let
+                          [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                      (catch Throwable _ nil))
+                           fork-state-id (try (vis/db-fork-session-at-turn!
+                                                db
+                                                current-id
+                                                {:workspace-id ws-id
+                                                 :through-turn-id through-turn-id})
+                                              (catch Throwable _ nil))]
+                          (if fork-state-id
+                            (if-let [session-result (chat/resume-session fork-state-id)]
+                              (do (open-session-tab! session-result false)
+                                  (vis/notify! "Forked current session"
+                                               :level :success
+                                               :ttl-ms copy-success-ttl-ms))
+                              (vis/notify! "Forked, but failed to reload session"
+                                           :level :warn
                                            :ttl-ms copy-success-ttl-ms))
-                          (vis/notify! "Forked, but failed to reload session"
-                                       :level :warn
-                                       :ttl-ms copy-success-ttl-ms))
-                        (vis/notify! "Could not fork current session"
+                            (vis/notify! "Could not fork current session"
+                                         :level :warn
+                                         :ttl-ms copy-success-ttl-ms)))
+                        (vis/notify! "No turns to fork from yet"
                                      :level :warn
                                      :ttl-ms copy-success-ttl-ms)))
                     (vis/notify! "No current session to fork"
@@ -5876,6 +5935,11 @@
                               bubble-hit
                               (when (and simple-click? (not= source :input) (not disclosure-hit))
                                 (bubble-copy-hit screen-point transcript-bubble-copy-regions))
+                              toggle-detail-hit
+                              (when (and simple-click? (not= source :input)
+                                         (not disclosure-hit) (not bubble-hit))
+                                (let [h (cr/lookup mx my)]
+                                  (when (= :toggle-details (:kind h)) h)))
                               screen-sel (selection/document->screen-selection sel
                                                                                selection-viewport)
                               ;; Transcript copy always rebuilds from the
@@ -5887,25 +5951,37 @@
                               ;; bubble's visible rows (see `visible-projected`),
                               ;; so a streaming bubble inside the range copies
                               ;; what the user sees instead of the placeholder IR.
-                              payload (if (= source :transcript)
-                                        (selected-transcript-text
-                                          (:messages db)
-                                          (:layout db)
-                                          cols
-                                          (:settings db)
-                                          {:session-id (get-in db [:session :id])
-                                           :detail-expansions (:detail-expansions db)}
-                                          sel)
-                                        (selection/selected-text (get-in db [:layout :screen-cells])
-                                                                 screen-sel
-                                                                 (selectable-ranges-for-source
-                                                                   source
-                                                                   transcript-selectable-ranges
-                                                                   input-selectable-ranges)))]
+                              screen-cell-text
+                              (fn []
+                                (selection/selected-text (get-in db [:layout :screen-cells])
+                                                         screen-sel
+                                                         (selectable-ranges-for-source
+                                                           source
+                                                           transcript-selectable-ranges
+                                                           input-selectable-ranges)))
+
+                              doc-text
+                              (if (= source :transcript)
+                                (selected-transcript-text
+                                  (:messages db)
+                                  (:layout db)
+                                  cols
+                                  (:settings db)
+                                  {:session-id (get-in db [:session :id])
+                                   :detail-expansions (:detail-expansions db)}
+                                  sel)
+                                (screen-cell-text))
+
+                              payload
+                              (selection-copy-payload source doc-text screen-cell-text)]
 
                              (state/dispatch [:clear-mouse-selection])
                              (cond disclosure-hit (copy-bubble! (:text disclosure-hit))
                                    bubble-hit (copy-bubble-hit! bubble-hit)
+                                   toggle-detail-hit
+                                   (state/dispatch [:toggle-detail (:session-id toggle-detail-hit)
+                                                    (:node-id toggle-detail-hit)
+                                                    (:collapsed? toggle-detail-hit)])
                                    (and (not simple-click?) (not (str/blank? payload)))
                                    (copy-selection! payload source)))
                            (when (and (not was-dragging?) (not already-handled?))
@@ -6012,7 +6088,8 @@
                        ;; freeze the input loop's redraw cadence.
                        (= atype MouseActionType/CLICK_DOWN)
                        (do
-                         (if-let [hit (cr/lookup mx my)]
+                         (let [hit (cr/lookup mx my)]
+                          (if (and hit (not= :toggle-details (:kind hit)))
                            (do
                              ;; Tell the matching CLICK_RELEASE in
                              ;; the same gesture pair to skip the
@@ -6168,7 +6245,7 @@
                                    (vreset! mouse-selection-line? (boolean line-sel))
                                    (state/dispatch
                                      [:set-mouse-selection
-                                      {:anchor doc-anchor :focus doc-focus :source source}]))))))
+                                      {:anchor doc-anchor :focus doc-focus :source source}])))))))
                          (recur))
                        ;; Every other click - inside the input box,
                        ;; on the footer, etc. - falls through here.
@@ -6402,7 +6479,8 @@
                                   (when-let
                                     [c (with-dialog-lock #(provider/show-provider-dialog!
                                                             screen
-                                                            (:config @state/app-db)))]
+                                                            (:config @state/app-db)
+                                                            {:open-settings (fn [] (open-settings-modal! screen))}))]
                                     (state/dispatch [:set-config c])
                                     (state/dispatch [:force-provider-limits-refresh]))
 
@@ -6410,21 +6488,10 @@
                                   (when-let
                                     [c (with-dialog-lock #(provider/show-provider-dialog!
                                                             screen
-                                                            (:config @state/app-db)))]
+                                                            (:config @state/app-db)
+                                                            {:open-settings (fn [] (open-settings-modal! screen))}))]
                                     (state/dispatch [:set-config c])
                                     (state/dispatch [:force-provider-limits-refresh]))
-
-                                  :settings
-                                  (when-let
-                                    [s (with-dialog-lock #(dlg/settings-dialog!
-                                                            screen
-                                                            (:settings @state/app-db)
-                                                            {:on-change
-                                                             (fn [settings]
-                                                               (state/dispatch [:update-settings
-                                                                                settings])
-                                                               (repaint-chat-frame! screen))}))]
-                                    (state/dispatch [:update-settings s]))
 
                                   ;; App verbs reachable from the palette (Ctrl+P)
                                   ;; in addition to their direct keys — the palette
@@ -6774,14 +6841,15 @@
                          :switch-project
                          (do (switch-project!) (recur))
 
-                         ;; Ctrl+B: provider / model configuration dialog (also
-                         ;; reachable via the Ctrl+P palette → "Configure Providers").
+                         ;; Ctrl+B: opens the Router (providers + settings hub; also
+                         ;; reachable via the Ctrl+P palette → "Router").
                          :providers
                          (do (when-not (:dialog-open? @state/app-db)
                                (when-let
                                  [c (with-dialog-lock #(provider/show-provider-dialog!
                                                          screen
-                                                         (:config @state/app-db)))]
+                                                         (:config @state/app-db)
+                                                         {:open-settings (fn [] (open-settings-modal! screen))}))]
                                  (state/dispatch [:set-config c])
                                  (state/dispatch [:force-provider-limits-refresh])))
                              (recur))

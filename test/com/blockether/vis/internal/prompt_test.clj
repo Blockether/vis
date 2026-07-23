@@ -88,7 +88,7 @@
           "Drop spent reads/catalogs/errors with no gist" "preserve only decisions, findings, edits"
           "Create no unrequested" "without asking permission or offering optional"
           "Never expose or log secrets" "commit, push, publish" "Before every `session_fold`"
-          "read `session[\"turn\"]`" "`N < session[\"turn\"]`" "never target current/future turns"
+          "read `session[\"turn\"]`" "Fold SETTLED steps" "done iters, not the live one"
           "Fold completed prior-turn wire steps" "`ntr[tool_id]`" "breadcrumb lists accessors"
           "`await session_state()`" "session UID" "pass it — `await session_state(uid)`"
           "Route vis issues upstream" "`blockether/vis`" "open one only when requested"

@@ -25,7 +25,8 @@
    reuse/refresh fns. Both return a 0-arg fn yielding the provider-token
    map, owning their own lock; drop them straight into
    `:provider/get-token-fn` / `:provider/refresh-token-fn`."
-  (:require [clojure.string :as str]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]))
 
 (def default-reuse-window-ms
   "A refresh persisted/produced within this window is REUSED instead of
@@ -75,6 +76,25 @@
     (fn ([] (single-flight! lock #(reuse nil) refresh!))
       ([rejected] (single-flight! lock #(reuse rejected) refresh!)))))
 
+(defn call-with-file-lock
+  "Run `f` while holding an OS advisory lock on `lock-path`, serializing the
+   critical section ACROSS processes (e.g. two vis JVMs — a `--jvm` client and
+   its gateway daemon — sharing one credential file). The caller must already
+   hold the in-process monitor, since a single JVM cannot hold two overlapping
+   locks on the same file. Blank/nil `lock-path`, or any locking failure
+   (unsupported filesystem, IO error, overlapping lock), degrades to running
+   `f` UNLOCKED rather than blocking authentication."
+  [lock-path f]
+  (if (str/blank? lock-path)
+    (f)
+    (let [lf (io/file lock-path)]
+      (try (io/make-parents lf)
+           (with-open [ch (.getChannel (java.io.RandomAccessFile. lf "rw"))]
+             (let [fl (.lock ch)]
+               (try (f) (finally (.release fl)))))
+           (catch java.nio.channels.OverlappingFileLockException _ (f))
+           (catch Throwable _ (f))))))
+
 (defn make-file-refresher
   "Build a 0/1-arg single-flight refresh fn for a FILE-backed credential
    store whose token endpoint ROTATES the refresh_token (Anthropic,
@@ -95,25 +115,55 @@
      :->token       (fn [creds] -> token-map)      runtime provider-token shape
      :no-token!     (fn [] -> throws)              when no refresh token on file
      :reuse-window-ms (optional) override the default window
+     :lock-path       (optional) file path for an OS advisory lock that
+                      serializes the rotating exchange ACROSS processes
+                      (two vis JVMs sharing one credential file). Without it,
+                      only in-process callers serialize and two processes can
+                      still race the rotation into HTTP 400 `invalid_grant`.
 
    Returns the provider-token map produced by `:->token`."
-  [{:keys [load saved-at refresh-token exchange! persist! ->token no-token! reuse-window-ms]}]
-  (let [window (or reuse-window-ms default-reuse-window-ms)]
-    (refresher (fn [rejected]
-                 (let [creds (load)]
-                   (when (and creds (fresh-within? (saved-at creds) window))
-                     (let [tok (->token creds)]
-                       ;; Never hand back the exact token the server just
-                       ;; rejected (401): a locally-fresh but server-rotated
-                       ;; token would otherwise be REUSED and 401 again. When it
-                       ;; differs, reuse still collapses the 401 storm.
-                       (when-not (= rejected (:token tok)) tok)))))
-               (fn []
-                 (let
-                   [creds (load)
-                    rt (refresh-token creds)]
+  [{:keys [load saved-at refresh-token exchange! persist! ->token no-token! reuse-window-ms
+           lock-path]}]
+  (let
+    [window
+     (or reuse-window-ms default-reuse-window-ms)
 
-                   (when (str/blank? rt) (no-token!))
-                   (-> (exchange! rt)
-                       persist!
-                       ->token))))))
+     lock
+     (new-lock)
+
+     reuse
+     (fn [rejected]
+       (let [creds (load)]
+         (when (and creds (fresh-within? (saved-at creds) window))
+           (let [tok (->token creds)]
+             ;; Never hand back the exact token the server just
+             ;; rejected (401): a locally-fresh but server-rotated
+             ;; token would otherwise be REUSED and 401 again. When it
+             ;; differs, reuse still collapses the 401 storm.
+             (when-not (= rejected (:token tok)) tok)))))
+
+     refresh!
+     (fn []
+       (let
+         [creds
+          (load)
+
+          rt
+          (refresh-token creds)]
+
+         (when (str/blank? rt) (no-token!))
+         (-> (exchange! rt)
+             persist!
+             ->token)))
+
+     ;; In-process monitor serializes threads in THIS JVM; the file lock
+     ;; then serializes across JVMs. Order matters: hold the monitor first
+     ;; so only one thread per JVM ever reaches the (non-reentrant) file
+     ;; lock. After the winner persists and releases, the next process's
+     ;; `reuse` reads the freshly-stamped file and reuses instead of
+     ;; running a second rotating exchange.
+     run
+     (fn [rejected]
+       (locking lock (call-with-file-lock lock-path #(or (reuse rejected) (refresh!)))))]
+
+    (fn ([] (run nil)) ([rejected] (run rejected)))))

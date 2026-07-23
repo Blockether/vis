@@ -86,8 +86,8 @@
 
 (deftest provider-status-reads-is-authenticated-from-gateway-wire
   ;; The gateway emits snake_case wire keys (`is_authenticated`). The client
-  ;; reads that boolean straight into `:is-authenticated` — otherwise an
-  ;; authenticated provider paints RED forever.
+  ;; returns the canonical STRING-keyed status map verbatim — no keyword
+  ;; restoration — so consumers read `(get status "is_authenticated")`.
   (let [request (atom nil)]
     (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
                                                      (reset! request path)
@@ -103,11 +103,11 @@
       (fn []
         (let [status (client/provider-status :anthropic-coding-plan)]
           (is (= "/v1/providers/anthropic-coding-plan/status" @request))
-          (is (every? keyword? (keys status)))
-          (is (true? (:is-authenticated status)))
-          (is (= "auth-file" (:source status)))
-          (is (= "sk-ant-o..." (:oauth-token-preview status)))
-          (is (= 10859960 (:expires-in-ms status))))))))
+          (is (every? string? (keys status)))
+          (is (true? (get status "is_authenticated")))
+          (is (= "auth-file" (get status "source")))
+          (is (= "sk-ant-o..." (get status "oauth_token_preview")))
+          (is (= 10859960 (get status "expires_in_ms"))))))))
 
 (defn- run-serving!
   "Drive ensure-gateway-serving! with a scripted `probe-route` (a seq of results,
