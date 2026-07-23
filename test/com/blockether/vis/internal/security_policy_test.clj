@@ -9,8 +9,9 @@
     "resolves configured paths once, hashes the policy, and renders HOME-relative access"
     (let
       [home
-       (.toFile (Files/createTempDirectory "vis-policy-home"
-                                           (make-array java.nio.file.attribute.FileAttribute 0)))
+       (.getCanonicalFile
+        (.toFile (Files/createTempDirectory "vis-policy-home"
+                                            (make-array java.nio.file.attribute.FileAttribute 0))))
 
        project
        (doto (java.io.File. home "vis") .mkdirs)
@@ -23,7 +24,7 @@
 
        cfg
        {"sandbox" true
-        "jail" {"filesystem" {"allow-read-write" ["../spel"]
+        "jail" {"filesystem" {"allow-read-write" ["~/spel"]
                               "allow-read" ["~/read-only"]
                               "language-caches" ["~/.m2"]}
                 "inbound-ports" [5273]}
