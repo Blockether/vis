@@ -257,10 +257,15 @@
                     "--ai-bubble-fg" "--ai-role-fg" "--iteration-header-fg" "--iteration-header-bg"
                     "--answer-bg" "--answer-fg" "--md-h1-fg" "--md-h2-fg" "--md-h3-fg" "--code-bg"
                     "--code-fg" "--code-ok-bg" "--code-err-bg" "--code-success" "--code-error"
-                    "--code-syntax-keyword" "--result-bg" "--code-result" "--code-duration"
-                    "--footer-fg" "--footer-muted" "--footer-spinner"]]
+                    "--code-syntax-keyword" "--code-syntax-special" "--code-syntax-string"
+                    "--code-syntax-number" "--code-syntax-comment" "--result-bg" "--code-result"
+                    "--code-duration" "--footer-fg" "--footer-muted" "--footer-spinner"]]
           (is (string? (get-in current ["css_vars" css-var])) css-var))
-        (is (some #(= "vis-dark" (get % "id")) (get current "themes"))))
+        (is (some #(= "vis-dark" (get % "id")) (get current "themes")))
+        ;; Each theme in the list carries its own browser-ready palette so the
+        ;; companion can pin a local theme (e.g. light) without a POST.
+        (doseq [t (get current "themes")]
+          (is (string? (get-in t ["css_vars" "--bg"])) (get t "id"))))
       (let
         [set-response ((rv 'set-theme-handler) {:body (body-stream {:id "vis-dark"})})
          updated (wire/parse-json (:body set-response))]

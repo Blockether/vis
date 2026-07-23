@@ -591,7 +591,7 @@
           :allowed-domains :denied-domains :exclude-domains :allow-private :rules :host :methods
           :allow :method :text :replace? :include-gitignored-paths :always-exclude :backend
           :theme-name :contributors-disabled :servers :transport :command :args :cwd :env :url
-          :headers}))
+          :headers :python :resource-cache}))
 
 (defn runtime-config
   "Adapt an already-validated string-keyed YAML map to Vis' internal domain maps.
@@ -610,32 +610,36 @@
         (sequential? v) (mapv runtime-config v)
         :else v))
 
+(defn- parse-yaml-config-map
+  "Parse+normalize one YAML file to its string-keyed representation WITHOUT spec
+   validation. nil when absent / malformed / not a map. Shared by the strict
+   `read-yaml-config-map` and the lenient machine-store fallback."
+  [path]
+  (let [f (io/file path)]
+    (when (.exists f)
+      (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))]
+        (when (map? raw)
+          (if-let [legacy-filesystem (get raw "filesystem")]
+            (let
+              [legacy-jail (or (get raw "jail") {})
+               legacy-jail* (if (map? legacy-jail) legacy-jail {})]
+
+              (-> raw
+                  (dissoc "filesystem")
+                  (assoc "jail" (assoc legacy-jail*
+                                  "filesystem" (if (map? (get legacy-jail* "filesystem"))
+                                                 (merge (get legacy-jail* "filesystem")
+                                                        legacy-filesystem)
+                                                 legacy-filesystem)))))
+            raw))))))
+
 (defn- read-yaml-config-map
   "Parse one YAML file and validate its original string-keyed representation.
    No keys or values are keywordized before clojure.spec sees them. Absent,
    malformed, and non-map documents return nil; invalid maps throw."
   [path]
-  (let [f (io/file path)]
-    (when (.exists f)
-      (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))
-            normalized (when (map? raw)
-                         (if-let [legacy-filesystem (get raw "filesystem")]
-                           (let [legacy-jail (or (get raw "jail") {})
-                                 legacy-jail* (if (map? legacy-jail)
-                                               legacy-jail
-                                               {})]
-                             (-> raw
-                                 (dissoc "filesystem")
-                                 (assoc "jail"
-                                        (assoc legacy-jail*
-                                               "filesystem"
-                                               (if (map? (get legacy-jail* "filesystem"))
-                                                 (merge (get legacy-jail* "filesystem")
-                                                        legacy-filesystem)
-                                                 legacy-filesystem)))))
-                           raw))]
-        (when (map? normalized)
-          (config-spec/assert-config! normalized path))))))
+  (when-let [normalized (parse-yaml-config-map path)]
+    (config-spec/assert-config! normalized path)))
 
 
 (defn- project-config-yaml-paths
@@ -673,7 +677,20 @@
    the YAML file Vis read-modify-writes. Machine-owned on purpose — kept out of the
    hand-written YAML merge so the RMW cycle never clobbers user files."
   []
-  (read-yaml-config-map state-path))
+  (try (read-yaml-config-map state-path)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :vis/invalid-config (:type (ex-data e)))
+           ;; The machine store is Vis' own RMW file: a legacy/extra field it once
+           ;; round-tripped must NOT nuke the whole fleet. Load it leniently and warn;
+           ;; the next save! re-validates and heals it.
+           (do (tel/log!
+                 {:level :warn
+                  :id ::machine-config-invalid
+                  :data {:source state-path :problems (:problems (ex-data e))}
+                  :msg
+                  "state.yml failed the config contract; loading leniently so providers survive"})
+               (parse-yaml-config-map state-path))
+           (throw e)))))
 
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of

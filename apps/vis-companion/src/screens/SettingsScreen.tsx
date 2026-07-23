@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { GatewayConn, GatewayTheme, Toggle, ToggleGroup } from '../lib/types';
-import { applyGatewayTheme } from '../lib/theme';
+import type { GatewayConn, GatewayTheme, ThemePref, Toggle, ToggleGroup } from '../lib/types';
+import { applyGatewayTheme, resolveTheme } from '../lib/theme';
+import { getThemePref, setThemePref } from '../lib/storage';
 import { Banner } from '../components/ui';
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Props) {
   const [groups, setGroups] = useState<ToggleGroup[] | null>(null);
   const [theme, setTheme] = useState<GatewayTheme | null>(null);
+  const [pref, setPref] = useState<ThemePref>('light');
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -24,8 +26,10 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
       setGroups(settings.groups ?? []);
       try {
         const activeTheme = await client.theme();
+        const themePref = await getThemePref();
         setTheme(activeTheme);
-        if (isActive) applyGatewayTheme(activeTheme);
+        setPref(themePref);
+        if (isActive) applyGatewayTheme(resolveTheme(activeTheme, themePref));
       } catch (e) {
         setTheme(null);
         setErr(`Theme sync unavailable: ${(e as Error).message}`);
@@ -59,12 +63,12 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
     );
   }
 
-  async function chooseTheme(id: string) {
-    setPending(`theme:${id}`);
+  async function chooseTheme(next: ThemePref) {
+    setPending(`theme:${next}`);
     try {
-      const updated = await client.setTheme(id);
-      setTheme(updated);
-      if (isActive) applyGatewayTheme(updated);
+      await setThemePref(next);
+      setPref(next);
+      if (isActive && theme) applyGatewayTheme(resolveTheme(theme, next));
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -147,38 +151,52 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
           {err && <Banner kind="err">{err}</Banner>}
 
           {theme && (
-            <SettingsPanel title="Theme" meta={theme.display_name}>
-              <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
-                {theme.themes.map((choice) => {
-                  const selected = choice.id === theme.id;
-                  return (
-                    <button
-                      type="button"
-                      key={choice.id}
-                      disabled={pending !== null}
-                      onClick={() => chooseTheme(choice.id)}
-                      className={`flex min-h-12 min-w-0 items-center justify-between gap-3 px-3 py-2 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-11 ${
-                        selected
-                          ? 'bg-accent text-accent-foreground'
-                          : 'bg-input text-white hover:bg-hover'
-                      }`}
-                      aria-pressed={selected}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate font-mono text-[11px] font-bold">
-                          {choice.display_name}
-                        </span>
-                        <span className="block font-mono text-[8px] uppercase tracking-wider opacity-65">
-                          {choice.mode}
-                        </span>
-                      </span>
-                      <span className="shrink-0 font-mono text-[10px] font-black" aria-hidden="true">
-                        {selected ? '●' : '○'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+            <SettingsPanel
+              title="Theme"
+              meta={pref === 'gateway' ? `gateway · ${theme.display_name}` : 'saved on this device'}
+            >
+              {(() => {
+                const resolved = resolveTheme(theme, pref);
+                const options: { key: ThemePref; name: string; sub: string }[] = [
+                  { key: 'gateway', name: 'Follow gateway', sub: theme.display_name },
+                  ...theme.themes.map((t) => ({ key: t.id, name: t.display_name, sub: t.mode })),
+                ];
+                return (
+                  <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
+                    {options.map((choice) => {
+                      const selected =
+                        choice.key === pref ||
+                        (choice.key !== 'gateway' && pref !== 'gateway' && choice.key === resolved.id);
+                      return (
+                        <button
+                          type="button"
+                          key={choice.key}
+                          disabled={pending !== null}
+                          onClick={() => chooseTheme(choice.key)}
+                          className={`flex min-h-12 min-w-0 items-center justify-between gap-3 px-3 py-2 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-11 ${
+                            selected
+                              ? 'bg-accent text-accent-foreground'
+                              : 'bg-input text-white hover:bg-hover'
+                          }`}
+                          aria-pressed={selected}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-mono text-[11px] font-bold">
+                              {choice.name}
+                            </span>
+                            <span className="block font-mono text-[8px] uppercase tracking-wider opacity-65">
+                              {choice.sub}
+                            </span>
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] font-black" aria-hidden="true">
+                            {selected ? '●' : '○'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </SettingsPanel>
           )}
 

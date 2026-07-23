@@ -79,7 +79,13 @@ export interface ThemeSummary {
   id: string;
   display_name: string;
   mode: 'light' | 'dark';
+  /** Browser-ready CSS custom properties for THIS theme (present in the themes list). */
+  css_vars?: Record<string, string>;
 }
+
+/** App-local theme preference. `gateway` follows the gateway's active theme;
+ *  `light`/`dark` pin a mode; any other value pins a specific theme id. */
+export type ThemePref = 'gateway' | 'light' | 'dark' | string;
 
 export interface GatewayTheme extends ThemeSummary {
   css_vars: Record<string, string>;

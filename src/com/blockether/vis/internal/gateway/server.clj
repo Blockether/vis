@@ -934,7 +934,8 @@
                      (let [candidate (theme/theme theme-id)]
                        {:id (:name candidate)
                         :display-name (:display-name candidate)
-                        :mode (name (:mode candidate))}))
+                        :mode (name (:mode candidate))
+                        :css-vars (theme/theme->web-css-vars candidate)}))
                    (theme/available-theme-ids))}))
 
 (defn- get-theme-handler

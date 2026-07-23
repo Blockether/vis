@@ -166,8 +166,11 @@ Security configuration is resolved and snapshotted when a root session environme
 is built. Relative paths become absolute and symlinks are resolved at that boundary.
 Every child environment inherits the exact same snapshot; it never rereads
 `vis.yml`. Editing a model-writable configuration file therefore cannot widen a
-running parent or child. `/reload` explicitly rebuilds the root environment and
-creates a new snapshot.
+running parent or child. `/reload` bumps one process-wide policy epoch that
+invalidates **every** active session, not only the one you typed it in. The
+rebuild is lazy and per session: each session recycles its environment and
+re-snapshots from the current `vis.yml` on its **next** message, so an idle
+session keeps its old snapshot until you send it something.
 
 The same effective snapshot is exposed read-only as `session["access"]`. It includes
 a SHA-256 generation id, filesystem modes, network policy, inbound ports, and

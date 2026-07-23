@@ -97,9 +97,7 @@
          (with-verbs)
 
          _
-         (swap! ca assoc
-           "engine_iter_universe" ["t1/i1"]
-           "engine_protected_iter_scopes" #{"t1/i1"})
+         (swap! ca assoc "engine_iter_universe" ["t1/i1"] "engine_protected_iter_scopes" #{"t1/i1"})
 
          out
          (ev "session_fold([\"t1/i1\"], \"trim\")")]
@@ -173,7 +171,10 @@
          [intent]
          (get @ca "session_summaries")]
 
-        (expect (= {"scopes" #{"t1/i2" "t2/i1"} "gist" "open"} intent))
+        ;; frozen scopes PLUS the whole-turn intent the open range carried at
+        ;; fold time (it covered ALL of t2) — dropping it on freeze would
+        ;; resurrect t2's Q/A recap downstream.
+        (expect (= {"scopes" #{"t1/i2" "t2/i1"} "gist" "open" "turns" #{2}} intent))
         (expect (not (contains? intent "from")))
         (expect (= #{"t1/i2" "t2/i1"}
                    (get (first (expand-through [intent] ["t1/i1" "t1/i2" "t2/i1" "t2/i2"]))
@@ -303,6 +304,39 @@
                  (expect (= #{} (resolve1 {"scopes" #{"t7"}}))))
              (it "an intent with NO selector key passes through untouched"
                  (expect (= [{"drop" true}] (expand-through [{"drop" true}] universe)))))
+
+(def ^:private supersede-summaries (var-get #'eng/supersede-summaries))
+
+(defdescribe
+  whole-turn-intent-test
+  ;; `"turns"` records EXPLICIT whole-turn intent only. Downstream
+  ;; (previous-turn-context) keys Q/A removal off it, so these pin the boundary
+  ;; between "fold these iterations" and "fold that whole turn".
+  (it "a bare tN records whole-turn intent even when the universe is empty"
+      (let [out (first (expand-through [{"scopes" #{"t1"}}] []))]
+        (expect (= #{1} (get out "turns")))))
+  (it "a range selector spanning every iteration of a turn records that turn"
+      (let [out (first (expand-through [{"through" "t2/i1"}] universe))]
+        ;; t1 fully inside the window; t2 only partially (t2/i2 is outside).
+        (expect (= #{1} (get out "turns")))))
+  (it "a range selector past the newest records every universe turn"
+      (let [out (first (expand-through [{"through" "t9/i9"}] universe))]
+        (expect (= #{1 2} (get out "turns")))))
+  (it "an ENUMERATED list covering every iteration records NO whole-turn intent"
+      (let [out (first (expand-through [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"}}] universe))]
+        (expect (nil? (get out "turns")))))
+  (it "supersede merges a dropped summary's whole-turn intent into its surviving coverer"
+      (let
+        [resolved
+         (expand-through [{"scopes" #{"t1"} "gist" "fine"} {"through" "t2/i2" "gist" "broad"}]
+                         universe)
+
+         out
+         (supersede-summaries resolved)]
+
+        (expect (= 1 (count out)))
+        (expect (= "broad" (get (first out) "gist")))
+        (expect (= #{1 2} (get (first out) "turns"))))))
 
 ;; ── layer 3: what the LLM sees (apply-summaries over a trailer) ───────────────
 
@@ -621,6 +655,27 @@
                              nil
                              nil)))
       (expect (= {} (folds-view [{"scopes" #{"t1/i1"}}] nil nil nil))))
+  (it "turn-weights price the removed Q/A recap of a whole-turn fold into the token clause"
+      (let [uni ["t1/i1" "t1/i2" "t2/i1"]]
+        ;; bare t1 fold: iteration weights (4k+2k) + t1's Q/A recap (6k) = 12k
+        (expect (= {"now" "saved 2/3 (67%, ~12k tok) · live t2/*"}
+                   (folds-view [{"scopes" #{"t1"} "gist" "g"}]
+                               uni
+                               {"t1/i1" 4000 "t1/i2" 2000}
+                               nil
+                               #{}
+                               {1 6000})))
+        ;; an enumerated fold carries NO whole-turn intent -> Q/A weight NOT added
+        (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
+                   (folds-view [{"scopes" #{"t1/i1" "t1/i2"} "gist" "g"}]
+                               uni
+                               {"t1/i1" 4000 "t1/i2" 2000}
+                               nil
+                               #{}
+                               {1 6000})))
+        ;; Q/A weight alone (no iteration weights) still yields the clause
+        (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
+                   (folds-view [{"scopes" #{"t1"} "gist" "g"}] uni nil nil #{} {1 6000})))))
   (it "session-view merges only `now` INTO session_utilization — no top-level key, no `folds` leaf"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
       (let

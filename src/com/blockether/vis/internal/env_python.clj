@@ -1087,6 +1087,68 @@ def __vis_native_result_scan__(__vis_tree__):
           (System/setProperty "polyglot.log.file" (str (java.io.File. vis-dir "vis.log")))))
       true))
 
+(defonce graal-resource-cache-redirected
+  ;; GraalPy materializes its Python stdlib ("internal resources", from the
+  ;; python-resources jar) under `$XDG_CACHE_HOME/org.graalvm.polyglot` (or
+  ;; `~/.cache/org.graalvm.polyglot`) — at RUNTIME, on the JVM and on the
+  ;; compiled native-image binary alike. In a confined process — e.g. a macOS
+  ;; sandbox profile that only whitelists the workspace and build caches — that
+  ;; root is unwritable, and the very first stdlib import in the context
+  ;; bootstrap dies with `ModuleNotFoundError: No module named 'ast'`. The
+  ;; cache root is read ONCE per JVM (system property
+  ;; `polyglot.engine.userResourceCache`) when internal resources initialize,
+  ;; so resolve it HERE — at ns load, before `shared-engine` can be forced.
+  ;; Precedence: explicit `-Dpolyglot.engine.userResourceCache` (untouched) >
+  ;; `python.resource-cache` in merged vis.yml config > `~/.vis/cache/graal-resources`
+  ;; (ALWAYS preferred: writable across sandboxed and normal runs, gitignored) >
+  ;; `./.graal-resources` under the CWD. We deliberately do NOT keep the default
+  ;; `~/.cache/org.graalvm.polyglot` root even when it's writable — redirecting
+  ;; unconditionally makes stdlib materialization behave identically whether or
+  ;; not the sandbox happens to whitelist that root. Documented in
+  ;; vis-docs/configuration.md § GraalPy internal-resource cache.
+  (or
+    (some? (System/getProperty "polyglot.engine.userResourceCache"))
+    (let
+      [expand-home
+       (fn [^String p]
+         (if (or (= p "~") (str/starts-with? p "~/"))
+           (str (System/getProperty "user.home") (subs p 1))
+           p))
+
+       usable?
+       (fn [^java.io.File d]
+         (try (.mkdirs d)
+              (let [p (java.io.File. d ".vis-probe")]
+                (spit p "")
+                (.delete p)
+                true)
+              (catch Throwable _ false)))
+
+       ;; `python.resource-cache` from the merged YAML config tiers.
+       ;; requiring-resolve keeps this ns decoupled from config's load
+       ;; order; any config error degrades to the automatic behavior.
+       configured
+       (try (when-let
+              [path (some-> ((requiring-resolve
+                               'com.blockether.vis.internal.config/load-config-raw))
+                            (get-in ["python" "resource-cache"]))]
+              (java.io.File. ^String (expand-home path)))
+            (catch Throwable _ nil))
+
+       ;; Always land on a writable, gitignored cache dir; never keep the
+       ;; default `~/.cache/org.graalvm.polyglot` root.
+       chosen
+       (or (when (and configured (usable? configured)) configured)
+           (first (filter usable?
+                          [(java.io.File. (System/getProperty "user.home")
+                                          ".vis/cache/graal-resources")
+                           (java.io.File. ".graal-resources")])))]
+
+      (when chosen
+        (System/setProperty "polyglot.engine.userResourceCache"
+                            (.getAbsolutePath ^java.io.File chosen)))
+      true)))
+
 ;; `engine.WarnVirtualThreadSupport=false` is applied INLINE on each
 ;; Engine/Context builder chain below (no shared helper: an untyped
 ;; helper arg would force reflection on the whole chain). We
@@ -1891,8 +1953,8 @@ del __vis_posix_lazy__
   "Python names installed into builtins for every `python_execution` context.
    This is the model-facing inventory; keep it synchronized with
    `auto-imports-python` and its real-context regression test."
-  ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib"
-   "Path" "textwrap" "base64" "math" "socket" "builtins"])
+  ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib" "Path"
+   "textwrap" "base64" "math" "socket" "builtins"])
 
 (def ^:private auto-imports-python
   "Install tiny convenience imports as Python builtins so agents can use them

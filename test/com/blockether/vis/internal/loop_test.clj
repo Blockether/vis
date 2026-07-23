@@ -836,7 +836,10 @@
                                                       {"through" "t2/i1"
                                                        "gist" "one durable checkpoint"}]})}]
           (expect (nil? (previous-turn-context env "t3"))))))
-  (it "a gist-less whole-turn fold drops the complete prior Q/A representation"
+  (it "a gist-less whole-turn fold of a no-iteration turn leaves a visible tombstone checkpoint"
+      ;; No done iterations → no trailer anchor exists anywhere, so previous-
+      ;; turn-context must materialize the checkpoint itself instead of letting
+      ;; the turn vanish without a trace.
       (with-redefs
         [persistance/db-list-session-turns
          (constantly [{:id "t1"
@@ -849,11 +852,43 @@
          persistance/db-list-session-turn-iterations
          (constantly [])]
 
-        (expect (nil? (previous-turn-context {:session-id "s1"
-                                              :db-info ::db
-                                              :ctx-atom (atom {"session_summaries" [{"scopes"
-                                                                                     #{"t1"}}]})}
-                                             "t2"))))))
+        (let
+          [out (previous-turn-context {:session-id "s1"
+                                       :db-info ::db
+                                       :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1"}}]})}
+                                      "t2")]
+          (expect (= 1 (count out)))
+          (expect (:checkpoint? (first out)))
+          (expect (= [1] (:turns (first out))))
+          (expect (clojure.string/includes? (str (:gist (first out))) "dropped"))
+          (expect (nil? (:user-request (first out)))))))
+  (it
+    "an enumerated iteration fold covering EVERY iteration still keeps the turn's Q/A recap"
+    ;; Regression: 'all iterations folded' must NOT be inferred as whole-turn
+    ;; intent — only a bare tN or a spanning range selector removes Q/A.
+    (with-redefs
+      [persistance/db-list-session-turns
+       (constantly [{:id "t1"
+                     :status :done
+                     :position 1
+                     :user-request "keep my question"
+                     :content [(content/prose "keep my answer")]}
+                    {:id "t2" :status :running :position 2}])
+
+       persistance/db-list-session-turn-iterations
+       (constantly
+         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+
+      (let
+        [out (previous-turn-context {:session-id "s1"
+                                     :db-info ::db
+                                     :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"}
+                                                                            "gist" "read a"}]})}
+                                    "t2")]
+        (expect (= 1 (count out)))
+        (expect (= "keep my question" (:user-request (first out))))
+        (expect (= "keep my answer" (:answer (first out))))
+        (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out))))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"

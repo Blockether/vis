@@ -1028,6 +1028,10 @@
    "--code-success" :code-success-fg
    "--code-error" :code-error-fg
    "--code-syntax-keyword" :code-syntax-keyword-fg
+   "--code-syntax-special" :code-syntax-special-fg
+   "--code-syntax-string" :code-syntax-string-fg
+   "--code-syntax-number" :code-syntax-number-fg
+   "--code-syntax-comment" :code-syntax-comment-fg
    "--code-border" :code-border-fg
    "--code-duration" :code-duration-fg
    "--code-result" :code-result-fg

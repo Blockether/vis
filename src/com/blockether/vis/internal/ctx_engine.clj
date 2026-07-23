@@ -354,6 +354,14 @@
      `\"from\"`/`\"to\"` inclusive window — either bound optional (open start / end).
      `\"since\"`  `tN/iN` cursor → every universe scope AT OR AFTER it (cursor→newest).
    The range keys are dropped after resolution and the union lands in `\"scopes\"`.
+
+   EXPLICIT whole-turn intent is recorded as `\"turns\"` (a set of turn numbers):
+   a bare `tN` token, or a RANGE selector whose resolved window covers every
+   universe iteration of that turn. An ENUMERATED `tN/iN` list never yields
+   whole-turn intent — even when it happens to name every iteration — so a
+   fine-grained fold can never silently erase a turn's Q/A recap downstream
+   (`previous-turn-context` keys Q/A removal off `\"turns\"`, not scope cover).
+
    Intents with none of these keys pass through untouched. Pure — same inputs →
    same output."
   [summaries universe]
@@ -380,6 +388,12 @@
                              (= tn (first k))))
                    (map first))
              ukeys))
+
+     universe-turns
+     (into #{}
+           (map (fn [[_ k]]
+                  (first k)))
+           ukeys)
 
      selector?
      #{"scopes" "through" "from" "to" "since"}]
@@ -413,8 +427,11 @@
                                    :else [sc])))
                    (get s "scopes"))
 
-             scopes
-             (cond-> expl
+             ;; Scopes selected by RANGE selectors only — bulk intent, kept
+             ;; separate so whole-turn coverage is derived from the RANGE, never
+             ;; from an enumerated iteration list.
+             range-sel
+             (cond-> #{}
                thr
                (into (pick (fn [k]
                              (<= (compare k thr) 0))))
@@ -426,11 +443,22 @@
 
                snc
                (into (pick (fn [k]
-                             (>= (compare k snc) 0)))))]
+                             (>= (compare k snc) 0)))))
 
-            (-> s
-                (dissoc "through" "from" "to" "since")
-                (assoc "scopes" scopes)))))
+             whole-turns
+             (into (into #{} (keep turn-key) (get s "scopes"))
+                   (when (seq range-sel)
+                     (filter (fn [tn]
+                               (let [ts (turn-scopes tn)]
+                                 (and (seq ts) (every? range-sel ts))))
+                             universe-turns)))]
+
+            (cond->
+              (-> s
+                  (dissoc "through" "from" "to" "since")
+                  (assoc "scopes" (into expl range-sel)))
+              (seq whole-turns)
+              (update "turns" (fnil into #{}) whole-turns)))))
       summaries)))
 
 (defn supersede-summaries
@@ -439,8 +467,11 @@
    re-folding a region with a broader/newer gist REPLACES the finer breadcrumb
    instead of stacking a second line. Coverage is never lost: every scope of a
    dropped summary is present in the one that supersedes it (the superset wins;
-   for equal sets the later/newer wins). Order-stable. Expects scopes already
-   resolved (run AFTER expand-through). Pure."
+   for equal sets the later/newer wins), and the dropped summary's explicit
+   whole-turn intent (`\"turns\"`) is MERGED into a surviving coverer so a
+   fold-of-fold can never resurrect an already-folded turn's Q/A recap.
+   Order-stable. Expects scopes already resolved (run AFTER expand-through).
+   Pure."
   [summaries]
   (let
     [v
@@ -459,10 +490,38 @@
                                    (and (every? sj si)           ; si ⊆ sj
                                         (or (not (every? si sj)) ; proper subset → superset wins
                                             (< (long i) (long j))))))) ; equal → later wins
-                             (range n))))))]
+                             (range n))))))
+
+     ;; A covered summary's whole-turn intent must survive on a SURVIVING
+     ;; coverer (coverage is transitive, so one always exists when i is
+     ;; covered): index → extra turns to merge.
+     surviving-coverer
+     (fn [i]
+       (let [si (set (get (nth v i) "scopes"))]
+         (some (fn [j]
+                 (when (and (not= i j)
+                            (not (covered? j))
+                            (let [sj (set (get (nth v j) "scopes"))]
+                              (and (every? sj si) (or (not (every? si sj)) (< (long i) (long j))))))
+                   j))
+               (range n))))
+
+     merged-turns
+     (reduce (fn [m i]
+               (let [ts (get (nth v i) "turns")]
+                 (if (and (covered? i) (seq ts))
+                   (if-let [j (surviving-coverer i)]
+                     (update m j (fnil into #{}) ts)
+                     m)
+                   m)))
+             {}
+             (range n))]
 
     (vec (keep-indexed (fn [i s]
-                         (when-not (covered? i) s))
+                         (when-not (covered? i)
+                           (if-let [extra (get merged-turns i)]
+                             (update s "turns" (fnil into #{}) extra)
+                             s)))
                        v))))
 
 (defn- int-runs
@@ -601,7 +660,9 @@
               inflate it) is folded away, priced BOTH in scopes (`<C>/<T>`) AND —
               when `weights` are stamped — in reclaimed context (`~<toks> tok`,
               summed from `engine_iter_weights` with the SAME estimator the
-              `session_fold` card and the over-budget nudge use); and `live` the
+              `session_fold` card and the over-budget nudge use, PLUS the Q/A
+              recaps of explicitly whole-turn-folded turns priced from
+              `turn-weights` / `engine_turn_weights`); and `live` the
               compressed scopes STILL on the wire (accounting only; current-turn
               scopes are not foldable). No gists. `context` is the
               LIVE per-call saturation (`util`'s `saturation`), so the same delta
@@ -618,9 +679,13 @@
    simply omits `~<toks> tok`, leaving the scope counts — never breaks the line.
    `protected-scopes` (optional fifth arg) are live skill-body iterations; they
    are excluded from the collapsed set so the ledger describes the exact wire.
+   `turn-weights` (optional sixth arg, `{turn-number → ~tokens}`) prices the
+   removed Q/A recap of every whole-turn-folded turn into the same clause.
    Pure."
-  ([summaries universe weights util] (folds-view summaries universe weights util #{}))
+  ([summaries universe weights util] (folds-view summaries universe weights util #{} nil))
   ([summaries universe weights util protected-scopes]
+   (folds-view summaries universe weights util protected-scopes nil))
+  ([summaries universe weights util protected-scopes turn-weights]
    (let
      [universe
       (into [] (comp (filter string?) (distinct)) universe)
@@ -649,8 +714,19 @@
       total
       (+ c (count live))
 
+      folded-turns
+      (into #{} (mapcat #(get % "turns")) resolved)
+
+      qa-toks
+      (when (seq turn-weights)
+        (reduce + 0 (keep #(get turn-weights %) folded-turns)))
+
       saved-toks
-      (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live)))
+      (let [s (+ (long (or (when (seq weights)
+                             (reduce + 0 (keep #(get weights %) collapsed-live)))
+                           0))
+                 (long (or qa-toks 0)))]
+        (when (pos? s) s))
 
       sat
       (get util "saturation")
@@ -671,7 +747,7 @@
                                 " ("
                                 (Math/round (* 100.0 (/ (double c) total)))
                                 "%"
-                                (when (and saved-toks (pos? (long saved-toks)))
+                                (when saved-toks
                                   (str ", ~" (fmt-toks saved-toks) " tok"))
                                 ")")) (when (seq live-str) (str "live " live-str))])))]
 
@@ -708,7 +784,8 @@
                     (get ctx "engine_iter_universe")
                     (get ctx "engine_iter_weights")
                     (get ctx "engine_utilization")
-                    (get ctx "engine_protected_iter_scopes")))
+                    (get ctx "engine_protected_iter_scopes")
+                    (get ctx "engine_turn_weights")))
 
       util
       (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))

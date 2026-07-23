@@ -12,7 +12,8 @@ import {
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
 import { onPairingLink } from './lib/deeplink';
-import { applyGatewayTheme } from './lib/theme';
+import { applyGatewayTheme, resolveLocalTheme, resolveTheme } from './lib/theme';
+import { getThemePref } from './lib/storage';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { GatewaySettingsDialog } from './screens/SettingsScreen';
@@ -77,6 +78,13 @@ export function App() {
     void refresh().finally(() => setReady(true));
   }, [refresh]);
 
+  // Paint the app-local theme (default light) immediately on mount, before any
+  // gateway connects and regardless of a stale browser-cached stylesheet. The
+  // gateway effect below re-resolves once a connection's palette is available.
+  useEffect(() => {
+    void getThemePref().then((pref) => applyGatewayTheme(resolveLocalTheme(pref)));
+  }, []);
+
   // Deep-linked pairing: vis://gateway?url=…&token=…
   useEffect(() => {
     let dispose = () => {};
@@ -87,13 +95,14 @@ export function App() {
     return () => dispose();
   }, [addConnection]);
 
-  // The gateway exposes the exact palette selected in the TUI's persisted settings.
+  // The gateway owns the set of themes and their exact colors; the app pins its
+  // own local preference on top (defaults to light) without mutating the shared
+  // TUI/gateway theme.
   useEffect(() => {
     if (!active) return;
     const ctrl = new AbortController();
-    void new GatewayClient(active)
-      .theme(ctrl.signal)
-      .then(applyGatewayTheme)
+    void Promise.all([new GatewayClient(active).theme(ctrl.signal), getThemePref()])
+      .then(([theme, pref]) => applyGatewayTheme(resolveTheme(theme, pref)))
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [active]);

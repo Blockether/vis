@@ -76,22 +76,21 @@
          ["Work on the host project by default" "For vis tasks" "`await vis_docs()`"
           "runtime > source > docs > assumption"
           "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
-          "`python_execution`" "`await gather(...)` independent calls"
-          "anything complicated" "stays retrievable as" "control exactly what enters context"
+          "`python_execution`" "`await gather(...)` independent calls" "anything complicated"
+          "stays retrievable as" "control exactly what enters context"
           "direct native tools for single operations" "Reading `session` is always live"
           "never probe merely to refresh it" "Before `repl_eval` or lifecycle changes"
           "`repl_start`" "after verification, stop only those you" "External REPLs are"
-          "`find_files`" "`rg`" "`struct_index` for code structure" "batch" "independent reads"
+          "`find_files`" "`struct_index` for code structure" "batch" "independent reads"
           "Inspect dependencies before adding them" "benchmark/profile identical workloads"
           "Prefer structural editing" "`struct_index`/`struct_patch`" "reach for it over text edits"
           "structural ops cannot express" "`format` stales anchors" "re-read first"
           "Drop spent reads/catalogs/errors with no gist" "preserve only decisions, findings, edits"
-          "Create no unrequested"
-          "without asking permission or offering optional" "Never expose or log secrets"
-          "commit, push, publish" "Before every `session_fold`" "read `session[\"turn\"]`"
-          "`N < session[\"turn\"]`" "never target current/future turns"
+          "Create no unrequested" "without asking permission or offering optional"
+          "Never expose or log secrets" "commit, push, publish" "Before every `session_fold`"
+          "read `session[\"turn\"]`" "`N < session[\"turn\"]`" "never target current/future turns"
           "Fold completed prior-turn wire steps" "`ntr[tool_id]`" "breadcrumb lists accessors"
-          "`await session_state()`" "session UID" "resolve it via `await sessions()`"
+          "`await session_state()`" "session UID" "pass it — `await session_state(uid)`"
           "Route vis issues upstream" "`blockether/vis`" "open one only when requested"
           "Broader/newer folds replace covered breadcrumbs" "Lead with the answer or next action"
           "≤120 words" "≤3 bullets" "numbered bounded actions" "State completed results"
@@ -271,32 +270,42 @@
         (expect (= "system" (:role (first msgs)))))))
 
 (defdescribe resume-message-cache-stability-test
-  (it "appends each completed turn as its own stable message"
-    (let [entry (fn [n]
-                  {:turn n
-                   :user-request (str "q" n)
-                   :answer (str "a" n)
-                   :results []})
-          assemble (fn [prior current turn]
-                     (prompt/assemble-initial-messages
-                       {:stable-prompt-messages [{:role "system" :content "stable"}]
-                        :previous-turn-context prior
-                        :turn-context (str "session[\"turn\"] = " turn)
-                        :initial-user-content current}))
-          t3 (assemble [(entry 1) (entry 2)] "q3" 3)
-          t4 (assemble [(entry 1) (entry 2) (entry 3)] "q4" 4)]
-      (expect (= (vec (butlast t3)) (subvec t4 0 (dec (count t3)))))
-      (expect (str/includes? (:content (last t4)) ";; -- TURN-SYSTEM-CONTEXT --"))
-      (expect (str/includes? (:content (last t4)) "session[\"turn\"] = 4"))))
-  (it "renders one checkpoint message without covered Q/A"
-    (let [messages (prompt/assemble-initial-messages
-                     {:previous-turn-context [{:checkpoint? true
-                                               :turns [1 2]
-                                               :gist "durable state"}]
-                      :turn-context "session[\"turn\"] = 3"
-                      :initial-user-content "continue"})
-          prior (:content (first messages))]
-      (expect (= 2 (count messages)))
-      (expect (str/includes? prior "folded turns 1, 2"))
-      (expect (str/includes? prior "durable state"))
-      (expect (not (str/includes? prior "user asked:"))))))
+             (it "appends each completed turn as its own stable message"
+                 (let
+                   [entry
+                    (fn [n]
+                      {:turn n :user-request (str "q" n) :answer (str "a" n) :results []})
+
+                    assemble
+                    (fn [prior current turn]
+                      (prompt/assemble-initial-messages
+                        {:stable-prompt-messages [{:role "system" :content "stable"}]
+                         :previous-turn-context prior
+                         :turn-context (str "session[\"turn\"] = " turn)
+                         :initial-user-content current}))
+
+                    t3
+                    (assemble [(entry 1) (entry 2)] "q3" 3)
+
+                    t4
+                    (assemble [(entry 1) (entry 2) (entry 3)] "q4" 4)]
+
+                   (expect (= (vec (butlast t3)) (subvec t4 0 (dec (count t3)))))
+                   (expect (str/includes? (:content (last t4)) ";; -- TURN-SYSTEM-CONTEXT --"))
+                   (expect (str/includes? (:content (last t4)) "session[\"turn\"] = 4"))))
+             (it "renders one checkpoint message without covered Q/A"
+                 (let
+                   [messages
+                    (prompt/assemble-initial-messages
+                      {:previous-turn-context
+                       [{:checkpoint? true :turns [1 2] :gist "durable state"}]
+                       :turn-context "session[\"turn\"] = 3"
+                       :initial-user-content "continue"})
+
+                    prior
+                    (:content (first messages))]
+
+                   (expect (= 2 (count messages)))
+                   (expect (str/includes? prior "folded turns 1, 2"))
+                   (expect (str/includes? prior "durable state"))
+                   (expect (not (str/includes? prior "user asked:"))))))
