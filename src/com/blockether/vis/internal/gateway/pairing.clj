@@ -62,6 +62,13 @@
          distinct
          vec)))
 
+(defn tailscale-hosts
+  "Tailscale (100.64/10) IPv4 addresses currently bound to a live interface, in
+  discovery order. Empty when Tailscale is not up, so callers can fall back to
+  LAN / `0.0.0.0` guidance."
+  []
+  (vec (filter tailscale-ip? (iface-addresses))))
+
 (defn pairing-url
   [{:keys [host port token]}]
   (let

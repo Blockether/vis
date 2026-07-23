@@ -2434,7 +2434,14 @@
       (let [log-path (str (System/getProperty "user.home") "/.vis/vis.log")]
         (alter-var-root #'*log-writer*
                         (fn [cur]
-                          (or cur (io/writer log-path :append true))))
+                          (or cur
+                              ;; Diagnostics sink ONLY — an unwritable log path
+                              ;; (confined process, read-only $HOME) must NEVER
+                              ;; fail the tool invocation it wraps: fall back to
+                              ;; a null writer and keep the call running.
+                              (try (io/writer log-path :append true)
+                                   (catch Throwable _
+                                     (io/writer (java.io.OutputStream/nullOutputStream)))))))
         *log-writer*)))
 
 (declare wrap-extension-thunked)

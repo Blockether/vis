@@ -40,7 +40,7 @@ YAML is validated exactly as parsed:
 `com.blockether.vis.internal.config-spec/config` is the complete `clojure.spec`
 contract for the original string-keyed YAML representation. It covers these closed
 top-level blocks: `providers`, `router`, `system-prompt`, `sandbox`, `jail`, `network`,
-`environment`, `db-spec`, `search`, `toggles`, `tui-settings`, and `mcp`. Filesystem
+`environment`, `db-spec`, `search`, `toggles`, `tui-settings`, `mcp`, and `python`. Filesystem
 policy is a closed block at `jail.filesystem`.
 
 Nested maps are also closed except maps whose keys are user-defined, such as environment
@@ -182,30 +182,22 @@ network:
 ```
 
 Filesystem roots under `jail.filesystem` use last-match-wins deny carve-outs:
-session roots and `allow-read-write` have full access, `allow-write` is the legacy
-equivalent, and `allow-read` is read-only. `deny-write` or `deny-read` takes
-precedence. A bare `language-caches` path is readable and writable;
-`access: read-only` permits dependency resolution without cache mutation. No
-dependency cache is exposed unless listed.
+session roots and `allow-read-write` have full access, `allow-write` is the
+legacy equivalent, `allow-read` is read-only, and `deny-write`/`deny-read` take
+precedence. A bare `language-caches` path is readable and writable; `access:
+read-only` permits dependency resolution without cache mutation, and no cache is
+exposed unless listed. `network.allowed-domains` restricts public hosts while
+`denied-domains` wins over it; `jail.inbound-ports` allowlists extra local ports
+a confined shell child may **accept** on (for example `5273`, so a jailed Vite
+server is reachable from a browser or phone).
 
-Child processes use the gateway's loopback egress proxy. `allowed-domains`
-restricts public hosts; `denied-domains` wins over it. Loopback development
-services are allowed except Vis's reserved control-plane ports. Private LAN
-addresses require `allow-private: true`; link-local, metadata, wildcard, and
-multicast addresses remain blocked. Sandbox, filesystem, and network permissions
-are snapshotted when a session environment is built. Run `/reload` to apply policy
-changes; editing a model-writable project `vis.yml` alone cannot widen a live session.
-
-For HTTPS method/path rules, MITM behavior, network filters, managed REPLs,
-trusted-extension policy, `repl_connect`, and the macOS test matrix, see
-[Process sandbox and gateway egress](sandbox.md).
-
-The `jail` block owns filesystem confinement and inbound sockets for confined shell
-children. By default a jailed child may bind any local port but may **accept**
-connections only on Vis's managed nREPL loopback port. `jail.inbound-ports` allowlists
-additional ports a child may accept on—for example `5273`, so a jailed Vite server is
-reachable from a browser or phone. Like every jail permission, it is snapshotted when
-the environment is built, so run `/reload` after changing it.
+These permissions are snapshotted when a session environment is built, so editing
+a model-writable project `vis.yml` alone cannot widen a live session. `/reload`
+applies the change across **every** active session, lazily on each session's next
+message. For the complete filesystem precedence, network model (HTTPS method/path
+policy, MITM behavior, SSRF denial, programmable filters), inbound sockets,
+snapshot inheritance, the read-only `session["access"]` view, `repl_connect`, and
+the macOS test matrix, see [Process sandbox and gateway egress](sandbox.md).
 
 ### macOS native-image startup failures
 
@@ -220,6 +212,41 @@ process. After upgrading from a Vis build without this permission, restart the
 Vis client/gateway before retrying the native tool. An actual egress-policy
 failure instead reports the rejected host (for example, `host not permitted`);
 add that hostname to `network.allowed-domains` when appropriate.
+
+### GraalPy internal-resource cache
+
+GraalPy extracts its Python standard library ("internal resources") on first
+use into `$XDG_CACHE_HOME/org.graalvm.polyglot` (default
+`~/.cache/org.graalvm.polyglot`). This happens at **runtime** on both the JVM
+and the compiled native-image binary — the stdlib is not baked into the
+executable. If that directory is unwritable (a confined process, a read-only
+home, minimal CI), the very first Python block fails with
+`ModuleNotFoundError: No module named 'ast'`.
+
+Resolution order for the cache root:
+
+1. The GraalVM system property always wins:
+   `vis -J-Dpolyglot.engine.userResourceCache=/path` on the JVM launcher, or
+   `VIS_OPTS`/`JAVA_TOOL_OPTIONS` style `-D` flags where applicable.
+2. `python.resource-cache` in config (`~` expands to your home directory):
+
+   ```yaml
+   # vis.yml
+   python:
+     resource-cache: ~/.vis/cache/graal-resources
+   ```
+
+3. `~/.vis/cache/graal-resources` — always preferred when writable. vis redirects
+   here unconditionally rather than reusing the default
+   `~/.cache/org.graalvm.polyglot` root, so behavior is identical whether or not a
+   sandbox happens to whitelist that root. This directory is git-ignored.
+4. Final fallback: `./.graal-resources` under the working directory (also
+   git-ignored) when even `~/.vis` is unwritable.
+
+The property is read **once per process** when the polyglot engine
+initializes, so changing it requires restarting the client and the gateway
+daemon — `/reload` is not enough. An unusable configured path silently degrades
+to steps 3–4 rather than failing startup.
 
 ## Extension environment overrides
 

@@ -27,3 +27,7 @@ Python is the lingua franca models write most fluently, so the action layer meet
 ## Build-time cost, runtime payoff
 
 GraalPy ships substantial native-image configuration (build-time initialization, a heavy heap during the build). Vis does **not** duplicate that config — it inherits it from the GraalPy language jar on the classpath, and adds only its own app-level reflection and flags. See [JVM & native-image](jvm-native-image.md).
+
+## Internal resources cache
+
+GraalPy's Python stdlib ships as "internal resources" — inside the language jar on the JVM, and **inside the executable itself** in the compiled native binary (`-H:+IncludeLanguageResources`; `PythonHome` is never used). Either way they are extracted at **runtime** into `$XDG_CACHE_HOME/org.graalvm.polyglot` (default `~/.cache/org.graalvm.polyglot`). When that root is unwritable (confined process, read-only home), the first stdlib import fails with `ModuleNotFoundError: No module named 'ast'`. Vis redirects the cache to a writable fallback automatically, and the root is configurable: `python.resource-cache` in `vis.yml`, or the `-Dpolyglot.engine.userResourceCache` system property, which always wins. Read once per process — restart, don't `/reload`. See [Configuration](configuration.md#graalpy-internal-resource-cache).

@@ -5,10 +5,15 @@
 // app reconnects to the SAME gateway the TUI/other channels use.
 
 import { Preferences } from '@capacitor/preferences';
-import type { GatewayConn } from './types';
+import type { GatewayConn, ThemePref } from './types';
 
 const CONNS_KEY = 'vis.connections';
 const ACTIVE_KEY = 'vis.activeConnection';
+const THEME_PREF_KEY = 'vis.themePref';
+
+// The companion defaults to the light theme regardless of what a gateway/TUI
+// persists, and remembers the user's own choice locally across reloads.
+const DEFAULT_THEME_PREF: ThemePref = 'light';
 
 async function getRaw(key: string): Promise<string | null> {
   try {
@@ -74,6 +79,16 @@ export async function getActiveConnection(): Promise<GatewayConn | null> {
   if (!url) return null;
   const conns = await loadConnections();
   return conns.find((c) => c.url === url) ?? null;
+}
+
+/** The app-local theme preference. Defaults to the light theme. */
+export async function getThemePref(): Promise<ThemePref> {
+  const raw = await getRaw(THEME_PREF_KEY);
+  return (raw ?? DEFAULT_THEME_PREF) as ThemePref;
+}
+
+export async function setThemePref(pref: ThemePref): Promise<void> {
+  await setRaw(THEME_PREF_KEY, pref);
 }
 
 const SUBSCRIPTIONS_KEY = 'vis.sessionSubscriptions';

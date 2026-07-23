@@ -2961,13 +2961,23 @@
           (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
                                "  vis gateway start --host 0.0.0.0 --require-token --pair")
                           {:vis/user-error true}))
-          loopback? (throw (ex-info (str
-                                      "the running gateway is bound to " host
-                                      " (loopback) — a phone cannot reach it.\n"
-                                      "Restart it on a reachable host:\n"
-                                      "  vis gateway stop\n"
-                                      "  vis gateway start --host 0.0.0.0 --require-token --pair")
-                                    {:vis/user-error true}))
+          loopback?
+          (throw (ex-info
+                   (let
+                     [ts (first ((requiring-resolve
+                                   'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
+                     (str
+                       "the running gateway is bound to " host
+                       " (loopback) \u2014 a phone cannot reach it.\n"
+                       "Restart it on a reachable host:\n"
+                       "  vis gateway stop\n"
+                       (if ts
+                         (str
+                           "  vis gateway start --host " ts
+                           " --require-token --pair"
+                           "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
+                         "  vis gateway start --host 0.0.0.0 --require-token --pair")))
+                   {:vis/user-error true}))
           :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
                   {:host host :port port :token token :require-token? (boolean token)}))))
 

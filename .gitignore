@@ -98,3 +98,6 @@ channels-*.csv
 
 # local git worktrees (CI native-build probes, etc.)
 .gitworktrees/
+
+# GraalPy internal-resource cache fallback (confined processes)
+.graal-resources/

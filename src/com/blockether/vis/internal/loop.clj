@@ -1764,11 +1764,17 @@
 
 (defn- previous-turn-context
   "Prior provider-visible turns as an append-only RESUME sequence, compacted by
-   the persisted fold ledger. A summary that covers every iteration of a turn
-   removes that turn's complete Q/A + result recap here; `apply-summaries` owns
-   the summary's ONE durable trailer checkpoint. A gist-less complete fold thus
-   drops the recap entirely. Broader/newer summaries are resolved first, so a
-   fold-of-fold cannot leave older Q/A or breadcrumbs beside the checkpoint.
+   the persisted fold ledger. Q/A removal keys off EXPLICIT whole-turn intent
+   only (`\"turns\"` stamped by expand-through: a bare `tN` or a range selector
+   spanning the turn) — an enumerated iteration fold that happens to name every
+   iteration keeps the turn's Q/A recap with folded result lines. A turn covered
+   with explicit intent loses its complete Q/A + result recap here; the trailer
+   (`apply-summaries`) owns the ONE durable checkpoint anchored at its folded
+   iterations. A covered turn with NO done iterations has no trailer anchor, so
+   it materializes a minimal `:checkpoint?` entry here instead of vanishing —
+   nothing leaves the wire without a visible tombstone. Broader/newer summaries
+   are resolved first (supersede merges whole-turn intent), so a fold-of-fold
+   cannot leave older Q/A or breadcrumbs beside the checkpoint.
 
    Synthetic slash turns remain local-only. Oldest→newest; current/running turns
    are excluded; nil when no provider-visible representation remains."
@@ -1808,39 +1814,68 @@
                               :forms forms
                               :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
                turns)
+         ;; Q/A recap weight per turn (~tokens, chars/4 — the SAME estimator as
+         ;; `engine_iter_weights`): stamped on the ctx so `session_fold`'s ack and
+         ;; the `now` budget can price the recap a whole-turn fold removes. Built
+         ;; from the DB turn rows (not the fold ledger), so an already-folded
+         ;; turn keeps a stable weight instead of dropping to zero.
+         _ (when-let [ca (:ctx-atom environment)]
+             (try
+               (swap! ca assoc "engine_turn_weights"
+                      (into {}
+                            (map (fn [{:keys [turn user-request answer]}]
+                                   [turn (quot (+ (count (str user-request))
+                                                  (count (str answer)))
+                                               4)]))
+                            turn-data))
+               (catch Throwable _ nil)))
          universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
          resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
                                                                              universe))
-         covering-summary (fn [{:keys [turn iter-scopes]}]
-                            (or (last (filter (fn [summary]
-                                                (contains? (set (get summary "scopes"))
-                                                           (str "t" turn)))
-                                              summaries))
-                                (when (seq iter-scopes)
-                                  (last (filter (fn [summary]
-                                                  (let [selected (set (get summary "scopes"))]
-                                                    (every? selected iter-scopes)))
-                                                resolved)))))
-         covered (into #{}
-                       (keep (fn [turn]
-                               (when (covering-summary turn) (:turn turn))))
-                       turn-data)]
+         covering-summary (fn [{:keys [turn]}]
+                            (last (filter (fn [summary]
+                                            (contains? (set (get summary "turns")) turn))
+                                          resolved)))]
 
-        (not-empty (reduce (fn [out {:keys [turn user-request answer interrupted? forms]}]
-                             ;; The trailer's apply-summaries path owns the ONE durable
-                             ;; breadcrumb. Removing the complete Q/A representation here
-                             ;; avoids echoing that checkpoint in a second wire location.
-                             (if (contains? covered turn)
-                               out
-                               (conj out
-                                     {:turn turn
-                                      :user-request user-request
-                                      :answer answer
-                                      :interrupted? interrupted?
-                                      :results
-                                      (vec (take 40 (prior-turn-scope-index forms resolved)))})))
-                           []
-                           turn-data))))
+        (some->>
+          (reduce
+            (fn [out {:keys [turn user-request answer interrupted? forms iter-scopes] :as td}]
+              (if-let [summary (covering-summary td)]
+                (if (seq iter-scopes)
+                  ;; The trailer's apply-summaries path owns the ONE durable
+                  ;; breadcrumb (anchored at this turn's folded iterations).
+                  ;; Removing the complete Q/A representation here avoids
+                  ;; echoing that checkpoint in a second wire location.
+                  out
+                  ;; No done iterations → no trailer anchor exists anywhere.
+                  ;; Materialize the checkpoint HERE so the fold never
+                  ;; erases a turn without a visible tombstone. Consecutive
+                  ;; turns covered by the SAME summary share one entry.
+                  (let [prev (peek out)]
+                    (if (and (:checkpoint? prev) (identical? (:summary prev) summary))
+                      (conj (pop out) (update prev :turns conj turn))
+                      (conj
+                        out
+                        {:checkpoint? true
+                         :summary summary
+                         :turns [turn]
+                         :gist
+                         (or
+                           (some-> (get summary "gist")
+                                   str
+                                   str/trim
+                                   not-empty)
+                           "(dropped — raw turn data remains in session storage; recover via `await session_state()`)")}))))
+                (conj out
+                      {:turn turn
+                       :user-request user-request
+                       :answer answer
+                       :interrupted? interrupted?
+                       :results (vec (take 40 (prior-turn-scope-index forms resolved)))})))
+            []
+            turn-data)
+          not-empty
+          (mapv #(dissoc % :summary)))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-turn-context-failed
@@ -2735,8 +2770,16 @@
                              [candidates
                               (conj (vec (get ctx "session_summaries")) intent)
 
+                              ;; The supersede universe is the live wire PLUS every
+                              ;; concrete scope the candidates themselves name — so a
+                              ;; bare `tN` re-fold covers earlier enumerated folds of
+                              ;; that turn even before (or after) those iterations are
+                              ;; stamped into `engine_iter_universe`.
                               universe
-                              (or (get ctx "engine_iter_universe") [])
+                              (into (vec (or (get ctx "engine_iter_universe") []))
+                                    (comp (mapcat #(get % "scopes"))
+                                          (filter ctx-engine/scope-key))
+                                    candidates)
 
                               tagged
                               (mapv (fn [idx summary]
@@ -2798,13 +2841,25 @@
             util
             (get ctx "engine_utilization")
 
+            expanded
+            (ctx-engine/expand-through [base] (or universe []))
+
             scopes
             (into #{}
                   (mapcat #(get % "scopes"))
-                  (ctx-engine/expand-through [base] (or universe [])))
+                  expanded)
+
+            ;; Whole-turn intent also removes the turn's Q/A recap from the
+            ;; prior-turn context — price that too (`engine_turn_weights`,
+            ;; stamped by `previous-turn-context`), so a bare `tN` /
+            ;; turn-spanning range fold reports its FULL reclaim, not just the
+            ;; trailer iterations still carrying weights.
+            qa-toks
+            (let [tw (get ctx "engine_turn_weights")]
+              (reduce + 0 (keep #(get tw %) (into #{} (mapcat #(get % "turns")) expanded))))
 
             toks
-            (reduce + 0 (keep #(get weights %) scopes))
+            (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))
 
             lim
             (get util "model_input_limit")
@@ -4328,77 +4383,82 @@
          (fn [{:keys [reasoning content tool-input tool-call-preview done?] :as chunk}]
            (cond (:event/type chunk)
                  (on-chunk {:phase :provider-fallback :iteration iteration-position :event chunk})
-                 :else (do (when (or (some? reasoning) done?)
-                             (let
-                               [thinking (some-> reasoning
-                                                 str)
-                                prev-len (long @reasoning-len-volatile)
-                                cur-len (long (count (or thinking "")))
-                                delta (cond (nil? thinking) nil
-                                            (< cur-len prev-len) thinking
-                                            (= cur-len prev-len) ""
-                                            :else (subs thinking prev-len))]
+                 :else
+                 (do
+                   (when (or (some? reasoning) done?)
+                     (let
+                       [thinking (some-> reasoning
+                                         str)
+                        prev-len (long @reasoning-len-volatile)
+                        cur-len (long (count (or thinking "")))
+                        delta (cond (nil? thinking) nil
+                                    (< cur-len prev-len) thinking
+                                    (= cur-len prev-len) ""
+                                    :else (subs thinking prev-len))]
 
-                               (vreset! reasoning-len-volatile cur-len)
-                               (on-chunk {:phase :reasoning
-                                          :iteration iteration-position
-                                          :thinking thinking
-                                          :delta delta
-                                          :done? (boolean done?)})))
-                           (when (some? content)
-                             ;; Stream provider content (the answer
-                             ;; markdown) so the bubble surfaces live
-                             ;; progress between reasoning and parsed
-                             ;; forms. Same delta math as
-                             ;; reasoning; consumers redraw or append.
-                             (let
-                               [content-s (some-> content
-                                                  str)
-                                prev-len (long @content-len-volatile)
-                                cur-len (long (count (or content-s "")))
-                                delta (cond (nil? content-s) nil
-                                            (< cur-len prev-len) content-s
-                                            (= cur-len prev-len) ""
-                                            :else (subs content-s prev-len))]
+                       (vreset! reasoning-len-volatile cur-len)
+                       (on-chunk {:phase :reasoning
+                                  :iteration iteration-position
+                                  :thinking thinking
+                                  :delta delta
+                                  :done? (boolean done?)})))
+                   (when (some? content)
+                     ;; Stream provider content (the answer
+                     ;; markdown) so the bubble surfaces live
+                     ;; progress between reasoning and parsed
+                     ;; forms. Same delta math as
+                     ;; reasoning; consumers redraw or append.
+                     (let
+                       [content-s (some-> content
+                                          str)
+                        prev-len (long @content-len-volatile)
+                        cur-len (long (count (or content-s "")))
+                        delta (cond (nil? content-s) nil
+                                    (< cur-len prev-len) content-s
+                                    (= cur-len prev-len) ""
+                                    :else (subs content-s prev-len))]
 
-                               (vreset! content-len-volatile cur-len)
-                               (on-chunk {:phase :content
-                                          :iteration iteration-position
-                                          :content content-s
-                                          :delta delta
-                                          :done? (boolean done?)})))
-                           ;; Native tool input is neither assistant prose nor
-                           ;; reasoning. Svar identifies the call before its argument
-                           ;; deltas; preserve that identity in a dedicated preview
-                           ;; phase so every client labels the code as a native call
-                           ;; from its first streamed byte.
-                           (when tool-call-preview
-                             (vreset! tool-call-preview-volatile tool-call-preview))
-                           (let [preview (or tool-call-preview @tool-call-preview-volatile)
-                                 code (or (some-> tool-input live-code-from-tool-input)
-                                          @tool-code-volatile)]
-                             (when (and (str/blank? (or content ""))
-                                        preview
-                                        (or tool-call-preview (some? tool-input)
-                                            (and done? (some? code))))
-                               (let [code (or code "")
-                                     prev-len (long @tool-code-len-volatile)
-                                     cur-len (long (count code))
-                                     delta (cond (< cur-len prev-len) code
-                                                 (= cur-len prev-len) ""
-                                                 :else (subs code prev-len))]
-                                 (vreset! tool-code-len-volatile cur-len)
-                                 (vreset! tool-code-volatile (not-empty code))
-                                 (on-chunk {:phase :tool-preview
-                                            :iteration iteration-position
-                                            :position 0
-                                            :code code
-                                            :delta delta
-                                            :vis/tool-name "native_call"
-                                            :tool-color-role :tool-color/meta
-                                            :result-summary (or (:name preview) "Native call")
-                                            :svar/tool-call-id (:id preview)
-                                            :done? (boolean done?)}))))))))
+                       (vreset! content-len-volatile cur-len)
+                       (on-chunk {:phase :content
+                                  :iteration iteration-position
+                                  :content content-s
+                                  :delta delta
+                                  :done? (boolean done?)})))
+                   ;; Native tool input is neither assistant prose nor
+                   ;; reasoning. Svar identifies the call before its argument
+                   ;; deltas; preserve that identity in a dedicated preview
+                   ;; phase so every client labels the code as a native call
+                   ;; from its first streamed byte.
+                   (when tool-call-preview (vreset! tool-call-preview-volatile tool-call-preview))
+                   (let
+                     [preview (or tool-call-preview @tool-call-preview-volatile)
+                      code (or (some-> tool-input
+                                       live-code-from-tool-input)
+                               @tool-code-volatile)]
+
+                     (when (and (str/blank? (or content ""))
+                                preview
+                                (or tool-call-preview (some? tool-input) (and done? (some? code))))
+                       (let
+                         [code (or code "")
+                          prev-len (long @tool-code-len-volatile)
+                          cur-len (long (count code))
+                          delta (cond (< cur-len prev-len) code
+                                      (= cur-len prev-len) ""
+                                      :else (subs code prev-len))]
+
+                         (vreset! tool-code-len-volatile cur-len)
+                         (vreset! tool-code-volatile (not-empty code))
+                         (on-chunk {:phase :tool-preview
+                                    :iteration iteration-position
+                                    :position 0
+                                    :code code
+                                    :delta delta
+                                    :vis/tool-name "native_call"
+                                    :tool-color-role :tool-color/meta
+                                    :result-summary (or (:name preview) "Native call")
+                                    :svar/tool-call-id (:id preview)
+                                    :done? (boolean done?)}))))))))
        copilot-initiator (copilot-initiator-for-iteration iteration)
        effective-llm-headers
        (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
@@ -9603,7 +9663,8 @@
 
      ;; Security configuration is resolved exactly once for a root environment.
      ;; A sub_loop child receives the parent's value through `:child`; it never
-     ;; re-reads model-writable vis.yml. `/reload` rebuilds the root environment.
+     ;; re-reads model-writable vis.yml. `/reload` bumps `policy-reload-epoch`,
+     ;; so each live env recycles at its next turn and rebuilds this snapshot.
      security-config
      (or (:security-policy child) (security-config-snapshot))
 
@@ -9866,6 +9927,33 @@
   cache
   (atom {}))
 
+(defonce
+  ^{:doc
+    "Monotonic `/reload` epoch. Every `/reload` bumps it (via a reload hook).
+   A cache entry stamped with an older epoch is recycled at its NEXT turn
+   boundary so its immutable security-policy snapshot rebuilds from the
+   freshly-reloaded vis.yml. This is the sanctioned way `/reload` replaces the
+   frozen network-domain / filesystem-root policy: the snapshot drives the
+   GraalPy context, egress proxy, and process jail at env-creation time, so it
+   can only change by rebuilding the env — never by an in-place reseat."}
+  policy-reload-epoch
+  (atom 0))
+
+(defn mark-policy-reload!
+  "Invalidate every cached env's frozen security-policy snapshot. Registered as
+   a `/reload` hook: live sessions recycle at their next turn so vis.yml edits
+   to network domains / filesystem roots actually take effect. Returns nil."
+  []
+  (swap! policy-reload-epoch inc)
+  nil)
+
+;; Wire `mark-policy-reload!` into the `/reload` slash. `run-reload-hooks!`
+;; (invoked by `reload-slash` after `config/reload-config!`) bumps the epoch, so
+;; the next turn of each live session rebuilds its security-policy snapshot.
+;; `defonce` keeps the registration idempotent across `(require ... :reload)`.
+(defonce ^:private _policy-reload-hook
+  (extension/register-reload-hook! ::security-policy-reload mark-policy-reload!))
+
 (defn- cache-key
   "Normalize an id-shaped value (UUID or string-UUID) to a UUID
    suitable for keying `cache`. Nil → nil so wrapped lookups stay
@@ -10004,7 +10092,10 @@
   {:environment env
    :lock (java.util.concurrent.locks.ReentrantLock.)
    :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
-   :turns (java.util.concurrent.atomic.AtomicLong. 0)})
+   :turns (java.util.concurrent.atomic.AtomicLong. 0)
+   ;; The `/reload` epoch this env was built under. `send!` recycles the entry
+   ;; when a later `/reload` has bumped `policy-reload-epoch` past this stamp.
+   :policy-epoch (java.util.concurrent.atomic.AtomicLong. (long @policy-reload-epoch))})
 
 (defn- touch-entry!
   "Bump `entry`'s `:last-active` stamp to now so the reaper treats it as warm.
@@ -10315,7 +10406,10 @@
         (assoc old
           :environment fresh-env
           :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
-          :turns (java.util.concurrent.atomic.AtomicLong. 0)))
+          :turns (java.util.concurrent.atomic.AtomicLong. 0)
+          ;; Restamp to the current epoch: the fresh env carries the latest
+          ;; security-policy snapshot, so it is no longer reload-stale.
+          :policy-epoch (java.util.concurrent.atomic.AtomicLong. (long @policy-reload-epoch))))
       (try (dispose-environment! (:environment old)) (catch Throwable _ nil)))))
 
 (defn db-info
@@ -10482,6 +10576,20 @@
      ;; finished and before the next user code executes.
      (.lock lock)
      (try
+       ;; Apply a pending `/reload` FIRST: if this entry was built under an
+       ;; older policy epoch, recycle it now so the turn runs against a
+       ;; security-policy snapshot rebuilt from the freshly-reloaded vis.yml
+       ;; (new network domains / filesystem roots take effect here). Done under
+       ;; the lock, before the turn, so no eval races the swap.
+       (let
+         [cur
+          (or (get @cache k) entry)
+
+          ^java.util.concurrent.atomic.AtomicLong pe
+          (:policy-epoch cur)]
+
+         (when (and pe (< (.get pe) (long @policy-reload-epoch)))
+           (try (recycle-env! k) (catch Throwable _ nil))))
        ;; Re-read :environment UNDER the lock: a between-turns turn-cap recycle
        ;; or a router/extension reseat may have swapped it since we captured
        ;; `entry`, so the queued turn runs against the CURRENT context.

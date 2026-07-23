@@ -24,6 +24,18 @@
         (is (str/includes? (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})
                            "url=http%3A%2F%2F100.109.18.77%3A7890"))))))
 
+(deftest tailscale-hosts-selects-only-tailnet-ips
+  (testing "only 100.64/10 addresses are returned, in discovery order"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["192.168.0.45" "100.109.18.77" "10.1.2.3"
+                                                  "100.72.5.9"])}
+      (fn []
+        (is (= ["100.109.18.77" "100.72.5.9"] (pairing/tailscale-hosts)))))
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["192.168.0.45" "10.1.2.3"])}
+      (fn []
+        (is (= [] (pairing/tailscale-hosts)))))))
+
 (deftest terminal-qr-renders-non-empty-blocks
   (testing "CLI pairing can print a QR without shelling out"
     (let [qr (pairing/terminal-qr "vis://gateway?url=http%3A%2F%2F127.0.0.1%3A7890&token=s")]

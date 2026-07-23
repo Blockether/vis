@@ -6,6 +6,9 @@ jail:
       - ../spel
       - ../tree-sitter-language-pack
       - ../svar
+      # Vis' own state/config/log dir, so the agent can read ~/.vis/state.yml,
+      # inspect logs, and diagnose config/provider issues in-session.
+      - ~/.vis
     # Managed REPL / test-runner dependency caches. OPT-IN only: nothing writable
     # is granted by default anymore. Each entry is either a bare path (read+write)
     # or {path: .., access: read-only}. read-only lets a jailed JVM RESOLVE

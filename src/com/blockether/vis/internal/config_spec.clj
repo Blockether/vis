@@ -216,9 +216,10 @@
 (def tui-keys #{"theme-name" "contributors-disabled"})
 (def mcp-keys #{"servers"})
 (def mcp-server-keys #{"transport" "command" "args" "cwd" "env" "url" "headers"})
+(def python-keys #{"resource-cache"})
 (def config-keys
   #{"providers" "router" "system-prompt" "sandbox" "jail" "network" "environment" "db-spec" "search"
-    "toggles" "tui-settings" "mcp"})
+    "toggles" "tui-settings" "mcp" "python"})
 
 (def prompt-schema {"text" string? "replace?" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -236,6 +237,13 @@
   {"theme-name" non-blank-string?
    "contributors-disabled" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))})
 (s/def ::tui-settings #(closed-map? tui-schema %))
+
+(def python-schema
+  ;; GraalPy internal-resource cache root (where the Python stdlib extracts at
+  ;; runtime). Read ONCE per process at polyglot-engine boot; the explicit
+  ;; `-Dpolyglot.engine.userResourceCache` system property wins over this key.
+  {"resource-cache" non-blank-string?})
+(s/def ::python #(closed-map? python-schema %))
 
 (def mcp-server-schema
   {"transport" (one-of #{"stdio" "http"})
@@ -265,7 +273,8 @@
    "search" (spec-pred ::search)
    "toggles" named-scalar-map?
    "tui-settings" (spec-pred ::tui-settings)
-   "mcp" (spec-pred ::mcp)})
+   "mcp" (spec-pred ::mcp)
+   "python" (spec-pred ::python)})
 
 (s/def ::config #(closed-map? config-schema %))
 
