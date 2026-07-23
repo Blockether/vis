@@ -60,27 +60,19 @@
   2000)
 
 (def ^:private streaming-text-phases
-  "Model-generated text (reasoning/content/prose) streamed LIVE over the gateway,
-   coalesced to sentence granularity (see `coalesce-delta?`). Thinking rides
-   `reasoning.delta`; provider content + end-of-iteration prose ride
-   `content.delta` (prose flagged `:prose-final`) — DISTINCT wire events so a
-   client paints live thinking and live prose as SEPARATE blocks."
-  #{:reasoning :content :assistant-prose})
+  "Model-generated text and native-call code streamed LIVE over the gateway.
+   Reasoning/content/prose become typed content deltas; tool previews keep their
+   dedicated `block.preview` event but share the same bounded coalescing policy."
+  #{:reasoning :content :assistant-prose :tool-preview})
 
 (defn- delta-text
-  "The cumulative text a streaming reasoning/content/prose chunk carries — the
-   per-phase key the loop fills (`:thinking` / `:content` / `:text`)."
-  [{:keys [phase thinking content text]}]
+  "The cumulative text carried by a streaming chunk."
+  [{:keys [phase thinking content text code]}]
   (case phase
-    :reasoning
-    thinking
-
-    :content
-    content
-
-    :assistant-prose
-    text
-
+    :reasoning thinking
+    :content content
+    :assistant-prose text
+    :tool-preview code
     nil))
 
 (defn- sentence-closed-in-suffix?
@@ -762,7 +754,7 @@
     (let
       [payload
        (case phase
-         :form-start
+         (:tool-preview :form-start)
          (merge
            ;; Carry the native-tool badge identity so a client can hide the
            ;; redundant invocation code WHILE the tool runs.
@@ -849,6 +841,9 @@
                              :attempt :delay-ms :status :error])))
            {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
       [(case phase
+         :tool-preview
+         "block.preview"
+
          :form-start
          "block.started"
 
@@ -1339,7 +1334,8 @@
                     delta))]
 
                (when streaming?
-                 (when-not (contains? @started-blocks block-id)
+                 (when (and (not= phase :tool-preview)
+                            (not (contains? @started-blocks block-id)))
                    (vswap! started-blocks conj block-id)
                    (append-event! sid
                                   "content.block.started"

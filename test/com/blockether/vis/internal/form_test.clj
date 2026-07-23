@@ -134,4 +134,6 @@
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false}))))
   (it "->display drops nils so a merge never stamps empty keys"
       (expect (= {} (form/->display {:result nil :vis/tool-name nil})))
-      (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil})))))
+      (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil}))))
+  (it "labels the streaming placeholder as a native call"
+  (expect (= "NATIVE CALL" (form/tool-label "native_call")))))

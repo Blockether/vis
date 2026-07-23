@@ -172,7 +172,20 @@
                                        :assistant-prose " full prose "})]
                    (expect (= "iteration.completed" type))
                    (expect (= 5 (:iteration payload)))
-                   (expect (= "full prose" (:assistant-prose payload))))))
+                   (expect (= "full prose" (:assistant-prose payload)))))
+             (it "native-call preview is a distinct replayable block event"
+  (let [[type store? payload]
+        (#'state/chunk->event
+          {:phase :tool-preview :iteration 1 :position 0 :code "print(4"
+           :vis/tool-name "native_call" :tool-color-role :tool-color/meta
+           :result-summary "run_python" :svar/tool-call-id "call_1"})]
+    (expect (= "block.preview" type))
+    (expect store?)
+    (expect (= 1 (:iteration payload)))
+    (expect (= 0 (:block_id payload)))
+    (expect (= "print(4" (:code payload)))
+    (expect (= "native_call" (:tool_name payload)))
+    (expect (= "call_1" (:tool_call_id payload))))))
 
 (defdescribe
   iteration-attachment-descriptor-wire-test
@@ -631,7 +644,12 @@
                                    1050))))
     (it "tool phases always pass"
         (expect (false?
-                  (coalesce? {[:reasoning 0] {:ms 1000 :len 0}} {:phase :form-result} 1050))))))
+                  (coalesce? {[:reasoning 0] {:ms 1000 :len 0}} {:phase :form-result} 1050)))))
+  (it "coalesces native-call code without classifying it as content"
+  (let [prior {[:tool-preview 1] {:ms 1000 :len 3}}]
+    (expect (true? (coalesce? prior {:phase :tool-preview :iteration 1 :code "prin"} 1200)))
+    (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print\n"} 1200)))
+    (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print" :done? true} 1200))))))
 
 (defdescribe volatile-queue-reconciliation-test
              (it "marks orphaned running turns interrupted without reconstructing messages"

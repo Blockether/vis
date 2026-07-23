@@ -727,6 +727,10 @@
       "content.block.completed"
       nil
 
+      "block.preview"
+      (merge {:phase :tool-preview :iteration iteration :position block-id :code code}
+             (vis/form<-wire event))
+
       "block.started"
       (merge {:phase :form-start :iteration iteration :position block-id :code code}
              ;; Read back the native-tool badge identity (`:vis/tool-name`

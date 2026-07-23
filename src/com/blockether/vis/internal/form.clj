@@ -59,6 +59,7 @@
    the `!`/`!&` shell-sugar tools read as prose `SHELL RUN` / `SHELL BACKGROUND`
    instead of the raw wire names `SHELL_RUN` / `SHELL_BG`."
   {"python_execution" "RESULT"
+   "native_call" "NATIVE CALL"
    "repl_eval" "REPL"
    "shell_run" "SHELL RUN"
    "shell_bg" "SHELL BACKGROUND"})

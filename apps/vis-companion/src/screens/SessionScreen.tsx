@@ -131,11 +131,13 @@ export function SessionScreen({
           return;
         }
 
-        if (type === 'block.started') {
+        if (type === 'block.preview' || type === 'block.started') {
           setLiveTurn((turn) => turn ? {
             ...turn,
-            operation: stringField(event, 'tool_name') || stringField(event, 'scope') || 'Running operation',
-            operationCount: turn.operationCount + 1,
+            operation: type === 'block.preview'
+              ? `Native call: ${stringField(event, 'result_summary') || stringField(event, 'tool_name') || 'tool'}`
+              : stringField(event, 'tool_name') || stringField(event, 'scope') || 'Running operation',
+            operationCount: type === 'block.started' ? turn.operationCount + 1 : turn.operationCount,
           } : turn);
           return;
         }

@@ -480,7 +480,17 @@
                         "text" "pondering"})]
           (expect (= :reasoning (:phase chunk)))
           (expect (= 2 (:iteration chunk)))
-          (expect (= "pondering" (:thinking chunk)))))))
+          (expect (= "pondering" (:thinking chunk))))))
+  (it "block.preview remains a native preview rather than reasoning/content"
+  (let [chunk (g->c {"type" "block.preview" "iteration" 1 "block_id" 0
+                     "code" "print(4" "tool_name" "native_call"
+                     "tool_color_role" "tool-color/meta"
+                     "result_summary" "run_python" "tool_call_id" "call_1"})]
+    (expect (= :tool-preview (:phase chunk)))
+    (expect (= "print(4" (:code chunk)))
+    (expect (= "native_call" (:vis/tool-name chunk)))
+    (expect (= :tool-color/meta (:tool-color-role chunk)))
+    (expect (= "call_1" (:svar/tool-call-id chunk))))))
 
 (defdescribe
   activity-event-chunk-test
