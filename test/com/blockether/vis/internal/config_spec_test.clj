@@ -46,7 +46,8 @@
                   "search" true} {"id" "ref" "path" "~/reference" "access" "read-only"}
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
-   "jail" {"enabled" true "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
+   "jail" {"enabled" true
+           "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
            "inbound-ports" [5273 8080]
            "env" ["CI" "MY_TOKEN"]
            "deny-exec" ["definitely-not-a-real-binary-xyz"]}
@@ -281,9 +282,7 @@
       (let [wire (yamlstar/load (slurp (io/file "vis.yml")))]
         ;; The repo vis.yml ships fully commented (a documented template), so it
         ;; parses to nil. When it carries content it must satisfy the root spec.
-        (expect (or (nil? wire)
-                    (and (every? string? (keys wire))
-                         (config-spec/valid? wire))))))
+        (expect (or (nil? wire) (and (every? string? (keys wire)) (config-spec/valid? wire))))))
   (it "checks recursively user-owned request and pricing maps without keywordizing"
       (expect (config-spec/valid? (assoc-in full-config
                                     ["providers" 0 "extra-body"]
