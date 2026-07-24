@@ -27,6 +27,8 @@ import {
 import type {
   GatewayCapabilities,
   FileSuggestion,
+  QueuedTurn,
+  QueuePausedInfo,
   Session,
   SlashCommand,
   SseEvent,
@@ -563,6 +565,9 @@ export function SessionScreen({
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
+  const [queued, setQueued] = useState<QueuedTurn[]>([]);
+  const [editingQueued, setEditingQueued] = useState<{ turnId: string; text: string } | null>(null);
+  const [queuePaused, setQueuePaused] = useState<QueuePausedInfo | null>(null);
   const [showJump, setShowJump] = useState(false);
   const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
@@ -594,6 +599,9 @@ export function SessionScreen({
   const liveTurnRef = useRef<LiveTurn | null>(null);
   const runningRef = useRef(false);
   const turnsRef = useRef<TranscriptTurn[]>([]);
+  // Keep the loading overlay up until a freshly opened session has been
+  // scrolled to its bottom, so persisted history never flashes at the top first.
+  const initialScrollPendingRef = useRef(!fresh);
   runningRef.current = running;
   turnsRef.current = turns;
 
@@ -602,6 +610,8 @@ export function SessionScreen({
     recordingRef.current = null;
     setTurns([]);
     setLiveTurn(null);
+    setQueued([]);
+    setQueuePaused(null);
     liveTurnRef.current = null;
     setSession(null);
     setAttachments([]);
@@ -613,6 +623,7 @@ export function SessionScreen({
     setLoading(!fresh);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
     followingRef.current = true;
+    initialScrollPendingRef.current = !fresh;
     showJumpRef.current = false;
   }, [sid, fresh]);
 
@@ -632,12 +643,19 @@ export function SessionScreen({
       const next = await client.transcript(sid);
       setTurns(next);
       setError(null);
+      // With turns present, the scroll effect drops the overlay only after it
+      // pins the viewport to the bottom; an empty transcript has nothing to
+      // scroll, so reveal it immediately.
+      if (!next.length) {
+        initialScrollPendingRef.current = false;
+        setLoading(false);
+      }
       return next;
     } catch (cause) {
       setError((cause as Error).message);
-      return null;
-    } finally {
+      initialScrollPendingRef.current = false;
       setLoading(false);
+      return null;
     }
   }, [client, sid]);
 
@@ -804,6 +822,44 @@ export function SessionScreen({
       const batch = coalesceLiveEvents(eventQueue.splice(0));
       if (!batch.length) return;
 
+      // Queue-mirror + pause control frames (channel-agnostic, same events the
+      // TUI consumes). Not live-turn events, so handle them outside the reducer.
+      for (const event of batch) {
+        const tid = stringField(event, 'turn_id');
+        switch (event.type) {
+          case 'turn.queued':
+            setQueued((current) =>
+              current.some((item) => item.turnId === tid)
+                ? current
+                : [...current, { turnId: tid, request: stringField(event, 'request') }]);
+            break;
+          case 'turn.queued.updated':
+            setQueued((current) =>
+              current.map((item) =>
+                item.turnId === tid ? { ...item, request: stringField(event, 'request') } : item));
+            break;
+          case 'turn.queued.deleted':
+          case 'turn.queued.drained':
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
+            break;
+          case 'queue.paused':
+            setQueuePaused({
+              reason: stringField(event, 'reason') || 'provider_unhealthy',
+              held: Number(event.held ?? 0),
+              fails: Number(event.fails ?? 0),
+              isTransient: event.is_transient !== false,
+              isBreakerOpen: event.is_breaker_open === true,
+              retryAt: event.retry_at != null ? Number(event.retry_at) : null,
+            });
+            break;
+          case 'queue.resumed':
+            setQueuePaused(null);
+            break;
+          default:
+            break;
+        }
+      }
+
       if (batch.some((event) => event.type === 'turn.started')) setRunning(true);
       setLiveTurn((turn) => {
         const reduced = batch.reduce(reduceLiveEvent, turn);
@@ -850,6 +906,12 @@ export function SessionScreen({
       return;
     }
     if (followingRef.current) scrollToEnd('auto');
+    if (initialScrollPendingRef.current && turns.length) {
+      initialScrollPendingRef.current = false;
+      // Reveal one frame later, after the browser paints the bottom-pinned
+      // transcript, so opening a session lands on the latest turn.
+      requestAnimationFrame(() => setLoading(false));
+    }
   }, [turns, visibleTurnCount, liveTurn?.id, scrollToEnd]);
 
   // Deferred Markdown, fonts, and content-visibility can change the transcript's
@@ -884,8 +946,8 @@ export function SessionScreen({
   useEffect(() => {
     const textarea = composerRef.current;
     if (!textarea) return;
-    textarea.style.height = '36px';
-    textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 36), 112)}px`;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
   }, [prompt]);
 
   function addAttachments() {
@@ -1058,7 +1120,7 @@ export function SessionScreen({
     const request = expandFileMentions(expandPastePlaceholders(authoredRequest, pastes))
       || (attachments.length ? 'Please inspect the attached image(s).' : '');
     const displayRequest = collapsePastePlaceholders(authoredRequest, pastes) || request;
-    if (!request || running || voicePhase !== 'idle') return;
+    if (!request || voicePhase !== 'idle') return;
 
     const [command = '', ...argParts] = authoredRequest.split(/\s+/);
     const args = argParts.join(' ');
@@ -1089,6 +1151,36 @@ export function SessionScreen({
         setError((cause as Error).message);
       } finally {
         setRunning(false);
+      }
+      return;
+    }
+
+    // A turn is already running: the gateway enqueues this behind it and mirrors
+    // it back as `turn.queued`, which fills the tray. Keep the composer live.
+    if (running || queued.length) {
+      const pendingAttachments = attachments;
+      const pendingPastes = pastes;
+      setPrompt('');
+      setAttachments([]);
+      setPastes(new Map());
+      setComposerNotice(null);
+      setSlashDismissed(false);
+      setError(null);
+      try {
+        await client.submitTurn(sid, request, {
+          displayRequest,
+          attachments: pendingAttachments.map(({ filename, media_type, base64 }) => ({
+            filename,
+            media_type,
+            base64,
+          })),
+        });
+      } catch (cause) {
+        setPrompt(authoredRequest);
+        setPastes(pendingPastes);
+        setAttachments((current) => current.length ? current : pendingAttachments);
+        setError((cause as Error).message);
+        requestAnimationFrame(() => composerRef.current?.focus());
       }
       return;
     }
@@ -1324,6 +1416,7 @@ export function SessionScreen({
         </div>
       </header>
 
+      <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]"
@@ -1337,13 +1430,10 @@ export function SessionScreen({
         >
           {error && <Banner kind="err">{error}</Banner>}
 
-          {loading && !turns.length ? (
-            <LoadingSession />
-          ) : (
-            <>
+          <>
               {!turns.length && !liveTurn ? (
             <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
-              <div className="grid size-11 place-items-center border border-dialog-edge bg-panel-2 shadow-[3px_3px_0_var(--dialog-shadow)]" aria-hidden="true">
+              <div className="grid size-11 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
                 <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
               </div>
               <h2 className="mb-1 mt-3 text-base font-semibold">Start a conversation</h2>
@@ -1399,9 +1489,14 @@ export function SessionScreen({
               />
             </div>
           )}
-            </>
-          )}
+          </>
         </div>
+      </div>
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink transition-opacity duration-200">
+            <LoadingSession />
+          </div>
+        )}
       </div>
 
       {showJump && (
@@ -1485,6 +1580,92 @@ export function SessionScreen({
           </div>
         )}
 
+        {queuePaused && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border border-warn-strong bg-warn-surface px-2.5 py-1.5 font-mono text-[10px] text-warn-strong">
+            <span className="size-1.5 shrink-0 bg-warn-strong" aria-hidden="true" />
+            <span className="font-bold text-warn-strong">
+              {queuePaused.isBreakerOpen ? 'Provider unhealthy' : 'Queue paused'}
+            </span>
+            <span className="min-w-0 flex-1 truncate">
+              {queuePaused.held} held · {queuePaused.reason.replace(/_/g, ' ')}
+              {queuePaused.fails > 0 ? ` · ${queuePaused.fails} fail${queuePaused.fails > 1 ? 's' : ''}` : ''}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 border border-warn-strong px-2 py-0.5 font-bold text-warn-strong transition-colors hover:bg-warn-strong hover:text-ink"
+              onClick={() => { void client.resumeQueue(sid).catch(() => undefined); setQueuePaused(null); }}
+            >
+              Retry now
+            </button>
+          </div>
+        )}
+
+        {queued.length > 0 && (
+          <div className="mb-1.5 border border-dialog-edge bg-panel">
+            <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-[10px] font-bold text-dialog-title-foreground">
+              <span aria-hidden="true">┌</span>
+              Queued · {queued.length}
+            </div>
+            {queued.map((item, index) => {
+              const editing = editingQueued?.turnId === item.turnId;
+              return (
+              <div
+                key={item.turnId}
+                className="flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+              >
+                <span className="shrink-0 font-mono text-[10px] font-bold text-accent-ink">#{index + 1}</span>
+                {editing ? (
+                  <input
+                    autoFocus
+                    value={editingQueued.text}
+                    onChange={(event) => setEditingQueued({ turnId: item.turnId, text: event.target.value })}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        const text = editingQueued.text.trim();
+                        if (text && text !== item.request) {
+                          setQueued((current) =>
+                            current.map((entry) => (entry.turnId === item.turnId ? { ...entry, request: text } : entry)));
+                          void client.updateQueuedTurn(sid, item.turnId, text).catch(() => undefined);
+                        }
+                        setEditingQueued(null);
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setEditingQueued(null);
+                      }
+                    }}
+                    onBlur={() => setEditingQueued(null)}
+                    className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-[11px] text-dialog-foreground outline-none"
+                    aria-label={`Edit queued message ${index + 1}`}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingQueued({ turnId: item.turnId, text: item.request })}
+                    className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-dialog-foreground transition-colors hover:text-accent-ink"
+                    title="Tap to edit"
+                  >
+                    {item.request || '(empty)'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="grid size-6 shrink-0 place-items-center text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                  onClick={() => {
+                    setEditingQueued((current) => (current?.turnId === item.turnId ? null : current));
+                    setQueued((current) => current.filter((entry) => entry.turnId !== item.turnId));
+                    void client.deleteQueuedTurn(sid, item.turnId).catch(() => undefined);
+                  }}
+                  aria-label={`Remove queued message ${index + 1}`}
+                >
+                  ×
+                </button>
+              </div>
+              );
+            })}
+          </div>
+        )}
+
         <div className="relative border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
           {activePastes.length > 0 && (
             <div className="flex gap-1 overflow-x-auto border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
@@ -1556,11 +1737,12 @@ export function SessionScreen({
               className="hidden"
               onChange={(event) => void onFilesPicked(event.target.files)}
             />
+
             <button
               type="button"
               className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
               onClick={() => void addAttachments()}
-              disabled={running || attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
+              disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
               aria-label="Add images"
               title="Add images"
             >
@@ -1574,7 +1756,7 @@ export function SessionScreen({
                 type="button"
                 className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
                 onClick={() => void captureCamera()}
-                disabled={running || attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
+                disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
                 aria-label="Take photo"
                 title="Take photo"
               >
@@ -1585,36 +1767,16 @@ export function SessionScreen({
               </button>
             )}
 
-            {voiceSupported && (
-              <button
-                type="button"
-                className={`grid size-11 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9 ${
-                  voicePhase === 'recording'
-                    ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
-                    : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
-                }`}
-                onClick={() => void toggleVoice()}
-                disabled={running || voicePhase === 'transcribing' || voiceModel?.status === 'downloading'}
-                aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
-                title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
-              >
-                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
-                </svg>
-              </button>
-            )}
-
             <textarea
               ref={composerRef}
               rows={1}
               value={prompt}
-              disabled={running}
-              placeholder={running ? 'Vis is working…' : voicePhase === 'recording' ? 'Listening…' : 'Message Vis or type /'}
+              disabled={voicePhase === 'recording'}
+              placeholder={voicePhase === 'recording' ? 'Listening…' : running ? 'Message Vis — queues behind the running turn' : 'Message Vis or type /'}
               aria-label="Message Vis"
               aria-controls={slashMatches.length ? 'slash-command-list' : undefined}
               aria-expanded={slashMatches.length > 0}
-              className="h-11 min-h-11 max-h-28 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-base leading-6 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-9 sm:min-h-9 sm:py-2 sm:text-[12px] sm:leading-5"
+              className="h-11 min-h-11 max-h-28 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-base leading-6 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-9 sm:min-h-9 sm:py-2 sm:text-[12px] sm:leading-5"
               onPaste={handlePaste}
               onSelect={(event) =>
                 setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -1675,7 +1837,38 @@ export function SessionScreen({
               }}
             />
 
-            {running ? (
+            {voiceSupported && !(prompt.trim() || attachments.length) && (
+              <button
+                type="button"
+                className={`grid size-11 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9 ${
+                  voicePhase === 'recording'
+                    ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
+                    : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
+                }`}
+                onClick={() => void toggleVoice()}
+                disabled={voicePhase === 'transcribing' || voiceModel?.status === 'downloading'}
+                aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+                title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
+                </svg>
+              </button>
+            )}
+            {(!!(prompt.trim() || attachments.length) || (!running && !voiceSupported)) && (
+              <button
+                type="button"
+                className="grid size-11 shrink-0 place-items-center border border-dialog-edge bg-dialog-title font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-9"
+                onClick={send}
+                disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
+                aria-label={running ? 'Queue message' : 'Send message'}
+                title={running ? 'Queue behind the running turn' : 'Send'}
+              >
+                {running ? '+' : '↑'}
+              </button>
+            )}
+            {running && (
               <button
                 type="button"
                 className="grid size-11 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-9"
@@ -1683,16 +1876,6 @@ export function SessionScreen({
                 aria-label="Stop response"
               >
                 <span className="size-2.5 bg-err" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="grid size-11 shrink-0 place-items-center border border-dialog-edge bg-dialog-title font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-9"
-                onClick={send}
-                disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
-                aria-label="Send message"
-              >
-                ↑
               </button>
             )}
           </div>

@@ -487,6 +487,30 @@
       ;; an unrelated public host still dials
       (is (:addr (ep/safe-upstream-address "example.org" 443 pol))))))
 
+(deftest host-policy-specificity-matches-sandbox-guard
+  ;; The shell-child egress proxy and the in-interpreter Python guard
+  ;; (`env-python/network-guard-python`) must reach ONE verdict for the same
+  ;; allow/deny lists. Both are specificity-based: a SPECIFIC (non-`*`) match wins
+  ;; over a `*` in the OTHER list, so `denied ["*"]` + `allowed ["example.com"]`
+  ;; means "deny everything EXCEPT example.com" — NOT "deny wins unconditionally."
+  (testing "denied `*` + a specific allow ⇒ deny all EXCEPT the allowlist (subdomains too)"
+    (let [pol (ep/compile-policy {:denied-domains ["*"] :allowed-domains ["example.com"]})]
+      (is (:allow? (ep/decide pol nil "example.com" nil)))
+      (is (:allow? (ep/decide pol nil "www.example.com" nil)))
+      (is (not (:allow? (ep/decide pol nil "evil.com" nil))))))
+  (testing "allow `*` + a specific deny ⇒ allow all EXCEPT the denylist"
+    (let [pol (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["example.com"]})]
+      (is (not (:allow? (ep/decide pol nil "example.com" nil))))
+      (is (not (:allow? (ep/decide pol nil "www.example.com" nil))))
+      (is (:allow? (ep/decide pol nil "other.com" nil)))))
+  (testing "a host on both specific lists is denied (fail safe)"
+    (let
+      [pol (ep/compile-policy {:allowed-domains ["example.com"] :denied-domains ["example.com"]})]
+      (is (not (:allow? (ep/decide pol nil "example.com" nil))))))
+  (testing "both `*` ⇒ deny wins"
+    (let [pol (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["*"]})]
+      (is (not (:allow? (ep/decide pol nil "anything.com" nil)))))))
+
 (deftest ssrf-wire-blocks-reserved-loopback-port
   (run-wire-test
     (fn []

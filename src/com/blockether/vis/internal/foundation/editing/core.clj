@@ -4310,6 +4310,21 @@
   [p]
   (paths/abbreviate-home p))
 
+(defn- code-fence-delimiter
+  "Markdown fence delimiter (a backtick run) longer than any backtick run in
+   `body`. A file's own content or a unified diff of it can carry Markdown
+   fences — editing/reading `configuration.md` (which shows ```diff examples)
+   produces a diff whose context lines include a bare ``` closing fence. A fixed
+   triple-backtick wrapper is then ambiguous and closes early, so the rest of
+   the body renders as prose. CommonMark permits longer fences; pick the
+   shortest safe one."
+  [body]
+  (let
+    [max-run (->> (re-seq #"`+" (str body))
+                  (map count)
+                  (reduce max 0))]
+    (apply str (repeat (max 3 (inc (long max-run))) "`"))))
+
 (defn- render-cat-result
   "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
    line count (the op-card headline); the body is the numbered slice as a code
@@ -4395,7 +4410,15 @@
                    "` · " (cond (nil? loc) counted
                                 (= 1 (count spans)) loc
                                 :else (str loc " · " counted)))
-     :body (when (seq rows) (str "\n```" (or lang "") "\n" (str/join "\n" rows) "\n```"))}))
+     :body (when (seq rows)
+             (let
+               [joined
+                (str/join "\n" rows)
+
+                fence
+                (code-fence-delimiter joined)]
+
+               (str "\n" fence (or lang "") "\n" joined "\n" fence)))}))
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
@@ -4463,7 +4486,8 @@
                               (for [{:strs [path changed diff]} summaries]
                                 (let
                                   [diff-block (when (and changed (seq (str diff)))
-                                                (str "```diff\n" diff "\n```"))]
+                                                (let [fence (code-fence-delimiter diff)]
+                                                  (str fence "diff\n" diff "\n" fence)))]
                                   (if (= n 1)
                                     (or diff-block "")
                                     (str "`" (disp-path path)

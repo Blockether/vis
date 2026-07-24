@@ -1105,15 +1105,19 @@
    `…` when the window clips the column. `nil` when `col` doesn't contain `q`.
    Keeps the wire tiny: only this window travels, never the whole 105MB body."
   [col q]
-  (let [pos    [:instr [:lower col] [:lower q]]
-        start  [:max 1 [:- pos 30]]
-        window 160]
-    [:case
-     [:= pos 0] nil
-     :else      [:||
-                 [:case [:> pos 31] "…" :else ""]
-                 [:substr col start window]
-                 [:case [:> [:length col] [:+ start (dec window)]] "…" :else ""]]]))
+  (let
+    [pos
+     [:instr [:lower col] [:lower q]]
+
+     start
+     [:max 1 [:- pos 30]]
+
+     window
+     160]
+
+    [:case [:= pos 0] nil :else
+     [:|| [:case [:> pos 31] "…" :else ""] [:substr col start window]
+      [:case [:> [:length col] [:+ start (dec window)]] "…" :else ""]]]))
 
 (defn db-search-session-matches
   "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring),
@@ -1142,36 +1146,39 @@
          all? (or (nil? ch) (= "all" ch))
          pat (str "%" q "%")]
 
-        (mapv (fn [{:keys [id in_request in_reply request_snippet reply_snippet]}]
-                {:id (->uuid id)
-                 :in-request? (pos? (or in_request 0))
-                 :in-reply? (pos? (or in_reply 0))
-                 :request-snippet request_snippet
-                 :reply-snippet reply_snippet})
-              (query!
-                db-info
-                {:select [:cs.id [[:max [:case [:like :ts.user_request pat] 1 :else 0]] :in_request]
-                          [[:max
-                            [:case
-                             [:or [:like :it.llm_assistant_prose pat] [:like :it.llm_thinking pat]
-                              [:like :it.llm_assistant_message pat]] 1 :else 0]] :in_reply]
-                          [[:max [:case [:like :ts.user_request pat]
-                                  (transcript-snippet :ts.user_request q) :else nil]] :request_snippet]
-                          [[:max [:case
-                                  [:like :it.llm_assistant_prose pat] (transcript-snippet :it.llm_assistant_prose q)
-                                  [:like :it.llm_thinking pat] (transcript-snippet :it.llm_thinking q)
-                                  [:like :it.llm_assistant_message pat] (transcript-snippet :it.llm_assistant_message q)
-                                  :else nil]] :reply_snippet]]
-                 :from [[:session_soul :cs]]
-                 :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                 :left-join [[:session_turn_soul :ts] [:= :ts.session_state_id :s.id]
-                             [:session_turn_state :tst] [:= :tst.session_turn_soul_id :ts.id]
-                             [:session_turn_iteration :it] [:= :it.session_turn_state_id :tst.id]]
-                 :where (into [:and [:= :cs.parent_state_id nil] [:not= :cs.claimed_at nil]
-                               [:or [:like :ts.user_request pat] [:like :it.llm_assistant_prose pat]
-                                [:like :it.llm_thinking pat] [:like :it.llm_assistant_message pat]]]
-                              (when-not all? [[:= :cs.channel ch]]))
-                 :group-by [:cs.id]}))))))
+        (mapv
+          (fn [{:keys [id in_request in_reply request_snippet reply_snippet]}]
+            {:id (->uuid id)
+             :in-request? (pos? (long (or in_request 0)))
+             :in-reply? (pos? (long (or in_reply 0)))
+             :request-snippet request_snippet
+             :reply-snippet reply_snippet})
+          (query! db-info
+                  {:select
+                   [:cs.id [[:max [:case [:like :ts.user_request pat] 1 :else 0]] :in_request]
+                    [[:max
+                      [:case
+                       [:or [:like :it.llm_assistant_prose pat] [:like :it.llm_thinking pat]
+                        [:like :it.llm_assistant_message pat]] 1 :else 0]] :in_reply]
+                    [[:max
+                      [:case [:like :ts.user_request pat] (transcript-snippet :ts.user_request q)
+                       :else nil]] :request_snippet]
+                    [[:max
+                      [:case [:like :it.llm_assistant_prose pat]
+                       (transcript-snippet :it.llm_assistant_prose q) [:like :it.llm_thinking pat]
+                       (transcript-snippet :it.llm_thinking q) [:like :it.llm_assistant_message pat]
+                       (transcript-snippet :it.llm_assistant_message q) :else nil]] :reply_snippet]]
+                   :from [[:session_soul :cs]]
+                   :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
+                   :left-join [[:session_turn_soul :ts] [:= :ts.session_state_id :s.id]
+                               [:session_turn_state :tst] [:= :tst.session_turn_soul_id :ts.id]
+                               [:session_turn_iteration :it] [:= :it.session_turn_state_id :tst.id]]
+                   :where (into [:and [:= :cs.parent_state_id nil] [:not= :cs.claimed_at nil]
+                                 [:or [:like :ts.user_request pat]
+                                  [:like :it.llm_assistant_prose pat] [:like :it.llm_thinking pat]
+                                  [:like :it.llm_assistant_message pat]]]
+                                (when-not all? [[:= :cs.channel ch]]))
+                   :group-by [:cs.id]}))))))
 
 (defn db-search-session-ids
   "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring):
@@ -2711,7 +2718,8 @@
 
    Copies rows generically (`SELECT *` → re-insert with remapped id/FK columns),
    so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
-   the new ROOT STATE UUID (for `resume-session`), or nil when `:through-turn-id`
+   the new SESSION SOUL UUID (for `resume-session`, which resolves sessions by
+   `session_soul.id`), or nil when `:through-turn-id`
    is not a turn of the source session (or the env has no datasource)."
   [db-info session-id {:keys [title workspace-id through-turn-id]}]
   (when-not workspace-id
@@ -2857,7 +2865,9 @@
                                           :session_turn_soul_id new-turn-soul-id
                                           :session_turn_iteration_id (some-> it-id
                                                                              iter-id-map))]}))))
-              new-state-id)))))))
+              ;; Return the fork's SOUL id: resume-session/db-get-session key
+              ;; sessions by session_soul.id, so a state id can never be reopened.
+              new-soul-id)))))))
 
 (defn- normalize-routing-event
   "THE one adapter between `event_json` (parsed with STRING keys — `<-json`

@@ -1549,7 +1549,7 @@
    so its `__vis_*` names are filtered out of the model-visible live-vars view.
    Python uses single-quoted string literals throughout so this Clojure string
    needs no escaping."
-  "# vis sandbox PIL/Pillow-compat shim, backed by the JVM Java2D / ImageIO stack.
+  (str "# vis sandbox PIL/Pillow-compat shim, backed by the JVM Java2D / ImageIO stack.
 #
 # The agent sandbox ships no CPython Pillow wheel. This shim publishes a
 # Pillow-compatible PIL package whose Image/ImageDraw/ImageFilter/ImageOps/
@@ -2378,7 +2378,8 @@ def __vis_install_pil__():
                [float(xy[0]), float(xy[1])],
                {'text': str(text), 'fill': self._col(fill) if fill is not None else [0, 0, 0],
                 'font_size': int(size)})
-
+"
+     "
         def multiline_text(self, xy, text, fill=None, font=None, spacing=4, **kw):
             size = getattr(font, 'size', 12) if font is not None else 12
             x, y = float(xy[0]), float(xy[1])
@@ -3237,7 +3238,7 @@ def __vis_install_pil__():
 
 __vis_install_pil__()
 del __vis_install_pil__
-")
+"))
 
 (def vis-extension
   (vis/extension

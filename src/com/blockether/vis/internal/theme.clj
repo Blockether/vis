@@ -341,8 +341,8 @@
      ;; frame ink carried across the header row with the warm cream ground as text.
      :dialog-title-fg [250 243 235]
      :dialog-title-bg [63 63 63]
-     :button-bg [255 196 32]
-     :button-fg [38 30 0]
+     :button-bg [63 63 63]
+     :button-fg [250 243 235]
      :dialog-border [63 63 63]
      :dialog-shadow [255 196 32]
      :dialog-hint [111 106 99]

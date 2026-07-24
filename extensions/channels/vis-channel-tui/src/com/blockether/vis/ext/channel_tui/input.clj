@@ -1223,7 +1223,15 @@
                     entry
                     (when id (get pastes-map id))]
 
-                   (if entry (str (:content entry)) whole)))))
+                   (cond
+                     (nil? entry) whole
+                     ;; An image entry's content is a bare filesystem path. Isolate it on
+                     ;; its own line so text the user typed flush against the placeholder
+                     ;; can't glue onto the path: `.../shot.pngin tui` no longer ends in an
+                     ;; image extension, so the engine's extension-anchored scanner drops it
+                     ;; and the image silently never attaches.
+                     (:image entry) (str "\n" (:content entry) "\n")
+                     :else (str (:content entry)))))))
 
 (def ^:const PASTE_PREVIEW_HEAD_LINES
   "How many leading lines of a pasted payload the collapsed transcript

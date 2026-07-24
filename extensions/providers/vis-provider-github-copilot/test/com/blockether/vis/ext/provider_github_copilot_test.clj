@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.provider-github-copilot-test
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-github-copilot :as sut]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defdescribe
   provider-registration-test
@@ -61,7 +61,7 @@
       (expect (ifn? (:provider/auth-fn business)))
       (expect (ifn? (:provider/get-token-fn business)))
       (expect (ifn? (:provider/limits-fn business)))))
-  (defdescribe active-tier-detect-test
+  (describe "active-tier-detect"
                (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
                    (require 'com.blockether.vis.ext.provider-github-copilot :reload)
                    (let

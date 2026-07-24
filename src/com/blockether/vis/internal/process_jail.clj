@@ -105,6 +105,37 @@
           (when (.canExecute (File. ^String p)) p))
         ["/usr/bin/bwrap" "/bin/bwrap" "/usr/local/bin/bwrap"]))
 
+;; Linux FILTERED EGRESS uses pasta (from the passt project) -- a userspace,
+;; unprivileged TCP/IP stack. bwrap `--unshare-net` gives the child an isolated
+;; network namespace whose loopback is its OWN, so the gateway proxy on the host's
+;; `127.0.0.1:<port>` is unreachable -- filtered egress would die entirely. pasta
+;; bridges ONLY that one port back to the host: `pasta -T <proxy-port> -t none
+;; -u none -U none` forwards the child's `127.0.0.1:<proxy-port>` to the host
+;; loopback and NOTHING else -- no default route (internet unreachable), no
+;; gateway map (host control plane / other loopback ports unreachable). Exact
+;; parity with the macOS "only the proxy port" Seatbelt rule, verified on a real
+;; Linux kernel. nil when absent -- filtered egress then degrades to NO egress
+;; (`--unshare-net`, safe) with a loud one-time warning. Same install class as
+;; bwrap (`apt-get install passt`); works on WSL2 (real kernel) too.
+(def ^:private linux-pasta
+  (some (fn [p]
+          (when (.canExecute (File. ^String p)) p))
+        ["/usr/bin/pasta" "/bin/pasta" "/usr/local/bin/pasta"]))
+
+;; WSL detection. WSL2 runs a REAL Linux kernel -- namespaces, bwrap and pasta all
+;; work, so it is treated as ordinary Linux. WSL1 is a syscall-translation shim
+;; with NO real kernel namespaces, so bwrap cannot enforce anything; it is reported
+;; UNENFORCEABLE (fail loud) rather than silently passing children through. The
+;; kernel `osrelease` distinguishes them: WSL2 = `...-microsoft-standard-WSL2`,
+;; WSL1 = `...-Microsoft` (no `WSL2` marker).
+(defn- linux-osrelease [] (try (slurp "/proc/sys/kernel/osrelease") (catch Throwable _ "")))
+
+(defn- wsl1?
+  "True only on WSL1 (a `microsoft` kernel WITHOUT the `WSL2` real-kernel marker)."
+  []
+  (let [r (str/lower-case (linux-osrelease))]
+    (and (str/includes? r "microsoft") (not (str/includes? r "wsl2")))))
+
 (defn supported?
   "True when the current OS can ENFORCE a jail. macOS: Seatbelt via the system
    `sandbox-exec`. Linux: bubblewrap (`bwrap`) namespaces. Windows/other: not
@@ -116,7 +147,7 @@
     (.canExecute (File. ^String macos-sandbox-exec))
 
     :linux
-    (boolean linux-bwrap)
+    (and (boolean linux-bwrap) (not (wsl1?)))
 
     false))
 
@@ -132,7 +163,11 @@
       "macOS jail needs /usr/bin/sandbox-exec, which is not executable here"
 
       :linux
-      "Linux jail needs bubblewrap (`bwrap`); install it (e.g. `apt-get install bubblewrap`)"
+      (cond
+        (wsl1?)
+        "WSL1 has no real Linux kernel namespaces; the jail needs WSL2 (run `wsl --set-version <distro> 2`)"
+        :else
+        "Linux jail needs bubblewrap (`bwrap`); install it (e.g. `apt-get install bubblewrap`)")
 
       :windows
       "the OS process jail is not available on Windows"
@@ -369,12 +404,18 @@
    re-bind `:deny-write` read-only and mask `:deny-read` (empty tmpfs for dirs,
    /dev/null for files) -- later binds win, so the denies override the allows. Only
    bound paths exist inside the child, so everything else on the host (e.g. `~/.ssh`)
-   is simply absent. Network: `--unshare-net` is a real no-egress wall for the
-   net-off case AND the proxy-restricted case -- per-host/verb egress filtering on
-   Linux still needs seccomp, so restricted egress is denied ENTIRELY (safe) rather
-   than left open; an explicitly-open network (`net-enabled?` with no proxy, e.g. a
-   managed nREPL) shares the host network namespace."
-  ^java.util.List [{:keys [rw ro deny-write deny-read net-enabled? proxy-port]}]
+   is simply absent. `:deny-exec` binaries are masked with /dev/null (a char device),
+   so `execve` fails EACCES -- the Linux equivalent of macOS's `(deny process-exec*)`;
+   it is bound AFTER the allow binds so a denied binary inside an allowed `:ro` root
+   is still blocked. Network: for FILTERED egress (`:proxy-port` set) pasta wraps
+   the bwrap child, giving it a private net namespace that reaches ONLY the host
+   gateway proxy port (see `linux-pasta`) -- exact macOS parity; bwrap then SHARES
+   that namespace (no `--unshare-net`). Without pasta, filtered egress degrades to
+   `--unshare-net` (no egress at all, safe). Net-off also `--unshare-net`; an
+   explicitly-open network (`net-enabled?` with no proxy, e.g. a managed nREPL)
+   shares the host network namespace."
+  ^java.util.List
+  [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port]}]
   (let
     [rw
      (->> rw
@@ -383,13 +424,24 @@
           vec)
 
      ro
-     (->> (concat linux-system-read-roots ro)
-          (keep real-path)
+     ;; System roots are bound at their LITERAL path (not real-path'd): on merged-usr
+     ;; distros `/lib`,`/lib64`,`/bin`,`/sbin` are symlinks into `/usr`, and the ELF
+     ;; interpreter is hardcoded (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`).
+     ;; Canonicalizing them collapses the loader mount point so EVERY binary fails to
+     ;; exec (ENOENT on its interpreter). `--ro-bind-try` tolerates any absent on a distro.
+     ;; User `:ro` allow-read paths stay canonicalized for dedup/symlink safety.
+     (->> (concat linux-system-read-roots (keep real-path ro))
           distinct
           vec)
 
      dw
      (->> deny-write
+          (keep deny-path)
+          distinct
+          vec)
+
+     dex
+     (->> deny-exec
           (keep deny-path)
           distinct
           vec)
@@ -417,18 +469,63 @@
                        :else ["--ro-bind-try" "/dev/null" rp])))
              (distinct deny-read))
 
-     net
-     (cond proxy-port ["--unshare-net"]
-           net-enabled? []
-           :else ["--unshare-net"])]
+     ;; Mask each denied binary with /dev/null (a char device): `execve` on it fails
+     ;; (exit 126). Bound AFTER the allow binds so it wins over a binary inside an
+     ;; allowed `:ro` root -- the Linux equivalent of macOS `(deny process-exec*)`.
+     ;; On merged-usr distros the same binary is reachable via BOTH `/usr/bin/<n>` and
+     ;; `/bin/<n>` (distinct bwrap mounts), so masking only the canonical path leaves
+     ;; the PATH alias runnable -- mask every EXISTING bin-dir alias of the basename.
+     ;; `--ro-bind-try` aborts if the destination is absent on a read-only bind, so the
+     ;; alias set is filtered to files that actually exist on the host.
+     dex-flags
+     (mapcat (fn [p]
+               (let [n (.getName (File. ^String p))]
+                 (->> (cons p
+                            (map #(str % "/" n)
+                                 ["/usr/bin" "/bin" "/usr/sbin" "/sbin" "/usr/local/bin"
+                                  "/usr/local/sbin"]))
+                      (filter #(.exists (File. ^String %)))
+                      distinct
+                      (mapcat (fn [t]
+                                ["--ro-bind-try" "/dev/null" t])))))
+             dex)
 
-    (vec (concat ["bwrap" "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
-                 ro-flags
-                 rw-flags
-                 dw-flags
-                 dr-flags
-                 net
-                 ["--"]))))
+     ;; Network. proxy-port set = FILTERED egress: when pasta is present it gives
+     ;; the child a private net ns reaching ONLY the host proxy port, and bwrap
+     ;; SHARES that ns (no --unshare-net). Without pasta, filtered egress degrades
+     ;; to a full no-egress wall rather than leaving the child open. net-off and
+     ;; the no-pasta fallback both --unshare-net; an explicitly-open network
+     ;; (net-enabled? with no proxy, e.g. a managed nREPL) shares the host ns.
+     pasta?
+     (boolean (and proxy-port linux-pasta))
+
+     net
+     (cond pasta? []
+           proxy-port ["--unshare-net"]
+           net-enabled? []
+           :else ["--unshare-net"])
+
+     bwrap-args
+     (vec (concat ["bwrap" "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
+                  ro-flags
+                  rw-flags
+                  dw-flags
+                  dr-flags
+                  dex-flags
+                  net
+                  ["--"]))]
+
+    (if pasta?
+      ;; pasta wraps bwrap: `-T <port>` forwards the child's loopback proxy port to
+      ;; the host (egress); `-t <loopback-port>` forwards the host INBOUND to the
+      ;; child's loopback port so vis can attach to a managed nREPL bound inside the
+      ;; ns (else `-t none`); `-u none -U none` disable UDP. So the ONLY reachable
+      ;; destination is the gateway proxy, and the only inbound is the nREPL port.
+      (into (vec (concat ["pasta" "-T" (str proxy-port)]
+                         (if loopback-port ["-t" (str loopback-port)] ["-t" "none"])
+                         ["-u" "none" "-U" "none" "--"]))
+            bwrap-args)
+      bwrap-args)))
 
 (defonce ^:private unenforceable-warned (atom false))
 
@@ -442,6 +539,21 @@
       (println (str "vis WARNING: sandbox is enabled but CANNOT be enforced on this host -- " reason
                     ". Shell/REPL children run UNCONFINED (full host access). "
                     "See `vis-docs sandbox`.")))))
+
+(defonce ^:private no-pasta-warned (atom false))
+
+(defn- warn-no-pasta!
+  "Emit ONE loud stderr line on Linux when FILTERED egress was requested (a proxy
+   policy) but pasta is absent, so the operator learns the child has NO network
+   (egress denied entirely) instead of the degradation being silent. `passt`
+   provides pasta. Deduped per process."
+  []
+  (when (compare-and-set! no-pasta-warned false true)
+    (binding [*out* *err*]
+      (println
+        (str "vis WARNING: Linux filtered egress needs pasta (from `passt`) but it is "
+             "not installed -- jailed shell/REPL children get NO network (egress denied "
+             "entirely). Install it (e.g. `apt-get install passt`). See `vis-docs sandbox`.")))))
 
 (defn wrap-argv
   "Given the base executor argv and a jail POLICY value, return the argv to spawn.
@@ -458,7 +570,9 @@
         (into ["sandbox-exec" "-p" (macos-profile (compile-policy policy))] argv)
 
         :linux
-        (into (linux-bwrap-args (compile-policy policy)) argv)
+        (let [pol (compile-policy policy)]
+          (when (and (:proxy-port pol) (not linux-pasta)) (warn-no-pasta!))
+          (into (linux-bwrap-args pol) argv))
 
         argv)
       (do (when (and wanted? (not (inherited-jail?)))

@@ -353,7 +353,7 @@
 
     (cond->
       (assoc f0
-        (compact-tool-summary (:summary merged) tool) (:summary merged)
+        :result-summary (compact-tool-summary (:summary merged) tool)
         :result-render (:body merged))
       ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
       ;; `:result` comes back as the rendered string (anchors flattened) and the

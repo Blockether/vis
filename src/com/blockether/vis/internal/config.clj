@@ -568,30 +568,50 @@
 
 (def ^:private verbatim-key-subtrees
   "String-keyed subtrees owned by users or wire protocols. Their keys stay exact."
-  #{"environment" "env" "headers" "llm-headers" "extra-body" "toggles" "pricing" "context-limits"})
+  #{"environment" "env" "headers" "llm_headers" "extra_body" "toggles" "pricing" "context_limits"})
 
 (def ^:private keyword-valued-keys
   "Known scalar fields whose internal runtime representation is a keyword."
-  #{"id" "backend" "api-style"})
+  #{"id" "backend" "api_style"})
+
+(def ^:private svar-yaml->runtime
+  "svar owns these ?-suffixed keyword contracts (`:tool-call?`, `:check-context?`,
+   `:respect-retry-after?`, `:fallback-provider?`); the vis.yml surface spells them
+   `is_*` — config keys carry no `?` — so they break the plain `_`↔`-` mirror and map
+   explicitly. The internal keyword is unchanged, so svar's router still reads it."
+  {"is_tool_call" :tool-call?
+   "is_check_context" :check-context?
+   "is_respect_retry_after" :respect-retry-after?
+   "is_fallback_provider" :fallback-provider?})
+
+(def ^:private runtime->svar-yaml
+  "Write-path inverse of `svar-yaml->runtime`."
+  {:tool-call? "is_tool_call"
+   :check-context? "is_check_context"
+   :respect-retry-after? "is_respect_retry_after"
+   :fallback-provider? "is_fallback_provider"})
 
 (def ^:private runtime-keywords
   "Finite YAML key vocabulary used by internal keyword-keyed domain maps.
    Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
-  (into {}
-        (map (juxt name identity))
-        #{:providers :router :system-prompt :workspace :enabled :filesystem :jail :network
-          :environment :db-spec :search :toggles :tui-settings :mcp :name :context :output-limit
-          :tool-call? :id :api-key :models :base-url :api-style :responses-path :llm-headers
-          :extra-body :rate-limit :budget :tokens :same-provider-delays-ms :fallback-after-ms
-          :respect-retry-after? :fallback-provider? :timeout-ms :ttft-timeout-ms :idle-timeout-ms
-          :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms :multiplier :max-tokens
-          :max-cost :check-context? :pricing :context-limits :output-reserve :failure-threshold
-          :recovery-ms :transient-status-codes :window-ms :cooldown-ms :max-wait-ms
-          :allow-read-write :allow-read :allow-write :deny-read :deny-write :path :access
-          :description :inbound-ports :deny-exec :allowed-domains :denied-domains :exclude-domains
-          :allow-private :rules :host :methods :allow :method :text :replace?
-          :include-gitignored-paths :always-exclude :backend :theme-name :contributors-disabled
-          :servers :transport :command :args :cwd :env :url :headers :python :resource-cache}))
+  (merge (into {}
+               (map (juxt (comp #(str/replace % "-" "_") name) identity))
+               #{:providers :router :system-prompt :workspace :enabled :filesystem :jail :network
+                 :environment :db-spec :search :toggles :tui-settings :mcp :name :context
+                 :output-limit :id :api-key :models :base-url :api-style :responses-path
+                 :llm-headers :extra-body :rate-limit :budget :tokens :same-provider-delays-ms
+                 :fallback-after-ms :timeout-ms :ttft-timeout-ms :idle-timeout-ms
+                 :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms :multiplier
+                 :max-tokens :max-cost :pricing :context-limits :output-reserve :failure-threshold
+                 :recovery-ms :transient-status-codes :window-ms :cooldown-ms :max-wait-ms
+                 :allow-read-write :allow-read :allow-write :deny-read :deny-write :path :access
+                 :description :inbound-ports :deny-exec :allowed-domains :denied-domains
+                 :exclude-domains :allow-private :rules :host :methods :allow :method :text
+                 :is-replace :include-gitignored-paths :always-exclude :backend :theme-name
+                 :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
+                 :python :resource-cache :message-queue :breaker-threshold :retry-backoff-ms
+                 :halfopen-probe-ms :retry-after-cap-ms})
+         svar-yaml->runtime))
 
 (defn runtime-config
   "Adapt an already-validated string-keyed YAML map to Vis' internal domain maps.
@@ -780,10 +800,10 @@
      (get (load-config-raw) "search")
 
      include-gitignored-paths
-     (get search "include-gitignored-paths")
+     (get search "include_gitignored_paths")
 
      always-exclude
-     (get search "always-exclude")]
+     (get search "always_exclude")]
 
     (when (or (seq include-gitignored-paths) (seq always-exclude))
       {:include-gitignored-paths (mapv str include-gitignored-paths)
@@ -881,7 +901,10 @@
   [v]
   (cond (map? v) (into {}
                        (map (fn [[k val]]
-                              [(if (keyword? k) (name k) (str k)) (->yaml-safe val)]))
+                              [(cond (and (keyword? k) (contains? runtime->svar-yaml k))
+                                     (runtime->svar-yaml k)
+                                     (keyword? k) (str/replace (name k) "-" "_")
+                                     :else (str k)) (->yaml-safe val)]))
                        v)
         (sequential? v) (mapv ->yaml-safe v)
         (keyword? v) (name v)
@@ -1076,7 +1099,7 @@
          {:backend :sqlite :path prop-path})
        (when-let [env-path (System/getenv "VIS_DB_PATH")]
          {:backend :sqlite :path env-path})
-       (some-> (get (load-config-raw) "db-spec")
+       (some-> (get (load-config-raw) "db_spec")
                runtime-config)
        default-db-spec)))
 

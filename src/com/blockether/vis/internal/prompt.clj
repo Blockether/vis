@@ -268,23 +268,23 @@
 
 (defn- config-system-prompt
   "Read the optional string-keyed `system-prompt` YAML setting.
-   Returns an internal `{:text ... :replace? ...}` map or nil."
+   Returns an internal `{:text ... :is-replace ...}` map or nil."
   []
   (try (let
          [raw
           (config/load-config-raw)
 
           sp
-          (when (map? raw) (get raw "system-prompt"))
+          (when (map? raw) (get raw "system_prompt"))
 
           [s replace?]
           (cond (string? sp) [sp false]
-                (map? sp) [(get sp "text") (boolean (get sp "replace?"))]
+                (map? sp) [(get sp "text") (boolean (get sp "is_replace"))]
                 :else [nil false])]
 
          (when (string? s)
            (let [t (extension/normalize-prompt-text s)]
-             (when-not (str/blank? t) {:text t :replace? replace?}))))
+             (when-not (str/blank? t) {:text t :is-replace replace?}))))
        (catch Throwable _ nil)))
 
 (defn- read-prompt-file
@@ -330,8 +330,8 @@
 
    Assembled in send order (later blocks positionally reinforce earlier):
    base, then the caller's `:system-prompt` addendum, then the
-   `:system-prompt` pulled from Vis config (`vis.edn` / `.vis/config.edn` /
-   `~/.vis/config.edn`, deep-merged), then `~/.vis/APPEND_SYSTEM.md`, then
+   `:system-prompt` pulled from Vis config (`~/.vis/config.yml` / `state.yml` /
+   `<project>/vis.yml` / `.vis/config.yml`, deep-merged), then `~/.vis/APPEND_SYSTEM.md`, then
    `<workspace>/.vis/APPEND_SYSTEM.md`. The config + file hooks let a project
    append house rules without any caller having to pass them.
 
@@ -354,10 +354,10 @@
      (:replace files)
 
      cfg-replace?
-     (and (nil? file-replace) (boolean (:replace? cfg)))
+     (and (nil? file-replace) (boolean (:is-replace cfg)))
 
      cfg-prompt
-     (when (and cfg (not (:replace? cfg))) (:text cfg))
+     (when (and cfg (not (:is-replace cfg))) (:text cfg))
 
      base
      (or file-replace (when cfg-replace? (:text cfg)) CORE_SYSTEM_PROMPT)

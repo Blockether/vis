@@ -962,3 +962,93 @@
         (try (reset! registry {sid {:next-seq 4 :current-turn "t-x" :turns {"t-x" {}}}})
              (expect (nil? (state/running-turn-start-cursor sid)))
              (finally (reset! registry saved))))))
+
+(defdescribe
+  queue-failure-pause-test
+  "The provider-health queue: a FAILURE with a queued backlog PAUSES instead of
+   cascading the next message into a sick provider; an explicit resume drains and
+   re-arms the breaker; clean completion advances without pausing; and three
+   straight transient failures trip the breaker (no auto-retry, waits for resume)."
+  (it
+    "pauses on failure, resumes explicitly, drains cleanly, and trips the breaker"
+    (let
+      [sid
+       "queue-pause-test"
+
+       reg
+       @#'state/registry
+
+       evs
+       (atom [])
+
+       saved
+       (into {}
+             (for
+               [v [#'state/append-event! #'state/drain-next-queued! #'state/schedule-auto-resume!
+                   #'state/queued-after-cancel? #'cancellation/cancelled?]]
+               [v @v]))
+
+       seed!
+       (fn []
+         (reset! reg {sid {:next-seq 0
+                           :current-turn nil
+                           :turn-order ["q1" "q2"]
+                           :turns {"q1" {:turn_id "q1" :status "queued" :queued_at 1}
+                                   "q2" {:turn_id "q2" :status "queued" :queued_at 2}}}})
+         (reset! evs []))
+
+       types
+       #(mapv first @evs)]
+
+      (try (alter-var-root #'state/append-event!
+                           (constantly (fn [_ t p & _]
+                                         (swap! evs conj [t p]))))
+           (alter-var-root #'state/drain-next-queued!
+                           (constantly (fn [_]
+                                         (swap! evs conj [:drained]))))
+           (alter-var-root #'state/schedule-auto-resume!
+                           (constantly (fn [& _]
+                                         nil)))
+           (alter-var-root #'state/queued-after-cancel?
+                           (constantly (fn [_ _]
+                                         false)))
+           (alter-var-root #'cancellation/cancelled?
+                           (constantly (fn [_]
+                                         false)))
+           ;; a transient failure with a backlog HOLDS it — no drain
+           (seed!)
+           (#'state/after-turn-terminal!
+            sid
+            "t"
+            {:failed? true :transient? true :cancel-token :c :stalled? false})
+           (expect (= ["queue.paused"] (types)))
+           (expect (some? (state/queue-paused-info sid)))
+           ;; explicit resume emits queue.resumed then drains the head, clearing the pause
+           (reset! evs [])
+           (state/resume-queue! sid {:auto? false})
+           (expect (= ["queue.resumed" :drained] (types)))
+           (expect (nil? (state/queue-paused-info sid)))
+           ;; clean completion advances and never pauses
+           (seed!)
+           (#'state/after-turn-terminal!
+            sid
+            "t"
+            {:failed? false :transient? false :cancel-token :c :stalled? false})
+           (expect (= [:drained] (types)))
+           (expect (nil? (state/queue-paused-info sid)))
+           ;; three straight transient failures trip the breaker; it stays OPEN
+           (seed!)
+           (dotimes [_ 3]
+             (#'state/after-turn-terminal!
+              sid
+              "t"
+              {:failed? true :transient? true :cancel-token :c :stalled? false}))
+           (let [third (second (last @evs))]
+             (expect (= 3 (:fails third)))
+             (expect (true? (:is_breaker_open third)))
+             ;; breaker-open no longer waits forever: a half-open probe is
+             ;; scheduled so a lasting outage still self-heals when it recovers.
+             (expect (some? (:retry_at third))))
+           (finally (doseq [[v orig] saved]
+                      (alter-var-root v (constantly orig)))
+                    (swap! reg dissoc sid))))))

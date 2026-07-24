@@ -1001,7 +1001,7 @@
   []
   (let
     [saved
-     (get-in (or (config/load-config-raw) {}) ["tui-settings" "theme-name"])
+     (get-in (or (config/load-config-raw) {}) ["tui_settings" "theme_name"])
 
      id
      (cond (keyword? saved) (name saved)
@@ -1049,7 +1049,7 @@
           (not (contains? (theme/theme-registry) id))
           (error-response 404 :unknown-theme "no such theme" :id id)
           :else (let [raw (or (config/load-config-raw) {})]
-                  (config/save-config! (assoc-in raw ["tui-settings" "theme-name"] id))
+                  (config/save-config! (assoc-in raw ["tui_settings" "theme_name"] id))
                   (json-response (theme-json id))))))
 
 (defn- create-session-handler
@@ -1407,6 +1407,16 @@
   (let [sid (path-sid request)]
     (if (and sid (state/soul sid))
       (json-response {:turn (state/drain-idle! sid)})
+      (session-404 (get-in request [:path-params :sid])))))
+
+(defn- resume-queue-handler
+  "POST /sessions/:sid/resume-queue — clear a queue PAUSED by a provider failure
+   and start its head. An explicit resume also resets the failure breaker.
+   Returns `{:turn <started>|nil}`; nil turn means the queue was not paused."
+  [request]
+  (let [sid (path-sid request)]
+    (if (and sid (state/soul sid))
+      (json-response {:turn (state/resume-queue! sid {:auto? false})})
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- context-handler
@@ -2182,7 +2192,8 @@
         [(sid-route "/turns/:tid/trace") {:get turn-trace-handler}]
         [(sid-route "/turns/:tid/cancel") {:post cancel-turn-handler}]
         [(sid-route "/cancel-current") {:post cancel-current-turn-handler}]
-        [(sid-route "/drain-queue") {:post drain-idle-handler}]]]
+        [(sid-route "/drain-queue") {:post drain-idle-handler}]
+        [(sid-route "/resume-queue") {:post resume-queue-handler}]]]
       (keep (fn [{:keys [routes]}]
               (when routes
                 (try (routes token)
@@ -2294,7 +2305,7 @@
 (defonce ^:private toggle-persist-listener-installed? (atom false))
 
 (defn- install-toggle-persistence!
-  "Hydrate feature toggles from the `:toggles` slot of ~/.vis/config.edn
+  "Hydrate feature toggles from the `toggles:` slot of the merged YAML config
    and install a listener that writes every change back. Mirrors the
    TUI's wiring in `channel-tui/screen.clj` so a toggle flipped from any
    gateway client survives a gateway restart -
@@ -2419,7 +2430,7 @@
              (tel/log! :warn
                        ["gateway: orphan-running-turn reconciliation failed" (ex-message t)])))
 
-      ;; Hydrate persisted toggles + install the config.edn save
+      ;; Hydrate persisted toggles + install the state.yml save
       ;; listener so web/gateway-driven flips survive restarts.
       _
       (install-toggle-persistence!)

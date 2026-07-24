@@ -1739,6 +1739,15 @@
         {
           "name": "TYPE"
         }
+      ],
+      "methods": [
+        {
+          "name": "codePointAt",
+          "parameterTypes": [
+            "java.lang.CharSequence",
+            "int"
+          ]
+        }
       ]
     },
     {
@@ -2039,10 +2048,12 @@
       "type": "java.lang.reflect.Modifier"
     },
     {
-      "type": "java.math.BigDecimal"
+      "type": "java.math.BigDecimal",
+      "methods": [{ "name": "<init>", "parameterTypes": ["java.lang.String"] }]
     },
     {
-      "type": "java.math.BigInteger"
+      "type": "java.math.BigInteger",
+      "methods": [{ "name": "<init>", "parameterTypes": ["java.lang.String"] }]
     },
     {
       "type": "java.net.Authenticator"

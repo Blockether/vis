@@ -72,9 +72,9 @@ jobs:
           ---
           Do the thing.
           MD
-      - name: Install bubblewrap (Linux jail enforcer)
+      - name: Install bubblewrap + passt (Linux jail enforcer + filtered egress)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap passt
       - name: Run test suite
         env:
           # Prevent a vacuous green: macOS must execute fresh Seatbelt/socket E2E,

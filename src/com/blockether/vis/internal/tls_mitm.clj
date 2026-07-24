@@ -45,7 +45,7 @@
            (org.bouncycastle.cert.jcajce JcaX509CertificateConverter JcaX509v3CertificateBuilder)
            (org.bouncycastle.operator.jcajce JcaContentSignerBuilder)))
 
-(def ^:private ^SecureRandom secure-rng (SecureRandom.))
+(def ^:private secure-rng (delay (SecureRandom.))) ; delayed: keeps the RNG out of the native-image heap
 
 (def ^:private day-ms 86400000)
 (def ^:private validity-ms (* 825 (long day-ms))) ; 825 days: the CA/browser leaf ceiling.
@@ -55,7 +55,7 @@
   ^KeyPair []
   (.generateKeyPair (doto (KeyPairGenerator/getInstance "RSA") (.initialize 2048))))
 
-(defn- rand-serial ^BigInteger [] (BigInteger. 159 secure-rng))
+(defn- rand-serial ^BigInteger [] (BigInteger. 159 ^SecureRandom @secure-rng))
 
 (defn- ->x509 ^X509Certificate [holder] (.getCertificate (JcaX509CertificateConverter.) holder))
 
@@ -163,7 +163,7 @@
             (checkServerTrusted [_ _ _])
             (getAcceptedIssuers [_] (make-array X509Certificate 0)))]
     (.getSocketFactory (doto (SSLContext/getInstance "TLS")
-                         (.init nil (into-array TrustManager [tm]) secure-rng)))))
+                         (.init nil (into-array TrustManager [tm]) ^SecureRandom @secure-rng)))))
 
 (defn- default-root-certificates
   "Return the JVM's current default trust anchors. The child trust bundle includes

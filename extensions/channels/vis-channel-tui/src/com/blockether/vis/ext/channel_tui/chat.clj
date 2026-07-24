@@ -888,6 +888,20 @@
       "turn.queued.drained"
       {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
 
+      ;; The gateway PAUSED this session's queue after a provider failure instead
+      ;; of cascading the next message into a failing provider (see state.clj
+      ;; `pause-queue!`). Carry the reason so the Queued strip can show WHY.
+      "queue.paused"
+      {:phase :queue-paused
+       :queue-paused {:reason (event-get event :reason)
+                      :held (event-get event :held)
+                      :is-breaker-open (event-get event :is-breaker-open)
+                      :retry-at (event-get event :retry-at)}}
+
+      ;; The queue resumed (auto-retry or explicit) — clear the paused strip.
+      "queue.resumed"
+      {:phase :queue-paused :queue-paused nil}
+
       ;; The turn actually STARTED running. Carries the gateway's canonical
       ;; `started_at` (epoch ms) — the ONE clock every channel shares — so the
       ;; TUI re-seeds its elapsed timer from it (see state/:sync-turn-clock):

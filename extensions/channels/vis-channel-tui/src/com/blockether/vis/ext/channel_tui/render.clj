@@ -5360,7 +5360,7 @@
     (if (> (count s) 240) (str (subs s 0 240) "…") s)))
 
 (defn- queued-progress-entries
-  [pending-sends content-w]
+  [pending-sends content-w paused-info]
   (let [queued (vec (or pending-sends []))]
     (when (seq queued)
       (let
@@ -5369,7 +5369,10 @@
          ;; group — the same left-bar affordance a "You" bubble uses.
          ;;
          ;; Header row: bold accent "Queued".
-         hdr-line (str queue-hdr-marker "Queued")
+         hdr-line (str queue-hdr-marker
+                       "Queued"
+                       (when paused-info
+                         (if (:is-breaker-open paused-info) " · provider unhealthy" " · paused")))
          ;; Rail + its trailing space eat 2 cols before any content.
          rail-w 2
          ;; Ordinals count in SEND ORDER, top to bottom: #1 is the item that
@@ -5397,10 +5400,22 @@
          ;; submission (item #N, the bottom row) back into the editor (see state.clj
          ;; :history-up). Accent hint on the REGULAR bubble bg (via
          ;; `hint-marker`) so the affordance pops as a control.
-         hint {:line (str hint-marker "↑ to edit") :meta nil}]
+         hint {:line (str hint-marker "↑ to edit") :meta nil}
+         ;; When the gateway paused the queue after a provider failure, the head
+         ;; is held (not cascaded). Show WHY on its own row, above the edit hint.
+         paused-line
+         (when paused-info
+           {:line (str hint-marker
+                       "⚠ held — "
+                       (str/replace (str (or (:reason paused-info) "provider unhealthy")) #"_" " ")
+                       " · resumes automatically")
+            :meta nil})]
 
-        (vec
-          (concat [{:line "" :meta nil} {:line hdr-line :meta nil}] item-lines [border hint]))))))
+        (vec (concat [{:line "" :meta nil} {:line hdr-line :meta nil}]
+                     item-lines
+                     [border]
+                     (when paused-line [paused-line])
+                     [hint]))))))
 
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
@@ -5446,7 +5461,7 @@
       (max 10 (- (long bubble-w) 4))
 
       {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-              viewport-rows pending-sends command-label]}
+              viewport-rows pending-sends command-label queue-paused]}
       extra
 
       now-ms
@@ -5519,7 +5534,7 @@
                                     :live? true})
 
              queued-entries
-             (queued-progress-entries pending-sends content-w)
+             (queued-progress-entries pending-sends content-w queue-paused)
 
              ;; Top margin invariant: the spinner row always has ONE blank
              ;; line above it inside the bubble, whether or not any
@@ -5915,6 +5930,16 @@
    dropped by `fitting-image-placements`."
   90)
 
+(def ^:private image-max-rows
+  "Ceiling on the inline-image box HEIGHT in cells. Sized so a width-filled
+   portrait / near-square image is NOT pinned to a short strip on a wide
+   terminal (with a 30-row cap a 206×164 grab maxed at 76×30 and could never
+   reach the 90-col width cap). An image whose box overflows the transcript
+   viewport is no longer dropped — `fitting-image-placements` clamps a
+   bottom-overflowing box down to the visible rows (aspect-preserving) and
+   Kitty source-crops a scrolled one — so a taller ceiling stays placeable."
+  40)
+
 (defn- image-disclosure-entries
   "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
 
@@ -5957,11 +5982,11 @@
          [box
           (timg/cell-size {:w width :h height}
                           (min (long image-max-cols) (max 1 (long content-w)))
-                          ;; Height ceiling in cells — kept comfortably
-                          ;; below a typical transcript viewport so a
-                          ;; width-filled image is still fully placeable
-                          ;; (an over-tall box is dropped, not clipped).
-                          30)
+                          ;; Height ceiling in cells (see `image-max-rows`):
+                          ;; large enough that a width-filled portrait fills
+                          ;; the width cap, while an over-tall box is clamped
+                          ;; to the viewport by `fitting-image-placements`.
+                          image-max-rows)
 
           rows
           (max 1 (long (:rows box)))

@@ -97,10 +97,31 @@ vis gateway start --host 0.0.0.0 --require-token --pair
 vis://gateway?url=http%3A%2F%2F<host>%3A7890&token=<bearer-token>
 ```
 
-In the companion app open **Settings → Gateway → Scan QR** and scan it. The
+In the companion app, open **Gateways → Add a gateway → Pairing link** and tap
+**Scan QR** (or paste the link into the field and tap **Pair**). The
 QR also lists the reachable hosts it picked, in preference order:
 **Tailscale addresses first** (they keep working off-LAN), then LAN
 (`10.x` / `192.168.x` / `172.16–31.x`), then the concrete bind host.
+
+### Connecting from the companion app
+
+Open the companion (web, iOS, or Android). Its first screen is **Gateways**.
+Under **Add a gateway** there are two ways in:
+
+- **Pairing link** — the fastest path, and the only one that also carries the
+  token. Either tap **Scan QR** and point the camera at the QR from `vis gateway
+  pair` (or `vis gateway start … --pair`), or paste the
+  `vis://gateway?url=…&token=…` link into the field and tap **Pair**. Both fill
+  in the URL and bearer token together, so there is nothing else to type.
+- **URL + token** — for a gateway whose address you already know. Enter the
+  gateway URL (LAN, Tailscale, or a Cloudflare tunnel address) and, when it is
+  token-gated, the bearer token, then tap **Connect**. The token is optional
+  only for a loopback (`127.0.0.1`) gateway.
+
+Each saved gateway then carries a live status dot, re-probed every six seconds:
+green `●` online (with the round-trip in milliseconds), red `●` offline, amber
+`●` unauthorized — reachable, but the token is missing or wrong. Tap a row to
+open its **Settings**; tap the active row to reconnect.
 
 ### Pairing a gateway that is already running
 

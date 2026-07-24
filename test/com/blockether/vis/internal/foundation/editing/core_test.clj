@@ -2893,7 +2893,16 @@
                                     {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
                      (expect (= "`src/a.clj`, `src/b.clj`" (:summary card)))
                      (expect (not (clojure.string/includes? (:body card) "update")))
-                     (expect (not (clojure.string/includes? (:body card) "add `")))))))
+                     (expect (not (clojure.string/includes? (:body card) "add `")))))
+               (it "widens the diff fence past any backtick run in the diff so an inner ``` fence never closes it early"
+                   ;; Editing a doc that shows ```diff examples produces a diff
+                   ;; whose context lines carry a bare ``` — a fixed 3-backtick
+                   ;; wrapper closed early and the rest rendered as prose.
+                   (let [diff "@@ -1,3 +1,3 @@\n ```diff\n+ x\n ```"
+                         card (render [{"path" "resources/vis-docs/configuration.md"
+                                        "op" "update" "changed" true "diff" diff}])]
+                     (expect (clojure.string/includes? (:body card) "````diff\n"))
+                     (expect (clojure.string/ends-with? (clojure.string/trim (:body card)) "````"))))))
 
 (defdescribe
   render-cat-result-spans-test
@@ -2943,7 +2952,14 @@
           (expect (clojure.string/starts-with? body "\n```clojure\n"))))
     (it "leaves non-code CAT bodies as plain fences"
         (let [body (:body (render {"path" "notes.txt" "anchors" {"1:aa" {"text" "hello"}}}))]
-          (expect (clojure.string/starts-with? body "\n```\n"))))))
+          (expect (clojure.string/starts-with? body "\n```\n"))))
+    (it "widens the fence past any backtick run in the file content so an inner ``` never closes it early"
+        (let [body (:body (render {"path" "README.md"
+                                   "anchors" {"1:aa" {"text" "```clojure"}
+                                              "2:bb" {"text" "(def x 1)"}
+                                              "3:cc" {"text" "```"}}}))]
+          (expect (clojure.string/starts-with? body "\n````"))
+          (expect (clojure.string/ends-with? (clojure.string/trim body) "````"))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 

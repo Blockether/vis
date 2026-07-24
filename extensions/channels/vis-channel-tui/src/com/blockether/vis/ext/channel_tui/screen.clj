@@ -1991,7 +1991,8 @@
       :turn-start-ms turn-start-ms
       :cancelling? (boolean cancelling?)
       :viewport-rows inner-h
-      :pending-sends (:pending-sends db)}
+      :pending-sends (:pending-sends db)
+      :queue-paused (:queue-paused db)}
 
      ;; Single virtualized layout pass: cheap height estimate for
      ;; every message, full projection + real height ONLY for
@@ -2654,7 +2655,8 @@
       :turn-start-ms turn-start-ms
       :cancelling? (boolean cancelling?)
       :viewport-rows inner-h
-      :pending-sends (:pending-sends db)}
+      :pending-sends (:pending-sends db)
+      :queue-paused (:queue-paused db)}
 
      layout
      (virtual/layout messages
@@ -2993,7 +2995,8 @@
       :turn-start-ms (:turn-start-ms db)
       :cancelling? false
       :viewport-rows inner-h
-      :pending-sends (:pending-sends db)}
+      :pending-sends (:pending-sends db)
+      :queue-paused (:queue-paused db)}
 
      layout
      (virtual/layout messages
@@ -3809,6 +3812,11 @@
                 (case (:phase chunk)
                   :queue-sync
                   (state/dispatch [:sync-queued-turn tab-id chunk])
+
+                  ;; The gateway paused/resumed this session's queue after a
+                  ;; provider failure — surface it next to the Queued strip.
+                  :queue-paused
+                  (state/dispatch [:sync-queue-paused tab-id chunk])
 
                   :turn-start
                   (do (state/dispatch [:sync-turn-clock tab-id chunk])
@@ -4887,14 +4895,14 @@
                         (let
                           [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
                                       (catch Throwable _ nil))
-                           fork-state-id (try (vis/db-fork-session-at-turn!
+                           fork-soul-id (try (vis/db-fork-session-at-turn!
                                                 db
                                                 current-id
                                                 {:workspace-id ws-id
                                                  :through-turn-id through-turn-id})
                                               (catch Throwable _ nil))]
-                          (if fork-state-id
-                            (if-let [session-result (chat/resume-session fork-state-id)]
+                          (if fork-soul-id
+                            (if-let [session-result (chat/resume-session fork-soul-id)]
                               (do (open-session-tab! session-result false)
                                   (vis/notify! "Forked current session"
                                                :level :success
@@ -4931,14 +4939,14 @@
                           (let
                             [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
                                         (catch Throwable _ nil))
-                             fork-state-id (try (vis/db-fork-session-at-turn!
+                             fork-soul-id (try (vis/db-fork-session-at-turn!
                                                   db
                                                   current-id
                                                   {:workspace-id ws-id :through-turn-id turn-id})
                                                 (catch Throwable _ nil))]
 
-                            (if fork-state-id
-                              (if-let [session-result (chat/resume-session fork-state-id)]
+                            (if fork-soul-id
+                              (if-let [session-result (chat/resume-session fork-soul-id)]
                                 (do (open-session-tab! session-result false)
                                     (vis/notify! "Forked session at turn"
                                                  :level :success

@@ -110,7 +110,9 @@ This recovers evidence without restoring it to the model wire. Filter in `python
 
 ### The budget stays visible
 
-The fold breadcrumb shows the reclaimed scope and token estimate in place. `session["utilization"]["now"]` reports total saved context and the scopes still represented on the wire.
+The fold breadcrumb shows the reclaimed scope and a token estimate. Its `~N% of budget` measures that reclaim against the **operating ceiling** — `auto_compress_above` (the ~144k soft compaction guardrail), or the live handled context (`last_request_tokens`) once a bigger task has grown past it — not the 1M hard per-call max, so a working fold never reads as noise. `session["utilization"]["now"]` reports total saved context and the scopes still represented on the wire.
+
+When handled context climbs above the ceiling, `session["utilization"]["hint"]` adds one throttled nudge to fold settled turns. It fires for at most three turns from the crossing, then goes quiet; dropping back under the ceiling re-arms a fresh window for the next crossing.
 
 ## The net effect
 

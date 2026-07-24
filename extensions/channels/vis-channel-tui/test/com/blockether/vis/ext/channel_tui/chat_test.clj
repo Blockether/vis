@@ -642,7 +642,7 @@
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
                    (g->c {"type" "turn.queued.drained" "turn_id" "q1"}))))
     (it "turn.started projects to :turn-start with the canonical run-start clock"
-        (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234}
+        (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234 :server-at-ms nil}
                    (g->c
                      {"type" "turn.started" "turn_id" "t1" "request" "hi" "started_at" 1234}))))))
 
