@@ -5304,10 +5304,29 @@
 (defn- navigator-visible-rows
   "Rows whose title/project cells match `query`, UNION rows whose id is in
    `transcript-ids` (server-side matches on user request + LLM response text).
-   Blank query → `row-matches?` keeps everything, so the union is a no-op."
+   Blank query → `row-matches?` keeps everything, so the union is a no-op.
+
+   A row kept ONLY because its id is in `transcript-ids` (its title/project
+   did NOT match the typed query) is tagged `:transcript-match?` and its
+   `:status` cell overwritten with `in chat`, so the list shows WHY the row
+   is there — the hit is in the conversation body, not the visible columns."
   [rows query transcript-ids]
-  (vec (filter #(or (table/row-matches? % query) (contains? transcript-ids (str (:id (:target %)))))
-               rows)))
+  (let [q (str/trim (or query ""))]
+    (vec (keep (fn [row]
+                 (let
+                   [title-hit? (table/row-matches? row query)
+                    body-hit? (contains? transcript-ids (str (:id (:target row))))]
+
+                   (cond
+                     ;; Body-only match (query typed, title/project missed it):
+                     ;; keep, but mark it so the Status column reads `in chat`.
+                     (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
+                     (assoc row
+                       :transcript-match? true
+                       :status "in chat")
+                     (or title-hit? body-hit?) row
+                     :else nil)))
+               rows))))
 
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so

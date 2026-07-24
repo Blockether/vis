@@ -427,6 +427,19 @@
 
           (expect (= "01-01 00:00" (:created r1)))
           (expect (= "01-01 01:00" (:modified r1)))))
+    (it "transcript-only matches are tagged and show an `in chat` status"
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           visible-rows (var-get #'dlg/navigator-visible-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           id2 (str (:id (:target (second rows))))
+           ;; Query matches no title/project cell; the id arrives ONLY from the
+           ;; transcript (body) search, so the row is kept AND marked `in chat`.
+           vis (visible-rows rows "zzz-no-title-match" #{id2})]
+
+          (expect (= 1 (count vis)))
+          (expect (:transcript-match? (first vis)))
+          (expect (= "in chat" (:status (first vis))))))
     (it "visible-rows filters by query only"
         (let
           [all-rows (var-get #'dlg/navigator-all-rows)
@@ -538,7 +551,7 @@
                [out (apply-settings-option {:something "else"}
                                            {:type :registry-toggle :toggle-id id})]
                (expect (= {:something "else"} out))
-               (expect (= :medium (vis/toggle-value id)))
+               (expect (= "medium" (vis/toggle-value id)))
                (expect (= "Enum Test: medium"
                           (settings-option-label
                             {:type :registry-toggle :toggle-id id :label "Enum Test"}
