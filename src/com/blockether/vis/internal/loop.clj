@@ -2930,12 +2930,19 @@
             (get util "saturation")
 
             saved
-            (if (pos? (long toks))
+            (cond
+              (pos? (long toks))
               (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of budget")))
-              ;; A re-fold of scopes already collapsed on a prior turn reclaims no
-              ;; NEW wire, so `toks` is 0 — but stay explicit rather than silently
+              ;; Utilization IS stamped but this fold reclaims no NEW wire — a re-fold
+              ;; of scopes already collapsed on a prior turn, or a fresh scope not yet
+              ;; sent. Either way it freed 0 tokens; stay explicit rather than silently
               ;; dropping the clause, so the human sees a no-op, not a display bug.
-              " · saved ~0 tokens (already folded)")
+              (some? util)
+              " · saved ~0 tokens"
+              ;; NO stamped utilization at all: nothing to price, so the card degrades
+              ;; to the bare confirmation and the recorded intent carries no `note`.
+              :else
+              "")
 
             ;; Even a fold that reclaims no NEW wire (every covered scope
             ;; already collapsed on a prior turn — a whole-session
