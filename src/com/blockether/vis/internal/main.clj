@@ -1665,7 +1665,7 @@
               (assoc acc
                 id (case (:type spec)
                      :enum
-                     (let [value (keyword (str/replace v #"^:" ""))]
+                     (let [value (str/replace v #"^:" "")]
                        (when-not (contains? (set (:choices spec)) value)
                          (throw (ex-info (str "Invalid value for " k ": " v)
                                          {:type :vis.cli/invalid-toggle

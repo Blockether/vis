@@ -165,8 +165,8 @@
                           (expect (true? (t/coerce-config-value "test_b" "on")))
                           (expect (false? (t/coerce-config-value "test_b" "off")))
                           (expect (true? (t/coerce-config-value "test_b" true)))
-                          (expect (= :deep (t/coerce-config-value "test_e" "DEEP")))
-                          (expect (= :quick (t/coerce-config-value "test_e" :quick)))
+                          (expect (= "deep" (t/coerce-config-value "test_e" "DEEP")))
+                          (expect (= "quick" (t/coerce-config-value "test_e" :quick)))
                           (expect (= "x" (t/coerce-config-value "test_unknown_id" "x"))))))
   (it "hydrate-from-config! applies YAML string toggles (the vis.yml path)"
       (with-clean-state
@@ -180,23 +180,23 @@
                                :persist? true})
           (t/hydrate-from-config! {:toggles {"test_flag" "true" "test_mode" "deep"}})
           (expect (true? (t/enabled? "test_flag")))
-          (expect (= :deep (t/value-of "test_mode")))
+          (expect (= "deep" (t/value-of "test_mode")))
           ;; the same canonical string id updates the same toggle
           (t/hydrate-from-config! {:toggles {"test_mode" "quick"}})
-          (expect (= :quick (t/value-of "test_mode")))
+          (expect (= "quick" (t/value-of "test_mode")))
           ;; keyword and namespaced aliases are ignored, never coerced
           (t/hydrate-from-config! {:toggles {:test_mode "deep" "ns/test_mode" "deep"}})
-          (expect (= :quick (t/value-of "test_mode")))
+          (expect (= "quick" (t/value-of "test_mode")))
           ;; an out-of-set enum string is dropped, leaving the prior value
           (t/hydrate-from-config! {:toggles {"test_mode" "nonsense"}})
-          (expect (= :quick (t/value-of "test_mode")))))))
+          (expect (= "quick" (t/value-of "test_mode")))))))
 
 (defdescribe host-defaults-test
              (it "the reasoning_level toggle is registered as an enum"
                  (let [spec (t/toggle-spec "reasoning_level")]
                    (expect (some? spec))
                    (expect (= :enum (:type spec)))
-                   (expect (= :balanced (:default spec)))))
+                   (expect (= "balanced" (:default spec)))))
              (it "retired display toggles do not exist (code always shows)"
                  ;; Render-fn op cards were removed — tool output is now stdout, and the TUI
                  ;; renders the model's raw :code unconditionally (the canonical contract,

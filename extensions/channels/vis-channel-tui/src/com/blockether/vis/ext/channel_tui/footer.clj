@@ -50,9 +50,9 @@
 (set! *unchecked-math* :warn-on-boxed)
 
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
-(def ^:private default-reasoning-level :balanced)
+(def ^:private default-reasoning-level "balanced")
 
-(def ^:private default-codex-verbosity :low)
+(def ^:private default-codex-verbosity "low")
 
 (defn- chosen-model-info
   "Resolved model map for the configured root model, or nil."

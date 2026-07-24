@@ -896,29 +896,110 @@
 (defdescribe
   session-transcript-search-test
   (it "matches a session by its user request text (case-insensitive)"
-      (let [s (h/store)
-            cid (h/store-session! s {:channel :tui :title "Alpha"})]
-        (vis/db-store-session-turn! s {:parent-session-id cid :user-request "make the FILTERING work" :status :done})
+      (let
+        [s
+         (h/store)
+
+         cid
+         (h/store-session! s {:channel :tui :title "Alpha"})]
+
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "make the FILTERING work" :status :done})
         (expect (= [cid] (vis/db-search-session-ids s :all "filtering")))
         (expect (= [cid] (vis/db-search-session-ids s :all "FILTER")))
         (expect (= [] (vis/db-search-session-ids s :all "nomatch")))))
   (it "matches a session by assistant iteration prose"
-      (let [s (h/store)
-            cid (h/store-session! s {:channel :tui :title "Beta"})
-            tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q" :status :done})]
-        (h/store-iteration! s {:session-turn-id tid :assistant-prose "here is the SERVER-side answer" :code "(+ 1 1)" :result 2})
+      (let
+        [s
+         (h/store)
+
+         cid
+         (h/store-session! s {:channel :tui :title "Beta"})
+
+         tid
+         (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q" :status :done})]
+
+        (h/store-iteration! s
+                            {:session-turn-id tid
+                             :assistant-prose "here is the SERVER-side answer"
+                             :code "(+ 1 1)"
+                             :result 2})
         (expect (= [cid] (vis/db-search-session-ids s :all "server-side")))
         (expect (= [] (vis/db-search-session-ids s :all "clientside")))))
-  (it "returns [] for a blank query and honours channel scope"
-      (let [s (h/store)
-            a (h/store-session! s {:channel :tui :title "A"})
-            b (h/store-session! s {:channel :cli :title "B"})]
-        (vis/db-store-session-turn! s {:parent-session-id a :user-request "needle here" :status :done})
-        (vis/db-store-session-turn! s {:parent-session-id b :user-request "needle here" :status :done})
-        (expect (= [] (vis/db-search-session-ids s :all "   ")))
-        (expect (= [] (vis/db-search-session-ids s :all "")))
-        (expect (= [a] (vis/db-search-session-ids s :tui "needle")))
-        (expect (= #{a b} (set (vis/db-search-session-ids s :all "needle")))))))
+  (it
+    "tags each match with WHERE it hit: request, reply, or both"
+    (let
+      [s
+       (h/store)
+
+       req
+       (h/store-session! s {:channel :tui :title "Req"})
+
+       rep
+       (h/store-session! s {:channel :tui :title "Rep"})
+
+       both
+       (h/store-session! s {:channel :tui :title "Both"})]
+
+      ;; request-only: needle in user request, not the reply
+      (vis/db-store-session-turn!
+        s
+        {:parent-session-id req :user-request "has NEEDLE here" :status :done})
+      ;; reply-only: needle in assistant prose, not the request
+      (let
+        [tid (vis/db-store-session-turn!
+               s
+               {:parent-session-id rep :user-request "plain q" :status :done})]
+        (h/store-iteration!
+          s
+          {:session-turn-id tid :assistant-prose "reply with NEEDLE" :code "x" :result 1}))
+      ;; both: needle in request AND reply
+      (let
+        [tid (vis/db-store-session-turn!
+               s
+               {:parent-session-id both :user-request "NEEDLE in ask" :status :done})]
+        (h/store-iteration!
+          s
+          {:session-turn-id tid :assistant-prose "NEEDLE in answer" :code "x" :result 1}))
+      (let
+        [by-id (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+        (expect (= 3 (count by-id)))
+        (expect (= {:in-request? true :in-reply? false}
+                   (select-keys (get by-id req) [:in-request? :in-reply?])))
+        (expect (= {:in-request? false :in-reply? true}
+                   (select-keys (get by-id rep) [:in-request? :in-reply?])))
+        (expect (= {:in-request? true :in-reply? true}
+                   (select-keys (get by-id both) [:in-request? :in-reply?])))
+        ;; request-only: snippet on the request side, nothing on the reply side
+        (expect (str/includes? (:request-snippet (get by-id req)) "NEEDLE"))
+        (expect (nil? (:reply-snippet (get by-id req))))
+        ;; reply-only: snippet on the reply side, nothing on the request side
+        (expect (str/includes? (:reply-snippet (get by-id rep)) "NEEDLE"))
+        (expect (nil? (:request-snippet (get by-id rep))))
+        ;; both: a snippet from each side
+        (expect (str/includes? (:request-snippet (get by-id both)) "NEEDLE"))
+        (expect (str/includes? (:reply-snippet (get by-id both)) "NEEDLE")))))
+  (it
+    "returns [] for a blank query and honours channel scope"
+    (let
+      [s
+       (h/store)
+
+       a
+       (h/store-session! s {:channel :tui :title "A"})
+
+       b
+       (h/store-session! s {:channel :cli :title "B"})]
+
+      (vis/db-store-session-turn! s
+                                  {:parent-session-id a :user-request "needle here" :status :done})
+      (vis/db-store-session-turn! s
+                                  {:parent-session-id b :user-request "needle here" :status :done})
+      (expect (= [] (vis/db-search-session-ids s :all "   ")))
+      (expect (= [] (vis/db-search-session-ids s :all "")))
+      (expect (= [a] (vis/db-search-session-ids s :tui "needle")))
+      (expect (= #{a b} (set (vis/db-search-session-ids s :all "needle")))))))
 
 ;; =============================================================================
 ;; Adoption marker (V5 claimed_at) - warm-pool scaffolding stays out of the

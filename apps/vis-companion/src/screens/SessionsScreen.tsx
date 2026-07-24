@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Banner, Button } from '../components/ui';
-import { GatewayClient } from '../lib/gateway';
+import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session } from '../lib/types';
 import { homeifyPath } from '../lib/path';
@@ -27,7 +27,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [transcriptIds, setTranscriptIds] = useState<Set<string> | null>(null);
+  const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -118,7 +118,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   useEffect(() => {
     const needle = query.trim();
     if (!needle) {
-      setTranscriptIds(null);
+      setTranscriptMatches(null);
       return;
     }
     const connection = activeRef.current;
@@ -126,12 +126,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void (clientRef.current ?? new GatewayClient(connection))
-        .searchSessionIds(needle, controller.signal)
-        .then((ids) => {
-          if (!controller.signal.aborted) setTranscriptIds(new Set(ids));
+        .searchSessionMatches(needle, controller.signal)
+        .then((matches) => {
+          if (!controller.signal.aborted) {
+            setTranscriptMatches(new Map(matches.map((m) => [m.sessionId, m])));
+          }
         })
         .catch(() => {
-          if (!controller.signal.aborted) setTranscriptIds(null);
+          if (!controller.signal.aborted) setTranscriptMatches(null);
         });
     }, 200);
     return () => {
@@ -148,10 +150,10 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
       return (
         !needle ||
         sessionSearchText(session).includes(needle) ||
-        transcriptIds?.has(session.id) === true
+        transcriptMatches?.has(session.id) === true
       );
     });
-  }, [query, sessions, showEmpty, transcriptIds]);
+  }, [query, sessions, showEmpty, transcriptMatches]);
 
   const totals = useMemo(() => {
     const all = sessions?.length ?? 0;

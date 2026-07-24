@@ -1099,39 +1099,90 @@
                               (when-not all? [[:= :cs.channel ch]]))
                  :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]})))))
 
+(defn- transcript-snippet
+  "HoneySQL expr: a short WINDOW of `col` around the (case-insensitive) first
+   match of `q` — ~30 chars before, the match, ~90 after — with leading/trailing
+   `…` when the window clips the column. `nil` when `col` doesn't contain `q`.
+   Keeps the wire tiny: only this window travels, never the whole 105MB body."
+  [col q]
+  (let [pos    [:instr [:lower col] [:lower q]]
+        start  [:max 1 [:- pos 30]]
+        window 160]
+    [:case
+     [:= pos 0] nil
+     :else      [:||
+                 [:case [:> pos 31] "…" :else ""]
+                 [:substr col start window]
+                 [:case [:> [:length col] [:+ start (dec window)]] "…" :else ""]]]))
+
+(defn db-search-session-matches
+  "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring),
+   each tagged with WHERE it hit and a short MATCH SNIPPET per side:
+   `{:id uuid :in-request? bool :in-reply? bool
+     :request-snippet str-or-nil :reply-snippet str-or-nil}`.
+
+   `:in-request?` = the user's request (`session_turn_soul.user_request`) matched;
+   `:in-reply?` = any assistant iteration text matched
+   (`llm_assistant_prose` / `llm_thinking` / `llm_assistant_message`). Both can be
+   true. This is the SERVER-side half of transcript search: the 105MB of assistant
+   text never crosses the wire — clients match title/project locally and union
+   these tagged ids for the deep matches. `channel` filters like `db-list-sessions`
+   (`:all`/nil = cross-channel). Blank query returns `[]`."
+  [db-info channel query]
+  (let
+    [q (some-> query
+               str
+               str/trim)]
+    (if (or (not (ds db-info)) (nil? q) (= "" q))
+      []
+      (let
+        [ch (some-> channel
+                    ->kw
+                    name)
+         all? (or (nil? ch) (= "all" ch))
+         pat (str "%" q "%")]
+
+        (mapv (fn [{:keys [id in_request in_reply request_snippet reply_snippet]}]
+                {:id (->uuid id)
+                 :in-request? (pos? (or in_request 0))
+                 :in-reply? (pos? (or in_reply 0))
+                 :request-snippet request_snippet
+                 :reply-snippet reply_snippet})
+              (query!
+                db-info
+                {:select [:cs.id [[:max [:case [:like :ts.user_request pat] 1 :else 0]] :in_request]
+                          [[:max
+                            [:case
+                             [:or [:like :it.llm_assistant_prose pat] [:like :it.llm_thinking pat]
+                              [:like :it.llm_assistant_message pat]] 1 :else 0]] :in_reply]
+                          [[:max [:case [:like :ts.user_request pat]
+                                  (transcript-snippet :ts.user_request q) :else nil]] :request_snippet]
+                          [[:max [:case
+                                  [:like :it.llm_assistant_prose pat] (transcript-snippet :it.llm_assistant_prose q)
+                                  [:like :it.llm_thinking pat] (transcript-snippet :it.llm_thinking q)
+                                  [:like :it.llm_assistant_message pat] (transcript-snippet :it.llm_assistant_message q)
+                                  :else nil]] :reply_snippet]]
+                 :from [[:session_soul :cs]]
+                 :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
+                 :left-join [[:session_turn_soul :ts] [:= :ts.session_state_id :s.id]
+                             [:session_turn_state :tst] [:= :tst.session_turn_soul_id :ts.id]
+                             [:session_turn_iteration :it] [:= :it.session_turn_state_id :tst.id]]
+                 :where (into [:and [:= :cs.parent_state_id nil] [:not= :cs.claimed_at nil]
+                               [:or [:like :ts.user_request pat] [:like :it.llm_assistant_prose pat]
+                                [:like :it.llm_thinking pat] [:like :it.llm_assistant_message pat]]]
+                              (when-not all? [[:= :cs.channel ch]]))
+                 :group-by [:cs.id]}))))))
+
 (defn db-search-session-ids
   "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring):
    the user's request (`session_turn_soul.user_request`) OR any assistant
    iteration text (`llm_assistant_prose` / `llm_thinking` / `llm_assistant_message`).
 
-   This is the SERVER-side half of transcript search: the 105MB of assistant
-   text never crosses the wire — clients match title/project locally and union
-   these ids for the deep matches. `channel` filters like `db-list-sessions`
+   Thin id-only projection of `db-search-session-matches` (see it for the
+   where-it-hit tags). `channel` filters like `db-list-sessions`
    (`:all`/nil = cross-channel). Blank query returns `[]`."
   [db-info channel query]
-  (let [q (some-> query str str/trim)]
-    (if (or (not (ds db-info)) (nil? q) (= "" q))
-      []
-      (let [ch (some-> channel ->kw name)
-            all? (or (nil? ch) (= "all" ch))
-            pat (str "%" q "%")]
-        (mapv (comp ->uuid :id)
-              (query! db-info
-                      {:select-distinct [:cs.id]
-                       :from [[:session_soul :cs]]
-                       :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                       :left-join [[:session_turn_soul :ts] [:= :ts.session_state_id :s.id]
-                                   [:session_turn_state :tst] [:= :tst.session_turn_soul_id :ts.id]
-                                   [:session_turn_iteration :it] [:= :it.session_turn_state_id :tst.id]]
-                       :where (into [:and
-                                     [:= :cs.parent_state_id nil]
-                                     [:not= :cs.claimed_at nil]
-                                     [:or
-                                      [:like :ts.user_request pat]
-                                      [:like :it.llm_assistant_prose pat]
-                                      [:like :it.llm_thinking pat]
-                                      [:like :it.llm_assistant_message pat]]]
-                                    (when-not all? [[:= :cs.channel ch]]))}))))))
+  (mapv :id (db-search-session-matches db-info channel query)))
 
 (defn db-session-turn-stats
   "Per-session turn aggregates for the WHOLE store in ONE grouped query:

@@ -34,6 +34,25 @@ export class GatewayError extends Error {
   }
 }
 
+// One transcript-search hit, tagged with WHERE the query matched (the user's
+// own request vs. the assistant's reply) plus a short preview snippet of each
+// matching side. Only the small window travels — never the whole conversation.
+export interface SessionMatch {
+  sessionId: string;
+  inRequest: boolean;
+  inReply: boolean;
+  requestSnippet: string | null;
+  replySnippet: string | null;
+}
+
+interface RawSessionMatch {
+  session_id: string;
+  is_in_request?: boolean;
+  is_in_reply?: boolean;
+  request_snippet?: string | null;
+  reply_snippet?: string | null;
+}
+
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -224,6 +243,30 @@ export class GatewayClient {
       signal,
     );
     return res.session_ids ?? [];
+  }
+
+  // Like searchSessionIds, but each hit is tagged with WHERE the query landed —
+  // the user's own request vs. the assistant's reply — plus a short snippet of
+  // the matching text so the UI can preview the conversation, not just the id.
+  async searchSessionMatches(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<SessionMatch[]> {
+    const q = query.trim();
+    if (!q) return [];
+    const res = await this.request<{ matches?: RawSessionMatch[] }>(
+      'GET',
+      `/v1/sessions/search?q=${encodeURIComponent(q)}`,
+      undefined,
+      signal,
+    );
+    return (res.matches ?? []).map((m) => ({
+      sessionId: m.session_id,
+      inRequest: Boolean(m.is_in_request),
+      inReply: Boolean(m.is_in_reply),
+      requestSnippet: m.request_snippet ?? null,
+      replySnippet: m.reply_snippet ?? null,
+    }));
   }
 
   createSession(opts: {

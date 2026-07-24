@@ -23,6 +23,8 @@
   [["clojure" "(defn foo\n  \"a docstring\n   spanning lines\"\n  [x]\n  (+ x 1))\n"]
    ["python" "def f(x):\n    '''\n    multi\n    line\n    '''\n    return x\n"]
    ["javascript" "const a = 1\nfunction g() { return a }\n"]
+   ["typescript" "const a: number = 1\nfunction g(x: number): number { return x }\n"]
+   ["tsx" "const El = () => <div className=\"x\">hi</div>\n"]
    ["json" "{\"a\": 1,\n \"b\": [2, 3]}\n"]])
 
 (defdescribe highlight-safety-test
@@ -30,6 +32,15 @@
                  (expect (nil? (hl/highlight nil "(+ 1 2)")))
                  (expect (nil? (hl/highlight "clojure" "")))
                  (expect (nil? (hl/highlight "clojure" nil)))))
+
+(defdescribe grammar-for-mapping-test
+             (it "routes ts/tsx/jsx fence langs to their pack grammars"
+                 (expect (= "typescript" (hl/grammar-for "typescript")))
+                 (expect (= "typescript" (hl/grammar-for "ts")))
+                 (expect (= "tsx" (hl/grammar-for "tsx")))
+                 (expect (= "tsx" (hl/grammar-for "TSX")))
+                 (expect (= "tsx" (hl/grammar-for "jsx")))
+                 (expect (nil? (hl/grammar-for "nope")))))
 
 (defdescribe highlight-finalized-exact-test
              (it "finalized (non-live) colouring is byte-identical to a bare native parse"

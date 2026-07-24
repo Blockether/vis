@@ -279,3 +279,54 @@ header/footer chips (which share `t/dialog-shadow`) are not painted `░`:
 At 120×42 the magit box is 112×30 (left 3 / top 3 / bottom 32), the header tab
 bar rides rows 0–2, and the composer + two footer rows sit below the shadow —
 the full frame, every pixel from the real paint code.
+
+## Documentation guidelines
+
+How to write every document, comment, commit message, and reply. Two layers:
+which artifact to produce (structure), and how its prose reads (voice). Structure
+without voice gives organized filler; voice without structure gives sharp prose
+with no home. Do both.
+
+### Which artifact to write
+
+Pick the document type by what the reader needs, then fill its skeleton.
+
+- **README** — what the thing is, how to install it, one runnable example, where to go next. First screen answers "what is this and should I keep reading."
+- **ADR** (Architecture Decision Record) — one file per architectural decision under `docs/adr/NNNN-title.md`, numbered and append-only. Sections: Title, Status (proposed/accepted/superseded), Context (the forces), Decision (what you chose), Consequences (what gets easier, what gets harder). Never edit an accepted record — supersede it with a new one.
+- **Design document** — records the current state of thinking, not the history. Decision, option set, and substance; not the argument defending a choice the document already made. State each principle once in a principles list. No reasoning history, no file lists (they go stale — the code is the source), no per-option "which to pick" once picked. Field-level detail only for the phase being built; future work stays high-level.
+- **Reference / API docs** — one entry per public symbol, parallel structure across entries, at least one concrete call and its result. Docstrings in normal English; Markdown-quote every parameter and code item.
+- **Changelog** — one line per user-visible change, grouped by version, newest first.
+- **Review** — each finding a self-contained subsection (where, what, why it matters, recommendation); a short positives section near the top; no synthesis spanning findings, since findings are worked one at a time.
+
+### How it must read (voice)
+
+These rules are mechanical and checkable in review — apply them to prose in any artifact above.
+
+- **Answer first.** Lead with Yes / No / Done / the result, then the reasoning. Never restate the question, never warm up, no preamble ("Great question!") and no hollow closing ("Hope this helps!").
+- **Brevity by default, depth when earned.** A confirmation is one line; a complex answer gets several structured paragraphs and not one filler sentence more.
+- **Write to a technical peer.** Precise terms; paste real log lines, exact error strings, concrete examples. Match depth to the reader.
+- **Honesty over comfort.** Disagree when the reader is wrong and state the correction. Say "I don't know" when true. Own mistakes in first person, apologize once, move to the fix. Label estimates as guesses. Never invent a number, capability, or behavior.
+- **Banned marketing words:** powerful, seamless, robust, effortless, revolutionary, streamline, game-changing, cutting-edge, world-class, best-in-class, next-generation, turnkey, unleash, unlock (figurative), elevate, supercharge, empower, journey, ecosystem, "solution(s)" as a product category, delve, realm, tapestry, foster; leverage and utilize (say "use"), harness as a verb.
+- **Banned filler:** "In today's fast-paced world", "Whether you're X or Y", "look no further", "designed to help you", "and more", "take your X to the next level", "boost productivity", "peace of mind", "at your fingertips". No safety disclaimers ("Note that…", "Keep in mind…") without genuine risk. No fake "we", no empathy theatre.
+- **Delete adjectives that grade your own output** (clean, elegant, honest, smart). State the mechanism and let the reader conclude.
+- **Literal verbs, not figurative.** Not features that "chain into" a workflow, events that "fire", numbers that "feed" a report — say features work together, the event is created, the projection updates. Make one dedicated pass for figurative verbs; they survive the first read.
+- **Concrete beats abstract.** A specific number, unit, or worked example outweighs any adjective.
+- **Short subject–verb–object sentences.** Avoid passive voice and deep nesting. Unpack compressed jargon into plain sentences even when longer, but keep exact identifier and entity names.
+- **One meaning per term;** reuse established vocabulary rather than varying it for elegance. Parallel structure across listed items. No hedging when reasoning settles the question; reserve hedged language for genuine uncertainty and say why.
+- **No rhetorical-question headings.** State the answer as the heading.
+
+### Formatting mechanics
+
+- Short paragraphs, 2–4 sentences. Lists only for genuinely distinct items or ordered steps; one or two points are prose. Emphasis is rare; no ALL-CAPS, no exclamation marks in formal prose.
+- ISO 8601 dates (`2026-07-22`), full UTC timestamps when quoting logs. No space in slash-suffix units (`$0.14/mm`). Spell out small or approximate counts, digits for exact quantities.
+- In Markdown, keep prose paragraphs as single physical lines — do not hard-wrap.
+
+### Comments, logs, titles
+
+- **Comments explain WHY, not WHAT** — the constraint, the rationale, the borrowed-algorithm attribution. Add one only when it carries information the code does not. Never reference transient labels (sprint, milestone, ticket phase); name the feature or design-doc section.
+- **Log and error messages** are lowercase, context-rich, and always carry their values — the identifier, the count, the error name. A message without its values forces a second round-trip.
+- **Titles name the problem, not its explanation.** Good: `Part settings crash ("Cannot compare")`. Bad: `Part settings crash: sort-by second over storage-location maps…`. Root cause goes in the description.
+
+### The final pass
+
+Read it once more and delete the most brochure-like sentence. When it reads like one engineer explaining something to another, it is right.

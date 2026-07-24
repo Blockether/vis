@@ -2766,7 +2766,7 @@
 (defn- turn-extra-body
   [{:keys [settings] :as db}]
   (when (= :openai-codex (current-provider-id db))
-    {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
+    {:text {:verbosity (name (or (:openai-codex-verbosity settings) "low"))}}))
 
 (defn- db-for-tab
   [db workspace-id]

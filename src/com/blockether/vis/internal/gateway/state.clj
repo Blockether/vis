@@ -2628,8 +2628,26 @@
   ([query] (search-session-ids :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
+     (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
+
+(defn search-session-matches
+  "Soul-id STRINGS whose TRANSCRIPT matches `query`, each TAGGED with WHERE it hit:
+   `[{:session_id str :is_in_request bool :is_in_reply bool}]` (wire-shaped:
+   snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side deep search as
+   `search-session-ids` — the assistant text never crosses the wire, only the
+   match location does. `:is_in_request` = the user's own request matched;
+   `:is_in_reply` = assistant reply text matched. Blank query → []."
+  ([query] (search-session-matches :all query))
+  ([channel query]
+   (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (mapv str (persistance/db-search-session-ids db channel query))
+       (mapv (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet]}]
+               {:session_id (str id)
+                :is_in_request (boolean in-request?)
+                :is_in_reply (boolean in-reply?)
+                :request_snippet request-snippet
+                :reply_snippet reply-snippet})
+             (persistance/db-search-session-matches db channel query))
        []))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
