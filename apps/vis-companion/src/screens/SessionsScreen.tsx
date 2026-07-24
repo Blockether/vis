@@ -309,6 +309,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
                 sessions={projectSessions}
                 conn={active!}
                 subscribedIds={subscribedIds}
+                matches={transcriptMatches}
+                needle={query.trim()}
                 onOpen={onOpen}
               />
             ))}
@@ -330,12 +332,16 @@ function ProjectGroup({
   sessions,
   conn,
   subscribedIds,
+  matches,
+  needle,
   onOpen,
 }: {
   project: string;
   sessions: Session[];
   conn: GatewayConn;
   subscribedIds: ReadonlySet<string>;
+  matches: Map<string, SessionMatch> | null;
+  needle: string;
   onOpen: Props['onOpen'];
 }) {
   const root = projectRoot(sessions);
@@ -375,6 +381,8 @@ function ProjectGroup({
             session={session}
             conn={conn}
             subscribed={subscribedIds.has(session.id)}
+            match={matches?.get(session.id) ?? null}
+            needle={needle}
             onOpen={onOpen}
           />
         ))}
@@ -387,11 +395,15 @@ function SessionRow({
   session,
   conn,
   subscribed,
+  match,
+  needle,
   onOpen,
 }: {
   session: Session;
   conn: GatewayConn;
   subscribed: boolean;
+  match: SessionMatch | null;
+  needle: string;
   onOpen: Props['onOpen'];
 }) {
   const status = statusLabel(session);
@@ -400,9 +412,10 @@ function SessionRow({
   const live = sessionIsLive(session);
 
   return (
+    <div className="[&+&]:border-t [&+&]:border-dialog-edge">
     <button
       type="button"
-      className="group grid min-h-14 w-full text-left transition-[background-color,transform] duration-150 active:translate-x-0.5 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none md:min-h-11 md:grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] md:active:translate-x-0 [&+&]:border-t [&+&]:border-dialog-edge"
+      className="group grid min-h-14 w-full text-left transition-[background-color,transform] duration-150 active:translate-x-0.5 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none md:min-h-11 md:grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] md:active:translate-x-0"
       data-session-id={session.id}
       onClick={() => void onOpen(conn, session.id)}
     >
@@ -450,6 +463,8 @@ function SessionRow({
         {relativeTime(timestamp)}
       </span>
     </button>
+      {match && <MatchPreview match={match} needle={needle} />}
+    </div>
   );
 }
 

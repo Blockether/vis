@@ -721,6 +721,18 @@
   (fn []
     (status {:account-type account-type})))
 
+(defn- make-detect-fn
+  "Detect credentials for THIS Copilot tier only. All three tier providers
+   (individual/business/enterprise) share a single OAuth token file, so a raw
+   `detect-oauth-token` would report every tier authenticated and surface all
+   three in the picker/router at once (issue #48). Report authenticated only
+   for the tier recorded in the auth file (or forced by env), leaving exactly
+   one Copilot provider live."
+  [account-type]
+  (fn []
+    (when (= account-type (configured-account-type nil))
+      (detect-oauth-token))))
+
 (defn- make-get-token-fn
   [account-type]
   (fn []
@@ -878,7 +890,7 @@
      shared
      {:provider/status-fn (make-status-fn account-type)
       :provider/logout-fn #'logout!
-      :provider/detect-fn #'detect-oauth-token
+      :provider/detect-fn (make-detect-fn account-type)
       :provider/auth-fn (make-auth-fn account-type)
       :provider/get-token-fn (make-get-token-fn account-type)
       :provider/refresh-token-fn (make-force-refresh-fn account-type)
