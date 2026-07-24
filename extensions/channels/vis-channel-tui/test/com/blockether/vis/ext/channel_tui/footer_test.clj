@@ -479,7 +479,7 @@
           (fn []
             (let
               [texts (->> (build-segments {:messages []
-                                           :settings {:openai-codex-verbosity :high}
+                                           :settings {:openai-codex-verbosity "high"}
                                            :session-model-pref {:provider "anthropic-coding-plan"
                                                                 :model "claude-opus-4-8"}}
                                           0)
@@ -493,7 +493,7 @@
           (fn []
             (let
               [texts (->> (build-segments {:messages []
-                                           :settings {:openai-codex-verbosity :high}
+                                           :settings {:openai-codex-verbosity "high"}
                                            :session-model-pref {:provider "openai-codex"
                                                                 :model "gpt-5.5"}}
                                           0)

@@ -5223,8 +5223,15 @@
                                                                          :db @state/app-db
                                                                          :search-transcript-ids
                                                                          (fn [q]
-                                                                           (try (vis/gateway-search-session-ids q)
-                                                                                (catch Throwable _ nil)))}))]
+                                                                           (try
+                                                                             (into {}
+                                                                                   (map (fn [{:keys [id in-request? in-reply?]}]
+                                                                                          [id (cond (and in-request? in-reply?) :both
+                                                                                                    in-request? :request
+                                                                                                    in-reply? :reply
+                                                                                                    :else :both)]))
+                                                                                   (vis/gateway-search-session-matches q))
+                                                                             (catch Throwable _ nil)))}))]
                       (switch-session! choice)
                       ;; After a delete, reopen the picker on the
                       ;; refreshed list so pruning can continue.

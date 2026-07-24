@@ -322,10 +322,33 @@
    assistant text) matches `query`. Blank query → []. The heavy assistant text
    never crosses the wire; callers union these ids into a local title filter."
   [query]
-  (let [q (some-> query str str/trim)]
+  (let
+    [q (some-> query
+               str
+               str/trim)]
     (if (or (nil? q) (= "" q))
       []
       (get (send-json! "GET" (str "/v1/sessions/actions/search?q=" (enc q))) "session_ids"))))
+
+(defn search-session-matches
+  "GET /v1/sessions/actions/search?q= — like `search-session-ids` but each hit is
+   TAGGED with WHERE it matched: `[{:id str :in-request? bool :in-reply? bool}]`.
+   `:in-request?` = the user's own request matched; `:in-reply?` = assistant reply
+   text matched. Blank query → []. Heavy assistant text never crosses the wire."
+  [query]
+  (let
+    [q (some-> query
+               str
+               str/trim)]
+    (if (or (nil? q) (= "" q))
+      []
+      (->> (get (send-json! "GET" (str "/v1/sessions/actions/search?q=" (enc q))) "matches")
+           (mapv (fn [m]
+                   {:id (get m "session_id")
+                    :in-request? (boolean (get m "is_in_request"))
+                    :in-reply? (boolean (get m "is_in_reply"))
+                    :request-snippet (get m "request_snippet")
+                    :reply-snippet (get m "reply_snippet")}))))))
 
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 

@@ -249,7 +249,11 @@ function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | nul
         ...iteration,
         assistant_prose: applyText(iteration.assistant_prose ?? '', event),
       }));
-      return { ...next, activity: undefined };
+      // The model's prose streamed first as a live `:content` ticker (turn.answer)
+      // and now lands as this iteration's canonical prose. Mirror the TUI
+      // (progress.clj drops `:content-stream`): clear the live answer so the same
+      // text isn't rendered twice — once above the tool and once below it.
+      return { ...next, answer: '', activity: undefined };
     }
     if (field === 'markdown') {
       return { ...turn, answer: applyText(turn.answer, event), activity: undefined };
@@ -265,7 +269,10 @@ function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | nul
       assistant_prose: stringField(event, 'assistant_prose') || iteration.assistant_prose,
       error: undefined,
     }));
-    return { ...next, activity: undefined };
+    // If this iteration finalized any prose, the live `:content` ticker that fed
+    // it has been promoted into the iteration — drop it so it isn't duplicated.
+    const promoted = next.iterations.find((i) => i.position === position)?.assistant_prose;
+    return { ...next, answer: promoted ? '' : turn.answer, activity: undefined };
   }
 
   if (type === 'block.preview') {
@@ -613,8 +620,16 @@ export function SessionScreen({
         next.live !== undefined ? next.live : next.status === 'running';
       const showsWork = liveTurnRef.current !== null || runningRef.current;
       if (!gatewayLive && showsWork) {
-        await loadTranscript();
+        // Batch the reload with clearing the live bubble so the persisted turn
+        // (engine id ≠ live gateway id) never renders alongside it for a frame.
+        let next: TranscriptTurn[] | null = null;
+        try {
+          next = await client.transcript(sid);
+        } catch {
+          next = null;
+        }
         if (cancelled) return;
+        if (next) setTurns(next);
         setRunning(false);
         setLiveTurn(null);
         liveTurnRef.current = null;
@@ -691,16 +706,35 @@ export function SessionScreen({
       // actually persisted in the transcript, otherwise it vanishes for a frame
       // (the persisted row lags the terminal event) and the view jumps.
       const finishedId = stringField(event, 'turn_id') || liveTurnRef.current?.id || '';
-      let next = await loadTranscript();
+      // Fetch the finished transcript WITHOUT touching state, then apply the
+      // turns and drop the live bubble in ONE synchronous (React-batched) update.
+      // The persisted finished turn carries the engine's row id, not the live
+      // turn's gateway id, so `visibleTurns` can't filter it out — if `setTurns`
+      // rendered before `setLiveTurn(null)`, both would show for a frame (dup).
+      let next: TranscriptTurn[] | null = null;
+      try {
+        next = await client.transcript(sid);
+      } catch {
+        next = null;
+      }
       const has = (turns: TranscriptTurn[] | null) =>
         !finishedId || !!turns?.some((turn) => (turn.id ?? turn.turn_id) === finishedId);
       if (next && !has(next)) {
         await new Promise((resolve) => window.setTimeout(resolve, 300));
-        next = await loadTranscript();
+        try {
+          next = await client.transcript(sid);
+        } catch {
+          /* keep the earlier snapshot */
+        }
       }
-      if (next && has(next)) {
-        setLiveTurn(null);
-        liveTurnRef.current = null;
+      if (next) {
+        setTurns(next);
+        setError(null);
+        setLoading(false);
+        if (has(next)) {
+          setLiveTurn(null);
+          liveTurnRef.current = null;
+        }
       }
       if (type === 'turn.failed') {
         setError(stringField(event, 'message') || stringField(event, 'error') || 'The turn failed.');

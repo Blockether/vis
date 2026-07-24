@@ -125,6 +125,16 @@
 ;; Registry ops
 ;; =============================================================================
 
+(defn- ->str-choice
+  "Canonicalise one enum choice / default to a plain lower-case string:
+   a keyword sheds its colon (:deep becomes the string deep), a string
+   passes through. Enum toggle VALUES are strings end-to-end, the same rule
+   as toggle ids, so nothing keyword-shaped reaches the wire, YAML, or a row."
+  [v]
+  (cond (keyword? v) (name v)
+        (nil? v) v
+        :else (str v)))
+
 (defn- normalize-spec
   "Coerce a caller spec into the canonical registry shape. Drops
    unknown keys so a future field added here doesn't bleed into
@@ -150,7 +160,7 @@
                   (boolean default)
 
                   :enum
-                  default)
+                  (->str-choice default))
        :owner (or owner :vis)
        :persist? (boolean persist?)
        ;; `:settings? false` keeps a toggle registered/persisted but OUT
@@ -175,7 +185,7 @@
       (assoc :channels (set channels))
 
       (= :enum t)
-      (assoc :choices (vec choices)))))
+      (assoc :choices (mapv ->str-choice choices)))))
 
 (defn register-toggle!
   "Register one toggle. `spec` must satisfy `:toggle/spec`.
@@ -454,13 +464,14 @@
             :else (boolean v))
 
       :enum
-      (if (string? v)
-        (let [target (str/lower-case (str/trim v))]
-          (or (some (fn [c]
-                      (when (= target (str/lower-case (name c))) c))
-                    (:choices spec))
-              v))
-        v)
+      (let [target (some-> (cond (keyword? v) (name v)
+                                 (string? v) v
+                                 :else nil)
+                           str/trim str/lower-case)]
+        (or (some (fn [c]
+                    (when (and target (= target (str/lower-case c))) c))
+                  (:choices spec))
+            v))
 
       v)))
 
@@ -551,12 +562,12 @@
                        :label "Reasoning effort"
                        :description "Reasoning budget hint passed to reasoning-capable models."
                        :type :enum
-                       :choices [:quick :balanced :deep]
+                       :choices ["quick" "balanced" "deep"]
                        ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
                        ;; dialog — `:settings? false` keeps it registered + persisted but out
                        ;; of every channel's Settings list.
                        :settings? false
-                       :default :balanced
+                       :default "balanced"
                        :owner :vis
                        :group :provider
                        :persist? true})

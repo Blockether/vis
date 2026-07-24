@@ -1079,7 +1079,8 @@
                  keyword)
          :all)]
 
-    (json-response {:session_ids (state/search-session-ids channel q)})))
+    (json-response {:session_ids (state/search-session-ids channel q)
+                    :matches (state/search-session-matches channel q)})))
 
 (defn- soul-handler
   [request]
@@ -1278,8 +1279,7 @@
                                     {:request (get body "request")
                                      :idempotency-key (get body "idempotency_key")
                                      :model (get body "model")
-                                     :reasoning-default (some-> (get body "reasoning_default")
-                                                                keyword)
+                                     :reasoning-default (get body "reasoning_default")
                                      :extra-body (get body "extra_body")
                                      :turn-features (get body "turn_features")
                                      :workspace (get body "workspace")

@@ -550,8 +550,8 @@
                        :label "Verbosity"
                        :description "Output detail hint passed to the OpenAI Codex backend."
                        :type :enum
-                       :choices [:low :medium :high]
-                       :default :low
+                       :choices ["low" "medium" "high"]
+                       :default "low"
                        :owner :vis
                        :group :provider
                        :persist? true

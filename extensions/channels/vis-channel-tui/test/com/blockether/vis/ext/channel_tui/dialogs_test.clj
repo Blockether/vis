@@ -427,14 +427,32 @@
 
           (expect (= "01-01 00:00" (:created r1)))
           (expect (= "01-01 01:00" (:modified r1)))))
+    (it "transcript-only matches are tagged and show WHERE they hit"
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           visible-rows (var-get #'dlg/navigator-visible-rows)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           id2 (str (:id (:target (second rows))))
+           ;; Query matches no title/project cell; the id arrives ONLY from the
+           ;; transcript (body) search as a MAP {id kind}, so the row is kept AND
+           ;; its Status cell shows WHERE the hit is.
+           both (visible-rows rows "zzz-no-title-match" {id2 :both})
+           req (visible-rows rows "zzz-no-title-match" {id2 :request})
+           rep (visible-rows rows "zzz-no-title-match" {id2 :reply})]
+
+          (expect (= 1 (count both)))
+          (expect (:transcript-match? (first both)))
+          (expect (= "in chat" (:status (first both))))
+          (expect (= "in request" (:status (first req))))
+          (expect (= "in reply" (:status (first rep))))))
     (it "visible-rows filters by query only"
         (let
           [all-rows (var-get #'dlg/navigator-all-rows)
            visible-rows (var-get #'dlg/navigator-visible-rows)
            rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
-          (expect (= 1 (count (visible-rows rows "second" #{}))))
-          (expect (= 2 (count (visible-rows rows "" #{}))))))))
+          (expect (= 1 (count (visible-rows rows "second" {}))))
+          (expect (= 2 (count (visible-rows rows "" {}))))))))
 
 (defdescribe scrollbar-geometry-test
              (it "scrollbar geometry sanity (canonical primitive)"
@@ -538,7 +556,7 @@
                [out (apply-settings-option {:something "else"}
                                            {:type :registry-toggle :toggle-id id})]
                (expect (= {:something "else"} out))
-               (expect (= :medium (vis/toggle-value id)))
+               (expect (= "medium" (vis/toggle-value id)))
                (expect (= "Enum Test: medium"
                           (settings-option-label
                             {:type :registry-toggle :toggle-id id :label "Enum Test"}

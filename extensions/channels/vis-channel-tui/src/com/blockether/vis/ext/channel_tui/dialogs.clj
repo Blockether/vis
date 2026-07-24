@@ -5303,11 +5303,48 @@
 
 (defn- navigator-visible-rows
   "Rows whose title/project cells match `query`, UNION rows whose id is in
-   `transcript-ids` (server-side matches on user request + LLM response text).
-   Blank query → `row-matches?` keeps everything, so the union is a no-op."
-  [rows query transcript-ids]
-  (vec (filter #(or (table/row-matches? % query) (contains? transcript-ids (str (:id (:target %)))))
-               rows)))
+   `transcript-matches` (server-side hits on the user request + LLM response text).
+   Blank query → `row-matches?` keeps everything, so the union is a no-op.
+
+   `transcript-matches` is a MAP `{id-str kind}` where kind is `:request`,
+   `:reply`, or `:both` — the WHERE-it-hit tag. A row kept ONLY because its id is
+   in the map (its title/project did NOT match the typed query) is tagged
+   `:transcript-match?` and its `:status` cell overwritten to show WHERE the hit
+   is: `in request`, `in reply`, or `in chat` (both), so the list shows WHY the
+   row is there — the match is in the conversation body, not the visible columns."
+  [rows query transcript-matches]
+  (let
+    [q
+     (str/trim (or query ""))
+
+     kind->status
+     {:request "in request" :reply "in reply" :both "in chat"}]
+
+    (vec
+      (keep (fn [row]
+              (let
+                [title-hit?
+                 (table/row-matches? row query)
+
+                 id
+                 (str (:id (:target row)))
+
+                 kind
+                 (get transcript-matches id)
+
+                 body-hit?
+                 (some? kind)]
+
+                (cond
+                  ;; Body-only match (query typed, title/project missed it):
+                  ;; keep, but mark WHERE it hit in the Status column.
+                  (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
+                  (assoc row
+                    :transcript-match? true
+                    :status (get kind->status kind "in chat"))
+                  (or title-hit? body-hit?) row
+                  :else nil)))
+            rows))))
 
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
@@ -5371,8 +5408,8 @@
      search-transcript-ids
      (:search-transcript-ids opts)
 
-     transcript-ids
-     (atom #{})
+     transcript-matches
+     (atom {})
 
      transcript-query
      (atom nil)]
@@ -5384,7 +5421,7 @@
          (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
 
          visible-rows
-         (navigator-visible-rows rows @query @transcript-ids)
+         (navigator-visible-rows rows @query @transcript-matches)
 
          total
          (count visible-rows)
@@ -5594,13 +5631,14 @@
              ;; toggle). The gateway call is synchronous but only fires on the
              ;; keystroke that mutated the query.
              (let [q (str/trim @query)]
-               (cond (empty? q) (do (reset! transcript-ids #{}) (reset! transcript-query nil))
+               (cond (empty? q) (do (reset! transcript-matches {}) (reset! transcript-query nil))
                      (not= q @transcript-query) (do (reset! transcript-query q)
-                                                    (reset! transcript-ids
+                                                    (reset! transcript-matches
                                                       (if search-transcript-ids
-                                                        (set (try (search-transcript-ids q)
-                                                                  (catch Throwable _ nil)))
-                                                        #{}))))))]
+                                                        (or (try (search-transcript-ids q)
+                                                                 (catch Throwable _ nil))
+                                                            {})
+                                                        {}))))))]
 
           (when key
             (cond

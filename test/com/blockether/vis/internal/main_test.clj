@@ -107,7 +107,7 @@
 
 (defdescribe toggle-overrides-test
              (it "parses NAME=VALUE pairs against the registry"
-                 (expect (= {"main_test_flag" true "reasoning_level" :deep}
+                 (expect (= {"main_test_flag" true "reasoning_level" "deep"}
                             (#'main/parse-toggle-overrides
                              "main_test_flag=true,reasoning_level=deep"))))
              (it "rejects unknown toggles as user error"
@@ -128,13 +128,13 @@
                         (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
              (it "applies overrides only while the one-shot body runs"
                  (toggles/set-enabled! "main_test_flag" false)
-                 (try (expect (= [true :deep]
+                 (try (expect (= [true "deep"]
                                  (#'main/call-with-toggle-overrides
-                                  {"main_test_flag" true "reasoning_level" :deep}
+                                  {"main_test_flag" true "reasoning_level" "deep"}
                                   #(vector (toggles/enabled? "main_test_flag")
                                            (toggles/value-of "reasoning_level")))))
                       (expect (false? (toggles/enabled? "main_test_flag")))
-                      (expect (= :balanced (toggles/value-of "reasoning_level")))
+                      (expect (= "balanced" (toggles/value-of "reasoning_level")))
                       (finally (toggles/reset-to-default! "main_test_flag")
                                (toggles/reset-to-default! "reasoning_level")))))
 
@@ -184,7 +184,7 @@
 (defdescribe
   toggle-name-parsing-test
   (it "accepts exact snake_case ids"
-      (expect (= {"main_test_flag" true "reasoning_level" :deep}
+      (expect (= {"main_test_flag" true "reasoning_level" "deep"}
                  (#'main/parse-toggle-overrides "main_test_flag=true,reasoning_level=deep"))))
   (it "rejects leading-colon, kebab-case, and namespaced aliases"
       (doseq [input [":main_test_flag=true" "main-test-flag=true" "vis/reasoning_level=deep"]]
