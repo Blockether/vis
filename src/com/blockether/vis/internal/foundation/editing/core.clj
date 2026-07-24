@@ -10,8 +10,8 @@
         (cat path offset n)   ; n lines starting at line `offset` (1-based)
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
-        (ls path)             ; -> nested dict tree (name/path/type/size/children)
-        (ls path opts)        ; opts keys: depth / is_hidden / is_respect_gitignore
+        (cat dir)             ; a DIRECTORY path -> shallow listing {:path :entries [{name path type size}] :depth}
+        (cat dir opts)        ; opts keys: depth (recurse) / is_hidden / is_respect_gitignore
         (rg query)           ; -> content hits; query = a term or list of terms (OR),
                                ; smart-case substring. Opts: paths/include/context/is_files_only
 
@@ -447,11 +447,13 @@
 (defn- ensure-existing-file!
   ^File [^File f]
   (when-not (.exists f)
-    (throw (ex-info (str "File not found: " (.getPath f))
-                    {:type :ext.foundation.editing/file-not-found :path (.getPath f)})))
+    (throw (ex-info (str "File not found: " (paths/abbreviate-home (.getPath f)))
+                    {:type :ext.foundation.editing/file-not-found
+                     :path (paths/abbreviate-home (.getPath f))})))
   (when (.isDirectory f)
-    (throw (ex-info (str "Path is a directory, not a file: " (.getPath f))
-                    {:type :ext.foundation.editing/path-is-dir :path (.getPath f)})))
+    (throw (ex-info (str "Path is a directory, not a file: " (paths/abbreviate-home (.getPath f)))
+                    {:type :ext.foundation.editing/path-is-dir
+                     :path (paths/abbreviate-home (.getPath f))})))
   f)
 
 (defn- rel-path
@@ -1269,6 +1271,57 @@
               (validate-cat-range! (first p) (second p))
               p))
           pairs)))
+
+(defn- dir-entry
+  "One directory listing row for `f`, or nil when it is hidden/gitignored and not
+   opted in. `levels` is how many directory levels REMAIN to descend; a subdir
+   nests a `\"children\"` vector while `levels` > 1. `root` anchors gitignore
+   matching for the whole listing."
+  [^File f ^File root node is_hidden levels]
+  (when-not (or (and (not is_hidden) (.isHidden f)) (ignored? node f root))
+    (let [dir? (.isDirectory f)]
+      (cond->
+        {"name" (.getName f) "path" (rel-path f) "type" (if dir? "dir" "file") "size" (.length f)}
+        (and dir? (> levels 1))
+        (assoc "children"
+          (->> (or (.listFiles f) (into-array File []))
+               (sort-by (fn [^File c]
+                          [(if (.isDirectory c) 0 1) (.getName c)]))
+               (keep #(dir-entry % root node is_hidden (dec levels)))
+               vec))))))
+
+(defn- list-dir
+  "Shallow (`depth` 1) directory listing as MODEL data — the cat-on-directory read.
+   Entries sort directories first, then files, each alphabetical. Hidden entries
+   and gitignored paths are skipped unless opted in; `depth` > 1 nests
+   `\"children\"`. Returns `{\"path\" \"type\" \"entries\" \"depth\"}`."
+  [^File d
+   {:keys [depth is_hidden is_respect_gitignore]
+    :or {depth 1 is_hidden false is_respect_gitignore true}}]
+  (let
+    [levels
+     (long depth)
+
+     node
+     (when is_respect_gitignore (load-ignore-node d))
+
+     entries
+     (->> (or (.listFiles d) (into-array File []))
+          (sort-by (fn [^File c]
+                     [(if (.isDirectory c) 0 1) (.getName c)]))
+          (keep #(dir-entry % d node is_hidden levels))
+          vec)]
+
+    {"path" (rel-path d) "type" "dir" "entries" entries "depth" levels}))
+
+(defn- dir-listing-success
+  "Wrap a `list-dir` result in the cat tool envelope (`:kind :dir`)."
+  [path listing]
+  (tool-success {:op :cat
+                 :path path
+                 :kind :dir
+                 :result listing
+                 :metadata {:entry-count (count (get listing "entries")) :dir? true}}))
 
 (defn- read-file
   "Read a window of a text file as pure structured data.
@@ -3532,7 +3585,9 @@
    {anchor: {\"text\": line}} map — MIRRORS rg's hit value, so read v[\"text\"]
    uniformly; there is NO top-level \"lines\"/\"content\" key (c[\"lines\"] KeyErrors).
    Each key IS the `patch` from_anchor — copy it straight into an edit.
-   Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
+   Not \"eof\"/\"truncated\" → paginate from \"next_offset\".
+   A DIRECTORY path lists its entries instead: {\"path\", \"entries\" [{\"name\" \"path\" \"type\" \"size\"}…], \"depth\"};
+   opts {\"depth\": N} recurses (default 1), {\"is_hidden\": true} adds dotfiles, {\"is_respect_gitignore\": false} adds ignored."
   ([path]
    (if (map? path)
      ;; All-kwargs form: `cat(path="p", ranges=rs)` collapses at the Python
@@ -3540,12 +3595,16 @@
      ;; Pull the path out and delegate to the opts-map arity so range/ranges/
      ;; anchor/tail keep working — mirrors rg's lone-spec-map contract.
      (cat-tool (get path "path") (dissoc path "path"))
-     (let [out (read-file path 1 default-cat-limit)]
-       (tool-success {:op :cat
-                      :path path
-                      :kind :file
-                      :result (cat-result->model out)
-                      :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}}))))
+     (let [f (safe-path path)]
+       (if (.isDirectory f)
+         (dir-listing-success path (list-dir f nil))
+         (let [out (read-file path 1 default-cat-limit)]
+           (tool-success {:op :cat
+                          :path path
+                          :kind :file
+                          :result (cat-result->model out)
+                          :metadata {:next-offset (:next-offset out)
+                                     :truncated? (:truncated? out)}}))))))
   ([path arg]
    (cond
      ;; Python-native form: a single options dict, e.g.
@@ -3554,35 +3613,38 @@
      ;;   cat("p", {"tail": 100})            cat("p", {})  -> whole file
      ;; Delegated to the keyword arities below so internal Clojure callers
      ;; (which pass bare keyword args) keep working unchanged.
-     (map? arg) (let
-                  [rng
-                   (get arg "range")
+     (map? arg) (let [f (safe-path path)]
+                  (if (.isDirectory f)
+                    (dir-listing-success path
+                                         (list-dir f
+                                                   {:depth (or (get arg "depth") 1)
+                                                    :is_hidden (boolean (get arg "is_hidden"))
+                                                    :is_respect_gitignore
+                                                    (if (contains? arg "is_respect_gitignore")
+                                                      (boolean (get arg "is_respect_gitignore"))
+                                                      true)}))
+                    (let
+                      [rng (get arg "range")
+                       ranges (get arg "ranges")
+                       anc (normalize-cat-anchor-option (get arg "anchor"))
+                       tail (get arg "tail")]
 
-                   ranges
-                   (get arg "ranges")
-
-                   anc
-                   (normalize-cat-anchor-option (get arg "anchor"))
-
-                   tail
-                   (get arg "tail")]
-
-                  (cond rng (let
-                              [[s e] (or (normalize-cat-pair rng)
-                                         (when (cat-pair-items rng) (cat-pair-error! rng))
-                                         rng)]
-                              (cat-tool path :range s e))
-                        ranges (cat-tool path :ranges ranges)
-                        ;; A mis-passed line-number `anchor` (`9357`, `"9357"`,
-                        ;; `[9357, 9412]`, or `"9357, 9412"`) reads as a line
-                        ;; RANGE; real `lineno:hash` anchors fall through below.
-                        (cat-anchor->line-range anc) (let [[s e] (cat-anchor->line-range anc)]
-                                                       (cat-tool path :range s e))
-                        (vector? anc) (cat-tool path :anchor (first anc) (second anc))
-                        (some? anc) (cat-tool path :anchor anc)
-                        (integer? tail) (cat-tool path :tail tail)
-                        (some? tail) (cat-tool path :tail)
-                        :else (cat-tool path)))
+                      (cond rng (let
+                                  [[s e] (or (normalize-cat-pair rng)
+                                             (when (cat-pair-items rng) (cat-pair-error! rng))
+                                             rng)]
+                                  (cat-tool path :range s e))
+                            ranges (cat-tool path :ranges ranges)
+                            ;; A mis-passed line-number `anchor` (`9357`, `"9357"`,
+                            ;; `[9357, 9412]`, or `"9357, 9412"`) reads as a line
+                            ;; RANGE; real `lineno:hash` anchors fall through below.
+                            (cat-anchor->line-range anc) (let [[s e] (cat-anchor->line-range anc)]
+                                                           (cat-tool path :range s e))
+                            (vector? anc) (cat-tool path :anchor (first anc) (second anc))
+                            (some? anc) (cat-tool path :anchor anc)
+                            (integer? tail) (cat-tool path :tail tail)
+                            (some? tail) (cat-tool path :tail)
+                            :else (cat-tool path)))))
      (= arg :tail) (let [out (tail-file path default-cat-limit)]
                      (tool-success {:op :cat
                                     :path path
@@ -4325,6 +4387,39 @@
                   (reduce max 0))]
     (apply str (repeat (max 3 (inc (long max-run))) "`"))))
 
+(defn- render-ls-result
+  "cat-on-directory → `{:summary :body}`: the summary is the dir path + entry
+   count; the body lists entries one per row, `name/` for subdirs, two-space
+   indent per nested level. `r` is `{\"path\" \"entries\" \"depth\"}`."
+  [r]
+  (let
+    [entries
+     (get r "entries")
+
+     rows
+     (fn rows [indent es]
+       (mapcat (fn [e]
+                 (let
+                   [dir?
+                    (= "dir" (get e "type"))
+
+                    nm
+                    (str indent (get e "name") (when dir? "/"))]
+
+                   (cons nm (rows (str indent "  ") (get e "children")))))
+               es))
+
+     body
+     (str/join "\n" (rows "" entries))
+
+     n
+     (count entries)]
+
+    {:summary (str "`" (disp-path (get r "path")) "/` · " n " " (if (= 1 n) "entry" "entries"))
+     :body (when (seq entries)
+             (let [fence (code-fence-delimiter body)]
+               (str "\n" fence "\n" body "\n" fence)))}))
+
 (defn- render-cat-result
   "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
    line count (the op-card headline); the body is the numbered slice as a code
@@ -4337,88 +4432,90 @@
    contiguous run shows just `L<a>-<b>` — the count is implied; multi-run
    shows the overall extent + run count + line total."
   [r]
-  (let
-    [line-no
-     (fn [k]
-       (first (str/split (str k) #":")))
+  (if (contains? r "entries")
+    (render-ls-result r)
+    (let
+      [line-no
+       (fn [k]
+         (first (str/split (str k) #":")))
 
-     anchors
-     (get r "anchors")
+       anchors
+       (get r "anchors")
 
-     ;; Gutter width = widest line number in THIS slice, not a fixed 5.
-     ;; A hardcoded `%5s` padded 3-digit reads (`380`) with two spurious
-     ;; leading spaces that read as a broken left margin on the cat card.
-     gutter-w
-     (reduce (fn [^long w [k _]]
-               (max w (count (line-no k))))
-             1
-             anchors)
+       ;; Gutter width = widest line number in THIS slice, not a fixed 5.
+       ;; A hardcoded `%5s` padded 3-digit reads (`380`) with two spurious
+       ;; leading spaces that read as a broken left margin on the cat card.
+       gutter-w
+       (reduce (fn [^long w [k _]]
+                 (max w (count (line-no k))))
+               1
+               anchors)
 
-     ;; Gap marker between NON-CONTIGUOUS slices (multi-range / multi-anchor
-     ;; reads) so disjoint areas read as separate regions instead of one run.
-     ;; `⋯` is the project's canonical "content omitted here" glyph (see the
-     ;; `# ⋯ folded`/`# ⋯ clipped` breadcrumbs in loop.clj); right-align it in
-     ;; the line-number gutter so it sits exactly where the skipped lines were.
-     divider
-     (format (str "%" gutter-w "s") "⋯")
+       ;; Gap marker between NON-CONTIGUOUS slices (multi-range / multi-anchor
+       ;; reads) so disjoint areas read as separate regions instead of one run.
+       ;; `⋯` is the project's canonical "content omitted here" glyph (see the
+       ;; `# ⋯ folded`/`# ⋯ clipped` breadcrumbs in loop.clj); right-align it in
+       ;; the line-number gutter so it sits exactly where the skipped lines were.
+       divider
+       (format (str "%" gutter-w "s") "⋯")
 
-     rows
-     (:rows
-       (reduce
-         (fn [{:keys [rows prev]} [k v]]
-           (let
-             [ln
-              (parse-long (line-no k))
-
-              row
-              (str (format (str "%" gutter-w "s") (line-no k)) "  " (patch/anchor-value-text v))]
-
-             {:prev ln
-              :rows (cond-> rows
-                      (and prev ln (> (long ln) (inc (long prev))))
-                      (conj divider)
-
-                      :always
-                      (conj row))}))
-         {:rows [] :prev nil}
-         (sort-by (comp parse-long line-no key) anchors)))
-
-     n
-     (count anchors)
-
-     spans
-     (anchor-line-spans (get r "anchors"))
-
-     span-str
-     (fn [[a b]]
-       (if (= a b) (str "L" a) (str "L" a "-" b)))
-
-     loc
-     (cond (nil? spans) nil
-           (= 1 (count spans)) (span-str (first spans))
-           :else (str "L" (ffirst spans) "-" (second (peek spans)) " (" (count spans) " ranges)"))
-
-     counted
-     (str n " line" (when (not= 1 n) "s"))
-
-     ;; Fence the numbered slice with the file's code language. The TUI strips
-     ;; the line-number gutter before parsing, then restores it uncolored.
-     lang
-     (index/code-language (get r "path"))]
-
-    {:summary (str "`" (disp-path (get r "path"))
-                   "` · " (cond (nil? loc) counted
-                                (= 1 (count spans)) loc
-                                :else (str loc " · " counted)))
-     :body (when (seq rows)
+       rows
+       (:rows
+         (reduce
+           (fn [{:keys [rows prev]} [k v]]
              (let
-               [joined
-                (str/join "\n" rows)
+               [ln
+                (parse-long (line-no k))
 
-                fence
-                (code-fence-delimiter joined)]
+                row
+                (str (format (str "%" gutter-w "s") (line-no k)) "  " (patch/anchor-value-text v))]
 
-               (str "\n" fence (or lang "") "\n" joined "\n" fence)))}))
+               {:prev ln
+                :rows (cond-> rows
+                        (and prev ln (> (long ln) (inc (long prev))))
+                        (conj divider)
+
+                        :always
+                        (conj row))}))
+           {:rows [] :prev nil}
+           (sort-by (comp parse-long line-no key) anchors)))
+
+       n
+       (count anchors)
+
+       spans
+       (anchor-line-spans (get r "anchors"))
+
+       span-str
+       (fn [[a b]]
+         (if (= a b) (str "L" a) (str "L" a "-" b)))
+
+       loc
+       (cond (nil? spans) nil
+             (= 1 (count spans)) (span-str (first spans))
+             :else (str "L" (ffirst spans) "-" (second (peek spans)) " (" (count spans) " ranges)"))
+
+       counted
+       (str n " line" (when (not= 1 n) "s"))
+
+       ;; Fence the numbered slice with the file's code language. The TUI strips
+       ;; the line-number gutter before parsing, then restores it uncolored.
+       lang
+       (index/code-language (get r "path"))]
+
+      {:summary (str "`" (disp-path (get r "path"))
+                     "` · " (cond (nil? loc) counted
+                                  (= 1 (count spans)) loc
+                                  :else (str loc " · " counted)))
+       :body (when (seq rows)
+               (let
+                 [joined
+                  (str/join "\n" rows)
+
+                  fence
+                  (code-fence-delimiter joined)]
+
+                 (str "\n" fence (or lang "") "\n" joined "\n" fence)))})))
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
@@ -4438,13 +4535,6 @@
   "The leading line number from an `<lineno>:<hash>` anchor key (string form)."
   [k]
   (first (str/split (kw->str k) #":")))
-
-
-
-
-
-
-
 
 (defn- render-patch-result
   "patch/write/struct_patch → `{:summary :body}`. The badge already states the
@@ -4893,6 +4983,7 @@
      :call {:pos ["path"] :rest :opt}
      :description
      (str "Read one sufficient file region as patch-ready `lineno:hash` anchored lines. "
+          "A DIRECTORY path lists its entries instead (shallow one level; `depth` recurses). "
           "For supported code, use `struct_index` first; every write invalidates returned anchors.")
      :render render-cat-result
      :color-role :tool-color/read
@@ -4915,10 +5006,19 @@
         :description
         "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
        "tail"
-       {:type "integer" :minimum 1 :description "Optional: read the last N lines (omit N → 2000)."}}
+       {:type "integer" :minimum 1 :description "Optional: read the last N lines (omit N → 2000)."}
+       "depth" {:type "integer"
+                :minimum 1
+                :description
+                "Directory listing only: nesting depth (default 1, a shallow one-level listing)."}
+       "is_hidden" {:type "boolean"
+                    :description
+                    "Directory listing only: include dotfiles / hidden entries (default false)."}
+       "is_respect_gitignore"
+       {:type "boolean" :description "Directory listing only: honor .gitignore (default true)."}}
       :required ["path"]
       :additionalProperties false
-      :maxProperties 2}
+      :maxProperties 4}
      :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))

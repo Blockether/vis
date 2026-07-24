@@ -33,7 +33,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     return (
       <input
         ref={ref}
-        className={`min-h-11 w-full rounded-none border border-dialog-edge bg-input px-3 py-2 font-mono text-base text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-9 sm:text-xs ${className}`}
+        className={`min-h-9 w-full rounded-none border border-dialog-edge bg-input px-2.5 py-1.5 font-mono text-base leading-tight text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-xs ${className}`}
         {...props}
       />
     );

@@ -1078,6 +1078,116 @@
                    (expect (= (numbered-tuples 18 ["L18" "L19" "L20"])
                               (patch/anchor-map->tuples (get out "anchors")))))))
 
+(defdescribe vis-cat-on-dir-test
+             ;; cat on a DIRECTORY lists its entries (ls) instead of erroring — the
+             ;; advertised cat-on-directory read. Default hides dotfiles + gitignored
+             ;; paths; opts widen the view; depth nests children.
+             (it "(cat dir) returns a shallow directory listing envelope"
+                 (let
+                   [_
+                    (write-temp! "lsbasic/a.txt" "x")
+
+                    _
+                    (write-temp! "lsbasic/sub/b.txt" "y")
+
+                    dir
+                    (temp-dir-path "lsbasic")
+
+                    cat-tool
+                    (private-fn "cat-tool")
+
+                    out
+                    (:result (cat-tool dir))]
+
+                   (expect (= "dir" (get out "type")))
+                   (expect (= 1 (get out "depth")))
+                   ;; directories sort before files, each alphabetical
+                   (expect (= ["sub" "a.txt"] (mapv #(get % "name") (get out "entries"))))
+                   (expect (every? #(contains? % "size") (get out "entries")))))
+             (it "(cat dir) hides dotfiles + gitignored entries by default; opts widen"
+                 (let
+                   [_
+                    (write-temp! "lsopts/.gitignore" "ignored.txt\n")
+
+                    _
+                    (write-temp! "lsopts/a.txt" "x")
+
+                    _
+                    (write-temp! "lsopts/.hidden" "x")
+
+                    _
+                    (write-temp! "lsopts/ignored.txt" "x")
+
+                    dir
+                    (temp-dir-path "lsopts")
+
+                    cat-tool
+                    (private-fn "cat-tool")
+
+                    names
+                    (fn [arg]
+                      (set (mapv #(get % "name") (get (:result (cat-tool dir arg)) "entries"))))]
+
+                   (expect (= #{"a.txt"} (names {})))
+                   (expect (= #{"a.txt"} (names {"is_respect_gitignore" true})))
+                   (expect (contains? (names {"is_hidden" true}) ".hidden"))
+                   (expect (contains? (names {"is_hidden" true}) ".gitignore"))
+                   ;; hidden and gitignore are independent axes
+                   (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
+                   (expect (contains? (names {"is_respect_gitignore" false}) "ignored.txt"))))
+             (it "(cat dir {\"depth\" 2}) nests a children vector under subdirs"
+                 (let
+                   [_
+                    (write-temp! "lsdepth/sub/b.txt" "y")
+
+                    dir
+                    (temp-dir-path "lsdepth")
+
+                    cat-tool
+                    (private-fn "cat-tool")
+
+                    out
+                    (:result (cat-tool dir {"depth" 2}))
+
+                    sub
+                    (first (filter #(= "sub" (get % "name")) (get out "entries")))]
+
+                   (expect (= 2 (get out "depth")))
+                   (expect (= ["b.txt"] (mapv #(get % "name") (get sub "children")))))))
+
+(defdescribe
+  vis-ensure-existing-file-home-homogenized-test
+  ;; ensure-existing-file! reports paths through paths/abbreviate-home so a
+  ;; workspace under $HOME reads "~/vis/…" instead of a leaked absolute home
+  ;; path in both the not-found and is-a-directory messages.
+  (it "file-not-found + path-is-dir messages collapse $HOME to ~"
+      (let
+        [ensure
+         (private-fn "ensure-existing-file!")
+
+         safe
+         (private-fn "safe-path")
+
+         home
+         (System/getProperty "user.home")
+
+         missing
+         (str (fs/cwd) "/target/editing-test/homoge-missing.txt")
+
+         dirp
+         (temp-dir-path "homoge-dir")
+
+         msg-of
+         (fn [p]
+           (try (ensure (safe p)) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+
+        (let [m (msg-of missing)]
+          (expect (string/includes? m "File not found: ~/"))
+          (expect (not (string/includes? m home))))
+        (let [m (msg-of dirp)]
+          (expect (string/includes? m "Path is a directory, not a file: ~/"))
+          (expect (not (string/includes? m home)))))))
+
 (defdescribe
   vis-cat-range-arity-test
   ;; G1 from the cat probe (C9): the offset+count arity feels awkward
@@ -2885,24 +2995,30 @@
           (expect (clojure.string/includes? (slurp (fs/file f1)) "ww/q"))
           (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))))
 
-(defdescribe render-patch-result-compact-headline-test
-             (let [render @#'editing/render-patch-result]
-               (it "uses only path chips because the tool badge already names the operation"
-                   (let
-                     [card (render [{"path" "src/a.clj" "op" "update" "changed" true "diff" "+a"}
-                                    {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
-                     (expect (= "`src/a.clj`, `src/b.clj`" (:summary card)))
-                     (expect (not (clojure.string/includes? (:body card) "update")))
-                     (expect (not (clojure.string/includes? (:body card) "add `")))))
-               (it "widens the diff fence past any backtick run in the diff so an inner ``` fence never closes it early"
-                   ;; Editing a doc that shows ```diff examples produces a diff
-                   ;; whose context lines carry a bare ``` — a fixed 3-backtick
-                   ;; wrapper closed early and the rest rendered as prose.
-                   (let [diff "@@ -1,3 +1,3 @@\n ```diff\n+ x\n ```"
-                         card (render [{"path" "resources/vis-docs/configuration.md"
-                                        "op" "update" "changed" true "diff" diff}])]
-                     (expect (clojure.string/includes? (:body card) "````diff\n"))
-                     (expect (clojure.string/ends-with? (clojure.string/trim (:body card)) "````"))))))
+(defdescribe
+  render-patch-result-compact-headline-test
+  (let [render @#'editing/render-patch-result]
+    (it "uses only path chips because the tool badge already names the operation"
+        (let
+          [card (render [{"path" "src/a.clj" "op" "update" "changed" true "diff" "+a"}
+                         {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
+          (expect (= "`src/a.clj`, `src/b.clj`" (:summary card)))
+          (expect (not (clojure.string/includes? (:body card) "update")))
+          (expect (not (clojure.string/includes? (:body card) "add `")))))
+    (it
+      "widens the diff fence past any backtick run in the diff so an inner ``` fence never closes it early"
+      ;; Editing a doc that shows ```diff examples produces a diff
+      ;; whose context lines carry a bare ``` — a fixed 3-backtick
+      ;; wrapper closed early and the rest rendered as prose.
+      (let
+        [diff "@@ -1,3 +1,3 @@\n ```diff\n+ x\n ```"
+         card (render [{"path" "resources/vis-docs/configuration.md"
+                        "op" "update"
+                        "changed" true
+                        "diff" diff}])]
+
+        (expect (clojure.string/includes? (:body card) "````diff\n"))
+        (expect (clojure.string/ends-with? (clojure.string/trim (:body card)) "````"))))))
 
 (defdescribe
   render-cat-result-spans-test
@@ -2953,13 +3069,15 @@
     (it "leaves non-code CAT bodies as plain fences"
         (let [body (:body (render {"path" "notes.txt" "anchors" {"1:aa" {"text" "hello"}}}))]
           (expect (clojure.string/starts-with? body "\n```\n"))))
-    (it "widens the fence past any backtick run in the file content so an inner ``` never closes it early"
-        (let [body (:body (render {"path" "README.md"
-                                   "anchors" {"1:aa" {"text" "```clojure"}
-                                              "2:bb" {"text" "(def x 1)"}
-                                              "3:cc" {"text" "```"}}}))]
-          (expect (clojure.string/starts-with? body "\n````"))
-          (expect (clojure.string/ends-with? (clojure.string/trim body) "````"))))))
+    (it
+      "widens the fence past any backtick run in the file content so an inner ``` never closes it early"
+      (let
+        [body (:body (render {"path" "README.md"
+                              "anchors" {"1:aa" {"text" "```clojure"}
+                                         "2:bb" {"text" "(def x 1)"}
+                                         "3:cc" {"text" "```"}}}))]
+        (expect (clojure.string/starts-with? body "\n````"))
+        (expect (clojure.string/ends-with? (clojure.string/trim body) "````"))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 

@@ -105,7 +105,7 @@ function liveProgressPhase(turn: LiveTurn): string {
   const activity = turn.activity;
   const iteration = Math.max(
     turn.iterations.length,
-    activity?.iteration == null ? 0 : activity.iteration + 1,
+    activity?.iteration == null ? 0 : activity.iteration,
   );
 
   if (last?.error != null) return 'Vis is retrying';
@@ -1767,6 +1767,26 @@ export function SessionScreen({
               </button>
             )}
 
+            {voiceSupported && (
+              <button
+                type="button"
+                className={`grid size-11 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9 ${
+                  voicePhase === 'recording'
+                    ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
+                    : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
+                }`}
+                onClick={() => void toggleVoice()}
+                disabled={voicePhase === 'transcribing' || voiceModel?.status === 'downloading'}
+                aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+                title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
+                </svg>
+              </button>
+            )}
+
             <textarea
               ref={composerRef}
               rows={1}
@@ -1837,26 +1857,7 @@ export function SessionScreen({
               }}
             />
 
-            {voiceSupported && !(prompt.trim() || attachments.length) && (
-              <button
-                type="button"
-                className={`grid size-11 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9 ${
-                  voicePhase === 'recording'
-                    ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
-                    : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
-                }`}
-                onClick={() => void toggleVoice()}
-                disabled={voicePhase === 'transcribing' || voiceModel?.status === 'downloading'}
-                aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
-                title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
-              >
-                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
-                </svg>
-              </button>
-            )}
-            {(!!(prompt.trim() || attachments.length) || (!running && !voiceSupported)) && (
+            {(!running || !!(prompt.trim() || attachments.length)) && (
               <button
                 type="button"
                 className="grid size-11 shrink-0 place-items-center border border-dialog-edge bg-dialog-title font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-9"
@@ -1865,7 +1866,7 @@ export function SessionScreen({
                 aria-label={running ? 'Queue message' : 'Send message'}
                 title={running ? 'Queue behind the running turn' : 'Send'}
               >
-                {running ? '+' : '↑'}
+                {'↑'}
               </button>
             )}
             {running && (

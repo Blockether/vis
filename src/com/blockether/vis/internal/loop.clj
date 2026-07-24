@@ -2930,15 +2930,20 @@
             (get util "saturation")
 
             saved
-            (when (pos? (long toks))
-              (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of budget"))))
+            (if (pos? (long toks))
+              (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of budget")))
+              ;; A re-fold of scopes already collapsed on a prior turn reclaims no
+              ;; NEW wire, so `toks` is 0 — but stay explicit rather than silently
+              ;; dropping the clause, so the human sees a no-op, not a display bug.
+              " · saved ~0 tokens (already folded)")
 
             ;; Even a fold that reclaims no NEW wire (every covered scope
             ;; already collapsed on a prior turn — a whole-session
             ;; `{"through" "tN"}` re-fold) should still tell the human where
             ;; the window stands, so the card is never a bare `folded …`.
             ;; `context <U>%` is the provider's absolute saturation, not the
-            ;; fold's own reduction, so it's honest even when `saved` is nil.
+            ;; fold's own reduction, so it complements `saved` rather than
+            ;; replacing it — both always render.
             ctx-pct
             (when (and sat (pos? (long sat)))
               (let [lrt (get util "last_request_tokens")]

@@ -931,6 +931,17 @@
              (str out)
              (vec (map #(.getName ^java.io.File %) (.listFiles out))))))
 
+(defn- oracle-native-image?
+  "True when the native build KEEPS the GraalPy/Truffle optimizing JIT in the image
+   (bigger binary, much longer build, faster CPU-bound Python). Default false = the
+   lean interpreter build. Set with `:oracle-native-image true` or the VIS_ORACLE_NATIVE_IMAGE
+   env token (1/true/yes/on)."
+  [opts]
+  (if (some? (:oracle-native-image opts))
+    (boolean (:oracle-native-image opts))
+    (contains? #{"1" "true" "yes" "on"}
+               (some-> (System/getenv "VIS_ORACLE_NATIVE_IMAGE") str/trim str/lower-case))))
+
 (defn- native-image-args
   "native-image CLI args. Config travels INSIDE the classpath jars
    (META-INF/native-image/…); here we add only classpath/main/output, the
@@ -939,7 +950,7 @@
    `with-assets?` also embeds the vendored voice model resources; voiceless
    profiles drop every voice resource pattern (the extension is off the
    classpath, so the jars carrying those resources are absent anyway)."
-  [basis with-assets? profile]
+  [basis with-assets? profile jit?]
   (let [tok
         (native-platform-token)
 
@@ -1023,16 +1034,30 @@
              ;;     speed — trims the ~115 MB __text with negligible impact on
              ;;     an I/O-bound agent, and cuts compile time.
              "-Os"
-             ;;   • Run embedded Python INTERPRETED: drop the Truffle/Graal JIT
-             ;;     from the image. GraalPy documents this as ~40% smaller — the
-             ;;     single biggest lever — and it removes the giant runtime-
-             ;;     compiled-method set that made native-image hang in universe
-             ;;     building on the full profile. vis's python_execution sandbox
-             ;;     runs SHORT, I/O-bound glue scripts, exactly the
-             ;;     "performance not critical / short-running" case this targets.
-             ;;     Delete these two lines to restore the JIT if a workload needs it.
-             "-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime"
-             "-Dpolyglot.engine.WarnInterpreterOnly=false"]
+             ]
+      ;; ── Embedded-Python JIT vs interpreter — the single biggest size lever ──
+      ;; DEFAULT (`:oracle-native-image` false): run GraalPy INTERPRETED by forcing Truffle's
+      ;; fallback runtime, dropping the Graal JIT from the image. GraalPy documents
+      ;; this as ~40% smaller, and it removes the ~18k runtime-compiled Truffle
+      ;; methods that otherwise make native-image build slow/hang — right for vis's
+      ;; short, I/O-bound python_execution glue. `:oracle-native-image true` KEEPS the
+      ;; optimizing runtime for CPU-bound Python, at the cost of a bigger binary and
+      ;; a much longer build. The runtime engine adapts to either (build-engine*).
+      (not jit?)
+      (conj "-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime"
+            "-Dpolyglot.engine.WarnInterpreterOnly=false")
+
+      ;; ── Auxiliary engine cache — Oracle/JIT image ONLY ──────────────────────
+      ;; env_python's `shared-engine` persists the warmed, JIT-compiled Truffle
+      ;; code with `Engine.storeCache`/`engine.CacheLoad`, skipping the JVMCI
+      ;; warm-up that dominates GraalPy boot. The feature is contributed only by
+      ;; the optimizing Truffle runtime, so it exists ONLY in the Oracle/JIT
+      ;; image; without these build flags `.storeCache` throws
+      ;; UnsupportedOperationException and the runtime silently cold-starts.
+      ;; ReservedAuxiliaryImageBytes is address space only, not resident memory;
+      ;; both are experimental (UnlockExperimentalVMOptions is set above).
+      jit?
+      (conj "-H:+AuxiliaryEngineCache" "-H:ReservedAuxiliaryImageBytes=2145482548")
       ;; voice JNI native libs for THIS platform (sherpa + onnxruntime).
       ;; Per-host `tok` keeps foreign-OS libs OUT of each binary; the
       ;; onnxruntime pattern stops at the dir level ([^/]*$) so the macOS
@@ -1053,7 +1078,8 @@
 (defn native-image-only
   "FAST native-image iteration: re-run native-image ONLY, reusing the existing
    `target/native-classes` from a prior `native` build (no re-AOT). For tuning
-   native-image flags; run `native` once first to populate the AOT classes."
+   native-image flags; run `native` once first to populate the AOT classes. Honors
+   `:oracle-native-image true` (or VIS_ORACLE_NATIVE_IMAGE) to keep the GraalPy JIT in the image."
   [opts]
   (let [profile
         (resolve-profile opts)
@@ -1065,7 +1091,7 @@
     (let [{:keys [exit]} (b/process
                            {:command-args
                             (into [(native-image-command)]
-                                  (native-image-args basis (embed-assets? opts profile) profile))})]
+                                  (native-image-args basis (embed-assets? opts profile) profile (oracle-native-image? opts)))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))
@@ -1089,7 +1115,9 @@
                            embedded (fully offline, no HuggingFace/network fetch).
      :with-assets true   — embed the ~465 MB voice ASR model for a fully-offline
                            binary (default: download on first use). Requires a
-                           voice-capable profile; :corporate implies it."
+                           voice-capable profile; :corporate implies it.
+     :oracle-native-image true — KEEP the GraalPy JIT in the image (bigger binary, slower
+                           build, faster CPU-bound Python). Default: lean interpreter."
   [opts]
   (let
     [profile
@@ -1125,7 +1153,7 @@
              "(this takes several minutes)…")
     (let [{:keys [exit]} (b/process {:command-args
                                      (into [(native-image-command)]
-                                           (native-image-args basis with-assets? profile))})]
+                                           (native-image-args basis with-assets? profile (oracle-native-image? opts)))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))

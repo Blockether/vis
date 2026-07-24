@@ -245,11 +245,31 @@
 (defn- wrap-ifn
   "Wrap a Clojure fn as a Python-callable `ProxyExecutable`. Positional Python
    args are marshalled to Clojure, the fn is applied, and the result marshalled
-   back to Python. Matches vis's positional-args tool contract."
+   back to Python. Matches vis's positional-args tool contract.
+
+   A host `NullPointerException` from the tool body is an INTERNAL engine/tool
+   bug, never the model's Python. Left raw it surfaces as a bare Java `Cannot
+   invoke ... because ... is null` naming some private local (`row`), reads like
+   the model's OWN error, and gets retried verbatim forever. Catch it AT THE
+   BOUNDARY and rethrow a labelled, catchable `ex-info` that says so, keeping the
+   original null message so the surfacing hint (`host-npe?`) still fires. A
+   genuine Python fault (NameError, TypeError, ValueError) is raised by the guest
+   and never reaches here, so those still terror through unchanged."
   ^ProxyExecutable [f]
   (reify
     ProxyExecutable
-      (execute [_ args] (->py (apply f (map ->clj args))))))
+      (execute [_ args]
+        (->py (try (apply f (map ->clj args))
+                   (catch NullPointerException e
+                     (throw (ex-info (str
+                                       "internal tool fault: a vis tool binding hit a Java "
+                                       "NullPointerException (" (.getMessage e)
+                                       ") — a vis "
+                                       "engine/tool bug, NOT your Python. Retrying the same call "
+                                       "fails identically; take a different approach or report it "
+                                       "to the user.")
+                                     {:type :vis/host-null-tool-fault :npe-message (.getMessage e)}
+                                     e))))))))
 
 ;; =============================================================================
 ;; Canonical CONTEXT serialization — the agent-facing `context` snapshot is a
@@ -1251,7 +1271,17 @@ def __vis_native_result_scan__(__vis_tree__):
            ;; throws `Could not find option with name engine.CompilerThreads`.
            (when tune?
              (.option b "engine.CompilerThreads" "2")
-             (.option b "engine.CompilerIdleDelay" "5000"))
+             (.option b "engine.CompilerIdleDelay" "5000")
+             ;; Enable the auxiliary-cache STORE path so the shutdown-hook
+             ;; `.storeCache` actually writes (Engine javadoc: requires
+             ;; engine.CacheStoreEnabled=true; without it storeCache returns
+             ;; false and writes nothing). The option is contributed only by the
+             ;; enterprise Truffle runtime in an Oracle native image, so gate it
+             ;; on native-image? — the community image lacks it and drops it on
+             ;; the tune? false retry; the JVM optimizing runtime never sets it
+             ;; (store is a no-op there we never call).
+             (when (and (native-image?) (engine-cache-enabled?))
+               (.option b "engine.CacheStoreEnabled" "true")))
            ;; `engine.CacheLoad` restores the warmed compiled code. The option
            ;; only EXISTS on a native-image host; on the JVM it throws, so we
            ;; only reach here under `use-cache?` (native binary). Any load
@@ -1262,8 +1292,7 @@ def __vis_native_result_scan__(__vis_tree__):
 
        build-engine*
        (fn ^Engine [^java.io.File load-file]
-         (try (build-engine load-file true)
-              (catch Throwable _ (build-engine load-file false))))
+         (try (build-engine load-file true) (catch Throwable _ (build-engine load-file false))))
 
        use-cache?
        (and (native-image?) (engine-cache-enabled?))
@@ -2858,8 +2887,7 @@ def network_probe(method, target=None):
      ;; Jail OFF ⇒ no guard, so the sandbox network is unconfined (same as the OS
      ;; process jail). With net off the socket capability is denied outright.
      guard?
-     (and net? (:jail-enabled? network-opts)
-          (or (seq denied) (not allow-all?)))
+     (and net? (:jail-enabled? network-opts) (or (seq denied) (not allow-all?)))
 
      ;; When proxying, urllib must reach the loopback proxy even under a restrictive
      ;; allowlist — so the host guard always permits loopback (the proxy itself
@@ -3457,6 +3485,20 @@ def network_probe(method, target=None):
            #"Operation is not allowed for|Operation not permitted|PermissionError|was excluded|UnsupportedPosixFeature"
            (str base))))
 
+     ;; A HOST NullPointerException — Java's "Cannot invoke ... because ... is
+     ;; null" / a bare "... is null" leaking from a tool or engine binding. This
+     ;; is an INTERNAL fault, not the model's Python; with no hint it reads like
+     ;; the model's OWN bug and gets retried verbatim forever. Flag it so the hint
+     ;; steers to a different approach instead of a doomed retry.
+     host-npe?
+     (boolean (and host?
+                   (or (instance? NullPointerException cause)
+                       (and
+                         base
+                         (re-find
+                           #"Cannot invoke .+ because .+ is null|\bis null\b|NullPointerException"
+                           (str base))))))
+
      ;; A genuine FOREIGN/polyglot value — a tool result whose interop wrapper
      ;; really lacks that method (GraalPy: "foreign object has no attribute …").
      foreign-attr
@@ -3521,6 +3563,12 @@ def network_probe(method, target=None):
            indent? (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
                         "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
                         "statement must start at column 0. Re-indent that region. Original error: ")
+           host-npe? (str "This is an INTERNAL engine/tool fault — a host call returned null "
+                          "(a Java NullPointerException), NOT a bug in your Python. Retrying the "
+                          "SAME code will fail identically. Take a different approach (another "
+                          "tool, different arguments, or read the inputs first); if it keeps "
+                          "happening, tell the USER — it likely needs a fix in vis itself. "
+                          "Original error: ")
            sandbox-denied?
            (str "Your sandbox has NO real filesystem / native / process access — "
                 "importlib + exec_module on a project file, open(), subprocess, and sockets "
@@ -3578,6 +3626,9 @@ def network_probe(method, target=None):
 
              bracket-diag
              (assoc :unbalanced-bracket? true)
+
+             host-npe?
+             (assoc :host-null? true)
 
              undefined-name
              (assoc :name-undefined?

@@ -267,8 +267,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent px-2 py-3 font-mono text-base text-white outline-none placeholder:text-dialog-hint sm:text-xs"
-            placeholder="Filter title, project, or session"
+            className="min-w-0 flex-1 bg-transparent px-2 py-3 font-mono text-sm text-white outline-none placeholder:text-dialog-hint sm:text-xs"
+            placeholder="Filter title, project, session"
             aria-label="Filter sessions"
           />
           <button

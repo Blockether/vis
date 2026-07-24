@@ -952,7 +952,7 @@ export const UserMessage = memo(function UserMessage(
             <span aria-hidden>⇗</span>{part.summary}
           </span>
         ) : (
-          <details key={part.key} className="my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
+          <details key={part.key} className="group my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
             <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-[10px] font-semibold text-accent marker:hidden [&::-webkit-details-marker]:hidden">
               <span className="mr-1 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
               {part.summary}

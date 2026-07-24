@@ -138,6 +138,47 @@ hard requirements when you add or change one:
   coercion, and the settings wire (TUI dialog / gateway `/v1/settings`) so a
   new toggle appears and round-trips everywhere, not just in code.
 
+## Sandbox Python shims
+
+GraalPy in the `python_execution` sandbox cannot pip-install CPython packages
+that need native wheels. A shim makes `import X` work anyway by publishing a
+pure-Java-backed or pure-Python module. Shims live in
+`src/com/blockether/vis/internal/foundation/shim_*.clj` (`shim_pil.clj`,
+`shim_fonttools.clj`, `shim_sqlite3.clj`, …). Treat these as hard requirements
+when you add or change one:
+
+- **One shim per file, registered once.** A shim ns requires
+  `com.blockether.vis.core :as vis`, defines a private `…-shim-src` Python
+  preamble string, then `(def vis-extension (vis/extension {:ext/name … :ext/sandbox-shims [{:shim/name "x" :shim/preamble …-src}]}))`
+  and ends with `(vis/register-extension! vis-extension)`. Add the ns to the
+  `builtin-extension-nses` vector in `extension.clj` (~L3518-3532) or it never
+  loads.
+- **Prefer lazy over eager — it is not optional here.** `capture-shim-triggers`
+  (`env_python.clj` ~L2347-2423) runs each preamble ONCE in a throwaway probe
+  context and diffs `sys.modules` + `builtins`: `autoload` = new `builtins`
+  names, `provides` = new top-level modules whose name is in
+  `#{shim-id} ∪ autoload`. A shim that publishes NEITHER stays **eager** and
+  re-runs its whole preamble on every context init — a real per-block cost for
+  a heavy shim. To be lazy, the preamble must staple its import name(s) onto
+  `builtins` when the module name differs from the shim id. Example: the
+  `fonttools` shim (id `"fonttools"`) staples `fontTools` and `brotli`, so
+  `capture-shim-triggers` reports
+  `{:provides ["brotli" "fontTools"] :autoload ["brotli" "fontTools"]}` and it
+  loads only on first `import`. Verify in the REPL: create a context, assert
+  the module is absent from `sys.modules` at init, then present after `import`.
+- **The trigger cache invalidates on preamble change.** Lazy triggers are
+  memoized to `~/.vis/cache/shim-triggers.json`, keyed by a hash of ALL
+  preambles, so adding or editing a shim recomputes the set — do not hand-edit
+  the cache.
+- **Docstring the boundary.** Say what `import X` now works and, plainly, what
+  is NOT supported (e.g. fonttools is WOFF2->TTF decompress-only: no
+  `brotli.compress`, no WOFF1, not the full `ttLib.TTFont` API). No pip, no
+  native wheel, no host binary unless the shim is bindings-backed.
+- **Add a compat test.** `test/com/blockether/vis/internal/<name>_compat_shim_test.clj`
+  drives a real `ep/create-python-context`, evals Python that exercises the
+  module, and expects observable results — never just "import didn't throw".
+
+
 ## Gateway wire contract
 
 The HTTP/SSE gateway wire has ONE dumb, deterministic boundary

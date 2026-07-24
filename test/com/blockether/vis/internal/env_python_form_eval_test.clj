@@ -925,3 +925,75 @@ await patch({'path': css})" "t1/i1")]
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block @py-ctx "print(1 + 2)")]
         (expect (nil? (:error r))))))
+
+(defn- host-throw!
+  "Install a host binding `nm` whose call throws `t`, invoke it, and return the
+   op-error map `map-polyglot-error` produces — the exact shape the model sees for
+   a host (Java) fault leaking out of a tool/engine binding."
+  [nm ^Throwable t]
+  (let
+    [^org.graalvm.polyglot.Context c
+     @py-ctx
+
+     code
+     (str nm "()")]
+
+    (.putMember (.getBindings c "python")
+                nm
+                (reify
+                  org.graalvm.polyglot.proxy.ProxyExecutable
+                    (execute [_ _] (throw t))))
+    (let [pe (try (.eval c "python" code) nil (catch PolyglotException e e))]
+      (ep/map-polyglot-error c pe code))))
+
+(defdescribe host-null-pointer-hint-test
+             ;; A host NullPointerException (Java's helpful "Cannot invoke ... because ... is
+             ;; null") leaking from a tool/engine binding is an INTERNAL fault, not the model's
+             ;; Python. Without a hint it reads as the model's own bug and gets retried verbatim.
+             ;; map-polyglot-error tags it :host-null? and prepends a steer to a DIFFERENT approach.
+             (it "tags a host NPE :host-null? and steers away from a doomed retry"
+                 (let
+                   [err (host-throw!
+                          "__npe_boom__"
+                          (NullPointerException.
+                            "Cannot invoke \"java.util.Map.get(Object)\" because \"row\" is null"))]
+                   (expect (= :python/host (get-in err [:data :phase])))
+                   (expect (true? (get-in err [:data :host-null?])))
+                   (expect (str/includes? (:message err) "INTERNAL engine/tool fault"))
+                   ;; the raw Java message is preserved as the trailing original error.
+                   (expect (str/includes? (:message err) "is null"))))
+             (it "does NOT tag a non-null host error (real message survives untouched)"
+                 (let [err (host-throw! "__rt_boom__" (RuntimeException. "disk quota exceeded"))]
+                   (expect (= :python/host (get-in err [:data :phase])))
+                   (expect (nil? (get-in err [:data :host-null?])))
+                   (expect (= "disk quota exceeded" (:message err))))))
+
+(defdescribe
+  wrap-ifn-host-null-guard-test
+  ;; The SOURCE guard: `wrap-ifn` runs every native tool from Python. A
+  ;; NullPointerException inside a tool body (the null `row`) is caught AT
+  ;; THE BOUNDARY and rethrown as a labelled, catchable ex-info instead of a
+  ;; raw Java "... is null" naming a private local. A genuine Python fault
+  ;; never reaches wrap-ifn, so this only fires for host NPEs.
+  (it "relabels a tool-body NPE as :vis/host-null-tool-fault, keeping the null message"
+      (let
+        [^org.graalvm.polyglot.Context c
+         @py-ctx
+
+         _
+         (.putMember (.getBindings c "python")
+                     "__wrapifn_boom__"
+                     (#'ep/wrap-ifn
+                      (fn [& _]
+                        (let [^java.util.Map row nil]
+                          (.get row "k")))))
+
+         err
+         (let [pe (try (.eval c "python" "__wrapifn_boom__()") nil (catch PolyglotException e e))]
+           (ep/map-polyglot-error c pe "__wrapifn_boom__()"))]
+
+        (expect (= :python/host (get-in err [:data :phase])))
+        (expect (true? (get-in err [:data :host-null?])))
+        (expect (= :vis/host-null-tool-fault (get-in err [:data :type])))
+        (expect (str/includes? (str (get-in err [:data :npe-message])) "is null"))
+        (expect (str/includes? (:message err) "internal tool fault")))))
