@@ -78,6 +78,26 @@ Native contracts have one source: tool descriptions own routing and semantics; J
 
 ## Install
 
+### Install from source manually (git clone over HTTPS)
+
+Clone Vis over HTTPS, then symlink the launcher onto your `PATH`:
+
+```bash
+git clone https://github.com/Blockether/vis.git ~/.vis/sourcecode
+ln -sfn ~/.vis/sourcecode/bin/vis ~/.local/bin/vis
+vis help
+```
+
+`~/.vis/sourcecode` is the default checkout path (`vis update` pulls it); `~/.local/bin/vis` is the launcher symlink. Both are configurable — set `VIS_SOURCE_DIR` and `VIS_LOCAL_BIN_DIR`, or clone anywhere and point the symlink at `<checkout>/bin/vis`. If `~/.local/bin` is not already on your `PATH`, add it:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+```
+
+To pin a branch or tag, add `--branch NAME` to the clone. To pull from a fork, clone its HTTPS URL instead of `Blockether/vis`. Update later with a plain `git pull` in the checkout, or `vis update`.
+
+### One-liner installer
+
 **macOS & Linux** (bash):
 
 ```bash
@@ -125,7 +145,7 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 - **[Process sandbox and gateway egress](sandbox.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes a standalone binary.
 - **[Custom distributions](distributions.md)**: per-platform native artifacts and how they're built.
-- **[Configuration](configuration.md)**: providers and models, system-prompt overrides, router tuning, the database.
+- **[Configuration](configuration.md)**: providers and models, system_prompt overrides, router tuning, the database.
 - **[Python extensions](python-extensions.md)**: drop a `.py` file into `.vis/extensions/` — project-local tools, prompts, slash commands and guards, no rebuild, `/reload`able. Vis can write these for itself mid-session.
 - **[Clojure extensions](extending.md)**: the full-surface path — new tools, channels, providers, slash commands and doc pages, compiled into the binary.
 - **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.

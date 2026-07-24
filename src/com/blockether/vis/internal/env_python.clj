@@ -1131,7 +1131,7 @@ def __vis_native_result_scan__(__vis_tree__):
        (try (when-let
               [path (some-> ((requiring-resolve
                                'com.blockether.vis.internal.config/load-config-raw))
-                            (get-in ["python" "resource-cache"]))]
+                            (get-in ["python" "resource_cache"]))]
               (java.io.File. ^String (expand-home path)))
             (catch Throwable _ nil))
 
@@ -1237,13 +1237,21 @@ def __vis_native_result_scan__(__vis_tree__):
   (delay
     (let
       [build-engine
-       (fn ^Engine [^java.io.File load-file]
+       (fn ^Engine [^java.io.File load-file tune?]
          (let
            [b (-> (Engine/newBuilder (into-array String ["python"]))
                   (.allowExperimentalOptions true)
-                  (.option "engine.WarnVirtualThreadSupport" "false")
-                  (.option "engine.CompilerThreads" "2")
-                  (.option "engine.CompilerIdleDelay" "5000"))]
+                  (.option "engine.WarnVirtualThreadSupport" "false"))]
+           ;; Compiler-thread tuning only exists when the Truffle optimizing
+           ;; runtime is present (JVM, or an Oracle/enterprise native image).
+           ;; The community native image runs GraalPy in interpreter mode with
+           ;; no compiler, so these options don't exist. Option validation is
+           ;; DEFERRED to `.build`, so a bad `.option` can't be caught at set
+           ;; time — the caller retries with `tune? false` when a tuned build
+           ;; throws `Could not find option with name engine.CompilerThreads`.
+           (when tune?
+             (.option b "engine.CompilerThreads" "2")
+             (.option b "engine.CompilerIdleDelay" "5000"))
            ;; `engine.CacheLoad` restores the warmed compiled code. The option
            ;; only EXISTS on a native-image host; on the JVM it throws, so we
            ;; only reach here under `use-cache?` (native binary). Any load
@@ -1251,6 +1259,11 @@ def __vis_native_result_scan__(__vis_tree__):
            ;; caller and falls back to a plain cold build.
            (when load-file (.option b "engine.CacheLoad" (.getAbsolutePath load-file)))
            (.build b)))
+
+       build-engine*
+       (fn ^Engine [^java.io.File load-file]
+         (try (build-engine load-file true)
+              (catch Throwable _ (build-engine load-file false))))
 
        use-cache?
        (and (native-image?) (engine-cache-enabled?))
@@ -1260,8 +1273,8 @@ def __vis_native_result_scan__(__vis_tree__):
 
        engine
        (or (when (and cache-file (.exists ^java.io.File cache-file))
-             (try (build-engine cache-file) (catch Throwable _ nil)))
-           (build-engine nil))]
+             (try (build-engine* cache-file) (catch Throwable _ nil)))
+           (build-engine* nil))]
 
       ;; Store the warmed engine on process exit so the NEXT native start can
       ;; load it. Best-effort, never throws (see `store-engine-cache!`).
@@ -2839,11 +2852,14 @@ def network_probe(method, target=None):
      allow-all?
      (or (empty? allowed) (some #(= "*" (str %)) allowed))
 
-     ;; Install the guard whenever there is an actual restriction to enforce —
-     ;; a denylist (always present: defaults) or a non-`*` allowlist. With net
-     ;; off the socket capability is denied outright, so no guard is needed.
+     ;; The in-interpreter domain guard is part of the JAIL, not an independent
+     ;; layer: it installs only when the jail is ON and there is a restriction to
+     ;; enforce — a denylist (always present via defaults) or a non-`*` allowlist.
+     ;; Jail OFF ⇒ no guard, so the sandbox network is unconfined (same as the OS
+     ;; process jail). With net off the socket capability is denied outright.
      guard?
-     (and net? (or (seq denied) (not allow-all?)))
+     (and net? (:jail-enabled? network-opts)
+          (or (seq denied) (not allow-all?)))
 
      ;; When proxying, urllib must reach the loopback proxy even under a restrictive
      ;; allowlist — so the host guard always permits loopback (the proxy itself

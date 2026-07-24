@@ -69,7 +69,7 @@ my-extension/
 | `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
 | `:ext/slash-commands` | Vec of slash-command specs (below). |
 | `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis doctor`. |
-| `:ext/settings` `:ext/env` | Declared settings / environment variables (configurable via `~/.vis/config.edn` `:environment`). |
+| `:ext/settings` `:ext/env` | Declared settings / environment variables (configurable via `~/.vis/config.yml` `environment`). |
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 

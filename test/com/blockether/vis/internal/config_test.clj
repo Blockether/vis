@@ -115,8 +115,8 @@
              ;; (1) welcome connects provider A (mirrors show-welcome!'s persist:
              ;;     merge into raw global config, then save-config!)
              (config/save-config! (assoc (or (config/load-config-raw) {})
-                                    "router" {"budget" {"max-cost" 5.0}}
-                                    "providers" [{"id" "prov-a" "api-key" "key-a"}]))
+                                    "router" {"budget" {"max_cost" 5.0}}
+                                    "providers" [{"id" "prov-a" "api_key" "key-a"}]))
              (expect (not (config/first-run?)))
              (expect (config/provider-configured?))
              (expect (= [:prov-a] (mapv :id (:providers (config/load-config)))))
@@ -125,7 +125,7 @@
              (let [raw (config/load-config-raw)]
                (config/save-config! (assoc raw
                                       "providers" (conj (vec (get raw "providers"))
-                                                        {"id" "prov-b" "api-key" "key-b"}))))
+                                                        {"id" "prov-b" "api_key" "key-b"}))))
              ;; (3) reload from disk: BOTH providers survive (in order) and the
              ;;     unrelated global :router key is preserved
              (let [loaded (config/load-config)]
@@ -142,7 +142,7 @@
         [wire
          {"environment" {"ANTHROPIC_API_KEY" "tok"}
           "providers"
-          [{"id" "anthropic" "api-style" "anthropic" "llm-headers" {"X-Custom-Header" "v"}}]}
+          [{"id" "anthropic" "api_style" "anthropic" "llm_headers" {"X-Custom-Header" "v"}}]}
 
          runtime
          (config/runtime-config wire)]
@@ -151,6 +151,25 @@
                     :providers
                     [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
                    runtime))))
+  (it "maps svar's is_* YAML keys to their ?-suffixed keyword contracts both ways"
+      (let
+        [wire
+         {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_call" true}]}]
+          "router" {"rate_limit" {"is_respect_retry_after" true "is_fallback_provider" false}
+                    "tokens" {"is_check_context" true}}
+          "system_prompt" {"text" "x" "is_replace" true}}
+
+         runtime
+         (config/runtime-config wire)]
+
+        (expect (true? (get-in runtime [:providers 0 :models 0 :tool-call?])))
+        (expect (true? (get-in runtime [:router :rate-limit :respect-retry-after?])))
+        (expect (false? (get-in runtime [:router :rate-limit :fallback-provider?])))
+        (expect (true? (get-in runtime [:router :tokens :check-context?])))
+        (expect (true? (get-in runtime [:system-prompt :is-replace])))
+        (expect (= "is_respect_retry_after"
+                   (first (keys (#'config/->yaml-safe {:respect-retry-after? true})))))
+        (expect (= "is_replace" (first (keys (#'config/->yaml-safe {:is-replace true})))))))
   (it "parses vis.yml directly into the string-keyed clojure.spec shape"
       (let
         [read-yaml
@@ -164,10 +183,10 @@
 
         (try (.mkdirs dir)
              (spit yml
-                   (str "system-prompt: Prefer RST.\n"
-                        "search:\n  include-gitignored-paths:\n    - repositories/\n"))
-             (expect (= {"system-prompt" "Prefer RST."
-                         "search" {"include-gitignored-paths" ["repositories/"]}}
+                   (str "system_prompt: Prefer RST.\n"
+                        "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+             (expect (= {"system_prompt" "Prefer RST."
+                         "search" {"include_gitignored_paths" ["repositories/"]}}
                         (read-yaml (.getPath yml))))
              (spit yml "{{{{: not yaml")
              (expect (nil? (read-yaml (.getPath yml))))
@@ -180,7 +199,7 @@
       (let
         [overlay (with-redefs
                    [config/load-config-raw (fn []
-                                             {"search" {"include-gitignored-paths"
+                                             {"search" {"include_gitignored_paths"
                                                         ["repositories/"]}})]
                    (config/search-overlay))]
         (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
@@ -189,8 +208,8 @@
                  (:always-exclude (with-redefs
                                     [config/load-config-raw (fn []
                                                               {"search"
-                                                               {"include-gitignored-paths" ["r/"]
-                                                                "always-exclude" ["*.log"]}})]
+                                                               {"include_gitignored_paths" ["r/"]
+                                                                "always_exclude" ["*.log"]}})]
                                     (config/search-overlay)))))))
 
 (defdescribe
@@ -236,7 +255,7 @@
         [safe (#'config/->yaml-safe
                {:toggles {"reasoning_level" :deep "auto_commit" true} :base-url "x" :providers []})]
         (expect (= {"reasoning_level" "deep" "auto_commit" true} (get safe "toggles")))
-        (expect (contains? safe "base-url")))))
+        (expect (contains? safe "base_url")))))
 
 (defdescribe
   config-tier-precedence-test
@@ -270,13 +289,13 @@
       (try (.mkdirs (io/file dir ".vis"))
            (.mkdirs gdir)
            (spit gyml
-                 (str "system-prompt: FROM-GLOBAL-YAML\n"
-                      "router:\n  budget:\n    max-cost: 1.0\n"))
+                 (str "system_prompt: FROM-GLOBAL-YAML\n"
+                      "router:\n  budget:\n    max_cost: 1.0\n"))
            (spit gstate "providers:\n  - id: prov-a\n")
            (spit root-yml
-                 (str "system-prompt: FROM-ROOT\n"
-                      "search:\n  include-gitignored-paths:\n    - repositories/\n"))
-           (spit nested-yml "system-prompt: FROM-NESTED\n")
+                 (str "system_prompt: FROM-ROOT\n"
+                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+           (spit nested-yml "system_prompt: FROM-NESTED\n")
            (with-redefs
              [config/state-path
               (.getPath gstate)
@@ -295,17 +314,17 @@
 
              (let [cfg (config/load-config-raw)]
                ;; the nested overlay wins the conflicting key
-               (expect (= "FROM-NESTED" (get cfg "system-prompt")))
+               (expect (= "FROM-NESTED" (get cfg "system_prompt")))
                ;; disjoint keys from every tier survive the merge
-               (expect (= ["repositories/"] (get-in cfg ["search" "include-gitignored-paths"])))
+               (expect (= ["repositories/"] (get-in cfg ["search" "include_gitignored_paths"])))
                (expect (= ["prov-a"] (mapv #(get % "id") (get cfg "providers"))))
-               (expect (= 1.0 (get-in cfg ["router" "budget" "max-cost"]))))
+               (expect (= 1.0 (get-in cfg ["router" "budget" "max_cost"]))))
              ;; drop the nested overlay entirely -> root wins
              (.delete nested-yml)
-             (expect (= "FROM-ROOT" (get (config/load-config-raw) "system-prompt")))
+             (expect (= "FROM-ROOT" (get (config/load-config-raw) "system_prompt")))
              ;; drop root too -> the global YAML base shows through
              (.delete root-yml)
-             (expect (= "FROM-GLOBAL-YAML" (get (config/load-config-raw) "system-prompt"))))
+             (expect (= "FROM-GLOBAL-YAML" (get (config/load-config-raw) "system_prompt"))))
            (finally (rm-rf! dir)))))
   (it
     "global ~/.vis: hand-written YAML merges UNDER machine-written state.yml (state wins per key)"
@@ -325,9 +344,9 @@
 
       (try (.mkdirs dir)
            (spit gyml
-                 (str "system-prompt: FROM-YAML\n"
-                      "search:\n  include-gitignored-paths:\n    - repositories/\n"))
-           (spit gstate "system-prompt: FROM-STATE\n")
+                 (str "system_prompt: FROM-YAML\n"
+                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+           (spit gstate "system_prompt: FROM-STATE\n")
            (with-redefs
              [config/state-path
               (.getPath gstate)
@@ -344,9 +363,9 @@
 
              (let [cfg (config/load-config-raw)]
                ;; conflicting key: the machine-written state.yml wins
-               (expect (= "FROM-STATE" (get cfg "system-prompt")))
+               (expect (= "FROM-STATE" (get cfg "system_prompt")))
                ;; YAML-only keys still land (merged, not ignored)
-               (expect (= ["repositories/"] (get-in cfg ["search" "include-gitignored-paths"])))))
+               (expect (= ["repositories/"] (get-in cfg ["search" "include_gitignored_paths"])))))
            ;; ~/.vis accepts vis.yml / vis.yaml spellings as fallbacks
            (expect (= ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]
                       (mapv #(.getName (io/file ^String %)) (@#'config/global-config-yaml-paths))))

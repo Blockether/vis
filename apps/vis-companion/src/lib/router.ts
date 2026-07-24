@@ -13,8 +13,7 @@
 // The gateway *id* (its stable, opaque `/healthz` instance id — NOT its URL)
 // rides in the link so the recipient's app can pick the right paired gateway
 // without leaking its URL or bearer token. They still need that gateway paired;
-// the link only says *which* gateway and *which* session. Legacy links that
-// carried a full gateway URL still resolve (matched by URL as a fallback).
+// the link only says *which* gateway and *which* session.
 
 export type Route =
   | { name: 'sessions' }

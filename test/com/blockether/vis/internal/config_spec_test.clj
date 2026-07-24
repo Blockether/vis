@@ -7,37 +7,38 @@
 
 (def full-config
   {"providers" [{"id" "anthropic"
-                 "api-key" "secret"
-                 "models" [{"name" "claude" "context" 200000 "output-limit" 8192 "tool-call?" true}]
-                 "base-url" "https://api.anthropic.com"
-                 "api-style" "anthropic"
-                 "responses-path" "/v1/messages"
-                 "llm-headers" {"X-Test" "yes"}
-                 "extra-body" {"temperature" 0}}]
-   "router" {"rate-limit" {"same-provider-delays-ms" [1000 2000]
-                           "fallback-after-ms" 30000
-                           "respect-retry-after?" true
-                           "fallback-provider?" true}
-             "network" {"timeout-ms" 300000
-                        "ttft-timeout-ms" 30000
-                        "idle-timeout-ms" 45000
-                        "semantic-timeout-ms" 120000
-                        "max-retries" 5
-                        "initial-delay-ms" 1000
-                        "max-delay-ms" 60000
+                 "api_key" "secret"
+                 "models"
+                 [{"name" "claude" "context" 200000 "output_limit" 8192 "is_tool_call" true}]
+                 "base_url" "https://api.anthropic.com"
+                 "api_style" "anthropic"
+                 "responses_path" "/v1/messages"
+                 "llm_headers" {"X-Test" "yes"}
+                 "extra_body" {"temperature" 0}}]
+   "router" {"rate_limit" {"same_provider_delays_ms" [1000 2000]
+                           "fallback_after_ms" 30000
+                           "is_respect_retry_after" true
+                           "is_fallback_provider" true}
+             "network" {"timeout_ms" 300000
+                        "ttft_timeout_ms" 30000
+                        "idle_timeout_ms" 45000
+                        "semantic_timeout_ms" 120000
+                        "max_retries" 5
+                        "initial_delay_ms" 1000
+                        "max_delay_ms" 60000
                         "multiplier" 2.0}
-             "budget" {"max-tokens" 1000000 "max-cost" 5.0}
-             "tokens" {"check-context?" true
+             "budget" {"max_tokens" 1000000 "max_cost" 5.0}
+             "tokens" {"is_check_context" true
                        "pricing" {"claude" {"input" 1.0 "output" 2.0}}
-                       "context-limits" {"claude" 200000}
-                       "output-reserve" 8192}
-             "failure-threshold" 5
-             "recovery-ms" 60000
-             "transient-status-codes" [429 500 503]
-             "window-ms" 60000
-             "cooldown-ms" 60000
-             "max-wait-ms" 30000}
-   "system-prompt" {"text" "Project rules" "replace?" false}
+                       "context_limits" {"claude" 200000}
+                       "output_reserve" 8192}
+             "failure_threshold" 5
+             "recovery_ms" 60000
+             "transient_status_codes" [429 500 503]
+             "window_ms" 60000
+             "cooldown_ms" 60000
+             "max_wait_ms" 30000}
+   "system_prompt" {"text" "Project rules" "is_replace" false}
    "workspace" {"filesystem"
                 [{"id" "svar"
                   "path" "/opt/svar"
@@ -48,24 +49,24 @@
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
-           "inbound-ports" [5273 8080]
+           "inbound_ports" [5273 8080]
            "env" ["CI" "MY_TOKEN"]
-           "deny-exec" ["definitely-not-a-real-binary-xyz"]}
-   "network" {"allowed-domains" ["github.com"]
-              "denied-domains" ["example.invalid"]
-              "exclude-domains" ["opaque.example"]
-              "allow-private" false
+           "deny_exec" ["definitely-not-a-real-binary-xyz"]}
+   "network" {"allowed_domains" ["github.com"]
+              "denied_domains" ["example.invalid"]
+              "exclude_domains" ["opaque.example"]
+              "allow_private" false
               "rules" [{"host" "api.example.com"
                         "access" "read-only"
                         "methods" ["POST"]
                         "ports" [443]
                         "allow" [{"method" "POST" "path" "/v1/**"}]}]}
    "environment" {"ANTHROPIC_API_KEY" "secret"}
-   "db-spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
-   "search" {"include-gitignored-paths" ["repositories/"] "always-exclude" ["target/"]}
+   "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
+   "search" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
-   "python" {"resource-cache" "~/.vis/cache/graal-resources"}
-   "tui-settings" {"theme-name" "dark" "contributors-disabled" ["voice"]}
+   "python" {"resource_cache" "~/.vis/cache/graal-resources"}
+   "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
    "mcp" {"servers" {"local" {"transport" "stdio"
                               "command" "npx"
                               "args" ["-y" "server"]
@@ -73,7 +74,11 @@
                               "env" {"TOKEN" "secret"}}
                      "remote" {"transport" "http"
                                "url" "https://mcp.example.com"
-                               "headers" {"Authorization" "Bearer secret"}}}}})
+                               "headers" {"Authorization" "Bearer secret"}}}}
+   "message_queue" {"breaker_threshold" 3
+                    "retry_backoff_ms" [2000 8000 30000]
+                    "halfopen_probe_ms" 60000
+                    "retry_after_cap_ms" 120000}})
 
 (defdescribe
   config-contract-test
@@ -84,6 +89,12 @@
     "rejects keyword keys, aliases, unknown keys, and invalid security values"
     (expect (not (config-spec/valid? {:filesystem {}})))
     (expect (not (config-spec/valid? {"filesystem" {}})))
+    ;; #50: snake_case is the ONLY accepted spelling — kebab-case keys are rejected.
+    (expect (not (config-spec/valid? (assoc-in full-config ["providers" 0 "api-key"] "k"))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["providers" 0 "base-url"] "https://x"))))
+    (expect (not (config-spec/valid? (assoc full-config "system-prompt" "hi"))))
+    (expect (not (config-spec/valid? (assoc full-config "db-spec" {"backend" "sqlite"}))))
     ;; Workspace entries: a rooted path is required and unknown keys are rejected.
     (expect (not (config-spec/valid? (assoc-in full-config
                                        ["workspace" "filesystem"]
@@ -101,15 +112,15 @@
     ;; jail.filesystem is pure id admission — only an `allow` STRING VECTOR, nothing else.
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "allow"] "svar"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "deny"] ["svar"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound-ports"] [0]))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound_ports"] [0]))))
     (expect (config-spec/valid?
               (assoc-in full-config
                 ["workspace" "filesystem"]
                 [{"id" "ok" "path" "~/home-ok" "description" "why" "search" false}])))
     ;; deny-exec: a list of executable names (or rooted paths) to block by read.
-    (expect (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] ["curl" "ssh"])))
-    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] "curl"))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] [""]))))
+    (expect (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] ["curl" "ssh"])))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] "curl"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] [""]))))
     ;; Descriptions of ADMITTED roots flow into the derived policy, keyed by grant path.
     (expect (= {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}
                (:path-descriptions (config-spec/process-jail-config full-config))))
@@ -122,7 +133,16 @@
     (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] ["443"]))))
     ;; GraalPy resource cache: closed block, non-blank path only.
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "cache"] "/x"))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource-cache"] "")))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource_cache"] ""))))
+    ;; Queue tuning: a closed block of positive numbers; the backoff is a non-empty list.
+    (expect (config-spec/valid? (assoc-in full-config ["message_queue" "breaker_threshold"] 5)))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["message_queue" "breaker_threshold"] 0))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["message_queue" "retry_backoff_ms"] []))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["message_queue" "retry_backoff_ms"] ["2s"]))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["message_queue" "unknown"] 1)))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
                   :allow-read-write ["/opt/svar" "~/generated" "~/.m2"]
@@ -158,7 +178,7 @@
     (let
       [pol
        (config-spec/process-jail-config (assoc-in full-config
-                                          ["jail" "deny-exec"]
+                                          ["jail" "deny_exec"]
                                           ["/opt/nope/curl" "definitely-not-a-real-binary-xyz"]))
 
        denied
@@ -251,7 +271,7 @@
         [config-spec/model-keys config-spec/model-schema (set (keys model))]
         [config-spec/provider-keys config-spec/provider-schema (set (keys provider))]
         [config-spec/rate-limit-keys config-spec/rate-limit-schema
-         (set (keys (get router "rate-limit")))]
+         (set (keys (get router "rate_limit")))]
         [config-spec/router-network-keys config-spec/router-network-schema
          (set (keys (get router "network")))]
         [config-spec/budget-keys config-spec/budget-schema (set (keys (get router "budget")))]
@@ -266,12 +286,14 @@
         [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
         [config-spec/network-keys config-spec/network-schema (set (keys network))]
         [config-spec/prompt-keys config-spec/prompt-schema
-         (set (keys (get full-config "system-prompt")))]
+         (set (keys (get full-config "system_prompt")))]
         [config-spec/search-keys config-spec/search-schema (set (keys (get full-config "search")))]
-        [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db-spec")))]
-        [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui-settings")))]
+        [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db_spec")))]
+        [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui_settings")))]
         [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
         [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
+        [config-spec/message-queue-keys config-spec/message-queue-schema
+         (set (keys (get full-config "message_queue")))]
         [config-spec/mcp-server-keys config-spec/mcp-server-schema
          (into #{} (mapcat keys) servers)]]]
 
@@ -285,11 +307,11 @@
         (expect (or (nil? wire) (and (every? string? (keys wire)) (config-spec/valid? wire))))))
   (it "checks recursively user-owned request and pricing maps without keywordizing"
       (expect (config-spec/valid? (assoc-in full-config
-                                    ["providers" 0 "extra-body"]
+                                    ["providers" 0 "extra_body"]
                                     {"thinking" {"type" "enabled" "budget_tokens" 2048}
                                      "stop" ["DONE" nil]})))
       (expect (not (config-spec/valid? (assoc-in full-config
-                                         ["providers" 0 "extra-body"]
+                                         ["providers" 0 "extra_body"]
                                          {:keyword-key "not YAML wire data"}))))
       (expect (not (config-spec/valid? (assoc-in full-config
                                          ["router" "tokens" "pricing"]

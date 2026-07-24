@@ -741,6 +741,68 @@
                               "utilization")
                          "now"))))
 
+(defdescribe
+  over-budget-hint-test
+  ;; The throttled compaction nudge: `session_utilization.hint` appears ONLY when
+  ;; the handled context (`last_request_tokens`) has floated above the 144k soft
+  ;; ceiling (`auto_compress_above`) — a bigger task — and self-silences after 3
+  ;; turns so it never nags. `stamp-utilization!` arms the first-crossing turn on
+  ;; the ctx-atom; `over-budget-hint` renders it; `session-view` surfaces it.
+  (let
+    [over
+     {"last_request_tokens" 210000
+      "auto_compress_above" 144000
+      "model_input_limit" 1000000
+      "saturation" 21}
+
+     under
+     {"last_request_tokens" 62000
+      "auto_compress_above" 144000
+      "model_input_limit" 1000000
+      "saturation" 6}
+
+     stamp
+     #'lp/stamp-utilization!]
+
+    (it "fires for exactly 3 turns from the armed turn, then goes quiet"
+        (expect (some? (eng/over-budget-hint over 6 6)))
+        (expect (some? (eng/over-budget-hint over 7 6)))
+        (expect (some? (eng/over-budget-hint over 8 6)))
+        ;; delta = 3 → past the window, suppressed even while still over budget
+        (expect (nil? (eng/over-budget-hint over 9 6))))
+    (it "names both numbers with the shared estimator spelling"
+        (expect
+          (= "handled context 210k over the 144k compaction budget — fold settled turns to compact"
+             (eng/over-budget-hint over 6 6))))
+    (it "nil when unarmed, under budget, or missing the ceiling"
+        (expect (nil? (eng/over-budget-hint over 6 nil)))
+        (expect (nil? (eng/over-budget-hint under 6 6)))
+        (expect (nil? (eng/over-budget-hint {"last_request_tokens" 210000} 6 6))))
+    (it "session-view surfaces the `hint` leaf only when armed and in-window"
+        (let [ctx {"session_id" "s" "session_turn" 7 "engine_utilization" over}]
+          (expect (= (eng/over-budget-hint over 7 6)
+                     (get-in (eng/session-view (assoc ctx "engine_overbudget_hint_turn" 6))
+                             ["session_utilization" "hint"])))
+          ;; unarmed → no leaf
+          (expect (not (contains? (get (eng/session-view ctx) "session_utilization") "hint")))))
+    (it "stamp-utilization! arms the first-crossing turn, holds it, clears under, re-arms"
+        (let [a (atom {"session_turn" 5})]
+          (stamp a over)  ; cross at t5
+          (expect (= 5 (get @a "engine_overbudget_hint_turn")))
+          (swap! a assoc "session_turn" 6)
+          (stamp a over)  ; still over → keep 5
+          (expect (= 5 (get @a "engine_overbudget_hint_turn")))
+          (swap! a assoc "session_turn" 7)
+          (stamp a under) ; dropped → clear
+          (expect (nil? (get @a "engine_overbudget_hint_turn")))
+          (swap! a assoc "session_turn" 9)
+          (stamp a over)  ; re-cross → re-arm at 9
+          (expect (= 9 (get @a "engine_overbudget_hint_turn")))
+          ;; a transient nil util must NOT blank the already-stamped utilization
+          (stamp a nil)
+          (expect (= over (get @a "engine_utilization")))))))
+
+
 ;; ── layer 6: the human-facing fold CARD (tokens saved + context level) ───────
 
 (defn- priced-ctx
@@ -751,26 +813,28 @@
   (atom {"session_turn" 3
          "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t2/i1"]
          "engine_iter_weights" {"t1/i1" 12000 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
-         "engine_utilization"
-         {"saturation" 44 "last_request_tokens" 42000 "model_input_limit" 96000}}))
+         "engine_utilization" {"saturation" 44
+                               "last_request_tokens" 42000
+                               "auto_compress_above" 70000
+                               "model_input_limit" 96000}}))
 
 (defdescribe
   session-fold-card-test
   ;; The verb RETURN string is the tool card the human sees. It is enriched with
   ;; how much wire the fold reclaims — in ~tokens (summed from `engine_iter_weights`)
-  ;; AND as a fraction of `model_input_limit`. This is the fold's OWN reduction,
-  ;; NOT an absolute level: a projected level baselines on the growing
-  ;; `last_request_tokens`, so it RISES across iterations even when the fold helped
+  ;; AND as a fraction of the OPERATING ceiling (`auto_compress_above`, grown to the
+  ;; handled context on a bigger task). This is the fold's OWN reduction, NOT an
+  ;; absolute level: a projected level baselines on the growing
   ;; (issue #27's scary regression). A per-fold reduction can never mislead that way.
   ;; Alongside it the card ALSO surfaces the live window fullness as `context <U>%`,
   ;; taken straight from the provider's authoritative `saturation` — a separate,
   ;; absolute reading, omitted when no `saturation` is stamped.
   (it
-    "an explicit scope card prices its ~tokens + the reduction as % of window"
+    "an explicit scope card prices its ~tokens + the reduction as % of budget"
     (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
       (expect
         (=
-          "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens) → big cat dump"
+          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) → big cat dump"
           (sf ["t1/i1"] "big cat dump")))))
   (it
     "a `through` selector sums the weight of EVERY scope it resolves"
@@ -778,12 +842,12 @@
       ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
       (expect
         (=
-          "folded through t1/i2 · saved ~15k tokens · ~16% of window · context 44% (42k/96k tokens) → traced"
+          "folded through t1/i2 · saved ~15k tokens · ~22% of budget · context 44% (42k/96k tokens) → traced"
           (sf {"through" "t1/i2"} "traced")))))
   (it "a gist-less fold still shows the tokens + reduction suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         (expect (=
-                  "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens)"
+                  "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens)"
                   (sf ["t1/i1"])))))
   (it
     "a scope with NO stamped weight reclaims nothing, so the card drops the saved figure but still surfaces the live window fullness"
@@ -814,17 +878,44 @@
        _
        (swap! ca assoc
          "engine_iter_weights" {"t1/i1" 0 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
-         "engine_utilization" {"last_request_tokens" 90000 "model_input_limit" 96000})
+         "engine_utilization"
+         {"last_request_tokens" 90000 "auto_compress_above" 70000 "model_input_limit" 96000})
 
        card2
        (sf ["t1/i2"] "second")]
 
       (expect
         (=
-          "folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens) → first"
+          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) → first"
           card1))
       ;; second fold reclaims only its own 3.4k regardless of the 90k request
-      (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of window → second" card2))))
+      (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of budget → second" card2))))
+  (it
+    "a bigger task prices against the GROWN operating ceiling (handled context), not the fixed budget"
+    ;; auto-compress is a SOFT guardrail: `last_request_tokens` can float above it
+    ;; before compaction fires. The `% of budget` denominator is
+    ;; max(auto_compress_above, last_request_tokens), so it grows with the real
+    ;; handled context and the fraction never overflows a ceiling already breached.
+    (let
+      [ca
+       (priced-ctx)
+
+       _
+       (swap! ca assoc
+         "engine_iter_weights" {"t1/i1" 60000 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
+         "engine_utilization" {"saturation" 94
+                               "last_request_tokens" 90000
+                               "auto_compress_above" 70000
+                               "model_input_limit" 96000})
+
+       sf
+       (get (compaction-verbs ca) 'session-fold)]
+
+      ;; ceiling = max(70000, 90000) = 90000; 60000/90000 = 67%
+      (expect
+        (=
+          "folded t1/i1 · saved ~60k tokens · ~67% of budget · context 94% (90k/96k tokens) → bigger task"
+          (sf ["t1/i1"] "bigger task")))))
   (it
     "the note ALSO lands in the persistent breadcrumb, not just the tool card"
     ;; regression: the saved-tokens + projected suffix must ride the durable
@@ -851,7 +942,7 @@
 
       (expect
         (=
-          "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · context 44% (42k/96k tokens) · big cat dump"
+          "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) · big cat dump"
           line))))
   (it "a fold breadcrumb carries its folded steps' ntr[...] recovery accessors"
       ;; The scope→accessor index rides the DURABLE breadcrumb so a harness

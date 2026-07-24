@@ -294,6 +294,22 @@ export interface SubmittedTurn {
   [key: string]: unknown;
 }
 
+/** A message enqueued behind the running turn, mirrored from the gateway. */
+export interface QueuedTurn {
+  turnId: string;
+  request: string;
+}
+
+/** The gateway paused this session's queue after a provider failure. */
+export interface QueuePausedInfo {
+  reason: string;
+  held: number;
+  fails: number;
+  isTransient: boolean;
+  isBreakerOpen: boolean;
+  retryAt: number | null;
+}
+
 export interface SseEvent {
   type: string;
   sid?: string;

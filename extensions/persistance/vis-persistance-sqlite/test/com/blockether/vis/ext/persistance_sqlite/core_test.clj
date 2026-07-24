@@ -1312,14 +1312,17 @@
        (raw-query s
                   {:select [:user_request]
                    :from :session_turn_soul
-                   :where [:= :session_state_id (str fork-state)]
+                   :where [:= :session_state_id
+                           {:select [:id]
+                            :from :session_state
+                            :where [:= :session_soul_id (str fork-state)]}]
                    :order-by [[:position :asc]]})]
 
       ;; SOURCE keeps all three turns — untouched.
       (expect (= ["Q1" "Q2" "Q3"] (mapv :user-request (vis/db-list-session-turns s cid))))
       ;; FORK got exactly the first two, in order.
       (expect (= ["Q1" "Q2"] (mapv :user_request fork-turns)))
-      ;; It is a brand-new session soul (a fresh state id, not the source soul).
+      ;; It is a brand-new session soul (a fresh soul id, not the source soul).
       (expect (some? fork-state))
       (expect (not= (str fork-state) (str cid)))
       ;; Unknown pick ⇒ nil, nothing copied.

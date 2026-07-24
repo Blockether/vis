@@ -2,8 +2,9 @@
   "The executable contract for the YAML representation of Vis configuration.
 
    YAMLStar returns maps with string keys. This namespace validates that exact
-   representation: no recursive keywordization, no snake_case aliases, and no
-   acceptance of keyword-keyed lookalikes. Maps are closed unless their keys are
+   representation: snake_case string keys ONLY (kebab-case is rejected), no
+   recursive keywordization, and no acceptance of keyword-keyed lookalikes.
+   Maps are closed unless their keys are
    deliberately user-defined (environment variables, headers, toggle ids, MCP
    server names, pricing/model tables, and provider request bodies).
 
@@ -64,7 +65,7 @@
                     (pred v)))
                 m))))
 
-(def ^:private sensitive-keys #{"api-key" "environment" "env" "headers" "llm-headers" "extra-body"})
+(def ^:private sensitive-keys #{"api_key" "environment" "env" "headers" "llm_headers" "extra_body"})
 
 (defn- redact
   [x]
@@ -78,15 +79,15 @@
 
 ;; Provider/model contract -----------------------------------------------------
 
-(def model-keys #{"name" "context" "output-limit" "tool-call?"})
+(def model-keys #{"name" "context" "output_limit" "is_tool_call"})
 (def provider-keys
-  #{"id" "api-key" "models" "base-url" "api-style" "responses-path" "llm-headers" "extra-body"})
+  #{"id" "api_key" "models" "base_url" "api_style" "responses_path" "llm_headers" "extra_body"})
 
 (def model-schema
   {"name" non-blank-string?
    "context" positive-int?
-   "output-limit" positive-int?
-   "tool-call?" boolean?})
+   "output_limit" positive-int?
+   "is_tool_call" boolean?})
 
 (s/def ::model-map #(closed-map? model-schema #{"name"} %))
 (s/def ::model
@@ -96,13 +97,13 @@
 
 (def provider-schema
   {"id" non-blank-string?
-   "api-key" string?
+   "api_key" string?
    "models" (spec-pred ::models)
-   "base-url" non-blank-string?
-   "api-style" non-blank-string?
-   "responses-path" non-blank-string?
-   "llm-headers" string-map?
-   "extra-body" yaml-map?})
+   "base_url" non-blank-string?
+   "api_style" non-blank-string?
+   "responses_path" non-blank-string?
+   "llm_headers" string-map?
+   "extra_body" yaml-map?})
 
 (s/def ::provider #(closed-map? provider-schema #{"id"} %))
 (s/def ::providers (s/coll-of ::provider :kind vector?))
@@ -110,58 +111,58 @@
 ;; Router contract -------------------------------------------------------------
 
 (def rate-limit-keys
-  #{"same-provider-delays-ms" "fallback-after-ms" "respect-retry-after?" "fallback-provider?"})
+  #{"same_provider_delays_ms" "fallback_after_ms" "is_respect_retry_after" "is_fallback_provider"})
 (def router-network-keys
-  #{"timeout-ms" "ttft-timeout-ms" "idle-timeout-ms" "semantic-timeout-ms" "max-retries"
-    "initial-delay-ms" "max-delay-ms" "multiplier"})
-(def budget-keys #{"max-tokens" "max-cost"})
-(def token-keys #{"check-context?" "pricing" "context-limits" "output-reserve"})
+  #{"timeout_ms" "ttft_timeout_ms" "idle_timeout_ms" "semantic_timeout_ms" "max_retries"
+    "initial_delay_ms" "max_delay_ms" "multiplier"})
+(def budget-keys #{"max_tokens" "max_cost"})
+(def token-keys #{"is_check_context" "pricing" "context_limits" "output_reserve"})
 (def router-keys
-  #{"rate-limit" "network" "budget" "tokens" "failure-threshold" "recovery-ms"
-    "transient-status-codes" "window-ms" "cooldown-ms" "max-wait-ms"})
+  #{"rate_limit" "network" "budget" "tokens" "failure_threshold" "recovery_ms"
+    "transient_status_codes" "window_ms" "cooldown_ms" "max_wait_ms"})
 
 (def rate-limit-schema
-  {"same-provider-delays-ms" #(and (vector? %) (every? positive-int? %))
-   "fallback-after-ms" positive-int?
-   "respect-retry-after?" boolean?
-   "fallback-provider?" boolean?})
+  {"same_provider_delays_ms" #(and (vector? %) (every? positive-int? %))
+   "fallback_after_ms" positive-int?
+   "is_respect_retry_after" boolean?
+   "is_fallback_provider" boolean?})
 (s/def ::rate-limit #(closed-map? rate-limit-schema %))
 
 (def router-network-schema
-  {"timeout-ms" positive-int?
-   "ttft-timeout-ms" positive-int?
-   "idle-timeout-ms" positive-int?
-   "semantic-timeout-ms" positive-int?
-   "max-retries" positive-int?
-   "initial-delay-ms" positive-int?
-   "max-delay-ms" positive-int?
+  {"timeout_ms" positive-int?
+   "ttft_timeout_ms" positive-int?
+   "idle_timeout_ms" positive-int?
+   "semantic_timeout_ms" positive-int?
+   "max_retries" positive-int?
+   "initial_delay_ms" positive-int?
+   "max_delay_ms" positive-int?
    "multiplier" number?})
 (s/def ::router-network #(closed-map? router-network-schema %))
 
-(def budget-schema {"max-tokens" positive-int? "max-cost" non-negative-number?})
+(def budget-schema {"max_tokens" positive-int? "max_cost" non-negative-number?})
 (s/def ::budget #(closed-map? budget-schema %))
 
 (def token-schema
-  {"check-context?" boolean?
+  {"is_check_context" boolean?
    "pricing" named-yaml-map?
-   "context-limits" number-map?
-   "output-reserve" positive-int?})
+   "context_limits" number-map?
+   "output_reserve" positive-int?})
 (s/def ::tokens #(closed-map? token-schema %))
 
 (def router-schema
-  {"rate-limit" (spec-pred ::rate-limit)
+  {"rate_limit" (spec-pred ::rate-limit)
    "network" (spec-pred ::router-network)
    "budget" (spec-pred ::budget)
    "tokens" (spec-pred ::tokens)
-   "failure-threshold" positive-int?
-   "recovery-ms" positive-int?
-   "transient-status-codes" #(and (or (vector? %) (set? %))
+   "failure_threshold" positive-int?
+   "recovery_ms" positive-int?
+   "transient_status_codes" #(and (or (vector? %) (set? %))
                                   (every? (fn [n]
                                             (and (integer? n) (<= 100 n 599)))
                                           %))
-   "window-ms" positive-int?
-   "cooldown-ms" positive-int?
-   "max-wait-ms" positive-int?})
+   "window_ms" positive-int?
+   "cooldown_ms" positive-int?
+   "max_wait_ms" positive-int?})
 (s/def ::router #(closed-map? router-schema %))
 
 ;; Sandbox contracts -----------------------------------------------------------
@@ -193,18 +194,18 @@
 (def jail-filesystem-schema {"allow" #(and (vector? %) (every? non-blank-string? %))})
 (s/def ::jail-filesystem #(closed-map? jail-filesystem-schema %))
 
-(def jail-keys #{"enabled" "filesystem" "inbound-ports" "env" "deny-exec"})
+(def jail-keys #{"enabled" "filesystem" "inbound_ports" "env" "deny_exec"})
 (def jail-schema
   {"enabled" boolean?
    "filesystem" (spec-pred ::jail-filesystem)
-   "inbound-ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
+   "inbound_ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
    "env" env-var-name-list?
-   "deny-exec" string-list?})
+   "deny_exec" string-list?})
 (s/def ::jail #(closed-map? jail-schema %))
 
 (def network-rule-allow-keys #{"method" "path"})
 (def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
-(def network-keys #{"allowed-domains" "denied-domains" "exclude-domains" "allow-private" "rules"})
+(def network-keys #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "rules"})
 (def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
 (s/def ::network-rule-allow #(closed-map? network-rule-allow-schema #{"method"} %))
 (s/def ::network-rule-allows (s/coll-of ::network-rule-allow :kind vector?))
@@ -220,49 +221,60 @@
 (s/def ::network-rules (s/coll-of ::network-rule :kind vector?))
 
 (def network-schema
-  {"allowed-domains" string-list?
-   "denied-domains" string-list?
-   "exclude-domains" string-list?
-   "allow-private" boolean?
+  {"allowed_domains" string-list?
+   "denied_domains" string-list?
+   "exclude_domains" string-list?
+   "allow_private" boolean?
    "rules" (spec-pred ::network-rules)})
 (s/def ::network #(closed-map? network-schema %))
 
 ;; Remaining top-level blocks --------------------------------------------------
 
-(def prompt-keys #{"text" "replace?"})
-(def search-keys #{"include-gitignored-paths" "always-exclude"})
+(def prompt-keys #{"text" "is_replace"})
+(def search-keys #{"include_gitignored_paths" "always_exclude"})
 (def db-keys #{"backend" "path"})
-(def tui-keys #{"theme-name" "contributors-disabled"})
+(def tui-keys #{"theme_name" "contributors_disabled"})
 (def mcp-keys #{"servers"})
 (def mcp-server-keys #{"transport" "command" "args" "cwd" "env" "url" "headers"})
-(def python-keys #{"resource-cache"})
+(def python-keys #{"resource_cache"})
+(def message-queue-keys
+  #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def config-keys
-  #{"providers" "router" "system-prompt" "workspace" "jail" "network" "environment" "db-spec"
-    "search" "toggles" "tui-settings" "mcp" "python"})
+  #{"providers" "router" "system_prompt" "workspace" "jail" "network" "environment" "db_spec"
+    "search" "toggles" "tui_settings" "mcp" "python" "message_queue"})
 
-(def prompt-schema {"text" string? "replace?" boolean?})
+(def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
 (s/def ::system-prompt
   (s/or :text string?
         :map ::prompt-map))
 
-(def search-schema {"include-gitignored-paths" string-list? "always-exclude" string-list?})
+(def search-schema {"include_gitignored_paths" string-list? "always_exclude" string-list?})
 (s/def ::search #(closed-map? search-schema %))
 
 (def db-schema {"backend" non-blank-string? "path" non-blank-string?})
 (s/def ::db-spec #(closed-map? db-schema #{"backend"} %))
 
 (def tui-schema
-  {"theme-name" non-blank-string?
-   "contributors-disabled" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))})
+  {"theme_name" non-blank-string?
+   "contributors_disabled" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))})
 (s/def ::tui-settings #(closed-map? tui-schema %))
 
 (def python-schema
   ;; GraalPy internal-resource cache root (where the Python stdlib extracts at
   ;; runtime). Read ONCE per process at polyglot-engine boot; the explicit
   ;; `-Dpolyglot.engine.userResourceCache` system property wins over this key.
-  {"resource-cache" non-blank-string?})
+  {"resource_cache" non-blank-string?})
 (s/def ::python #(closed-map? python-schema %))
+
+(def message-queue-schema
+  ;; Gateway turn-queue failure handling. Every value is a plain number so it
+  ;; round-trips through ->yaml-safe/runtime-config as a snake_case string key.
+  {"breaker_threshold" positive-int?
+   "retry_backoff_ms" #(and (vector? %) (seq %) (every? positive-int? %))
+   "halfopen_probe_ms" positive-int?
+   "retry_after_cap_ms" positive-int?})
+(s/def ::message-queue #(closed-map? message-queue-schema %))
 
 (def mcp-server-schema
   {"transport" (one-of #{"stdio" "http"})
@@ -283,17 +295,18 @@
 (def config-schema
   {"providers" (spec-pred ::providers)
    "router" (spec-pred ::router)
-   "system-prompt" (spec-pred ::system-prompt)
+   "system_prompt" (spec-pred ::system-prompt)
    "workspace" (spec-pred ::workspace)
    "jail" (spec-pred ::jail)
    "network" (spec-pred ::network)
    "environment" string-map?
-   "db-spec" (spec-pred ::db-spec)
+   "db_spec" (spec-pred ::db-spec)
    "search" (spec-pred ::search)
    "toggles" named-scalar-map?
-   "tui-settings" (spec-pred ::tui-settings)
+   "tui_settings" (spec-pred ::tui-settings)
    "mcp" (spec-pred ::mcp)
-   "python" (spec-pred ::python)})
+   "python" (spec-pred ::python)
+   "message_queue" (spec-pred ::message-queue)})
 
 (s/def ::config #(closed-map? config-schema %))
 
@@ -345,7 +358,7 @@
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
          #(rooted-path-list? (or (:no-search %) []))
          #(rooted-path-list? (or (:deny-exec %) []))
-         #(s/valid? (get jail-schema "inbound-ports") (:inbound-ports %))
+         #(s/valid? (get jail-schema "inbound_ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
          #(let
             [d
@@ -441,9 +454,9 @@
        :allow-write []
        :deny-read []
        :deny-write []
-       :deny-exec (resolve-exec-denies (get jail "deny-exec"))
+       :deny-exec (resolve-exec-denies (get jail "deny_exec"))
        :no-search (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)
-       :inbound-ports (vec (get jail "inbound-ports"))
+       :inbound-ports (vec (get jail "inbound_ports"))
        :env-passthrough (vec (get jail "env"))
        :path-descriptions descriptions})))
 
@@ -474,17 +487,17 @@
   (assert-config! config)
   (let [net (get config "network" {})]
     (cond-> {}
-      (contains? net "allowed-domains")
-      (assoc :allowed-domains (get net "allowed-domains"))
+      (contains? net "allowed_domains")
+      (assoc :allowed-domains (get net "allowed_domains"))
 
-      (contains? net "denied-domains")
-      (assoc :denied-domains (get net "denied-domains"))
+      (contains? net "denied_domains")
+      (assoc :denied-domains (get net "denied_domains"))
 
-      (contains? net "exclude-domains")
-      (assoc :exclude-domains (get net "exclude-domains"))
+      (contains? net "exclude_domains")
+      (assoc :exclude-domains (get net "exclude_domains"))
 
-      (contains? net "allow-private")
-      (assoc :allow-private (get net "allow-private"))
+      (contains? net "allow_private")
+      (assoc :allow-private (get net "allow_private"))
 
       (contains? net "rules")
       (assoc :rules (mapv network-rule->runtime (get net "rules"))))))

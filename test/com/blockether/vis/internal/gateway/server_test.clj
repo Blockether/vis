@@ -240,7 +240,7 @@
   (let [saved (atom nil)]
     (with-redefs
       [config/load-config-raw (constantly {"providers" [{"id" "demo"}]
-                                           "tui-settings" {"theme-name" "solarized-dark"}})
+                                           "tui_settings" {"theme_name" "solarized-dark"}})
        config/save-config! #(reset! saved %)]
 
       (let
@@ -273,7 +273,7 @@
 
         (is (= 200 (:status set-response)))
         (is (= "vis-dark" (get updated "id")))
-        (is (= "vis-dark" (get-in @saved ["tui-settings" "theme-name"])))
+        (is (= "vis-dark" (get-in @saved ["tui_settings" "theme_name"])))
         (is (= [{"id" "demo"}] (get @saved "providers")))))))
 
 (deftest theme-handler-rejects-unknown-themes

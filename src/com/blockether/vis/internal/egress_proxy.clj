@@ -181,11 +181,28 @@
           :else (or (= h p) (str/ends-with? h (str "." p))))))
 
 (defn- host-ok?
-  "Host-level allow/deny (denied wins; empty/`*` allow-list ⇒ all)."
+  "Host-level allow/deny with the SAME specificity as the in-interpreter sandbox
+   guard (`network-guard-python`), so both network layers reach one verdict: a
+   SPECIFIC (non-`*`) match wins over a `*` in the OTHER list. Specific deny wins
+   (incl. both-specific); then specific allow (beats a `*` denylist); then a `*`
+   denylist blocks the rest; else an empty/`*` allowlist allows and a non-empty
+   allowlist with no match blocks."
   [{:keys [allowed-domains denied-domains]} host]
-  (cond (some #(host-matches? % host) denied-domains) false
-        (or (empty? allowed-domains) (some #{"*"} allowed-domains)) true
-        :else (boolean (some #(host-matches? % host) allowed-domains))))
+  (let
+    [specific
+     (fn [ds]
+       (remove #(= "*" %) ds))
+
+     deny-star
+     (boolean (some #{"*"} denied-domains))
+
+     allow-star
+     (or (empty? allowed-domains) (some #{"*"} allowed-domains))]
+
+    (cond (some #(host-matches? % host) (specific denied-domains)) false
+          (some #(host-matches? % host) (specific allowed-domains)) true
+          deny-star false
+          :else (boolean allow-star))))
 
 (defn- glob->re
   "fnmatch-ish glob → regex; `*`/`**` match anything (incl. `/`), `?` one char."

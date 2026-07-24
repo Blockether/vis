@@ -1976,7 +1976,34 @@
    a fresh request refreshes it; a brand-new session starts blank because
    nothing was ever stamped."
   [ctx-atom util]
-  (when (and ctx-atom util) (swap! ctx-atom assoc "engine_utilization" util)))
+  (when (and ctx-atom util)
+    (swap! ctx-atom (fn [ctx]
+                      ;; Arm/disarm the throttled over-budget compaction hint (rendered by
+                      ;; `ctx-engine/over-budget-hint`): stamp the FIRST turn the handled
+                      ;; context crossed the soft ceiling so the hint can self-silence after
+                      ;; 3 turns, and clear it once back under so a later re-crossing re-arms.
+                      (let
+                        [turn
+                         (long (or (get ctx "session_turn") 1))
+
+                         req
+                         (long (or (get util "last_request_tokens") 0))
+
+                         cap
+                         (long (or (get util "auto_compress_above") 0))
+
+                         over?
+                         (and (pos? cap) (> req cap))
+
+                         since
+                         (get ctx "engine_overbudget_hint_turn")]
+
+                        (cond-> (assoc ctx "engine_utilization" util)
+                          (and over? (nil? since))
+                          (assoc "engine_overbudget_hint_turn" turn)
+
+                          (not over?)
+                          (dissoc "engine_overbudget_hint_turn")))))))
 
 (defn- stamp-iter-universe!
   "Record the CURRENT wire's iteration universe, token weights, recoverable native
@@ -2826,7 +2853,9 @@
 
      ;; Human-facing enrichment for the fold card: how much wire THIS fold
      ;; reclaims — in ~tokens (summed from `engine_iter_weights`) AND as a
-     ;; fraction of the model's per-call limit (`~P% of window`). That figure
+     ;; fraction of the OPERATING ceiling (`~P% of budget`): `auto_compress_above`
+     ;; (the 144k soft compaction guardrail), or the live handled context when a
+     ;; bigger task has already floated above it. That figure
      ;; is deliberately the fold's OWN contribution (a REDUCTION), never a
      ;; derived "how full am I" level: `last_request_tokens` grows with every
      ;; new tool result, so a PROJECTED level would RISE across iterations
@@ -2877,16 +2906,32 @@
             lim
             (get util "model_input_limit")
 
+            ;; Denominator for `% of budget` is the OPERATING ceiling, NOT the
+            ;; 1M hard per-call max. `auto_compress_above` (the 144k soft
+            ;; guardrail = the budget we actually work within) is what a fold's
+            ;; reclaim is relevant against; dividing by the 1M ceiling read every
+            ;; fold ~7x smaller than its real weight, so compaction looked like
+            ;; noise exactly when it worked. On a BIGGER task the handled context
+            ;; (`last_request_tokens`) floats ABOVE that soft guardrail before
+            ;; auto-compress fires, so `max` lets the ceiling grow with what
+            ;; truly resides — the fraction stays honest instead of pinning to a
+            ;; budget already breached. `toks` is residence-bounded (expand-through
+            ;; resolves only against the live universe), so it can't exceed the
+            ;; grown ceiling: no >100% category error survives, no cap needed.
+            ceiling
+            (max (long (or (get util "auto_compress_above") 0))
+                 (long (or (get util "last_request_tokens") 0)))
+
             pct
-            (when (and (pos? (long toks)) lim (pos? (long lim)))
-              (long (Math/round (/ (* 100.0 (double toks)) (double lim)))))
+            (when (and (pos? (long toks)) (pos? (long ceiling)))
+              (long (Math/round (/ (* 100.0 (double toks)) (double ceiling)))))
 
             sat
             (get util "saturation")
 
             saved
             (when (pos? (long toks))
-              (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of window"))))
+              (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of budget"))))
 
             ;; Even a fold that reclaims no NEW wire (every covered scope
             ;; already collapsed on a prior turn — a whole-session
@@ -4668,6 +4713,29 @@
        ;; the op-card HEADLINE and the gist the expandable body, instead of the
        ;; whole string hiding as a body-only card the user must expand.
        native-renderers (assoc (extension/native-tool-renderers active-extensions)
+                          ;; `resource_stop` / `resource_restart` are ENGINE-level
+                          ;; (no extension symbol), so their card renderer rides
+                          ;; here: lift the outcome + stopped/restarted resource id
+                          ;; into the HEADLINE so the label names WHICH resource,
+                          ;; not a raw `{result, id}` dump the user must expand.
+                          "resource_stop"
+                          (fn [result]
+                            (let [r (if (map? result) result {})
+                                  outcome (str (get r "result"))
+                                  id (str (get r "id"))
+                                  msg (get r "message")]
+                              {:summary (str (if (seq outcome) outcome "stopped")
+                                             (when (seq id) (str " `" id "`")))
+                               :body (when (seq (str msg)) (str "\n" msg))}))
+                          "resource_restart"
+                          (fn [result]
+                            (let [r (if (map? result) result {})
+                                  outcome (str (get r "result"))
+                                  id (str (get r "id"))
+                                  msg (get r "message")]
+                              {:summary (str (if (seq outcome) outcome "restarted")
+                                             (when (seq id) (str " `" id "`")))
+                               :body (when (seq (str msg)) (str "\n" msg))}))
                           "session_fold" (fn [result]
                                            (let [s (str result)]
                                              (if-let [i (str/index-of s " → ")]
@@ -9213,37 +9281,45 @@
    environment. Child environments inherit this exact immutable value.
 
    RESILIENT: a wrong config must never kill a running session. `load-config-raw`
-   already loads leniently; if the derived snapshot still fails the contract
-   (`:vis/invalid-config`) we log ONE warning and reuse the last-good snapshot
-   (or a minimal deny-safe `{}` snapshot on first load) instead of throwing. The
-   next `save!`/`/reload` with a valid config replaces it."
+   already loads leniently; if BUILDING the snapshot still fails for ANY reason
+   — a `:vis/invalid-config` contract violation, an internal derived-policy
+   assertion, or an unexpected error while resolving paths — we log ONE warning
+   and reuse the last-good snapshot (or a minimal deny-safe `{}` snapshot on first
+   load) instead of throwing. Nothing here ever re-throws. The next `save!`/`/reload`
+   with a valid config replaces it."
   []
   (try (let [snap (security-policy/snapshot (or (config/load-config-raw) {}))]
          (reset! last-good-security-snapshot snap)
          snap)
-       (catch clojure.lang.ExceptionInfo e
-         (if (= :vis/invalid-config (:type (ex-data e)))
-           (do (tel/log! {:level :warn
-                          :id ::security-config-invalid
-                          :data {:problems (:problems (ex-data e))}
-                          :msg (str "security config failed the contract; "
-                                    (if @last-good-security-snapshot
-                                      "keeping the last-good policy"
-                                      "falling back to a deny-safe policy")
-                                    " so the session survives")})
-               (let [problems (try (config/config-problems) (catch Throwable _ nil))]
-                 (assoc (or @last-good-security-snapshot (security-policy/snapshot {}))
-                   :config-error
-                   {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
-                    "message" (str "The live config on disk failed the contract; "
-                                   (if @last-good-security-snapshot
-                                     "the last-good policy is in effect."
-                                     "a deny-safe policy is in effect."))
-                    "problems" (if (seq problems) (vec problems) [(ex-message e)])
-                    "hint" (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
-                                "/reload. Keys are snake_case strings; the config is closed, "
-                                "so unknown or renamed keys are rejected.")})))
-           (throw e)))))
+       (catch Throwable e
+         (let
+           [invalid? (and (instance? clojure.lang.ExceptionInfo e)
+                          (= :vis/invalid-config (:type (ex-data e))))]
+           (tel/log! {:level :warn
+                      :id ::security-config-invalid
+                      :data
+                      (if invalid? {:problems (:problems (ex-data e))} {:error (ex-message e)})
+                      :msg (str "security config could not be applied; "
+                                (if @last-good-security-snapshot
+                                  "keeping the last-good policy"
+                                  "falling back to a deny-safe policy")
+                                " so the session survives")})
+           (let
+             [problems (try (config/config-problems) (catch Throwable _ nil))
+              base (or @last-good-security-snapshot
+                       (try (security-policy/snapshot {}) (catch Throwable _ {})))]
+
+             (assoc base
+               :config-error {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
+                              "message" (str "The live config on disk could not be applied; "
+                                             (if @last-good-security-snapshot
+                                               "the last-good policy is in effect."
+                                               "a deny-safe policy is in effect."))
+                              "problems" (if (seq problems) (vec problems) [(ex-message e)])
+                              "hint"
+                              (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
+                                   "/reload. Keys are snake_case strings; the config is closed, "
+                                   "so unknown or renamed keys are rejected.")}))))))
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
@@ -9700,28 +9776,30 @@
 
          (security-policy/access-view security-config live-roots)))
 
-     net-cfg
-     (:network security-config)
-
-     ;; Network is always available through the jail policy when the jail is on.
-     ;; The jail is OFF by default; `jail.enabled: true` opts in. There is no
-     ;; independent network toggle.
-     net-on?
-     true
-
-     network-opts
-     {:enabled? net-on?
-      :allowed-domains (:allowed-domains net-cfg)
-      :denied-domains (:denied-domains net-cfg)
-      :exclude-domains (:exclude-domains net-cfg)
-      :allow-private (:allow-private net-cfg)
-      :rules (:rules net-cfg)}
-
      jail-config
      (:process-jail security-config)
 
      jail-enabled?
      (not (:disabled? jail-config))
+
+     net-cfg
+     (:network security-config)
+
+     ;; Host sockets stay available to the interpreter; the jail is the ONE
+     ;; network switch. With the jail OFF there is no egress proxy AND no
+     ;; in-interpreter domain guard — the sandbox network is unconfined, the
+     ;; same all-or-nothing containment the OS process jail gives subprocesses.
+     net-on?
+     true
+
+     network-opts
+     {:enabled? net-on?
+      :jail-enabled? jail-enabled?
+      :allowed-domains (:allowed-domains net-cfg)
+      :denied-domains (:denied-domains net-cfg)
+      :exclude-domains (:exclude-domains net-cfg)
+      :allow-private (:allow-private net-cfg)
+      :rules (:rules net-cfg)}
 
      ;; One shared gateway proxy serves every environment. Unguessable tokens
      ;; attribute requests to this environment's immutable policy snapshot.

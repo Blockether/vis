@@ -361,6 +361,38 @@ export class GatewayClient {
     );
   }
 
+  // ── Queue (shared server-side backlog, same as the TUI) ─────────
+  // A busy-time submitTurn is enqueued by the gateway and mirrored to every
+  // channel via turn.queued/.updated/.deleted/.drained. These edit that backlog.
+
+  /** Edit a still-queued turn's prompt before it starts. */
+  updateQueuedTurn(sid: string, tid: string, request: string): Promise<unknown> {
+    return this.request(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
+      { request },
+    );
+  }
+
+  /** Drop a queued turn before it ever runs. */
+  deleteQueuedTurn(sid: string, tid: string): Promise<unknown> {
+    return this.request(
+      'DELETE',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
+    );
+  }
+
+  /**
+   * Resume a queue the gateway paused after a provider failure — retries the
+   * held head immediately and clears the failure counter/circuit breaker.
+   */
+  resumeQueue(sid: string): Promise<unknown> {
+    return this.request(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(sid)}/resume-queue`,
+    );
+  }
+
   // ── SSE live stream ─────────────────────────────────────────────
   //
   // GET /v1/sessions/:sid/events streams `data: {json}\n\n` frames. We read the

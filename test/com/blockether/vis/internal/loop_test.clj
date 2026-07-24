@@ -227,26 +227,27 @@
       (require 'com.blockether.vis.internal.loop :reload)
       (let
         [cfg
-         (atom {"sandbox" true
-                "workspace" {"filesystem"
-                             [{"id" "full" "path" "/approved/full"}
-                              {"id" "read" "path" "/approved/read" "access" "read-only"}
-                              {"id" "cache" "path" "/approved/cache" "search" false}]}
-                "jail" {"filesystem" {"allow" ["full" "read" "cache"]} "inbound-ports" [5273]}
-                "network" {"allowed-domains" ["approved.example"]}})
+         (atom
+           {"workspace" {"filesystem" [{"id" "full" "path" "/approved/full"}
+                                       {"id" "read" "path" "/approved/read" "access" "read-only"}
+                                       {"id" "cache" "path" "/approved/cache" "search" false}]}
+            "jail"
+            {"enabled" true "filesystem" {"allow" ["full" "read" "cache"]} "inbound_ports" [5273]}
+            "network" {"allowed_domains" ["approved.example"]}})
 
          snapshot
          (with-redefs [config/load-config-raw #(deref cfg)]
            ((ns-resolve 'com.blockether.vis.internal.loop 'security-config-snapshot)))]
 
         ;; This models a tool editing writable vis.yml after environment creation.
-        (reset! cfg {"sandbox" false
-                     "workspace" {"filesystem"
+        (reset! cfg {"workspace" {"filesystem"
                                   [{"id" "full" "path" "/escaped/full"}
                                    {"id" "read" "path" "/escaped/read" "access" "read-only"}
                                    {"id" "cache" "path" "/escaped/cache" "search" false}]}
-                     "jail" {"filesystem" {"allow" ["full" "read" "cache"]} "inbound-ports" [9999]}
-                     "network" {"allowed-domains" ["escaped.example"]}})
+                     "jail" {"enabled" false
+                             "filesystem" {"allow" ["full" "read" "cache"]}
+                             "inbound_ports" [9999]}
+                     "network" {"allowed_domains" ["escaped.example"]}})
         (expect (= true (:sandbox snapshot)))
         (expect (= ["/approved/full" "/approved/cache"]
                    (get-in snapshot [:process-jail :allow-read-write])))

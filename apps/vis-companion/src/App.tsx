@@ -97,7 +97,7 @@ export function App() {
       const route = parseRoute(hash);
       if (route.name === 'session') {
         const conn =
-          (route.gw && conns.find((c) => c.id === route.gw || c.url === route.gw)) || active;
+          (route.gw && conns.find((c) => c.id === route.gw)) || active;
         if (conn) {
           void openGatewaySession(conn, route.sid);
           return;

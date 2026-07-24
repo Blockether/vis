@@ -362,7 +362,7 @@ vis.extension(
 ```
 
 The `preset` flows into the router the same way a built-in provider's does, so
-adding `acme` to `~/.vis/config.edn`'s `:providers` (or the TUI *Add Provider*
+adding `acme` to `~/.vis/config.yml`'s `providers` (or the TUI *Add Provider*
 picker, which lists any labelled provider) makes the model call it. Callable
 slots — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`,
 `refresh_token_fn`, `auth_fn`, `auth_prompt_fn`, `enrich_models_fn`,

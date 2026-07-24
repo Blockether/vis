@@ -41,10 +41,10 @@ files under a `.vis/` directory:
 | `~/.vis/APPEND_SYSTEM.md` | **Appends** to the system prompt (global) |
 | `<project>/.vis/APPEND_SYSTEM.md` | **Appends** to the system prompt (project, rendered last) |
 
-Replacement precedence: project `SYSTEM.md` > global `SYSTEM.md` > the EDN
-config `:system-prompt {:replace? true}` form > the built-in core prompt.
+Replacement precedence: project `SYSTEM.md` > global `SYSTEM.md` > the
+config `system_prompt: {is_replace: true}` form > the built-in core prompt.
 Append files always apply, global first, project last — the nearest text sits
-closest to the conversation. The EDN `:system-prompt` string form (see
+closest to the conversation. The `system_prompt` string form (see
 [Configuration](configuration.md)) still works and is appended before the
 `APPEND_SYSTEM.md` files.
 

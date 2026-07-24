@@ -294,6 +294,11 @@
      auto_compress_above  soft guardrail threshold for request size
      turn_total_tokens    cumulative input this turn (billing, NOT a
                           per-call limit — may exceed the limit safely)
+     hint                 throttled compaction nudge, present ONLY when the
+                          handled context has grown past `auto_compress_above`
+                          (a bigger task) — the actionable partner to the passive
+                          ceiling numbers; added by `session-view` from
+                          `over-budget-hint`, self-silences after 3 turns
    Returns nil until a request has actually been measured (req <= 0), so
    the first iter of a turn shows nothing rather than a bogus 0%."
   [request-tokens window-tokens turn-tokens fold-cap]
@@ -752,6 +757,40 @@
        (seq now)
        (assoc "now" now)))))
 
+(defn over-budget-hint
+  "Throttled compaction nudge for `session_utilization`, added ONLY when the
+   handled context has grown past the operating ceiling — a BIGGER task, not the
+   1M hard per-call max. Trigger: `last_request_tokens` > `auto_compress_above`
+   (the 144k soft guardrail; the floor of the fold card's `% of budget`). It is the
+   actionable partner to the passive `auto_compress_above`/`headroom_tokens`
+   numbers already in the map: those state the ceiling, this says do something.
+
+   Throttled to AT MOST 3 turns from `since-turn` (the turn it first fired,
+   armed once in `stamp-utilization!`), so a long over-budget stretch nudges
+   three times and then goes quiet instead of nagging every turn. Dropping back
+   under the ceiling clears `since-turn`, so a later re-crossing re-arms a fresh
+   3-turn window. Reuses `fmt-toks` — the SAME estimator spelling as the fold
+   card and the `now` budget, so nothing reads two ways. Pure; returns nil when
+   not over budget, unarmed, or past the 3-turn window (never breaks the line)."
+  [util current-turn since-turn]
+  (let
+    [req
+     (long (or (get util "last_request_tokens") 0))
+
+     cap
+     (long (or (get util "auto_compress_above") 0))]
+
+    (when (and (pos? cap)
+               (> req cap)
+               since-turn
+               current-turn
+               (< (- (long current-turn) (long since-turn)) 3))
+      (str "handled context "
+           (fmt-toks req)
+           " over the "
+           (fmt-toks cap)
+           " compaction budget — fold settled turns to compact"))))
+
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
    `session_*` view.
@@ -784,10 +823,18 @@
                     (get ctx "engine_protected_iter_scopes")
                     (get ctx "engine_turn_weights")))
 
+      hint
+      (over-budget-hint (get ctx "engine_utilization")
+                        (get ctx "session_turn")
+                        (get ctx "engine_overbudget_hint_turn"))
+
       util
       (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
         (seq budget)
-        (merge budget))]
+        (merge budget)
+
+        hint
+        (assoc "hint" hint))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)

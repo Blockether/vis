@@ -3080,6 +3080,19 @@
                         (and awaiting-cancel? sid)
                         (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
 
+(reg-event-db :sync-queue-paused
+              ;; Mirror the gateway's queue.paused / queue.resumed signal into the
+              ;; tab so the Queued strip shows the provider-failure hold. The chunk
+              ;; carries `:queue-paused` (a map while paused, nil once resumed).
+              (fn [db [_ workspace-id chunk]]
+                (let [workspace-id (or workspace-id (current-tab-id db))]
+                  (if-not workspace-id
+                    db
+                    (update-tab db
+                                workspace-id
+                                (fn [w]
+                                  (assoc w :queue-paused (:queue-paused chunk))))))))
+
 (reg-event-db :sync-queued-turn
               ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
               ;; forwarded through the gateway sync/attach subscriptions as a :queue-sync
@@ -3949,6 +3962,10 @@
                     :queue-sync
                     (try (dispatch [:sync-queued-turn workspace-id chunk]) (catch Throwable _ nil))
 
+                    ;; Queue paused/resumed after a provider failure.
+                    :queue-paused
+                    (try (dispatch [:sync-queue-paused workspace-id chunk]) (catch Throwable _ nil))
+
                     ;; The turn actually STARTED running — re-seed
                     ;; this tab's elapsed clock from the gateway's
                     ;; canonical started_at; never a progress chunk.
@@ -4076,6 +4093,10 @@
                     ;; queue; never a progress chunk.
                     :queue-sync
                     (try (dispatch [:sync-queued-turn workspace-id chunk]) (catch Throwable _ nil))
+
+                    ;; Queue paused/resumed after a provider failure.
+                    :queue-paused
+                    (try (dispatch [:sync-queue-paused workspace-id chunk]) (catch Throwable _ nil))
 
                     ;; The turn actually STARTED running — re-seed
                     ;; this tab's elapsed clock from the gateway's

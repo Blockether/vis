@@ -108,8 +108,11 @@
    one channel shows up in every sibling. `turn.queued.drained` marks the
    queue head leaving the queue because the gateway auto-STARTED it, so
    mirrors drop the entry and a replayed history nets to zero
-   (`turn.queued` … `turn.queued.drained`)."
-  #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"})
+   (`turn.queued` … `turn.queued.drained`). `queue.paused`/`queue.resumed` carry
+   the provider-health lane state (held count, breaker) so every sibling shows
+   the same paused banner and unpauses together."
+  #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained" "queue.paused"
+    "queue.resumed"})
 
 (def turn-meta-keys
   "Wire keys of a settled turn's META (usage/routing/timing) — the fields

@@ -29,11 +29,15 @@ With `jail.enabled: true` the OS process jail and forced gateway egress path are
 active for managed child processes on:
 
 - **macOS** — Seatbelt via the system `sandbox-exec` (ships with the OS, zero install).
-- **Linux** — bubblewrap (`bwrap`) mount + network namespaces; install `bubblewrap`
-  (e.g. `apt-get install bubblewrap`). Filesystem confinement and network-off are
-  kernel-enforced. Per-host/verb *filtered* egress through the proxy still needs
-  seccomp, so a proxy-restricted network is denied ENTIRELY (safe) on Linux rather
-  than left open; an explicitly-open network shares the host namespace.
+- **Linux** (incl. WSL2) — bubblewrap (`bwrap`) mount + network namespaces; install
+  `bubblewrap` (e.g. `apt-get install bubblewrap`). Filesystem confinement and
+  network-off are kernel-enforced. Per-host/verb *filtered* egress through the proxy
+  uses **pasta** (from `passt`; `apt-get install passt`): the child gets a private
+  network namespace reaching ONLY the gateway proxy port — exact parity with the
+  macOS "only the proxy port" rule. Without `passt`, filtered egress degrades to
+  no egress at all (safe) with a loud warning. An explicitly-open network (a managed
+  nREPL) shares the host namespace. **WSL2** runs a real Linux kernel and works like
+  any Linux host; **WSL1** has no real namespaces and is reported unenforceable.
 
 If the host cannot enforce a jail (e.g. Linux without `bwrap`, or Windows), a
 requested `jail.enabled: true` **fails loud** — a one-time stderr WARNING that
@@ -47,6 +51,119 @@ Omitting `jail.enabled` (or setting it `false`) leaves confinement off. Setting 
 `jail.enabled: false` does not turn the in-process GraalPy context into a trusted
 context. `python_execution` still has its Truffle filesystem and host/socket
 restrictions.
+
+## Installing the sandbox dependencies
+
+**macOS** — nothing to install. `sandbox-exec` ships with the OS.
+
+**Linux (incl. WSL2)** — two packages:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install -y bubblewrap passt
+# Fedora / RHEL
+sudo dnf install -y bubblewrap passt
+# Arch
+sudo pacman -S bubblewrap passt
+```
+
+- `bubblewrap` (`bwrap`) — required for **any** Linux jail (filesystem confinement +
+  network-off). Without it, `jail.enabled: true` fails loud and children run unconfined.
+- `passt` (provides `pasta`) — required only for *filtered* egress through the proxy.
+  Without it, a policy that would allow filtered egress instead denies all egress
+  (safe) and warns once.
+
+Verify:
+
+```bash
+bwrap --version
+pasta --version
+```
+
+Unprivileged user namespaces must be enabled — the default on modern kernels. If
+`bwrap` fails with `setting up uid map: Permission denied`, enable them:
+
+```bash
+sudo sysctl -w kernel.unprivileged_userns_clone=1   # older Debian/Ubuntu kernels
+```
+
+**WSL2** runs a real Linux kernel and works like any Linux host. **WSL1** has no
+namespaces and is reported unenforceable (the jail fails loud).
+
+## Running the gateway on a VPS (dedicated user)
+
+Run the gateway under its **own unprivileged user**. The jail is the second layer;
+the OS user is the first — a jail escape is then confined to a low-privilege account
+that owns nothing but the workspace. Keep this user distinct from your login user,
+so `deny-read` and the workspace roots protect something real (a jail rooted at the
+operator's `$HOME` protects less).
+
+1. Create the user and workspace:
+
+```bash
+sudo adduser --disabled-password --gecos "" visgw
+sudo -u visgw mkdir -p /home/visgw/workspace /home/visgw/.vis
+```
+
+2. Install the sandbox dependencies once, as root:
+
+```bash
+sudo apt-get install -y bubblewrap passt
+```
+
+3. Install vis for that user (native binary at e.g. `/usr/local/bin/vis`, or the
+   JVM build) and write a project config with the jail **on**:
+
+```bash
+sudo -u visgw tee /home/visgw/workspace/vis.yml >/dev/null <<'YAML'
+jail:
+  enabled: true
+network:
+  allowed_domains: ["api.github.com", "*.pypi.org"]
+YAML
+```
+
+4. Run the gateway as a systemd service under that user:
+
+```ini
+# /etc/systemd/system/vis-gateway.service
+[Unit]
+Description=vis gateway
+After=network.target
+
+[Service]
+User=visgw
+Group=visgw
+WorkingDirectory=/home/visgw/workspace
+ExecStart=/usr/local/bin/vis gateway start --host 0.0.0.0 --port 7890 --require-token
+Restart=on-failure
+# The gateway itself stays UNCONFINED; it applies the jail to its CHILDREN.
+# Do NOT wrap this unit in its own bwrap/seccomp/NoNewPrivileges sandbox —
+# that would break the per-child bwrap + pasta invocation.
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now vis-gateway
+```
+
+5. Expose it safely. The control plane on port 7890 is bearer-token authenticated
+   (`--require-token`), but it is your management surface — keep it behind TLS + a
+   firewall or a VPN, not raw on the public internet. For pairing a phone/remote
+   client and the token model, see [Gateway](gateway.md). A jailed child can **never**
+   dial this port: the gateway's own port is always subtracted from what a child may
+   reach, even under `allow-loopback`.
+
+Notes:
+
+- The egress proxy and its MITM CA live **inside** the gateway process. Nothing is
+  written to the host trust store; each session gets an ephemeral CA.
+- `bwrap` and `pasta` are invoked per child spawn — they run no daemon of their own.
+- Leave the systemd unit itself unsandboxed; the jail is applied downward to model
+  children, not to the gateway.
 
 ## Filesystem policy
 
@@ -124,13 +241,13 @@ managed language processes, and GraalPy HTTP clients.
 
 ```yaml
 network:
-  allowed-domains:
+  allowed_domains:
     - "*"
-  denied-domains:
+  denied_domains:
     - evil.example
-  exclude-domains:
+  exclude_domains:
     - pinned.example
-  allow-private: false
+  allow_private: false
   rules:
     - host: api.example.com
       access: read-only
@@ -143,7 +260,7 @@ network:
       ports: [5432]           # only Postgres; every other port on this host is denied
 
 jail:
-  inbound-ports:
+  inbound_ports:
     - 5273
 ```
 
@@ -155,13 +272,13 @@ CONNECT and the SOCKS5 lane) — e.g. `ports: [22, 443]` allows only ssh + https
 to a host, `ports: [5432]` only Postgres. A rule with no `ports` allows any port
 (the default); a rule that lists only `ports` leaves verbs unrestricted.
 
-`denied-domains` blocks a host by BOTH its name and its resolved IP: a concrete
+`denied_domains` blocks a host by BOTH its name and its resolved IP: a concrete
 denied name (not a `*.` glob) is resolved to its addresses, and any dial whose
 destination resolves to one of those addresses is refused at the connect
 chokepoint — so a child cannot bypass the denylist by resolving the name itself
 and dialing the raw IP literal. Glob entries (`*.evil.com`) still match by name
 only (a wildcard has no single IP to resolve). For the hardest boundary, use a
-strict `allowed-domains` allowlist — it is enforced against IP-literal targets
+strict `allowed_domains` allowlist — it is enforced against IP-literal targets
 too (a non-listed IP is denied) — and combine it with the always-on SSRF floor,
 which validates every *resolved* address (loopback reserved ports,
 link-local/metadata, private ranges) and cannot be bypassed by IP literal or DNS
@@ -170,7 +287,7 @@ identically to HTTP(S) and the SOCKS5 lane — both share one host gate.
 
 HTTPS verb and path enforcement uses a gateway-owned ephemeral CA and TLS
 termination. Common clients receive CA environment variables, and managed JVMs
-receive a temporary PKCS12 truststore. Hosts in `exclude-domains` are opaque TLS
+receive a temporary PKCS12 truststore. Hosts in `exclude_domains` are opaque TLS
 tunnels for certificate-pinned or otherwise incompatible clients; host policy
 still applies, but methods, paths, and plaintext network filters cannot be
 inspected there.
@@ -187,10 +304,10 @@ itself) still need an explicit `ProxyCommand`.
 Loopback development services are reachable except Vis's reserved gateway and
 proxy ports. Link-local, cloud metadata, wildcard, and multicast destinations
 are always denied. RFC1918, CGNAT, and IPv6 ULA destinations require
-`allow-private: true`. The proxy resolves and validates addresses before dialing
+`allow_private: true`. The proxy resolves and validates addresses before dialing
 the validated address, preventing DNS-rebinding pivots.
 
-`jail.inbound-ports` permits a confined development server to accept on those
+`jail.inbound_ports` permits a confined development server to accept on those
 ports. Managed nREPL receives only its preselected loopback port and does not
 inherit this general server list.
 
@@ -275,35 +392,37 @@ but a reviewed extension may proxy specific AWS calls." The sandbox supports thi
 because confinement is applied **per spawn**, not ambiently, and the two callers
 take different code paths to the OS.
 
-**Block a command with `jail.deny-exec`.** There is no argv denylist; a command
+**Block a command with `jail.deny_exec`.** There is no argv denylist; a command
 is blocked by forbidding EXECUTION of its binary. List the command names and Vis
-resolves each on `PATH` at config-read, emitting a Seatbelt `(deny process-exec*)`
-for **every** matching executable — kernel-enforced, no leaky argv parsing:
+resolves each on `PATH` at config-read, then the jail emits a kernel exec-block for
+**every** matching executable — a Seatbelt `(deny process-exec*)` on macOS, and on
+Linux a `/dev/null` mask over the binary at every bin-dir alias (`/usr/bin`, `/bin`,
+…) so the PATH lookup finds no runnable copy. Kernel-enforced on both, no leaky argv parsing:
 
 ```yaml
 jail:
-  deny-exec: [curl, wget, ssh]
+  deny_exec: [curl, wget, ssh]
 ```
 
 An absolute or `~`-rooted entry (e.g. `/opt/homebrew/bin/aws`) is denied
 verbatim; an unresolvable name is a no-op. Every process spawned through the jail
 — the managed shell (`shell_run` / `shell_bg`), agent tool commands, managed
 REPLs, and project test runners — inherits the profile, so `curl …` fails to
-exec with `Operation not permitted`.
+exec (`Operation not permitted` on macOS, exit 126 on Linux).
 
 This overrides the jail's blanket exec allow. Note that denying **read** on a
 binary would not stop its execution on macOS (the kernel maps an allowed binary
-without a file-read check) — `deny-exec` is what actually blocks the command.
+without a file-read check) — `deny_exec` is what actually blocks the command.
 
-**`deny-exec` is convenience, not containment.** It blocks a *named* binary and
+**`deny_exec` is convenience, not containment.** It blocks a *named* binary and
 its symlinks — not the *capability*. An interpreter already on the allow-list
 substitutes trivially: with `curl` denied, `python3 -c "import urllib.request; …"`
 or `bash`'s `/dev/tcp` do the same job, and a script the child writes into a
-writable root and runs is never on your list. Treat `deny-exec` as a guardrail
+writable root and runs is never on your list. Treat `deny_exec` as a guardrail
 that stops the obvious/lazy invocation and trims the tool surface — the real
 egress boundary is the **network** layer (net-off, or proxy-filtered
 allow-domains + verb rules), which contains *whatever* binary tries to reach out.
-Never rely on `deny-exec` alone to keep a capability away from the child.
+Never rely on `deny_exec` alone to keep a capability away from the child.
 
 **Re-allow it inside a trusted extension.** A Python extension runs in its own
 context with real process creation, and its subprocesses are **not** routed
@@ -332,7 +451,7 @@ def aws_s3_ls(bucket):
         # Raising is the failure path — the message surfaces to the model.
         raise ValueError(f"bucket {bucket!r} not in allowlist {sorted(_ALLOWED_BUCKETS)}")
     # Runs UNCONFINED: this subprocess is not routed through wrap-argv, so it is
-    # never sandbox-exec-wrapped and the jail's deny-exec on the aws binary
+    # never sandbox-exec-wrapped and the jail's deny_exec on the aws binary
     # never applies here. argv form (no shell) — the model never shapes a string.
     out = subprocess.run(
         ["aws", "s3", "ls", f"s3://{bucket}"],
@@ -386,11 +505,12 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
   contexts have real filesystem, network, inherited environment, threads, and
   process creation. They have no arbitrary Java/native/polyglot interop. Review
   project `.vis/extensions/` with the same care as executable build files.
-- The OS enforcer is implemented on macOS (Seatbelt) and Linux (bubblewrap);
-  Windows and other hosts have none. There the gateway policy remains useful but
-  is not a kernel boundary, and a requested `jail.enabled: true` fails loud rather than
-  pretending to confine. On Linux, filtered egress through the proxy is not yet
-  kernel-enforced (needs seccomp), so a proxy-restricted network is denied entirely.
+- The OS enforcer is implemented on macOS (Seatbelt) and Linux/WSL2 (bubblewrap +
+  pasta); Windows and WSL1 have none. There the gateway policy remains useful but
+  is not a kernel boundary, and a requested `jail.enabled: true` fails loud rather
+  than pretending to confine. On Linux, filtered egress is kernel-enforced via pasta
+  when `passt` is installed (only the gateway proxy port reachable); without it,
+  a proxy-restricted network is denied entirely (safe).
 
 ## Reload, inheritance, and model context
 
@@ -430,7 +550,7 @@ The focused suites cover:
 - PTY/background input and attach bridge behavior;
 - managed process launch, fail-closed session lookup, CA/truststore injection;
 - config validation and `jail.enabled: true` opt-in / omitted-or-`false` as the off default;
-- Linux bubblewrap argv compilation (every OS) and real bwrap filesystem containment (Linux CI);
+- Linux bubblewrap argv compilation (every OS), WSL1/WSL2 detection, and real bwrap filesystem containment + `deny_exec` exec-block + pasta filtered egress (only the proxy port reachable; control-plane and internet blocked) on Linux CI;
 - fail-loud passthrough + reason when a jail is requested on a host that cannot enforce it.
 
 Run the relevant namespaces through the Clojure language pack or the full macOS

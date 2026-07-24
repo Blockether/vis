@@ -15,6 +15,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -1327,7 +1328,51 @@
 ;; Turn execution
 ;; =============================================================================
 
-(declare drain-next-queued! queued-after-cancel?)
+(declare drain-next-queued!
+         queued-after-cancel?
+         first-queued-turn
+         pause-queue!
+         resume-queue!
+         schedule-auto-resume!
+         after-turn-terminal!
+         failure-transient?
+         failure-retry-after-ms
+         re-queue-turn!)
+
+(def ^:private QUEUE_TUNING_DEFAULTS
+  "Built-in queue failure-handling tuning. Every value is overridable per-gateway
+   via the `queue:` block in vis.yml (snake_case string keys → these kebab
+   keywords); `queue-tuning` merges the validated config over these and a
+   `/reload` picks it up without a recompile.
+
+     :breaker-threshold   consecutive failure-pauses after which the breaker trips
+                          OPEN — it stops auto-retrying the head and holds the
+                          whole backlog for an explicit user resume, so a sick
+                          provider can't burn the backlog on a backoff timer.
+     :retry-backoff-ms    exponential backoff (ms) for auto-retrying a queue head
+                          after a TRANSIENT failure, indexed by consecutive fails.
+     :halfopen-probe-ms   half-open probe delay once the breaker is OPEN: auto-
+                          resume ONE head retry this long after each pause so a
+                          lasting outage still self-heals, probed once a minute.
+     :retry-after-cap-ms  upper clamp on a provider-supplied Retry-After so a
+                          bogus/huge value can't wedge the queue for hours."
+  {:breaker-threshold 3
+   :retry-backoff-ms [2000 8000 30000]
+   :halfopen-probe-ms 60000
+   :retry-after-cap-ms 120000})
+
+(defn- queue-tuning
+  "The effective queue tuning: the validated `queue:` config slice merged over
+   [[QUEUE_TUNING_DEFAULTS]]. Read lazily from `config/current-config`, so an
+   operator tunes the breaker/backoff in vis.yml and a `/reload` applies it; an
+   unset key keeps its default."
+  []
+  (merge QUEUE_TUNING_DEFAULTS (:message-queue (config/current-config))))
+
+(defn- queue-breaker-threshold ^long [] (long (:breaker-threshold (queue-tuning))))
+(defn- queue-retry-backoff-ms [] (:retry-backoff-ms (queue-tuning)))
+(defn- queue-halfopen-probe-ms ^long [] (long (:halfopen-probe-ms (queue-tuning))))
+(defn- queue-retry-after-cap-ms ^long [] (long (:retry-after-cap-ms (queue-tuning))))
 
 (def ^:private TURN_STALL_TIMEOUT_MS
   "Daemon backstop: force-cancel a turn wedged with NO chunk activity for this
@@ -1577,10 +1622,13 @@
         ;; so it drains the moment this worker unwinds (queued-after-cancel?).
         ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
         ;; is cancelled either way, so distinguish on the stall flag and drain.
-        (when (or stalled?
-                  (not (cancellation/cancelled? cancel-token))
-                  (queued-after-cancel? sid tid))
-          (drain-next-queued! sid)))
+        (after-turn-terminal! sid
+                              tid
+                              {:failed? (= "failed" status)
+                               :transient? (failure-transient? {:stalled? stalled? :result result})
+                               :cancel-token cancel-token
+                               :stalled? stalled?
+                               :retry-after-ms (failure-retry-after-ms {:result result})}))
       (catch Throwable t
         (let
           [stalled?
@@ -1619,10 +1667,13 @@
                           eval
                           (assoc :eval eval)))
           (append-event! sid "turn.failed" {:turn_id tid :status "failed"})
-          (when (or stalled?
-                    (not (cancellation/cancelled? cancel-token))
-                    (queued-after-cancel? sid tid))
-            (drain-next-queued! sid)))))))
+          (after-turn-terminal! sid
+                                tid
+                                {:failed? true
+                                 :transient? (failure-transient? {:stalled? stalled? :throwable t})
+                                 :cancel-token cancel-token
+                                 :stalled? stalled?
+                                 :retry-after-ms (failure-retry-after-ms {:throwable t})}))))))
 
 
 (defn- launch-turn-worker!
@@ -1811,6 +1862,186 @@
                (or (zero? (long last-cancel))
                    (>= (long (or (:queued_at head) 0)) (long last-cancel))))
       (drain-next-queued! sid))))
+
+(defn- failure-transient?
+  "Classify a terminal FAILURE as transient (rate-limit / transport / stream
+   stall) vs terminal (auth, bad-request, tool-schema, empty-content). A
+   transient failure earns a backoff auto-retry of the head; a terminal one is
+   held for an explicit resume. Accepts `{:stalled? :throwable :result}` — one
+   of the three, whichever the failing path carries."
+  [{:keys [stalled? throwable result]}]
+  (boolean (cond stalled? true
+                 throwable (or (provider-error/transport-throwable? throwable)
+                               (contains? #{:rate-limit :transport}
+                                          (provider-error/provider-error-kind throwable)))
+                 :else (let [err (:error result)]
+                         (or (nil? err)
+                             (contains? #{:rate-limit :transport}
+                                        (provider-error/provider-error-kind err)))))))
+
+(defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
+
+(defn- failure-retry-after-ms
+  "Best-effort provider Retry-After, in ms, for a transient failure — read from an
+   explicit `:retry-after-ms`/`:retry_after_ms` on the error data, or a numeric
+   `retry_after`/`retryAfter` (seconds) in the provider's JSON error body. nil when
+   absent (the caller falls back to the fixed backoff). Header-level Retry-After is
+   not surfaced by the provider layer today, so the error data/body is the only
+   source. Accepts `{:throwable :result}` — whichever the failing path carries."
+  [{:keys [throwable result]}]
+  (let
+    [err
+     (or throwable (:error result))
+
+     data
+     (ex-data err)
+
+     direct
+     (or (:retry-after-ms data) (:retry_after_ms data))
+
+     body
+     (some-> (:body data)
+             str)
+
+     secs
+     (when body
+       (some-> (re-find #"(?i)retry[_-]?after\"?\s*[:=]\s*\"?(\d+(?:\.\d+)?)" body)
+               second
+               parse-double))]
+
+    (cond direct (long direct)
+          secs (long (* 1000.0 (double secs)))
+          :else nil)))
+
+(defn- re-queue-turn!
+  "Reset a just-FAILED turn back to QUEUED at the head of `sid`'s backlog so a
+   transient failure RETRIES the same message rather than advancing past it (and
+   losing it). Clears the stale failure fields and re-stamps `:queued_at`. No-op
+   when the turn is gone. The tid keeps its original front slot in `:turn-order`,
+   so `first-queued-turn` re-selects it ahead of the rest of the backlog."
+  [sid tid]
+  (swap! registry update
+    sid
+    (fn [entry]
+      (if (and entry (get-in entry [:turns tid]))
+        (update-in entry
+                   [:turns tid]
+                   (fn [turn]
+                     (-> turn
+                         (dissoc :content :error :eval :completed_at :duration_ms)
+                         (assoc :status "queued"
+                                :queued_at (System/currentTimeMillis)))))
+        entry))))
+
+(defn- schedule-auto-resume!
+  "After `delay-ms`, auto-resume `sid` IFF it is STILL paused at the same
+   `gen`. Any newer failure or explicit resume bumps `:queue-paused :gen`, so
+   this timer becomes a no-op — no double drain, no resurrecting a stale pause."
+  [sid gen delay-ms]
+  (future (let [d (long delay-ms)]
+            (try (Thread/sleep (max 0 d)) (catch InterruptedException _ nil)))
+          (when (= gen (get-in @registry [sid :queue-paused :gen]))
+            (resume-queue! sid {:auto? true}))))
+
+(defn- pause-queue!
+  "Hold `sid`'s queued backlog after a FAILURE instead of cascading the next
+   message into a sick provider. Bumps the consecutive-failure counter, stamps a
+   `:queue-paused` marker, emits `queue.paused`, and — for a TRANSIENT failure —
+   schedules ONE auto-resume, honouring a provider `retry-after-ms` when present
+   (clamped by [[queue-retry-after-cap-ms]]), else the exponential backoff. At/above
+   [[queue-breaker-threshold]] the breaker is OPEN: it drops the short backoff and
+   probes once per [[queue-halfopen-probe-ms]] so a lasting outage still self-heals
+   without a human. A TERMINAL failure schedules nothing — it waits for a resume."
+  [sid {:keys [reason transient? retry-after-ms]}]
+  (let [captured (volatile! nil)]
+    (swap! registry update
+      sid
+      (fn [entry]
+        (when entry
+          (let
+            [held (count-queued entry)
+             fails (inc (long (:queue-fails entry 0)))
+             gen (inc (long (get-in entry [:queue-paused :gen] 0)))]
+
+            (vreset! captured {:held held :fails fails :gen gen})
+            (-> entry
+                (assoc :queue-fails fails)
+                (assoc :queue-paused {:reason reason
+                                      :is_transient (boolean transient?)
+                                      :held held
+                                      :fails fails
+                                      :gen gen
+                                      :at (System/currentTimeMillis)}))))))
+    (when-let [{:keys [held fails gen]} @captured]
+      (when (pos? (long held))
+        (let
+          [breaker-open? (>= (long fails) (queue-breaker-threshold))
+           backoff (queue-retry-backoff-ms)
+           delay-ms (when transient?
+                      (long
+                        (cond retry-after-ms (min (long retry-after-ms) (queue-retry-after-cap-ms))
+                              breaker-open? (queue-halfopen-probe-ms)
+                              :else (nth backoff (min (dec (long fails)) (dec (count backoff)))))))
+           retry-at (when delay-ms (+ (System/currentTimeMillis) (long delay-ms)))]
+
+          (append-event! sid
+                         "queue.paused"
+                         {:reason reason
+                          :held held
+                          :fails fails
+                          :is_transient (boolean transient?)
+                          :is_breaker_open breaker-open?
+                          :retry_at retry-at})
+          (when delay-ms (schedule-auto-resume! sid gen delay-ms)))))))
+
+(defn resume-queue!
+  "Clear a paused backlog and start its head. `:auto?` marks a breaker/backoff
+   auto-resume; an explicit (user) resume ALSO resets the consecutive-failure
+   counter so the breaker re-arms. No-op when the queue is not paused. Returns
+   the started turn, or nil."
+  [sid {:keys [auto?]}]
+  (let [was (volatile! false)]
+    (swap! registry update
+      sid
+      (fn [entry]
+        (when entry
+          (when (:queue-paused entry) (vreset! was true))
+          (cond-> (dissoc entry :queue-paused)
+            (not auto?)
+            (dissoc :queue-fails)))))
+    (when @was
+      (append-event! sid "queue.resumed" {:is_auto (boolean auto?)})
+      (drain-next-queued! sid))))
+
+(defn queue-paused-info
+  "The live `:queue-paused` marker for `sid` (`{:reason :held :fails :gen …}`),
+   or nil when the queue is running."
+  [sid]
+  (get-in @registry [sid :queue-paused]))
+
+(defn- after-turn-terminal!
+  "Post-terminal queue decision, replacing the old blind drain-on-both-paths.
+   Clean success/suspend advances the backlog and re-arms the breaker. A TRANSIENT
+   failure RE-QUEUES the failed message at the head and PAUSES — the backoff/breaker
+   auto-resume then retries THAT same message, so a sick provider never burns the
+   backlog and no message is skipped. A TERMINAL failure (auth/bad-request) is dead:
+   it holds the REST for an explicit resume. A user cancel leaves the backlog queued,
+   except the explicit \"stop that, run THIS\" case (`queued-after-cancel?`)."
+  [sid tid {:keys [failed? transient? cancel-token stalled? retry-after-ms]}]
+  (let
+    [drain?
+     (or stalled? (not (cancellation/cancelled? cancel-token)) (queued-after-cancel? sid tid))]
+    (cond (not drain?) nil
+          (not failed?) (do (swap! registry update sid #(when % (dissoc % :queue-fails)))
+                            (drain-next-queued! sid))
+          transient? (do (re-queue-turn! sid tid)
+                         (pause-queue! sid
+                                       {:reason "provider_unhealthy"
+                                        :transient? true
+                                        :retry-after-ms retry-after-ms}))
+          (first-queued-turn (get @registry sid))
+          (pause-queue! sid {:reason "provider_error" :transient? false})
+          :else nil)))
 
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.

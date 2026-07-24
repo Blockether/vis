@@ -152,6 +152,8 @@
   []
   (and (pj/supported?) (not= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))))
 
+(defn- linux? [] (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
+
 (deftest macos-e2e-runner-contract
   (when (= "1" (System/getenv "VIS_REQUIRE_MACOS_SANDBOX_E2E"))
     (is (pj/supported?) "required macOS E2E runner must provide sandbox-exec")
@@ -358,13 +360,23 @@
            (is (re-find #"-Djava\.net\.preferIPv4Stack=true" (get env "JAVA_TOOL_OPTIONS")))
            (is (re-find #"-Djavax\.net\.ssl\.trustStore=/tmp/repl-ca\.p12"
                         (get env "JAVA_TOOL_OPTIONS")))
-           (if (sandbox-applicable?)
-             (do (is (= "sandbox-exec" (first argv)))
-                 (is (not (re-find #"\(allow network\*\)" (nth argv 2))))
-                 (is (re-find #"network-bind \(local ip\)" (nth argv 2)))
-                 (is (str/includes? (nth argv 2) "network-inbound (local ip \"*:54321\")"))
-                 (is (re-find #"localhost:999" (nth argv 2))))
-             (is (= ["clojure" "-M:x"] argv))))
+           (cond (and (sandbox-applicable?) (linux?))
+                 ;; Linux: proxy-port present => pasta lane wraps bwrap; the managed
+                 ;; nREPL's loopback port is forwarded INBOUND (`-t <port>`) so vis attaches.
+                 (do (is (= "pasta" (first argv)) "linux repl jail must wrap with pasta")
+                     (let
+                       [av (vec argv)
+                        ti (.indexOf ^java.util.List av "-t")]
+
+                       (is (and (pos? ti) (= "54321" (nth av (inc ti))))
+                           "the nREPL loopback port must be pasta -t forwarded inbound")))
+                 (sandbox-applicable?)
+                 (do (is (= "sandbox-exec" (first argv)))
+                     (is (not (re-find #"\(allow network\*\)" (nth argv 2))))
+                     (is (re-find #"network-bind \(local ip\)" (nth argv 2)))
+                     (is (str/includes? (nth argv 2) "network-inbound (local ip \"*:54321\")"))
+                     (is (re-find #"localhost:999" (nth argv 2))))
+                 :else (is (= ["clojure" "-M:x"] argv))))
          (finally (pj/unregister-session-jail! "t-sid")))))
 
 (deftest env-scrub-allowlist
@@ -449,7 +461,6 @@
               (str "ancestor not granted metadata: " anc)))
         (finally (.delete dir))))))
 
-(defn- linux? [] (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
 
 (deftest linux-bwrap-compiler
   ;; Pure argv compilation — runs on EVERY OS (incl. macOS + Linux CI), no kernel
@@ -474,13 +485,13 @@
      off
      (pj/linux-bwrap-args (assoc base :net-enabled? false))
 
-     prox
-     (pj/linux-bwrap-args (assoc base
-                            :net-enabled? true
-                            :proxy-port 51000))
-
      open
      (pj/linux-bwrap-args (assoc base :net-enabled? true))
+
+     dex
+     (pj/linux-bwrap-args (assoc base
+                            :net-enabled? false
+                            :deny-exec ["/bin/sh"]))
 
      pairs
      (partition 2 1 off)]
@@ -503,11 +514,44 @@
 
              (is (and (pos? ai) (pos? di) (< ai di)))))
          (testing "deny-read is masked with an empty tmpfs" (is (some #(= % ["--tmpfs" pp]) pairs)))
-         (testing "net OFF and proxy-restricted both get the --unshare-net kernel wall (safe)"
-           (is (some #{"--unshare-net"} off))
-           (is (some #{"--unshare-net"} prox)))
+         (testing "net OFF gets the --unshare-net kernel wall (safe)"
+           (is (some #{"--unshare-net"} off)))
+         (testing "filtered egress (proxy-port): pasta lane vs no-pasta fallback"
+           (let
+             [no-pasta
+              (with-redefs [pj/linux-pasta nil]
+                (pj/linux-bwrap-args (assoc base
+                                       :net-enabled? true
+                                       :proxy-port 51000)))
+
+              pasta
+              (with-redefs [pj/linux-pasta "/usr/bin/pasta"]
+                (pj/linux-bwrap-args (assoc base
+                                       :net-enabled? true
+                                       :proxy-port 51000)))]
+
+             (is (some #{"--unshare-net"} no-pasta)
+                 "no pasta => filtered egress degrades to the no-egress wall (safe)")
+             (is (not= "pasta" (first no-pasta)))
+             (is (= ["pasta" "-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--" "bwrap"]
+                    (take 11 pasta))
+                 "pasta wraps bwrap, forwarding ONLY the proxy port to the host loopback")
+             (is (nil? (some #{"--unshare-net"} pasta))
+                 "pasta provides the restricted ns; bwrap shares it (no --unshare-net)")
+             (is (some #(= % ["--bind-try" rp]) (partition 2 1 pasta))
+                 "the filesystem jail still applies inside the pasta lane")))
          (testing "an explicitly-open network shares the host namespace (no --unshare-net)"
            (is (nil? (some #{"--unshare-net"} open))))
+         (testing
+           "deny-exec masks the binary with /dev/null so execve fails (macOS process-exec* parity)"
+           (is (some (fn [[a _]]
+                       (= "/dev/null" a))
+                     (partition 2 1 dex))
+               "deny-exec must emit a /dev/null mask bind for the binary")
+           (is (not (some (fn [[a _]]
+                            (= "/dev/null" a))
+                          (partition 2 1 off)))
+               "no /dev/null mask without deny-exec (deny-read here is a dir => tmpfs)"))
          (finally (io/delete-file prot true) (io/delete-file root true)))))
 
 (deftest unenforceable-fails-loud
@@ -520,6 +564,20 @@
         "unsupported host => passthrough, never a fake-jailed argv")
     (is (some? (pj/unenforceable-reason))
         "unsupported host must give a reason, so `sandbox: true` is not a silent no-op")))
+
+(deftest wsl-detection
+  ;; WSL2 runs a real kernel (bwrap + pasta work) => treated as ordinary Linux.
+  ;; WSL1 has NO real namespaces => must be reported unenforceable (fail loud),
+  ;; never silently passed through. The kernel osrelease is the discriminator.
+  (testing "WSL1 kernel (a `Microsoft` build with NO `WSL2` marker) is detected"
+    (with-redefs [pj/linux-osrelease (constantly "4.4.0-19041-Microsoft")]
+      (is (true? (#'pj/wsl1?)))))
+  (testing "WSL2 real-kernel build is NOT flagged WSL1"
+    (with-redefs [pj/linux-osrelease (constantly "5.15.153.1-microsoft-standard-WSL2")]
+      (is (false? (#'pj/wsl1?)))))
+  (testing "native Linux is NOT flagged WSL1"
+    (with-redefs [pj/linux-osrelease (constantly "6.8.0-52-generic")]
+      (is (false? (#'pj/wsl1?))))))
 
 (deftest linux-e2e-runner-contract
   (when (= "1" (System/getenv "VIS_REQUIRE_LINUX_SANDBOX_E2E"))
@@ -552,10 +610,14 @@
        (.getCanonicalPath secret)
 
        policy
-       {:roots-fn (constantly [wsc]) :net-enabled? false}
+       {:roots-fn (constantly [wsc]) :net-enabled? false :deny-exec ["/bin/ls"]}
 
        argv
-       (pj/wrap-argv ["bash" "-lc" (str "cat " wsc "/ok.txt; echo ---; cat " sc " 2>&1 || true")]
+       (pj/wrap-argv ["bash" "-lc"
+                      (str "cat " wsc
+                           "/ok.txt; echo ---; cat " sc
+                           " 2>&1 || true"
+                           "; echo ===; ls / >/dev/null 2>&1 && echo LS-RAN || echo LS-BLOCKED")]
                      policy)]
 
       (try (is (= "bwrap" (first argv)) "linux jail must bwrap-wrap the child")
@@ -563,7 +625,83 @@
              (is (str/includes? out "WORKSPACE-OK")
                  "workspace file must be readable inside the jail")
              (is (not (str/includes? out "TOP-SECRET-DATA"))
-                 "a secret outside the bound roots must be absent inside the jail"))
+                 "a secret outside the bound roots must be absent inside the jail")
+             (is (and (str/includes? out "LS-BLOCKED") (not (str/includes? out "LS-RAN")))
+                 "deny-exec must block execve of the masked binary (macOS process-exec* parity)"))
            (finally (io/delete-file (io/file ws "ok.txt") true)
                     (io/delete-file ws true)
                     (io/delete-file secret true))))))
+
+(defn- pasta-present?
+  []
+  (some #(.canExecute (io/file ^String %)) ["/usr/bin/pasta" "/bin/pasta" "/usr/local/bin/pasta"]))
+
+(deftest linux-pasta-filtered-egress
+  ;; Real pasta+bwrap FILTERED egress — runs ONLY on a Linux host with bwrap AND
+  ;; pasta (the ubuntu CI job installs `passt`). Proves a jailed child reaches ONLY
+  ;; the gateway proxy port (via pasta `-T`), while a sibling loopback port (the
+  ;; would-be control plane) and the public internet are both unreachable. This is
+  ;; the Linux equivalent of the macOS "only the proxy port" Seatbelt rule.
+  (when (and (linux?) (pj/supported?) (pasta-present?))
+    (let
+      [proxy-srv
+       (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
+
+       ctrl-srv
+       (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
+
+       proxy-port
+       (.getLocalPort proxy-srv)
+
+       ctrl-port
+       (.getLocalPort ctrl-srv)
+
+       ;; both servers send a marker byte-string immediately on accept, then close
+       accept!
+       (fn [^java.net.ServerSocket ss ^String marker]
+         (future (try (loop []
+
+                        (let [s (.accept ss)]
+                          (doto (.getOutputStream s) (.write (.getBytes marker)) (.flush))
+                          (.close s))
+                        (recur))
+                      (catch Throwable _ nil))))
+
+       _
+       (accept! proxy-srv "PROXY-OK")
+
+       _
+       (accept! ctrl-srv "CTRL-OK")
+
+       ws
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-pasta-ws-" (System/nanoTime)))
+         (.mkdirs))
+
+       wsc
+       (.getCanonicalPath ws)
+
+       probe
+       (str "P=$(timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/"
+            proxy-port
+            " && head -c8 <&3' 2>/dev/null); echo \"proxy=[$P]\"; "
+            "timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/"
+            ctrl-port
+            " && head -c8 <&3' 2>/dev/null && echo CTRL-REACHED || echo CTRL-BLOCKED; "
+            "timeout 4 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' 2>/dev/null "
+            "&& echo NET-REACHED || echo NET-BLOCKED")
+
+       policy
+       {:roots-fn (constantly [wsc]) :net-enabled? true :proxy-port proxy-port}
+
+       argv
+       (pj/wrap-argv ["bash" "-lc" probe] policy)]
+
+      (try (is (= "pasta" (first argv)) "filtered egress must wrap the child with pasta")
+           (let [{:keys [out]} (run-jailed argv)]
+             (is (str/includes? out "PROXY-OK")
+                 "the child must reach the gateway proxy port through pasta's -T forward")
+             (is (str/includes? out "CTRL-BLOCKED")
+                 "a sibling loopback port (control plane) must be unreachable")
+             (is (str/includes? out "NET-BLOCKED")
+                 "the public internet must be unreachable (proxy-only egress)"))
+           (finally (.close proxy-srv) (.close ctrl-srv) (io/delete-file ws true))))))
