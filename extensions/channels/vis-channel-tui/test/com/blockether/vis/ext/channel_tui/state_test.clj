@@ -40,7 +40,7 @@
                                   {:session {:id "s1"}
                                    :session-model-pref {:provider "anthropic-coding-plan"
                                                         :model "claude-sonnet-4-6"}
-                                   :settings {:openai-codex-verbosity :high}})))))
+                                   :settings {:openai-codex-verbosity "high"}})))))
              (it "includes verbosity when the session selects OpenAI Codex"
                  (with-redefs
                    [vis/get-router
@@ -54,7 +54,7 @@
                               (#'state/turn-extra-body
                                {:session {:id "s1"}
                                 :session-model-pref {:provider "openai-codex" :model "gpt-5.6-sol"}
-                                :settings {:openai-codex-verbosity :high}}))))))
+                                :settings {:openai-codex-verbosity "high"}}))))))
 
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
@@ -383,8 +383,8 @@
         [vis/load-config-raw (fn []
                                {})]
         (state/init!)
-        (expect (= :balanced (get-in @state/app-db [:settings :reasoning-level])))
-        (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity])))
         (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
         (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
         (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
@@ -400,7 +400,7 @@
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
-             (expect (= :deep (get-in @state/app-db [:settings :reasoning-level]))))
+             (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "resync repairs the projection when hydration runs AFTER init! (production order)"
       ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
@@ -419,7 +419,7 @@
              (expect (= :balanced                       ;; stale projection, pre-resync
                         (get-in @state/app-db [:settings :reasoning-level])))
              (state/dispatch [:resync-toggle-settings]) ;; the fix
-             (expect (= :quick (get-in @state/app-db [:settings :reasoning-level]))))
+             (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "hydrates Codex verbosity from the toggles registry"
       (vis/toggles-hydrate-from-config! {:toggles {"openai_codex_verbosity" :medium}})
@@ -427,7 +427,7 @@
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
-             (expect (= :medium (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+             (expect (= "medium" (get-in @state/app-db [:settings :openai-codex-verbosity]))))
            (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))
   (it "drops invalid persisted enum values back to registered defaults"
       ;; `hydrate-from-config!` routes through `set-value!` which
@@ -439,8 +439,8 @@
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
-             (expect (= :balanced (get-in @state/app-db [:settings :reasoning-level])))
-             (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+             (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
+             (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level")
                     (vis/toggle-reset-to-default! "openai_codex_verbosity")))))
 
@@ -451,7 +451,7 @@
       ;; `:settings` projection is rebuilt synchronously in the same
       ;; FX :db so notification listeners observe the new value the
       ;; moment they fire.
-      (vis/toggle-set-value! "reasoning_level" :deep)
+      (vis/toggle-set-value! "reasoning_level" "deep")
       (try (with-redefs
              [vis/load-config-raw
               (fn []
@@ -471,15 +471,15 @@
               (fn [& _]
                 (state/dispatch [:bump-render-version]))]
 
-             (reset! state/app-db {:settings {:reasoning-level :deep :openai-codex-verbosity :low}
+             (reset! state/app-db {:settings {:reasoning-level "deep" :openai-codex-verbosity "low"}
                                    :render-version 0})
              (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
                (expect (= :done (deref result 1000 :timeout)))
-               (expect (= :quick (vis/toggle-value "reasoning_level")))
-               (expect (= :quick (get-in @state/app-db [:settings :reasoning-level])))))
+               (expect (= "quick" (vis/toggle-value "reasoning_level")))
+               (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level])))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "wraps reasoning level from deep back to quick"
-      (vis/toggle-set-value! "reasoning_level" :deep)
+      (vis/toggle-set-value! "reasoning_level" "deep")
       (try (with-redefs
              [vis/load-config-raw
               (fn []
@@ -498,11 +498,11 @@
               vis/notify!
               (fn [& _])]
 
-             (reset! state/app-db {:settings {:reasoning-level :deep :openai-codex-verbosity :low}
+             (reset! state/app-db {:settings {:reasoning-level "deep" :openai-codex-verbosity "low"}
                                    :render-version 0})
              (state/dispatch [:cycle-reasoning-level])
-             (expect (= :quick (vis/toggle-value "reasoning_level")))
-             (expect (= :quick (get-in @state/app-db [:settings :reasoning-level]))))
+             (expect (= "quick" (vis/toggle-value "reasoning_level")))
+             (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
       (let [notified (atom nil)]
@@ -517,10 +517,10 @@
            vis/notify! (fn [text & kvs]
                          (reset! notified [text kvs]))]
 
-          (reset! state/app-db {:settings {:reasoning-level :deep :openai-codex-verbosity :low}
+          (reset! state/app-db {:settings {:reasoning-level "deep" :openai-codex-verbosity "low"}
                                 :render-version 0})
           (state/dispatch [:cycle-reasoning-level])
-          (expect (= :deep (get-in @state/app-db [:settings :reasoning-level])))
+          (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level])))
           (expect (= ["Reasoning effort is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
@@ -533,10 +533,10 @@
            vis/notify! (fn [text & kvs]
                          (reset! notified [text kvs]))]
 
-          (reset! state/app-db {:settings {:reasoning-level :balanced :openai-codex-verbosity :high}
+          (reset! state/app-db {:settings {:reasoning-level "balanced" :openai-codex-verbosity "high"}
                                 :render-version 0})
           (state/dispatch [:cycle-codex-verbosity])
-          (expect (= :high (get-in @state/app-db [:settings :openai-codex-verbosity])))
+          (expect (= "high" (get-in @state/app-db [:settings :openai-codex-verbosity])))
           (expect (= ["Codex verbosity is only available for OpenAI Codex"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
@@ -564,14 +564,14 @@
       ;; to its :low default so a value another test left in the shared
       ;; registry can't shift where the first step lands (order-dependent flake).
       (vis/toggle-reset-to-default! "openai_codex_verbosity")
-      (try (reset! state/app-db {:settings {:reasoning-level :balanced :openai-codex-verbosity :low}
+      (try (reset! state/app-db {:settings {:reasoning-level "balanced" :openai-codex-verbosity "low"}
                                  :render-version 0})
            (state/dispatch [:cycle-codex-verbosity])
-           (expect (= :medium (get-in @state/app-db [:settings :openai-codex-verbosity])))
+           (expect (= "medium" (get-in @state/app-db [:settings :openai-codex-verbosity])))
            (state/dispatch [:cycle-codex-verbosity])
-           (expect (= :high (get-in @state/app-db [:settings :openai-codex-verbosity])))
+           (expect (= "high" (get-in @state/app-db [:settings :openai-codex-verbosity])))
            (state/dispatch [:cycle-codex-verbosity])
-           (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity])))
+           (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity])))
            (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))))
 
 (defdescribe
@@ -780,7 +780,7 @@
                :messages []
                :input-history []
                :scroll {:mode :at :offset 80 :pos 80}
-               :settings {:reasoning-level :balanced :openai-codex-verbosity :low}
+               :settings {:reasoning-level "balanced" :openai-codex-verbosity "low"}
                :pastes {}}]
 
           (with-redefs
@@ -1483,7 +1483,7 @@
         :messages []
         :messages-scroll 0
         :input-history []
-        :settings {:reasoning-level :deep :openai-codex-verbosity :high}
+        :settings {:reasoning-level "deep" :openai-codex-verbosity "high"}
         :pastes {}}]
 
       (with-redefs
@@ -1614,7 +1614,7 @@
         :input-history ["prior"]
         :input-history-index nil
         :input-history-draft nil
-        :settings {:reasoning-level :balanced :openai-codex-verbosity :low}
+        :settings {:reasoning-level "balanced" :openai-codex-verbosity "low"}
         :pastes {1 {:id 1 :content "hello"}}
         :paste-counter 1}]
 
