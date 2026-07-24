@@ -146,32 +146,35 @@ Omit it and built-in defaults apply. Unknown keys are rejected by the configurat
 
 ## Sandbox, filesystem, and network
 
-The process sandbox is **off by default** and opt-in via `sandbox: true`.
+The process jail is **off by default** and opt-in via `jail.enabled: true`.
 **Strongly recommended** whenever the model runs untrusted code: without it,
 managed shells and language processes run with the gateway user's full host
-permissions. On macOS with it enabled, shell commands and managed language
-processes run under Seatbelt and use the gateway egress proxy. There is no
-separate shell or network toggle. Unsupported hosts currently have no OS
-boundary.
+permissions. With it enabled, shell commands and managed language processes run
+under the OS jail (Seatbelt on macOS, bubblewrap on Linux) and use the gateway
+egress proxy. There is no separate shell or network toggle. Unsupported hosts
+currently have no OS boundary and a requested `jail.enabled: true` fails loud.
+
+Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
+`path`, optional `description`, `access` = `read-write`/`read-only`, `search`),
+and `jail.filesystem.allow` lists the ids that enter the jail (deny-by-omission).
 
 ```yaml
 # vis.yml
-sandbox: true
-jail:
+workspace:
   filesystem:
-    allow-read-write:
-      - ~/sibling-repository
-    allow-read:
-      - ~/shared-reference
-    allow-write:
-      - /srv/generated
-    deny-write:
-      - /srv/generated/locked
-    # Managed REPL/test-runner dependency caches are opt-in.
-    language-caches:
-      - ~/.m2
-      - path: ~/.clojure
-        access: read-only
+    - id: sibling
+      path: ~/sibling-repository
+    - id: reference
+      path: ~/shared-reference
+      access: read-only
+    - id: m2
+      path: ~/.m2
+      description: Maven/Clojure dependency cache
+      search: false            # granted but kept out of the default search sweep
+jail:
+  enabled: true
+  filesystem:
+    allow: [sibling, reference, m2]
   # Extra local ports on which a confined shell child may accept connections.
   inbound-ports:
     - 5273
@@ -185,13 +188,12 @@ network:
 ```
 
 [Process sandbox and gateway egress](sandbox.md) is the single authoritative
-reference for this boundary: filesystem precedence (last-match-wins deny
-carve-outs, `allow-read-write`/`allow-read`/`allow-write`/`deny-*`, opt-in
-`language-caches`), the network model (HTTPS method/path policy, MITM behavior,
-SSRF denial, programmable filters), `jail.inbound-ports`, snapshot inheritance
-and `/reload`, and the read-only `session["access"]` view. Every filesystem path
-must be absolute or home-relative (`~`); a bare-relative path is rejected when
-the config is read.
+reference for this boundary: the `workspace.filesystem` catalog and
+`jail.filesystem.allow` admission model, the network model (HTTPS method/path
+policy, MITM behavior, SSRF denial, programmable filters), `jail.inbound-ports`,
+snapshot inheritance and `/reload`, and the read-only `session["access"]` view.
+Every filesystem path must be absolute or home-relative (`~`); a bare-relative
+path is rejected when the config is read.
 
 One exception is called out there and worth repeating: **`repl_connect` is not
 jailed.** It attaches to an already-running, user-owned external process that

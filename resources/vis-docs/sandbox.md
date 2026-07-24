@@ -291,10 +291,9 @@ verbatim; an unresolvable name is a no-op. Every process spawned through the jai
 REPLs, and project test runners — inherits the profile, so `curl …` fails to
 exec with `Operation not permitted`.
 
-This overrides the jail's blanket exec allow. Note that
-`jail.filesystem.deny-read` on a binary blocks reading its *contents* but does
-**not** stop execution on macOS (the kernel maps an allowed binary without a
-file-read check) — use `deny-exec` to actually block the command.
+This overrides the jail's blanket exec allow. Note that denying **read** on a
+binary would not stop its execution on macOS (the kernel maps an allowed binary
+without a file-read check) — `deny-exec` is what actually blocks the command.
 
 **`deny-exec` is convenience, not containment.** It blocks a *named* binary and
 its symlinks — not the *capability*. An interpreter already on the allow-list
@@ -333,7 +332,7 @@ def aws_s3_ls(bucket):
         # Raising is the failure path — the message surfaces to the model.
         raise ValueError(f"bucket {bucket!r} not in allowlist {sorted(_ALLOWED_BUCKETS)}")
     # Runs UNCONFINED: this subprocess is not routed through wrap-argv, so it is
-    # never sandbox-exec-wrapped and the jail's deny-read on the aws binary
+    # never sandbox-exec-wrapped and the jail's deny-exec on the aws binary
     # never applies here. argv form (no shell) — the model never shapes a string.
     out = subprocess.run(
         ["aws", "s3", "ls", f"s3://{bucket}"],
@@ -389,7 +388,7 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
   project `.vis/extensions/` with the same care as executable build files.
 - The OS enforcer is implemented on macOS (Seatbelt) and Linux (bubblewrap);
   Windows and other hosts have none. There the gateway policy remains useful but
-  is not a kernel boundary, and a requested `sandbox: true` fails loud rather than
+  is not a kernel boundary, and a requested `jail.enabled: true` fails loud rather than
   pretending to confine. On Linux, filtered egress through the proxy is not yet
   kernel-enforced (needs seccomp), so a proxy-restricted network is denied entirely.
 
@@ -430,7 +429,7 @@ The focused suites cover:
 - session token attribution, network filters, and SSRF denial;
 - PTY/background input and attach bridge behavior;
 - managed process launch, fail-closed session lookup, CA/truststore injection;
-- config validation and `sandbox: true` opt-in / `sandbox: false` (or absent) as the off default;
+- config validation and `jail.enabled: true` opt-in / omitted-or-`false` as the off default;
 - Linux bubblewrap argv compilation (every OS) and real bwrap filesystem containment (Linux CI);
 - fail-loud passthrough + reason when a jail is requested on a host that cannot enforce it.
 
