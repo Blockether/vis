@@ -496,7 +496,12 @@
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
 ;; dlg/dlg/ellipsize, p/clamp, dlg/visible-window-start, dlg/clear-screen!
 
-(defn- priority-label [^long idx] (str "(" (inc idx) ")"))
+(defn- priority-label
+  "Compact priority badge. Circled numerals ①–⑳ (U+2460+) read as a single
+   tidy glyph next to the provider label; beyond 20 fall back to `(N)`."
+  [^long idx]
+  (let [n (inc idx)]
+    (if (<= 1 n 20) (str (char (+ 0x245F n))) (str "(" n ")"))))
 
 (def ^:private url-host vis/provider-url-host)
 
@@ -581,7 +586,9 @@
      (or (:name (first models)) "--")
 
      suffix
-     (if (<= model-count 1) "(1 model)" (str "(+" (dec model-count) " models)"))
+     (cond (<= model-count 1) "(1 model)"
+           (= model-count 2) "(+1 model)"
+           :else (str "(+" (dec model-count) " models)"))
 
      ;; Dynamic per-account rows (e.g. `:zai-coding-plan-5h`, `:codex-7d`)
      ;; come from `[:dynamic :limits]`; they're what the footer shows

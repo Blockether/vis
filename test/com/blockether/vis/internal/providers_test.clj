@@ -129,3 +129,22 @@
           "a provider with no detected creds is skipped")
       (is (= [:openai] (mapv :id (providers/picker-fleet))))))
   (providers/invalidate-configured-providers!))
+
+(deftest github-copilot-presets-are-contiguous-in-add-provider-picker
+  ;; Issue #47/#48: the three GitHub Copilot tiers must sit next to each other
+  ;; in the "Add Provider" picker. `:github-copilot-enterprise` was missing from
+  ;; PRESET_ORDER, so it sorted to Long/MAX_VALUE at the end — split from
+  ;; business/individual by zai/mistral (top, middle, then stranded at the
+  ;; bottom). Guard the whole family stays a single contiguous run.
+  (let
+    [order
+     @(ns-resolve 'com.blockether.vis.internal.config 'PRESET_ORDER)
+
+     idxs
+     (mapv #(.indexOf ^java.util.List order %)
+           [:github-copilot-business :github-copilot-individual :github-copilot-enterprise])]
+
+    (is (every? nat-int? idxs) "all three Copilot tiers are listed in PRESET_ORDER")
+    (let [sorted (sort idxs)]
+      (is (= sorted (range (first sorted) (inc (last sorted))))
+          "the three Copilot tiers form one contiguous run — no other preset splits them"))))

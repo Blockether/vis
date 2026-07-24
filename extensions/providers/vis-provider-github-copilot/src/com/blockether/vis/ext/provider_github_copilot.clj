@@ -730,8 +730,7 @@
    one Copilot provider live."
   [account-type]
   (fn []
-    (when (= account-type (configured-account-type nil))
-      (detect-oauth-token))))
+    (when (= account-type (configured-account-type nil)) (detect-oauth-token))))
 
 (defn- make-get-token-fn
   [account-type]

@@ -624,3 +624,53 @@ function formatExact(value?: string): string {
   const millis = dateMillis(value);
   return millis ? new Date(millis).toLocaleString() : '';
 }
+
+// Renders a transcript-search hit in the SAME left-aligned style as the
+// conversation view: the user request under a "You" rail (left accent border),
+// the assistant reply under a "Vis" rail, plain text only — no tools, no
+// bubbles. Only the short server snippet is shown, with the query highlighted.
+function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }) {
+  const request = match.requestSnippet?.trim();
+  const reply = match.replySnippet?.trim();
+  if (!request && !reply) return null;
+  return (
+    <div className="flex flex-col gap-3 border-t border-dialog-edge bg-ink/40 px-3 py-3 sm:px-4">
+      {request && (
+        <div>
+          <div className="mb-1 font-mono text-[10px] font-bold text-you-role">You</div>
+          <p className="whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 font-mono text-[11px] leading-5 text-you-message-foreground">
+            {highlightNeedle(request, needle)}
+          </p>
+        </div>
+      )}
+      {reply && (
+        <div>
+          <div className="mb-1 font-mono text-[10px] font-bold text-vis-role">Vis</div>
+          <p className="whitespace-pre-wrap break-words bg-answer px-3 py-2 font-mono text-[11px] leading-5 text-answer-foreground">
+            {highlightNeedle(reply, needle)}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Splits `text` on the (case-insensitive) needle and wraps each hit in a
+// contrast <mark> that reads on both rail colors.
+function highlightNeedle(text: string, needle: string) {
+  if (!needle) return text;
+  const parts = text.split(new RegExp(`(${escapeRegExp(needle)})`, 'ig'));
+  return parts.map((part, index) =>
+    part.toLowerCase() === needle.toLowerCase() && part.length > 0 ? (
+      <mark key={index} className="rounded-[2px] bg-accent/30 px-0.5 font-bold text-white">
+        {part}
+      </mark>
+    ) : (
+      <span key={index}>{part}</span>
+    ),
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
