@@ -13,7 +13,6 @@ import { Capacitor } from '@capacitor/core';
 import {
   attachmentsFromFiles,
   captureCameraAttachment,
-  pickImageAttachments,
   type PendingAttachment,
 } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
@@ -531,6 +530,7 @@ export function SessionScreen({
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
   const pasteCounterRef = useRef(0);
   const resizeScrollFrameRef = useRef<number | null>(null);
@@ -835,7 +835,25 @@ export function SessionScreen({
     textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 36), 112)}px`;
   }, [prompt]);
 
-  async function addAttachments() {
+  function addAttachments() {
+    const limits = capabilities?.features.attachments;
+    const maximum = limits?.max_files ?? 8;
+    if (maximum - attachments.length <= 0) {
+      setComposerNotice(`You can attach up to ${maximum} images`);
+      return;
+    }
+    // A persistent hidden <input type="file"> is the one attachment path that
+    // works identically on the web and inside the iOS/Android WKWebView (it
+    // shows the native Photos/Files sheet) — no Capacitor plugin required.
+    fileInputRef.current?.click();
+  }
+
+  async function onFilesPicked(fileList: FileList | null) {
+    const input = fileInputRef.current;
+    if (input) input.value = '';
+    const files = fileList ? Array.from(fileList) : [];
+    if (!files.length) return;
+
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
@@ -843,9 +861,8 @@ export function SessionScreen({
       setComposerNotice(`You can attach up to ${maximum} images`);
       return;
     }
-
     try {
-      const result = await pickImageAttachments({
+      const result = await attachmentsFromFiles(files, {
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
         mediaTypes: limits?.media_types,
@@ -853,8 +870,7 @@ export function SessionScreen({
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
-      const message = (cause as Error).message;
-      if (!/cancel|dismiss/i.test(message)) setComposerNotice(message);
+      setComposerNotice((cause as Error).message);
     }
   }
 
@@ -1394,6 +1410,14 @@ export function SessionScreen({
           )}
 
           <div className="flex items-end gap-1 p-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={(capabilities?.features.attachments.media_types ?? ['image/*']).join(',')}
+              multiple
+              className="hidden"
+              onChange={(event) => void onFilesPicked(event.target.files)}
+            />
             <button
               type="button"
               className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
