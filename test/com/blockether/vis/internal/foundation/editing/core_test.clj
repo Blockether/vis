@@ -3248,6 +3248,31 @@
         (with-redefs [workspace/allowed-roots (constantly [vis-home primary])]
           (expect (= [vis-home primary] (mapv str (:roots (rsr ["."]))))))))
     (it
+      "a real DRAFT clone under the drafts store (~/.vis/drafts) is KEPT in the default sweep even though it is under ~/.vis — so an in-draft session (its primary + /fs-add clones) stays searchable, while the raw ~/.vis grant is still pruned"
+      (let
+        [rsr
+         @#'editing/resolve-search-roots
+
+         home
+         (System/getProperty "user.home")
+
+         vis-home
+         (str home "/.vis")
+
+         draft-primary
+         (str vis-home "/drafts/proj/feature-x")
+
+         draft-clone
+         (str vis-home "/drafts/proj/feature-x-lib")]
+
+        (binding [workspace/*drafts-home* (java.io.File. (str vis-home "/drafts"))]
+          (with-redefs [workspace/allowed-roots (constantly [draft-primary draft-clone vis-home])]
+            (let [roots (mapv str (:roots (rsr ["."])))]
+              ;; both draft clones kept (under the drafts store) …
+              (expect (= [draft-primary draft-clone] roots))
+              ;; … and the raw ~/.vis grant is still gone
+              (expect (not (some #{vis-home} roots))))))))
+    (it
       "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
       (let
         [dir

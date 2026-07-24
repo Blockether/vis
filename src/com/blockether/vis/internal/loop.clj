@@ -7877,7 +7877,7 @@
 
 (defn- run-bang-turn!
   "LLM-free `!`/`!&` shell-sugar turn: run the shell tool DIRECTLY (honoring the
-   user-owned `:shell/enabled` toggle), then persist ONE synthetic iteration —
+   user-owned `shell` toggle), then persist ONE synthetic iteration —
    the SAME shape `run-slash-turn!` writes — whose form carries the shell RESULT
    map, native-tool identity, and `:tag :user-shell`. The op-card renders as the
    answer bubble (channels suppress the redundant trace by that tag), and the
@@ -7907,7 +7907,7 @@
                                :form-idx 0)
 
      enabled?
-     (toggles/enabled? :shell/enabled)
+     (toggles/enabled? "shell")
 
      tool-name
      (if (= kind :bg) "shell_bg" "shell_run")
@@ -7917,7 +7917,7 @@
 
      ;; Run the shell tool. `requiring-resolve` keeps foundation-shell a
      ;; DROPPABLE plug-in (nil when the jar is absent) and avoids a compile-time
-     ;; cycle; the `:shell/enabled` gate is applied HERE (the symbol's own
+     ;; cycle; the "shell" toggle gate is applied HERE (the symbol's own
      ;; before-fn gate is bypassed by the direct var call).
      on-chunk
      (or (:on-chunk loop-opts) (get-in loop-opts [:hooks :on-chunk]))
@@ -7957,7 +7957,7 @@
      active-exts
      ;; `registered-extensions` (NOT activation-filtered) so the shell op-card
      ;; renderers resolve even when the shell layer's activation-fn is false —
-     ;; the `:shell/enabled` gate is applied above, renderer lookup is display-only.
+     ;; the "shell" toggle gate is applied above, renderer lookup is display-only.
      (try (extension/registered-extensions) (catch Throwable _ []))
 
      renderers
@@ -8938,13 +8938,13 @@
          (catch Throwable t (log-subloop-warn! :merge t (:id child-ws)) nil))))
 
 (def child-forced-toggles
-  "Toggles a `sub_loop` child has ON by DEFAULT, whatever the global state — so
-   a dispatched agent can always run shell commands and reach the harness
-   skills/agents (the user's rule: sub-agents get both compat layers enabled).
-   Soft keyword coupling only (no load dependency on those extensions), the same
-   convention as the posix shim's tool-name coupling. Bound around the child
-   turn; binding-conveyance carries it into `parallel` futures."
-  #{:shell/enabled :vis/harness-skills :vis/harness-agents})
+  "Toggle ids a `sub_loop` child has ON by DEFAULT, whatever the global state —
+   so a dispatched agent can always run shell commands. Canonical snake_case
+   string ids (the only shape `toggles/enabled?` matches); the harness skill/
+   agent verbs are unconditionally available and no longer gated by a toggle.
+   Bound around the child turn; binding-conveyance carries it into `parallel`
+   futures."
+  #{"shell"})
 
 (defn- project-child-result
   "Run the child turn, merge its edits back (rift path), and project the result
@@ -9203,11 +9203,47 @@
              (try (future-cancel f) (catch Throwable _ nil)))
            (throw e)))))
 
+(defonce ^:private last-good-security-snapshot
+  ;; Retains the most recent VALID security snapshot so an invalid live config
+  ;; edit never tears down running sessions — see `security-config-snapshot`.
+  (atom nil))
+
 (defn- security-config-snapshot
   "Read, validate, resolve, and hash security configuration once for a ROOT
-   environment. Child environments inherit this exact immutable value."
+   environment. Child environments inherit this exact immutable value.
+
+   RESILIENT: a wrong config must never kill a running session. `load-config-raw`
+   already loads leniently; if the derived snapshot still fails the contract
+   (`:vis/invalid-config`) we log ONE warning and reuse the last-good snapshot
+   (or a minimal deny-safe `{}` snapshot on first load) instead of throwing. The
+   next `save!`/`/reload` with a valid config replaces it."
   []
-  (security-policy/snapshot (or (config/load-config-raw) {})))
+  (try (let [snap (security-policy/snapshot (or (config/load-config-raw) {}))]
+         (reset! last-good-security-snapshot snap)
+         snap)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :vis/invalid-config (:type (ex-data e)))
+           (do (tel/log! {:level :warn
+                          :id ::security-config-invalid
+                          :data {:problems (:problems (ex-data e))}
+                          :msg (str "security config failed the contract; "
+                                    (if @last-good-security-snapshot
+                                      "keeping the last-good policy"
+                                      "falling back to a deny-safe policy")
+                                    " so the session survives")})
+               (let [problems (try (config/config-problems) (catch Throwable _ nil))]
+                 (assoc (or @last-good-security-snapshot (security-policy/snapshot {}))
+                   :config-error
+                   {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
+                    "message" (str "The live config on disk failed the contract; "
+                                   (if @last-good-security-snapshot
+                                     "the last-good policy is in effect."
+                                     "a deny-safe policy is in effect."))
+                    "problems" (if (seq problems) (vec problems) [(ex-message e)])
+                    "hint" (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
+                                "/reload. Keys are snake_case strings; the config is closed, "
+                                "so unknown or renamed keys are rejected.")})))
+           (throw e)))))
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
@@ -9761,6 +9797,7 @@
         ;; and egress all derive from this same environment-owned value.
         :security-policy security-config
         :security/filesystem-roots configured-rw-roots
+        :security/no-search-roots (security-policy/no-search-roots security-config)
         :access-view-fn access-view-fn
         ;; What the Python sandbox can ACTUALLY reach this session —
         ;; `python-execution-tool` builds its fs/network description

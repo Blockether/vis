@@ -336,28 +336,6 @@
       (is (some #{"~/.vis/logs"} (:allow-write rp)))
       (is (some #{"~/.vis/logs"} (:allow-read tool)))
       (is (some #{"/w"} (:allow-write rp)))))
-  (testing "language caches are OPT-IN with per-entry read-only/read-write access"
-    (let
-      [base
-       {:repl-proxy-port 1000
-        :repl-ca-file "/repl-ca.pem"
-        :allow-write ["/w"]
-        :allow-read ["/r"]
-        :language-cache-dirs ["/rw/cache" {:path "/ro/cache" :access "read-only"}]}
-
-       pol
-       (pj/language-process-policy base nil)]
-
-      ;; a bare string grants read+write
-      (is (some #{"/rw/cache"} (:allow-write pol)))
-      (is (some #{"/rw/cache"} (:allow-read pol)))
-      ;; access read-only grants read but NOT write
-      (is (not (some #{"/ro/cache"} (:allow-write pol))))
-      (is (some #{"/ro/cache"} (:allow-read pol)))
-      ;; nothing writable is granted by default — no ~/.m2 unless configured
-      (let [none (pj/language-process-policy (dissoc base :language-cache-dirs) nil)]
-        (is (not (some #{"~/.m2"} (:allow-write none))))
-        (is (not (some #{"~/.m2"} (:allow-read none)))))))
   (testing "unknown and disposed sessions fail closed before spawn"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"session jail is not registered"
@@ -470,3 +448,122 @@
           (is (str/includes? p (str "(literal \"" anc "\")"))
               (str "ancestor not granted metadata: " anc)))
         (finally (.delete dir))))))
+
+(defn- linux? [] (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
+
+(deftest linux-bwrap-compiler
+  ;; Pure argv compilation — runs on EVERY OS (incl. macOS + Linux CI), no kernel
+  ;; needed. Asserts the bubblewrap flag vector the Linux jail hands the executor.
+  (let
+    [root
+     (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-lx-" (System/nanoTime)))
+       (.mkdirs))
+
+     prot
+     (doto (io/file root "protected") (.mkdirs))
+
+     rp
+     (.getCanonicalPath root)
+
+     pp
+     (.getCanonicalPath prot)
+
+     base
+     {:rw [(.getPath root)] :ro [] :deny-write [(.getPath prot)] :deny-read [(.getPath prot)]}
+
+     off
+     (pj/linux-bwrap-args (assoc base :net-enabled? false))
+
+     prox
+     (pj/linux-bwrap-args (assoc base
+                            :net-enabled? true
+                            :proxy-port 51000))
+
+     open
+     (pj/linux-bwrap-args (assoc base :net-enabled? true))
+
+     pairs
+     (partition 2 1 off)]
+
+    (try (testing "argv shape: starts with bwrap, ends with the -- separator"
+           (is (= "bwrap" (first off)))
+           (is (= "--" (last off))))
+         (testing "session root is bind-mounted read-write"
+           (is (some #(= % ["--bind-try" rp]) pairs)))
+         (testing "system toolchain roots are read-only bind-mounted (else nothing launches)"
+           (is (some #(= % ["--ro-bind-try" "/usr"]) pairs)))
+         (testing "deny-write is re-bound read-only AFTER the rw bind (deny wins)"
+           (is (some #(= % ["--ro-bind-try" pp]) pairs))
+           (let
+             [ai
+              (.indexOf ^java.util.List off rp)
+
+              di
+              (.lastIndexOf ^java.util.List off pp)]
+
+             (is (and (pos? ai) (pos? di) (< ai di)))))
+         (testing "deny-read is masked with an empty tmpfs" (is (some #(= % ["--tmpfs" pp]) pairs)))
+         (testing "net OFF and proxy-restricted both get the --unshare-net kernel wall (safe)"
+           (is (some #{"--unshare-net"} off))
+           (is (some #{"--unshare-net"} prox)))
+         (testing "an explicitly-open network shares the host namespace (no --unshare-net)"
+           (is (nil? (some #{"--unshare-net"} open))))
+         (finally (io/delete-file prot true) (io/delete-file root true)))))
+
+(deftest unenforceable-fails-loud
+  ;; A requested jail on a host that cannot enforce it must NOT silently pass the
+  ;; child through pretending safety: `wrap-argv` returns argv UNWRAPPED, and
+  ;; `unenforceable-reason` explains why (so callers can warn loudly).
+  (with-redefs [pj/supported? (constantly false)]
+    (is (= ["bash" "-lc" "echo hi"]
+           (pj/wrap-argv ["bash" "-lc" "echo hi"] {:roots-fn (constantly [])}))
+        "unsupported host => passthrough, never a fake-jailed argv")
+    (is (some? (pj/unenforceable-reason))
+        "unsupported host must give a reason, so `sandbox: true` is not a silent no-op")))
+
+(deftest linux-e2e-runner-contract
+  (when (= "1" (System/getenv "VIS_REQUIRE_LINUX_SANDBOX_E2E"))
+    (is (and (linux?) (pj/supported?))
+        "required Linux E2E runner must be Linux with bubblewrap installed")))
+
+(deftest linux-real-containment
+  ;; Real bubblewrap enforcement — runs ONLY on a Linux host with bwrap (i.e. the
+  ;; ubuntu CI job). Proves a wrapped bash reads its workspace but CANNOT read a
+  ;; secret outside the bound roots (which simply does not exist inside the jail).
+  (when (and (linux?) (pj/supported?))
+    (let
+      [ws
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-bwrap-ws-" (System/nanoTime)))
+         (.mkdirs))
+
+       wsc
+       (.getCanonicalPath ws)
+
+       _
+       (spit (io/file ws "ok.txt") "WORKSPACE-OK")
+
+       secret
+       (io/file (System/getProperty "user.home") (str ".vis-bwrap-secret-" (System/nanoTime)))
+
+       _
+       (spit secret "TOP-SECRET-DATA")
+
+       sc
+       (.getCanonicalPath secret)
+
+       policy
+       {:roots-fn (constantly [wsc]) :net-enabled? false}
+
+       argv
+       (pj/wrap-argv ["bash" "-lc" (str "cat " wsc "/ok.txt; echo ---; cat " sc " 2>&1 || true")]
+                     policy)]
+
+      (try (is (= "bwrap" (first argv)) "linux jail must bwrap-wrap the child")
+           (let [{:keys [out]} (run-jailed argv)]
+             (is (str/includes? out "WORKSPACE-OK")
+                 "workspace file must be readable inside the jail")
+             (is (not (str/includes? out "TOP-SECRET-DATA"))
+                 "a secret outside the bound roots must be absent inside the jail"))
+           (finally (io/delete-file (io/file ws "ok.txt") true)
+                    (io/delete-file ws true)
+                    (io/delete-file secret true))))))

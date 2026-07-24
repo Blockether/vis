@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
-import { removeConnection } from '../lib/storage';
 import { scanQr } from '../lib/scan';
 import { Banner, Button, Input } from '../components/ui';
 
@@ -10,18 +9,14 @@ interface Props {
   conns: GatewayConn[];
   active: GatewayConn | null;
   onAdd: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
-  onSelect: (url: string) => Promise<void>;
   onSettings: (conn: GatewayConn) => void;
-  onChanged: () => Promise<void>;
 }
 
 export function ConnectScreen({
   conns,
   active,
   onAdd,
-  onSelect,
   onSettings,
-  onChanged,
 }: Props) {
   const [payload, setPayload] = useState('');
   const [url, setUrl] = useState('');
@@ -65,20 +60,37 @@ export function ConnectScreen({
     return () => window.clearInterval(id);
   }, [conns, probe]);
 
+  // Handshake first: never save a gateway we cannot reach. `ping()` returns true
+  // on a 2xx /healthz, throws GatewayError(401) when reachable-but-unauthorized, and
+  // returns false on a genuine network failure. We only persist a gateway that
+  // actually answered — an unreachable URL/QR is rejected with a clear reason.
   async function tryConn(conn: GatewayConn) {
     setBusy(true);
     setMsg(null);
     try {
       const client = new GatewayClient(conn);
-      await client.ping();
+      const reachable = await client.ping();
+      if (!reachable) {
+        setMsg({
+          kind: 'err',
+          text: `Can't reach ${hostOf(conn.url)}. Check the URL, that you're on the same network/Tailscale, and that the gateway is running.`,
+        });
+        return;
+      }
       await onAdd(conn);
-      setMsg({ kind: 'ok', text: `Paired with ${conn.label ?? conn.url}` });
+      setMsg({ kind: 'ok', text: `Connected to ${conn.label ?? hostOf(conn.url)}` });
       setPayload('');
       setUrl('');
       setToken('');
     } catch (e) {
-      await onAdd(conn, false);
-      setMsg({ kind: 'err', text: `Saved, but not reachable yet: ${(e as Error).message}` });
+      if (e instanceof GatewayError && e.status === 401) {
+        setMsg({
+          kind: 'err',
+          text: `${hostOf(conn.url)} is reachable but rejected the token. Check the bearer token from \u2018vis gateway pair\u2019.`,
+        });
+        return;
+      }
+      setMsg({ kind: 'err', text: `Can't reach ${hostOf(conn.url)}: ${(e as Error).message}` });
     } finally {
       setBusy(false);
     }
@@ -125,104 +137,71 @@ export function ConnectScreen({
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
-      <header className="border-b border-dialog-edge pb-3">
-        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent-ink">
-          Connections
-        </p>
-        <div className="mt-1 flex items-end justify-between gap-4">
-          <div>
-            <h1 className="font-mono text-base font-black text-white">Gateways</h1>
-            <p className="mt-1 max-w-xl text-xs leading-5 text-dialog-hint">
-              Choose where Vis runs. Each gateway owns its sessions, theme, and settings.
-            </p>
-          </div>
-          {conns.length > 0 && (
-            <span className="shrink-0 font-mono text-[10px] text-dialog-hint">
-              {conns.length} saved
-            </span>
-          )}
-        </div>
+      <header className="flex items-end justify-between gap-4 border-b border-dialog-edge pb-3">
+        <h1 className="font-mono text-base font-black text-white">Gateways</h1>
+        {conns.length > 0 && (
+          <span className="shrink-0 font-mono text-[10px] text-dialog-hint">
+            {conns.length} saved
+          </span>
+        )}
       </header>
 
       {msg && <Banner kind={msg.kind === 'ok' ? 'ok' : 'err'}>{msg.text}</Banner>}
 
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
-          <header className="flex min-h-9 items-center justify-between bg-dialog-title px-3 py-2 text-dialog-title-foreground">
+          <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
             <h2 className="font-mono text-xs font-black uppercase tracking-[0.12em]">Saved gateways</h2>
-            <span className="font-mono text-[9px] font-bold uppercase tracking-wider opacity-65">
-              Select · configure
-            </span>
           </header>
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
               const selected = active?.url === conn.url;
               const hv = healthView(health[conn.url]);
               return (
-                <div
+                <button
+                  type="button"
                   key={conn.url}
-                  className={`grid min-w-0 grid-cols-1 gap-1.5 px-2 py-2 transition-[background-color,opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-2 sm:px-3 ${
-                    selected ? 'border-l-2 border-accent bg-panel-2' : 'bg-panel hover:bg-hover'
+                  onClick={() => onSettings(conn)}
+                  className={`flex w-full min-w-0 items-center gap-3 px-2 py-2.5 text-left transition-[background-color,transform] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-3 ${
+                    selected ? 'border-l-2 border-accent bg-panel-2' : 'border-l-2 border-transparent bg-panel'
                   }`}
                 >
-                  <button
-                    type="button"
-                    className="group flex min-h-11 min-w-0 items-center gap-3 px-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-                    onClick={() => onSelect(conn.url)}
-                    aria-current={selected ? 'true' : undefined}
+                  <span
+                    className={`shrink-0 font-mono text-sm ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
+                    aria-hidden="true"
+                    title={hv.label}
                   >
-                    <span
-                      className={`shrink-0 font-mono text-sm ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
-                      aria-hidden="true"
-                      title={hv.label}
-                    >
-                      {hv.glyph}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-mono text-xs font-bold text-white">
-                          {conn.label ?? hostOf(conn.url)}
-                        </span>
-                        {selected && (
-                          <span className="shrink-0 font-mono text-[8px] font-black uppercase tracking-wider text-ok">
-                            Active
-                          </span>
-                        )}
+                    {hv.glyph}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-xs font-bold text-white">
+                        {conn.label ?? hostOf(conn.url)}
                       </span>
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="block truncate font-mono text-[9px] text-dialog-hint">
-                          {conn.url}
+                      {selected && (
+                        <span className="shrink-0 font-mono text-[8px] font-black uppercase tracking-wider text-accent-ink">
+                          Active
                         </span>
-                        <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-wider ${hv.textClass}`}>
-                          {hv.label}
-                          {hv.ms != null && hv.state === 'online' ? ` \u00b7 ${hv.ms}ms` : ''}
-                        </span>
+                      )}
+                    </span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="block truncate font-mono text-[9px] text-dialog-hint">
+                        {conn.url}
+                      </span>
+                      <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-wider ${hv.textClass}`}>
+                        {hv.state === 'online'
+                          ? (hv.ms != null ? `${hv.ms}ms` : '')
+                          : hv.label}
                       </span>
                     </span>
-                  </button>
-
-                  <div className="grid grid-cols-2 gap-1.5 sm:flex sm:shrink-0 sm:items-center">
-                    <Button
-                      variant="ghost"
-                      className="w-full px-2.5 py-1.5 font-mono text-[10px] sm:w-auto"
-                      onClick={() => onSettings(conn)}
-                      aria-label={`Settings for ${conn.label ?? hostOf(conn.url)}`}
-                    >
-                      Settings
-                    </Button>
-                    <Button
-                      variant="danger"
-                      className="w-full px-2.5 py-1.5 font-mono text-[10px] sm:w-auto"
-                      onClick={async () => {
-                        await removeConnection(conn.url);
-                        await onChanged();
-                      }}
-                      aria-label={`Remove ${conn.label ?? hostOf(conn.url)}`}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                </div>
+                  </span>
+                  <span
+                    className="shrink-0 font-mono text-[9px] font-black uppercase tracking-wider text-dialog-hint"
+                    aria-hidden="true"
+                  >
+                    Settings ›
+                  </span>
+                </button>
               );
             })}
           </div>
@@ -255,7 +234,7 @@ export function ConnectScreen({
               />
               <div className="flex gap-2">
                 <Button className="min-h-11 flex-1 sm:min-h-10" onClick={addFromPayload} disabled={busy || !payload}>
-                  Pair
+                  {busy ? 'Checking\u2026' : 'Pair'}
                 </Button>
                 <Button variant="ghost" className="min-h-11 sm:min-h-10" onClick={scan} disabled={busy}>
                   Scan QR
@@ -287,7 +266,7 @@ export function ConnectScreen({
                 autoCorrect="off"
               />
               <Button className="min-h-11 w-full sm:min-h-10" onClick={addManual} disabled={busy || !url}>
-                Connect
+                {busy ? 'Checking\u2026' : 'Connect'}
               </Button>
             </div>
           </div>
@@ -324,7 +303,7 @@ function healthView(h?: GwHealth): GwHealthView {
   const state = h?.state ?? 'checking';
   switch (state) {
     case 'online':
-      return { state, glyph: '\u25cf', label: 'Online', ms: h?.ms, dotClass: 'text-ok', textClass: 'text-ok' };
+      return { state, glyph: '\u25cf', label: 'Online', ms: h?.ms, dotClass: 'text-ok', textClass: 'text-dialog-hint' };
     case 'offline':
       return { state, glyph: '\u25cf', label: 'Offline', ms: h?.ms, dotClass: 'text-err', textClass: 'text-err' };
     case 'auth':

@@ -228,11 +228,11 @@
       (let
         [cfg
          (atom {"sandbox" true
-                "jail" {"filesystem" {"allow-read-write" ["/approved/full"]
-                                      "allow-read" ["/approved/read"]
-                                      "allow-write" ["/approved/write"]
-                                      "language-caches" ["/approved/cache"]}
-                        "inbound-ports" [5273]}
+                "workspace" {"filesystem"
+                             [{"id" "full" "path" "/approved/full"}
+                              {"id" "read" "path" "/approved/read" "access" "read-only"}
+                              {"id" "cache" "path" "/approved/cache" "search" false}]}
+                "jail" {"filesystem" {"allow" ["full" "read" "cache"]} "inbound-ports" [5273]}
                 "network" {"allowed-domains" ["approved.example"]}})
 
          snapshot
@@ -241,17 +241,17 @@
 
         ;; This models a tool editing writable vis.yml after environment creation.
         (reset! cfg {"sandbox" false
-                     "jail" {"filesystem" {"allow-read-write" ["/escaped/full"]
-                                           "allow-read" ["/escaped/read"]
-                                           "allow-write" ["/escaped/write"]
-                                           "language-caches" ["/escaped/cache"]}
-                             "inbound-ports" [9999]}
+                     "workspace" {"filesystem"
+                                  [{"id" "full" "path" "/escaped/full"}
+                                   {"id" "read" "path" "/escaped/read" "access" "read-only"}
+                                   {"id" "cache" "path" "/escaped/cache" "search" false}]}
+                     "jail" {"filesystem" {"allow" ["full" "read" "cache"]} "inbound-ports" [9999]}
                      "network" {"allowed-domains" ["escaped.example"]}})
         (expect (= true (:sandbox snapshot)))
-        (expect (= ["/approved/full"] (get-in snapshot [:process-jail :allow-read-write])))
+        (expect (= ["/approved/full" "/approved/cache"]
+                   (get-in snapshot [:process-jail :allow-read-write])))
         (expect (= ["/approved/read"] (get-in snapshot [:process-jail :allow-read])))
-        (expect (= ["/approved/write"] (get-in snapshot [:process-jail :allow-write])))
-        (expect (= ["/approved/cache"] (get-in snapshot [:process-jail :language-cache-dirs])))
+        (expect (= ["/approved/cache"] (get-in snapshot [:process-jail :no-search])))
         (expect (= [5273] (get-in snapshot [:process-jail :inbound-ports])))
         (expect (= ["approved.example"] (get-in snapshot [:network :allowed-domains])))
         (expect (not= @cfg snapshot))))

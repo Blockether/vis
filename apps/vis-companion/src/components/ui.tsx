@@ -96,11 +96,11 @@ export function DialogFrame({
         {onClose && (
           <button
             type="button"
-            className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-lg font-bold transition-colors hover:bg-err hover:text-white focus-visible:bg-err focus-visible:text-white focus-visible:outline-none sm:min-w-10"
+            className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-base leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none sm:min-w-10"
             onClick={onClose}
             aria-label="Close dialog"
           >
-            ×
+            ✕
           </button>
         )}
       </header>

@@ -742,6 +742,36 @@
            (:status ((rv 'set-setting-handler)
                       {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
 
+(deftest provider-models-handler-serves-live-catalog-daemon-side
+  (testing
+    "GET /v1/providers/:id/models fetches the LIVE catalog DAEMON-side (gateway owns OAuth token) and emits snake_case hidden_count"
+    (with-redefs-fn {#'providers/default-model-names (constantly ["claude-opus-4-8"])
+                     #'providers/model-options (fn [_ _ show-all?]
+                                                 {:models ["claude-opus-4-8" "claude-sonnet-5"]
+                                                  :hidden-count (if show-all? 0 4)})}
+      (fn []
+        (let
+          [resp
+           ((rv 'provider-models-handler) {:path-params {:provider-id "anthropic-coding-plan"}})
+
+           body
+           (wire/parse-json (:body resp))]
+
+          (is (= 200 (:status resp)))
+          (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get body "models")))
+          (is (= 4 (get body "hidden_count"))))
+        (let
+          [resp
+           ((rv 'provider-models-handler)
+             {:path-params {:provider-id "anthropic-coding-plan"}
+              :query-params {"show_all" "true"}})
+
+           body
+           (wire/parse-json (:body resp))]
+
+          (is (= 0 (get body "hidden_count"))))))))
+
+
 (deftest router-handler-assembles-string-keyed-fleet-with-status
   (testing
     "GET /v1/router returns the whole fleet in ONE payload; wire keys are snake_case STRINGS and the connection verdict rides as is_authenticated"

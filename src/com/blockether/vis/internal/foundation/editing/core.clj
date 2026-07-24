@@ -532,15 +532,6 @@
 
     (if dir (rel-path dir) p)))
 
-(defn- vis-home-path
-  "Canonical `~/.vis` NIO path — vis's own machine home (repo mirrors under
-   `drafts/`, `cache/` CPython, logs, machine state). The DEFAULT search sweep
-   prunes any bound root under this: it is noise for a project search. Explicit
-   `paths` are unaffected — they bypass the default expansion and still reach it.
-   nil when `user.home` is unresolvable."
-  []
-  (try (.toPath (.getCanonicalFile (io/file config/config-dir))) (catch Throwable _ nil)))
-
 (defn- resolve-search-roots
   "Resolve rg/find `paths` into `{:roots [File …] :resolutions [{…} …]}`.
 
@@ -560,10 +551,12 @@
 
    The DEFAULT/unscoped `[\".\"]` (or a BLANK/nil entry, which the model routinely
    tacks on, e.g. `[\".github\" \"\"]`) expands to the FULL allowed-roots set — the
-   primary cwd PLUS every bound filesystem-root clone — EXCEPT vis's own `~/.vis`
-   home, which is pruned from the default sweep (its `drafts/` repo mirrors and
-   `cache/` CPython are search noise; explicit paths still reach it) — and carries
-   NO `:resolutions` (a default sweep names nothing, so nothing is reportable).
+   primary cwd PLUS every bound filesystem-root clone — EXCEPT roots flagged
+   `search: false` in the `workspace.filesystem` catalog (e.g. `~/.vis`, the
+   language/dependency caches), which are pruned from the default sweep as search
+   noise. The primary cwd is ALWAYS kept (so a session sitting in a draft or in
+   `~/.vis` still searches its own tree), and explicit paths still reach a pruned
+   root. NO `:resolutions` (a default sweep names nothing, so nothing is reportable).
 
    Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap); a
    confinement violation still propagates — that is not a miss."
@@ -577,15 +570,14 @@
       (let
         [roots (workspace/allowed-roots)
          primary (first roots)
-         ^java.nio.file.Path vh (vis-home-path)
-         under-vis-home?
-         (fn [r]
-           (and vh
-                (not= r primary)
-                (try (.startsWith ^java.nio.file.Path (.toPath (.getCanonicalFile (io/file r))) vh)
-                     (catch Throwable _ false))))]
+         no-search (workspace/no-search-roots)]
 
-        {:roots (into [] (comp (remove under-vis-home?) (map io/file)) roots) :resolutions []})
+        {:roots (into []
+                      (comp (remove (fn [r]
+                                      (and (not= r primary) (contains? no-search r))))
+                            (map io/file))
+                      roots)
+         :resolutions []})
       (let
         [resolutions
          (mapv (fn [p]

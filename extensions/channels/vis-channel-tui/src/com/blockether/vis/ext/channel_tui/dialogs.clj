@@ -838,10 +838,14 @@
      (long box-h)
 
      box-left
-     (quot (- cols box-w) 2)
+     ;; MUST mirror `draw-dialog-chrome!` exactly (lines ~687/692): the chrome
+     ;; nudges the box left/up to clear the drop shadow and clamps to a sane
+     ;; inset. Plain centering here would drift 3 cols / 2 rows from the painted
+     ;; frame, so every measured coordinate would overflow the border.
+     (max 3 (- (quot (- cols box-w) 2) 3))
 
      box-top
-     (quot (- rows box-h) 2)]
+     (max 2 (- (quot (- rows box-h) 2) 2))]
 
     {:left box-left
      :top box-top
@@ -5297,7 +5301,13 @@
     ;; group ordered by its most recent session (see `group-rows-by-dir`).
     (vec (concat (filter :focused? rows) (group-rows-by-dir (remove :focused? rows))))))
 
-(defn- navigator-visible-rows [rows query] (vec (filter #(table/row-matches? % query) rows)))
+(defn- navigator-visible-rows
+  "Rows whose title/project cells match `query`, UNION rows whose id is in
+   `transcript-ids` (server-side matches on user request + LLM response text).
+   Blank query → `row-matches?` keeps everything, so the union is a no-op."
+  [rows query transcript-ids]
+  (vec (filter #(or (table/row-matches? % query) (contains? transcript-ids (str (:id (:target %)))))
+               rows)))
 
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
@@ -5353,7 +5363,19 @@
      (volatile! nil)
 
      show-empty-untitled?
-     (atom (boolean (:show-empty-untitled? opts)))]
+     (atom (boolean (:show-empty-untitled? opts)))
+
+     ;; Server-side transcript search: ids whose user request / LLM response
+     ;; text matches the current query. Injected by the caller so this dialog
+     ;; stays decoupled from the gateway client. nil = feature unavailable.
+     search-transcript-ids
+     (:search-transcript-ids opts)
+
+     transcript-ids
+     (atom #{})
+
+     transcript-query
+     (atom nil)]
 
     (loop []
 
@@ -5362,7 +5384,7 @@
          (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
 
          visible-rows
-         (navigator-visible-rows rows @query)
+         (navigator-visible-rows rows @query @transcript-ids)
 
          total
          (count visible-rows)
@@ -5566,7 +5588,19 @@
            reset-list!
            (fn []
              (reset! selected 0)
-             (reset! scroll 0))]
+             (reset! scroll 0)
+             ;; Refresh the transcript-match id set when the query text changes
+             ;; (skip re-search on unrelated resets like the empty-untitled
+             ;; toggle). The gateway call is synchronous but only fires on the
+             ;; keystroke that mutated the query.
+             (let [q (str/trim @query)]
+               (cond (empty? q) (do (reset! transcript-ids #{}) (reset! transcript-query nil))
+                     (not= q @transcript-query) (do (reset! transcript-query q)
+                                                    (reset! transcript-ids
+                                                      (if search-transcript-ids
+                                                        (set (try (search-transcript-ids q)
+                                                                  (catch Throwable _ nil)))
+                                                        #{}))))))]
 
           (when key
             (cond
@@ -6043,7 +6077,8 @@
    {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
    {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
    {:id :fork-at-turn :label "Fork Session at Turn…"} {:id :close-tab :label "Close Tab"}
-   {:id :providers :label "Router"} {:id :toggle-all-details :label "Fold / Unfold All"}
+   {:id :providers :label "Router"} {:id :settings :label "Settings"}
+   {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
 

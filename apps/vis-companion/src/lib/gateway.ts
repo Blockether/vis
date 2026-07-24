@@ -212,6 +212,20 @@ export class GatewayClient {
     return res.sessions ?? [];
   }
 
+  // GET /v1/sessions/search?q= matches user requests + LLM responses in the
+  // transcript store server-side, returning only the matching session ids.
+  async searchSessionIds(query: string, signal?: AbortSignal): Promise<string[]> {
+    const q = query.trim();
+    if (!q) return [];
+    const res = await this.request<{ session_ids: string[] }>(
+      'GET',
+      `/v1/sessions/search?q=${encodeURIComponent(q)}`,
+      undefined,
+      signal,
+    );
+    return res.session_ids ?? [];
+  }
+
   createSession(opts: {
     title?: string;
     channel?: string;

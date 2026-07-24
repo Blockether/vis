@@ -503,3 +503,24 @@
         (is (= {:provider "zai" :model "glm"} (client/set-session-model! "sid-w" "zai" "glm")))
         (is (= {:provider "zai" :model "glm"} (:val (get @@cache "sid-w")))
             "the PATCHed pref lands in the footer cache immediately")))))
+
+(deftest provider-models-proxies-to-daemon-catalog-route
+  (testing
+    "provider-models asks the DAEMON for the catalog instead of building a token-resolving router client-side"
+    (let [request (atom nil)]
+      (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
+                                                       (reset! request path)
+                                                       fake-entry)
+                       (rv 'ensure-client!) (constantly "client-id")
+                       (rv 'send-json-with-entry!) (fn [_ method path]
+                                                     (is (= "GET" method))
+                                                     (is (= @request path))
+                                                     {"models" ["claude-opus-4-8" "claude-sonnet-5"]
+                                                      "hidden_count" 3})}
+        (fn []
+          (let [r (client/provider-models :anthropic-coding-plan false)]
+            (is (= "/v1/providers/anthropic-coding-plan/models" @request))
+            (is (= ["claude-opus-4-8" "claude-sonnet-5"] (:models r)))
+            (is (= 3 (:hidden-count r))))
+          (client/provider-models :anthropic-coding-plan true)
+          (is (= "/v1/providers/anthropic-coding-plan/models?show_all=true" @request)))))))

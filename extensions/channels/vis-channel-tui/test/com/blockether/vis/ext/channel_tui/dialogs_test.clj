@@ -433,8 +433,8 @@
            visible-rows (var-get #'dlg/navigator-visible-rows)
            rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
-          (expect (= 1 (count (visible-rows rows "second"))))
-          (expect (= 2 (count (visible-rows rows ""))))))))
+          (expect (= 1 (count (visible-rows rows "second" #{}))))
+          (expect (= 2 (count (visible-rows rows "" #{}))))))))
 
 (defdescribe scrollbar-geometry-test
              (it "scrollbar geometry sanity (canonical primitive)"
@@ -1028,11 +1028,13 @@
          ids
          (set (mapv :id palette-commands))]
 
-        ;; Providers + Settings are merged into one "Router" hub entry.
+        ;; Providers live under the "Router" hub; Settings is its own palette
+        ;; verb (no longer a hidden `S` keybind inside the Router).
         (expect (some #{"Router"} labels))
-        (expect (not (some #{"Configure Providers" "Settings"} labels)))
+        (expect (some #{"Settings"} labels))
+        (expect (not (some #{"Configure Providers"} labels)))
         (expect (contains? ids :providers))
-        (expect (not (contains? ids :settings)))
+        (expect (contains? ids :settings))
         ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids

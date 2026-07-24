@@ -33,13 +33,15 @@
 ;;; ── Model list (core service + the TUI's 'Show all' affordance) ────────────
 
 (defn- build-model-list
-  "Build the model selection list from `vis/provider-model-options`.
-   Appends the 'Show all models...' toggle when dated variants were
-   hidden."
-  [provider default-models show-all?]
+  "Build the model selection list from the gateway's LIVE catalog
+   (`vis/gateway-provider-model-options`). The daemon owns OAuth token
+   resolution, so the TUI NEVER builds a token-resolving router to list
+   models — it proxies to the gateway. Appends the 'Show all models...'
+   toggle when dated variants were hidden."
+  [provider _default-models show-all?]
   (let
     [{:keys [models hidden-count]}
-     (vis/provider-model-options provider default-models show-all?)
+     (vis/gateway-provider-model-options (:id provider) show-all?)
 
      items
      (mapv (fn [id]
@@ -756,222 +758,6 @@
     (let [m (nth models idx)]
       (vec (cons m (concat (subvec models 0 idx) (subvec models (inc (long idx)))))))))
 
-(defn- show-model-manager!
-  [^TerminalScreen screen provider]
-  (let
-    [models
-     (atom (->> (:models provider)
-                (keep vis/->svar-model)
-                vec))
-
-     selected
-     (atom 0)
-
-     scroll
-     (atom 0)]
-
-    (loop []
-
-      (let
-        [size
-         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-         cols
-         (.getColumns size)
-
-         rows
-         (.getRows size)
-
-         g
-         (.newTextGraphics screen)
-
-         total
-         (long (count @models))
-
-         ;; Do NOT clear the whole terminal here - the chat
-         ;; behind the dialog should stay visible (other modals
-         ;; in `dialogs.clj` already behave this way). The dialog
-         ;; chrome paints its own background + drop shadow over
-         ;; whatever was underneath, which is the desired "floating
-         ;; popup" look. Wiping `0 0 cols rows` to terminal-bg every
-         ;; frame is what made the chat disappear behind the
-         ;; provider dialogs.
-         title
-         (str (vis/display-label (:id provider)) " Models")
-
-         bounds
-         (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
-
-         {:keys [left inner-w]}
-         bounds
-
-         {:keys [content-top content-h hint-row]}
-         (dlg/dialog-layout bounds (card-height (max 1 total)))
-
-         left
-         (long left)
-
-         inner-w
-         (long inner-w)
-
-         content-top
-         (long content-top)
-
-         content-h
-         (long content-h)
-
-         visible-count
-         (card-visible-count content-h)
-
-         scrollable?
-         (> total visible-count)
-
-         card-inner-w
-         (if scrollable? (max 1 (dec inner-w)) inner-w)
-
-         _
-         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
-
-         _
-         (swap! scroll #(card-window-start @selected % content-h total))]
-
-        (p/set-bg! g t/dialog-bg)
-        (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (if (zero? total)
-          (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/draw-centered! g
-                                (inc left)
-                                (+ content-top (quot content-h 2))
-                                inner-w
-                                "No models. Press A to add."))
-          (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
-            (let
-              [idx (long idx)
-               card-y (+ content-top (card-start-row (- idx (long @scroll))))
-               model (nth @models idx)
-               previous-name (when (pos? idx) (:name (nth @models (dec idx))))
-               next-name (when (< idx (dec total)) (:name (nth @models (inc idx))))]
-
-              (draw-model-card! g
-                                left
-                                card-y
-                                card-inner-w
-                                idx
-                                (= idx @selected)
-                                (zero? idx)
-                                (:id provider)
-                                model
-                                previous-name
-                                next-name))))
-        (scrollbar/draw! g
-                         {:col (+ left inner-w)
-                          :top content-top
-                          :track-h content-h
-                          :total-h total
-                          :inner-h (card-visible-count content-h)
-                          :scroll @scroll})
-        (dlg/draw-hint-bar! g
-                            left
-                            hint-row
-                            inner-w
-                            [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"]
-                             ["R" "primary"] ["Esc" "back"]])
-        (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (dlg/read-modal-key! screen)]
-          (when key
-            (cond
-              (instance? MouseAction key)
-              (let
-                [^MouseAction ma key
-                 action (.getActionType ma)
-                 pos (.getPosition ma)
-                 mx (.getColumn pos)
-                 my (.getRow pos)
-                 hit-idx (when (and (>= mx (inc left))
-                                    (< mx (+ left inner-w))
-                                    (>= my content-top)
-                                    (< my (+ content-top content-h)))
-                           (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
-
-                (cond (= action MouseActionType/SCROLL_UP)
-                      (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
-                      (= action MouseActionType/SCROLL_DOWN)
-                      (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
-                      (and (= action MouseActionType/CLICK_DOWN) hit-idx (< (long hit-idx) total))
-                      (do (reset! selected hit-idx) (recur))
-                      :else (recur)))
-              :else
-              (let [ktype (.getKeyType key)]
-                (cond (= ktype KeyType/Escape) {:models (vec @models)}
-                      (= ktype KeyType/ArrowUp)
-                      (if (input/reorder-modifier? key)
-                        (do (when (pos? (long @selected))
-                              (swap! models swap-items @selected (dec (long @selected)))
-                              (swap! selected dec))
-                            (recur))
-                        (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
-                            (recur)))
-                      (= ktype KeyType/ArrowDown)
-                      (if (input/reorder-modifier? key)
-                        (do (when (< (long @selected) (dec total))
-                              (swap! models swap-items @selected (inc (long @selected)))
-                              (swap! selected inc))
-                            (recur))
-                        (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total))))
-                            (recur)))
-                      (= ktype KeyType/Character)
-                      (let
-                        [c (Character/toLowerCase (.getCharacter key))
-                         ctrl (.isCtrlDown key)]
-
-                        (cond
-                          ;; Ctrl+P / Ctrl+N - reorder the selected model up / down,
-                          ;; the SAME Emacs prev/next-line keys used in every input
-                          ;; (modified arrows are unreliable on stock macOS terminals;
-                          ;; this replaces the old vim-style K/J).
-                          (and ctrl (= c keymap/picker-reorder-up))
-                          (do (when (pos? (long @selected))
-                                (swap! models swap-items @selected (dec (long @selected)))
-                                (swap! selected dec))
-                              (recur))
-                          (and ctrl (= c keymap/picker-reorder-down))
-                          (do (when (< (long @selected) (dec total))
-                                (swap! models swap-items @selected (inc (long @selected)))
-                                (swap! selected inc))
-                              (recur))
-                          (= c \a) (do (when-let
-                                         [model-name (select-model!
-                                                       screen
-                                                       provider
-                                                       (->> (concat (map vis/model-name @models)
-                                                                    (:default-models
-                                                                      (vis/provider-template
-                                                                        (:id provider)))
-                                                                    (:default-models provider))
-                                                            (remove nil?)
-                                                            distinct
-                                                            vec))]
-                                         (when-not (some #(= model-name (vis/model-name %)) @models)
-                                           (swap! models conj {:name model-name})
-                                           (reset! selected (dec (count @models)))))
-                                       (recur))
-                          (= c \d)
-                          (do (when (and (pos? total)
-                                         (dlg/confirm-dialog!
-                                           screen
-                                           "Remove Model"
-                                           [(str "Remove " (:name (nth @models @selected)) "?")]))
-                                (swap! models #(vec (concat (subvec % 0 @selected)
-                                                            (subvec % (inc (long @selected))))))
-                                (swap! selected #(p/clamp % 0 (max 0 (dec (count @models))))))
-                              (recur))
-                          (= c \r) (do (when (pos? total)
-                                         (swap! models move-model-to-front @selected)
-                                         (reset! selected 0))
-                                       (recur))
-                          :else (recur)))
-                      :else (recur))))))))))
 
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
@@ -1049,6 +835,18 @@
   [provider]
   (not (contains? local-no-auth-provider-ids (:id provider))))
 
+(defn- status-md->line
+  "Flatten ONE markdown status line to plain terminal text: drop heading `#`,
+   emphasis `**`/`__`/`_`, and inline-code backticks; turn `- ` bullets into `• `."
+  [s]
+  (-> (str s)
+      (str/replace #"^\s*#{1,6}\s+" "")
+      (str/replace #"^(\s*)[-*]\s+" "$1• ")
+      (str/replace #"\*\*" "")
+      (str/replace #"__" "")
+      (str/replace #"`" "")
+      (str/replace #"(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])" "$1")))
+
 (defn provider-action-items
   ([provider] (provider-action-items provider (configured-provider-status provider)))
   ([provider status]
@@ -1062,15 +860,15 @@
       auth-label
       (if is-authenticated "Re-authenticate" "Authenticate")]
 
-     (cond-> [{:id :models :label "Configure Models"}]
+     (cond-> [{:id :models :label "Configure Models" :key \m}]
        (provider-supports-auth? provider)
-       (conj {:id :authenticate :label auth-label :force? is-authenticated})
+       (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
        (or (:provider/status-fn registered) (:provider/detect-fn registered) (:api-key provider))
-       (conj {:id :status :label "Show Status + Limits"})
+       (conj {:id :status :label "Show Status + Limits" :key \s})
 
        (or (:provider/logout-fn registered) (:api-key provider))
-       (conj {:id :logout :label "Log Out"})))))
+       (conj {:id :logout :label "Log Out" :key \l})))))
 
 (def ^:private api-key-prompt-cancelled ::api-key-prompt-cancelled)
 
@@ -1171,6 +969,22 @@
                  (cond (= api-key-prompt-cancelled prompted) nil
                        prompted prompted
                        :else (run-generic-provider-auth! screen provider))))))
+
+(defn- perform-logout!
+  "Network logout + config removal for `provider`. No dialogs — the caller owns
+   confirmation and any success feedback. Returns true."
+  [provider]
+  (let
+    [provider-id
+     (:id provider)
+
+     registered
+     (vis/provider-by-id provider-id)]
+
+    (when-let [logout-fn (:provider/logout-fn registered)]
+      (logout-fn))
+    (vis/remove-config-provider! provider-id :tui-provider-logout)
+    true))
 
 (defn logout-provider!
   [^TerminalScreen screen provider]
@@ -1366,12 +1180,9 @@
    Optional `current-config` seeds the dialog with current state."
   ([^TerminalScreen screen] (show-provider-dialog! screen nil nil))
   ([^TerminalScreen screen current-config] (show-provider-dialog! screen current-config nil))
-  ([^TerminalScreen screen current-config opts]
+  ([^TerminalScreen screen current-config _opts]
    (let
-     [open-settings
-      (:open-settings opts)
-
-      seed
+     [seed
       (or current-config (vis/load-config) {:providers []})
 
       items
@@ -1393,6 +1204,27 @@
       (atom 0)
 
       scroll
+      (atom 0)
+
+      mode
+      (atom :list)
+
+      action-sel
+      (atom 0)
+
+      status-scroll
+      (atom 0)
+
+      pending
+      (atom nil)
+
+      model-items
+      (atom nil)
+
+      model-sel
+      (atom 0)
+
+      model-scroll
       (atom 0)]
 
      (refresh-providers-diagnostics! @items statuses limits)
@@ -1412,12 +1244,13 @@
           (.newTextGraphics screen)
 
           ;; Do NOT clear the whole terminal here - keep the chat
-          ;; visible behind the dialog (see model-manager note).
-          ;; Sub-dialog artifact concern is moot: every sub-modal
-          ;; (`add-provider!`, `confirm-dialog!`, `select-dialog!`,
-          ;; `show-model-manager!`) repaints its own chrome on every
-          ;; frame and on return the parent loop’s next iteration
-          ;; redraws the parent chrome on top of any leftovers.
+          ;; visible behind the dialog. Sub-dialog artifact concern is
+          ;; moot: the remaining sub-modals (`add-provider!`,
+          ;; `select-model!`, the OAuth flows) repaint their own chrome on
+          ;; every frame and on return the parent loop's next iteration
+          ;; redraws the parent chrome on top of any leftovers. The model
+          ;; editor and every provider action now live inline as bottom
+          ;; transients / a full-content `:models` sub-view of THIS chrome.
           total
           (long (count @items))
 
@@ -1477,46 +1310,240 @@
          ;; Clear content area
          (p/set-bg! g t/dialog-bg)
          (p/fill-rect! g (inc left) content-top inner-w content-h)
-         (if (zero? total)
-           (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-               (p/draw-centered! g
-                                 (inc left)
-                                 (+ content-top (quot content-h 2))
-                                 inner-w
-                                 "No providers. Press A to add."))
-           ;; Draw visible cards
-           (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
-             (let
-               [idx (long idx)
-                card-y (+ content-top (card-start-row (- idx (long @scroll))))]
+         (cond
+           (= @mode :status)
+           ;; Inline status + limits — the selected provider card on top, its
+           ;; markdown Status & Limits report as plain rows below, scrollable.
+           ;; Replaces the separate markdown-viewer popup.
+           (let
+             [provider
+              (nth @items @selected)
 
-               (draw-provider-card! g
-                                    left
-                                    card-y
-                                    card-inner-w
-                                    idx
-                                    (= idx @selected)
-                                    (nth @items idx)
-                                    (get @statuses (:id (nth @items idx)))
-                                    (get @limits (:id (nth @items idx)))))))
-         (scrollbar/draw! g
-                          {:col (+ left inner-w)
-                           :top content-top
-                           :track-h content-h
-                           :total-h total
-                           :inner-h (card-visible-count content-h)
-                           :scroll @scroll})
-         (dlg/draw-hint-bar!
-           g
-           left
-           hint-row
-           inner-w
-           (cond-> [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"]]
-             open-settings
-             (conj ["S" "settings"])
+              body-top
+              (+ content-top card-rows card-gap)
 
-             :always
-             (conj ["Esc" "done"])))
+              body-h
+              (max 1 (- content-h card-rows card-gap))
+
+              raw
+              (str (vis/provider-status-md provider
+                                           (get @statuses (:id provider))
+                                           (get @limits (:id provider))))
+
+              lines
+              (mapv status-md->line (str/split-lines raw))
+
+              total-l
+              (count lines)
+
+              maxw
+              (max 0 (- inner-w 2))
+
+              sc
+              (p/clamp (long @status-scroll) 0 (max 0 (- total-l body-h)))]
+
+             (reset! status-scroll sc)
+             (draw-provider-card! g
+                                  left
+                                  content-top
+                                  inner-w
+                                  @selected
+                                  false
+                                  provider
+                                  (get @statuses (:id provider))
+                                  (get @limits (:id provider)))
+             (doseq [i (range body-h)]
+               (let
+                 [li (+ sc (long i))
+                  row (+ (long body-top) (long i))]
+
+                 (p/set-colors! g t/dialog-fg t/dialog-bg)
+                 (p/fill-rect! g (inc left) row inner-w 1)
+                 (when (< li total-l)
+                   (let
+                     [ln (nth lines li)
+                      shown (subs ln 0 (min (count ln) maxw))]
+
+                     (p/put-str! g (+ left 2) row shown))))))
+           (= @mode :models)
+           (let
+             [ms
+              @model-items
+
+              mtotal
+              (long (count ms))
+
+              _
+              (swap! model-sel #(p/clamp % 0 (max 0 (dec mtotal))))
+
+              _
+              (swap! model-scroll #(card-window-start @model-sel % content-h mtotal))
+
+              mvis
+              (card-visible-count content-h)
+
+              mscrollable?
+              (> mtotal mvis)
+
+              mci
+              (if mscrollable? (max 1 (dec inner-w)) inner-w)
+
+              pid
+              (:id (nth @items @selected))]
+
+             (if (zero? mtotal)
+               (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                   (p/draw-centered! g
+                                     (inc left)
+                                     (+ content-top (quot content-h 2))
+                                     inner-w
+                                     "No models. Press A to add."))
+               (doseq [idx (range @model-scroll (min mtotal (+ (long @model-scroll) mvis)))]
+                 (let
+                   [idx (long idx)
+                    card-y (+ content-top (card-start-row (- idx (long @model-scroll))))
+                    model (nth ms idx)
+                    previous-name (when (pos? idx) (:name (nth ms (dec idx))))
+                    next-name (when (< idx (dec mtotal)) (:name (nth ms (inc idx))))]
+
+                   (draw-model-card! g
+                                     left
+                                     card-y
+                                     mci
+                                     idx
+                                     (= idx @model-sel)
+                                     (zero? idx)
+                                     pid
+                                     model
+                                     previous-name
+                                     next-name)))))
+           :else (if (zero? total)
+                   (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                       (p/draw-centered! g
+                                         (inc left)
+                                         (+ content-top (quot content-h 2))
+                                         inner-w
+                                         "No providers. Press A to add."))
+                   ;; Draw visible cards
+                   (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
+                     (let
+                       [idx (long idx)
+                        card-y (+ content-top (card-start-row (- idx (long @scroll))))]
+
+                       (draw-provider-card! g
+                                            left
+                                            card-y
+                                            card-inner-w
+                                            idx
+                                            (= idx @selected)
+                                            (nth @items idx)
+                                            (get @statuses (:id (nth @items idx)))
+                                            (get @limits (:id (nth @items idx))))))))
+         (when (not= @mode :status)
+           (scrollbar/draw! g
+                            {:col (+ left inner-w)
+                             :top content-top
+                             :track-h content-h
+                             :total-h (if (= @mode :models) (count @model-items) total)
+                             :inner-h (card-visible-count content-h)
+                             :scroll (if (= @mode :models) @model-scroll @scroll)}))
+         ;; Bottom-anchored magit-style transients painted OVER the card list —
+         ;; the provider stays visible above, actions/confirm live at the base.
+         (cond (and (= @mode :actions) (pos? total))
+               (let
+                 [provider
+                  (nth @items @selected)
+
+                  actions
+                  (provider-action-items provider (get @statuses (:id provider)))
+
+                  n
+                  (count actions)
+
+                  last-body
+                  (+ content-top content-h -1)
+
+                  body-top
+                  (max (+ content-top 2) (- (inc last-body) n))
+
+                  title-row
+                  (dec body-top)
+
+                  sep-row
+                  (dec title-row)]
+
+                 (p/set-colors! g t/dialog-fg t/dialog-bg)
+                 (p/fill-rect! g (inc left) sep-row inner-w 1)
+                 (p/set-colors! g t/dialog-border t/dialog-bg)
+                 (p/draw-separator! g left (+ left inner-w 1) sep-row)
+                 (p/set-colors! g t/dialog-fg t/dialog-bg)
+                 (p/fill-rect! g (inc left) title-row inner-w 1)
+                 (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                 (p/styled g
+                           [p/BOLD]
+                           (p/put-str! g
+                                       (+ left 2)
+                                       title-row
+                                       (str (vis/display-label (:id provider)) " — actions")))
+                 (doseq [[i action] (map-indexed vector actions)]
+                   (let
+                     [row (+ (long body-top) (long i))
+                      sel? (= (long i) (long @action-sel))
+                      keytxt (str (:key action))
+                      kx (+ left 2 p/SELECTION_WIDTH)
+                      lx (+ kx (p/display-width keytxt) 2)]
+
+                     (p/set-colors! g t/dialog-fg t/dialog-bg)
+                     (p/fill-rect! g (inc left) row inner-w 1)
+                     (p/draw-selection-marker! g (inc left) row sel? t/dialog-hint-key)
+                     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                     (p/put-str! g kx row keytxt)
+                     (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
+                     (if sel?
+                       (p/styled g [p/BOLD] (p/put-str! g lx row (:label action)))
+                       (p/put-str! g lx row (:label action))))))
+               (= @mode :confirm)
+               (let
+                 [prompt
+                  (:prompt @pending)
+
+                  last-body
+                  (+ content-top content-h -1)
+
+                  title-row
+                  last-body
+
+                  sep-row
+                  (dec title-row)]
+
+                 (p/set-colors! g t/dialog-fg t/dialog-bg)
+                 (p/fill-rect! g (inc left) sep-row inner-w 1)
+                 (p/set-colors! g t/dialog-border t/dialog-bg)
+                 (p/draw-separator! g left (+ left inner-w 1) sep-row)
+                 (p/set-colors! g t/dialog-fg t/dialog-bg)
+                 (p/fill-rect! g (inc left) title-row inner-w 1)
+                 (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                 (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (str prompt)))))
+         (dlg/draw-hint-bar! g
+                             left
+                             hint-row
+                             inner-w
+                             (case @mode
+                               :actions
+                               [["↑/↓" "move"] ["Enter" "run"] ["key" "pick"] ["Esc" "back"]]
+
+                               :status
+                               [["↑/↓" "scroll"] ["Esc" "back"]]
+
+                               :confirm
+                               [["y" "confirm"] ["n/Esc" "cancel"]]
+
+                               :models
+                               [["↑/↓" "move"] ["^P/^N" "reorder"] ["R" "primary"] ["A" "add"]
+                                ["D" "del"] ["Esc" "back"]]
+
+                               [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"]
+                                ["Enter" "actions"] ["Esc" "done"]]))
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
          (let
@@ -1527,6 +1554,195 @@
            (if (nil? key)
              (do (Thread/sleep 100) (recur))
              (cond
+               (= @mode :status)
+               (if (instance? MouseAction key)
+                 (let
+                   [^MouseAction ma key
+                    at (.getActionType ma)]
+
+                   (cond (= at MouseActionType/SCROLL_UP)
+                         (do (swap! status-scroll #(max 0 (dec (long %)))) (recur))
+                         (= at MouseActionType/SCROLL_DOWN)
+                         (do (swap! status-scroll #(inc (long %))) (recur))
+                         :else (recur)))
+                 (let [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)]
+                   (cond (= ktype KeyType/Escape) (do (reset! mode :actions) (recur))
+                         (= ktype KeyType/ArrowUp) (do (swap! status-scroll #(max 0 (dec (long %))))
+                                                       (recur))
+                         (= ktype KeyType/ArrowDown) (do (swap! status-scroll #(inc (long %)))
+                                                         (recur))
+                         :else (recur))))
+               (= @mode :confirm)
+               (if (instance? MouseAction key)
+                 (recur)
+                 (let
+                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
+                    c (when (= ktype KeyType/Character)
+                        (Character/toLowerCase (.getCharacter
+                                                 ^com.googlecode.lanterna.input.KeyStroke key)))]
+
+                   (cond (or (= ktype KeyType/Enter) (= c \y)) (do (when-let [run (:run @pending)]
+                                                                     (run))
+                                                                   (reset! pending nil)
+                                                                   (reset! mode :list)
+                                                                   (recur))
+                         (or (= ktype KeyType/Escape) (= c \n))
+                         (do (reset! pending nil) (reset! mode :list) (recur))
+                         :else (recur))))
+               (= @mode :actions)
+               (if (instance? MouseAction key)
+                 (recur)
+                 (let
+                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
+                    provider (nth @items @selected)
+                    actions (provider-action-items provider (get @statuses (:id provider)))
+                    n (count actions)
+                    run-action!
+                    (fn [action]
+                      (case (:id action)
+                        :models
+                        (do (reset! model-items (->> (:models provider)
+                                                     (keep vis/->svar-model)
+                                                     vec))
+                            (reset! model-sel 0)
+                            (reset! model-scroll 0)
+                            (reset! mode :models))
+
+                        :authenticate
+                        (do (when-let
+                              [updated (authenticate-provider! screen provider (:force? action))]
+                              (swap! items assoc @selected updated))
+                            (reset! mode :list))
+
+                        :status
+                        (do (reset! status-scroll 0) (reset! mode :status))
+
+                        :logout
+                        (do (reset! pending {:prompt (str "Log out of "
+                                                          (vis/display-label (:id provider))
+                                                          "?  y / n")
+                                             :run
+                                             (fn []
+                                               (when (perform-logout! provider)
+                                                 (swap! items remove-provider-by-id (:id provider))
+                                                 (swap! statuses dissoc (:id provider))
+                                                 (swap! limits dissoc (:id provider))
+                                                 (swap! selected
+                                                   #(p/clamp % 0 (max 0 (dec (count @items)))))))})
+                            (reset! mode :confirm))
+
+                        (reset! mode :list))
+                      (when-let [provider* (get @items @selected)]
+                        (refresh-provider-diagnostics! provider* statuses limits)))]
+
+                   (cond (= ktype KeyType/Escape) (do (reset! mode :list) (recur))
+                         (= ktype KeyType/ArrowUp)
+                         (do (swap! action-sel #(p/clamp (dec (long %)) 0 (max 0 (dec n)))) (recur))
+                         (= ktype KeyType/ArrowDown)
+                         (do (swap! action-sel #(p/clamp (inc (long %)) 0 (max 0 (dec n)))) (recur))
+                         (= ktype KeyType/Enter)
+                         (do (run-action! (nth actions
+                                               (p/clamp (long @action-sel) 0 (max 0 (dec n)))))
+                             (recur))
+                         (= ktype KeyType/Character)
+                         (let
+                           [c (Character/toLowerCase
+                                (.getCharacter ^com.googlecode.lanterna.input.KeyStroke key))]
+                           (if-let [action (some #(when (= c (:key %)) %) actions)]
+                             (do (run-action! action) (recur))
+                             (recur)))
+                         :else (recur))))
+               (= @mode :models)
+               (if (instance? MouseAction key)
+                 (let
+                   [^MouseAction ma key
+                    at (.getActionType ma)]
+
+                   (cond (= at MouseActionType/SCROLL_UP)
+                         (do (swap! model-sel #(p/clamp (dec (long %))
+                                                        0
+                                                        (max 0 (dec (count @model-items)))))
+                             (recur))
+                         (= at MouseActionType/SCROLL_DOWN)
+                         (do (swap! model-sel #(p/clamp (inc (long %))
+                                                        0
+                                                        (max 0 (dec (count @model-items)))))
+                             (recur))
+                         :else (recur)))
+                 (let
+                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
+                    ms @model-items
+                    n (long (count ms))
+                    provider (nth @items @selected)]
+
+                   (cond
+                     (= ktype KeyType/Escape) (do (swap! items assoc
+                                                    @selected
+                                                    (assoc (nth @items @selected)
+                                                      :models (vec @model-items)))
+                                                  (reset! mode :list)
+                                                  (recur))
+                     (= ktype KeyType/ArrowUp)
+                     (if (input/reorder-modifier? key)
+                       (do (when (pos? (long @model-sel))
+                             (swap! model-items swap-items @model-sel (dec (long @model-sel)))
+                             (swap! model-sel dec))
+                           (recur))
+                       (do (swap! model-sel #(p/clamp (dec (long %)) 0 (max 0 (dec n)))) (recur)))
+                     (= ktype KeyType/ArrowDown)
+                     (if (input/reorder-modifier? key)
+                       (do (when (< (long @model-sel) (dec n))
+                             (swap! model-items swap-items @model-sel (inc (long @model-sel)))
+                             (swap! model-sel inc))
+                           (recur))
+                       (do (swap! model-sel #(p/clamp (inc (long %)) 0 (max 0 (dec n)))) (recur)))
+                     (= ktype KeyType/Character)
+                     (let
+                       [c (Character/toLowerCase (.getCharacter
+                                                   ^com.googlecode.lanterna.input.KeyStroke key))
+                        ctrl (.isCtrlDown ^com.googlecode.lanterna.input.KeyStroke key)]
+
+                       (cond (and ctrl (= c keymap/picker-reorder-up))
+                             (do (when (pos? (long @model-sel))
+                                   (swap! model-items swap-items @model-sel (dec (long @model-sel)))
+                                   (swap! model-sel dec))
+                                 (recur))
+                             (and ctrl (= c keymap/picker-reorder-down))
+                             (do (when (< (long @model-sel) (dec n))
+                                   (swap! model-items swap-items @model-sel (inc (long @model-sel)))
+                                   (swap! model-sel inc))
+                                 (recur))
+                             (= c \r) (do (when (pos? n)
+                                            (swap! model-items move-model-to-front @model-sel)
+                                            (reset! model-sel 0))
+                                          (recur))
+                             (= c \d) (do (when (pos? n)
+                                            (let [sel (long @model-sel)]
+                                              (swap! model-items #(vec (concat (subvec % 0 sel)
+                                                                               (subvec %
+                                                                                       (inc sel)))))
+                                              (swap! model-sel
+                                                #(p/clamp % 0 (max 0 (dec (count @model-items)))))))
+                                          (recur))
+                             (= c \a) (do (when-let
+                                            [model-name
+                                             (select-model!
+                                               screen
+                                               provider
+                                               (->> (concat (map vis/model-name @model-items)
+                                                            (:default-models (vis/provider-template
+                                                                               (:id provider)))
+                                                            (:default-models provider))
+                                                    (remove nil?)
+                                                    distinct
+                                                    vec))]
+                                            (when-not (some #(= model-name (vis/model-name %))
+                                                            @model-items)
+                                              (swap! model-items conj {:name model-name})
+                                              (reset! model-sel (dec (count @model-items)))))
+                                          (recur))
+                             :else (recur)))
+                     :else (recur))))
                (instance? MouseAction key)
                (let
                  [^MouseAction ma key
@@ -1573,46 +1789,9 @@
                            (swap! selected inc))
                          (recur))
                      (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
-                   ;; Enter - open action menu for selected provider
+                   ;; Enter - open the inline actions view for the selected provider
                    (= ktype KeyType/Enter)
-                   (do
-                     (when (pos? total)
-                       (let [provider (nth @items @selected)]
-                         (when-let
-                           [action (dlg/select-dialog!
-                                     screen
-                                     (str (vis/display-label (:id provider)) " Actions")
-                                     (provider-action-items provider
-                                                            (get @statuses (:id provider))))]
-                           (case (:id action)
-                             :models
-                             (when-let [updated-models (show-model-manager! screen provider)]
-                               (swap! items assoc
-                                 @selected
-                                 (assoc provider :models (:models updated-models))))
-
-                             :authenticate
-                             (when-let
-                               [updated (authenticate-provider! screen provider (:force? action))]
-                               (swap! items assoc @selected updated))
-
-                             :status
-                             (show-provider-status! screen
-                                                    provider
-                                                    (get @statuses (:id provider))
-                                                    (get @limits (:id provider)))
-
-                             :logout
-                             (when (logout-provider! screen provider)
-                               (swap! items remove-provider-by-id (:id provider))
-                               (swap! statuses dissoc (:id provider))
-                               (swap! limits dissoc (:id provider))
-                               (swap! selected #(p/clamp % 0 (max 0 (dec (count @items))))))
-
-                             nil)
-                           (when-let [provider* (get @items @selected)]
-                             (refresh-provider-diagnostics! provider* statuses limits)))))
-                     (recur))
+                   (do (when (pos? total) (reset! action-sel 0) (reset! mode :actions)) (recur))
                    (= ktype KeyType/Character)
                    (let
                      [c (Character/toLowerCase (.getCharacter
@@ -1640,23 +1819,23 @@
                                       (refresh-provider-diagnostics! p statuses limits)
                                       (reset! selected (dec (count @items))))
                                     (recur))
-                       ;; D - delete provider
+                       ;; D - delete provider (inline confirm, no popup)
                        (= c \d)
-                       (do (when (and (pos? total)
-                                      (dlg/confirm-dialog! screen
-                                                           "Remove"
-                                                           [(str "Remove "
-                                                                 (vis/display-label
-                                                                   (:id (nth @items @selected)))
-                                                                 "?")]))
-                             (let [provider-id (:id (nth @items @selected))]
-                               (swap! items #(vec (concat (subvec % 0 @selected)
-                                                          (subvec % (inc (long @selected))))))
-                               (swap! statuses dissoc provider-id)
-                               (swap! limits dissoc provider-id)
-                               (swap! selected #(p/clamp % 0 (max 0 (dec (count @items)))))))
+                       (do (when (pos? total)
+                             (let
+                               [sel @selected
+                                provider-id (:id (nth @items sel))]
+
+                               (reset! pending
+                                 {:prompt (str "Remove " (vis/display-label provider-id) "?  y / n")
+                                  :run
+                                  (fn []
+                                    (swap! items #(vec (concat (subvec % 0 sel)
+                                                               (subvec % (inc (long sel))))))
+                                    (swap! statuses dissoc provider-id)
+                                    (swap! limits dissoc provider-id)
+                                    (swap! selected #(p/clamp % 0 (max 0 (dec (count @items))))))})
+                               (reset! mode :confirm)))
                            (recur))
-                       ;; S - open Settings without leaving the Router hub
-                       (and open-settings (= c \s)) (do (open-settings) (recur))
                        :else (recur)))
                    :else (recur)))))))))))

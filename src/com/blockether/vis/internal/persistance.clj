@@ -324,6 +324,8 @@
 
 (defdelegate db-list-sessions [db-info channel])
 
+(defdelegate db-search-session-ids [db-info channel query])
+
 (defdelegate db-find-session-by-external [db-info channel ext-id])
 
 (defdelegate db-update-session-title! [db-info ref title])

@@ -1,26 +1,45 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayError, type GatewayClient } from '../lib/gateway';
 import type { GatewayConn, GatewayTheme, ThemePref, Toggle, ToggleGroup } from '../lib/types';
 import { applyGatewayTheme, resolveTheme } from '../lib/theme';
 import { getThemePref, setThemePref } from '../lib/storage';
-import { Banner } from '../components/ui';
+import { Banner, Input } from '../components/ui';
 
 interface Props {
   client: GatewayClient;
   gateway: GatewayConn;
   isActive: boolean;
+  onActivate?: () => void;
+  onDeactivate?: () => void;
+  onRename?: (label: string | undefined) => void | Promise<void>;
+  onRemove?: () => void | Promise<void>;
   onClose: () => void;
 }
 
-export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Props) {
+export function GatewaySettingsDialog({
+  client,
+  gateway,
+  isActive,
+  onActivate,
+  onDeactivate,
+  onRename,
+  onRemove,
+  onClose,
+}: Props) {
   const [groups, setGroups] = useState<ToggleGroup[] | null>(null);
   const [theme, setTheme] = useState<GatewayTheme | null>(null);
   const [pref, setPref] = useState<ThemePref>('light');
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
+  const [unauthorized, setUnauthorized] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(gateway.label ?? '');
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
+    setUnreachable(false);
+    setUnauthorized(false);
     try {
       const settings = await client.settings();
       setGroups(settings.groups ?? []);
@@ -35,8 +54,17 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
         setErr(`Theme sync unavailable: ${(e as Error).message}`);
       }
     } catch (e) {
+      // A token-gated gateway that's actually up answers /healthz (so the list
+      // reads Online) but 401s on /v1/settings. Surface that as "unauthorized",
+      // NOT "offline" — otherwise the dialog contradicts the reachable list.
+      if (e instanceof GatewayError && e.status === 401) {
+        setUnauthorized(true);
+        setGroups(null);
+        return;
+      }
       setErr((e as Error).message);
-      setGroups([]);
+      setUnreachable(true);
+      setGroups(null);
     }
   }, [client, isActive]);
 
@@ -99,7 +127,13 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
   }
 
   const settingCount = groups?.reduce((total, group) => total + group.toggles.length, 0) ?? 0;
-  const label = gateway.label || gatewayHost(gateway.url);
+  const status = unreachable
+    ? { dot: '○', label: 'Offline', tone: 'text-err' }
+    : unauthorized
+      ? { dot: '●', label: 'Unauthorized', tone: 'text-warn-strong' }
+      : isActive
+        ? { dot: '●', label: 'Active', tone: 'text-ok' }
+        : { dot: '○', label: 'Saved', tone: 'text-dialog-hint' };
 
   return (
     <div
@@ -116,41 +150,121 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
       >
         <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
           <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <h2
-                id="gateway-settings-title"
-                className="shrink-0 font-mono text-xs font-black uppercase tracking-[0.12em]"
-              >
-                Gateway settings
-              </h2>
-              <span className="truncate font-mono text-[10px] font-bold opacity-65">· {label}</span>
-            </div>
-            <p className="truncate font-mono text-[9px] opacity-65">{gateway.url}</p>
+            <h2
+              id="gateway-settings-title"
+              className="shrink-0 font-mono text-xs font-black uppercase tracking-[0.12em]"
+            >
+              Gateway settings
+            </h2>
+            <p className="truncate font-mono text-[10px] opacity-65">{gateway.url}</p>
           </div>
           <button
             type="button"
-            className="grid min-w-12 self-stretch place-items-center border-l border-dialog-title-foreground/25 font-mono text-lg font-black transition-colors hover:bg-err hover:text-white focus-visible:bg-err focus-visible:text-white focus-visible:outline-none"
+            className="grid min-w-12 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-base leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close gateway settings"
-            autoFocus
           >
-            ×
+            ✕
           </button>
         </header>
 
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-          <p className="min-w-0 text-[11px] leading-4 text-dialog-hint">
+        <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
+          <p className="text-[11px] leading-4 text-dialog-hint">
             Stored on this gateway and shared with its connected TUI and clients.
           </p>
-          <span className={`shrink-0 font-mono text-[9px] font-black uppercase ${isActive ? 'text-ok' : 'text-dialog-hint'}`}>
-            {isActive ? '● Active' : '○ Saved'}
-          </span>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
 
-          {theme && (
+          <SettingsPanel
+            title="Gateway"
+            meta={<span className={`font-black ${status.tone}`}>{status.dot} {status.label}</span>}
+          >
+            <div className="space-y-3 p-3">
+              <label className="block">
+                <span className="mb-1 block font-mono text-[9px] font-bold uppercase tracking-wider text-dialog-hint">
+                  Display name
+                </span>
+                <div className="flex gap-2">
+                  <Input
+                    value={labelDraft}
+                    placeholder={gatewayHost(gateway.url)}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    className="h-10 min-w-0 flex-1 text-xs sm:h-9"
+                    onChange={(event) => setLabelDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void onRename?.(labelDraft.trim() || undefined);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={(labelDraft.trim() || undefined) === (gateway.label ?? undefined)}
+                    onClick={() => void onRename?.(labelDraft.trim() || undefined)}
+                    className="h-10 shrink-0 border border-dialog-edge bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white disabled:border-dialog-edge disabled:bg-panel disabled:text-dialog-hint disabled:opacity-45 disabled:hover:bg-panel disabled:hover:text-dialog-hint sm:h-9"
+                  >
+                    Save
+                  </button>
+                </div>
+              </label>
+
+              <div className="flex flex-wrap items-center gap-2 border-t border-dialog-edge pt-3">
+                {isActive ? (
+                  <button
+                    type="button"
+                    onClick={() => onDeactivate?.()}
+                    className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
+                  >
+                    Deactivate
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onActivate?.();
+                      onClose();
+                    }}
+                    className="h-9 border border-accent bg-accent px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-accent-foreground transition-opacity hover:opacity-90"
+                  >
+                    Activate
+                  </button>
+                )}
+                {confirmRemove ? (
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-err">Remove?</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await onRemove?.();
+                        onClose();
+                      }}
+                      className="h-9 border border-err bg-err px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-white transition-opacity hover:opacity-90"
+                    >
+                      Yes, remove
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRemove(false)}
+                      className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRemove(true)}
+                    className="h-9 border border-err/40 bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-err transition-colors hover:border-err hover:bg-err hover:text-white"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </SettingsPanel>
+
+          {!unreachable && !unauthorized && theme && (
             <SettingsPanel
               title="Theme"
               meta={pref === 'gateway' ? `gateway · ${theme.display_name}` : 'saved on this device'}
@@ -171,7 +285,7 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
                         <button
                           type="button"
                           key={choice.key}
-                          disabled={pending !== null}
+                          disabled={pending?.startsWith('theme:') ?? false}
                           onClick={() => chooseTheme(choice.key)}
                           className={`flex min-h-12 min-w-0 items-center justify-between gap-3 px-3 py-2 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-11 ${
                             selected
@@ -200,7 +314,41 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
             </SettingsPanel>
           )}
 
-          {groups === null ? (
+          {unreachable ? (
+            <SettingsPanel title="Settings">
+              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+                <p className="font-mono text-xs font-bold text-err">Gateway unreachable</p>
+                <p className="font-mono text-[10px] leading-relaxed text-dialog-hint">
+                  Can't load settings — the gateway isn't responding.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-[10px] font-bold text-white hover:bg-hover"
+                >
+                  Retry
+                </button>
+              </div>
+            </SettingsPanel>
+          ) : unauthorized ? (
+            <SettingsPanel title="Settings" meta="unauthorized">
+              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+                <p className="font-mono text-xs font-bold text-warn-strong">Token missing or invalid</p>
+                <p className="max-w-sm font-mono text-[10px] leading-relaxed text-dialog-hint">
+                  The gateway is online, but rejected this token. Re-pair from{' '}
+                  <code className="text-accent-ink">vis gateway pair</code> and paste the fresh
+                  link to load its settings.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-[10px] font-bold text-white hover:bg-hover"
+                >
+                  Retry
+                </button>
+              </div>
+            </SettingsPanel>
+          ) : groups === null ? (
             <SettingsPanel title="Loading">
               <div className="space-y-px bg-dialog-edge" aria-label="Loading settings">
                 {[0, 1, 2].map((item) => (
@@ -227,7 +375,7 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
                     return (
                       <div
                         key={toggle.id}
-                        className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-2.5 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
+                        className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
                       >
                         <span
                           className={`pt-0.5 font-mono text-xs ${
@@ -243,7 +391,7 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
                             {toggle.label}
                           </p>
                           {toggle.description && (
-                            <p className="break-words text-[10px] leading-[1.45] text-dialog-hint">
+                            <p className="mt-0.5 hyphens-auto break-words text-justify text-[10px] leading-[1.45] text-dialog-hint">
                               {toggle.description}
                             </p>
                           )}
@@ -291,11 +439,8 @@ export function GatewaySettingsDialog({ client, gateway, isActive, onClose }: Pr
           )}
         </div>
 
-        <footer className="flex shrink-0 items-center justify-between border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-[9px] text-dialog-hint sm:px-4 sm:py-2">
-          <span>{settingCount} options on {label}</span>
-          <button type="button" className="font-bold text-dialog-hint-key hover:text-white" onClick={onClose}>
-            Close
-          </button>
+        <footer className="flex shrink-0 items-center border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-[9px] text-dialog-hint sm:px-4 sm:py-2">
+          <span>{settingCount} {settingCount === 1 ? 'option' : 'options'}</span>
         </footer>
       </section>
     </div>
@@ -308,7 +453,7 @@ function SettingsPanel({
   children,
 }: {
   title: string;
-  meta?: string;
+  meta?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -350,13 +495,15 @@ function Switch({
       aria-busy={busy}
       disabled={disabled}
       onClick={onClick}
-      className={`mt-0.5 inline-flex h-10 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-[10px] font-black tracking-[0.12em] transition-[background-color,border-color,color,transform] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:h-7 ${
+      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-[9px] font-black leading-none tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 sm:h-6 ${
         on
           ? 'border-accent bg-accent text-accent-foreground'
-          : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong hover:text-white'
+          : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong'
       }`}
     >
-      {busy ? '···' : on ? 'ON' : 'OFF'}
+      <span aria-hidden className={busy ? 'animate-pulse' : ''}>
+        {busy ? '··' : on ? 'ON' : 'OFF'}
+      </span>
     </button>
   );
 }

@@ -166,64 +166,45 @@
 
 ;; Sandbox contracts -----------------------------------------------------------
 
-(def cache-keys #{"path" "access"})
-(def filesystem-keys
-  #{"allow-read-write" "allow-read" "allow-write" "deny-read" "deny-write" "language-caches"})
-(def jail-keys #{"filesystem" "inbound-ports" "env" "deny-exec"})
-(def network-rule-allow-keys #{"method" "path"})
-(def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
-(def network-keys #{"allowed-domains" "denied-domains" "exclude-domains" "allow-private" "rules"})
+;; ── Workspace filesystem catalog ─────────────────────────────────────────────
+;; ONE documented catalog of every filesystem root. Each entry is
+;; `{id, path, description, access?, search?}`. `access` (default read-write)
+;; picks RW vs read-only; `search: false` keeps the root OUT of the default
+;; rg/find_files sweep (explicit paths still reach it). The catalog is the sole
+;; source of truth; `jail.filesystem.allow` references entries by id.
+(def workspace-entry-keys #{"id" "path" "description" "access" "search"})
+(def workspace-access-values #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})
+(def workspace-entry-schema
+  {"id" non-blank-string?
+   "path" rooted-path?
+   "description" non-blank-string?
+   "access" (one-of workspace-access-values)
+   "search" boolean?})
+(s/def ::workspace-entry #(closed-map? workspace-entry-schema #{"id" "path"} %))
+(s/def ::workspace-entries (s/coll-of ::workspace-entry :kind vector?))
+(def workspace-keys #{"filesystem"})
+(def workspace-schema {"filesystem" (spec-pred ::workspace-entries)})
+(s/def ::workspace #(closed-map? workspace-schema %))
 
-(def cache-schema
-  {"path" rooted-path?
-   "access" (one-of #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})})
-(s/def ::cache-map #(closed-map? cache-schema #{"path"} %))
-(s/def ::cache
-  (s/or :path rooted-path?
-        :map ::cache-map))
-(s/def ::caches (s/coll-of ::cache :kind vector?))
+;; ── Jail filesystem admission ────────────────────────────────────────────────
+;; Pure id references into the workspace catalog (deny-by-omission): a catalog
+;; root is OUTSIDE the OS jail unless its id appears in `allow`.
+(def jail-filesystem-keys #{"allow"})
+(def jail-filesystem-schema {"allow" #(and (vector? %) (every? non-blank-string? %))})
+(s/def ::jail-filesystem #(closed-map? jail-filesystem-schema %))
 
-(def fs-grant-keys #{"path" "description"})
-(def fs-grant-schema {"path" rooted-path? "description" non-blank-string?})
-(s/def ::fs-grant-map #(closed-map? fs-grant-schema #{"path"} %))
-(s/def ::fs-grant
-  (s/or :path rooted-path?
-        :map ::fs-grant-map))
-(s/def ::fs-grants (s/coll-of ::fs-grant :kind vector?))
-
-(defn- grant-path
-  "The rooted path of a filesystem grant entry (a bare string or a
-   `{path, description}` map). Enforcement consumes paths only."
-  [entry]
-  (if (map? entry) (get entry "path") entry))
-
-(defn- grant-descriptions
-  "Path -> human description for the grant entries that carry one. Feeds the
-   model-facing session view so the agent knows why each root is granted."
-  [grants]
-  (into {}
-        (keep (fn [entry]
-                (when (map? entry)
-                  (when-let [d (get entry "description")]
-                    [(get entry "path") d]))))
-        grants))
-
-(def filesystem-schema
-  {"allow-read-write" (spec-pred ::fs-grants)
-   "allow-read" (spec-pred ::fs-grants)
-   "allow-write" (spec-pred ::fs-grants)
-   "deny-read" rooted-path-list?
-   "deny-write" rooted-path-list?
-   "language-caches" (spec-pred ::caches)})
-(s/def ::filesystem #(closed-map? filesystem-schema %))
-
+(def jail-keys #{"enabled" "filesystem" "inbound-ports" "env" "deny-exec"})
 (def jail-schema
-  {"filesystem" (spec-pred ::filesystem)
+  {"enabled" boolean?
+   "filesystem" (spec-pred ::jail-filesystem)
    "inbound-ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
    "env" env-var-name-list?
    "deny-exec" string-list?})
 (s/def ::jail #(closed-map? jail-schema %))
 
+(def network-rule-allow-keys #{"method" "path"})
+(def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
+(def network-keys #{"allowed-domains" "denied-domains" "exclude-domains" "allow-private" "rules"})
 (def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
 (s/def ::network-rule-allow #(closed-map? network-rule-allow-schema #{"method"} %))
 (s/def ::network-rule-allows (s/coll-of ::network-rule-allow :kind vector?))
@@ -256,8 +237,8 @@
 (def mcp-server-keys #{"transport" "command" "args" "cwd" "env" "url" "headers"})
 (def python-keys #{"resource-cache"})
 (def config-keys
-  #{"providers" "router" "system-prompt" "sandbox" "jail" "network" "environment" "db-spec" "search"
-    "toggles" "tui-settings" "mcp" "python"})
+  #{"providers" "router" "system-prompt" "workspace" "jail" "network" "environment" "db-spec"
+    "search" "toggles" "tui-settings" "mcp" "python"})
 
 (def prompt-schema {"text" string? "replace?" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -303,7 +284,7 @@
   {"providers" (spec-pred ::providers)
    "router" (spec-pred ::router)
    "system-prompt" (spec-pred ::system-prompt)
-   "sandbox" boolean?
+   "workspace" (spec-pred ::workspace)
    "jail" (spec-pred ::jail)
    "network" (spec-pred ::network)
    "environment" string-map?
@@ -319,6 +300,27 @@
 (defn explain-data [config] (s/explain-data ::config config))
 (defn valid? [config] (s/valid? ::config config))
 
+(defn explain-problems
+  "Best-effort, model-readable reasons a string-keyed YAML `config` fails the
+   contract — one line per offending TOP-LEVEL key: a non-string key, an unknown
+   key (config is closed), or a value the section schema rejects. Returns [] for
+   a valid or nil map, so a caller surfaces a `config_error` hint ONLY when the
+   live config is actually denied. This points a fix straight at the key rather
+   than dumping the whole opaque spec problem."
+  [config]
+  (cond (nil? config) []
+        (not (map? config)) ["config: expected a YAML map with string keys"]
+        :else (into []
+                    (keep (fn [[k v]]
+                            (cond (not (string? k)) (str (pr-str k)
+                                                         ": every config key must be a string")
+                                  (not (contains? config-schema k))
+                                  (str k ": unknown top-level config key (config is closed)")
+                                  (not ((get config-schema k) v))
+                                  (str k ": value rejected by the " k " contract")
+                                  :else nil)))
+                    config)))
+
 (defn assert-config!
   "Return a string-keyed YAML config when it satisfies the complete contract."
   ([config] (assert-config! config nil))
@@ -333,7 +335,7 @@
 
 (def process-jail-config-keys
   #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write :deny-exec
-    :language-cache-dirs :inbound-ports :env-passthrough :path-descriptions})
+    :no-search :inbound-ports :env-passthrough :path-descriptions})
 
 (s/def ::process-jail-config
   (s/and map?
@@ -341,7 +343,7 @@
          #(boolean? (:disabled? %))
          #(every? rooted-path-list?
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
-         #(s/valid? ::caches (:language-cache-dirs %))
+         #(rooted-path-list? (or (:no-search %) []))
          #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get jail-schema "inbound-ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
@@ -384,34 +386,66 @@
                 (distinct))
           names)))
 
+(defn- entry-read-only?
+  [entry]
+  (contains? #{"read-only" "readonly" "ro"}
+             (some-> (get entry "access")
+                     str/lower-case)))
+
+(defn- entry-no-search?
+  "Search visibility defaults to true; only an explicit `search: false` opts out."
+  [entry]
+  (false? (get entry "search")))
+
 (defn process-jail-config
-  "Derive the internal process-jail policy from validated string-keyed config."
+  "Derive the internal process-jail policy from validated string-keyed config.
+   The `workspace.filesystem` catalog is the single source of roots;
+   `jail.filesystem.allow` selects which catalog ids enter the OS jail
+   (deny-by-omission). Each admitted entry's `access` sets RW vs read-only and
+   `search: false` marks it out of the default search sweep."
   [config]
   (assert-config! config)
   (let
     [jail
      (get config "jail" {})
 
-     fs
-     (get jail "filesystem" {})
+     entries
+     (get-in config ["workspace" "filesystem"] [])
+
+     by-id
+     (reduce (fn [m e]
+               (assoc m (get e "id") e))
+             {}
+             entries)
+
+     allowed
+     (into []
+           (map (fn [id]
+                  (or (get by-id id)
+                      (throw (ex-info (str "jail.filesystem.allow references unknown workspace id: "
+                                           id)
+                                      {:type :vis/invalid-config :id id})))))
+           (get-in jail ["filesystem" "allow"] []))
 
      descriptions
-     (merge (grant-descriptions (get fs "allow-read-write"))
-            (grant-descriptions (get fs "allow-read"))
-            (grant-descriptions (get fs "allow-write")))]
+     (into {}
+           (keep (fn [e]
+                   (when-let [d (get e "description")]
+                     [(get e "path") d])))
+           allowed)]
 
-    (assert-process-jail-config! {:disabled? (not (true? (get config "sandbox")))
-                                  :allow-read-write
-                                  (into [] (keep grant-path) (get fs "allow-read-write"))
-                                  :allow-read (into [] (keep grant-path) (get fs "allow-read"))
-                                  :allow-write (into [] (keep grant-path) (get fs "allow-write"))
-                                  :deny-read (vec (get fs "deny-read"))
-                                  :deny-write (vec (get fs "deny-write"))
-                                  :deny-exec (resolve-exec-denies (get jail "deny-exec"))
-                                  :language-cache-dirs (vec (get fs "language-caches"))
-                                  :inbound-ports (vec (get jail "inbound-ports"))
-                                  :env-passthrough (vec (get jail "env"))
-                                  :path-descriptions descriptions})))
+    (assert-process-jail-config!
+      {:disabled? (= false (get jail "enabled"))
+       :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
+       :allow-read (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
+       :allow-write []
+       :deny-read []
+       :deny-write []
+       :deny-exec (resolve-exec-denies (get jail "deny-exec"))
+       :no-search (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)
+       :inbound-ports (vec (get jail "inbound-ports"))
+       :env-passthrough (vec (get jail "env"))
+       :path-descriptions descriptions})))
 
 (defn- network-allow->runtime
   [allow]

@@ -1,29 +1,37 @@
 import type { GatewayTheme, ThemePref, ThemeSummary } from './types';
 import { BUNDLED_LIGHT, BUNDLED_THEMES } from './palettes';
 
-/** Apply the daemon's browser-ready projection of the active TUI palette. */
+const appliedThemeVars = new Map<string, string>();
 
-const appliedThemeVars = new Set<string>();
-
-/** Apply the daemon's browser-ready projection of the active TUI palette. */
+/**
+ * Apply the daemon's browser-ready projection of the active TUI palette.
+ * Diff-based and idempotent: it removes only vars that disappeared and sets only
+ * vars that changed, never remove-then-add — so a repeated identical apply is a
+ * no-op and can't flash the `:root` fallback (the toggle-click flicker).
+ */
 export function applyGatewayTheme(theme: GatewayTheme): void {
   const root = document.documentElement;
 
-  for (const name of appliedThemeVars) root.style.removeProperty(name);
-  appliedThemeVars.clear();
-
+  const next = new Map<string, string>();
   for (const [name, value] of Object.entries(theme.css_vars ?? {})) {
-    if (!name.startsWith('--')) continue;
-    root.style.setProperty(name, value);
-    appliedThemeVars.add(name);
+    if (name.startsWith('--')) next.set(name, value);
   }
 
-  root.dataset.theme = theme.id;
-  root.style.colorScheme = theme.mode;
+  for (const name of appliedThemeVars.keys()) {
+    if (!next.has(name)) root.style.removeProperty(name);
+  }
+  for (const [name, value] of next) {
+    if (appliedThemeVars.get(name) !== value) root.style.setProperty(name, value);
+  }
+  appliedThemeVars.clear();
+  for (const [name, value] of next) appliedThemeVars.set(name, value);
+
+  if (root.dataset.theme !== theme.id) root.dataset.theme = theme.id;
+  if (root.style.colorScheme !== theme.mode) root.style.colorScheme = theme.mode;
 
   const chromeColor = theme.css_vars?.['--bg'];
   const themeMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (chromeColor && themeMeta) themeMeta.content = chromeColor;
+  if (chromeColor && themeMeta && themeMeta.content !== chromeColor) themeMeta.content = chromeColor;
 }
 
 /**

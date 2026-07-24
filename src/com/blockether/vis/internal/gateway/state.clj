@@ -1642,7 +1642,16 @@
                     :started_at (or (get-in @registry [sid :turns tid :started_at])
                                     (System/currentTimeMillis))}
                    queued?
-                   (assoc :queued? true)))
+                   (assoc :queued? true)
+
+                   ;; Echo the user's INLINE image attachments (web/API base64)
+                   ;; on the live event so a freshly-attached companion turn
+                   ;; renders the picture immediately — the SAME base64 the
+                   ;; history projection inlines (see `att-by-soul`). Without
+                   ;; this the live turn shows only the `[Image #N: …]` caption
+                   ;; until a reload rehydrates the persisted attachment.
+                   (seq attachments)
+                   (assoc :attachments attachments)))
   (let [stall (atom {:phase nil :last-ms (System/currentTimeMillis)})]
     (cancellation/cancellation-set-future! cancel-token
                                            (cancellation/worker-future
@@ -2609,6 +2618,19 @@
         vec
         session-summary-extras
         order-session-summaries)))
+
+(defn search-session-ids
+  "Soul-id STRINGS whose TRANSCRIPT (user request + assistant iteration text)
+   matches `query`. The SERVER-side half of transcript search: clients match
+   title/project locally over the already-loaded list and union these ids for
+   the deep matches, so the 105MB of assistant text never crosses the wire.
+   Blank query → []."
+  ([query] (search-session-ids :all query))
+  ([channel query]
+   (let [db (try (lp/db-info) (catch Throwable _ nil))]
+     (if db
+       (mapv str (persistance/db-search-session-ids db channel query))
+       []))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 

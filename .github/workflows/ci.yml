@@ -72,11 +72,16 @@ jobs:
           ---
           Do the thing.
           MD
+      - name: Install bubblewrap (Linux jail enforcer)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Run test suite
         env:
           # Prevent a vacuous green: macOS must execute fresh Seatbelt/socket E2E,
           # while Linux runs the cross-platform policy/compiler assertions.
           VIS_REQUIRE_MACOS_SANDBOX_E2E: ${{ runner.os == 'macOS' && '1' || '0' }}
+          # Linux must execute real bubblewrap containment (not a vacuous skip).
+          VIS_REQUIRE_LINUX_SANDBOX_E2E: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale

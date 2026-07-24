@@ -95,6 +95,50 @@ export async function pickImageAttachments({
   return { attachments, rejected };
 }
 
+// Build attachments from raw File/Blob objects — the clipboard-paste and
+// drag-drop path (web + iOS/Android WKWebView), reusing the same validation and
+// data-URL encoding as the native file picker above.
+export async function attachmentsFromFiles(
+  files: File[],
+  {
+    maxFiles = 8,
+    maxFileBytes = 5 * 1024 * 1024,
+    mediaTypes = DEFAULT_MEDIA_TYPES,
+  }: { maxFiles?: number; maxFileBytes?: number; mediaTypes?: string[] } = {},
+): Promise<PickAttachmentResult> {
+  const attachments: PendingAttachment[] = [];
+  const rejected: string[] = [];
+  for (const file of files) {
+    const name = file.name || 'pasted-image';
+    if (attachments.length >= maxFiles) {
+      rejected.push(`${name}: limit of ${maxFiles} images reached`);
+      continue;
+    }
+    if (!mediaTypes.includes(file.type)) {
+      rejected.push(`${name}: unsupported image format`);
+      continue;
+    }
+    if (file.size > maxFileBytes) {
+      rejected.push(`${name}: larger than ${Math.round(maxFileBytes / 1024 / 1024)} MB`);
+      continue;
+    }
+    try {
+      const previewUrl = await blobAsDataUrl(file);
+      attachments.push({
+        id: crypto.randomUUID(),
+        filename: name,
+        media_type: file.type,
+        base64: previewUrl,
+        previewUrl,
+        size: file.size,
+      });
+    } catch (cause) {
+      rejected.push(`${name}: ${(cause as Error).message}`);
+    }
+  }
+  return { attachments, rejected };
+}
+
 // Native camera capture (iOS/Android) via the official @capacitor/camera plugin.
 // This is SPM-compatible, so it links into the Capacitor 8 iOS project cleanly —
 // unlike the ML Kit barcode scanner, whose GoogleMLKit dependency is CocoaPods-only.

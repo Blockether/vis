@@ -579,19 +579,19 @@
    Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
   (into {}
         (map (juxt name identity))
-        #{:providers :router :system-prompt :sandbox :filesystem :jail :network :environment
-          :db-spec :search :toggles :tui-settings :mcp :name :context :output-limit :tool-call? :id
-          :api-key :models :base-url :api-style :responses-path :llm-headers :extra-body :rate-limit
-          :budget :tokens :same-provider-delays-ms :fallback-after-ms :respect-retry-after?
-          :fallback-provider? :timeout-ms :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms
-          :max-retries :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost
-          :check-context? :pricing :context-limits :output-reserve :failure-threshold :recovery-ms
-          :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write :allow-read
-          :allow-write :deny-read :deny-write :language-caches :path :access :description
-          :inbound-ports :deny-exec :allowed-domains :denied-domains :exclude-domains :allow-private
-          :rules :host :methods :allow :method :text :replace? :include-gitignored-paths
-          :always-exclude :backend :theme-name :contributors-disabled :servers :transport :command
-          :args :cwd :env :url :headers :python :resource-cache}))
+        #{:providers :router :system-prompt :workspace :enabled :filesystem :jail :network
+          :environment :db-spec :search :toggles :tui-settings :mcp :name :context :output-limit
+          :tool-call? :id :api-key :models :base-url :api-style :responses-path :llm-headers
+          :extra-body :rate-limit :budget :tokens :same-provider-delays-ms :fallback-after-ms
+          :respect-retry-after? :fallback-provider? :timeout-ms :ttft-timeout-ms :idle-timeout-ms
+          :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms :multiplier :max-tokens
+          :max-cost :check-context? :pricing :context-limits :output-reserve :failure-threshold
+          :recovery-ms :transient-status-codes :window-ms :cooldown-ms :max-wait-ms
+          :allow-read-write :allow-read :allow-write :deny-read :deny-write :path :access
+          :description :inbound-ports :deny-exec :allowed-domains :denied-domains :exclude-domains
+          :allow-private :rules :host :methods :allow :method :text :replace?
+          :include-gitignored-paths :always-exclude :backend :theme-name :contributors-disabled
+          :servers :transport :command :args :cwd :env :url :headers :python :resource-cache}))
 
 (defn runtime-config
   "Adapt an already-validated string-keyed YAML map to Vis' internal domain maps.
@@ -619,19 +619,32 @@
     (when (.exists f)
       (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))]
         (when (map? raw)
-          (if-let [legacy-filesystem (get raw "filesystem")]
-            (let
-              [legacy-jail (or (get raw "jail") {})
-               legacy-jail* (if (map? legacy-jail) legacy-jail {})]
+          (let
+            [legacy-filesystem (get raw "filesystem")
+             legacy-sandbox (get raw "sandbox")
+             legacy-jail (or (get raw "jail") {})
+             legacy-jail* (if (map? legacy-jail) legacy-jail {})
+             normalized-filesystem (if legacy-filesystem
+                                     (-> raw
+                                         (dissoc "filesystem")
+                                         (assoc "jail" (assoc legacy-jail*
+                                                         "filesystem"
+                                                         (if (map? (get legacy-jail* "filesystem"))
+                                                           (merge (get legacy-jail* "filesystem")
+                                                                  legacy-filesystem)
+                                                           legacy-filesystem))))
+                                     (dissoc raw "filesystem"))
+             existing-jail (get normalized-filesystem "jail")
+             with-legacy-sandbox
+             (if (and (boolean? legacy-sandbox)
+                      (or (not (map? existing-jail)) (not (contains? existing-jail "enabled"))))
+               (assoc-in normalized-filesystem ["jail" "enabled"] legacy-sandbox)
+               normalized-filesystem)
+             strip-legacy-sandbox? (boolean? legacy-sandbox)]
 
-              (-> raw
-                  (dissoc "filesystem")
-                  (assoc "jail" (assoc legacy-jail*
-                                  "filesystem" (if (map? (get legacy-jail* "filesystem"))
-                                                 (merge (get legacy-jail* "filesystem")
-                                                        legacy-filesystem)
-                                                 legacy-filesystem)))))
-            raw))))))
+            (if strip-legacy-sandbox?
+              (dissoc with-legacy-sandbox "sandbox")
+              with-legacy-sandbox)))))))
 
 (defn- read-yaml-config-map
   "Parse one YAML file and validate its original string-keyed representation.
@@ -641,6 +654,25 @@
   (when-let [normalized (parse-yaml-config-map path)]
     (config-spec/assert-config! normalized path)))
 
+(defn- read-yaml-config-map-lenient
+  "Like `read-yaml-config-map` but never lets an invalid config FILE crash the
+   live per-turn load path. On a `:vis/invalid-config` violation it logs one
+   warning and returns the leniently parsed (unvalidated) map instead of
+   throwing, so a transient/out-of-sync `vis.yml`, overlay, or machine store
+   never kills a running session mid-turn — the next `save!`/`/reload`
+   re-validates. Strict validation still guards the WRITE path (`save-config!`)."
+  [path]
+  (try (read-yaml-config-map path)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :vis/invalid-config (:type (ex-data e)))
+           (do (tel/log!
+                 {:level :warn
+                  :id ::config-file-invalid
+                  :data {:source path :problems (:problems (ex-data e))}
+                  :msg
+                  "config file failed the contract; loading leniently so the session survives"})
+               (parse-yaml-config-map path))
+           (throw e)))))
 
 (defn- project-config-yaml-paths
   "YAML candidates for the hidden `.vis/` project overlay tier."
@@ -677,20 +709,7 @@
    the YAML file Vis read-modify-writes. Machine-owned on purpose — kept out of the
    hand-written YAML merge so the RMW cycle never clobbers user files."
   []
-  (try (read-yaml-config-map state-path)
-       (catch clojure.lang.ExceptionInfo e
-         (if (= :vis/invalid-config (:type (ex-data e)))
-           ;; The machine store is Vis' own RMW file: a legacy/extra field it once
-           ;; round-tripped must NOT nuke the whole fleet. Load it leniently and warn;
-           ;; the next save! re-validates and heals it.
-           (do (tel/log!
-                 {:level :warn
-                  :id ::machine-config-invalid
-                  :data {:source state-path :problems (:problems (ex-data e))}
-                  :msg
-                  "state.yml failed the config contract; loading leniently so providers survive"})
-               (parse-yaml-config-map state-path))
-           (throw e)))))
+  (read-yaml-config-map-lenient state-path))
 
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
@@ -699,7 +718,7 @@
    store (`state.yml` wins per key), keeping user-authored config separate from
    the RMW machine file."
   []
-  (some read-yaml-config-map (global-config-yaml-paths)))
+  (some read-yaml-config-map-lenient (global-config-yaml-paths)))
 
 (defn load-project-config-raw
   "Load the hidden project overlay tier: the first existing of
@@ -709,13 +728,13 @@
   []
   (let [overlay-dir (io/file (System/getProperty "user.dir") ".vis")]
     (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file config-dir)))
-      (some read-yaml-config-map (project-config-yaml-paths)))))
+      (some read-yaml-config-map-lenient (project-config-yaml-paths)))))
 
 (defn load-project-root-config-raw
   "Load the visible project-root tier: the first existing of
    `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil."
   []
-  (some read-yaml-config-map (project-root-yaml-paths)))
+  (some read-yaml-config-map-lenient (project-root-yaml-paths)))
 
 (defn load-config-raw
   "Load raw config as the deep-merge of four YAML sources — later sources win,
@@ -734,6 +753,14 @@
                      (load-global-config-raw)
                      (load-project-root-config-raw)
                      (load-project-config-raw)))
+
+(defn config-problems
+  "Model-readable, per-top-level-key reasons the currently merged live config
+   fails the contract (`config-spec/explain-problems` over `load-config-raw`),
+   or [] when it is valid. Loads leniently so this never throws even while the
+   config on disk is broken — it is the diagnostic surfaced as `config_error`."
+  []
+  (config-spec/explain-problems (load-config-raw)))
 
 (def default-search-always-exclude
   "Default `:search :always-exclude` patterns (`.gitignore` syntax) guarding

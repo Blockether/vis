@@ -391,7 +391,8 @@
    value, intended for serialisation. Skips toggles whose
    `:persist?` is false. Boolean toggles are coerced to boolean;
    enum toggles surface their raw choice value. Orphans from a
-   previously-installed extension are dropped."
+   previously-installed extension are dropped. Keys are SORTED so the
+   serialised block is stable and diff-friendly, never a hash jumble."
   []
   (let
     [reg
@@ -418,8 +419,20 @@
 
                      (assoc acc id v))
                    acc))
-               {}
+               (sorted-map)
                reg)))
+
+(defn has-orphan-keys?
+  "True when a persisted, string-keyed `toggles` map carries ids that are no
+   longer registered — the signature of stale cruft from an earlier build
+   (e.g. the keyword-id era, when `:shell/enabled` serialised to the bare
+   `enabled`). Callers rewrite a fresh `snapshot` to converge state.yml."
+  [persisted]
+  (and (map? persisted)
+       (let [reg @registry]
+         (boolean (some (fn [[id _]]
+                          (not (contains? reg id)))
+                        persisted)))))
 
 (defn coerce-config-value
   "Coerce a raw config value (from hand-written `vis.yml`, where YAML has no
