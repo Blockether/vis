@@ -34,8 +34,13 @@
 
      - macOS  : a Seatbelt profile handed to the system `sandbox-exec -p` — ships
                 with the OS, ZERO install. IMPLEMENTED + verified.
-     - Linux  : Landlock LSM + seccomp via a re-exec helper — TODO. `supported?`
-                returns false so callers degrade to the cooperative gate.
+     - Linux  : bubblewrap (`bwrap`) mount + network namespaces. IMPLEMENTED (fs
+                confinement + net-off wall); filtered egress via the proxy still
+                needs seccomp, so a proxy-restricted net is denied ENTIRELY (safe)
+                rather than left open. `supported?` is true only when `bwrap` is
+                installed; otherwise `unenforceable-reason` explains the gap so a
+                requested jail fails LOUD instead of silently passing the child.
+     - other  : unsupported — callers keep the cooperative gate as the floor.
 
    Two locks learned from the kernel, baked in here:
      1. sandbox-exec matches RESOLVED real paths, so every root is realpath'd
@@ -90,12 +95,49 @@
 
 (def ^:private macos-sandbox-exec "/usr/bin/sandbox-exec")
 
+;; Linux enforcement uses bubblewrap (`bwrap`) as the argv-prefix wrapper — the same
+;; shape as macOS `sandbox-exec`. It is a setuid/unprivileged-userns helper that
+;; builds a mount + PID + (optionally) network namespace for the child before exec.
+;; Detected at its standard install locations; nil when absent (Linux then reports
+;; the jail as UNENFORCEABLE rather than silently passing the child through).
+(def ^:private linux-bwrap
+  (some (fn [p]
+          (when (.canExecute (File. ^String p)) p))
+        ["/usr/bin/bwrap" "/bin/bwrap" "/usr/local/bin/bwrap"]))
+
 (defn supported?
   "True when the current OS can ENFORCE a jail. macOS: Seatbelt via the system
-   `sandbox-exec`. Linux/Windows: not yet (returns false) — callers keep the
-   cooperative admission gate as the floor."
+   `sandbox-exec`. Linux: bubblewrap (`bwrap`) namespaces. Windows/other: not
+   supported -- callers keep the cooperative admission gate as the floor and
+   `unenforceable-reason` explains why so `sandbox: true` never silently no-ops."
   []
-  (and (= :macos (os-kind)) (.canExecute (File. ^String macos-sandbox-exec))))
+  (case (os-kind)
+    :macos
+    (.canExecute (File. ^String macos-sandbox-exec))
+
+    :linux
+    (boolean linux-bwrap)
+
+    false))
+
+(defn unenforceable-reason
+  "Nil when `supported?`, else a human string explaining why the jail CANNOT be
+   enforced on this host -- so a requested `sandbox: true` fails LOUD instead of
+   passing the child through unconfined. Distinguishes 'wrong OS' from 'right OS,
+   enforcer binary missing' (the actionable case: install the tool)."
+  []
+  (when-not (supported?)
+    (case (os-kind)
+      :macos
+      "macOS jail needs /usr/bin/sandbox-exec, which is not executable here"
+
+      :linux
+      "Linux jail needs bubblewrap (`bwrap`); install it (e.g. `apt-get install bubblewrap`)"
+
+      :windows
+      "the OS process jail is not available on Windows"
+
+      "the OS process jail is not available on this operating system")))
 
 (defn- inherited-jail?
   "True inside a child already confined by this process-jail contract. Seatbelt
@@ -126,6 +168,14 @@
   (into ["/" "/Users" "/Volumes" "/private" "/opt" "/etc" "/var" "/tmp" "/home"]
         (remove nil?)
         [(System/getProperty "user.home") (System/getProperty "java.io.tmpdir")]))
+
+;; Linux read-only system roots a confined child needs to launch a real toolchain
+;; (dynamic loader, shared libs, shell, and -- once net is on -- TLS CAs + resolver
+;; config under /etc). All world-readable code/config, bind-mounted read-only; no
+;; user secrets (those live under $HOME, which is NOT bound unless it is a session
+;; root). `*-try` variants tolerate a path missing on a given distro.
+(def ^:private linux-system-read-roots
+  ["/usr" "/bin" "/sbin" "/lib" "/lib64" "/lib32" "/etc" "/opt" "/nix" "/run" "/var/lib"])
 
 (defn- sbpl-quote
   [s]
@@ -312,19 +362,109 @@
      :loopback-port loopback-port
      :inbound-ports inbound-ports}))
 
+(defn linux-bwrap-args
+  "Compile the bubblewrap flag vector (ending in `--`) from a RESOLVED policy map
+   (the same shape `macos-profile` consumes). Filesystem: read-only bind the system
+   toolchain roots + `:ro`, read-write bind `:rw` (session roots + tmp), then
+   re-bind `:deny-write` read-only and mask `:deny-read` (empty tmpfs for dirs,
+   /dev/null for files) -- later binds win, so the denies override the allows. Only
+   bound paths exist inside the child, so everything else on the host (e.g. `~/.ssh`)
+   is simply absent. Network: `--unshare-net` is a real no-egress wall for the
+   net-off case AND the proxy-restricted case -- per-host/verb egress filtering on
+   Linux still needs seccomp, so restricted egress is denied ENTIRELY (safe) rather
+   than left open; an explicitly-open network (`net-enabled?` with no proxy, e.g. a
+   managed nREPL) shares the host network namespace."
+  ^java.util.List [{:keys [rw ro deny-write deny-read net-enabled? proxy-port]}]
+  (let
+    [rw
+     (->> rw
+          (keep real-path)
+          distinct
+          vec)
+
+     ro
+     (->> (concat linux-system-read-roots ro)
+          (keep real-path)
+          distinct
+          vec)
+
+     dw
+     (->> deny-write
+          (keep deny-path)
+          distinct
+          vec)
+
+     ro-flags
+     (mapcat (fn [p]
+               ["--ro-bind-try" p p])
+             ro)
+
+     rw-flags
+     (mapcat (fn [p]
+               ["--bind-try" p p])
+             rw)
+
+     dw-flags
+     (mapcat (fn [p]
+               ["--ro-bind-try" p p])
+             dw)
+
+     dr-flags
+     (mapcat (fn [p]
+               (let [rp (deny-path p)]
+                 (cond (nil? rp) nil
+                       (.isDirectory (File. ^String rp)) ["--tmpfs" rp]
+                       :else ["--ro-bind-try" "/dev/null" rp])))
+             (distinct deny-read))
+
+     net
+     (cond proxy-port ["--unshare-net"]
+           net-enabled? []
+           :else ["--unshare-net"])]
+
+    (vec (concat ["bwrap" "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
+                 ro-flags
+                 rw-flags
+                 dw-flags
+                 dr-flags
+                 net
+                 ["--"]))))
+
+(defonce ^:private unenforceable-warned (atom false))
+
+(defn- warn-unenforceable!
+  "Emit ONE loud stderr line when a jail was requested (sandbox: true -> an enabled
+   policy) but this host cannot enforce it, so the operator learns the child is
+   running UNCONFINED instead of the failure being silent. Deduped per process."
+  [reason]
+  (when (compare-and-set! unenforceable-warned false true)
+    (binding [*out* *err*]
+      (println (str "vis WARNING: sandbox is enabled but CANNOT be enforced on this host -- " reason
+                    ". Shell/REPL children run UNCONFINED (full host access). "
+                    "See `vis-docs sandbox`.")))))
+
 (defn wrap-argv
   "Given the base executor argv and a jail POLICY value, return the argv to spawn.
-   On macOS the first managed process is wrapped with `sandbox-exec`; descendants
-   inherit that kernel policy and are left unwrapped because Seatbelt rejects a
-   second sandbox application. Unsupported platforms remain explicit passthroughs."
+   macOS wraps the first managed process with `sandbox-exec` (descendants inherit
+   the kernel policy and are left unwrapped, since Seatbelt rejects a second
+   application). Linux wraps with bubblewrap (`bwrap`) namespaces. When a jail is
+   requested but the host cannot enforce it, the child is passed through UNWRAPPED
+   but a loud one-time warning fires -- `sandbox: true` never silently no-ops."
   [argv policy]
-  (if (and policy (not (:disabled? policy)) (supported?) (not (inherited-jail?)))
-    (case (os-kind)
-      :macos
-      (into ["sandbox-exec" "-p" (macos-profile (compile-policy policy))] argv)
+  (let [wanted? (and policy (not (:disabled? policy)))]
+    (if (and wanted? (supported?) (not (inherited-jail?)))
+      (case (os-kind)
+        :macos
+        (into ["sandbox-exec" "-p" (macos-profile (compile-policy policy))] argv)
 
-      argv)
-    argv))
+        :linux
+        (into (linux-bwrap-args (compile-policy policy)) argv)
+
+        argv)
+      (do (when (and wanted? (not (inherited-jail?)))
+            (when-let [reason (unenforceable-reason)]
+              (warn-unenforceable! reason)))
+          argv))))
 
 (defn- java-proxy-options
   [{:keys [proxy-port java-trust-store java-trust-store-password java-proxy? loopback-port]}]
@@ -445,21 +585,6 @@
    remain read-only: a REPL may execute them but cannot replace its JVM/Python/Bun."
   ["~/.sdkman" "~/.asdf" "~/.jenv" "~/.pyenv" "~/.local/bin" "~/.local/share/mise"])
 
-(defn- normalize-cache-entry
-  "Normalize one `:language-cache-dirs` entry to `{:path .. :write? <bool>}`.
-   A bare string grants READ+WRITE (a dependency cache normally must be
-   populated). A map `{:path .. :access ..}` chooses `read-only`/`ro` (read
-   only) vs anything else (read+write). Blank/`:path`-less entries drop."
-  [entry]
-  (letfn [(g [m k] (or (get m k) (get m (name k))))]
-    (cond (string? entry) (when (seq entry) {:path entry :write? true})
-          (map? entry) (when-let [p (g entry :path)]
-                         (let
-                           [a (some-> (g entry :access)
-                                      name
-                                      str/lower-case)]
-                           {:path p :write? (not (contains? #{"read-only" "readonly" "ro"} a))})))))
-
 (def ^:private language-process-runtime-dirs
   "Vis-owned runtime state managed language processes may read and write. REPL
    managers write lifecycle logs here, including when exercised from a jailed
@@ -472,9 +597,9 @@
    directories, and replaces the shell proxy endpoint with this session's
    attributed language-process endpoint.
 
-   Dependency caches are opt-in only. `jail.filesystem.language-caches` is the sole
-   source. Each entry is a plain path string (read/write) or a map with `path` and
-   `access: read-only`; unset means no dependency caches.
+   Dependency caches enter through the shared `workspace.filesystem` catalog and
+   are already present on the base policy's read/write roots; this pass only adds
+   the read-only language runtimes/toolchains plus Vis-owned log directories.
 
    Direct network access is disabled. CA-aware runtimes receive the combined PEM
    bundle, while JVM children also receive an ephemeral PKCS12 truststore.
@@ -482,34 +607,20 @@
   [base loopback-port]
   (cond (nil? base) nil
         (:disabled? base) base
-        :else (let
-                [entries
-                 (keep normalize-cache-entry (:language-cache-dirs base))
-
-                 cache-rw
-                 (into [] (comp (filter :write?) (map :path)) entries)
-
-                 cache-ro
-                 (into [] (comp (remove :write?) (map :path)) entries)]
-
-                (-> base
-                    (update :allow-write #(vec (concat % cache-rw language-process-runtime-dirs)))
-                    (update :allow-read
-                            #(vec (concat %
-                                          repl-toolchain-read-dirs
-                                          cache-rw
-                                          cache-ro
-                                          language-process-runtime-dirs)))
-                    ;; Managed REPL/test children get ONLY their own nREPL
-                    ;; loopback port; the shell dev-server inbound allowlist is
-                    ;; not theirs to inherit (least privilege).
-                    (dissoc :language-cache-dirs :inbound-ports)
-                    (assoc :net-enabled? false
-                           :proxy-port (:repl-proxy-port base)
-                           :proxy-token nil
-                           :ca-file (:repl-ca-file base)
-                           :java-proxy? true
-                           :loopback-port loopback-port)))))
+        :else (-> base
+                  (update :allow-write #(vec (concat % language-process-runtime-dirs)))
+                  (update :allow-read
+                          #(vec (concat % repl-toolchain-read-dirs language-process-runtime-dirs)))
+                  ;; Managed REPL/test children get ONLY their own nREPL
+                  ;; loopback port; the shell dev-server inbound allowlist is
+                  ;; not theirs to inherit (least privilege).
+                  (dissoc :inbound-ports)
+                  (assoc :net-enabled? false
+                         :proxy-port (:repl-proxy-port base)
+                         :proxy-token nil
+                         :ca-file (:repl-ca-file base)
+                         :java-proxy? true
+                         :loopback-port loopback-port))))
 
 (defn repl-policy
   "Derive the managed-nREPL variant for its selected loopback listener port."

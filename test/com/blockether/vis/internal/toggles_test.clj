@@ -126,6 +126,21 @@
             (expect (contains? snap "test_persist"))
             (expect (true? (get snap "test_persist")))
             (expect (not (contains? snap "test_transient")))))))
+  (it "snapshot is SORTED so the serialised block is stable, not a hash jumble"
+      (with-clean-state
+        (fn []
+          (t/register-toggle! {:id "test_zulu" :label "Z" :default true :persist? true})
+          (t/register-toggle! {:id "test_alpha" :label "A" :default true :persist? true})
+          (t/register-toggle! {:id "test_mike" :label "M" :default true :persist? true})
+          (let [ks (keys (t/snapshot))]
+            (expect (= (vec ks) (vec (sort ks))))))))
+  (it "has-orphan-keys? flags stale ids no longer registered (e.g. legacy `enabled`)"
+      (with-clean-state (fn []
+                          (t/register-toggle!
+                            {:id "test_live" :label "L" :default true :persist? true})
+                          (expect (true? (t/has-orphan-keys? {"test_live" true "enabled" true})))
+                          (expect (false? (t/has-orphan-keys? {"test_live" true})))
+                          (expect (false? (t/has-orphan-keys? nil))))))
   (it "hydrate-from-config! applies persisted values; orphaned ids are skipped"
       (with-clean-state
         (fn []

@@ -15,20 +15,15 @@
      /draft-blank <label>  like /draft new, but the draft starts EMPTY —
                            no files from the current HEAD are carried in
 
-   Filesystem (`/cd`, `/fs`) — session-scoped, every channel. What the jail
-   ALLOWS is derived from config (`jail.filesystem` in vis.yml, global or project);
-   these commands move / widen the session's LIVE roots:
+   Filesystem (`/cd`) — session-scoped, every channel. What the jail ALLOWS is
+   derived from config (`jail.filesystem` in vis.yml, global or project); `/cd`
+   moves the session's PRIMARY LIVE root within that grant:
 
      /cd [path]            show / CHANGE the session's filesystem root
-     /fs                   list the session's filesystem permissions
-     /fs add <path>        also let the session operate under <path> (temporary)
-     /fs remove <path>     drop an added directory
-     /fs create <path>     mkdir + add it
 
    Vis owns no git lifecycle — `apply` copies the changed files into the
    user's real cwd, uncommitted. Handlers are PURE w.r.t. the channel."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.internal.workspace :as workspace]))
 ;; =============================================================================
 ;; Helpers
@@ -371,14 +366,6 @@
           not-empty
           expand-home))
 
-(declare handle-fs-list)
-
-(defn- handle-fs
-  "Bare `/fs` — show the session's filesystem permissions (the root plus any
-   additional granted directories)."
-  [ctx]
-  (handle-fs-list ctx))
-
 (defn- handle-fs-root
   "`/cd <path>` — change the session's
    PRIMARY filesystem root. The session then works in <path>: shell cwd,
@@ -424,161 +411,9 @@
                   (catch Exception e
                     (err (str "Can't change root to '" path "': " (or (ex-message e) (str e)))))))))
 
-(defn- handle-fs-add
-  "`/fs add <path>` - widen the session so it may also operate on files under
-   <path>, in addition to its primary filesystem root."
-  [ctx]
-  (let
-    [db
-     (ctx-db ctx)
 
-     current
-     (session-workspace ctx)
 
-     path
-     (argv-path ctx)]
 
-    (cond (nil? current) (err "No active workspace")
-          (nil? path) (err "Give a directory: /fs add <path>")
-          :else (try
-                  (let
-                    [ws
-                     (sync-confinement! ctx (workspace/add-filesystem-root! db (:id current) path))
-
-                     roots
-                     (workspace/filesystem-roots ws)]
-
-                    {:slash/status :ok
-                     :slash/title "Added a filesystem directory - the session can work there now"
-                     :slash/body
-                     (str "Filesystem dirs (" (count roots)
-                          "):\n" (str/join
-                                   "\n"
-                                   (map #(str "  "
-                                              (:trunk %)
-                                              (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-                                                " (isolated draft copy — lands on /draft apply)"))
-                                        roots)))
-                     :slash/data {:filesystem-roots roots}})
-                  (catch Exception e
-                    (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
-
-(defn- handle-fs-create
-  "`/fs create <path>` - make the directory <path> (its last segment, under an
-   existing parent), then add it as a filesystem root so the session can work
-   there. The parent must already exist; only the final segment is created."
-  [ctx]
-  (let
-    [db
-     (ctx-db ctx)
-
-     current
-     (session-workspace ctx)
-
-     path
-     (argv-path ctx)]
-
-    (cond (nil? current) (err "No active workspace")
-          (nil? path) (err "Give a directory: /fs create <path>")
-          :else
-          (try (let
-                 [f
-                  (io/file path)
-
-                  parent
-                  (or (.getParent f) ".")
-
-                  created
-                  (workspace/create-dir! parent (.getName f))
-
-                  ws
-                  (sync-confinement! ctx (workspace/add-filesystem-root! db (:id current) created))
-
-                  roots
-                  (workspace/filesystem-roots ws)]
-
-                 {:slash/status :ok
-                  :slash/title (str "Created and added '" created "'")
-                  :slash/body (str "Filesystem dirs (" (count roots)
-                                   "):\n" (str/join "\n" (map #(str "  " (:trunk %)) roots)))
-                  :slash/data {:filesystem-roots roots :created created}})
-               (catch Exception e
-                 (err (str "Can't create '" path "': " (or (ex-message e) (str e)))))))))
-
-(defn- handle-fs-remove
-  "`/fs remove <path>` - stop letting the session operate under <path>."
-  [ctx]
-  (let
-    [db
-     (ctx-db ctx)
-
-     current
-     (session-workspace ctx)
-
-     path
-     (argv-path ctx)]
-
-    (cond (nil? current) (err "No active workspace")
-          (nil? path) (err "Give a directory: /fs remove <path>")
-          :else (let
-                  [ws
-                   (sync-confinement! ctx (workspace/remove-filesystem-root! db (:id current) path))
-
-                   roots
-                   (workspace/filesystem-roots ws)]
-
-                  {:slash/status :ok
-                   :slash/title "Removed a filesystem directory"
-                   :slash/body
-                   (if (seq roots)
-                     (str "Filesystem dirs (" (count roots)
-                          "):\n" (str/join
-                                   "\n"
-                                   (map #(str "  "
-                                              (:trunk %)
-                                              (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-                                                " (isolated draft copy — lands on /draft apply)"))
-                                        roots)))
-                     "No extra filesystem dirs - back to the primary root only.")
-                   :slash/data {:filesystem-roots roots}}))))
-
-(defn- handle-fs-list
-  "Bare `/fs` — show the session's filesystem permissions.
-   The ROOT (changeable via /cd <path>) is always #1 — vis reads/edits
-   there by default; added roots are extra grants. Enumerated so the listing
-   matches the web rail's `Filesystem` section (root first)."
-  [ctx]
-  (let
-    [current
-     (session-workspace ctx)
-
-     base
-     (:root current)
-
-     roots
-     (some-> current
-             workspace/filesystem-roots)
-
-     total
-     (+ (if base 1 0) (count roots))]
-
-    {:slash/status :ok
-     :slash/title "Filesystem"
-     :slash/body
-     (str
-       "Filesystem roots ("
-       total
-       "):\n"
-       (str/join "\n"
-                 (remove nil?
-                   (cons (when base (str "  " base "   (root — /cd <path> to change)"))
-                         (map #(str "  "
-                                    (:trunk %)
-                                    (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-                                      " (isolated draft copy — lands on /draft apply)"))
-                              roots))))
-       "\n\n/fs add <path> to widen, /fs remove <path> to drop one, /cd <path> to change the root.")
-     :slash/data {:filesystem-roots roots :root base}}))
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
@@ -637,35 +472,12 @@
       :slash/requires #{:session}
       :slash/run-fn handle-new-blank}]
     ;; Filesystem — session-scoped, every channel. What the jail ALLOWS is
-    ;; derived from config (`jail.filesystem`); these commands change/widen the
-    ;; session's LIVE roots. Standalone /cd plus the /fs subcommand tree.
+    ;; derived from config (`jail.filesystem`); `/cd` moves the session's
+    ;; PRIMARY LIVE root within that grant.
     [{:slash/name "cd"
       :slash/doc "Show or change the session's filesystem root (the directory vis works in)."
       :slash/usage "/cd [path]"
-      :slash/run-fn handle-fs-root}
-     {:slash/name "fs"
-      :slash/doc "Filesystem permissions — the directories this session may read and edit."
-      :slash/usage "/fs"
-      :slash/run-fn handle-fs}
-     {:slash/name "add"
-      :slash/parent ["fs"]
-      :slash/doc
-      "Let the session also operate on files under <path> (temporary — this session only)."
-      :slash/usage "/fs add <path>"
-      :slash/requires #{:session}
-      :slash/run-fn handle-fs-add}
-     {:slash/name "create"
-      :slash/parent ["fs"]
-      :slash/doc "Create a new directory and let the session operate under it."
-      :slash/usage "/fs create <path>"
-      :slash/requires #{:session}
-      :slash/run-fn handle-fs-create}
-     {:slash/name "remove"
-      :slash/parent ["fs"]
-      :slash/doc "Stop letting the session operate under <path>."
-      :slash/usage "/fs remove <path>"
-      :slash/requires #{:session}
-      :slash/run-fn handle-fs-remove}]))
+      :slash/run-fn handle-fs-root}]))
 
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."

@@ -1159,6 +1159,61 @@ def __vis_native_result_scan__(__vis_tree__):
 ;; explicitly, nothing about sandbox permissions.
 
 
+;; -----------------------------------------------------------------------------
+;; Auxiliary engine cache — native binary ONLY
+;;
+;; GraalVM's auxiliary engine cache persists the shared Engine's warmed,
+;; JIT-compiled Truffle code to disk; loading it on the next start skips the
+;; JVMCI warm-up that leads every cumulative-CPU table during GraalPy boot. Two
+;; hard facts (verified against polyglot 25.1.3) make it native-binary-only in
+;; BOTH directions:
+;;   - `Engine.storeCache(Path)` throws UnsupportedOperationException
+;;     ("only supported on native-image hosts") on the JVM.
+;;   - the `engine.CacheLoad` runtime option that restores it is contributed
+;;     ONLY by the native-image Truffle runtime; the JVM host rejects it
+;;     ("Could not find option engine.CacheLoad").
+;; So both paths are gated behind `native-image?`. Mirrors the JFR philosophy:
+;; idempotent, NEVER throws, NEVER blocks startup — any failure (unsupported
+;; build, stale/corrupt image, engine-option or version drift) silently falls
+;; back to a normal cold warm-up. The file is keyed by the GraalVM polyglot
+;; version so an engine upgrade cannot load an incompatible image. Disable with
+;; VIS_ENGINE_CACHE=0 (shares the falsey-token convention with VIS_MEM_LOG).
+
+(defn- native-image?
+  "True inside the compiled GraalVM binary (never on the JVM dev/gateway)."
+  []
+  (some? (System/getProperty "org.graalvm.nativeimage.imagecode")))
+
+(def ^:private engine-cache-disabled-tokens #{"0" "false" "off" "no"})
+
+(defn- engine-cache-enabled?
+  "Off only when VIS_ENGINE_CACHE is a falsey token; unset/anything else = on."
+  []
+  (not (contains? engine-cache-disabled-tokens
+                  (some-> (System/getenv "VIS_ENGINE_CACHE")
+                          str/trim
+                          str/lower-case))))
+
+(defn- engine-cache-file
+  "~/.vis/cache/engine/vis-engine-<polyglot-version>.img — versioned so an engine
+   upgrade never loads a stale, incompatible cache image."
+  ^java.io.File []
+  (let
+    [ver (or (some-> (io/resource "META-INF/graalvm/org.graalvm.polyglot/version")
+                     slurp
+                     str/trim
+                     not-empty)
+             "unknown")]
+    (io/file (System/getProperty "user.home")
+             ".vis" "cache"
+             "engine" (str "vis-engine-" ver ".img"))))
+
+(defn- store-engine-cache!
+  "Persist the warmed shared Engine's compiled code to `f` on shutdown so the
+   next native-binary start skips JVMCI warm-up. Native-image only; never throws."
+  [^Engine engine ^java.io.File f]
+  (try (.mkdirs (.getParentFile f)) (.storeCache engine (.toPath f)) (catch Throwable _ nil)))
+
 (defonce shared-engine
   ;; ONE process-wide GraalVM Engine. Every AGENT Context — the main session
   ;; sandbox AND every forked `sub_loop` child — is built ON this engine so that
@@ -1171,10 +1226,52 @@ def __vis_native_result_scan__(__vis_tree__):
   ;; then safe (verified: create-during-eval returns cleanly; N children eval
   ;; concurrently). Bonus: shared code cache ⇒ ~38ms warm child vs ~60ms standalone.
   ;; Built lazily; `create-python-context` forces it at session start (pre-eval).
-  (delay (-> (Engine/newBuilder (into-array String ["python"]))
-             (.allowExperimentalOptions true)
-             (.option "engine.WarnVirtualThreadSupport" "false")
-             (.build))))
+  ;;
+  ;; COMPILER-THREAD CAP: Truffle's JIT (`engine.CompilerThreads`) defaults to
+  ;; -1 = scale with CPU cores. On a 14-core box that spawns a fistful of JVMCI
+  ;; CompilerThreads that dominated every cumulative-CPU table during GraalPy
+  ;; warm-up. Cap at 2 (plenty for one shared Engine) and let idle compiler
+  ;; threads retire after 5s (default 10s) — fewer live threads, smaller CPU
+  ;; bursts, at a slightly slower warm-up. Stable engine options; takes effect
+  ;; on the next gateway start.
+  (delay
+    (let
+      [build-engine
+       (fn ^Engine [^java.io.File load-file]
+         (let
+           [b (-> (Engine/newBuilder (into-array String ["python"]))
+                  (.allowExperimentalOptions true)
+                  (.option "engine.WarnVirtualThreadSupport" "false")
+                  (.option "engine.CompilerThreads" "2")
+                  (.option "engine.CompilerIdleDelay" "5000"))]
+           ;; `engine.CacheLoad` restores the warmed compiled code. The option
+           ;; only EXISTS on a native-image host; on the JVM it throws, so we
+           ;; only reach here under `use-cache?` (native binary). Any load
+           ;; failure (stale/corrupt/option-drift image) is caught by the
+           ;; caller and falls back to a plain cold build.
+           (when load-file (.option b "engine.CacheLoad" (.getAbsolutePath load-file)))
+           (.build b)))
+
+       use-cache?
+       (and (native-image?) (engine-cache-enabled?))
+
+       cache-file
+       (when use-cache? (engine-cache-file))
+
+       engine
+       (or (when (and cache-file (.exists ^java.io.File cache-file))
+             (try (build-engine cache-file) (catch Throwable _ nil)))
+           (build-engine nil))]
+
+      ;; Store the warmed engine on process exit so the NEXT native start can
+      ;; load it. Best-effort, never throws (see `store-engine-cache!`).
+      (when use-cache?
+        (.addShutdownHook (Runtime/getRuntime)
+                          (Thread. ^Runnable
+                                   (fn []
+                                     (store-engine-cache! engine cache-file))
+                                   "vis-engine-cache-store")))
+      engine)))
 
 (defn ctx->python-str
   "Render plain boundary data as a deterministic, executable Python literal.
@@ -3325,7 +3422,7 @@ def network_probe(method, target=None):
      ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
      ;; its symbols when inactive, so the call raises a plain NameError with
      ;; no hint that the tool merely needs enabling (e.g. a call to shell_run
-     ;; while :shell/enabled is off only yields "shell_run is not defined").
+     ;; while the "shell" toggle is off only yields "shell_run is not defined").
      ;; Point it at apropos + the user instead
      ;; of letting it retry a name that will never resolve on its own.
      undefined-name

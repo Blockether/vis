@@ -3502,9 +3502,9 @@
        droppable extension.
 
      shell — the `shell/` compatibility layer (shell_run/shell_bg/shell_logs and
-       the `:shell/enabled` toggle). INTERNAL core, not a droppable plug-in, so the
+       the `shell` toggle). INTERNAL core, not a droppable plug-in, so the
        toggle always registers and the feature is one settings flip away (the tools
-       stay gated OFF behind :shell/enabled until the user enables it).
+       stay gated OFF behind the `shell` toggle until the user enables it).
 
      shim-yaml / shim-matplotlib / shim-requests — sandbox SHIMS. NOT gated by anything: each
        registers unconditionally and its `:ext/sandbox-shims` autoloads into

@@ -1308,12 +1308,12 @@ def __vis_registration__():
 ;; The loader's own host extension: `/reload` + doctor surface
 ;; =============================================================================
 
-(def ^:private diffed-config-keys [:sandbox :network :filesystem :jail :toggles])
+(def ^:private diffed-config-keys [:network :filesystem :jail :toggles])
 
 (defn- config-diff
-  "Short, redacted summary of changed top-level sandbox/config keys between the
-   pre- and post-reload merged config. `:sandbox` shows before→after (a bare
-   boolean); other keys report only that they moved. nil when nothing changed."
+  "Short, redacted summary of changed top-level config keys between the
+   pre- and post-reload merged config. Each changed key reports only that it
+   moved. nil when nothing changed."
   [old new]
   (let
     [tokens
@@ -1323,7 +1323,7 @@ def __vis_registration__():
                 n (get new k)]
 
                (when (not= o n)
-                 (if (= k :sandbox) (str "sandbox " (boolean o) "\u2192" (boolean n)) (name k)))))
+                 (name k))))
            diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 

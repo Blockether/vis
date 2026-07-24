@@ -317,6 +317,16 @@
   ([] (get (send-json! "GET" "/v1/sessions") "sessions"))
   ([_channel] (list-sessions)))
 
+(defn search-session-ids
+  "GET /v1/sessions/actions/search?q= — soul-id STRINGS whose transcript (user request +
+   assistant text) matches `query`. Blank query → []. The heavy assistant text
+   never crosses the wire; callers union these ids into a local title filter."
+  [query]
+  (let [q (some-> query str str/trim)]
+    (if (or (nil? q) (= "" q))
+      []
+      (get (send-json! "GET" (str "/v1/sessions/actions/search?q=" (enc q))) "session_ids"))))
+
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
@@ -1001,6 +1011,25 @@
 
     (ensure-client! entry)
     (provider-limits<-wire (get (send-json-with-entry! entry "GET" path) "report"))))
+
+(defn provider-models
+  "GET /v1/providers/:id/models — the LIVE model catalog resolved DAEMON-side,
+   where the gateway owns OAuth token resolution. A thin client NEVER builds a
+   token-resolving svar router to list models; it asks the daemon, which runs
+   the `svar/models!` probe (and any token refresh) against its own credential.
+   Returns the engine-shaped `{:models [id …] :hidden-count n}`."
+  [provider-id show-all?]
+  (let
+    [path
+     (str "/v1/providers/" (enc (name provider-id)) "/models" (when show-all? "?show_all=true"))
+
+     entry
+     (ensure-gateway-serving! path)
+
+     resp
+     (do (ensure-client! entry) (send-json-with-entry! entry "GET" path))]
+
+    {:models (vec (get resp "models")) :hidden-count (long (or (get resp "hidden_count") 0))}))
 
 (defn router
   "GET /v1/router — the unified router dialog payload assembled by the gateway:

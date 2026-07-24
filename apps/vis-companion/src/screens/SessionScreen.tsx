@@ -11,6 +11,7 @@ import { AssistantMessage, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
 import { Capacitor } from '@capacitor/core';
 import {
+  attachmentsFromFiles,
   captureCameraAttachment,
   pickImageAttachments,
   type PendingAttachment,
@@ -463,18 +464,18 @@ function ShareLink({ className }: { className: string }) {
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex shrink-0 items-center gap-1.5 border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
+      className={`group inline-flex shrink-0 items-center gap-1 border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
     >
       {copied ? (
         <>
-          <svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path d="M5 10.5l3.5 3.5L15 6.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <span>Copied</span>
         </>
       ) : (
         <>
-          <svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+          <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
             <path d="M7.5 10.5l5-3M7.5 9.5l5 3M6 10a2 2 0 11-4 0 2 2 0 014 0zM16 5a2 2 0 11-4 0 2 2 0 014 0zM16 15a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <span>Share</span>
@@ -860,7 +861,39 @@ export function SessionScreen({
     });
   }
 
+  async function addPastedImages(files: File[]) {
+    const limits = capabilities?.features.attachments;
+    const maximum = limits?.max_files ?? 8;
+    const remaining = maximum - attachments.length;
+    if (remaining <= 0) {
+      setComposerNotice(`You can attach up to ${maximum} images`);
+      return;
+    }
+    try {
+      const result = await attachmentsFromFiles(files, {
+        maxFiles: remaining,
+        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        mediaTypes: limits?.media_types,
+      });
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+    } catch (cause) {
+      setComposerNotice((cause as Error).message);
+    }
+  }
+
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    // Image paste (screenshots, copied pictures) — works on web and in the
+    // iOS/Android WKWebView, which surface pasted images as clipboard files.
+    const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
+      file.type.startsWith('image/'),
+    );
+    if (imageFiles.length) {
+      event.preventDefault();
+      void addPastedImages(imageFiles);
+      return;
+    }
+
     const content = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
     if (!content || !shouldCollapsePaste(content)) return;
     event.preventDefault();

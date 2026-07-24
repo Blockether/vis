@@ -39,12 +39,15 @@
              "max-wait-ms" 30000}
    "system-prompt" {"text" "Project rules" "replace?" false}
    "sandbox" true
-   "jail" {"filesystem" {"allow-read-write" ["/opt/svar"]
-                         "allow-read" ["~/reference"]
-                         "allow-write" ["~/generated"]
-                         "deny-read" ["~/private"]
-                         "deny-write" ["~/locked"]
-                         "language-caches" ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]}
+   "workspace" {"filesystem"
+                [{"id" "svar"
+                  "path" "/opt/svar"
+                  "description" "a sibling repo"
+                  "access" "read-write"
+                  "search" true} {"id" "ref" "path" "~/reference" "access" "read-only"}
+                 {"id" "gen" "path" "~/generated"}
+                 {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
+   "jail" {"filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
            "inbound-ports" [5273 8080]
            "env" ["CI" "MY_TOKEN"]
            "deny-exec" ["definitely-not-a-real-binary-xyz"]}
@@ -81,49 +84,35 @@
     "rejects keyword keys, aliases, unknown keys, and invalid security values"
     (expect (not (config-spec/valid? {:filesystem {}})))
     (expect (not (config-spec/valid? {"filesystem" {}})))
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["jail" "filesystem" "allow_reed"] ["../escape"]))))
+    ;; Workspace entries: a rooted path is required and unknown keys are rejected.
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["workspace" "filesystem"]
+                                       [{"id" "x" "path" "./relative"}]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["workspace" "filesystem"]
+                                       [{"id" "x" "path" "~/ok" "note" "unknown-key"}]))))
+    ;; `access` is a closed enum and `description` may not be blank.
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["workspace" "filesystem"]
+                                       [{"id" "x" "path" "~/ok" "access" "sideways"}]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["workspace" "filesystem"]
+                                       [{"id" "x" "path" "~/ok" "description" ""}]))))
+    ;; jail.filesystem is pure id admission — only an `allow` STRING VECTOR, nothing else.
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "allow"] "svar"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "deny"] ["svar"]))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound-ports"] [0]))))
-    ;; Filesystem grants must be absolute or home-rooted — bare-relative
-    ;; resolves against the gateway cwd (silent mis-grant / invalid deny).
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["jail" "filesystem" "allow-write"] ["./relative"]))))
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["jail" "filesystem" "deny-read"] ["relative"]))))
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["jail" "filesystem" "allow-read"] ["../escape"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config
-                                       ["jail" "filesystem" "language-caches"]
-                                       ["relative-cache"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config
-                                       ["jail" "filesystem" "language-caches"]
-                                       [{"path" "rel" "access" "ro"}]))))
     (expect (config-spec/valid?
-              (assoc-in full-config ["jail" "filesystem" "allow-write"] ["/abs/ok" "~/home-ok"])))
+              (assoc-in full-config
+                ["workspace" "filesystem"]
+                [{"id" "ok" "path" "~/home-ok" "description" "why" "search" false}])))
     ;; deny-exec: a list of executable names (or rooted paths) to block by read.
     (expect (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] ["curl" "ssh"])))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] "curl"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny-exec"] [""]))))
-    ;; Grants may be {path, description}; the description surfaces in the session view.
-    (expect (config-spec/valid? (assoc-in full-config
-                                  ["jail" "filesystem" "allow-read-write"]
-                                  ["/opt/svar" {"path" "~/repo" "description" "a sibling repo"}])))
-    ;; A grant map still requires a rooted path and rejects unknown keys / blank text.
-    (expect (not (config-spec/valid? (assoc-in full-config
-                                       ["jail" "filesystem" "allow-read-write"]
-                                       [{"path" "rel" "description" "bad"}]))))
-    (expect (not (config-spec/valid? (assoc-in full-config
-                                       ["jail" "filesystem" "allow-read-write"]
-                                       [{"path" "~/ok" "note" "unknown-key"}]))))
-    (expect (not (config-spec/valid? (assoc-in full-config
-                                       ["jail" "filesystem" "allow-read-write"]
-                                       [{"path" "~/ok" "description" ""}]))))
-    ;; Descriptions flow into the derived process-jail policy, keyed by grant path.
-    (expect (= {"~/repo" "why"}
-               (:path-descriptions (config-spec/process-jail-config
-                                     (assoc-in full-config
-                                       ["jail" "filesystem" "allow-read-write"]
-                                       ["/opt/svar" {"path" "~/repo" "description" "why"}])))))
+    ;; Descriptions of ADMITTED roots flow into the derived policy, keyed by grant path.
+    (expect (= {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}
+               (:path-descriptions (config-spec/process-jail-config full-config))))
     ;; Network is policy data, never an independent on/off escape hatch.
     (expect (not (config-spec/valid? (assoc-in full-config ["network" "enabled"] false))))
     (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "oops"] true))))
@@ -136,16 +125,16 @@
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource-cache"] "")))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
-                  :allow-read-write ["/opt/svar"]
+                  :allow-read-write ["/opt/svar" "~/generated" "~/.m2"]
                   :allow-read ["~/reference"]
-                  :allow-write ["~/generated"]
-                  :deny-read ["~/private"]
-                  :deny-write ["~/locked"]
-                  :language-cache-dirs ["~/.m2" {"path" "~/.clojure" "access" "read-only"}]
+                  :allow-write []
+                  :deny-read []
+                  :deny-write []
+                  :deny-exec []
+                  :no-search ["~/.m2"]
                   :inbound-ports [5273 8080]
                   :env-passthrough ["CI" "MY_TOKEN"]
-                  :path-descriptions {}
-                  :deny-exec []}
+                  :path-descriptions {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}}
                  (config-spec/process-jail-config full-config)))
       (expect (true? (:disabled? (config-spec/process-jail-config (assoc full-config
                                                                     "sandbox" false)))))
@@ -178,8 +167,8 @@
       (expect (contains? denied "/opt/nope/curl"))
       ;; an unresolvable bare name contributes nothing
       (expect (not (contains? denied "definitely-not-a-real-binary-xyz")))
-      ;; deny-exec does NOT pollute the filesystem deny-read list
-      (expect (= ["~/private"] (:deny-read pol)))))
+      ;; deny-exec is exec-only; the filesystem deny-read list stays empty.
+      (expect (= [] (:deny-read pol)))))
   (it "redacts credentials from validation failures"
       (let
         [bad
@@ -212,10 +201,10 @@
   (it "registers specs for every fixed and dynamic configuration block"
       (doseq
         [spec-name [:config :model-map :model :models :provider :providers :rate-limit
-                    :router-network :budget :tokens :router :cache-map :cache :caches :filesystem
-                    :jail :network-rule-allow :network-rule-allows :network-rule :network-rules
-                    :network :prompt-map :system-prompt :search :db-spec :tui-settings :mcp-server
-                    :mcp-servers :mcp]]
+                    :router-network :budget :tokens :router :workspace-entry :workspace-entries
+                    :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
+                    :network-rule :network-rules :network :prompt-map :system-prompt :search
+                    :db-spec :tui-settings :mcp-server :mcp-servers :mcp]]
         (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
@@ -250,8 +239,11 @@
        servers
        (vals (get mcp "servers"))
 
-       cache-map
-       (second (get filesystem "language-caches"))
+       workspace
+       (get full-config "workspace")
+
+       ws-entry
+       (first (get workspace "filesystem"))
 
        cases
        [[config-spec/config-keys config-spec/config-schema (set (keys full-config))]
@@ -264,9 +256,10 @@
         [config-spec/budget-keys config-spec/budget-schema (set (keys (get router "budget")))]
         [config-spec/token-keys config-spec/token-schema (set (keys (get router "tokens")))]
         [config-spec/router-keys config-spec/router-schema (set (keys router))]
-        [config-spec/cache-keys config-spec/cache-schema (set (keys cache-map))]
-        [config-spec/filesystem-keys config-spec/filesystem-schema (set (keys filesystem))]
-        [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
+        [config-spec/workspace-entry-keys config-spec/workspace-entry-schema (set (keys ws-entry))]
+        [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
+        [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
+         (set (keys filesystem))] [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
         [config-spec/network-rule-allow-keys config-spec/network-rule-allow-schema
          (set (keys rule-allow))]
         [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
@@ -298,4 +291,13 @@
                                          {:keyword-key "not YAML wire data"}))))
       (expect (not (config-spec/valid? (assoc-in full-config
                                          ["router" "tokens" "pricing"]
-                                         {"claude" {:input 1.0}}))))))
+                                         {"claude" {:input 1.0}})))))
+  (it "explain-problems names each offending top-level key, [] when valid"
+      (expect (= []
+                 (config-spec/explain-problems {"providers" [{"id" "a" "models" [{"name" "m"}]}]})))
+      (expect (= [] (config-spec/explain-problems nil)))
+      (expect (= ["config: expected a YAML map with string keys"] (config-spec/explain-problems 7)))
+      (expect (= ["nope: unknown top-level config key (config is closed)"]
+                 (config-spec/explain-problems {"nope" 1})))
+      (expect (= ["network: value rejected by the network contract"]
+                 (config-spec/explain-problems {"network" 5})))))

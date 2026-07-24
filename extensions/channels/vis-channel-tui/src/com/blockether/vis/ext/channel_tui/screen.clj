@@ -5220,7 +5220,11 @@
                                                                         {:sessions sessions
                                                                          :active-session-id
                                                                          (current-session-id)
-                                                                         :db @state/app-db}))]
+                                                                         :db @state/app-db
+                                                                         :search-transcript-ids
+                                                                         (fn [q]
+                                                                           (try (vis/gateway-search-session-ids q)
+                                                                                (catch Throwable _ nil)))}))]
                       (switch-session! choice)
                       ;; After a delete, reopen the picker on the
                       ;; refreshed list so pruning can continue.
@@ -5929,17 +5933,22 @@
                            (let
                              [sel {:anchor anchor :focus focus :source source}
                               simple-click? (= anchor (:focus sel))
-                              disclosure-hit (when (and simple-click? (not= source :input))
+                              ;; A simple click on a disclosure toggle control
+                              ;; must TOGGLE, never copy — the toggle row also
+                              ;; sits inside the whole-bubble copy rectangle, so
+                              ;; resolve it FIRST and gate the copy hits on it.
+                              toggle-detail-hit
+                              (when (and simple-click? (not= source :input))
+                                (let [h (cr/lookup mx my)]
+                                  (when (= :toggle-details (:kind h)) h)))
+                              disclosure-hit (when (and simple-click? (not= source :input)
+                                                        (not toggle-detail-hit))
                                                (bubble-copy-hit screen-point
                                                                 transcript-disclosure-copy-regions))
                               bubble-hit
-                              (when (and simple-click? (not= source :input) (not disclosure-hit))
-                                (bubble-copy-hit screen-point transcript-bubble-copy-regions))
-                              toggle-detail-hit
                               (when (and simple-click? (not= source :input)
-                                         (not disclosure-hit) (not bubble-hit))
-                                (let [h (cr/lookup mx my)]
-                                  (when (= :toggle-details (:kind h)) h)))
+                                         (not toggle-detail-hit) (not disclosure-hit))
+                                (bubble-copy-hit screen-point transcript-bubble-copy-regions))
                               screen-sel (selection/document->screen-selection sel
                                                                                selection-viewport)
                               ;; Transcript copy always rebuilds from the
@@ -5976,12 +5985,12 @@
                               (selection-copy-payload source doc-text screen-cell-text)]
 
                              (state/dispatch [:clear-mouse-selection])
-                             (cond disclosure-hit (copy-bubble! (:text disclosure-hit))
-                                   bubble-hit (copy-bubble-hit! bubble-hit)
-                                   toggle-detail-hit
+                             (cond toggle-detail-hit
                                    (state/dispatch [:toggle-detail (:session-id toggle-detail-hit)
                                                     (:node-id toggle-detail-hit)
                                                     (:collapsed? toggle-detail-hit)])
+                                   disclosure-hit (copy-bubble! (:text disclosure-hit))
+                                   bubble-hit (copy-bubble-hit! bubble-hit)
                                    (and (not simple-click?) (not (str/blank? payload)))
                                    (copy-selection! payload source)))
                            (when (and (not was-dragging?) (not already-handled?))
@@ -6483,6 +6492,9 @@
                                                             {:open-settings (fn [] (open-settings-modal! screen))}))]
                                     (state/dispatch [:set-config c])
                                     (state/dispatch [:force-provider-limits-refresh]))
+
+                                  :settings
+                                  (with-dialog-lock #(open-settings-modal! screen))
 
                                   :model
                                   (when-let

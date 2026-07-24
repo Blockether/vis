@@ -101,6 +101,7 @@
              [gateway-create-session! gateway-client/create-session!]
              [gateway-soul gateway-client/soul]
              [gateway-list-sessions gateway-client/list-sessions]
+             [gateway-search-session-ids gateway-client/search-session-ids]
              [gateway-close-session! gateway-client/close-session!]
              [gateway-list-projects gateway-client/list-projects]
              [gateway-get-project gateway-client/get-project]
@@ -150,7 +151,8 @@
              [gateway-session-model-cached gateway-client/session-model-cached]
              [gateway-set-session-model! gateway-client/set-session-model!]
              [gateway-provider-status gateway-client/provider-status]
-             [gateway-provider-limits gateway-client/provider-limits])
+             [gateway-provider-limits gateway-client/provider-limits]
+             [gateway-provider-model-options gateway-client/provider-models])
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
@@ -511,6 +513,7 @@
              [db-get-session persistance/db-get-session]
              [db-resolve-session-id persistance/db-resolve-session-id]
              [db-list-sessions persistance/db-list-sessions]
+             [db-search-session-ids persistance/db-search-session-ids]
              [db-find-session-by-external persistance/db-find-session-by-external]
              [db-update-session-title! persistance/db-update-session-title!]
              [db-claim-session! persistance/db-claim-session!]

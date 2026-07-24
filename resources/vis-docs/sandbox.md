@@ -24,10 +24,21 @@ sandbox: true
 > untrusted code. Leave it off only when you deliberately want that unrestricted
 > access (e.g. a fully trusted local workflow).
 
-With `sandbox: true` on a supported host (macOS), the OS process jail and the
-forced gateway egress path are active for managed child processes. A missing
-policy, failed policy function, unknown session, or disposed session does
-**not** silently disable confinement; managed process launch fails closed.
+With `sandbox: true` the OS process jail and forced gateway egress path are active
+for managed child processes on:
+
+- **macOS** — Seatbelt via the system `sandbox-exec` (ships with the OS, zero install).
+- **Linux** — bubblewrap (`bwrap`) mount + network namespaces; install `bubblewrap`
+  (e.g. `apt-get install bubblewrap`). Filesystem confinement and network-off are
+  kernel-enforced. Per-host/verb *filtered* egress through the proxy still needs
+  seccomp, so a proxy-restricted network is denied ENTIRELY (safe) on Linux rather
+  than left open; an explicitly-open network shares the host namespace.
+
+If the host cannot enforce a jail (e.g. Linux without `bwrap`, or Windows), a
+requested `sandbox: true` **fails loud** — a one-time stderr WARNING that children
+run unconfined — instead of silently pretending safety. A missing policy, failed
+policy function, unknown session, or disposed session does **not** silently disable
+confinement; managed process launch fails closed.
 
 Absent the key (or `sandbox: false`) confinement is off. Setting it back to
 `true` and running `/reload` re-enables it with no restart.
@@ -136,14 +147,17 @@ CONNECT and the SOCKS5 lane) — e.g. `ports: [22, 443]` allows only ssh + https
 to a host, `ports: [5432]` only Postgres. A rule with no `ports` allows any port
 (the default); a rule that lists only `ports` leaves verbs unrestricted.
 
-`denied-domains` under an `allowed-domains: ["*"]` (allow-all) posture is
-name-level and best-effort: a determined child can still reach a denied host by
-connecting to its resolved IP literal, since host filtering sees only the
-address it is handed. For a hard boundary, use a strict `allowed-domains`
-allowlist — it is enforced against IP-literal targets too (a non-listed IP is
-denied), and combine it with the always-on SSRF floor, which validates every
-*resolved* address (loopback reserved ports, link-local/metadata, private
-ranges) and cannot be bypassed by IP literal or DNS rebinding. This applies
+`denied-domains` blocks a host by BOTH its name and its resolved IP: a concrete
+denied name (not a `*.` glob) is resolved to its addresses, and any dial whose
+destination resolves to one of those addresses is refused at the connect
+chokepoint — so a child cannot bypass the denylist by resolving the name itself
+and dialing the raw IP literal. Glob entries (`*.evil.com`) still match by name
+only (a wildcard has no single IP to resolve). For the hardest boundary, use a
+strict `allowed-domains` allowlist — it is enforced against IP-literal targets
+too (a non-listed IP is denied) — and combine it with the always-on SSRF floor,
+which validates every *resolved* address (loopback reserved ports,
+link-local/metadata, private ranges) and cannot be bypassed by IP literal or DNS
+rebinding. This applies
 identically to HTTP(S) and the SOCKS5 lane — both share one host gate.
 
 HTTPS verb and path enforcement uses a gateway-owned ephemeral CA and TLS
@@ -365,9 +379,11 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
   contexts have real filesystem, network, inherited environment, threads, and
   process creation. They have no arbitrary Java/native/polyglot interop. Review
   project `.vis/extensions/` with the same care as executable build files.
-- On hosts without an implemented OS enforcer, process wrapping is currently an
-  explicit platform gap. The gateway policy remains useful, but it is not a
-  kernel boundary.
+- The OS enforcer is implemented on macOS (Seatbelt) and Linux (bubblewrap);
+  Windows and other hosts have none. There the gateway policy remains useful but
+  is not a kernel boundary, and a requested `sandbox: true` fails loud rather than
+  pretending to confine. On Linux, filtered egress through the proxy is not yet
+  kernel-enforced (needs seccomp), so a proxy-restricted network is denied entirely.
 
 ## Reload, inheritance, and model context
 
@@ -388,13 +404,15 @@ appear as context deltas. Paths beneath the user's home are displayed as `~` pat
 (for example `~/vis` and `~/spel`); enforcement always uses the resolved absolute
 paths.
 
-## macOS verification
+## Verification (macOS + Linux CI)
 
 Pure compiler/policy tests run on every OS. Socket and Seatbelt enforcement tests
-run only in an unconfined macOS test JVM; a managed JVM that already has
+run only in an unconfined test JVM: a managed JVM that already has
 `VIS_SEATBELT_ACTIVE=1` cannot apply a second profile or bind arbitrary fixture
-ports, so those cases report a conditional skip. The macOS CI job is unconfined
-and therefore executes the real boundary tests.
+ports, so those cases report a conditional skip. CI runs both the macOS job (real
+Seatbelt, `VIS_REQUIRE_MACOS_SANDBOX_E2E=1`) and the Linux job (real bubblewrap,
+`VIS_REQUIRE_LINUX_SANDBOX_E2E=1`), so the OS boundary is executed — not vacuously
+skipped — on both platforms.
 
 The focused suites cover:
 
@@ -404,7 +422,9 @@ The focused suites cover:
 - session token attribution, network filters, and SSRF denial;
 - PTY/background input and attach bridge behavior;
 - managed process launch, fail-closed session lookup, CA/truststore injection;
-- config validation and `sandbox: true` opt-in / `sandbox: false` (or absent) as the off default.
+- config validation and `sandbox: true` opt-in / `sandbox: false` (or absent) as the off default;
+- Linux bubblewrap argv compilation (every OS) and real bwrap filesystem containment (Linux CI);
+- fail-loud passthrough + reason when a jail is requested on a host that cannot enforce it.
 
 Run the relevant namespaces through the Clojure language pack or the full macOS
 CI job. A test JVM already started by a sandboxed session validates its inherited

@@ -1,55 +1,75 @@
-# vis.yml — project sandbox config (snapshotted when an environment is created).
+# # vis.yml — project sandbox config (snapshotted when an environment is created).
 
-# Master escape hatch: disable the OS jail + egress proxy entirely. Set back to
-# true (or remove) to re-enable containment. Temporarily off so an unjailed
-# test-runner can execute the real Seatbelt E2E suite.
-sandbox: false
+# # Master escape hatch: disable the OS jail + egress proxy entirely. Set back to
+# # true (or remove) to re-enable containment. Temporarily off so an unjailed
+# # test-runner can execute the real Seatbelt E2E suite.
+# sandbox: false
 
-jail:
-  filesystem:
-    # Sibling repositories available for full source/edit access. Each entry may be
-    # a bare path or {path: .., description: ..}; the description lands in the
-    # session's access view so the agent knows what each root is for.
-    allow-read-write:
-      - path: ~/spel
-        description: Sibling repo — Clojure Playwright (spel) browser automation.
-      - path: ~/tree-sitter-language-pack
-        description: Sibling repo — tree-sitter grammars powering structural tools.
-      - path: ~/svar
-        description: Sibling repo — structured LLM output + routing library.
-      # Vis' own state/config/log dir, so the agent can read ~/.vis/state.yml,
-      # inspect logs, and diagnose config/provider issues in-session.
-      - path: ~/.vis
-        description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.
-    # Managed REPL / test-runner dependency caches. OPT-IN only: nothing writable
-    # is granted by default anymore. Each entry is either a bare path (read+write)
-    # or {path: .., access: read-only}. read-only lets a jailed JVM RESOLVE
-    # already-cached artifacts without being able to modify the cache.
-    language-caches:
-      - ~/.m2
-      # Includes ~/.clojure/deps.edn required by tools.deps startup.
-      - ~/.clojure
-      # Extracted tree-sitter native library loaded by structural tools/tests.
-      - ~/.cache/clj-tslp
-      # GraalVM installed by SDKMAN; the jailed JVM must read its runtime dylibs.
-      - path: ~/.sdkman/candidates/java/25.1.3-graal
-        access: read-only
-      # Node/Vite/Capacitor cache for the apps/vis-companion universal build, so a
-      # jailed `npm install` / `npm run build` resolves without a project-local
-      # --cache workaround.
-      - ~/.npm
+# # ── Workspace filesystem catalog ─────────────────────────────────────────────
+# # ONE documented list of every filesystem root Vis knows about. Each entry:
+# #   id          stable handle referenced by jail.filesystem.allow
+# #   path        the root (bare path or ~-relative)
+# #   description lands in the session access view so the agent knows what it is for
+# #   access      read-write (default) | read-only
+# #   search      true (default) = walked by the default rg/find_files sweep;
+# #               false = kept OUT of the default sweep (explicit paths still reach it)
+# workspace:
+#   filesystem:
+#     - id: spel
+#       path: ~/spel
+#       description: Sibling repo — Clojure Playwright (spel) browser automation.
+#     - id: tree-sitter
+#       path: ~/tree-sitter-language-pack
+#       description: Sibling repo — tree-sitter grammars powering structural tools.
+#     - id: svar
+#       path: ~/svar
+#       description: Sibling repo — structured LLM output + routing library.
+#     - id: vis-home
+#       path: ~/.vis
+#       description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.
+#       search: false
+#     # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
+#     # resolves already-cached artifacts, but kept OUT of the default search sweep.
+#     - id: m2
+#       path: ~/.m2
+#       description: Maven/Clojure dependency cache.
+#       search: false
+#     - id: clojure
+#       path: ~/.clojure
+#       description: tools.deps config + cache (deps.edn) read at JVM startup.
+#       search: false
+#     - id: clj-tslp
+#       path: ~/.cache/clj-tslp
+#       description: Extracted tree-sitter native library loaded by structural tools/tests.
+#       search: false
+#     - id: graal
+#       path: ~/.sdkman/candidates/java/25.1.3-graal
+#       description: GraalVM (SDKMAN) — the jailed JVM reads its runtime dylibs.
+#       access: read-only
+#       search: false
+#     - id: npm
+#       path: ~/.npm
+#       description: Node/Vite/Capacitor cache for the apps/vis-companion universal build.
+#       search: false
 
-  # Extra local ports on which a confined shell child may accept connections.
-  # Empty / unset = no extra inbound ports (the secure default).
-  inbound-ports:
-    - 5273
+# # ── Jail admission ───────────────────────────────────────────────────────────
+# # Which workspace ids enter the OS jail (deny-by-omission: an id NOT listed here
+# # is not confined-granted). Access (RW vs read-only) comes from the catalog entry.
+# jail:
+#   filesystem:
+#     allow: [spel, tree-sitter, svar, vis-home, m2, clojure, clj-tslp, graal, npm]
 
-# Outbound egress allowlist for the sandbox. A bare host also matches its
-# subdomains, so `github.com` covers `api.github.com` and `githubusercontent.com`
-# covers `raw.githubusercontent.com`. Empty/unset allowlist = any host (minus the
-# SSRF deny-floor).
-network:
-  allowed-domains:
-    - github.com
-    - githubusercontent.com
-    - exa.ai
+#   # Extra local ports on which a confined shell child may accept connections.
+#   # Empty / unset = no extra inbound ports (the secure default).
+#   inbound-ports:
+#     - 5273
+
+# # Outbound egress allowlist for the sandbox. A bare host also matches its
+# # subdomains, so `github.com` covers `api.github.com` and `githubusercontent.com`
+# # covers `raw.githubusercontent.com`. Empty/unset allowlist = any host (minus the
+# # SSRF deny-floor).
+# network:
+#   allowed-domains:
+#     - github.com
+#     - githubusercontent.com
+#     - exa.ai

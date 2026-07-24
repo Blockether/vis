@@ -1099,6 +1099,40 @@
                               (when-not all? [[:= :cs.channel ch]]))
                  :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]})))))
 
+(defn db-search-session-ids
+  "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring):
+   the user's request (`session_turn_soul.user_request`) OR any assistant
+   iteration text (`llm_assistant_prose` / `llm_thinking` / `llm_assistant_message`).
+
+   This is the SERVER-side half of transcript search: the 105MB of assistant
+   text never crosses the wire — clients match title/project locally and union
+   these ids for the deep matches. `channel` filters like `db-list-sessions`
+   (`:all`/nil = cross-channel). Blank query returns `[]`."
+  [db-info channel query]
+  (let [q (some-> query str str/trim)]
+    (if (or (not (ds db-info)) (nil? q) (= "" q))
+      []
+      (let [ch (some-> channel ->kw name)
+            all? (or (nil? ch) (= "all" ch))
+            pat (str "%" q "%")]
+        (mapv (comp ->uuid :id)
+              (query! db-info
+                      {:select-distinct [:cs.id]
+                       :from [[:session_soul :cs]]
+                       :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
+                       :left-join [[:session_turn_soul :ts] [:= :ts.session_state_id :s.id]
+                                   [:session_turn_state :tst] [:= :tst.session_turn_soul_id :ts.id]
+                                   [:session_turn_iteration :it] [:= :it.session_turn_state_id :tst.id]]
+                       :where (into [:and
+                                     [:= :cs.parent_state_id nil]
+                                     [:not= :cs.claimed_at nil]
+                                     [:or
+                                      [:like :ts.user_request pat]
+                                      [:like :it.llm_assistant_prose pat]
+                                      [:like :it.llm_thinking pat]
+                                      [:like :it.llm_assistant_message pat]]]
+                                    (when-not all? [[:= :cs.channel ch]]))}))))))
+
 (defn db-session-turn-stats
   "Per-session turn aggregates for the WHOLE store in ONE grouped query:
    {soul-id-str {:turn-count n :latest-turn-at Date}}. Powers the session

@@ -468,6 +468,25 @@
     (is (nil? (ep/compile-policy {:allowed-domains ["*"]})))
     (is (nil? (:allow-loopback (ep/compile-policy {:allowed-domains ["example.com"]}))))))
 
+(deftest denied-domain-blocks-ip
+  (testing "a denied domain is blocked whether the child dials the NAME or its resolved IP"
+    (let
+      [pol
+       (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["example.com"]})
+
+       ip
+       (try (.getHostAddress (java.net.InetAddress/getByName "example.com"))
+            (catch Throwable _ nil))]
+
+      ;; name form: denied at host-level (already worked)
+      (is (:blocked (ep/safe-upstream-address "example.com" 443 pol)))
+      ;; IP form: host-ok? is name-level so decide alone still allows the raw IP …
+      (is (:allow? (ep/decide pol nil ip nil 443)))
+      ;; … but the dial chokepoint blocks it — the IP resolves from the denied name
+      (when ip (is (:blocked (ep/safe-upstream-address ip 443 pol))))
+      ;; an unrelated public host still dials
+      (is (:addr (ep/safe-upstream-address "example.org" 443 pol))))))
+
 (deftest ssrf-wire-blocks-reserved-loopback-port
   (run-wire-test
     (fn []

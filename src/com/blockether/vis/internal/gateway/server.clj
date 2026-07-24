@@ -337,6 +337,18 @@
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
+(defn- sid-route
+  "Build a `/sessions/:sid...` route.
+
+   Reitit (unlike Compojure) has NO inline-colon regex param syntax —
+   `:sid([regex])` is swallowed whole into the PARAM NAME, so `path-sid`
+   reads `[:path-params :sid]` as nil and EVERY per-session route 404s
+   (soul/events/turns/transcript…), while `/v1/sessions` (no sid) still
+   works. Plain `:sid` binds correctly; a non-UUID segment still yields
+   `session-404` via `parse-uuid` → nil in `path-sid`."
+  [tail]
+  (str "/sessions/:sid" (or tail "")))
+
 ;; =============================================================================
 ;; SSE (§6.3)
 ;; =============================================================================
@@ -829,6 +841,32 @@
                          keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
 
+(defn- provider-models-handler
+  "GET /v1/providers/:provider-id/models[?show_all=true] — the LIVE model
+   catalog for ONE provider, fetched DAEMON-side so the gateway stays the SOLE
+   owner of OAuth token resolution. The `svar/models!` probe (and any OAuth
+   token refresh it triggers) runs HERE, in the daemon that owns the credential
+   file — never in a thin client. Returns `{models [id …] hidden_count n}` with
+   snake_case STRING wire keys."
+  [request]
+  (let
+    [provider-id
+     (some-> (get-in request [:path-params :provider-id])
+             keyword)
+
+     show-all?
+     (contains? #{"1" "true" "yes"}
+                (some-> (get-in request [:query-params "show_all"])
+                        str/lower-case))
+
+     provider
+     (configured-provider provider-id)
+
+     {:keys [models hidden-count]}
+     (providers/model-options provider (providers/default-model-names provider) show-all?)]
+
+    (json-response {:models (vec models) :hidden-count (long (or hidden-count 0))})))
+
 (defn- router-provider-entry
   "One row of the unified router payload for `provider` (a configured or
    authenticated-preset fleet entry): display label, base URL, model names, live
@@ -1026,6 +1064,22 @@
                                            :root (get body "root")}))))
 
 (defn- list-sessions-handler [_] (json-response {:sessions (state/list-sessions)}))
+
+(defn- search-sessions-handler
+  "GET /v1/sessions/actions/search?q=&channel= — soul-id STRINGS whose transcript (user
+   request + assistant text) matches `q`. The heavy assistant text stays
+   server-side; clients union these ids into their local title/project filter."
+  [request]
+  (let
+    [q
+     (str (get-in request [:query-params "q"]))
+
+     channel
+     (or (some-> (get-in request [:query-params "channel"])
+                 keyword)
+         :all)]
+
+    (json-response {:session_ids (state/search-session-ids channel q)})))
 
 (defn- soul-handler
   [request]
@@ -2082,52 +2136,53 @@
         ["/slashes" {:get slashes-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
+        ["/providers/:provider-id/models" {:get provider-models-handler}]
         ["/router" {:get router-handler}] ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]
+        ["/sessions/actions/search" {:get search-sessions-handler}]
         ["/projects" {:get list-projects-handler :post create-project-handler}]
         ["/projects/actions/ensure" {:post ensure-project-for-root-handler}]
         ["/projects/:pid"
          {:get get-project-handler :patch patch-project-handler :delete delete-project-handler}]
         ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]
-        ["/sessions/:sid"
+        [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
-        ["/sessions/:sid/release" {:post release-session-handler}]
-        ["/sessions/:sid/events" {:get events-handler}]
-        ["/sessions/:sid/voice" {:post voice-handler}]
-        ["/sessions/:sid/voice/model" {:get voice-model-handler :post voice-model-handler}]
-        ["/sessions/:sid/events-since" {:get events-since-handler}]
-        ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
-        ["/sessions/:sid/transcript" {:get transcript-handler}]
-        ["/sessions/:sid/transcript.md" {:get transcript-md-handler}]
-        ["/sessions/:sid/transcript.html" {:get transcript-html-handler}]
-        ["/sessions/:sid/resources" {:get resources-handler}]
-        ["/sessions/:sid/resources/startables" {:get startables-handler}]
-        ["/sessions/:sid/resources/start" {:post resource-start-handler}]
-        ["/sessions/:sid/resources/stop" {:post resource-stop-handler}]
-        ["/sessions/:sid/resources/restart" {:post resource-restart-handler}]
-        ["/sessions/:sid/resources/logs" {:get resource-logs-handler}]
-        ["/sessions/:sid/iterations/:iid/attachments/:idx" {:get attachment-bytes-handler}]
-        ["/sessions/:sid/model" {:get session-model-handler :patch set-session-model-handler}]
-        ["/sessions/:sid/workspace" {:get workspace-handler}]
-        ["/sessions/:sid/workspace/roots"
+        [(sid-route "/release") {:post release-session-handler}]
+        [(sid-route "/events") {:get events-handler}] [(sid-route "/voice") {:post voice-handler}]
+        [(sid-route "/voice/model") {:get voice-model-handler :post voice-model-handler}]
+        [(sid-route "/events-since") {:get events-since-handler}]
+        [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
+        [(sid-route "/transcript") {:get transcript-handler}]
+        [(sid-route "/transcript.md") {:get transcript-md-handler}]
+        [(sid-route "/transcript.html") {:get transcript-html-handler}]
+        [(sid-route "/resources") {:get resources-handler}]
+        [(sid-route "/resources/startables") {:get startables-handler}]
+        [(sid-route "/resources/start") {:post resource-start-handler}]
+        [(sid-route "/resources/stop") {:post resource-stop-handler}]
+        [(sid-route "/resources/restart") {:post resource-restart-handler}]
+        [(sid-route "/resources/logs") {:get resource-logs-handler}]
+        [(sid-route "/iterations/:iid/attachments/:idx") {:get attachment-bytes-handler}]
+        [(sid-route "/model") {:get session-model-handler :patch set-session-model-handler}]
+        [(sid-route "/workspace") {:get workspace-handler}]
+        [(sid-route "/workspace/roots")
          {:post add-filesystem-root-handler :delete remove-filesystem-root-handler}]
-        ["/sessions/:sid/workspace/root" {:patch change-root-handler}]
-        ["/sessions/:sid/workspace/drafts" {:get drafts-handler :post create-draft-handler}]
-        ["/sessions/:sid/workspace/drafts/:workspace-id" {:delete abandon-draft-handler}]
-        ["/sessions/:sid/workspace/stash" {:post stash-draft-handler}]
-        ["/sessions/:sid/workspace/resume" {:post resume-draft-handler}]
-        ["/sessions/:sid/suggest" {:get suggest-handler}]
-        ["/sessions/:sid/turns" {:get list-turns-handler :post submit-turn-handler}]
-        ["/sessions/:sid/turns/:tid"
+        [(sid-route "/workspace/root") {:patch change-root-handler}]
+        [(sid-route "/workspace/drafts") {:get drafts-handler :post create-draft-handler}]
+        [(sid-route "/workspace/drafts/:workspace-id") {:delete abandon-draft-handler}]
+        [(sid-route "/workspace/stash") {:post stash-draft-handler}]
+        [(sid-route "/workspace/resume") {:post resume-draft-handler}]
+        [(sid-route "/suggest") {:get suggest-handler}]
+        [(sid-route "/turns") {:get list-turns-handler :post submit-turn-handler}]
+        [(sid-route "/turns/:tid")
          {:get get-turn-handler
           :patch update-queued-turn-handler
           :delete delete-queued-turn-handler}]
-        ["/sessions/:sid/turns/:tid/trace" {:get turn-trace-handler}]
-        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]
-        ["/sessions/:sid/cancel-current" {:post cancel-current-turn-handler}]
-        ["/sessions/:sid/drain-queue" {:post drain-idle-handler}]]]
+        [(sid-route "/turns/:tid/trace") {:get turn-trace-handler}]
+        [(sid-route "/turns/:tid/cancel") {:post cancel-turn-handler}]
+        [(sid-route "/cancel-current") {:post cancel-current-turn-handler}]
+        [(sid-route "/drain-queue") {:post drain-idle-handler}]]]
       (keep (fn [{:keys [routes]}]
               (when routes
                 (try (routes token)
@@ -2247,7 +2302,16 @@
    Idempotent: hydration re-runs harmlessly; the save listener installs
    once per process."
   []
-  (try (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
+  (try (let [raw (or (config/load-config-raw) {})]
+         (toggles/hydrate-from-config! raw)
+         ;; Self-heal stale toggle cruft: an old build persisted keyword-id
+         ;; toggles whose namespace was dropped on serialise (`:shell/enabled`
+         ;; -> a meaningless `enabled: true`). Those ids no longer register, so
+         ;; hydrate ignores them but they linger in state.yml until a flip. If
+         ;; any orphan is present, rewrite the canonical snapshot NOW so the
+         ;; file converges instead of carrying the garbage forever.
+         (when (toggles/has-orphan-keys? (get raw "toggles"))
+           (config/save-config! (assoc raw "toggles" (toggles/snapshot)))))
        (when (compare-and-set! toggle-persist-listener-installed? false true)
          (toggles/add-listener!
            (fn [_event]

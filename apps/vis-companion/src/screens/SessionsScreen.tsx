@@ -19,13 +19,15 @@ interface Props {
   client: GatewayClient | null;
   subscriptions: SessionSubscriptionHub | null;
   subscribedIds: ReadonlySet<string>;
+  gatewayCount: number;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
 }
 
-export function SessionsScreen({ active, client, subscriptions, subscribedIds, onOpen }: Props) {
+export function SessionsScreen({ active, client, subscriptions, subscribedIds, gatewayCount, onOpen }: Props) {
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [transcriptIds, setTranscriptIds] = useState<Set<string> | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -111,15 +113,45 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     if (row) viewport.scrollTop += row.getBoundingClientRect().top - anchor.top;
   }, [sessions]);
 
+  // Transcript search runs server-side (matches user requests + LLM responses)
+  // and unions its matching ids into the local title/project filter.
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle) {
+      setTranscriptIds(null);
+      return;
+    }
+    const connection = activeRef.current;
+    if (!connection) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (clientRef.current ?? new GatewayClient(connection))
+        .searchSessionIds(needle, controller.signal)
+        .then((ids) => {
+          if (!controller.signal.aborted) setTranscriptIds(new Set(ids));
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setTranscriptIds(null);
+        });
+    }, 200);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [query, activeKey]);
 
   const visible = useMemo(() => {
     if (!sessions) return null;
     const needle = query.trim().toLowerCase();
     return sessions.filter((session) => {
       if (!showEmpty && emptyUntitled(session)) return false;
-      return !needle || sessionSearchText(session).includes(needle);
+      return (
+        !needle ||
+        sessionSearchText(session).includes(needle) ||
+        transcriptIds?.has(session.id) === true
+      );
     });
-  }, [query, sessions, showEmpty]);
+  }, [query, sessions, showEmpty, transcriptIds]);
 
   const totals = useMemo(() => {
     const all = sessions?.length ?? 0;
@@ -147,6 +179,30 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
 
   const groups = groupByProject(visible ?? []);
 
+  if (loadError) {
+    return (
+      <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col px-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:py-6">
+        <div className="flex h-full min-h-0 flex-col items-center justify-center gap-4 border-y border-dialog-edge bg-panel px-6 py-16 text-center sm:border">
+          <span className="font-mono text-3xl leading-none text-err" aria-hidden="true">○</span>
+          <div className="space-y-1.5">
+            <p className="font-mono text-sm font-black uppercase tracking-[0.1em] text-err">Gateway offline</p>
+            <p className="mx-auto max-w-sm font-mono text-[11px] leading-relaxed text-dialog-hint">
+              {gatewayCount > 1
+                ? 'This gateway is not responding. Switch to another from the Gateways tab, or retry.'
+                : 'The gateway is not responding. Check the URL, your network / Tailscale, or that the gateway is running.'}
+            </p>
+            <p className="mx-auto max-w-sm break-all font-mono text-[10px] text-dialog-hint/60" title={loadError}>
+              {loadError}
+            </p>
+          </div>
+          <Button variant="ghost" className="px-4 py-1.5 text-xs" onClick={() => void load()}>
+            Retry
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:border">
@@ -163,7 +219,10 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                   'Reading sessions...'
                 ) : (
                   <>
-                    <span>{totals.projects} projects&nbsp; | &nbsp;{totals.all} sessions&nbsp; |</span>
+                    <span>{totals.projects} {totals.projects === 1 ? 'project' : 'projects'}</span>
+                    <span className="opacity-40">·</span>
+                    <span>{totals.all} {totals.all === 1 ? 'session' : 'sessions'}</span>
+                    <span className="opacity-40">·</span>
                     <span className={totals.live > 0 ? 'font-bold text-ok' : ''}>
                       {totals.live > 0 ? '●' : '○'} {totals.live} live
                     </span>
@@ -224,18 +283,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
           <NavigatorSkeleton />
-        ) : loadError ? (
-          <div className="flex items-center justify-between gap-4 px-4 py-8">
-            <div className="min-w-0">
-              <p className="font-mono text-xs font-bold text-err">Sessions unavailable</p>
-              <p className="mt-1 truncate font-mono text-[10px] text-dialog-hint" title={loadError}>
-                {loadError}
-              </p>
-            </div>
-            <Button variant="ghost" className="shrink-0 px-3 py-1.5 text-xs" onClick={() => void load()}>
-              Retry
-            </Button>
-          </div>
         ) : visible?.length === 0 ? (
           <div className="px-5 py-16 text-center">
             <p className="font-mono text-xs font-bold text-white/70">
@@ -304,15 +351,15 @@ function ProjectGroup({
             {root || 'No workspace path'}
           </p>
         </div>
-        <div className="grid min-w-[4.5rem] place-items-center border-l border-dialog-edge px-2 text-center font-mono sm:min-w-20 sm:border-l-0 sm:px-3">
-          <span>
+        <div className="flex min-w-[4.5rem] flex-col items-center justify-center gap-0.5 border-l border-dialog-edge px-2 text-center font-mono sm:min-w-20 sm:border-l-0 sm:px-3">
+          <span className="leading-none">
             <strong className="text-xs text-white">{sessions.length}</strong>
-            <span className="ml-1 text-[9px] text-dialog-hint sm:block sm:ml-0">
+            <span className="ml-1 text-[9px] text-dialog-hint sm:ml-0 sm:block">
               {sessions.length === 1 ? 'session' : 'sessions'}
             </span>
           </span>
           {liveCount > 0 && (
-            <span className="-mt-2 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ok sm:mt-0">
+            <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ok">
               <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
               {liveCount} live
             </span>
@@ -366,19 +413,22 @@ function SessionRow({
         >
           {title}
         </span>
-        <span className="mt-1 flex items-center gap-x-2 overflow-hidden font-mono text-[9px] text-dialog-hint md:hidden">
+        <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-dialog-hint md:hidden">
+          <span className={`inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] ${statusTone(session)}`}>
+            <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
+            {status}
+          </span>
+          <span className="shrink-0 opacity-40" aria-hidden="true">·</span>
           <span className="shrink-0">{shortId(session.id)}</span>
           {subscribed && (
             <span className="inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] text-accent-ink">
               <span className="size-1 bg-accent" /> SUB
             </span>
           )}
-          <span className={`inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] ${statusTone(session)}`}>
-            <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
-            {status}
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+            <span>{relativeTime(timestamp)}</span>
+            <span className="text-accent-ink opacity-60" aria-hidden="true">›</span>
           </span>
-          <span className="truncate">{relativeTime(timestamp)}</span>
-          <span className="ml-auto text-accent-ink opacity-60" aria-hidden="true">›</span>
         </span>
       </span>
       <span className="hidden items-center border-r border-dialog-edge px-3 font-mono text-[10px] text-white/55 md:flex">

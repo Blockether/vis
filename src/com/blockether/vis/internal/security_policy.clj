@@ -91,16 +91,6 @@
   [paths base-dir home]
   (vec (distinct (keep #(nearest-real-path % base-dir home) paths))))
 
-(defn- resolve-cache-entry
-  [entry base-dir home]
-  (cond (string? entry) (nearest-real-path entry base-dir home)
-        (map? entry)
-        (when-let [path (nearest-real-path (or (:path entry) (get entry "path")) base-dir home)]
-          (cond-> {:path path}
-            (or (:access entry) (get entry "access"))
-            (assoc :access (or (:access entry) (get entry "access")))))
-        :else nil))
-
 (defn- stable-value
   [value]
   (cond (map? value) (into (sorted-map)
@@ -136,7 +126,7 @@
       (config-spec/network-config config)
 
       path-keys
-      [:allow-read-write :allow-read :allow-write :deny-read :deny-write]
+      [:allow-read-write :allow-read :allow-write :deny-read :deny-write :no-search]
 
       jail
       (reduce (fn [policy key]
@@ -144,14 +134,8 @@
               jail
               path-keys)
 
-      jail
-      (update jail
-              :language-cache-dirs
-              #(into []
-                     (keep (fn [entry]
-                             (resolve-cache-entry entry base-dir home)))
-                     %))
-
+      ;; (language caches now live in the workspace catalog and resolve through the
+      ;;  path-keys reduce above; no separate cache-resolution pass.)
       jail
       (update jail
               :path-descriptions
@@ -163,7 +147,7 @@
                       m)))
 
       policy
-      {:sandbox (not= false (get config "sandbox")) :network network :process-jail jail}
+      {:sandbox (not= false (get-in config ["jail" "enabled"])) :network network :process-jail jail}
 
       generation
       (sha256 policy)]
@@ -180,17 +164,12 @@
   (vec (distinct (concat (get-in policy [:process-jail :allow-read-write])
                          (get-in policy [:process-jail :allow-write])))))
 
-(defn- cache-view
-  [entry home]
-  (if (string? entry)
-    {"path" (home-relative entry home) "access" "read_write"}
-    {"path" (home-relative (:path entry) home)
-     "access" (if (contains? #{"read-only" "readonly" "ro"}
-                             (some-> (:access entry)
-                                     name
-                                     str/lower-case))
-                "read_only"
-                "read_write")}))
+(defn no-search-roots
+  "Configured roots flagged `search: false` in the workspace catalog. They are
+   granted to the jail but excluded from the DEFAULT rg/find_files sweep;
+   explicit paths still reach them."
+  [policy]
+  (vec (get-in policy [:process-jail :no-search])))
 
 (defn access-view
   "Build the string-keyed model context from the exact enforcement snapshot.
@@ -224,8 +203,8 @@
      deny-write
      (mapv #(home-relative % home) (:deny-write jail))
 
-     caches
-     (mapv #(cache-view % home) (:language-cache-dirs jail))
+     no-search
+     (mapv #(home-relative % home) (:no-search jail))
 
      descriptions
      (into {}
@@ -233,18 +212,21 @@
                   [(home-relative k home) v]))
            (:path-descriptions jail))]
 
-    {"generation" (:generation policy)
-     "sandboxed" (boolean (:sandbox policy))
-     "filesystem" {"read_write" rw
-                   "process_read_only" ro
-                   "deny_read" deny-read
-                   "deny_write" deny-write
-                   "process_only" {"language_caches" caches}
-                   "descriptions" descriptions}
-     "network" {"enabled" true
-                "allowed_domains" (vec (:allowed-domains network))
-                "denied_domains" (vec (:denied-domains network))
-                "exclude_domains" (vec (:exclude-domains network))
-                "allow_private" (boolean (:allow-private network))
-                "inbound_ports" (vec (:inbound-ports jail))}
-     "changes_require" "reload"}))
+    (cond->
+      {"generation" (:generation policy)
+       "sandboxed" (boolean (:sandbox policy))
+       "filesystem" {"read_write" rw
+                     "process_read_only" ro
+                     "deny_read" deny-read
+                     "deny_write" deny-write
+                     "no_search" no-search
+                     "descriptions" descriptions}
+       "network" {"enabled" true
+                  "allowed_domains" (vec (:allowed-domains network))
+                  "denied_domains" (vec (:denied-domains network))
+                  "exclude_domains" (vec (:exclude-domains network))
+                  "allow_private" (boolean (:allow-private network))
+                  "inbound_ports" (vec (:inbound-ports jail))}
+       "changes_require" "reload"}
+      (:config-error policy)
+      (assoc "config_error" (:config-error policy)))))

@@ -4,7 +4,12 @@ import { defineConfig, loadEnv } from 'vite';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const gatewayProxyToken = loadEnv(mode, process.cwd(), '').VIS_COMPANION_GATEWAY_TOKEN;
+  const env = loadEnv(mode, process.cwd(), '');
+  const gatewayProxyToken = env.VIS_COMPANION_GATEWAY_TOKEN;
+  // The gateway binds whatever `vis gateway start --host` was given. When that is
+  // a Tailscale/LAN IP (not loopback), point the dev proxy at it via this env var,
+  // e.g. VIS_COMPANION_GATEWAY_TARGET=http://100.109.18.77:7890
+  const gatewayTarget = env.VIS_COMPANION_GATEWAY_TARGET || 'http://127.0.0.1:7890';
 
   return {
     plugins: [
@@ -58,7 +63,7 @@ export default defineConfig(({ mode }) => {
       port: 5273,
       proxy: {
         '/gateway': {
-          target: 'http://127.0.0.1:7890',
+          target: gatewayTarget,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/gateway/, ''),
         },

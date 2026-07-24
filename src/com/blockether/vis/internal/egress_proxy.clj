@@ -309,6 +309,22 @@
   [policy port]
   (not (contains? (set (:reserved-loopback-ports policy)) port)))
 
+(defn- denied-address-set
+  "Resolve every CONCRETE (non-glob) `:denied-domains` entry to its IP set — the
+   addresses a jailed child must not reach even by dialing a raw IP literal or a
+   DIFFERENT name that resolves to the same address. Glob entries (`*.evil.com`)
+   can't be resolved and are skipped (their hostname form is still caught by
+   `host-ok?` name matching); IP-literal entries resolve to themselves. Empty deny
+   list ⇒ empty set (no DNS)."
+  [denied-domains]
+  (into #{}
+        (comp (remove #(str/includes? (str %) "*"))
+              (mapcat (fn [d]
+                        (try (seq (InetAddress/getAllByName (str d))) (catch Throwable _ nil))))
+              (map (fn [^InetAddress a]
+                     (.getHostAddress a))))
+        denied-domains))
+
 (defn safe-upstream-address
   "Resolve `host` and validate EVERY resolved address against the SSRF deny-floor, then
    return `{:addr InetAddress}` to dial — the validated IP LITERAL, so the later connect
@@ -327,11 +343,19 @@
      addrs
      (when host (try (vec (InetAddress/getAllByName (str host))) (catch Throwable _ nil)))
 
+     denied-ips
+     (denied-address-set (:denied-domains policy))
+
      loopback?
      (fn [^InetAddress a]
        (.isLoopbackAddress a))]
 
     (cond (empty? addrs) {:blocked (str "cannot resolve host: " host)}
+          (and (seq denied-ips)
+               (some (fn [^InetAddress a]
+                       (contains? denied-ips (.getHostAddress a)))
+                     addrs))
+          {:blocked (str "blocked denied-domain address for host: " host)}
           (some non-loopback-always-blocked? addrs)
           {:blocked (str "blocked internal address for host: " host)}
           (some loopback? addrs) (if (loopback-allowed? policy port)

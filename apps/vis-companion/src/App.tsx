@@ -8,6 +8,7 @@ import {
   rememberSubscribedSession,
   setActiveUrl,
   upsertConnection,
+  removeConnection,
 } from './lib/storage';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
@@ -43,6 +44,13 @@ export function App() {
     () => client ? new SessionSubscriptionHub(client) : null,
     [client],
   );
+  // Stable client for the open settings dialog: a fresh `new GatewayClient(...)`
+  // per render made the dialog's `load` re-fire on every unrelated App re-render
+  // (session polling, subscriptions), re-applying the theme and flickering it.
+  const settingsClient = useMemo(
+    () => settingsTarget ? new GatewayClient(settingsTarget) : null,
+    [settingsTarget],
+  );
 
   const refresh = useCallback(async () => {
     setConns(await loadConnections());
@@ -65,6 +73,11 @@ export function App() {
     setActive(await getActiveConnection());
     setOpenTarget(null);
     setTab('sessions');
+  }, []);
+
+  const activateConnection = useCallback(async (url: string | null) => {
+    await setActiveUrl(url);
+    setActive(await getActiveConnection());
   }, []);
 
   const openGatewaySession = useCallback(async (conn: GatewayConn, sid: string, fresh = false) => {
@@ -228,9 +241,7 @@ export function App() {
             conns={conns}
             active={active}
             onAdd={addConnection}
-            onSelect={selectConnection}
             onSettings={setSettingsTarget}
-            onChanged={refresh}
           />
         ) : openTarget && client && subscriptions ? (
           <SessionScreen
@@ -248,6 +259,7 @@ export function App() {
             client={client}
             subscriptions={subscriptions}
             subscribedIds={subscribedIds}
+            gatewayCount={conns.length}
             onOpen={openGatewaySession}
           />
         )}
@@ -255,12 +267,27 @@ export function App() {
 
       {hasConn && !openTarget && <TabBar tab={tab} onTab={setTab} />}
 
-      {settingsTarget && (
+      {settingsTarget && settingsClient && (
         <GatewaySettingsDialog
           key={settingsTarget.url}
-          client={new GatewayClient(settingsTarget)}
+          client={settingsClient}
           gateway={settingsTarget}
           isActive={settingsTarget.url === active?.url}
+          onActivate={() => void selectConnection(settingsTarget.url)}
+          onDeactivate={() => {
+            void activateConnection(null);
+            setSettingsTarget(null);
+          }}
+          onRename={async (label) => {
+            const updated = { ...settingsTarget, label };
+            await upsertConnection(updated);
+            setSettingsTarget(updated);
+            await refresh();
+          }}
+          onRemove={async () => {
+            await removeConnection(settingsTarget.url);
+            await refresh();
+          }}
           onClose={() => setSettingsTarget(null)}
         />
       )}
@@ -275,10 +302,6 @@ function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (t
         <div className="flex items-center gap-2.5" aria-label="Vis">
           <img src="/vis-logo.png" alt="" className="h-[18px] w-5 object-contain" />
           <span className="font-mono text-[13px] font-black tracking-[0.18em] text-white">VIS</span>
-          <span className="hidden h-3 w-px bg-dialog-edge sm:block" aria-hidden="true" />
-          <span className="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-dialog-hint sm:block">
-            gateway console
-          </span>
         </div>
         <nav className="hidden h-full items-stretch sm:flex" aria-label="Primary navigation">
           {(hasConn ? (['sessions', 'connect'] as Tab[]) : (['connect'] as Tab[])).map((item) => (

@@ -104,7 +104,11 @@
      (if (map? env-or-roots) (:workspace/filesystem-roots env-or-roots) env-or-roots)
 
      configured-roots
-     (when (map? env-or-roots) (:security/filesystem-roots env-or-roots))]
+     (when (map? env-or-roots) (:security/filesystem-roots env-or-roots))
+
+     no-search
+     (when (map? env-or-roots)
+       (into #{} (keep normalize-root) (:security/no-search-roots env-or-roots)))]
 
     (vec (distinct (concat (keep (fn [e]
                                    (when-let [{:keys [trunk clone]} (root-entry e)]
@@ -112,7 +116,10 @@
                                  workspace-roots)
                            (keep (fn [path]
                                    (when-let [root (normalize-root path)]
-                                     {:trunk root :clone root}))
+                                     {:trunk root
+                                      :clone root
+                                      :no-search? (boolean (and no-search
+                                                                (contains? no-search root)))}))
                                  configured-roots))))))
 
 (defn cwd
@@ -139,6 +146,18 @@
            *filesystem-roots*)]
 
     (vec (distinct (cons primary extra)))))
+
+(defn no-search-roots
+  "Canonical CLONE paths of bound filesystem roots flagged `search: false` in
+   the workspace catalog. `resolve-search-roots` prunes these from the DEFAULT
+   rg/find_files sweep; explicit paths still reach them."
+  []
+  (into #{}
+        (keep (fn [e]
+                (when (:no-search? e)
+                  (some-> (:clone e)
+                          normalize-root))))
+        *filesystem-roots*))
 
 (defn filesystem-root-mappings
   "The bound filesystem roots as canonical `[{:trunk :clone}]` pairs — the
@@ -340,6 +359,15 @@
   "Backend-neutral parent storage dir for a trunk's derived workspaces."
   ^File [trunk]
   (io/file (drafts-home) (.getName (io/file trunk))))
+
+(defn drafts-store-path
+  "Canonical path of the drafts-store parent (`~/.vis/drafts` by default, or the
+   `vis.drafts.dir` override / `*drafts-home*` test binding). The DEFAULT search
+   sweep prunes the raw `~/.vis` grant tree but KEEPS real draft clones, which
+   live under this dir — so `/fs add` roots auto-cloned into a draft stay
+   searchable. nil when unresolvable."
+  ^String []
+  (try (.getCanonicalPath (drafts-home)) (catch Throwable _ nil)))
 
 (def ^:private ^"[Ljava.nio.file.CopyOption;" copy-opts
   ^"[Ljava.nio.file.CopyOption;"
