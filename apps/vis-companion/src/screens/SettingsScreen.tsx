@@ -379,7 +379,7 @@ export function GatewaySettingsDialog({
                       >
                         <span
                           className={`pt-0.5 font-mono text-xs ${
-                            toggle.type === 'boolean' && toggle.enabled ? 'text-accent-ink' : 'text-dialog-hint'
+                            toggle.type === 'boolean' && toggle.enabled ? 'text-ok' : 'text-dialog-hint'
                           }`}
                           aria-hidden="true"
                         >

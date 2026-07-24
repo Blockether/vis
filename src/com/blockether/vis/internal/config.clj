@@ -234,7 +234,7 @@
   "Stable display order in the 'Add Provider' picker. Most-likely-used
    first. Anything not in this vec lands at the end."
   [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot-business
-   :github-copilot-individual :zai :zai-coding-plan :ollama :lmstudio])
+   :github-copilot-individual :github-copilot-enterprise :zai :zai-coding-plan :ollama :lmstudio])
 
 (defn- registered-provider-metadata
   "Provider-owned preset metadata. First-party provider extensions put

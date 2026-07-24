@@ -5312,21 +5312,34 @@
    is there — the hit is in the conversation body, not the visible columns."
   [rows query transcript-ids]
   (let [q (str/trim (or query ""))]
-    (vec (keep (fn [row]
-                 (let
-                   [title-hit? (table/row-matches? row query)
-                    body-hit? (contains? transcript-ids (str (:id (:target row))))]
+    (vec
+      (keep (fn [row]
+              (let
+                [title-hit? (table/row-matches? row query)
+                 match (get transcript-ids (str (:id (:target row))))
+                 body-hit? (some? match)]
 
-                   (cond
-                     ;; Body-only match (query typed, title/project missed it):
-                     ;; keep, but mark it so the Status column reads `in chat`.
-                     (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
-                     (assoc row
-                       :transcript-match? true
-                       :status "in chat")
-                     (or title-hit? body-hit?) row
-                     :else nil)))
-               rows))))
+                (cond
+                  ;; Body-only match (query typed, title/project missed it):
+                  ;; keep, mark it, and label the Status column by WHERE the
+                  ;; hit landed — `in request` (user text), `in reply` (LLM
+                  ;; text), or `in chat` (both). `match` is a map for the
+                  ;; snippet-carrying caller, a bare id for legacy set callers.
+                  (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
+                  (assoc row
+                    :transcript-match? true
+                    :transcript-match (when (map? match) match)
+                    :status (case (:kind match)
+                              :request
+                              "in request"
+
+                              :reply
+                              "in reply"
+
+                              "in chat"))
+                  (or title-hit? body-hit?) row
+                  :else nil)))
+            rows))))
 
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
@@ -5361,6 +5374,92 @@
                           (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
     (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
 
+
+(defn- navigator-highlight-segments
+  "Split `s` into `[text bold?]` segments, bolding case-insensitive occurrences
+   of `needle` so the matched search term stands out in a plain snippet line."
+  [s needle]
+  (let
+    [s
+     (str (or s ""))
+
+     needle
+     (str/trim (str (or needle "")))]
+
+    (if (str/blank? needle)
+      [[s false]]
+      (let
+        [ls
+         (str/lower-case s)
+
+         ln
+         (str/lower-case needle)
+
+         n
+         (count needle)]
+
+        (loop
+          [from
+           0
+
+           acc
+           []]
+
+          (let [i (str/index-of ls ln from)]
+            (if (nil? i)
+              (conj acc [(subs s from) false])
+              (recur (+ (long i) n)
+                     (cond-> acc
+                       (> (long i) (long from))
+                       (conj [(subs s from i) false])
+
+                       :always
+                       (conj [(subs s i (+ (long i) n)) true]))))))))))
+
+(defn- navigator-preview-entries
+  "Transcript-style preview rows for a selected body match: a `You` side for the
+   user-request snippet and a `Vis` side for the LLM-reply snippet. Only sides
+   that actually matched (non-blank snippet) appear."
+  [match]
+  (when (map? match)
+    (cond-> []
+      (not (str/blank? (:request-snippet match)))
+      (conj {:label "You" :role :user :text (:request-snippet match)})
+
+      (not (str/blank? (:reply-snippet match)))
+      (conj {:label "Vis" :role :ai :text (:reply-snippet match)}))))
+
+(defn- draw-navigator-preview!
+  "Paint the selected match's conversation snippet under the table in the same
+   left-aligned You/Vis transcript style as the message view, matched term
+   bolded. Draws whole `label + text` pairs top-down, stopping before `max-rows`
+   would be exceeded."
+  [g x top width query match max-rows]
+  (let [limit (+ (long top) (long max-rows))]
+    (reduce (fn [r {:keys [label role text]}]
+              (if (> (+ (long r) 2) limit)
+                (reduced r)
+                (let [role-fg (if (= role :user) t/user-role-fg t/ai-role-fg)]
+                  (p/set-colors! g role-fg t/dialog-bg)
+                  (p/put-str! g x r label)
+                  (loop
+                    [segs (navigator-highlight-segments text query)
+                     cx (long x)
+                     remaining (long width)]
+
+                    (when (and (seq segs) (pos? remaining))
+                      (let
+                        [[seg bold?] (first segs)
+                         seg (if (> (count seg) remaining) (subs seg 0 (long remaining)) seg)]
+
+                        (p/set-colors! g t/dialog-fg t/dialog-bg)
+                        (if bold?
+                          (p/styled g [p/BOLD] (p/put-str! g cx (inc (long r)) seg))
+                          (p/put-str! g cx (inc (long r)) seg))
+                        (recur (rest segs) (+ cx (count seg)) (- remaining (count seg))))))
+                  (+ (long r) 2))))
+            (long top)
+            (navigator-preview-entries match))))
 
 (defn navigator-dialog!
   "Global C-g picker. Returns a target action map or nil on Esc."
@@ -5505,10 +5604,23 @@
          body-top
          (inc sep-row)
 
+         ;; When the highlighted row matched only in the conversation body, a
+         ;; snippet preview (You/Vis) is drawn beneath the table; reserve its
+         ;; rows so the table shrinks instead of overrunning the frame.
+         preview-match
+         (when (pos? total)
+           (:transcript-match (nth visible-rows (p/clamp @selected 0 (dec total)))))
+
+         preview-entries
+         (navigator-preview-entries preview-match)
+
+         preview-h
+         (if (seq preview-entries) (min 5 (inc (* 2 (count preview-entries)))) 0)
+
          ;; Height = actual row count (capped) so the bottom border is
          ;; glued to the last row instead of floating below blanks.
          body-h
-         (p/clamp total 1 (max 1 (- (long content-h) 6)))
+         (p/clamp total 1 (max 1 (- (long content-h) 6 preview-h)))
 
          bottom-row
          (+ body-top body-h)
@@ -5590,6 +5702,16 @@
                                     :total-h total
                                     :inner-h body-h
                                     :scroll @scroll}))))
+          ;; Conversation snippet for the highlighted body-only match, in the
+          ;; same left-aligned You/Vis transcript style as the message view.
+          (when (and table? (seq preview-entries))
+            (draw-navigator-preview! g
+                                     (+ table-x 2)
+                                     (+ bottom-row 2)
+                                     (max 1 (- table-body-w 2))
+                                     @query
+                                     preview-match
+                                     (max 1 (dec preview-h))))
           (draw-hint-bar! g
                           left
                           hint-row
@@ -5613,13 +5735,14 @@
              ;; toggle). The gateway call is synchronous but only fires on the
              ;; keystroke that mutated the query.
              (let [q (str/trim @query)]
-               (cond (empty? q) (do (reset! transcript-ids #{}) (reset! transcript-query nil))
+               (cond (empty? q) (do (reset! transcript-ids {}) (reset! transcript-query nil))
                      (not= q @transcript-query) (do (reset! transcript-query q)
                                                     (reset! transcript-ids
                                                       (if search-transcript-ids
-                                                        (set (try (search-transcript-ids q)
-                                                                  (catch Throwable _ nil)))
-                                                        #{}))))))]
+                                                        (or (try (search-transcript-ids q)
+                                                                 (catch Throwable _ nil))
+                                                            {})
+                                                        {}))))))]
 
           (when key
             (cond

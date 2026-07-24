@@ -52,6 +52,15 @@ export interface SlashCommand {
   doc: string;
 }
 
+// One ranked file row from GET /v1/sessions/:sid/suggest?kind=file — the same
+// rows the TUI `@` picker renders (relative path + size/age/git-status meta).
+export interface FileSuggestion {
+  name: string;
+  size: string;
+  age: string;
+  status: string;
+}
+
 export interface Project {
   id: string;
   name: string;

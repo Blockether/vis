@@ -10,6 +10,7 @@ import type {
   GatewayAttachment,
   GatewayCapabilities,
   GatewayConn,
+  FileSuggestion,
   GatewayStatus,
   GatewayTheme,
   Session,
@@ -218,6 +219,23 @@ export class GatewayClient {
       signal,
     );
     return response.commands ?? [];
+  }
+
+  // GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy file index
+  // (fff) behind the TUI `@` picker and the find_files tool. Returns ranked
+  // relative paths with size/age/git-status meta.
+  async suggestFiles(
+    sid: string,
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<FileSuggestion[]> {
+    const rows = await this.request<FileSuggestion[]>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/suggest?kind=file&q=${encodeURIComponent(query)}`,
+      undefined,
+      signal,
+    );
+    return rows ?? [];
   }
 
   // ── Sessions ────────────────────────────────────────────────────

@@ -61,6 +61,27 @@
       (expect (ifn? (:provider/auth-fn business)))
       (expect (ifn? (:provider/get-token-fn business)))
       (expect (ifn? (:provider/limits-fn business)))))
+  (defdescribe active-tier-detect-test
+               (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
+                   (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+                   (let
+                     [detect? (fn [pid]
+                                (boolean ((:provider/detect-fn (vis/provider-by-id pid)))))]
+                     ;; The three tiers share ONE OAuth token file. Even with a token present
+                     ;; only the tier recorded as active detects — the other two report nil,
+                     ;; so the picker/router surfaces exactly one Copilot provider.
+                     (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
+                                      #'sut/configured-account-type (constantly :business)}
+                       (fn []
+                         (expect (detect? :github-copilot-business))
+                         (expect (not (detect? :github-copilot-individual)))
+                         (expect (not (detect? :github-copilot-enterprise)))))
+                     (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
+                                      #'sut/configured-account-type (constantly :enterprise)}
+                       (fn []
+                         (expect (detect? :github-copilot-enterprise))
+                         (expect (not (detect? :github-copilot-individual)))
+                         (expect (not (detect? :github-copilot-business))))))))
   (it "returns Vis-owned static LLM headers with cached Copilot token"
       (reset! @#'sut/token-cache {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"
                                   :expires-at-ms (+ (System/currentTimeMillis) 600000)

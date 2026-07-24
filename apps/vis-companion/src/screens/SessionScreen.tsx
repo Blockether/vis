@@ -26,6 +26,7 @@ import {
 } from '../lib/paste';
 import type {
   GatewayCapabilities,
+  FileSuggestion,
   Session,
   SlashCommand,
   SseEvent,
@@ -390,6 +391,54 @@ function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// `@` file-mention trigger, mirroring the TUI (`file_suggest.clj` trigger-regex)
+// VERBATIM: the `@` must begin a word (start of text or right after whitespace),
+// and `@@` escapes to a literal `@`. `head` is the input text up to the caret.
+const FILE_MENTION_REGEX = /(?:^|\s)@(?!@)(\S*)$/;
+
+function fileMentionAt(head: string): { query: string; at: number } | null {
+  const match = FILE_MENTION_REGEX.exec(head);
+  if (!match) return null;
+  const query = match[1] ?? '';
+  return { query, at: head.length - query.length - 1 };
+}
+
+// Visible inline token inserted by the picker — quoted when the path has spaces,
+// matching the TUI's `format-file-mention`.
+function formatFileMention(path: string): string {
+  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
+}
+
+// Splice the picked `path` over the active `@token` at the caret, returning the
+// new text and caret offset. Mirrors `file_suggest.clj` apply-mention.
+function applyFileMention(
+  text: string,
+  caret: number,
+  path: string,
+): { text: string; caret: number } {
+  const head = text.slice(0, caret);
+  const mention = fileMentionAt(head);
+  if (!mention) return { text, caret };
+  const before = text.slice(0, mention.at);
+  const after = text.slice(caret);
+  const token = `${formatFileMention(path)} `;
+  return { text: before + token + after, caret: before.length + token.length };
+}
+
+// Expand inline `@path` mentions into the SAME agent-facing read-this-file
+// directive the TUI emits (`input.clj` file-mention->prompt-block), so the model
+// knows the user attached a file. The visible transcript keeps the short `@path`
+// token; only the outbound agent text carries the directive. `@@` stays literal.
+const FILE_MENTION_EXPAND_REGEX =
+  /(?<!\S)@(?:"([^"]+)"|([A-Za-z0-9][A-Za-z0-9._/-]*))/g;
+
+function expandFileMentions(text: string): string {
+  return text.replace(FILE_MENTION_EXPAND_REGEX, (_match, quoted, bare) => {
+    const path = (quoted ?? bare) as string;
+    return `[Attached File: ${path}]\nThe user attached this file. Read it (via the file/zipper tools) before answering.`;
+  });
+}
+
 const LOADING_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 // Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner that
@@ -519,6 +568,10 @@ export function SessionScreen({
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
+  const [caret, setCaret] = useState(0);
+  const [fileSuggestions, setFileSuggestions] = useState<FileSuggestion[]>([]);
+  const [fileIndex, setFileIndex] = useState(0);
+  const [fileDismissed, setFileDismissed] = useState(false);
   const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(() => new Map());
@@ -1002,7 +1055,7 @@ export function SessionScreen({
 
   async function send() {
     const authoredRequest = prompt.trim();
-    const request = expandPastePlaceholders(authoredRequest, pastes)
+    const request = expandFileMentions(expandPastePlaceholders(authoredRequest, pastes))
       || (attachments.length ? 'Please inspect the attached image(s).' : '');
     const displayRequest = collapsePastePlaceholders(authoredRequest, pastes) || request;
     if (!request || running || voicePhase !== 'idle') return;
@@ -1174,6 +1227,50 @@ export function SessionScreen({
     requestAnimationFrame(() => composerRef.current?.focus());
   }
 
+  // `@` file-mention picker — the SAME fuzzy index the TUI composer uses,
+  // served by GET /v1/sessions/:sid/suggest. The trigger smarts live here (never
+  // the gateway), so a literal `@@` is never endangered.
+  const caretPos = Math.min(caret, prompt.length);
+  const fileMention = !running && !slashOpen ? fileMentionAt(prompt.slice(0, caretPos)) : null;
+  const fileOpen = fileMention !== null && !fileDismissed;
+  const fileQuery = fileMention?.query ?? '';
+  const fileMatches = fileOpen ? fileSuggestions : [];
+  const selectedFile = fileMatches[Math.min(fileIndex, Math.max(0, fileMatches.length - 1))];
+
+  useEffect(() => {
+    if (!fileOpen) {
+      setFileSuggestions([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void client
+        .suggestFiles(sid, fileQuery, controller.signal)
+        .then((rows) => setFileSuggestions(rows))
+        .catch(() => {
+          /* keep the last rows on a transient failure */
+        });
+    }, 90);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [client, sid, fileOpen, fileQuery]);
+
+  function completeFile(path: string) {
+    const spliced = applyFileMention(prompt, caretPos, path);
+    setPrompt(spliced.text);
+    setFileIndex(0);
+    setFileDismissed(true);
+    requestAnimationFrame(() => {
+      const element = composerRef.current;
+      if (!element) return;
+      element.focus();
+      element.setSelectionRange(spliced.caret, spliced.caret);
+      setCaret(spliced.caret);
+    });
+  }
+
   const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
   const title = session?.title?.trim() || 'Chat';
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
@@ -1242,7 +1339,9 @@ export function SessionScreen({
 
           {loading && !turns.length ? (
             <LoadingSession />
-          ) : !turns.length && !liveTurn ? (
+          ) : (
+            <>
+              {!turns.length && !liveTurn ? (
             <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
               <div className="grid size-11 place-items-center border border-dialog-edge bg-panel-2 shadow-[3px_3px_0_var(--dialog-shadow)]" aria-hidden="true">
                 <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
@@ -1252,7 +1351,7 @@ export function SessionScreen({
                 This session is ready. Ask Vis to inspect, explain, or change your project.
               </p>
             </div>
-          ) : null}
+              ) : null}
 
           {visibleStart > 0 && (
             <div className="mb-5 flex justify-center">
@@ -1300,6 +1399,8 @@ export function SessionScreen({
               />
             </div>
           )}
+            </>
+          )}
         </div>
       </div>
 
@@ -1314,6 +1415,43 @@ export function SessionScreen({
       )}
 
       <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.4rem,env(safe-area-inset-bottom))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
+        {fileMatches.length > 0 && (
+          <div
+            id="file-mention-list"
+            role="listbox"
+            aria-label="File mentions"
+            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+          >
+            <div className="bg-dialog-title px-3 py-2 font-mono text-[10px] font-bold text-dialog-title-foreground">
+              Attach a file
+            </div>
+            {fileMatches.map((file, index) => (
+              <button
+                key={file.name}
+                type="button"
+                role="option"
+                aria-selected={index === fileIndex}
+                className={`grid w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-dialog-edge px-3 py-2 text-left transition-colors ${
+                  index === fileIndex
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-dialog-foreground hover:bg-hover'
+                }`}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => completeFile(file.name)}
+              >
+                <code className="truncate font-mono text-xs font-semibold text-accent-ink">
+                  {file.name}
+                </code>
+                <span className="shrink-0 font-mono text-[10px] text-dialog-hint">
+                  {[file.size, file.age, file.status && file.status !== 'clean' ? file.status : '']
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {slashMatches.length > 0 && (
           <div
             id="slash-command-list"
@@ -1478,12 +1616,38 @@ export function SessionScreen({
               aria-expanded={slashMatches.length > 0}
               className="h-11 min-h-11 max-h-28 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-base leading-6 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-9 sm:min-h-9 sm:py-2 sm:text-[12px] sm:leading-5"
               onPaste={handlePaste}
+              onSelect={(event) =>
+                setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)
+              }
               onChange={(event) => {
                 setPrompt(event.target.value);
+                setCaret(event.target.selectionStart ?? event.target.value.length);
                 setSlashIndex(0);
                 setSlashDismissed(false);
+                setFileIndex(0);
+                setFileDismissed(false);
               }}
               onKeyDown={(event) => {
+                if (fileMatches.length) {
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    const delta = event.key === 'ArrowDown' ? 1 : -1;
+                    setFileIndex(
+                      (current) => (current + delta + fileMatches.length) % fileMatches.length,
+                    );
+                    return;
+                  }
+                  if ((event.key === 'Tab' || event.key === 'Enter') && selectedFile) {
+                    event.preventDefault();
+                    completeFile(selectedFile.name);
+                    return;
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setFileDismissed(true);
+                    return;
+                  }
+                }
                 if (slashMatches.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                   event.preventDefault();
                   const delta = event.key === 'ArrowDown' ? 1 : -1;

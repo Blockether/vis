@@ -5225,11 +5225,13 @@
                                                                          (fn [q]
                                                                            (try
                                                                              (into {}
-                                                                                   (map (fn [{:keys [id in-request? in-reply?]}]
-                                                                                          [id (cond (and in-request? in-reply?) :both
-                                                                                                    in-request? :request
-                                                                                                    in-reply? :reply
-                                                                                                    :else :both)]))
+                                                                                   (map (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet]}]
+                                                                                          [id {:kind (cond (and in-request? in-reply?) :both
+                                                                                                           in-request? :request
+                                                                                                           in-reply? :reply
+                                                                                                           :else :both)
+                                                                                               :request-snippet request-snippet
+                                                                                               :reply-snippet reply-snippet}]))
                                                                                    (vis/gateway-search-session-matches q))
                                                                              (catch Throwable _ nil)))}))]
                       (switch-session! choice)
