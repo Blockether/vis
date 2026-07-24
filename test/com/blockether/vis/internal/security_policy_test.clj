@@ -27,8 +27,9 @@
                      [{"id" "spel" "path" "~/spel" "description" "Sibling repo"}
                       {"id" "ro" "path" "~/read-only" "access" "read-only"}
                       {"id" "m2" "path" "~/.m2" "search" false "description" "Maven cache"}]}
-        "jail" {"enabled" true "filesystem" {"allow" ["spel" "ro" "m2"]} "inbound_ports" [5273]}
-        "network" {"allowed_domains" ["example.com"]}}
+        "jail" {"enabled" true
+                "filesystem" {"allow" ["spel" "ro" "m2"]}
+                "network" {"allowed_domains" ["example.com"] "inbound_ports" [5273]}}}
 
        snapshot
        (policy/snapshot cfg {:base-dir (.getPath project) :home (.getPath home)})
@@ -50,7 +51,8 @@
   (it "keeps a stable generation for equivalent snapshots and changes it with policy"
       (let
         [base
-         {"jail" {"filesystem" {"allow" []}} "network" {"allowed_domains" ["example.com"]}}
+         {"jail"
+          {"enabled" true "filesystem" {"allow" []} "network" {"allowed_domains" ["example.com"]}}}
 
          a
          (policy/snapshot base)
@@ -59,14 +61,14 @@
          (policy/snapshot base)
 
          c
-         (policy/snapshot (assoc-in base ["network" "allowed_domains"] ["other.example"]))]
+         (policy/snapshot (assoc-in base ["jail" "network" "allowed_domains"] ["other.example"]))]
 
         (expect (= (:generation a) (:generation b)))
         (expect (not= (:generation a) (:generation c)))))
   (it "surfaces config_error in the access view only when the policy carries one"
       (let
         [snap
-         (policy/snapshot {"network" {"allowed_domains" ["example.com"]}})
+         (policy/snapshot {"jail" {"network" {"allowed_domains" ["example.com"]}}})
 
          clean
          (policy/access-view snap [])

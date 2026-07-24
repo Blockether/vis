@@ -118,8 +118,8 @@ sudo apt-get install -y bubblewrap passt
 sudo -u visgw tee /home/visgw/workspace/vis.yml >/dev/null <<'YAML'
 jail:
   enabled: true
-network:
-  allowed_domains: ["api.github.com", "*.pypi.org"]
+  network:
+    allowed_domains: ["api.github.com", "*.pypi.org"]
 YAML
 ```
 
@@ -240,28 +240,28 @@ session, blocks SSRF destinations, and applies one policy to shell HTTP clients,
 managed language processes, and GraalPy HTTP clients.
 
 ```yaml
-network:
-  allowed_domains:
-    - "*"
-  denied_domains:
-    - evil.example
-  exclude_domains:
-    - pinned.example
-  allow_private: false
-  rules:
-    - host: api.example.com
-      access: read-only
-      allow:
-        - method: POST
-          path: /v1/issues/**
-    - host: "*"
-      access: read-only
-    - host: db.internal
-      ports: [5432]           # only Postgres; every other port on this host is denied
-
 jail:
-  inbound_ports:
-    - 5273
+  enabled: true
+  network:
+    allowed_domains:
+      - "*"
+    denied_domains:
+      - evil.example
+    exclude_domains:
+      - pinned.example
+    allow_private: false
+    rules:
+      - host: api.example.com
+        access: read-only
+        allow:
+          - method: POST
+            path: /v1/issues/**
+      - host: "*"
+        access: read-only
+      - host: db.internal
+        ports: [5432]           # only Postgres; every other port on this host is denied
+    inbound_ports:
+      - 5273
 ```
 
 Host denies win over allows. `read-only` means `GET`, `HEAD`, and `OPTIONS`;
@@ -307,7 +307,7 @@ are always denied. RFC1918, CGNAT, and IPv6 ULA destinations require
 `allow_private: true`. The proxy resolves and validates addresses before dialing
 the validated address, preventing DNS-rebinding pivots.
 
-`jail.inbound_ports` permits a confined development server to accept on those
+`jail.network.inbound_ports` permits a confined development server to accept on those
 ports. Managed nREPL receives only its preselected loopback port and does not
 inherit this general server list.
 

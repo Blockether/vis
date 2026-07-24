@@ -49,18 +49,18 @@
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
-           "inbound_ports" [5273 8080]
            "env" ["CI" "MY_TOKEN"]
-           "deny_exec" ["definitely-not-a-real-binary-xyz"]}
-   "network" {"allowed_domains" ["github.com"]
-              "denied_domains" ["example.invalid"]
-              "exclude_domains" ["opaque.example"]
-              "allow_private" false
-              "rules" [{"host" "api.example.com"
-                        "access" "read-only"
-                        "methods" ["POST"]
-                        "ports" [443]
-                        "allow" [{"method" "POST" "path" "/v1/**"}]}]}
+           "deny_exec" ["definitely-not-a-real-binary-xyz"]
+           "network" {"inbound_ports" [5273 8080]
+                      "allowed_domains" ["github.com"]
+                      "denied_domains" ["example.invalid"]
+                      "exclude_domains" ["opaque.example"]
+                      "allow_private" false
+                      "rules" [{"host" "api.example.com"
+                                "access" "read-only"
+                                "methods" ["POST"]
+                                "ports" [443]
+                                "allow" [{"method" "POST" "path" "/v1/**"}]}]}}
    "environment" {"ANTHROPIC_API_KEY" "secret"}
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "search" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
@@ -112,7 +112,7 @@
     ;; jail.filesystem is pure id admission — only an `allow` STRING VECTOR, nothing else.
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "allow"] "svar"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "deny"] ["svar"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "inbound_ports"] [0]))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "network" "inbound_ports"] [0]))))
     (expect (config-spec/valid?
               (assoc-in full-config
                 ["workspace" "filesystem"]
@@ -125,12 +125,16 @@
     (expect (= {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}
                (:path-descriptions (config-spec/process-jail-config full-config))))
     ;; Network is policy data, never an independent on/off escape hatch.
-    (expect (not (config-spec/valid? (assoc-in full-config ["network" "enabled"] false))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "oops"] true))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "network" "enabled"] false))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "network" "rules" 0 "oops"] true))))
     ;; :ports is a list of valid port integers.
-    (expect (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] [22 443])))
-    (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] [70000]))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["network" "rules" 0 "ports"] ["443"]))))
+    (expect (config-spec/valid?
+              (assoc-in full-config ["jail" "network" "rules" 0 "ports"] [22 443])))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "network" "rules" 0 "ports"] [70000]))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "network" "rules" 0 "ports"] ["443"]))))
     ;; GraalPy resource cache: closed block, non-blank path only.
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "cache"] "/x"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource_cache"] ""))))
@@ -172,7 +176,10 @@
                            :methods ["POST"]
                            :ports [443]
                            :allow [{:method "POST" :path "/v1/**"}]}]}
-                 (config-spec/network-config full-config))))
+                 (config-spec/network-config full-config)))
+      ;; jail.enabled is the SINGLE gate: off => egress policy is empty (open).
+      (expect (= {} (config-spec/network-config (assoc-in full-config ["jail" "enabled"] false))))
+      (expect (= {} (config-spec/network-config (update full-config "jail" dissoc "enabled")))))
   (it
     "resolves jail.deny-exec into a separate deny-exec list (rooted passthrough, drops unresolvable)"
     (let
@@ -246,7 +253,7 @@
        (get jail "filesystem")
 
        network
-       (get full-config "network")
+       (get jail "network")
 
        rule
        (first (get network "rules"))
@@ -323,5 +330,5 @@
       (expect (= ["config: expected a YAML map with string keys"] (config-spec/explain-problems 7)))
       (expect (= ["nope: unknown top-level config key (config is closed)"]
                  (config-spec/explain-problems {"nope" 1})))
-      (expect (= ["network: value rejected by the network contract"]
-                 (config-spec/explain-problems {"network" 5})))))
+      (expect (= ["jail: value rejected by the jail contract"]
+                 (config-spec/explain-problems {"jail" 5})))))

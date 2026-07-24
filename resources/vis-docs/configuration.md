@@ -25,9 +25,9 @@ Config is YAML only, validated exactly as parsed:
 
 `com.blockether.vis.internal.config-spec/config` is the complete `clojure.spec`
 contract for the original string-keyed YAML representation. It covers these closed
-top-level blocks: `providers`, `router`, `system_prompt`, `workspace`, `jail`, `network`,
+top-level blocks: `providers`, `router`, `system_prompt`, `workspace`, `jail`,
 `environment`, `db_spec`, `search`, `toggles`, `tui_settings`, `mcp`, `python`, and `message_queue`. Filesystem
-policy is a closed block at `jail.filesystem`.
+admission is a closed block at `jail.filesystem`, and egress policy is a closed block at `jail.network`.
 
 Nested maps are also closed except maps whose keys are user-defined, such as environment
 variables, HTTP headers, toggle ids, MCP server names, pricing tables, and request bodies.
@@ -167,22 +167,23 @@ jail:
   enabled: true
   filesystem:
     allow: [sibling, reference, m2]
-  # Extra local ports on which a confined shell child may accept connections.
-  inbound_ports:
-    - 5273
-network:
-  allowed_domains:
-    - github.com
-    - npmjs.org
-  denied_domains:
-    - example.invalid
-  allow_private: false
+  # Egress policy is one facet of the jail; jail.enabled is the single gate.
+  network:
+    allowed_domains:
+      - github.com
+      - npmjs.org
+    denied_domains:
+      - example.invalid
+    allow_private: false
+    # Extra local ports on which a confined shell child may accept connections.
+    inbound_ports:
+      - 5273
 ```
 
 [Process sandbox and gateway egress](sandbox.md) is the single authoritative
 reference for this boundary: the `workspace.filesystem` catalog and
 `jail.filesystem.allow` admission model, the network model (HTTPS method/path
-policy, MITM behavior, SSRF denial, programmable filters), `jail.inbound_ports`,
+policy, MITM behavior, SSRF denial, programmable filters), `jail.network.inbound_ports`,
 snapshot inheritance and `/reload`, and the read-only `session["access"]` view.
 Every filesystem path must be absolute or home-relative (`~`); a bare-relative
 path is rejected when the config is read.
@@ -205,7 +206,7 @@ Seatbelt policy is inherited and cannot be replaced inside an already confined
 process. After upgrading from a Vis build without this permission, restart the
 Vis client/gateway before retrying the native tool. An actual egress-policy
 failure instead reports the rejected host (for example, `host not permitted`);
-add that hostname to `network.allowed_domains` when appropriate.
+add that hostname to `jail.network.allowed_domains` when appropriate.
 
 ### GraalPy internal-resource cache
 

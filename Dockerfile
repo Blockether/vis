@@ -95,7 +95,10 @@ WORKDIR /home/vis
 # The gateway HTTP/SSE port (server.clj DEFAULT_PORT 7890).
 EXPOSE 7890
 
-# Bind on all interfaces inside the container and require a bearer token so the
-# Dokku/nginx ingress fronts an authenticated gateway. The token is provisioned
-# via Dokku config (OpenBao -> VIS_GATEWAY_TOKEN) — see deploy notes.
-CMD ["vis", "gateway", "start", "--host", "0.0.0.0", "--port", "7890", "--require-token"]
+# A non-loopback bind (--host 0.0.0.0) MAKES a bearer token mandatory in
+# server.clj start!, so --require-token is explicit but redundant here. The
+# token is AUTO-GENERATED into --token-file on first boot (there is no token
+# env var); point it at the Dokku persistent-storage mount so it survives
+# redeploys. Read it back with `dokku run vis-gateway cat /home/vis/.vis/gateway-token`
+# (or `vis gateway status`) to hand to the companion/web client.
+CMD ["vis", "gateway", "start", "--host", "0.0.0.0", "--port", "7890", "--require-token", "--token-file", "/home/vis/.vis/gateway-token"]

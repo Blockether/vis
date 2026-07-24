@@ -1277,7 +1277,7 @@
    opted in. `levels` is how many directory levels REMAIN to descend; a subdir
    nests a `\"children\"` vector while `levels` > 1. `root` anchors gitignore
    matching for the whole listing."
-  [^File f ^File root node is_hidden ^long levels]
+  [^File f ^File root node is_hidden levels]
   (when-not (or (and (not is_hidden) (.isHidden f)) (ignored? node f root))
     (let [dir? (.isDirectory f)]
       (cond->

@@ -194,18 +194,18 @@
 (def jail-filesystem-schema {"allow" #(and (vector? %) (every? non-blank-string? %))})
 (s/def ::jail-filesystem #(closed-map? jail-filesystem-schema %))
 
-(def jail-keys #{"enabled" "filesystem" "inbound_ports" "env" "deny_exec"})
+(def jail-keys #{"enabled" "filesystem" "network" "env" "deny_exec"})
 (def jail-schema
   {"enabled" boolean?
    "filesystem" (spec-pred ::jail-filesystem)
-   "inbound_ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
+   "network" (spec-pred ::network)
    "env" env-var-name-list?
    "deny_exec" string-list?})
 (s/def ::jail #(closed-map? jail-schema %))
 
 (def network-rule-allow-keys #{"method" "path"})
 (def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
-(def network-keys #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "rules"})
+(def network-keys #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "inbound_ports" "rules"})
 (def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
 (s/def ::network-rule-allow #(closed-map? network-rule-allow-schema #{"method"} %))
 (s/def ::network-rule-allows (s/coll-of ::network-rule-allow :kind vector?))
@@ -225,6 +225,7 @@
    "denied_domains" string-list?
    "exclude_domains" string-list?
    "allow_private" boolean?
+   "inbound_ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
    "rules" (spec-pred ::network-rules)})
 (s/def ::network #(closed-map? network-schema %))
 
@@ -240,8 +241,8 @@
 (def message-queue-keys
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def config-keys
-  #{"providers" "router" "system_prompt" "workspace" "jail" "network" "environment" "db_spec"
-    "search" "toggles" "tui_settings" "mcp" "python" "message_queue"})
+  #{"providers" "router" "system_prompt" "workspace" "jail" "environment" "db_spec" "search"
+    "toggles" "tui_settings" "mcp" "python" "message_queue"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -298,7 +299,6 @@
    "system_prompt" (spec-pred ::system-prompt)
    "workspace" (spec-pred ::workspace)
    "jail" (spec-pred ::jail)
-   "network" (spec-pred ::network)
    "environment" string-map?
    "db_spec" (spec-pred ::db-spec)
    "search" (spec-pred ::search)
@@ -358,7 +358,7 @@
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
          #(rooted-path-list? (or (:no-search %) []))
          #(rooted-path-list? (or (:deny-exec %) []))
-         #(s/valid? (get jail-schema "inbound_ports") (:inbound-ports %))
+         #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
          #(let
             [d
@@ -456,7 +456,7 @@
        :deny-write []
        :deny-exec (resolve-exec-denies (get jail "deny_exec"))
        :no-search (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)
-       :inbound-ports (vec (get jail "inbound_ports"))
+       :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))
        :env-passthrough (vec (get jail "env"))
        :path-descriptions descriptions})))
 
@@ -482,22 +482,34 @@
     (assoc :allow (mapv network-allow->runtime (get rule "allow")))))
 
 (defn network-config
-  "Derive the keyword-keyed internal egress policy from validated YAML config."
+  "Derive the keyword-keyed internal egress policy from validated YAML config.
+   Egress filtering is one facet of the process jail: `jail.enabled` is the single
+   gate. When the jail is off the policy is empty (egress open); when on, the
+   `jail.network` block (allowed/denied/exclude domains, `allow_private`, rules)
+   is enforced alongside the filesystem and inbound-port confinement."
   [config]
   (assert-config! config)
-  (let [net (get config "network" {})]
-    (cond-> {}
-      (contains? net "allowed_domains")
-      (assoc :allowed-domains (get net "allowed_domains"))
+  (let
+    [jail
+     (get config "jail" {})
 
-      (contains? net "denied_domains")
-      (assoc :denied-domains (get net "denied_domains"))
+     net
+     (get jail "network" {})]
 
-      (contains? net "exclude_domains")
-      (assoc :exclude-domains (get net "exclude_domains"))
+    (if-not (true? (get jail "enabled"))
+      {}
+      (cond-> {}
+        (contains? net "allowed_domains")
+        (assoc :allowed-domains (get net "allowed_domains"))
 
-      (contains? net "allow_private")
-      (assoc :allow-private (get net "allow_private"))
+        (contains? net "denied_domains")
+        (assoc :denied-domains (get net "denied_domains"))
 
-      (contains? net "rules")
-      (assoc :rules (mapv network-rule->runtime (get net "rules"))))))
+        (contains? net "exclude_domains")
+        (assoc :exclude-domains (get net "exclude_domains"))
+
+        (contains? net "allow_private")
+        (assoc :allow-private (get net "allow_private"))
+
+        (contains? net "rules")
+        (assoc :rules (mapv network-rule->runtime (get net "rules")))))))

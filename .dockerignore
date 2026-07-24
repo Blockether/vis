@@ -1,0 +1,16 @@
+# Build context trim for the native-image gateway build. Keep sources + deps
+# metadata; drop build outputs, VCS, node/vite caches, and local state.
+.git
+target
+**/target
+.cpcache
+**/.cpcache
+.verification
+**/node_modules
+apps/vis-companion/dist
+apps/vis-companion/.vite
+**/*.jfr
+**/.omc
+.vis
+*.log
+.DS_Store

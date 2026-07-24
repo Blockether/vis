@@ -227,13 +227,13 @@
       (require 'com.blockether.vis.internal.loop :reload)
       (let
         [cfg
-         (atom
-           {"workspace" {"filesystem" [{"id" "full" "path" "/approved/full"}
-                                       {"id" "read" "path" "/approved/read" "access" "read-only"}
-                                       {"id" "cache" "path" "/approved/cache" "search" false}]}
-            "jail"
-            {"enabled" true "filesystem" {"allow" ["full" "read" "cache"]} "inbound_ports" [5273]}
-            "network" {"allowed_domains" ["approved.example"]}})
+         (atom {"workspace" {"filesystem"
+                             [{"id" "full" "path" "/approved/full"}
+                              {"id" "read" "path" "/approved/read" "access" "read-only"}
+                              {"id" "cache" "path" "/approved/cache" "search" false}]}
+                "jail" {"enabled" true
+                        "filesystem" {"allow" ["full" "read" "cache"]}
+                        "network" {"allowed_domains" ["approved.example"] "inbound_ports" [5273]}}})
 
          snapshot
          (with-redefs [config/load-config-raw #(deref cfg)]
@@ -246,8 +246,7 @@
                                    {"id" "cache" "path" "/escaped/cache" "search" false}]}
                      "jail" {"enabled" false
                              "filesystem" {"allow" ["full" "read" "cache"]}
-                             "inbound_ports" [9999]}
-                     "network" {"allowed_domains" ["escaped.example"]}})
+                             "network" {"allowed_domains" ["escaped.example"] "inbound_ports" [9999]}}})
         (expect (= true (:sandbox snapshot)))
         (expect (= ["/approved/full" "/approved/cache"]
                    (get-in snapshot [:process-jail :allow-read-write])))
