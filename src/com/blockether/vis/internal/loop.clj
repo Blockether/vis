@@ -9703,8 +9703,9 @@
      net-cfg
      (:network security-config)
 
-     ;; Network is always available through the sandbox policy. `sandbox: false`
-     ;; is the sole explicit escape hatch; there is no independent network toggle.
+     ;; Network is always available through the jail policy when the jail is on.
+     ;; The jail is OFF by default; `jail.enabled: true` opts in. There is no
+     ;; independent network toggle.
      net-on?
      true
 

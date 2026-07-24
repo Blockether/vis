@@ -440,6 +440,36 @@
           (expect (= 1 (count vis)))
           (expect (:transcript-match? (first vis)))
           (expect (= "in chat" (:status (first vis))))))
+    (it "body matches label the status by side and carry the You/Vis snippet"
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           visible-rows (var-get #'dlg/navigator-visible-rows)
+           preview-entries (var-get #'dlg/navigator-preview-entries)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           id2 (str (:id (:target (second rows))))
+           mk (fn [k]
+                {id2 {:kind k
+                      :request-snippet (when (#{:request :both} k) "…the search of…")
+                      :reply-snippet (when (#{:reply :both} k) "…searchable now…")}})
+           tag (fn [k]
+                 (first (visible-rows rows "zzz-no-title-match" (mk k))))]
+
+          ;; user-request hit → `in request`, only a You preview side.
+          (expect (= "in request" (:status (tag :request))))
+          (expect (= ["You"] (mapv :label (preview-entries (:transcript-match (tag :request))))))
+          ;; assistant-reply hit → `in reply`, only a Vis preview side.
+          (expect (= "in reply" (:status (tag :reply))))
+          (expect (= ["Vis"] (mapv :label (preview-entries (:transcript-match (tag :reply))))))
+          ;; both sides → `in chat`, You then Vis.
+          (expect (= "in chat" (:status (tag :both))))
+          (expect (= ["You" "Vis"] (mapv :label (preview-entries (:transcript-match (tag :both))))))
+          ;; the match carries the session title so the preview leads with it,
+          ;; before the You/Vis snippet — title first, then transcript.
+          (expect (= (:title (tag :both)) (:title (:transcript-match (tag :both)))))))
+    (it "highlight segments bold only the case-insensitive needle occurrences"
+        (let [segs (var-get #'dlg/navigator-highlight-segments)]
+          (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))
+          (expect (= [["no needle here" false]] (segs "no needle here" "")))))
     (it "visible-rows filters by query only"
         (let
           [all-rows (var-get #'dlg/navigator-all-rows)

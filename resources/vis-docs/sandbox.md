@@ -10,22 +10,23 @@ exceptions. See [Configuration](configuration.md) for all other `vis.yml` keys.
 
 ## One master switch
 
-**The sandbox is OFF by default.** It is opt-in via one boolean. There is no
-shell toggle and no independent network-enabled toggle.
+**The jail is OFF by default.** It is opt-in via one boolean. There is no shell
+toggle and no independent network-enabled toggle.
 
 ```yaml
-sandbox: true
+jail:
+  enabled: true
 ```
 
-> **Strongly recommended.** When the sandbox is off, every model-started shell,
+> **Strongly recommended.** When the jail is off, every model-started shell,
 > subprocess, and managed REPL runs with the gateway user's **full host
 > permissions** — it can read your SSH keys, exfiltrate secrets, and reach any
-> network host. Enable `sandbox: true` on any project where the model runs
+> network host. Set `jail.enabled: true` on any project where the model runs
 > untrusted code. Leave it off only when you deliberately want that unrestricted
 > access (e.g. a fully trusted local workflow).
 
-With `sandbox: true` the OS process jail and forced gateway egress path are active
-for managed child processes on:
+With `jail.enabled: true` the OS process jail and forced gateway egress path are
+active for managed child processes on:
 
 - **macOS** — Seatbelt via the system `sandbox-exec` (ships with the OS, zero install).
 - **Linux** — bubblewrap (`bwrap`) mount + network namespaces; install `bubblewrap`
@@ -35,55 +36,62 @@ for managed child processes on:
   than left open; an explicitly-open network shares the host namespace.
 
 If the host cannot enforce a jail (e.g. Linux without `bwrap`, or Windows), a
-requested `sandbox: true` **fails loud** — a one-time stderr WARNING that children
-run unconfined — instead of silently pretending safety. A missing policy, failed
-policy function, unknown session, or disposed session does **not** silently disable
-confinement; managed process launch fails closed.
+requested `jail.enabled: true` **fails loud** — a one-time stderr WARNING that
+children run unconfined — instead of silently pretending safety. A missing policy,
+failed policy function, unknown session, or disposed session does **not** silently
+disable confinement; managed process launch fails closed.
 
-Absent the key (or `sandbox: false`) confinement is off. Setting it back to
-`true` and running `/reload` re-enables it with no restart.
+Omitting `jail.enabled` (or setting it `false`) leaves confinement off. Setting it
+`true` and running `/reload` enables it with no restart.
 
-`sandbox: false` does not turn the in-process GraalPy context into a trusted
+`jail.enabled: false` does not turn the in-process GraalPy context into a trusted
 context. `python_execution` still has its Truffle filesystem and host/socket
 restrictions.
 
 ## Filesystem policy
 
-The session's active workspace roots are readable and writable. Temporary
-locations needed by ordinary programs are also available. Add explicit
-carve-outs in YAML:
+The session's active workspace roots are readable and writable, and temporary
+locations needed by ordinary programs are available. Every other filesystem root
+is declared ONCE in the `workspace.filesystem` catalog and admitted into the jail
+by id.
+
+Each catalog entry has an `id`, a `path` (absolute `/…` or home-relative `~`/`~/…`
+— a bare-relative path is rejected when the config is read), an optional
+`description` (shown in the session access view), an `access` of `read-write`
+(default) or `read-only`, and `search` (default `true`; `search: false` keeps the
+root out of the default `rg`/`find_files` sweep while explicit paths still reach
+it).
+
+`jail.filesystem.allow` then lists the ids that enter the OS jail
+(deny-by-omission — a catalog root NOT listed is not confined-granted); RW vs
+read-only comes from the catalog entry.
 
 ```yaml
+workspace:
+  filesystem:
+    - id: shared
+      path: ~/shared-repository
+      description: shared code the agent may edit
+    - id: reference
+      path: ~/reference-data
+      access: read-only
+    - id: m2
+      path: ~/.m2
+      description: Maven/Clojure dependency cache
+      search: false          # granted, but kept out of the default search sweep
+
 jail:
   filesystem:
-    allow-read-write:
-      - ~/shared-repository
-    allow-read:
-      - ~/reference-data
-    allow-write:
-      - /srv/generated
-    deny-read:
-      - ~/shared-repository/.secrets
-    deny-write:
-      - /srv/generated/locked
-    language-caches:
-      - ~/.m2
-      - path: ~/.clojure
-        access: read-only
+    allow: [shared, reference, m2]
 ```
 
-`jail.filesystem.allow-read-write` grants both operations. `allow-write` is also
-readable (a writable file must be inspectable); `allow-read` is process-only
-read access. Deny entries are emitted after allows, so deny wins for an
-overlapping subtree. Managed language dependency caches are **not** implicit: a
-bare `language-caches` path is read/write; a map with `access: read-only` is
-read-only. Every filesystem path must be absolute (`/…`) or home-relative
-(`~`/`~/…`); a bare-relative path is rejected when the config is read, because it
-would resolve against the gateway process directory rather than a session root.
+Managed language dependency caches (`~/.m2`, `~/.clojure`, `~/.npm`, …) are **not**
+implicit — grant them as catalog entries (typically `search: false`) and list
+their ids under `jail.filesystem.allow`.
 
-`/cd` changes the active workspace root. `/fs add <path>` adds a temporary
-session root. Those roots participate in draft isolation and the same policy;
-they are not a second permission store.
+`/cd` changes the active workspace root. `/fs add <path>` adds a temporary session
+root. Those roots participate in draft isolation and the same policy; they are not
+a second permission store.
 
 ## Environment scrubbing
 
