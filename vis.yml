@@ -1,9 +1,8 @@
 # # vis.yml — project sandbox config (snapshotted when an environment is created).
 
-# # Master escape hatch: disable the OS jail + egress proxy entirely. Set back to
-# # true (or remove) to re-enable containment. Temporarily off so an unjailed
-# # test-runner can execute the real Seatbelt E2E suite.
-# sandbox: false
+# # Master switch: the OS jail + egress proxy are OFF by default. Opt in with
+# # `jail.enabled: true` in the jail block below; omit it (or set false) to run
+# # children unconfined.
 
 # # ── Workspace filesystem catalog ─────────────────────────────────────────────
 # # ONE documented list of every filesystem root Vis knows about. Each entry:
@@ -56,6 +55,7 @@
 # # Which workspace ids enter the OS jail (deny-by-omission: an id NOT listed here
 # # is not confined-granted). Access (RW vs read-only) comes from the catalog entry.
 # jail:
+#   enabled: true
 #   filesystem:
 #     allow: [spel, tree-sitter, svar, vis-home, m2, clojure, clj-tslp, graal, npm]
 

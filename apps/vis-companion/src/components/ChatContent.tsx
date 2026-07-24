@@ -947,6 +947,10 @@ export const UserMessage = memo(function UserMessage(
       <div className="inline-block max-w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-[12px] leading-5 text-you-message-foreground">
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
+        ) : part.type === 'image' ? (
+          <span key={part.key} className="my-0.5 inline-flex items-center gap-1 border border-code-edge bg-code px-1.5 py-0.5 align-middle font-mono text-[10px] text-dialog-hint first:mt-0">
+            <span aria-hidden>⇗</span>{part.summary}
+          </span>
         ) : (
           <details key={part.key} className="my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
             <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-[10px] font-semibold text-accent marker:hidden [&::-webkit-details-marker]:hidden">

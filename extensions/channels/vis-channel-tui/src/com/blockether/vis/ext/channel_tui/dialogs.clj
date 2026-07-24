@@ -5328,7 +5328,7 @@
                   (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
                   (assoc row
                     :transcript-match? true
-                    :transcript-match (when (map? match) match)
+                    :transcript-match (when (map? match) (assoc match :title (:title row)))
                     :status (case (:kind match)
                               :request
                               "in request"
@@ -5430,12 +5430,29 @@
       (conj {:label "Vis" :role :ai :text (:reply-snippet match)}))))
 
 (defn- draw-navigator-preview!
-  "Paint the selected match's conversation snippet under the table in the same
-   left-aligned You/Vis transcript style as the message view, matched term
-   bolded. Draws whole `label + text` pairs top-down, stopping before `max-rows`
-   would be exceeded."
+  "Paint the selected match's TITLE first, then its conversation snippet under
+   the table in the same left-aligned You/Vis transcript style as the message
+   view, matched term bolded. Title leads (dialog accent, bold); only sides that
+   actually matched follow. Drawing stops before `max-rows` would be exceeded."
   [g x top width query match max-rows]
-  (let [limit (+ (long top) (long max-rows))]
+  (let
+    [limit
+     (+ (long top) (long max-rows))
+
+     title
+     (some-> (:title match)
+             str
+             str/trim
+             not-empty)
+
+     start
+     (if (or (nil? title) (>= (long top) limit))
+       (long top)
+       (let [t (if (> (count title) (long width)) (subs title 0 (long width)) title)]
+         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+         (p/styled g [p/BOLD] (p/put-str! g x top t))
+         (inc (long top))))]
+
     (reduce (fn [r {:keys [label role text]}]
               (if (> (+ (long r) 2) limit)
                 (reduced r)
@@ -5458,7 +5475,7 @@
                           (p/put-str! g cx (inc (long r)) seg))
                         (recur (rest segs) (+ cx (count seg)) (- remaining (count seg))))))
                   (+ (long r) 2))))
-            (long top)
+            start
             (navigator-preview-entries match))))
 
 (defn navigator-dialog!
@@ -5507,6 +5524,19 @@
          total
          (count visible-rows)
 
+         ;; A body-only match's snippet preview is drawn beneath the table;
+         ;; reserve its rows up front so the frame grows to fit it and the table
+         ;; shrinks instead of overrunning the border.
+         preview-match
+         (when (pos? total)
+           (:transcript-match (nth visible-rows (p/clamp @selected 0 (dec total)))))
+
+         preview-entries
+         (navigator-preview-entries preview-match)
+
+         preview-h
+         (if (seq preview-entries) (min 6 (+ 2 (* 2 (count preview-entries)))) 0)
+
          size
          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
@@ -5541,7 +5571,7 @@
                               (- (long rows-n) 6)
                               "Sessions"
                               (- cols 4)
-                              (+ (long (count rows)) 6))
+                              (+ (long (count rows)) 6 preview-h))
 
          {:keys [left right inner-w]}
          bounds
@@ -5603,19 +5633,6 @@
 
          body-top
          (inc sep-row)
-
-         ;; When the highlighted row matched only in the conversation body, a
-         ;; snippet preview (You/Vis) is drawn beneath the table; reserve its
-         ;; rows so the table shrinks instead of overrunning the frame.
-         preview-match
-         (when (pos? total)
-           (:transcript-match (nth visible-rows (p/clamp @selected 0 (dec total)))))
-
-         preview-entries
-         (navigator-preview-entries preview-match)
-
-         preview-h
-         (if (seq preview-entries) (min 5 (inc (* 2 (count preview-entries)))) 0)
 
          ;; Height = actual row count (capped) so the bottom border is
          ;; glued to the last row instead of floating below blanks.

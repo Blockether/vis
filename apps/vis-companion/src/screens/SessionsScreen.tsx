@@ -273,8 +273,10 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
           />
           <button
             type="button"
-            className={`ml-1 min-h-10 shrink-0 border-l border-dialog-edge px-2 font-mono text-[9px] transition-colors sm:ml-3 sm:px-3 sm:text-[10px] ${
-              showEmpty ? 'bg-accent text-accent-foreground' : 'text-dialog-hint hover:text-white'
+            className={`ml-2 min-h-8 shrink-0 rounded-none border px-2 font-mono text-[9px] transition-colors sm:ml-3 sm:px-3 sm:text-[10px] ${
+              showEmpty
+                ? 'border-accent bg-accent text-accent-foreground'
+                : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:text-white'
             }`}
             onClick={() => setShowEmpty((value) => !value)}
           >

@@ -435,7 +435,7 @@
            allowed)]
 
     (assert-process-jail-config!
-      {:disabled? (= false (get jail "enabled"))
+      {:disabled? (not (true? (get jail "enabled")))
        :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
        :allow-read (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
        :allow-write []

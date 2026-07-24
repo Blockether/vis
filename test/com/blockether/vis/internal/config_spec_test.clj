@@ -38,7 +38,6 @@
              "cooldown-ms" 60000
              "max-wait-ms" 30000}
    "system-prompt" {"text" "Project rules" "replace?" false}
-   "sandbox" true
    "workspace" {"filesystem"
                 [{"id" "svar"
                   "path" "/opt/svar"
@@ -47,7 +46,7 @@
                   "search" true} {"id" "ref" "path" "~/reference" "access" "read-only"}
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
-   "jail" {"filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
+   "jail" {"enabled" true "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
            "inbound-ports" [5273 8080]
            "env" ["CI" "MY_TOKEN"]
            "deny-exec" ["definitely-not-a-real-binary-xyz"]}
@@ -136,12 +135,13 @@
                   :env-passthrough ["CI" "MY_TOKEN"]
                   :path-descriptions {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}}
                  (config-spec/process-jail-config full-config)))
-      (expect (true? (:disabled? (config-spec/process-jail-config (assoc full-config
-                                                                    "sandbox" false)))))
-      (expect (false? (:disabled? (config-spec/process-jail-config (assoc full-config
-                                                                     "sandbox" true)))))
-      ;; DEFAULT is OFF: absent `sandbox` key ⇒ jail disabled (opt-in).
-      (expect (true? (:disabled? (config-spec/process-jail-config (dissoc full-config "sandbox")))))
+      (expect (true? (:disabled? (config-spec/process-jail-config
+                                   (assoc-in full-config ["jail" "enabled"] false)))))
+      (expect (false? (:disabled? (config-spec/process-jail-config
+                                    (assoc-in full-config ["jail" "enabled"] true)))))
+      ;; DEFAULT is OFF: absent `jail.enabled` key => jail disabled (opt-in).
+      (expect (true? (:disabled? (config-spec/process-jail-config
+                                   (update full-config "jail" dissoc "enabled")))))
       (expect (= {:allowed-domains ["github.com"]
                   :denied-domains ["example.invalid"]
                   :exclude-domains ["opaque.example"]
@@ -279,8 +279,11 @@
         (expect (= declared fixture)))))
   (it "validates the repository vis.yml through the same root spec"
       (let [wire (yamlstar/load (slurp (io/file "vis.yml")))]
-        (expect (every? string? (keys wire)))
-        (expect (config-spec/valid? wire))))
+        ;; The repo vis.yml ships fully commented (a documented template), so it
+        ;; parses to nil. When it carries content it must satisfy the root spec.
+        (expect (or (nil? wire)
+                    (and (every? string? (keys wire))
+                         (config-spec/valid? wire))))))
   (it "checks recursively user-owned request and pricing maps without keywordizing"
       (expect (config-spec/valid? (assoc-in full-config
                                     ["providers" 0 "extra-body"]
