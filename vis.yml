@@ -18,45 +18,45 @@
 #   access      read-write (default) | read-only
 #   search      true (default) = walked by the default rg/find_files sweep;
 #               false = kept OUT of the default sweep (explicit paths still reach it)
-#
-# workspace:
-#   filesystem:
-#     - id: spel
-#       path: ~/spel
-#       description: Sibling repo — Clojure Playwright (spel) browser automation.
-#     - id: tree-sitter
-#       path: ~/tree-sitter-language-pack
-#       description: Sibling repo — tree-sitter grammars powering structural tools.
-#     - id: svar
-#       path: ~/svar
-#       description: Sibling repo — structured LLM output + routing library.
-#     - id: vis-home
-#       path: ~/.vis
-#       description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.
-#       search: false
-#     # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
-#     # resolves already-cached artifacts, but kept OUT of the default search sweep.
-#     - id: m2
-#       path: ~/.m2
-#       description: Maven/Clojure dependency cache.
-#       search: false
-#     - id: clojure
-#       path: ~/.clojure
-#       description: tools.deps config + cache (deps.edn) read at JVM startup.
-#       search: false
-#     - id: clj-tslp
-#       path: ~/.cache/clj-tslp
-#       description: Extracted tree-sitter native library loaded by structural tools/tests.
-#       search: false
-#     - id: graal
-#       path: ~/.sdkman/candidates/java/25.1.3-graal
-#       description: GraalVM (SDKMAN) — the jailed JVM reads its runtime dylibs.
-#       access: read-only
-#       search: false
-#     - id: npm
-#       path: ~/.npm
-#       description: Node/Vite/Capacitor cache for the apps/vis-companion universal build.
-#       search: false
+
+workspace:
+  filesystem:
+    - id: spel
+      path: ~/spel
+      description: Sibling repo — Clojure Playwright (spel) browser automation.
+    - id: tree-sitter
+      path: ~/tree-sitter-language-pack
+      description: Sibling repo — tree-sitter grammars powering structural tools.
+    - id: svar
+      path: ~/svar
+      description: Sibling repo — structured LLM output + routing library.
+    - id: vis-home
+      path: ~/.vis
+      description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.
+      search: false
+    # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
+    # resolves already-cached artifacts, but kept OUT of the default search sweep.
+    - id: m2
+      path: ~/.m2
+      description: Maven/Clojure dependency cache.
+      search: false
+    - id: clojure
+      path: ~/.clojure
+      description: tools.deps config + cache (deps.edn) read at JVM startup.
+      search: false
+    - id: clj-tslp
+      path: ~/.cache/clj-tslp
+      description: Extracted tree-sitter native library loaded by structural tools/tests.
+      search: false
+    - id: graal
+      path: ~/.sdkman/candidates/java/25.1.3-graal
+      description: GraalVM (SDKMAN) — the jailed JVM reads its runtime dylibs.
+      access: read-only
+      search: false
+    - id: npm
+      path: ~/.npm
+      description: Node/Vite/Capacitor cache for the apps/vis-companion universal build.
+      search: false
 
 
 # ── Jail ─────────────────────────────────────────────────────────────────────
@@ -94,8 +94,8 @@
 # omit the block (or any key) to keep the built-in defaults shown here. A
 # `/reload` applies changes.
 #
-# message_queue:
-#   breaker_threshold: 3        # consecutive fails before the breaker holds the backlog
-#   retry_backoff_ms: [2000, 8000, 30000]  # head-retry backoff (ms) after a transient fail
-#   halfopen_probe_ms: 60000    # half-open probe cadence (ms) once the breaker is OPEN
-#   retry_after_cap_ms: 120000  # clamp (ms) on a provider-supplied Retry-After
+message_queue:
+  breaker_threshold: 3        # consecutive fails before the breaker holds the backlog
+  retry_backoff_ms: [2000, 8000, 30000]  # head-retry backoff (ms) after a transient fail
+  halfopen_probe_ms: 60000    # half-open probe cadence (ms) once the breaker is OPEN
+  retry_after_cap_ms: 120000  # clamp (ms) on a provider-supplied Retry-After
