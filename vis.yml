@@ -30,6 +30,9 @@ workspace:
     - id: svar
       path: ~/svar
       description: Sibling repo — structured LLM output + routing library.
+    - id: infrastructure
+      path: ~/infrastructure
+      description: Blockether Ansible infra — Hetzner servers, Dokku app deploys, SSH-CA, OpenBao secrets.
     - id: vis-home
       path: ~/.vis
       description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.

@@ -358,7 +358,7 @@
      :ai-role-fg [22 163 74]
      :status-ok [22 163 74]
      :status-bad [220 38 38]
-     :warning-bg [250 236 197]
+     :warning-bg [242 221 160]
      :warning-fg [122 74 0]
      :warning-border [217 119 6]
      :cancelled-bg [242 235 223]

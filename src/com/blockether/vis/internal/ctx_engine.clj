@@ -358,6 +358,8 @@
      `\"through\"` `tN/iN` cursor → every universe scope AT OR BEFORE it (start→cursor).
      `\"from\"`/`\"to\"` inclusive window — either bound optional (open start / end).
      `\"since\"`  `tN/iN` cursor → every universe scope AT OR AFTER it (cursor→newest).
+     A range cursor may also be a bare `tN` — a WHOLE-TURN boundary: `through`/`to tN`
+     cover all of turn N (its last iteration), `from`/`since tN` its first.
    The range keys are dropped after resolution and the union lands in `\"scopes\"`.
 
    EXPLICIT whole-turn intent is recorded as `\"turns\"` (a set of turn numbers):
@@ -408,21 +410,32 @@
         (if-not (some #(contains? s %) selector?)
           s
           (let
-            [thr
-             (some-> (get s "through")
-                     scope-key)
+            [cursor-key
+             (fn [raw upper?]
+               (or (scope-key raw)
+                   ;; A bare `tN` cursor is a WHOLE-TURN boundary: as an UPPER
+                   ;; bound it sits after that turn's last iteration, as a LOWER
+                   ;; bound before its first. So `through`/`to tN` cover all of
+                   ;; turn N (and earlier), `from`/`since tN` start at its first
+                   ;; iteration — instead of silently resolving to nothing.
+                   (when-let [tn (turn-key raw)]
+                     [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
+
+             thr
+             (when-let [r (get s "through")]
+               (cursor-key r true))
 
              frm
-             (some-> (get s "from")
-                     scope-key)
+             (when-let [r (get s "from")]
+               (cursor-key r false))
 
              to
-             (some-> (get s "to")
-                     scope-key)
+             (when-let [r (get s "to")]
+               (cursor-key r true))
 
              snc
-             (some-> (get s "since")
-                     scope-key)
+             (when-let [r (get s "since")]
+               (cursor-key r false))
 
              expl
              (into #{}

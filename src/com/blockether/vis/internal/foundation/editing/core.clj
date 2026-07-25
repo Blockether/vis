@@ -1748,8 +1748,14 @@
       [raw-query
        (get spec "query")
 
+       ls?
+       (or (nil? raw-query)
+           (and (string? raw-query) (str/blank? raw-query))
+           (and (sequential? raw-query) (empty? raw-query)))
+
        _
-       (when-not (or (and (string? raw-query) (not (str/blank? raw-query)))
+       (when-not (or ls?
+                     (and (string? raw-query) (not (str/blank? raw-query)))
                      (and (sequential? raw-query)
                           (seq raw-query)
                           (every? #(and (string? %) (not (str/blank? %))) raw-query)))
@@ -1759,7 +1765,9 @@
              {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
 
        query
-       (if (sequential? raw-query) (str/join " " raw-query) raw-query)
+       (cond ls? ""
+             (sequential? raw-query) (str/join " " raw-query)
+             :else raw-query)
 
        _
        (when (and (contains? spec "paths") (contains? spec "path"))
@@ -1800,7 +1808,8 @@
        :limit limit
        :is_hidden (boolean (get spec "is_hidden"))
        :is_respect_gitignore (get spec "is_respect_gitignore" true)
-       :is_gitignore_explicit (contains? spec "is_respect_gitignore")})))
+       :is_gitignore_explicit (contains? spec "is_respect_gitignore")
+       :is_ls ls?})))
 
 (defn- find-walk-files
   "Walk directory `base` ONCE, returning a vector of `{:path :file-name :size}`
@@ -1947,10 +1956,65 @@
          (take 5)
          vec)))
 
+(defn- find-ls
+  "ls-mode listing for a BLANK find_files query: enumerate every file under
+   `roots` (a FILE root lists itself) ranked by frecency then recency, capped at
+   `limit`. There is no pattern to match, so this is `ls`, not a fuzzy search —
+   it skips the whole query-scoring path. Honors `is_hidden`/`is_respect_gitignore`
+   exactly like the scored walk."
+  [roots limit is_hidden is_respect_gitignore]
+  (->> roots
+       (mapcat
+         (fn [^File root]
+           (cond (.isFile root) [{:path (rel-path root)
+                                  :file-name (.getName root)
+                                  :size (.length root)
+                                  :binary? false
+                                  :source :direct-file
+                                  :score 1.0}]
+                 (or (not is_respect_gitignore)
+                     (gitignore/tool-ignore-present? (.getCanonicalFile root)))
+                 (let
+                   [base
+                    (.getCanonicalFile root)
+
+                    ignore-node
+                    (when is_respect_gitignore (load-ignore-node base))]
+
+                   (map #(assoc % :score 1.0) (find-walk-files base is_hidden ignore-node nil)))
+                 :else
+                 (with-open [idx (rg-fff-open root)]
+                   (let [base (.getCanonicalFile root)]
+                     (doall
+                       (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
+                            (keep (fn
+                                    [{:keys [relative-path file-name git-status size modified
+                                             frecency-score binary?]}]
+                                    (let
+                                      [f (io/file base relative-path)
+                                       rel (rel-path f)]
+
+                                      (when (and (or is_hidden (not (.isHidden f)))
+                                                 (not (ignored? (load-ignore-node base) f base)))
+                                        {:path rel
+                                         :file-name (or file-name (.getName f))
+                                         :size size
+                                         :modified modified
+                                         :frecency-score frecency-score
+                                         :git-status git-status
+                                         :binary? (boolean binary?)
+                                         :score 1.0})))))))))))
+       (distinct)
+       (sort-by (fn [it]
+                  [(- (long (or (:frecency-score it) 0))) (- (long (or (:modified it) 0)))
+                   (:path it)]))
+       (take limit)
+       vec))
+
 (defn- find-search
   [args]
   (let
-    [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit]}
+    [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit is_ls]}
      (coerce-find-spec args)
 
      {roots :roots find-resolutions :resolutions}
@@ -1978,7 +2042,7 @@
        (find-scan roots q is_hidden is_respect_gitignore candidate-page walk-cache search-overlay))
 
      strict
-     (scan query)
+     (if is_ls [] (scan query))
 
      tokens
      (find-fallback-tokens query)
@@ -1999,51 +2063,53 @@
      (min (long limit) 20)
 
      [ranked fuzzy?]
-     (if (or (seq strict) (< (count tokens) 2))
-       [strict false]
-       (let
-         [stem
-          (fn [it]
-            (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
+     (if is_ls
+       [(find-ls roots limit is_hidden is_respect_gitignore) false]
+       (if (or (seq strict) (< (count tokens) 2))
+         [strict false]
+         (let
+           [stem
+            (fn [it]
+              (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
 
-          by-path
-          (reduce (fn [m t]
-                    (reduce (fn [m it]
-                              (update m
-                                      (:path it)
-                                      (fn [cur]
-                                        (-> (or cur
-                                                (assoc it
-                                                  :score 0.0
-                                                  :terms #{}))
-                                            (update :score max (:score it))
-                                            (update :terms conj t)))))
-                            m
-                            (scan t)))
-                  {}
-                  tokens)
+            by-path
+            (reduce (fn [m t]
+                      (reduce (fn [m it]
+                                (update m
+                                        (:path it)
+                                        (fn [cur]
+                                          (-> (or cur
+                                                  (assoc it
+                                                    :score 0.0
+                                                    :terms #{}))
+                                              (update :score max (:score it))
+                                              (update :terms conj t)))))
+                              m
+                              (scan t)))
+                    {}
+                    tokens)
 
-          ;; A term that IS the filename stem (`render` → `render.clj`) is a
-          ;; bullseye — it must beat a 2-common-word loose match
-          ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
-          ;; score bonus that ranks above raw term coverage.
-          scored
-          (map (fn [it]
-                 (let
-                   [s
-                    (stem it)
+            ;; A term that IS the filename stem (`render` → `render.clj`) is a
+            ;; bullseye — it must beat a 2-common-word loose match
+            ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
+            ;; score bonus that ranks above raw term coverage.
+            scored
+            (map (fn [it]
+                   (let
+                     [s
+                      (stem it)
 
-                    bull?
-                    (contains? (:terms it) s)]
+                      bull?
+                      (contains? (:terms it) s)]
 
-                   (assoc it :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
-               (vals by-path))]
+                     (assoc it :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
+                 (vals by-path))]
 
-         [(->> scored
-               (sort-by (fn [it]
-                          [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
-                           (- (long (or (:frecency-score it) 0))) (:path it)]))
-               vec) true]))
+           [(->> scored
+                 (sort-by (fn [it]
+                            [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
+                             (- (long (or (:frecency-score it) 0))) (:path it)]))
+                 vec) true])))
 
      items
      (if fuzzy?
@@ -2966,7 +3032,8 @@
                           :replacement (:replacement res)
                           :file file
                           :path rel
-                          :edit-index idx}
+                          :edit-index idx
+                          :from_anchor from_anchor}
                     check (assoc base-check :applied-positions [(:applied-line res)])]
 
                    (recur (inc idx)
@@ -2994,6 +3061,7 @@
            {:plan {:file (:file (first file-spans))
                    :path (:path (first file-spans))
                    :before before
+                   :spans sorted
                    :after (reduce (fn [content {:keys [start end replacement]}]
                                     (str (subs content 0 start) replacement (subs content end)))
                                   before
@@ -3161,19 +3229,41 @@
                 (str "\n" hint))}))
 
 (defn- patch-syntax-failures
-  "Return plans that turn clean supported code into syntactically broken code."
+  "Return plans that turn clean supported code into syntactically broken code.
+   When the combined batch breaks a file, bisect it: apply the file's edits
+   cumulatively bottom-up (offset-safe) and blame the FIRST edit that flips a
+   clean parse to a broken one, instead of a hardcoded edit-index 0."
   [plans]
-  (vec (keep (fn [{:keys [path before after]}]
-               (when-let [lang (index/code-language path)]
-                 (when (and (not (zipper/syntax-broken? lang (str before)))
-                            (zipper/syntax-broken? lang (str after)))
-                   {:edit-index 0
-                    :path path
-                    :reason :syntax-error
-                    :message (str "edit would break syntax in "
-                                  path
-                                  ". Fix the replacement or use struct_patch.")})))
-             plans)))
+  (vec
+    (keep (fn [{:keys [path before after spans]}]
+            (when-let [lang (index/code-language path)]
+              (when (and (not (zipper/syntax-broken? lang (str before)))
+                         (zipper/syntax-broken? lang (str after)))
+                (let
+                  [culprit (loop
+                             [content (str before)
+                              remaining (reverse spans)]
+
+                             (when-let [{:keys [start end replacement] :as span} (first remaining)]
+                               (let
+                                 [next-content (str (subs content 0 (long start))
+                                                    replacement
+                                                    (subs content (long end)))]
+                                 (if (zipper/syntax-broken? lang next-content)
+                                   span
+                                   (recur next-content (rest remaining))))))
+                   culprit (or culprit (first spans))]
+
+                  {:edit-index (:edit-index culprit)
+                   :from_anchor (:from_anchor culprit)
+                   :path path
+                   :reason :syntax-error
+                   :message (str "edit "
+                                 (:edit-index culprit)
+                                 " would break syntax in "
+                                 path
+                                 ". Fix the replacement or use struct_patch.")}))))
+          plans)))
 
 (defn- commit-patch-plans!
   "Write validated plans and clear their retry counters."
@@ -5800,7 +5890,7 @@
   (vis/symbol
     #'create-dirs-tool
     {:symbol 'create-dirs
-     :native-tool? true
+     :native-tool? false
      :call {:pos ["path"]}
      :name "create_dirs"
      :description
@@ -5819,7 +5909,7 @@
   (vis/symbol
     #'copy-tool
     {:symbol 'copy
-     :native-tool? true
+     :native-tool? false
      ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
      :call {:pos ["src" "dest"] :rest :opt}
      :description
@@ -5841,7 +5931,7 @@
 (def move-symbol
   (vis/symbol #'move-tool
               {:symbol 'move
-               :native-tool? true
+               :native-tool? false
                :call {:pos ["src" "dest"]}
                :description
                "Move or rename a confined file or directory without reconstructing its contents."
@@ -5860,7 +5950,7 @@
   (vis/symbol
     #'delete-tool
     {:symbol 'delete
-     :native-tool? true
+     :native-tool? false
      :call {:pos ["path"] :rest :opt}
      :description
      "Destructively delete one confined file or directory only with explicit user intent; can safely no-op when the target is already absent."
@@ -5900,7 +5990,7 @@
 (def file-exists-symbol
   (vis/symbol #'exists-tool
               {:symbol 'file-exists
-               :native-tool? true
+               :native-tool? false
                :name "file_exists"
                :call {:pos ["path"]}
                :description "Check whether a confined file or directory exists without reading it."
@@ -5914,11 +6004,128 @@
                :tag :observation
                :on-error-fn (tool-failure-on-error :file-exists :path nil)}))
 
+(defn- fs-arg-paths
+  "Paths of ONE fs input map: `path` (delete/create_dirs/exists) or `src`+`dest`."
+  [args]
+  (let [m (first args)]
+    (when (map? m)
+      (if-some [p (get m "path")]
+        [p]
+        (vec (keep #(get m %) ["src" "dest"]))))))
+
+(defn- fs-before-fn
+  "Route the fs op through path protection with the RIGHT intent: `exists`
+   reads, every other op writes."
+  [env f args]
+  (let [m (first args)
+        intent (if (= "exists" (get m "op")) :read :write)]
+    ((path-protected-before-fn :fs :path intent fs-arg-paths) env f args)))
+
+(defn- render-fs-result
+  "fs → delegate to the per-op summary render keyed by the result `op`."
+  [r]
+  (case (get r "op")
+    "copy" (render-copy-result r)
+    "move" (render-move-result r)
+    "delete" (render-delete-result r)
+    "create_dirs" (render-create-dirs-result r)
+    "exists" (render-exists-result r)
+    {:summary (str "fs " (get r "op"))}))
+
+(defn- fs-tool
+  "ONE filesystem tool dispatching on `op` — folds the old copy/move/delete/
+   create_dirs/file_exists native tools into a single wire surface. Takes the
+   whole input dict; results mirror the per-op shapes plus an `op`
+   discriminator. The bare copy/move/delete/… sandbox functions remain."
+  [m]
+  (let [op (get m "op")
+        path (get m "path")
+        src (get m "src")
+        dest (get m "dest")]
+    (case op
+      "copy"
+      (let [out (copy-safe src dest (select-keys m ["is_overwrite"]))]
+        (tool-success {:op :fs
+                       :path dest
+                       :kind :path
+                       :result {"op" "copy" "src" src "dest" dest "path" out}
+                       :metadata {:src (path->target src :path)
+                                  :dest (path->target dest :path)}}))
+
+      "move"
+      (let [out (move-safe src dest (select-keys m ["is_overwrite"]))]
+        (tool-success {:op :fs
+                       :path dest
+                       :kind :path
+                       :result {"op" "move" "src" src "dest" dest "path" out}
+                       :metadata {:src (path->target src :path)
+                                  :dest (path->target dest :path)}}))
+
+      "delete"
+      (let [deleted? (if (get m "is_missing_ok")
+                       (delete-if-exists-safe path)
+                       (do (delete-safe path) true))]
+        (tool-success {:op :fs
+                       :path path
+                       :kind :path
+                       :result {"op" "delete" "path" path "deleted" deleted?}
+                       :metadata {:deleted? deleted?}}))
+
+      "create_dirs"
+      (let [before (fs/exists? (safe-path path))
+            out (create-dirs-safe path)]
+        (tool-success {:op :fs
+                       :path path
+                       :kind :dir
+                       :result {"op" "create_dirs" "path" out
+                                "created" (not before)
+                                "already_existed" before}
+                       :metadata {:created? (not before) :already-existed? before}}))
+
+      "exists"
+      (let [exists? (exists-safe? path)]
+        (tool-success {:op :fs
+                       :path path
+                       :kind :path
+                       :result {"op" "exists" "path" (str path) "exists" exists?}
+                       :metadata {:exists? exists?}}))
+
+      (throw (ex-info (str "fs: unknown op " (pr-str op)
+                           " — expected copy | move | delete | create_dirs | exists")
+                      {:type :ext.foundation.editing/bad-fs-op :op op})))))
+
+(def fs-symbol
+  (vis/symbol
+    #'fs-tool
+    {:symbol 'fs
+     :native-tool? true
+     :description
+     "One confined filesystem tool — `op` ∈ copy | move | delete | create_dirs | exists. copy/move take src+dest and fail on an existing dest unless is_overwrite; delete is destructive and needs explicit user intent (is_missing_ok no-ops when absent); create_dirs makes missing parents; exists checks without reading."
+     :render render-fs-result
+     :color-role :tool-color/move
+     :schema {:type "object"
+              :properties {"op" {:type "string"
+                                 :enum ["copy" "move" "delete" "create_dirs" "exists"]
+                                 :description "Filesystem operation."}
+                           "path" {:type "string"
+                                   :description "Target path (delete / create_dirs / exists)."}
+                           "src" {:type "string" :description "Source path (copy / move)."}
+                           "dest" {:type "string" :description "Destination path (copy / move)."}
+                           "is_overwrite" {:type "boolean"
+                                           :description "copy/move: overwrite an existing dest (default false)."}
+                           "is_missing_ok" {:type "boolean"
+                                            :description "delete: no-op when the path is absent (default false)."}}
+              :required ["op"]
+              :additionalProperties false}
+     :before-fn fs-before-fn
+     :tag :mutation
+     :on-error-fn (tool-failure-on-error :fs :path nil)}))
+
 (defn available-editing-symbols
   []
   [index-symbol cat-symbol find-symbol patch-symbol write-symbol struct-patch-symbol sexpr-symbol
-   occurrences-symbol symbol-rename-symbol create-dirs-symbol copy-symbol move-symbol delete-symbol
-   delete-if-exists-symbol file-exists-symbol])
+   occurrences-symbol symbol-rename-symbol fs-symbol create-dirs-symbol copy-symbol move-symbol
+   delete-symbol delete-if-exists-symbol file-exists-symbol])
 
 (defn available-editing-prompt
   "No separate editing prompt: active native descriptions own routing and their

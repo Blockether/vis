@@ -112,7 +112,8 @@
     ;; jail.filesystem is pure id admission — only an `allow` STRING VECTOR, nothing else.
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "allow"] "svar"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "deny"] ["svar"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "network" "inbound_ports"] [0]))))
+    (expect (not (config-spec/valid?
+                   (assoc-in full-config ["jail" "network" "inbound_ports"] [0]))))
     (expect (config-spec/valid?
               (assoc-in full-config
                 ["workspace" "filesystem"]
@@ -197,6 +198,30 @@
       (expect (not (contains? denied "definitely-not-a-real-binary-xyz")))
       ;; deny-exec is exec-only; the filesystem deny-read list stays empty.
       (expect (= [] (:deny-read pol)))))
+  (it
+    "a DISABLED jail exposes the whole workspace catalog and ignores the allow list; an ENABLED one narrows to allow and rejects an unknown id"
+    ;; jail.enabled off => nothing is confined, so every catalog root is
+    ;; available and shows in the session, whatever `allow` says. A
+    ;; stale/renamed id in `allow` is irrelevant and never deny-safes.
+    (let
+      [with-ghost
+       (assoc-in full-config ["jail" "filesystem" "allow"] ["svar" "ghost-id"])
+
+       disabled
+       (assoc-in with-ghost ["jail" "enabled"] false)
+
+       enabled
+       (assoc-in with-ghost ["jail" "enabled"] true)]
+
+      ;; disabled => full catalog RW roots (svar, gen, cache), allow ignored.
+      (expect (= ["/opt/svar" "~/generated" "~/.m2"]
+                 (:allow-read-write (config-spec/process-jail-config disabled))))
+      (expect (= ["~/reference"] (:allow-read (config-spec/process-jail-config disabled))))
+      ;; enabled => allow narrows the jail, and the ghost id is a hard error.
+      (expect (= :vis/invalid-config
+                 (try (config-spec/process-jail-config enabled)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it "redacts credentials from validation failures"
       (let
         [bad

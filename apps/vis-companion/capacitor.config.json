@@ -2,6 +2,7 @@
   "appId": "com.blockether.viscompanion",
   "appName": "Vis",
   "webDir": "dist",
+  "backgroundColor": "#faf3eb",
   "server": {
     "androidScheme": "https"
   },

@@ -1628,7 +1628,7 @@
 
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
-   :gateway-turn-id])
+   :gateway-turn-id :live-turn-request])
 
 (defn- session-running?
   [session]
@@ -1646,6 +1646,7 @@
     :turn-start-ms nil
     :cancel-token nil
     :gateway-turn-id nil
+    :live-turn-request nil
     :cancelling-at-ms nil))
 
 (defn- reconcile-in-flight-state
@@ -2947,6 +2948,12 @@
                                   :cancel-awaiting-turn-id? false
                                   :progress {:iterations []}
                                   :turn-start-ms (System/currentTimeMillis)
+                                  ;; Agent-text of the turn this tab launched DIRECTLY. If the
+                                  ;; gateway is still tearing down a just-cancelled turn it parks
+                                  ;; this fresh submit in its queue and echoes a turn.queued back;
+                                  ;; :sync-queued-turn matches that echo to this field to refuse a
+                                  ;; duplicate "Queued" row (the sent bubble already paints it).
+                                  :live-turn-request agent-text
                                   :submitted-input {:text text
                                                     :pastes (:pastes source-db)
                                                     :paste-counter (:paste-counter source-db)}
@@ -3071,7 +3078,13 @@
                                            (assoc :turn-start-ms local-started-at-ms)
 
                                            (and turn-id (nil? (:gateway-turn-id w)))
-                                           (assoc :gateway-turn-id turn-id))
+                                           ;; Id now known: the exact-id match in
+                                           ;; :sync-queued-turn fully covers our own live
+                                           ;; turn, so drop the text heuristic — leaving it
+                                           ;; armed would suppress a genuinely-queued turn
+                                           ;; that shares this turn's agent-text.
+                                           (assoc :gateway-turn-id turn-id
+                                                  :live-turn-request nil))
                                          w)
                                        (:cancel-awaiting-turn-id? w)
                                        (dissoc :cancel-awaiting-turn-id?))))]
@@ -3130,7 +3143,18 @@
                                ;; as a "Queued" row while it is running (the "sent AND queued
                                ;; at the same time" ghost). Collapse every op to "ensure it
                                ;; is not mirrored"; the live turn paints once, on its own.
-                               running? (= turn-id (:gateway-turn-id w))]
+                               running? (or (= turn-id (:gateway-turn-id w))
+                                            ;; The gateway echoed our OWN in-flight turn back as
+                                            ;; "queued" because it had not finished cancelling the
+                                            ;; prior turn when this tab submitted DIRECTLY (idle
+                                            ;; locally, still busy on the gateway). Its
+                                            ;; :gateway-turn-id is not bound yet, so match by the
+                                            ;; live request text and drop the duplicate row —
+                                            ;; otherwise the message read as sent AND queued until
+                                            ;; turn.started bound the id seconds later.
+                                            (and (:loading? w)
+                                                 text
+                                                 (= text (:live-turn-request w))))]
 
                               (if running?
                                 (vec (remove #(= turn-id (:turn-id %)) q))

@@ -1183,210 +1183,6 @@
                       :else (recur)))
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
-(defn- startable-fields-form!
-  "Single inline card form for a startable's declared `:fields` — the TUI twin of
-   the web modal's inline form (replacing the old one-modal-per-field sequence).
-   Every field shows at once as a label + input line; ↑/↓/Tab move between the
-   fields and the Start action, typing edits the FOCUSED field, Enter submits
-   (validating required fields), Esc cancels. A `*`-marked field is required; an
-   empty field shows its placeholder dim as a hint. Returns `{(keyword name)
-   value}` or ::cancel."
-  [^TerminalScreen screen sr]
-  (let
-    [fields
-     (vec (:fields sr))
-
-     n
-     (count fields)
-
-     states
-     (mapv (fn [f]
-             (let [d (vec (str (or (:default f) "")))]
-               {:text (atom d) :cursor (atom (count d))}))
-           fields)
-
-     focus
-     (atom 0)
-
-     ;; 0..n-1 = fields, n = Start button
-     paste
-     (volatile! nil)
-
-     val-of
-     (fn [i]
-       (str/trim (apply str @(:text (nth states i)))))
-
-     title
-     (str "Start " (:label sr))]
-
-    (loop []
-
-      (let
-        [size
-         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-         cols
-         (.getColumns size)
-
-         rows
-         (.getRows size)
-
-         g
-         (.newTextGraphics screen)
-
-         ;; each field = label row + input row + gap row (3); + 1 Start row
-         content-h
-         (+ (* n 3) 1)
-
-         bounds
-         (draw-dialog-chrome! g cols rows title content-h)
-
-         {:keys [left inner-w]}
-         bounds
-
-         {:keys [content-top hint-row]}
-         (dialog-layout bounds content-h)
-
-         body-w
-         (max 1 (- (long inner-w) 4))
-
-         cursor-screen
-         (atom nil)]
-
-        (dotimes [i n]
-          (let
-            [f (nth fields i)
-             st (nth states i)
-             fy (+ (long content-top) (* (long i) 3))
-             iy (inc (long fy))
-             focused? (= @focus i)
-             val (apply str @(:text st))]
-
-            ;; label (accent when focused), with a * for required
-            (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
-            (p/fill-rect! g (inc (long left)) fy inner-w 1)
-            (p/put-str! g
-                        (+ (long left) 2)
-                        fy
-                        (ellipsize (str (or (:label f)
-                                            (some-> (:name f)
-                                                    name)
-                                            "field")
-                                        (when (:required f) " *"))
-                                   body-w))
-            ;; input line
-            (p/set-colors! g t/dialog-fg t/dialog-bg)
-            (p/fill-rect! g (inc (long left)) iy inner-w 1)
-            (if focused?
-              (reset! cursor-screen
-                (draw-text-input-field! g (inc (long left)) iy inner-w val @(:cursor st)))
-              (if (str/blank? val)
-                (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                    (p/put-str! g
-                                (+ (long left) 3)
-                                iy
-                                (ellipsize (str (or (:placeholder f) "")) body-w)))
-                (p/put-str! g (+ (long left) 3) iy (ellipsize val body-w))))))
-        ;; Add button — the primary action, centered and framed so it reads
-        ;; as a button: a solid accent block when focused, accent-inked when not.
-        (let
-          [by
-           (+ (long content-top) (* (long n) 3))
-
-           focused?
-           (= @focus n)
-
-           label
-           "  Add  "
-
-           bw
-           (count label)
-
-           bx
-           (+ (inc (long left)) (max 0 (quot (- (long inner-w) (long bw)) 2)))]
-
-          (p/set-colors! g t/dialog-fg t/dialog-bg)
-          (p/fill-rect! g (inc (long left)) by inner-w 1)
-          (if focused?
-            (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-            (p/set-colors! g t/dialog-hint-key t/dialog-bg))
-          (p/put-str! g bx by label))
-        (draw-hint-bar! g
-                        left
-                        hint-row
-                        inner-w
-                        [["↑/↓/Tab" "field"] ["Enter" "add"] ["Esc" "cancel"]])
-        (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let
-          [submit!
-           (fn []
-             (if-let
-               [missing (first (filter #(and (:required (nth fields %)) (str/blank? (val-of %)))
-                                       (range n)))]
-               (do (vis/notify! (str (or (:label (nth fields missing))
-                                         (some-> (:name (nth fields missing))
-                                                 name))
-                                     " is required")
-                                :level :warn
-                                :ttl-ms 3000)
-                   (reset! focus missing)
-                   nil)
-               (into {}
-                     (map (fn [i]
-                            [(keyword (:name (nth fields i))) (val-of i)])
-                          (range n)))))
-
-           cur-field
-           (when (< (long @focus) (long n)) (nth states @focus))
-
-           key
-           (read-modal-key! screen)]
-
-          (cond
-            (nil? key) (recur)
-            ;; bracketed paste → focused field only
-            (input/paste-start? key) (do (vreset! paste (StringBuilder.)) (recur))
-            (input/paste-end? key) (let [^StringBuilder sb @paste]
-                                     (when (and sb cur-field (pos? (.length sb)))
-                                       (let [chars (vec (.toString sb))]
-                                         (swap! (:text cur-field)
-                                           (fn [t]
-                                             (into (subvec t 0 @(:cursor cur-field))
-                                                   (concat chars (subvec t @(:cursor cur-field))))))
-                                         (swap! (:cursor cur-field) + (count chars))))
-                                     (vreset! paste nil)
-                                     (recur))
-            (some? @paste) (do (when-let [ch (input/keystroke->paste-char key)]
-                                 (.append ^StringBuilder @paste ch))
-                               (recur))
-            :else
-            (condp = (key-type key)
-              KeyType/Escape ::cancel
-              KeyType/Enter (or (submit!) (recur))
-              KeyType/Tab (do (swap! focus #(mod (inc (long %)) (inc (long n)))) (recur))
-              KeyType/ArrowDown (do (swap! focus #(mod (inc (long %)) (inc (long n)))) (recur))
-              KeyType/ArrowUp (do (swap! focus #(mod (+ (long %) (long n)) (inc (long n)))) (recur))
-              KeyType/Character (do (when cur-field
-                                      (let [c (key-character key)]
-                                        (swap! (:text cur-field)
-                                          #(into (subvec % 0 @(:cursor cur-field))
-                                                 (cons c (subvec % @(:cursor cur-field)))))
-                                        (swap! (:cursor cur-field) inc)))
-                                    (recur))
-              KeyType/Backspace (do (when (and cur-field (pos? (long @(:cursor cur-field))))
-                                      (swap! (:text cur-field)
-                                        #(into (subvec % 0 (dec (long @(:cursor cur-field))))
-                                               (subvec % @(:cursor cur-field))))
-                                      (swap! (:cursor cur-field) dec))
-                                    (recur))
-              KeyType/ArrowLeft
-              (do (when cur-field (swap! (:cursor cur-field) #(max 0 (dec (long %))))) (recur))
-              KeyType/ArrowRight (do (when cur-field
-                                       (swap! (:cursor cur-field) #(min (count @(:text cur-field))
-                                                                        (inc (long %)))))
-                                     (recur))
-              (recur))))))))
 
 (defn- resource-status-mark
   "Leading status glyph + color for a managed-resource row — same ● language as
@@ -1405,84 +1201,6 @@
 
     [p/STATUS_OFF t/dialog-hint]))
 
-(defn start-resource-flow!
-  "Generic 'start a new resource' flow. The daemon owns BOTH the startable
-   registry and the session env, so we FETCH the startable descriptors over the
-   gateway (each already carrying the options the daemon proposed from its env),
-   render the pick / dir / options dialogs locally, then POST the collected choice
-   back — the daemon runs the `:start-fn` so the spawned background registers in
-   ITS registry and shows up in this same Backgrounds list (a locally-started one
-   never would). No resource type is hardcoded here. Returns nil."
-  [^TerminalScreen screen session-id]
-  (let
-    [startables (vec (try (vis/gateway-list-startables session-id)
-                          (catch Throwable t
-                            (tel/log! :warn
-                                      ["dialogs: gateway-list-startables failed" (ex-message t)])
-                            nil)))]
-    (cond (empty? startables)
-          (vis/notify! "No startable resources registered" :level :warn :ttl-ms 3000)
-          :else
-          (let
-            [sr (if (= 1 (count startables))
-                  (first startables)
-                  (select-dialog! screen
-                                  "Start resource"
-                                  (mapv #(assoc %
-                                           :label (str "Start "
-                                                       (:label %)
-                                                       (when-let [v (get-in % [:variant :label])]
-                                                         (str " · " v))))
-                                        startables)))]
-            (when sr
-              (let
-                [root (str (:root sr))
-                 dir (when (:dir? sr)
-                       (let
-                         [r (startable-fields-form! screen
-                                                    (assoc sr
-                                                      :label (str (:label sr) " directory")
-                                                      :fields [{:name "dir"
-                                                                :label "Directory"
-                                                                :default root
-                                                                :placeholder root}]))]
-                         (if (= ::cancel r)
-                           ::cancel
-                           (let [d (str/trim (str (:dir r)))]
-                             (if (str/blank? d) root d)))))]
-
-                (when-not (= ::cancel dir)
-                  (let
-                    [selected (cond (seq (:fields sr)) (startable-fields-form! screen sr)
-                                    (:options? sr)
-                                    (multi-select-dialog!
-                                      screen
-                                      (str (:label sr) " — " (or (:options-label sr) "options"))
-                                      (or (:options sr) []))
-                                    :else [])]
-                    (when (and (some? selected) (not= ::cancel selected))
-                      (let
-                        [res (try (vis/gateway-start-resource!
-                                    session-id
-                                    {:kind (:kind sr) :dir dir :selected (not-empty selected)})
-                                  (catch Throwable t {:result "error" :message (ex-message t)}))]
-                        (cond (= "error" (:result res)) (vis/notify! (str "Start failed: "
-                                                                          (or (:message res)
-                                                                              "unknown error"))
-                                                                     :level :warn
-                                                                     :ttl-ms 4000)
-                              (= "started" (:result res))
-                              (vis/notify! (str "Started " (or (:label res) (:label sr)))
-                                           :level :info
-                                           :ttl-ms 3000)
-                              ;; The daemon boots the resource OFF the request thread
-                              ;; (a REPL/nREPL start is slow) and answers "starting"
-                              ;; at once; it appears in this list as it comes up.
-                              (= "starting" (:result res))
-                              (vis/notify! (str "Starting " (or (:label res) (:label sr)) "…")
-                                           :level :info
-                                           :ttl-ms 3000)))))))))))
-  nil)
 
 (declare text-view-dialog!)
 
@@ -1585,63 +1303,56 @@
                                     (recur))
               KeyType/Character
               (let [c (lower-key-character key)]
-                (if (= c \a)
-                  ;; start a NEW resource — available even with 0 resources.
-                  ;; Fully generic: drives the declarative startable registry
-                  ;; (pick type if >1, propose options, call its start-fn).
-                  (do (start-resource-flow! screen session-id) (recur))
-                  (do
-                    (when (pos? total)
-                      (let [r (nth items (p/clamp @selected 0 (dec total)))]
-                        (cond
-                          (= c \s) (do (vis/gateway-stop-resource! session-id (get r "id"))
-                                       (vis/notify! (str "Stopped " (get r "label"))
-                                                    :level :info
-                                                    :ttl-ms 3000))
-                          (= c \l)
-                          (when (get r "can_logs")
-                            (let
-                              [rid (get r "id")
-                               ;; logs-fn runs OFF the UI thread under a hard
-                               ;; deadline — a wedged resource can never hang F4.
-                               ;; A THROWN logs-fn (daemon error / non-2xx) is
-                               ;; caught here too: deref of a failed future
-                               ;; re-raises on the UI thread, which would wedge
-                               ;; the dialog — surface it as an inline line.
-                               fetch
-                               #(let
-                                  [f (future (try (vis/gateway-resource-logs session-id rid)
-                                                  (catch Throwable t {::log-fetch-error t})))
-                                   v (deref f 3000 ::log-fetch-timeout)]
+                (when (pos? total)
+                  (let [r (nth items (p/clamp @selected 0 (dec total)))]
+                    (cond
+                      (= c \s)
+                      (do (vis/gateway-stop-resource! session-id (get r "id"))
+                          (vis/notify! (str "Stopped " (get r "label")) :level :info :ttl-ms 3000))
+                      (= c \l)
+                      (when (get r "can_logs")
+                        (let
+                          [rid (get r "id")
+                           ;; logs-fn runs OFF the UI thread under a hard
+                           ;; deadline — a wedged resource can never hang F4.
+                           ;; A THROWN logs-fn (daemon error / non-2xx) is
+                           ;; caught here too: deref of a failed future
+                           ;; re-raises on the UI thread, which would wedge
+                           ;; the dialog — surface it as an inline line.
+                           fetch
+                           #(let
+                              [f (future (try (vis/gateway-resource-logs session-id rid)
+                                              (catch Throwable t {::log-fetch-error t})))
+                               v (deref f 3000 ::log-fetch-timeout)]
 
-                                  (cond
-                                    (= ::log-fetch-timeout v)
-                                    ["… log fetch timed out (3s) — the resource's logs-fn is stuck …"]
-                                    (and (map? v) (contains? v ::log-fetch-error))
-                                    [(str "… log fetch failed — "
-                                          (ex-message (::log-fetch-error v))
-                                          " …")]
-                                    :else (seq v)))
-                               lines (fetch)]
+                              (cond
+                                (= ::log-fetch-timeout v)
+                                ["… log fetch timed out (3s) — the resource's logs-fn is stuck …"]
+                                (and (map? v) (contains? v ::log-fetch-error))
+                                [(str "… log fetch failed — "
+                                      (ex-message (::log-fetch-error v))
+                                      " …")]
+                                :else (seq v)))
+                           lines (fetch)]
 
-                              (if lines
-                                (do (log-view-dialog! screen
-                                                      (str "Logs — " (get r "label"))
-                                                      lines
-                                                      :refresh-fn fetch
-                                                      :tail? true
-                                                      :grammar "bash")
-                                    ;; The log viewer paints FULLSCREEN, wiping the
-                                    ;; frozen chat behind this box; repaint it so the
-                                    ;; list doesn't return over stale log text.
-                                    (when repaint-bg (repaint-bg)))
-                                (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
-                          (= c \r) (when (get r "can_restart")
-                                     (vis/gateway-restart-resource! session-id (get r "id"))
-                                     (vis/notify! (str "Restarted " (get r "label"))
-                                                  :level :info
-                                                  :ttl-ms 3000)))))
-                    (recur))))
+                          (if lines
+                            (do (log-view-dialog! screen
+                                                  (str "Logs — " (get r "label"))
+                                                  lines
+                                                  :refresh-fn fetch
+                                                  :tail? true
+                                                  :grammar "bash")
+                                ;; The log viewer paints FULLSCREEN, wiping the
+                                ;; frozen chat behind this box; repaint it so the
+                                ;; list doesn't return over stale log text.
+                                (when repaint-bg (repaint-bg)))
+                            (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
+                      (= c \r) (when (get r "can_restart")
+                                 (vis/gateway-restart-resource! session-id (get r "id"))
+                                 (vis/notify! (str "Restarted " (get r "label"))
+                                              :level :info
+                                              :ttl-ms 3000)))))
+                (recur))
               (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!
@@ -6236,7 +5947,7 @@
    {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
    {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
    {:id :fork-at-turn :label "Fork Session at Turn…"} {:id :close-tab :label "Close Tab"}
-   {:id :providers :label "Router"} {:id :settings :label "Settings"}
+   {:id :providers :label "Models"} {:id :settings :label "Settings"}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])

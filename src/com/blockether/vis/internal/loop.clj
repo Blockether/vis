@@ -1871,9 +1871,20 @@
          universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
          resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
                                                                              universe))
+         ;; A whole-turn fold removes turn T's Q/A recap ONLY when it was issued
+         ;; in a LATER turn — one that actually SAW T's answer. A whole-turn
+         ;; selector issued DURING turn T (`issued_turn` = T) resolves to cover
+         ;; T against next request's now-complete universe, but must NOT erase the
+         ;; answer T produced AFTER the fold was recorded; it degrades to the
+         ;; enumerated path (Q/A recap kept, only the settled result lines fold on
+         ;; the trailer). A later broader re-fold supersedes it with its own
+         ;; higher `issued_turn`, legitimately re-enabling removal. Legacy
+         ;; summaries with no `issued_turn` keep the prior unconditional behavior.
          covering-summary (fn [{:keys [turn]}]
                             (last (filter (fn [summary]
-                                            (contains? (set (get summary "turns")) turn))
+                                            (and (contains? (set (get summary "turns")) turn)
+                                                 (let [it (get summary "issued_turn")]
+                                                   (or (nil? it) (> (long it) (long turn))))))
                                           resolved)))]
 
         (some->>
@@ -2930,19 +2941,16 @@
             (get util "saturation")
 
             saved
-            (cond
-              (pos? (long toks))
-              (str " · saved ~" (fmt-tok toks) " tokens" (when pct (str " · ~" pct "% of budget")))
-              ;; Utilization IS stamped but this fold reclaims no NEW wire — a re-fold
-              ;; of scopes already collapsed on a prior turn, or a fresh scope not yet
-              ;; sent. Either way it freed 0 tokens; stay explicit rather than silently
-              ;; dropping the clause, so the human sees a no-op, not a display bug.
-              (some? util)
-              " · saved ~0 tokens"
-              ;; NO stamped utilization at all: nothing to price, so the card degrades
-              ;; to the bare confirmation and the recorded intent carries no `note`.
-              :else
-              "")
+            (cond (pos? (long toks)) (str " · saved ~" (fmt-tok toks)
+                                          " tokens" (when pct (str " · ~" pct "% of budget")))
+                  ;; Utilization IS stamped but this fold reclaims no NEW wire — a re-fold
+                  ;; of scopes already collapsed on a prior turn, or a fresh scope not yet
+                  ;; sent. Either way it freed 0 tokens; stay explicit rather than silently
+                  ;; dropping the clause, so the human sees a no-op, not a display bug.
+                  (some? util) " · saved ~0 tokens"
+                  ;; NO stamped utilization at all: nothing to price, so the card degrades
+                  ;; to the bare confirmation and the recorded intent carries no `note`.
+                  :else "")
 
             ;; Even a fold that reclaims no NEW wire (every covered scope
             ;; already collapsed on a prior turn — a whole-session
@@ -3040,7 +3048,15 @@
                (let
                  [note (priced base)
                   recover (recover-hint base)
+                  ;; Stamp the ISSUING turn so `previous-turn-context` never lets
+                  ;; a whole-turn fold recorded DURING turn N erase turn N's own
+                  ;; Q/A recap next request (the answer is produced after the fold;
+                  ;; the gist can't summarize it). `turn` is always non-nil here —
+                  ;; the guard above throws when it can't prove the current turn.
                   intent (cond-> base
+                           turn
+                           (assoc "issued_turn" turn)
+
                            g
                            (assoc "gist" g)
 
@@ -4724,65 +4740,67 @@
        ;; — split it so the receipt (label + reclaimed tokens + utilization) is
        ;; the op-card HEADLINE and the gist the expandable body, instead of the
        ;; whole string hiding as a body-only card the user must expand.
-       native-renderers (assoc (extension/native-tool-renderers active-extensions)
-                          ;; `resource_stop` / `resource_restart` are ENGINE-level
-                          ;; (no extension symbol), so their card renderer rides
-                          ;; here: lift the outcome + stopped/restarted resource id
-                          ;; into the HEADLINE so the label names WHICH resource,
-                          ;; not a raw `{result, id}` dump the user must expand.
-                          "resource_stop"
-                          (fn [result]
-                            (let [r (if (map? result) result {})
-                                  outcome (str (get r "result"))
-                                  id (str (get r "id"))
-                                  msg (get r "message")]
-                              {:summary (str (if (seq outcome) outcome "stopped")
-                                             (when (seq id) (str " `" id "`")))
-                               :body (when (seq (str msg)) (str "\n" msg))}))
-                          "resource_restart"
-                          (fn [result]
-                            (let [r (if (map? result) result {})
-                                  outcome (str (get r "result"))
-                                  id (str (get r "id"))
-                                  msg (get r "message")]
-                              {:summary (str (if (seq outcome) outcome "restarted")
-                                             (when (seq id) (str " `" id "`")))
-                               :body (when (seq (str msg)) (str "\n" msg))}))
-                          "session_fold" (fn [result]
-                                           (let [s (str result)]
-                                             (if-let [i (str/index-of s " → ")]
-                                               {:summary (subs s 0 (long i))
-                                                ;; The gist is a terse breadcrumb the model
-                                                ;; wrote (backticks / file:line / :render spans),
-                                                ;; NOT authored markdown — fence it so the body
-                                                ;; shows VERBATIM instead of being re-styled.
-                                                :body (str "```\n" (subs s (+ (long i) 3)) "\n```")}
-                                               {:summary s})))
-                          ;; `doc` / `apropos` are ENGINE-level (no extension
-                          ;; symbol) and RETURN authored markdown. Render it
-                          ;; VERBATIM as the card body (channels paint bodies as
-                          ;; markdown) instead of the default python-literal fence,
-                          ;; and lift a real headline: the doc's symbol line, or
-                          ;; the apropos match count.
-                          "doc" (fn [result]
-                                  (let
-                                    [s (str/trim (str result))
-                                     nl (str/index-of s "\n")
-                                     head (if nl (subs s 0 (long nl)) s)]
+       native-renderers
+       (assoc (extension/native-tool-renderers active-extensions)
+         ;; `resource_stop` / `resource_restart` are ENGINE-level
+         ;; (no extension symbol), so their card renderer rides
+         ;; here: lift the outcome + stopped/restarted resource id
+         ;; into the HEADLINE so the label names WHICH resource,
+         ;; not a raw `{result, id}` dump the user must expand.
+         "resource_stop" (fn [result]
+                           (let
+                             [r (if (map? result) result {})
+                              outcome (str (get r "result"))
+                              id (str (get r "id"))
+                              msg (get r "message")]
 
-                                    {:summary (-> head
-                                                  (str/replace #"^#+\s*" "")
-                                                  str/trim
-                                                  not-empty)
-                                     :body (not-empty s)}))
-                          "apropos" (fn [result]
-                                      (let [s (str/trim (str result))]
-                                        (if (str/starts-with? s "|")
-                                          {:summary (let
-                                                      [n (max 0 (- (count (str/split-lines s)) 2))]
-                                                      (str n " tool" (when (not= n 1) "s")))
-                                           :body (not-empty s)}
-                                          {:summary (not-empty s)}))))
+                             {:summary (str (if (seq outcome) outcome "stopped")
+                                            (when (seq id) (str " `" id "`")))
+                              :body (when (seq (str msg)) (str "\n" msg))}))
+         "resource_restart" (fn [result]
+                              (let
+                                [r (if (map? result) result {})
+                                 outcome (str (get r "result"))
+                                 id (str (get r "id"))
+                                 msg (get r "message")]
+
+                                {:summary (str (if (seq outcome) outcome "restarted")
+                                               (when (seq id) (str " `" id "`")))
+                                 :body (when (seq (str msg)) (str "\n" msg))}))
+         "session_fold" (fn [result]
+                          (let [s (str result)]
+                            (if-let [i (str/index-of s " → ")]
+                              {:summary (subs s 0 (long i))
+                               ;; The gist is a terse breadcrumb the model
+                               ;; wrote (backticks / file:line / :render spans),
+                               ;; NOT authored markdown — fence it so the body
+                               ;; shows VERBATIM instead of being re-styled.
+                               :body (str "```\n" (subs s (+ (long i) 3)) "\n```")}
+                              {:summary s})))
+         ;; `doc` / `apropos` are ENGINE-level (no extension
+         ;; symbol) and RETURN authored markdown. Render it
+         ;; VERBATIM as the card body (channels paint bodies as
+         ;; markdown) instead of the default python-literal fence,
+         ;; and lift a real headline: the doc's symbol line, or
+         ;; the apropos match count.
+         "doc" (fn [result]
+                 (let
+                   [s (str/trim (str result))
+                    nl (str/index-of s "\n")
+                    head (if nl (subs s 0 (long nl)) s)]
+
+                   {:summary (-> head
+                                 (str/replace #"^#+\s*" "")
+                                 str/trim
+                                 not-empty)
+                    :body (not-empty s)}))
+         "apropos" (fn [result]
+                     (let [s (str/trim (str result))]
+                       (if (str/starts-with? s "|")
+                         {:summary (let [n (max 0 (- (count (str/split-lines s)) 2))]
+                                     (str n " tool" (when (not= n 1) "s")))
+                          :body (not-empty s)}
+                         {:summary (not-empty s)}))))
        ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
        ;; by the result's `:op` (the only origin handle a printed value carries),
        ;; so `print(await rg(...))` paints rg's card just like a native call.

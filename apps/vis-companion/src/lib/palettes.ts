@@ -99,7 +99,7 @@ export const BUNDLED_LIGHT: ThemeSummary = {
     '--user-bubble-fg': '#262626',
     '--user-role-fg': '#6f6a63',
     '--warning': '#7a4a00',
-    '--warning-bg': '#faecc5',
+    '--warning-bg': '#f2dda0',
     '--warning-border': '#d97706',
   },
 };

@@ -1316,15 +1316,13 @@ def __vis_registration__():
    moved. nil when nothing changed."
   [old new]
   (let
-    [tokens
-     (keep (fn [k]
-             (let
-               [o (get old k)
-                n (get new k)]
+    [tokens (keep (fn [k]
+                    (let
+                      [o (get old k)
+                       n (get new k)]
 
-               (when (not= o n)
-                 (name k))))
-           diffed-config-keys)]
+                      (when (not= o n) (name k))))
+                  diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 
 (defn- reload-slash
@@ -1492,31 +1490,46 @@ def __vis_registration__():
    ctx via [[egress/probe]] — PURE: no socket, no egress, nothing is sent. Returns
    a JSON string `{scheme, ctx, tier1, filters}` (or `{error}`) — the strings-only
    boundary the sandbox glue `json.loads`es before merging its own local
-   `network_filter`s and printing the verdict. `method` may be blank/nil."
-  [method target]
+   `network_filter`s and printing the verdict. `method` may be blank/nil.
+   `headers-json` is a JSON object string of request headers (or blank) and `body`
+   is the request body string (or blank); both are merged into the synthetic
+   HTTP-phase ctx so `:headers`/`:body` filter rules can be simulated."
+  [method target headers-json body]
   (let [parsed (parse-probe-target (remove str/blank? [method target]))]
     (if-let [e (:error parsed)]
       (json/write-json-str {"error" e})
       (let
         [{:keys [scheme ctx]} parsed
+         hdrs (try (let
+                     [m (when-not (str/blank? headers-json)
+                          (json/read-json headers-json :key-fn identity))]
+                     (when (map? m) m))
+                   (catch Throwable _ nil))
+         ctx (cond-> ctx
+               (seq hdrs)
+               (assoc :headers hdrs)
+
+               (not (str/blank? body))
+               (assoc :body body))
          {:keys [tier1 filters]} (egress/probe (session-network-policy) ctx)]
 
-        (json/write-json-str {"scheme" scheme
-                              "ctx" {"phase" (name (:phase ctx))
-                                     "method" (:method ctx)
-                                     "host" (:host ctx)
-                                     "path" (:path ctx)
-                                     "port" (:port ctx)
-                                     "headers" {}}
-                              "tier1" {"allow" (boolean (:allow? tier1)) "reason" (:reason tier1)}
-                              "filters" (mapv (fn [{:keys [owner allow? reason error]}]
-                                                {"owner" (str owner)
-                                                 "allow" (boolean allow?)
-                                                 "reason" reason
-                                                 "error" (when error
-                                                           {"message" (:message error)
-                                                            "trace" (:trace error)})})
-                                              filters)})))))
+        (json/write-json-str
+          {"scheme" scheme
+           "ctx" {"phase" (name (:phase ctx))
+                  "method" (:method ctx)
+                  "host" (:host ctx)
+                  "path" (:path ctx)
+                  "port" (:port ctx)
+                  "headers" (or (:headers ctx) {})
+                  "body" (:body ctx)}
+           "tier1" {"allow" (boolean (:allow? tier1)) "reason" (:reason tier1)}
+           "filters" (mapv (fn [{:keys [owner allow? reason error]}]
+                             {"owner" (str owner)
+                              "allow" (boolean allow?)
+                              "reason" reason
+                              "error" (when error
+                                        {"message" (:message error) "trace" (:trace error)})})
+                           filters)})))))
 
 (defn- net-probe-slash
   "Dev/debug: run the host allow/deny gate + EVERY registered `network_filter`

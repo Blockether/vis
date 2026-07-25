@@ -27,7 +27,7 @@
 
    Contract:
      - Toggle ids are non-blank snake_case strings (`reasoning_level`,
-       `mcp_enabled`, ...) — no keywords, namespaces, slashes, or kebab-case.
+       `shell`, ...) — no keywords, namespaces, slashes, or kebab-case.
        YAML config uses the same string verbatim (`reasoning_level: deep`).
      - `enabled?` is cheap (single atom deref + string lookup), called
        per-paint per-row by the render layer; do not turn it into a
@@ -464,10 +464,12 @@
             :else (boolean v))
 
       :enum
-      (let [target (some-> (cond (keyword? v) (name v)
-                                 (string? v) v
-                                 :else nil)
-                           str/trim str/lower-case)]
+      (let
+        [target (some-> (cond (keyword? v) (name v)
+                              (string? v) v
+                              :else nil)
+                        str/trim
+                        str/lower-case)]
         (or (some (fn [c]
                     (when (and target (= target (str/lower-case c))) c))
                   (:choices spec))

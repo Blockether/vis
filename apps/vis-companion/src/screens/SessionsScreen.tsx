@@ -28,7 +28,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
-  const [showEmpty, setShowEmpty] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const pollInFlight = useRef(false);
@@ -146,22 +145,21 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
     if (!sessions) return null;
     const needle = query.trim().toLowerCase();
     return sessions.filter((session) => {
-      if (!showEmpty && emptyUntitled(session)) return false;
+      if (emptyUntitled(session)) return false;
       return (
         !needle ||
         sessionSearchText(session).includes(needle) ||
         transcriptMatches?.has(session.id) === true
       );
     });
-  }, [query, sessions, showEmpty, transcriptMatches]);
+  }, [query, sessions, transcriptMatches]);
 
   const totals = useMemo(() => {
     const all = sessions?.length ?? 0;
     const shown = visible?.length ?? 0;
-    const hiddenEmpty = sessions?.filter(emptyUntitled).length ?? 0;
     const projects = new Set(sessions?.map(projectLabel) ?? []).size;
     const live = sessions?.filter(sessionIsLive).length ?? 0;
-    return { all, shown, hiddenEmpty, projects, live };
+    return { all, shown, projects, live };
   }, [sessions, visible]);
 
   async function createSession() {
@@ -262,26 +260,15 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
           )}
         </div>
 
-        <div className="flex min-h-12 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-11 sm:px-4">
+        <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
           <span className="shrink-0 font-mono text-xs text-accent-ink">›</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent px-2 py-3 font-mono text-sm text-white outline-none placeholder:text-dialog-hint sm:text-xs"
+            className="min-w-0 flex-1 bg-transparent px-2 py-2 font-mono text-sm text-white outline-none placeholder:text-dialog-hint sm:text-xs"
             placeholder="Filter title, project, session"
             aria-label="Filter sessions"
           />
-          <button
-            type="button"
-            className={`ml-2 min-h-8 shrink-0 rounded-none border px-2 font-mono text-[9px] transition-colors sm:ml-3 sm:px-3 sm:text-[10px] ${
-              showEmpty
-                ? 'border-accent bg-accent text-accent-foreground'
-                : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:text-white'
-            }`}
-            onClick={() => setShowEmpty((value) => !value)}
-          >
-            empty:{showEmpty ? 'on' : 'off'} ({totals.hiddenEmpty})
-          </button>
         </div>
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
@@ -293,7 +280,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
               {query ? 'No matching sessions' : 'No sessions yet'}
             </p>
             <p className="mt-2 font-mono text-[11px] text-dialog-hint">
-              {query ? 'Clear the filter or reveal empty sessions.' : 'Use New session to get started.'}
+              {query ? 'Clear the filter to see all sessions.' : 'Use New session to get started.'}
             </p>
           </div>
         ) : (
@@ -351,19 +338,19 @@ function ProjectGroup({
 
   return (
     <section className="border-t border-dialog-edge first:border-t-0">
-      <header className="grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <header className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
         <div className="hidden min-w-20 place-items-center bg-dialog-title px-3 font-mono text-[9px] font-black tracking-[0.14em] text-dialog-title-foreground sm:grid">
           PROJECT
         </div>
-        <div className="min-w-0 border-l-2 border-accent px-3 py-2 sm:border-l-0 sm:border-r sm:border-dialog-edge">
-          <h2 className="truncate font-mono text-[13px] font-bold leading-tight text-white">{project}</h2>
-          <p className="mt-1 truncate font-mono text-[10px] text-dialog-hint" title={root}>
+        <div className="min-w-0 border-l-2 border-accent px-3 py-1.5 sm:border-l-0 sm:border-r sm:border-dialog-edge">
+          <h2 className="truncate font-mono text-[11px] font-bold leading-tight text-white">{project}</h2>
+          <p className="mt-0.5 truncate font-mono text-[9px] text-dialog-hint" title={root}>
             {root || 'No workspace path'}
           </p>
         </div>
         <div className="flex min-w-[4.5rem] flex-col items-center justify-center gap-0.5 border-l border-dialog-edge px-2 text-center font-mono sm:min-w-20 sm:border-l-0 sm:px-3">
           <span className="leading-none">
-            <strong className="text-xs text-white">{sessions.length}</strong>
+            <strong className="text-[11px] text-white">{sessions.length}</strong>
             <span className="ml-1 text-[9px] text-dialog-hint sm:ml-0 sm:block">
               {sessions.length === 1 ? 'session' : 'sessions'}
             </span>
@@ -417,20 +404,20 @@ function SessionRow({
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
     <button
       type="button"
-      className="group grid min-h-14 w-full text-left transition-[background-color,transform] duration-150 active:translate-x-0.5 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none md:min-h-11 md:grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] md:active:translate-x-0"
+      className="group grid min-h-12 w-full text-left transition-[background-color,transform] duration-150 active:translate-x-0.5 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none md:min-h-9 md:grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] md:active:translate-x-0"
       data-session-id={session.id}
       onClick={() => void onOpen(conn, session.id)}
     >
-      <span className="relative flex min-w-0 flex-col justify-center px-3 py-2.5 sm:px-4 md:border-r md:border-dialog-edge md:py-3">
+      <span className="relative flex min-w-0 flex-col justify-center px-3 py-2 sm:px-4 md:border-r md:border-dialog-edge md:py-2">
         <span className="absolute inset-y-2 left-0 w-0.5 bg-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
         <span
-          className={`block truncate font-mono text-xs font-semibold ${
+          className={`block truncate font-mono text-[11px] font-semibold ${
             session.title?.trim() ? 'text-white' : 'text-white/45'
           }`}
         >
           {title}
         </span>
-        <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-dialog-hint md:hidden">
+        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] text-dialog-hint md:hidden">
           <span className={`inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] ${statusTone(session)}`}>
             <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
             {status}
@@ -475,9 +462,9 @@ function NavigatorSkeleton() {
     <div className="animate-pulse motion-reduce:animate-none" aria-label="Loading sessions">
       {[0, 1].map((index) => (
         <div key={index} className="border-t border-dialog-edge first:border-t-0">
-          <div className="h-14 bg-panel-2" />
-          <div className="h-11 border-t border-dialog-edge" />
-          <div className="h-11 border-t border-dialog-edge" />
+          <div className="h-11 bg-panel-2" />
+          <div className="h-9 border-t border-dialog-edge" />
+          <div className="h-9 border-t border-dialog-edge" />
         </div>
       ))}
     </div>

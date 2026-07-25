@@ -427,6 +427,39 @@
           {}
           headers))
 
+(def ^:private ^:const max-buffered-body
+  "Max request-body bytes buffered so a network filter can inspect `:body`.
+   A larger or chunked/unsized body streams through with `:body` nil — a content
+   rule on a 100 MB upload would mean holding the whole thing in heap."
+  1048576)
+
+(defn- content-length
+  "Non-negative `Content-Length` from a lower-cased header map, or nil."
+  [hmap]
+  (when-let [v (get hmap "content-length")]
+    (try (let [n (Long/parseLong (str/trim (str v)))]
+           (when (nat-int? n) n))
+         (catch Throwable _ nil))))
+
+(defn- read-body-bytes
+  "Read exactly `n` request-body bytes from `in` into a fresh array (or nil on
+   early EOF), but only when `n` is in `(0, max-buffered-body]`. nil otherwise ⇒
+   caller leaves the body to stream unbuffered."
+  ^bytes [^java.io.InputStream in n]
+  (when (and (integer? n) (pos? ^long n) (<= ^long n max-buffered-body))
+    (let
+      [n
+       (long n)
+
+       buf
+       (byte-array n)]
+
+      (loop [off 0]
+        (if (< off n)
+          (let [r (.read in buf off (- n off))]
+            (if (neg? r) nil (recur (+ off r))))
+          buf)))))
+
 (defn- filter-decision
   "Interpret ONE filter's return value into `{:allow? bool :reason str}`.
    nil / `{:allow? true}` ⇒ allow; a `block` marker or `:allow?`/`allow` false
@@ -485,7 +518,9 @@
   "DEV/DEBUG probe: run Tier-1 `decide` then EACH registered network filter
    individually over a synthetic `ctx`, WITHOUT collapsing on the first deny —
    so you see every filter's verdict AND its Python traceback. Pure: no socket,
-   no egress, no MITM. `ctx` = `{:phase :method :host :path :port :headers}`.
+   no egress, no MITM. `ctx` = `{:phase :method :host :path :port :headers :body}`
+   (`:body` is the decrypted request body on the HTTP/MITM path when it is a small,
+   Content-Length-sized upload; nil for larger/chunked bodies and for SOCKS).
    Returns
      {:tier1   {:allow? … :reason …}                 ; host allow/deny + SSRF + port
       :filters [{:owner o :allow? b :reason s :error {:message :trace}}] ; per filter
@@ -768,11 +803,26 @@
              headers
              (read-headers cin)
 
+             hmap
+             (headers->map headers)
+
              path
              (str target)
 
+             ;; Buffer a small body ONLY when a filter is registered, so a
+             ;; filter can inspect `:body`; larger/chunked bodies stream with
+             ;; `:body` nil (the honest envelope — no unbounded heap buffering).
+             body-bytes
+             (when (seq (registered-network-filters)) (read-body-bytes cin (content-length hmap)))
+
              req
-             {:phase :https :method method :host host :path path :headers (headers->map headers)}
+             {:phase :https
+              :method method
+              :host host
+              :path path
+              :headers hmap
+              :body (when body-bytes
+                      (String. ^bytes body-bytes java.nio.charset.StandardCharsets/UTF_8))}
 
              {:keys [allow? reason]}
              (decide+filter policy req)]
@@ -820,6 +870,7 @@
                              "Connection: close\r\n\r\n")]
 
                        (write-str uout req)
+                       (when body-bytes (.write uout ^bytes body-bytes) (.flush uout))
                        (if (seq (registered-network-filters))
                          (relay-with-response-filter
                            pool
@@ -893,8 +944,22 @@
 
        (str (if (str/blank? p) "/" p) (when q (str "?" q))))
 
+     hmap
+     (headers->map headers)
+
+     ;; Buffer a small body ONLY when a filter is registered (see mitm-intercept).
+     body-bytes
+     (when (seq (registered-network-filters))
+       (read-body-bytes (.getInputStream client) (content-length hmap)))
+
      req
-     {:phase :http :method method :host host :path path :port port :headers (headers->map headers)}
+     {:phase :http
+      :method method
+      :host host
+      :path path
+      :port port
+      :headers hmap
+      :body (when body-bytes (String. ^bytes body-bytes java.nio.charset.StandardCharsets/UTF_8))}
 
      {:keys [allow? reason]}
      (decide+filter policy req)
@@ -935,6 +1000,7 @@
                                    "Connection: close\r\n\r\n")]
 
                          (write-str uout req)
+                         (when body-bytes (.write uout ^bytes body-bytes) (.flush uout))
                          ;; body (client→upstream) + response (upstream→client), then done.
                          (if (seq (registered-network-filters))
                            (relay-with-response-filter

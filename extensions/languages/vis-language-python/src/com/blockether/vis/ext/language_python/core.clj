@@ -333,22 +333,6 @@
                            :test-fn py-test-fn
                            :start-repl-fn (fn [env op opts]
                                             (py-start-repl-fn env op opts))}]
-     :ext/startable-resources [{:kind :repl
-                                :dir? true
-                                :label "Python REPL"
-                                :start-fn (fn [env _selected]
-                                            (let
-                                              [root
-                                               (env-root env)
-
-                                               dir
-                                               (resolve-dir root (:startable/dir env))
-
-                                               r
-                                               (repl/start! dir {:session-id (:session-id env)})]
-
-                                              (register-repl-resource! (:session-id env) dir r)
-                                              r))}]
      :ext/kind "language"}))
 
 (vis/register-extension! vis-extension)

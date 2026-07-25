@@ -1199,6 +1199,23 @@
   [^String text]
   (boolean (or (.contains text "\n") (> (count text) PASTE_INLINE_MAX_CHARS))))
 
+(def ^:private image-path-content-regex
+  "A single-line paste whose sole payload is a filesystem path ending in a known
+   still-image extension. Case-insensitive; trailing whitespace tolerated. Used to
+   recognise an image paste the paste-time probe MISSED — e.g. the terminal pasted
+   the path a beat before it finished writing the temp file, so `probe-paste-image`
+   saw no readable image yet and filed it as a plain `:content` paste. By send time
+   the file exists, but a plain `:content` paste expands WITHOUT newline isolation
+   and glues onto adjacent text, so the engine's extension-anchored scanner drops
+   it and the image never attaches."
+  #"(?i)^\s*\S+\.(?:png|jpe?g|gif|webp|bmp)\s*$")
+
+(defn- image-path-content?
+  "True when `s` is a lone single-line image-extension path (see
+   [[image-path-content-regex]]). Pure string check — no filesystem access."
+  [^String s]
+  (boolean (and s (not (.contains s "\n")) (re-find image-path-content-regex s))))
+
 (defn expand-paste-placeholders
   "Substitute every `[Pasted #N: ...]` token in `text` with its content
    from `pastes-map`. Used by the send path so the agent receives
@@ -1231,6 +1248,11 @@
                      ;; image extension, so the engine's extension-anchored scanner drops it
                      ;; and the image silently never attaches.
                      (:image entry) (str "\n" (:content entry) "\n")
+                     ;; A plain paste that is ITSELF a lone image path: the paste-time
+                     ;; probe missed it (e.g. the temp file wasn't written yet), so it
+                     ;; was filed as `:content`, not `:image`. Isolate it the same way so
+                     ;; the now-existing file still attaches instead of gluing to text.
+                     (image-path-content? (:content entry)) (str "\n" (:content entry) "\n")
                      :else (str (:content entry)))))))
 
 (def ^:const PASTE_PREVIEW_HEAD_LINES

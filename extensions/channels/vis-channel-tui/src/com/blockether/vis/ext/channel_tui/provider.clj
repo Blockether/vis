@@ -497,11 +497,9 @@
 ;; dlg/dlg/ellipsize, p/clamp, dlg/visible-window-start, dlg/clear-screen!
 
 (defn- priority-label
-  "Compact priority badge. Circled numerals ①–⑳ (U+2460+) read as a single
-   tidy glyph next to the provider label; beyond 20 fall back to `(N)`."
+  "Compact priority badge — the 1-based rank in parentheses, e.g. `(1)`."
   [^long idx]
-  (let [n (inc idx)]
-    (if (<= 1 n 20) (str (char (+ 0x245F n))) (str "(" n ")"))))
+  (str "(" (inc idx) ")"))
 
 (def ^:private url-host vis/provider-url-host)
 
@@ -1083,7 +1081,7 @@
    "• vis sends your prompts and the files you ask it to read"
    "  directly to the provider you choose. Nothing else."
    "• No vis servers sit in between. No telemetry of your code."
-   "• Remove a provider any time from the Router (C-x C-p → Router)." ""
+   "• Remove a provider any time from Models (C-x o, or C-x p → Models)." ""
    "Local providers (Ollama / LM Studio) keep everything on-device."])
 
 (defn show-welcome!
@@ -1193,7 +1191,16 @@
       (or current-config (vis/load-config) {:providers []})
 
       items
-      (atom (vec (or (:providers seed) [])))
+      (atom (let [base (vec (or (:providers seed) []))
+                  configured-ids (into #{} (map :id) base)]
+              ;; Mirror runtime-router-providers / picker-fleet: authenticated
+              ;; OAuth providers (creds live OUTSIDE config) route AND list even
+              ;; when never persisted into `:providers`. The manager must SEE them
+              ;; too — otherwise a fleet that is entirely OAuth coding-plans reads
+              ;; "No providers. Press A to add." while the router happily routes.
+              (into base
+                    (remove #(contains? configured-ids (:id %)))
+                    (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))))
 
       statuses
       (atom (into {}
@@ -1267,7 +1274,7 @@
           ;; after the last provider. `golden-dialog-size` floors height to
           ;; `content + chrome`, so passing the real card height fits the box
           ;; (and clamps to the terminal when there are many providers).
-          ;; Floor the Router at the full default footprint so it reads as a
+          ;; Floor Models at the full default footprint so it reads as a
           ;; substantial panel (more height), not a tiny box hugging 2 cards;
           ;; a long provider list still grows past it and scrolls.
           content-rows
@@ -1277,7 +1284,7 @@
           (dlg/draw-dialog-chrome! g
                                    cols
                                    rows
-                                   "Router"
+                                   "Models"
                                    (dlg/default-content-width cols)
                                    content-rows)
 

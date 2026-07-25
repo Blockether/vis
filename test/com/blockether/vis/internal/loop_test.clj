@@ -246,7 +246,8 @@
                                    {"id" "cache" "path" "/escaped/cache" "search" false}]}
                      "jail" {"enabled" false
                              "filesystem" {"allow" ["full" "read" "cache"]}
-                             "network" {"allowed_domains" ["escaped.example"] "inbound_ports" [9999]}}})
+                             "network" {"allowed_domains" ["escaped.example"]
+                                        "inbound_ports" [9999]}}})
         (expect (= true (:sandbox snapshot)))
         (expect (= ["/approved/full" "/approved/cache"]
                    (get-in snapshot [:process-jail :allow-read-write])))
@@ -888,7 +889,61 @@
         (expect (= 1 (count out)))
         (expect (= "keep my question" (:user-request (first out))))
         (expect (= "keep my answer" (:answer (first out))))
-        (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out))))))))
+        (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out)))))))
+  (it
+    "a whole-turn fold ISSUED DURING that turn keeps its Q/A recap next request (answer produced after the fold)"
+    ;; Loophole fix (issued_turn invariant): a bare `tN` / spanning-range fold
+    ;; recorded mid-turn N stamps `issued_turn` = N. It resolves to whole-turn
+    ;; coverage of N against next request's complete universe, but must NOT erase
+    ;; N's own answer — which was produced AFTER the fold, so no gist summarizes
+    ;; it. Degrades to the enumerated path: Q/A recap kept, result lines folded.
+    (with-redefs
+      [persistance/db-list-session-turns
+       (constantly [{:id "t1"
+                     :status :done
+                     :position 1
+                     :user-request "keep my question"
+                     :content [(content/prose "keep my answer")]}
+                    {:id "t2" :status :running :position 2}])
+
+       persistance/db-list-session-turn-iterations
+       (constantly
+         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+
+      (let
+        [out (previous-turn-context
+               {:session-id "s1"
+                :db-info ::db
+                :ctx-atom (atom {"session_summaries"
+                                 [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]})}
+               "t2")]
+        (expect (= 1 (count out)))
+        (expect (= "keep my question" (:user-request (first out))))
+        (expect (= "keep my answer" (:answer (first out)))))))
+  (it
+    "a whole-turn fold ISSUED IN A LATER turn still removes the target turn's Q/A recap"
+    ;; The normal prior-turn case: turn 2 folds turn 1 (issued_turn 2 > 1) — it
+    ;; actually saw turn 1's answer, so removal is safe and the trailer owns the
+    ;; one checkpoint. With only turn 1 present, the whole context collapses.
+    (with-redefs
+      [persistance/db-list-session-turns
+       (constantly [{:id "t1"
+                     :status :done
+                     :position 1
+                     :user-request "old q"
+                     :content [(content/prose "old a")]} {:id "t2" :status :running :position 2}])
+
+       persistance/db-list-session-turn-iterations
+       (constantly
+         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+
+      (expect (nil? (previous-turn-context {:session-id "s1"
+                                            :db-info ::db
+                                            :ctx-atom (atom {"session_summaries"
+                                                             [{"scopes" #{"t1"}
+                                                               "issued_turn" 2
+                                                               "gist" "folded prior turn"}]})}
+                                           "t2"))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"

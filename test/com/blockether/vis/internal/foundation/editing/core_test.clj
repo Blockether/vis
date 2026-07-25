@@ -86,7 +86,8 @@
       (expect (<= 8 (count ents)))                          ;; cat ls find_files patch move delete file_exists
       (expect (contains? names "cat"))
       (expect (not (contains? names "rg")))                 ;; rg folded into find_files
-      (expect (contains? names "file_exists"))              ;; file-exists → file_exists
+      (expect (contains? names "fs"))                      ;; fs merges copy/move/delete/create_dirs/file_exists
+      (expect (not (contains? names "file_exists")))        ;; file-exists demoted to a sandbox verb
       (expect (every? (comp map? :ext.symbol/schema) ents)) ;; schema tight on the symbol
       (expect (every? :schema tools))                       ;; and surfaced
       (expect (some #(= {:type "string"} %) (:oneOf include-schema)))
@@ -3535,7 +3536,7 @@
           ;; summary must SHOW it, not flatten it to the generic "edit N in P failed."
           ;; (explain-failure used to drop :message because :syntax-error is not one
           ;; of the anchor-resolution `reason`s it case-matches on).
-          (expect (= (str "No changes (atomic): edit would break syntax in "
+          (expect (= (str "No changes (atomic): edit 0 would break syntax in "
                           p
                           ". Fix the replacement or use struct_patch.")
                      (:message r)))
@@ -3557,6 +3558,23 @@
 
           (expect (true? (:success? r)))
           (expect (= "(defn add [a b] (* a b))\n" (slurp p)))))
+    (it "a multi-edit break blames the LATER offending edit, not a hardcoded 0"
+        (let
+          [src "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n"
+           p (write-temp! "guard/multi.clj" src)
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                      "replace" "(defn add [a b] (+ a b 0))"} ;; edit 0 — harmless
+                     {"path" p
+                      "from_anchor" (patch/line-anchor 2 "(defn sub [a b] (- a b))")
+                      "replace" "(defn sub [a b] (- a b)"}])]
+          ;; edit 1 — drops a paren
+          (expect (false? (:success? r)))
+          (expect (= :syntax-error (:reason (first (:failures r)))))
+          ;; bisection: the break came from edit 1, so blame edit 1 — never 0
+          (expect (= 1 (:edit-index (first (:failures r)))))
+          (expect (string/includes? (:message r) "edit 1 would break syntax"))
+          (expect (= src (slurp p))))) ;; untouched
     (it "prose (.txt → vimdoc parses WITH error nodes) is NEVER blocked"
         (let
           [p (write-temp! "guard/notes.txt" "hello world\nsome notes\n")
@@ -3814,6 +3832,20 @@
           (expect (nil? (get out "fuzzy")))
           (expect (some #{"channel_tui_footer.clj"}
                         (map #(last (string/split % #"/")) (get out "paths"))))))
+    (it "a BLANK query lists every file under the paths like ls (no scoring)"
+        (let
+          [_ (write-temp! "findls/one.clj" ";; a\n")
+           _ (write-temp! "findls/two.md" "# b\n")
+           _ (write-temp! "findls/sub/three.txt" "c\n")
+           dir (temp-dir-path "findls")
+           out (find-search [{"paths" [dir]}])
+           names (set (map #(last (string/split % #"/")) (get out "paths")))]
+
+          (expect (= "" (get out "query")))
+          (expect (nil? (get out "fuzzy")))
+          (expect (= 3 (get out "item_count")))
+          (expect (= #{"one.clj" "two.md" "three.txt"} names))
+          (expect (every? #(get % "path") (get out "items")))))
     (it "a genuinely-unmatchable query still returns nothing (fuzzy can't invent hits)"
         (let
           [_ (write-temp! "findnone/alpha.clj" ";; x\n")

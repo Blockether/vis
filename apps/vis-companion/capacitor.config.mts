@@ -19,6 +19,9 @@ const config: CapacitorConfig = {
   appId: 'com.blockether.viscompanion',
   appName: 'Vis',
   webDir: 'dist',
+  // Matches --bg of the default light palette; WKWebView paints this behind
+  // unrendered tiles during fast scroll instead of flashing white.
+  backgroundColor: '#faf3eb',
   server: {
     androidScheme: 'https',
   },

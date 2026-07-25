@@ -357,7 +357,134 @@
                (is (= ["GET"] @(:seen origin))))
              (finally ((:stop! proxy)) ((:stop! origin)) ((:close! cap))))))))
 
-;; ---------------------------------------------------------------------------
+(defn- connect-status
+  "Send a bare CONNECT localhost:<origin-port> through the proxy and return the
+   first status line the proxy replies with (200 Connection Established when the
+   tunnel is permitted, 403 Forbidden when the port/host is refused)."
+  [proxy-port origin-port]
+  (with-open [s (doto (Socket.) (.connect (InetSocketAddress. "127.0.0.1" (int proxy-port)) 5000))]
+    (.setSoTimeout s 4000)
+    (.write (.getOutputStream s)
+            (.getBytes
+              (str "CONNECT localhost:" origin-port " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+    (.flush (.getOutputStream s))
+    (.readLine (BufferedReader. (InputStreamReader. (.getInputStream s))))))
+
+(deftest connect-port-allowlist-wire
+  ;; The :ports allowlist gates HTTPS CONNECT exactly as it gates SOCKS — the
+  ;; proxy reads only host:port from the CONNECT line, so the port is the finest
+  ;; filter available for an opaque (non-MITM) TLS tunnel.
+  (run-wire-test
+    (fn []
+      (let [origin (start-origin!)]
+        (try (testing "CONNECT to a port in the host's :ports is tunnelled (200)"
+               (let
+                 [proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy
+                                                   {:allowed-domains ["*"]
+                                                    :rules [{:host "localhost"
+                                                             :ports [(:port origin)]}]}))})]
+                 (try (is (= "HTTP/1.1 200 Connection Established"
+                             (connect-status (:port proxy) (:port origin))))
+                      (finally ((:stop! proxy))))))
+             (testing "CONNECT to a port NOT in :ports is refused (403) before any tunnel"
+               (let
+                 [proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy {:allowed-domains ["*"]
+                                                                     :rules [{:host "localhost"
+                                                                              :ports [1]}]}))})]
+                 (try (is (= "HTTP/1.1 403 Forbidden"
+                             (connect-status (:port proxy) (:port origin))))
+                      (finally ((:stop! proxy))))))
+             (finally ((:stop! origin))))))))
+
+(defn- https-post-body
+  "POST `body` over a MITM tunnel to origin (client trusts the CA); return the
+   status line the client observes, or an :error string."
+  [proxy-port ^SSLContext client-ctx origin-port ^String body]
+  (let [raw (doto (Socket.) (.connect (InetSocketAddress. "127.0.0.1" (int proxy-port)) 5000))]
+    (.write (.getOutputStream raw)
+            (.getBytes
+              (str "CONNECT localhost:" origin-port " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+    (.flush (.getOutputStream raw))
+    (let [cbr (BufferedReader. (InputStreamReader. (.getInputStream raw)))]
+      (loop []
+
+        (let [l (.readLine cbr)]
+          (when (and l (not= l "")) (recur)))))
+    (let
+      [ssl ^SSLSocket
+           (.createSocket (.getSocketFactory client-ctx) raw "localhost" (int origin-port) true)]
+      (.setSSLParameters ssl
+                         (doto (.getSSLParameters ssl)
+                           (.setEndpointIdentificationAlgorithm "HTTPS")))
+      (try (.startHandshake ssl)
+           (let [payload (.getBytes body)]
+             (.write (.getOutputStream ssl)
+                     (.getBytes (str "POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+                                     "Content-Length: "
+                                     (count payload)
+                                     "\r\n\r\n")))
+             (.write (.getOutputStream ssl) payload)
+             (.flush (.getOutputStream ssl)))
+           (let
+             [br (BufferedReader. (InputStreamReader. (.getInputStream ssl)))
+              status (.readLine br)]
+
+             (.close ssl)
+             status)
+           (catch Throwable t (str "error: " (.getMessage t)))))))
+
+(deftest mitm-body-filter-wire
+  ;; A tier-2 filter sees the DECRYPTED request `:body` on the MITM path: the
+  ;; proxy buffers a small Content-Length body BEFORE deciding, so a content rule
+  ;; (deny bodies containing "SECRET") is enforceable over HTTPS — not just verb/path.
+  (run-wire-test
+    (fn []
+      (let
+        [cap
+         (tls/create! {:upstream-trust-all? true})
+
+         origin
+         (start-tls-origin! ((:ctx-for cap) "localhost"))
+
+         client-ctx
+         (client-ctx-trusting (:ca-cert cap))
+
+         policy
+         (assoc (ep/compile-policy {:allowed-domains ["localhost"]
+                                    :rules [{:host "localhost" :access "full"}]})
+           :mitm? true)
+
+         proxy
+         (ep/start! {:mitm (fn []
+                             cap)
+                     :policy-fn (fn [_]
+                                  policy)})
+
+         owner
+         ::body-filt]
+
+        (try (ep/register-network-filter! owner
+                                          (fn [req]
+                                            (when (and (:body req)
+                                                       (str/includes? (str (:body req)) "SECRET"))
+                                              {:allow? false :reason "secret in body"})))
+             (testing "a POST whose decrypted body contains SECRET is denied at the proxy"
+               (is
+                 (= "HTTP/1.1 403 Forbidden"
+                    (https-post-body (:port proxy) client-ctx (:port origin) "hello SECRET data"))))
+             (testing "the denied POST never reached the origin" (is (= [] @(:seen origin))))
+             (testing "a POST with a clean body is forwarded and reaches the origin"
+               (is (= "HTTP/1.1 200 OK"
+                      (https-post-body (:port proxy) client-ctx (:port origin) "hello clean data")))
+               (is (= ["POST"] @(:seen origin))))
+             (finally (ep/unregister-network-filters-for-owner! owner)
+                      ((:stop! proxy))
+                      ((:stop! origin))
+                      ((:close! cap))))))))
+
+
 ;; Tier-2 network filters — the extension escape valve above :rules
 ;; ---------------------------------------------------------------------------
 
@@ -665,6 +792,24 @@
                    (is (= 0 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
                        "no matching filter ⇒ SOCKS connection allowed")
                    (finally (ep/unregister-network-filters-for-owner! owner) ((:stop! proxy))))))
+          (testing "a rule's :ports gates which port the SOCKS CONNECT may reach"
+            (let
+              [proxy (ep/start! {:policy-fn (fn [_]
+                                              (ep/compile-policy {:allowed-domains ["*"]
+                                                                  :rules [{:host "localhost"
+                                                                           :ports
+                                                                           [(:port origin)]}]}))})]
+              (try (is (= 0 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
+                       "the origin's port is in :ports ⇒ CONNECT allowed")
+                   (finally ((:stop! proxy)))))
+            (let
+              [proxy (ep/start! {:policy-fn (fn [_]
+                                              (ep/compile-policy {:allowed-domains ["*"]
+                                                                  :rules [{:host "localhost"
+                                                                           :ports [1]}]}))})]
+              (try (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
+                       "a port not in :ports ⇒ REP 0x02 not-allowed")
+                   (finally ((:stop! proxy))))))
           (finally ((:stop! origin))))))))
 
 (deftest probe-engine

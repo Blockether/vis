@@ -266,7 +266,7 @@
       (str/join
         "\n"
         (cons
-          "Harness SKILLS available — call skill(\"name\") to activate the FULL instructions on demand. Activation is idempotent while that exact body remains in the live context; a repeat returns only a compact receipt:"
+          "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand:"
           (for [s ss]
             (str "  " (:name s) " — " (clip (:description s) 180))))))))
 
@@ -277,7 +277,7 @@
       (str/join
         "\n"
         (cons
-          "Harness AGENTS available — call agent(\"name\", \"task prompt\") to delegate to a child loop (the agent's body is its system prompt; EXPENSIVE):"
+          "Harness AGENTS available — call agent(\"name\", \"task prompt\") to delegate to a child loop (EXPENSIVE):"
           (for [a as]
             (str "  " (:name a) " — " (clip (:description a) 180))))))))
 

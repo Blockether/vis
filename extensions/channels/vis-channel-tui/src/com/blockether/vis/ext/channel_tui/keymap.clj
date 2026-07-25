@@ -82,10 +82,16 @@
    app) and `Ctrl+M` == Enter (byte 0x0D). The dispatcher still ALSO accepts a
    Ctrl'd second key where it survives (so `C-x C-f` == `C-x f`), but the plain
    form is the one we advertise because it works for EVERY letter.
-   Order is the which-key / help display order."
-  [{:action :cycle-model :key \m :label "model"} {:action :pick-model :key \c :label "choose model"}
+   Order is the which-key / help display order. An optional `:show-when` tag
+   (`:multi-tab`, `:has-turns`) gates the verb's which-key STRIP entry to the
+   context where it can act; `:never` keeps it palette-only. The chord, palette,
+   and help still list every verb."
+  [{:action :cycle-model :key \m :label "model"}
+   ;; "choose model" is palette-only (C-x p → Choose Model…): its old C-x c
+   ;; second key collided with the quit reflex C-c, and `m` already fronts model.
    {:action :cycle-reasoning :key \r :label "reasoning"}
-   {:action :cycle-verbosity :key \l :label "length"} {:action :search-open :key \f :label "search"}
+   {:action :cycle-verbosity :key \l :label "length" :show-when :never}
+   {:action :search-open :key \f :label "search" :show-when :never}
    {:action :pick-file :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
    {:action :open-drafts :key \d :label "drafts"}
@@ -93,14 +99,14 @@
    {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
    {:action :show-sessions :key \s :label "switch session"}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
-   {:action :fork-session :key \y :label "fork session"}
-   {:action :fork-at-turn :key \t :label "fork at turn"}
+   {:action :fork-session :key \y :label "fork session" :show-when :never}
+   {:action :fork-at-turn :key \t :label "fork at turn" :show-when :has-turns}
    {:action :switch-project :key \w :label "switch project"}
-   {:action :close-tab :key \k :label "close tab"}
+   {:action :close-tab :key \k :label "close tab" :show-when :multi-tab}
    {:action :recenter :key \j :label "jump to bottom"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds"}
-   {:action :open-magit :key \g :label "git status"}])
+   {:action :open-magit :key \g :label "git status"} {:action :providers :key \o :label "models"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x

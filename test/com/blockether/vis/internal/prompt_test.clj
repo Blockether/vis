@@ -63,7 +63,7 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 4650))
+      (expect (< (count text) 2200))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
@@ -76,44 +76,41 @@
          ["Work on the host project by default" "For vis tasks" "`await vis_docs()`"
           "runtime > source > docs > assumption"
           "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
+          "hard preconditions"
           "`python_execution`" "`await gather(...)` independent calls" "anything complicated"
-          "stays retrievable as" "control exactly what enters context"
-          "direct native tools for single operations" "Reading `session` is always live"
-          "never probe merely to refresh it" "Before `repl_eval` or lifecycle changes"
-          "`repl_start`" "after verification, stop only those you" "External REPLs are"
-          "`find_files`" "`struct_index` for code structure" "batch" "independent reads"
-          "Inspect dependencies before adding them" "benchmark/profile identical workloads"
-          "Prefer structural editing" "`struct_index`/`struct_patch`" "reach for it over text edits"
-          "structural ops cannot express" "`format` stales anchors" "re-read first"
-          "Drop spent reads/catalogs/errors with no gist" "preserve only decisions, findings, edits"
+          "direct native tools for single operations"
+          "read-only `session`" "never use `ctx` or `context`"
+          "reproduce before editing" "rerun the same check after the fix"
+          "batch independent reads"
           "Create no unrequested" "without asking permission or offering optional"
-          "Never expose or log secrets" "commit, push, publish" "Before every `session_fold`"
-          "read `session[\"turn\"]`" "Fold SETTLED steps" "done iters, not the live one"
-          "Fold completed prior-turn wire steps" "`ntr[tool_id]`" "breadcrumb lists accessors"
-          "`await session_state()`" "session UID" "pass it — `await session_state(uid)`"
-          "Route vis issues upstream" "`blockether/vis`" "open one only when requested"
-          "Broader/newer folds replace covered breadcrumbs" "Lead with the answer or next action"
-          "≤120 words" "≤3 bullets" "numbered bounded actions" "State completed results"
-          "Step N/M complete. Next: ..." "location → cause → fix"
-          "3 failed attempts at the same operation" "end with one action under 2 minutes"
-          "never offer a menu"]]
+          "Never expose or log secrets" "commit, push, publish"
+          "retry any blocked fold" "`session_fold` owns the mechanics"
+          "preserve only decisions,\n  findings, edits"
+          "Lead with the answer. Be terse; depth only when earned."
+          "Confirm destructive actions."]]
         (expect (str/includes? text required)))
-      (expect (= 2 (count (re-seq #"ntr\[tool_id\]" text))))
+      ;; Tool-schema-owned contracts must NOT be duplicated in the core prompt.
+      (expect (zero? (count (re-seq #"ntr\[tool_id\]" text))))
       (doseq
         [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
-                  "canonical decision table"]]
+                  "canonical decision table"
+                  ;; schema-owned or removed contracts stay out of the core prompt
+                  "`repl_start`" "External REPLs" "stales anchors"
+                  "benchmark/profile" "Route vis issues upstream"
+                  "Before every `session_fold`" "`await session_state"
+                  "≤120 words" "never offer a menu"]]
         (expect (not (str/includes? text surplus))))))
   (it "advertises concise Python guidance and every auto-imported name"
       (let [text (#'prompt/sandbox-shims-prompt-block)]
-        (expect (< (count text) 1000))
+        (expect (< (count text) 800))
         (expect (not (str/includes? text "Not supported:")))
+        (expect (not (str/includes? text "apropos")))
+        (expect (not (str/includes? text "doc(name)")))
         (expect (str/includes? text "Auto-imported by `python_execution`"))
         (expect (str/includes? text "Preinstalled shims"))
-        (expect (str/includes? text "doc(name)"))
-        (expect (str/includes? text "always import before use"))
         (expect (str/includes? text "import numpy as np"))
-        (expect (str/includes? text "not auto-created or inferred from source"))
+        (expect (str/includes? text "never auto-created"))
         (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
           (expect (str/includes? text (str "`" name "`")))))))
 

@@ -930,7 +930,7 @@
        {:type "string"
         :minLength 1
         :description
-        "Language pack (e.g. \"clojure\"); pass it first — inferred from the file/workspace only when omitted."}
+        "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
                :description
                "Source to format (returns a lean changed? + char-delta ack, not the text)."}
@@ -966,7 +966,7 @@
        {:type "string"
         :minLength 1
         :description
-        "Language pack (e.g. \"clojure\"); pass it first — inferred from the file/workspace only when omitted."}
+        "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
                :description
                "Source to lint (returns findings). Mutually exclusive with path/paths."}
@@ -1001,7 +1001,7 @@
       {"language" {:type "string"
                    :minLength 1
                    :description
-                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+                   "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
        "namespaces"
        {:type "array"
         :items {:type "string" :minLength 1}
@@ -1054,7 +1054,7 @@
       {"language" {:type "string"
                    :minLength 1
                    :description
-                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+                   "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
        "code" {:type "string" :minLength 1 :description "Source to evaluate in the language REPL."}
        "id" {:type "string"
              :minLength 1
@@ -1080,7 +1080,8 @@
           "`session[\"resources\"][\"repls\"][language][dir]` (`.` is root): reuse "
           "`up`, start absent/down/failed, recheck `starting`, and restart `unresponsive`. "
           "Keep its returned resource id; after verified work, stop managed REPLs you "
-          "started with `repl_stop`.")
+          "started with `repl_stop`. `op` \"connect\" instead attaches an EXTERNAL "
+          "already-running REPL by `port` — never owned or killed; stopping only detaches.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
@@ -1090,12 +1091,14 @@
                {:type "string"
                 :minLength 1
                 :description
-                "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
+                "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
                "op" {:type "string"
-                     :enum ["start" "restart"]
-                     :description "Lifecycle operation (default \"start\")."}
+                     :enum ["start" "restart" "connect"]
+                     :description "Lifecycle operation (default \"start\"); \"connect\" attaches an external REPL."}
                "id" {:type "string" :minLength 1 :description "Optional lifecycle resource id."}
-               "dir" {:type "string" :minLength 1 :description "Directory to start the REPL in."}
+               "dir" {:type "string" :minLength 1 :description "Directory to start the REPL in (connect: the dir the attachment is keyed by)."}
+               "port" {:type "integer" :description "connect only: port of the already-running external REPL."}
+               "host" {:type "string" :description "connect only: its host (default localhost)."}
                "aliases" {:type "array"
                           :items {:type "string"}
                           :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
@@ -1108,7 +1111,7 @@
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
-     :native-tool? true
+     :native-tool? false
      :description
      "Attach an external REPL the user already runs. Vis registers it for evaluation but never owns or kills its process; stopping the resource only detaches."
      :call {:lead-opt "language" :rest :always}

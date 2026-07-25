@@ -612,23 +612,6 @@
   [sid rid]
   (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/logs?rid=" (enc rid))) "lines"))
 
-(defn list-startables
-  "Declarative startables the session can offer, each with the options the daemon
-   PROPOSED from its own env — canonical string-keyed wire descriptors, the SAME
-   shape the in-process web modal reads. Drives a remote 'add
-   background' flow: the client renders the dialogs from this, then posts the
-   chosen one to `start-resource!`."
-  [sid]
-  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/startables")) "startables"))
-
-(defn start-resource!
-  "Start the declared startable in the DAEMON (arg map {:kind :dir :selected}), so
-   the spawned background registers there and appears in every channel's Resources
-   list. Returns the daemon's result map ({:result \"started\"|\"error\" …})."
-  [sid {:keys [kind dir selected]}]
-  (send-json! "POST"
-              (str "/v1/sessions/" (enc sid) "/resources/start")
-              {:kind kind :dir dir :selected selected}))
 
 (defn iteration-attachment-bytes
   "Raw bytes (a byte-array) of ONE outbound artifact — iteration `iid`, its 0-based

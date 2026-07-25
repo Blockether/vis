@@ -205,7 +205,8 @@
 
 (def network-rule-allow-keys #{"method" "path"})
 (def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
-(def network-keys #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "inbound_ports" "rules"})
+(def network-keys
+  #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "inbound_ports" "rules"})
 (def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
 (s/def ::network-rule-allow #(closed-map? network-rule-allow-schema #{"method"} %))
 (s/def ::network-rule-allows (s/coll-of ::network-rule-allow :kind vector?))
@@ -412,7 +413,9 @@
 
 (defn process-jail-config
   "Derive the internal process-jail policy from validated string-keyed config.
-   The `workspace.filesystem` catalog is the single source of roots;
+   The `workspace.filesystem` catalog is the single source of roots. When the
+   jail is DISABLED (the default) nothing is confined, so every catalog root is
+   available and the `allow` list is ignored. When ENABLED,
    `jail.filesystem.allow` selects which catalog ids enter the OS jail
    (deny-by-omission). Each admitted entry's `access` sets RW vs read-only and
    `search: false` marks it out of the default search sweep."
@@ -432,13 +435,21 @@
              entries)
 
      allowed
-     (into []
-           (map (fn [id]
-                  (or (get by-id id)
-                      (throw (ex-info (str "jail.filesystem.allow references unknown workspace id: "
-                                           id)
-                                      {:type :vis/invalid-config :id id})))))
-           (get-in jail ["filesystem" "allow"] []))
+     ;; The workspace catalog is the single source of roots. When the jail is
+     ;; DISABLED it confines nothing, so the whole catalog is available and must
+     ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
+     ;; stale/renamed id in it can never deny-safe the config. Only a live
+     ;; (enabled) jail narrows to the `allow` subset and treats an unknown id as
+     ;; a hard config error.
+     (if (true? (get jail "enabled"))
+       (into []
+             (keep (fn [id]
+                     (or (get by-id id)
+                         (throw (ex-info
+                                  (str "jail.filesystem.allow references unknown workspace id: " id)
+                                  {:type :vis/invalid-config :id id})))))
+             (get-in jail ["filesystem" "allow"] []))
+       entries)
 
      descriptions
      (into {}

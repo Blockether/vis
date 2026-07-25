@@ -420,11 +420,17 @@ export class GatewayClient {
     void (async () => {
       let retryMs = 400;
       while (!signal.aborted && cursors.size > 0) {
+        // Per-attempt controller: the stall watchdog aborts only THIS
+        // connection attempt, so the outer loop reconnects with up-to-date
+        // cursors instead of dying with the caller's shared signal.
+        const attempt = new AbortController();
+        const attemptSignal = anySignal([signal, attempt.signal]);
+        let stallTimer: ReturnType<typeof setTimeout> | null = null;
         try {
           const spec = Array.from(cursors, ([sid, cursor]) => `${sid}:${cursor}`).join(',');
           const response = await fetch(
             `${this.base}/v1/events?sids=${encodeURIComponent(spec)}`,
-            { headers: this.headers({ Accept: 'text/event-stream' }), signal },
+            { headers: this.headers({ Accept: 'text/event-stream' }), signal: attemptSignal },
           );
           if (!response.ok || !response.body) {
             throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
@@ -436,8 +442,19 @@ export class GatewayClient {
           const decoder = new TextDecoder();
           let buffer = '';
 
+          // Stall watchdog: the gateway sends a heartbeat every 15 s. If we
+          // see nothing for 45 s the socket was silently frozen (iOS
+          // backgrounding, dead NAT, half-open TCP) — abort this attempt so
+          // the outer loop reconnects with the up-to-date cursor.
+          const armStall = () => {
+            if (stallTimer) clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => attempt.abort(), 45_000);
+          };
+          armStall();
+
           for (;;) {
             const { value, done } = await reader.read();
+            armStall();
             if (done) break;
             buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
             let boundary: number;
@@ -454,12 +471,14 @@ export class GatewayClient {
                   const sid = typeof event.session_id === 'string'
                     ? event.session_id
                     : typeof event.sid === 'string' ? event.sid : '';
+                  // Deliver FIRST, then advance the cursor: an event whose
+                  // handler failed must replay on reconnect, never be skipped.
+                  onEvent(event);
                   if (sid && event.type === 'subscription.ready' && typeof event.cursor === 'number') {
                     cursors.set(sid, event.cursor);
                   } else if (sid && typeof event.seq === 'number') {
                     cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
                   }
-                  onEvent(event);
                 } catch {
                   // Ignore one malformed frame without ending sibling sessions.
                 }
@@ -477,6 +496,9 @@ export class GatewayClient {
           ) return;
           await abortableDelay(retryMs, signal);
           retryMs = Math.min(retryMs * 2, 5_000);
+        } finally {
+          if (stallTimer) clearTimeout(stallTimer);
+          attempt.abort();
         }
       }
     })();
@@ -504,11 +526,16 @@ export class GatewayClient {
       let retryMs = 400;
 
       while (!signal.aborted) {
+        // Per-attempt controller — the stall watchdog aborts only this attempt
+        // so the loop reconnects from `cursor` instead of dying.
+        const attempt = new AbortController();
+        const attemptSignal = anySignal([signal, attempt.signal]);
+        let stallTimer: ReturnType<typeof setTimeout> | null = null;
         try {
           const query = cursor != null ? `?cursor=${cursor}` : '';
           const response = await fetch(
             `${this.base}/v1/sessions/${encodeURIComponent(sid)}/events${query}`,
-            { headers: this.headers({ Accept: 'text/event-stream' }), signal },
+            { headers: this.headers({ Accept: 'text/event-stream' }), signal: attemptSignal },
           );
           if (!response.ok || !response.body) {
             throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
@@ -520,8 +547,16 @@ export class GatewayClient {
           const decoder = new TextDecoder();
           let buffer = '';
 
+          // Stall watchdog — same 45 s bound as the multiplexed variant.
+          const armStall = () => {
+            if (stallTimer) clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => attempt.abort(), 45_000);
+          };
+          armStall();
+
           for (;;) {
             const { value, done } = await reader.read();
+            armStall();
             if (done) break;
             buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
             let boundary: number;
@@ -535,8 +570,10 @@ export class GatewayClient {
                 if (!json) continue;
                 try {
                   const event = JSON.parse(json) as SseEvent;
-                  if (typeof event.seq === 'number') cursor = Math.max(cursor ?? 0, event.seq);
+                  // Deliver FIRST, then advance: an event whose handler
+                  // failed must replay on reconnect, never be skipped.
                   onEvent(event);
+                  if (typeof event.seq === 'number') cursor = Math.max(cursor ?? 0, event.seq);
                 } catch {
                   // A malformed frame must not end an otherwise healthy stream.
                 }
@@ -556,6 +593,9 @@ export class GatewayClient {
           }
           await abortableDelay(retryMs, signal);
           retryMs = Math.min(retryMs * 2, 5_000);
+        } finally {
+          if (stallTimer) clearTimeout(stallTimer);
+          attempt.abort();
         }
       }
     })();

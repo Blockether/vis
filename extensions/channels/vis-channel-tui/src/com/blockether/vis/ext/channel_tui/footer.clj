@@ -720,14 +720,35 @@
   [text priority]
   {:text text :fg t/footer-fg-muted :bold? false :region :center :priority priority})
 
+(defn- verb-in-context?
+  "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
+   verbs always apply; the tagged ones surface in the which-key strip ONLY where
+   they can act — `:multi-tab` needs a second tab to close, `:has-turns` needs a
+   turn to fork at, `:never` is palette-only. The chord, palette, and help list
+   every verb regardless."
+  [db {:keys [show-when]}]
+  (case show-when
+    :multi-tab
+    (> (count (:tabs db)) 1)
+
+    :has-turns
+    (boolean (seq (:messages db)))
+
+    :never
+    false
+
+    true))
+
 (defn- which-key-segments
   "Emacs `which-key` strip. When the C-x prefix is ARMED (`:prefix` set on the
    input state), the echo area stops staying blank and instead lists
    the prefix you just pressed plus EVERY plain second key and the verb it runs
    — so the next keystroke in the chord is always discoverable, exactly like
-   Emacs' which-key popup. The `C-x-` header survives width-shrinking
-   (priority 0); the least-used verbs drop first on a narrow terminal."
-  []
+   Emacs' which-key popup. Verbs whose `:show-when` context does not hold are
+   dropped so the strip shows only what the next key can actually do. The `C-x-`
+   header survives width-shrinking (priority 0); the least-used verbs drop first
+   on a narrow terminal."
+  [db]
   (into [{:text (str (keymap/chord keymap/prefix-key) \-)
           :fg t/footer-fg-strong
           :bold? true
@@ -745,7 +766,7 @@
                         :bold? true
                         :region :center
                         :priority (+ (long i) 3)})
-                     keymap/prefix-commands)))
+                     (filter #(verb-in-context? db %) keymap/prefix-commands))))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
@@ -1114,8 +1135,8 @@
 
    No idle keybinding nags: discovery of every C-x verb lives in the help
    overlay (C-x h), so extensions advertise their chords THERE, not here."
-  [{:keys [loading? cancelling? input echo]}]
-  (cond (:prefix input) (which-key-segments)
+  [{:keys [loading? cancelling? input echo] :as db}]
+  (cond (:prefix input) (which-key-segments db)
         cancelling? [(hint-segment "Cancelling... please wait" 1)]
         loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
         (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]

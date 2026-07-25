@@ -642,7 +642,6 @@ function formCode(form: TranscriptForm): string {
 
 function showFormCode(form: TranscriptForm, code: string): boolean {
   if (!code) return false;
-  if (form.error != null) return true;
   if (!form.tool_name) return true;
   return form.tool_name === 'python_execution';
 }
@@ -657,7 +656,7 @@ function FormTrace({ form }: { form: TranscriptForm }) {
   return (
     <div className="min-w-0">
       {showCode && form.comment?.trim() && (
-        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-[10px] italic leading-4 text-thinking">
+        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-[11px] not-italic leading-5 text-vis-message">
           <Markdown compact>{form.comment.trim()}</Markdown>
         </div>
       )}

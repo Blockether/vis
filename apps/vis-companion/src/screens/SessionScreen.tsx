@@ -9,12 +9,7 @@ import {
 } from 'react';
 import { AssistantMessage, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
-import { Capacitor } from '@capacitor/core';
-import {
-  attachmentsFromFiles,
-  captureCameraAttachment,
-  type PendingAttachment,
-} from '../lib/attachments';
+import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -488,7 +483,7 @@ function CopyableId({ id, className }: { id: string; className: string }) {
       onClick={copy}
       title={`Copy session id\n${id}`}
       aria-label="Copy session id"
-      className={`group inline-flex min-w-0 items-center gap-1 border border-dialog-edge px-2 py-1 font-mono text-[10px] leading-none transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
+      className={`group inline-flex h-6 min-w-0 items-center gap-1 border border-dialog-edge px-2 font-mono text-[10px] leading-none transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
     >
       <span aria-hidden="true" className="opacity-50 transition-opacity group-hover:opacity-100">#</span>
       <span className="truncate">{copied ? 'Copied' : short}</span>
@@ -521,7 +516,7 @@ function ShareLink({ className }: { className: string }) {
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex shrink-0 items-center gap-1 border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
+      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-[10px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
     >
       {copied ? (
         <>
@@ -689,34 +684,50 @@ export function SessionScreen({
       setSession(next);
       const gatewayLive =
         next.live !== undefined ? next.live : next.status === 'running';
+      // Safety net: on wake we ALWAYS refetch the transcript and check whether
+      // the streamed live turn has already been persisted while we were
+      // backgrounded. iOS/Android suspend fetch-body streams silently, so the
+      // terminal event that would have cleared the live bubble may have been
+      // dropped. If the persisted turn now exists, drop the live bubble; if
+      // the gateway is idle but we still show work, do the same.
+      const liveId = liveTurnRef.current?.id ?? '';
+      let nextTurns: TranscriptTurn[] | null = null;
+      try {
+        nextTurns = await client.transcript(sid);
+      } catch {
+        nextTurns = null;
+      }
+      if (cancelled) return;
+      if (nextTurns) setTurns(nextTurns);
+      const persisted =
+        !!liveId &&
+        !!nextTurns?.some((turn) => (turn.id ?? turn.turn_id) === liveId);
       const showsWork = liveTurnRef.current !== null || runningRef.current;
-      if (!gatewayLive && showsWork) {
-        // Batch the reload with clearing the live bubble so the persisted turn
-        // (engine id ≠ live gateway id) never renders alongside it for a frame.
-        let next: TranscriptTurn[] | null = null;
-        try {
-          next = await client.transcript(sid);
-        } catch {
-          next = null;
-        }
-        if (cancelled) return;
-        if (next) setTurns(next);
+      if (persisted || (!gatewayLive && showsWork)) {
         setRunning(false);
         setLiveTurn(null);
         liveTurnRef.current = null;
       }
     };
     const timer = window.setInterval(() => void reconcile(), 5000);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void reconcile();
+    const onWake = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Force the multiplexed SSE stream to reconnect so a silently frozen
+      // background socket does not sit forever without firing an error.
+      subscriptions.resync();
+      void reconcile();
     };
-    document.addEventListener('visibilitychange', onVisible);
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('online', onWake);
+    window.addEventListener('pageshow', onWake);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('online', onWake);
+      window.removeEventListener('pageshow', onWake);
     };
-  }, [client, sid, loadTranscript]);
+  }, [client, sid, loadTranscript, subscriptions]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -988,28 +999,6 @@ export function SessionScreen({
       setComposerNotice((cause as Error).message);
     }
   }
-
-  async function captureCamera() {
-    const limits = capabilities?.features.attachments;
-    const maximum = limits?.max_files ?? 8;
-    if (attachments.length >= maximum) {
-      setComposerNotice(`You can attach up to ${maximum} images`);
-      return;
-    }
-    try {
-      const shot = await captureCameraAttachment({
-        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
-      });
-      if (shot) {
-        setAttachments((current) => [...current, shot].slice(0, maximum));
-        setComposerNotice(null);
-      }
-    } catch (cause) {
-      const message = (cause as Error).message;
-      if (!/cancel|dismiss|no image|user cancelled/i.test(message)) setComposerNotice(message);
-    }
-  }
-
   function removeAttachment(id: string) {
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
     setComposerNotice(null);
@@ -1300,7 +1289,6 @@ export function SessionScreen({
 
   const slashText = prompt.trimStart();
   const slashOpen =
-    !running &&
     !slashDismissed &&
     slashText.startsWith('/') &&
     !slashText.startsWith('//') &&
@@ -1323,7 +1311,7 @@ export function SessionScreen({
   // served by GET /v1/sessions/:sid/suggest. The trigger smarts live here (never
   // the gateway), so a literal `@@` is never endangered.
   const caretPos = Math.min(caret, prompt.length);
-  const fileMention = !running && !slashOpen ? fileMentionAt(prompt.slice(0, caretPos)) : null;
+  const fileMention = !slashOpen ? fileMentionAt(prompt.slice(0, caretPos)) : null;
   const fileOpen = fileMention !== null && !fileDismissed;
   const fileQuery = fileMention?.query ?? '';
   const fileMatches = fileOpen ? fileSuggestions : [];
@@ -1419,7 +1407,7 @@ export function SessionScreen({
       <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]"
+        className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none] [-webkit-overflow-scrolling:touch]"
         onClickCapture={handleDisclosureClick}
         onScroll={handleScroll}
         role="log"
@@ -1750,22 +1738,6 @@ export function SessionScreen({
                 <path d="M12 5v14M5 12h14" strokeLinecap="square" />
               </svg>
             </button>
-
-            {Capacitor.isNativePlatform() && (
-              <button
-                type="button"
-                className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
-                onClick={() => void captureCamera()}
-                disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
-                aria-label="Take photo"
-                title="Take photo"
-              >
-                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="M3 8h3l1.5-2h9L17 8h4v11H3z" strokeLinejoin="round" />
-                  <circle cx="12" cy="13" r="3.2" />
-                </svg>
-              </button>
-            )}
 
             {voiceSupported && (
               <button

@@ -1027,12 +1027,12 @@ vis.extension(
                              :rules [{:host "example.com" :access "read-only"}]})
 
      report
-     (fn [method target]
+     (fn [method target & [headers-json body]]
        ;; redef INSIDE the thunk — lazytest runs `it` bodies after
        ;; the surrounding form, so a `with-redefs` wrapping the `it`s
        ;; would already be unwound.
        (with-redefs [pyx/session-network-policy (constantly pol)]
-         (pyx/net-probe-report method target)))]
+         (pyx/net-probe-report method target (or headers-json "") (or body ""))))]
 
     (it "allows a GET to an allowed host and sees a registered gateway filter"
         (try (egress/register-network-filter! ::npr
@@ -1053,6 +1053,26 @@ vis.extension(
     (it "preserves the query string in the probed ctx path"
         (let [s (report "GET" "https://example.com/get?token=abc")]
           (expect (re-find #"\?token=abc" s))))
+    (it "feeds headers + body into the ctx so a filter can simulate rules on them"
+        (try (egress/register-network-filter!
+               ::npr-hb
+               (fn [ctx]
+                 (cond (= "Bearer leaked" (get (:headers ctx) "authorization"))
+                       {:allow? false :reason "token exfil in header"}
+                       (and (:body ctx) (clojure.string/includes? (:body ctx) "SECRET"))
+                       {:allow? false :reason "secret in body"}
+                       :else nil)))
+             (let
+               [s (report "GET" "https://example.com/data"
+                          "{\"authorization\":\"Bearer leaked\"}" "")]
+               (expect (re-find #"\"authorization\":\"Bearer leaked\"" s)) ; echoed back
+               (expect (re-find #"token exfil in header" s)))
+             (let [s (report "GET" "https://example.com/data" "{}" "has a SECRET inside")]
+               (expect (re-find #"\"body\":\"has a SECRET inside\"" s))
+               (expect (re-find #"secret in body" s)))
+             (let [s (report "GET" "https://example.com/data" "{}" "clean")]
+               (expect (re-find #"\"allow\":true" s)))
+             (finally (egress/unregister-network-filters-for-owner! ::npr-hb))))
     (it "reports a parse error for a blank target"
         (let [s (report nil "   ")]
           (expect (re-find #"\"error\"" s))))))

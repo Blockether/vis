@@ -22,7 +22,7 @@ export function Button({
 
   return (
     <button
-      className={`min-h-11 rounded-none border px-3.5 py-2 text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-dialog-edge disabled:bg-transparent disabled:text-dialog-hint disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-9 ${styles} ${className}`}
+      className={`min-h-9 rounded-none border px-3 py-1.5 text-[11px] font-semibold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-dialog-edge disabled:bg-transparent disabled:text-dialog-hint disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 ${styles} ${className}`}
       {...props}
     />
   );

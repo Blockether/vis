@@ -143,8 +143,6 @@
              [gateway-stop-resource! gateway-client/stop-resource!]
              [gateway-restart-resource! gateway-client/restart-resource!]
              [gateway-resource-logs gateway-client/resource-logs]
-             [gateway-list-startables gateway-client/list-startables]
-             [gateway-start-resource! gateway-client/start-resource!]
              [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes])
 
 (import-vars [gateway-events-since gateway-client/events-since]
@@ -249,7 +247,6 @@
 ;; =============================================================================
 (import-vars [active-slashes slash/active-slashes]
              [registered-slashes slash/registered-slashes]
-             [registered-startable-resources extension/registered-startable-resources]
              [slash-by-path slash/slash-by-path]
              [slash-children slash/slash-children]
              [slash-palette slash/slash-palette]

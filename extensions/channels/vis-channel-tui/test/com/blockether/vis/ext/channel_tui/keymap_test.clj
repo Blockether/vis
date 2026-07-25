@@ -30,7 +30,9 @@
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
                  (expect (= :open-drafts (keymap/prefix-action-for \d)))
                  (expect (nil? (keymap/prefix-action-for \e)))
-                 (expect (= :pick-model (keymap/prefix-action-for \c)))
+                 ;; "choose model" is palette-only now; C-x c stays free so it
+                 ;; can't collide with the quit reflex C-c (see below).
+                 (expect (nil? (keymap/prefix-action-for \c)))
                  (expect (= :show-sessions (keymap/prefix-action-for \s)))
                  (expect (= :fork-session (keymap/prefix-action-for \y)))
                  (expect (= :open-resources (keymap/prefix-action-for \b)))
@@ -53,8 +55,8 @@
                  (doseq [c emacs-letters]
                    (expect (nil? (keymap/action-for c))))
                  (expect (nil? (keymap/action-for nil))))
-             (it "providers is PALETTE-ONLY (no chord); new-session is C-x n"
-                 (expect (nil? (keymap/label-for :providers)))
+             (it "providers opens Models via C-x o; new-session is C-x n"
+                 (expect (= "C-x o" (keymap/label-for :providers)))
                  (expect (= :new-session (keymap/prefix-action-for \n)))
                  (expect (= "C-x n" (keymap/label-for :new-session))))
              (it "label-for renders EVERY prefix verb in the uniform plain C-x <key> form"
@@ -76,7 +78,7 @@
                  (expect (= "C-x f" (keymap/label-or-palette :search-open)))
                  (expect (= "C-x v" (keymap/label-or-palette :toggle-voice-recording)))
                  ;; A genuinely palette-only verb still falls back to the palette chord.
-                 (expect (= keymap/palette-chord (keymap/label-or-palette :providers))))
+                 (expect (= keymap/palette-chord (keymap/label-or-palette :pick-model))))
              (it "bindings is empty, so nothing collides with an emacs editing key"
                  (expect (empty? keymap/bindings))
                  (let

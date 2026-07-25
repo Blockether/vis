@@ -1,6 +1,6 @@
-(ns com.blockether.vis.ext.foundation-mcp.core-test
+(ns com.blockether.vis.internal.foundation.mcp.core-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.foundation-mcp.core :as mcp]
+            [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe mcp-native-contract-test

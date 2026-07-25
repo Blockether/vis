@@ -371,8 +371,8 @@ def block_writes(ctx):
     return None                             # None ALLOWS; a raise FAILS CLOSED
 
 network_filter(block_writes)                # register a local (session-scoped) guard
-network_probe('POST', 'https://api.github.com/repos')   # http: verb + path
-network_probe('db.host:5432')               # bare host[:port] -> SOCKS phase
+network_probe(method='POST', url='https://api.github.com/repos')  # http: verb + path
+network_probe(url='db.host:5432')                    # bare host[:port] -> SOCKS phase
 ```
 
 `network_probe` is **guard-only** — it runs the gateway's Tier-1 host/port/SSRF gate

@@ -602,7 +602,19 @@
                                                     pastes)))
         (expect (= "\n/tmp/shot.png\nin tui"
                    (input/expand-paste-placeholders "[Image #1: shot.png 1200×800, 245KB]in tui"
-                                                    pastes))))))
+                                                    pastes)))))
+  (it "a plain :content paste that is itself a lone image path is isolated so a probe-miss still attaches"
+      (let [pastes {1 {:id 1 :content "/tmp/shot.png"}}]
+        ;; No :image key (paste-time probe missed it), but the content IS a lone
+        ;; image path, so expand still pads it onto its own line — the engine's
+        ;; extension-anchored scanner sees a clean `/tmp/shot.png` at send time.
+        (expect (= "look \n/tmp/shot.png\nin tui"
+                   (input/expand-paste-placeholders "look [Pasted #1: 1 line, 13B]in tui"
+                                                    pastes)))
+        ;; A non-path payload is left untouched (no spurious newlines).
+        (expect (= "x echo hi y"
+                   (input/expand-paste-placeholders "x [Pasted #1: 1 line, 7B] y"
+                                                    {1 {:id 1 :content "echo hi"}}))))))
 
 (defdescribe placeholder-smart-delete-test
              (it "placeholder-id-before-cursor returns the id when cursor sits right after `]`"

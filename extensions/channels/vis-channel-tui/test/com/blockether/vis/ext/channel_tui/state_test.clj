@@ -2180,7 +2180,50 @@
                                        :gateway-turn-id "turn-1"
                                        :pending-sends [{:text "hello" :turn-id "turn-1"}]})
                  (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
-                 (expect (= [] (:pending-sends @state/app-db)))))
+                 (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
+                 (expect (= [] (:pending-sends @state/app-db))))
+             ;; Cancel a turn, then submit again before the daemon finishes tearing the
+             ;; old turn down: the tab is idle LOCALLY so it sends DIRECTLY (no pending
+             ;; echo), but the gateway is still busy, queues it, and echoes a turn.queued
+             ;; whose id is not yet bound to :gateway-turn-id. Match it to :live-turn-request
+             ;; so the message never shows as sent AND queued at the same time.
+             (it "never mirrors the tab's own directly-sent in-flight turn as a queued row"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id nil
+                                       :live-turn-request "continue"
+                                       :pending-sends []})
+                 ;; The gateway echoes our own in-flight turn back as queued (id unbound).
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-9" :text "continue"}])
+                 (expect (= [] (:pending-sends @state/app-db)))
+                 ;; A genuinely different queued sibling still mirrors.
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-8" :text "other"}])
+                 (expect (= ["turn-8"] (mapv :turn-id (:pending-sends @state/app-db)))))
+
+             ;; Once turn.started LATE-BINDS :gateway-turn-id, the exact-id match owns the
+             ;; "my own live turn" case, so :sync-turn-clock must CLEAR :live-turn-request.
+             ;; Leaving it armed would suppress a genuinely-queued sibling that happens to
+             ;; share the live turn's agent-text (e.g. a second "continue").
+             (it "clears :live-turn-request on id bind so a same-text queue still mirrors"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id nil
+                                       :live-turn-request "continue"
+                                       :pending-sends []})
+                 ;; turn.started binds the id and drops the text heuristic.
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "turn-9"}])
+                 (expect (= "turn-9" (:gateway-turn-id @state/app-db)))
+                 (expect (nil? (:live-turn-request @state/app-db)))
+                 ;; A genuinely-queued sibling with the SAME text now mirrors (its id differs).
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-10" :text "continue"}])
+                 (expect (= ["turn-10"] (mapv :turn-id (:pending-sends @state/app-db))))
+                 ;; The live turn's own late echo is still dropped by the exact-id match.
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-9" :text "continue"}])
+                 (expect (= ["turn-10"] (mapv :turn-id (:pending-sends @state/app-db))))))
 
 (defdescribe sync-turn-clock-test
              ;; `turn.started` carries the gateway's CANONICAL started_at (epoch ms).

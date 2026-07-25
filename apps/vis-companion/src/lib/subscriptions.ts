@@ -86,6 +86,17 @@ export class SessionSubscriptionHub {
     return () => this.connectionListeners.delete(listener);
   }
 
+  /**
+   * Force the multiplexed SSE stream to reconnect NOW, resuming each watched
+   * session at its last-seen cursor. Safety net for iOS/Android backgrounding:
+   * a fetch-body reader can silently park on wake with no error firing, so a
+   * visibility/online/pageshow handler calls this to guarantee catch-up.
+   */
+  resync(): void {
+    if (this.disposed || this.cursors.size === 0) return;
+    this.restart();
+  }
+
   dispose(): void {
     this.disposed = true;
     this.stopStream?.();

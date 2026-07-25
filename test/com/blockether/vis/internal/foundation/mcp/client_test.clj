@@ -1,13 +1,13 @@
-(ns com.blockether.vis.ext.foundation-mcp.client-test
+(ns com.blockether.vis.internal.foundation.mcp.client-test
   "Exercises the MCP client's stdio transport + JSON-RPC handshake against a
    tiny fake server (test/resources/fake_mcp_server.py). Skips gracefully when
    python3 or the script isn't present so CI without python stays green."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.ext.foundation-mcp.client :as mcp]
+            [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(def ^:private server-path "extensions/common/vis-foundation-mcp/test/resources/fake_mcp_server.py")
+(def ^:private server-path "test/resources/mcp/fake_mcp_server.py")
 
 (defn- on-path
   "Absolute path of `exe` if it's an executable on PATH, else nil."

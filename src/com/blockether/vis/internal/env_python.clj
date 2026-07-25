@@ -2674,7 +2674,7 @@ del __vis_init_lazy__
 
 (def ^:private network-probe-python
   "In-sandbox network-filter DEV loop, wired onto the session globals as
-   `network_filter(fn)` + `network_probe([method,] target)`. GUARD-ONLY: it
+   `network_filter(fn)` + `network_probe([method,] url)`. GUARD-ONLY: it
    exercises the egress DECISION (gateway host/verb/path/port + SSRF gate + every
    registered filter, plus the session's own local `network_filter`s) against a
    SYNTHETIC request via the `__vis_net_probe__` host callback — NO socket is
@@ -2684,7 +2684,7 @@ del __vis_init_lazy__
 def network_filter(fn):
     \"\"\"Register a guard fn(ctx)->None|reason for `network_probe` (GUARD-ONLY: a
     session filter never affects LIVE egress — author a `.py` extension for that).
-    ctx = {phase,method,host,path,port,headers}. Return None to allow; a string
+    ctx = {phase,method,host,path,port,headers,body}. Return None to allow; a string
     reason, or a dict like {'reason': ...}, to block; a raise fails CLOSED. Returns
     fn, so it also works as a decorator.\"\"\"
     __vis_net_filters__.append(fn)
@@ -2711,16 +2711,18 @@ def __vis_run_local_filters__(ctx):
             v['error'] = {'message': str(_e), 'trace': _tb.format_exc()}
         out.append(v)
     return out
-def network_probe(method, target=None):
+def network_probe(method='GET', url=None, headers=None, body=None):
     \"\"\"GUARD-ONLY egress probe (NEVER sends): evaluate the gateway host/verb/path/
     port + SSRF gate and every registered network filter (extension + your local
     `network_filter`s) over a SYNTHETIC request, printing each verdict + any Python
-    traceback. Usage: network_probe('POST','https://api.github.com/repos') or a
-    bare host[:port] for ssh/db, e.g. network_probe('db.host:5432').\"\"\"
+    traceback. Usage: network_probe(method='POST', url='https://api.github.com/repos')
+    or a bare host[:port] for ssh/db, e.g. network_probe(url='db.host:5432'). Pass
+    headers={...} and/or body='...' to feed the SYNTHETIC request so header/body
+    filter rules can be simulated on the HTTP path.\"\"\"
     import json as _json
-    if target is None:
-        target, method = method, None
-    rep = _json.loads(__vis_net_probe__(method or '', str(target)))
+    if url is None:
+        url, method = method, None
+    rep = _json.loads(__vis_net_probe__(method or '', str(url), _json.dumps(headers or {}), body or ''))
     if 'error' in rep:
         print('net-probe: ' + str(rep['error']))
         return rep
@@ -3090,7 +3092,7 @@ def network_probe(method, target=None):
       (.eval ctx "python" proxy-env-python)
       (.putMember g "__vis_proxy_url__" nil)
       (.putMember g "__vis_ca_file__" nil))
-    ;; DEV network-filter loop: an in-sandbox `network_probe([method,] target)` +
+    ;; DEV network-filter loop: an in-sandbox `network_probe([method,] url)` +
     ;; `network_filter(fn)`. `__vis_net_probe__` runs the gateway egress gate + every
     ;; registered filter over a SYNTHETIC request — PURE: no socket, no egress, nothing
     ;; sent (see `python-extensions/net-probe-report`); the Python glue adds the
@@ -3101,8 +3103,8 @@ def network_probe(method, target=None):
                         'com.blockether.vis.internal.python-extensions/net-probe-report)]
            (.putMember g
                        "__vis_net_probe__"
-                       (wrap-ifn (fn [method target]
-                                   (report-fn method target))))
+                       (wrap-ifn (fn [method target headers body]
+                                   (report-fn method target headers body))))
            (.eval ctx "python" network-probe-python))
          (catch Throwable _ nil))
     (let

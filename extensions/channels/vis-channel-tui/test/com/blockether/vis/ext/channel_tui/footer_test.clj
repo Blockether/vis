@@ -65,6 +65,22 @@
     (it "surfaces the which-key strip while the C-x prefix is armed"
         (let [text (mapv :text (echo-segments {:input (assoc (input/empty-input) :prefix true)}))]
           (expect (some #(str/includes? % "palette") text))))
+    (it "hides context-only verbs from the strip until their context holds"
+        (let
+          [armed {:input (assoc (input/empty-input) :prefix true)}
+           text (fn [db]
+                  (mapv :text (echo-segments db)))
+           bare (text armed)]
+
+          ;; single tab, no turns → no \"close tab\" and no \"fork at turn\"
+          (expect (not (some #(str/includes? % "close tab") bare)))
+          (expect (not (some #(str/includes? % "fork at turn") bare)))
+          ;; a second tab surfaces \"close tab\"
+          (expect (some #(str/includes? % "close tab")
+                        (text (assoc armed :tabs [{:id :a} {:id :b}]))))
+          ;; a turn surfaces \"fork at turn\"
+          (expect (some #(str/includes? % "fork at turn")
+                        (text (assoc armed :messages [{:role :user}]))))))
     (it "renders a transient :echo message"
         (expect (= ["Copied"]
                    (mapv :text (echo-segments {:input (input/empty-input) :echo "Copied"})))))

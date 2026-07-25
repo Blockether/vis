@@ -6652,6 +6652,12 @@
                          ;; draft, which made hung turns unrecoverable
                          ;; short of killing the JVM.
                          (cond
+                           ;; An open inline `/` or `@` suggestion palette owns Esc
+                           ;; FIRST: close the picker (clear its trigger draft) rather
+                           ;; than cancelling the running turn. Otherwise pressing Esc to
+                           ;; dismiss the palette while a turn streams killed the turn.
+                           (suggestion-trigger-active? (:input @state/app-db))
+                           (do (state/dispatch [:reset-input]) (recur))
                            (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
                            (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
                                                             (recur))
@@ -6870,8 +6876,8 @@
                          :switch-project
                          (do (switch-project!) (recur))
 
-                         ;; Ctrl+B: opens the Router (providers + settings hub; also
-                         ;; reachable via the Ctrl+P palette → "Router").
+                         ;; C-x o: opens Models (providers + settings hub; also
+                         ;; reachable via the C-x p palette → "Models").
                          :providers
                          (do (when-not (:dialog-open? @state/app-db)
                                (when-let

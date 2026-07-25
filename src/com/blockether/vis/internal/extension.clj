@@ -742,43 +742,6 @@
 
 (s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
 
-;; Declarative startable resources — the Resources UI in EVERY channel renders
-;; these generically (its own title + proposed options/fields + Start). Each entry:
-;;   {:kind          keyword                   ; stable id, e.g. :nrepl
-;;    :label         string                    ; display title, e.g. "nREPL"
-;;    :options-label string?                   ; what the options are ("aliases")
-;;    :options-fn    (fn [env] -> [opt-str …]) ; PROPOSE choices (optional)
-;;    :fields        [{:name keyword :label string :placeholder string? :required boolean?}]
-;;    :dir?          boolean?                  ; offer a working-directory input (defaults to
-;;                                             ; the workspace root); the chosen dir rides into
-;;                                             ; start-fn's env under :startable/dir
-;;    :start-fn      (fn [env selected])}       ; selected is opts vec or field map
-(s/def :startable/kind keyword?)
-
-(s/def :startable/name keyword?)
-
-(s/def :startable/label string?)
-
-(s/def :startable/placeholder string?)
-
-(s/def :startable/required boolean?)
-
-(s/def :startable/start-fn fn?)
-
-(s/def :startable/field
-  (s/keys :req-un [:startable/name :startable/label]
-          :opt-un [:startable/placeholder :startable/required]))
-
-(s/def :startable/visible-fn ifn?) ;; () -> bool; hide a startable from Resources UIs (e.g. behind a toggle)
-
-(s/def :startable/dir? boolean?) ;; offer a working-directory input; chosen dir arrives in start-fn's env as :startable/dir
-
-(s/def ::startable
-  (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
-          :opt-un [:startable/options-fn :startable/options-label :startable/fields
-                   :startable/visible-fn :startable/dir?]))
-
-(s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))
 
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
@@ -1056,15 +1019,36 @@
                  (when (and (:active? t) (:replay t)) [(:name t) (:replay t)]))
                (native-tools-for active-extensions env)))))
 
+(def ^:private wire-schema-constraint-keys
+  "Validation-only JSON-schema keys STRIPPED from the model-facing tool schemas.
+   The engine keeps validating against the full `:ext.symbol/schema`; on the
+   wire these are pure token cost the model cannot act on. `additionalProperties`
+   is deliberately KEPT — strict-tools provider modes rely on it."
+  [:minLength :maxLength :minItems :maxItems :minimum :maximum
+   :minProperties :maxProperties])
+
+(defn- strip-schema-constraints
+  "Recursively drop `wire-schema-constraint-keys` from a JSON-schema tree."
+  [x]
+  (cond
+    (map? x) (into {}
+                   (map (fn [[k v]] [k (strip-schema-constraints v)]))
+                   (apply dissoc x wire-schema-constraint-keys))
+    (sequential? x) (mapv strip-schema-constraints x)
+    :else x))
+
 (defn native-tool-schemas
   "The model-facing `:tools` surface: `{:name :description :schema}` for every
    ACTIVE native tool, in extension/symbol order. Single source — schema lives
-   WITH its symbol."
+   WITH its symbol; validation-only constraint keys are stripped at this wire
+   boundary (see `wire-schema-constraint-keys`)."
   ([active-extensions] (native-tool-schemas active-extensions nil))
   ([active-extensions env]
    (->> (native-tools-for active-extensions env)
         (filter :active?)
-        (mapv #(select-keys % [:name :description :schema])))))
+        (mapv #(-> %
+                   (select-keys [:name :description :schema])
+                   (update :schema strip-schema-constraints))))))
 
 (defn native-tool-handlers
   "Map wire-name → `:handler` `(fn [env input] -> result)` for every ACTIVE native
@@ -1202,7 +1186,7 @@
                        :ext/version :ext/author :ext/owner :ext/license :ext/cli :ext/channels
                        :ext/providers :ext/persistance :ext/workspace-backends
                        :ext/attachment-storage :ext/channel-contributions :ext/slash-commands
-                       :ext/startable-resources :ext/doctor-fn :ext/sandbox-shims])
+                       :ext/doctor-fn :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
 ;; =============================================================================
@@ -2638,9 +2622,6 @@
         (not (:ext/slash-commands spec))
         (assoc :ext/slash-commands [])
 
-        (not (:ext/startable-resources spec))
-        (assoc :ext/startable-resources [])
-
         (not (:ext/doctor-fn spec))
         (assoc :ext/doctor-fn (constantly [])))
       (validate!)))
@@ -3254,23 +3235,6 @@
              {}
              @reload-hooks))
 
-(defn- startable-visible?
-  "True when a startable should appear in a Resources UI: no `:visible-fn` means
-   always visible; a throwing predicate fails OPEN (shown) so a broken predicate
-   can never hide a control the user needs. Mirrors `toggles/toggle-visible?`."
-  [{:keys [visible-fn]}]
-  (if visible-fn (try (boolean (visible-fn)) (catch Throwable _ true)) true))
-
-(defn registered-startable-resources
-  "Union of every registered extension's `:ext/startable-resources` — the
-   declarative resources any channel's Resources UI can start (each with its own
-   label + proposed options + start-fn).
-
-   A startable may declare a `:visible-fn` (() -> bool) to gate its appearance,
-   e.g. behind a feature toggle; non-visible ones are dropped here so EVERY
-   channel's Resources UI (web modal + TUI dialog) hides them uniformly."
-  []
-  (vec (filter startable-visible? (mapcat :ext/startable-resources (registered-extensions)))))
 
 (defn- normalized-channel-contribution
   [slot contribution]
@@ -3530,6 +3494,8 @@
     com.blockether.vis.internal.foundation.shim-pptx
     com.blockether.vis.internal.foundation.shim-attach
     com.blockether.vis.internal.foundation.shim-fonttools
+    com.blockether.vis.internal.foundation.shim-fonttools
+    com.blockether.vis.internal.foundation.mcp.core
     com.blockether.vis.internal.foundation.harness.core])
 
 (defn- load-builtin-extensions!

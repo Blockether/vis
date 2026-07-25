@@ -76,7 +76,7 @@
                    (:result (language-surface/start-repl env {"op" "restart" "dir" "ext"}))))
         (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
   (it "advertises explicit lifecycle op and no repl_eval auto-start"
-      (expect (= ["start" "restart"]
+      (expect (= ["start" "restart" "connect"]
                  (get-in language-surface/start-repl-symbol
                          [:ext.symbol/schema :properties "op" :enum])))
       (let

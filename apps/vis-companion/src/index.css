@@ -93,7 +93,7 @@
   --user-bubble-fg: #262626;
   --user-role-fg: #6f6a63;
   --warning: #7a4a00;
-  --warning-bg: #faecc5;
+  --warning-bg: #f2dda0;
   --warning-border: #d97706;
 }
 
@@ -188,16 +188,24 @@
 }
 
 @layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   html,
   body,
   #root {
-    @apply h-full;
+    @apply h-full bg-ink;
   }
 
   body {
     @apply m-0 overflow-hidden bg-ink font-sans text-[12px] leading-[1.5] text-white antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-synthesis: none;
     text-rendering: optimizeLegibility;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-font-smoothing: antialiased;
     overscroll-behavior: none;
   }
 

@@ -328,31 +328,6 @@
              "repl_start(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
              "repl_start(\"clojure\", \"stop\")" "repl_start(\"clojure\", \"restart\")"]}))))))
 
-(defn ui-start-repl!
-  "Channel-invokable nREPL start for the Resources UI (web modal / TUI F4).
-   Resolves the workspace dir from `env`, starts a managed nREPL with `aliases`
-   (vec/seq of keyword-or-string names, or nil → [:dev :test]), and mirrors it
-   into the session resource registry (ctx + footer + stop/restart). ALWAYS
-   allowed: a user clicking Start is explicit consent. Returns the start result."
-  [env aliases]
-  (let
-    [root
-     (env-root env)
-
-     sid
-     (:session-id env)
-
-     dir
-     (resolve-repl-dir root (:startable/dir env))
-
-     als
-     (coerce-aliases aliases)]
-
-    (when-not (.isDirectory (io/file dir))
-      (throw (ex-info (str "REPL target dir does not exist: " dir) {:type :clj/bad-args :dir dir})))
-    (let [result (repl-manager/start! sid dir {:aliases als})]
-      (register-repl-resource! sid dir als result)
-      result)))
 
 (defn available-aliases
   "Alias names declared in the workspace `deps.edn` — surfaced to the UI so the
@@ -1250,21 +1225,6 @@
      :ext/op-hooks [{:op :write :phase :after :fn clj-edit-repair-hook}
                     {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
                     {:op :patch :phase :around :fn clj-patch-no-fail-around}]
-     ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
-     ;; renders this generically: its title, the proposed deps.edn aliases, and
-     ;; Start. Always allowed (the self-start flag gates only the model).
-     :ext/startable-resources [{:kind :nrepl
-                                :dir? true
-                                :label "nREPL"
-                                :options-label "aliases"
-                                ;; options-fn RENDERS aliases in deps.edn spelling (":dev"); start-fn
-                                ;; consumes its own display format back — the exact inverse (drop the
-                                ;; one ":" this options-fn prepended). No regex, no dual-spelling
-                                ;; tolerance.
-                                :options-fn (fn [env]
-                                              (mapv #(str ":" %) (available-aliases env)))
-                                :start-fn (fn [env selected]
-                                            (ui-start-repl! env (map #(subs (str %) 1) selected)))}]
      :ext/kind "language"}))
 
 (vis/register-extension! vis-extension)
