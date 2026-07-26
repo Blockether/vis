@@ -519,7 +519,7 @@ function ShareLink({ className }: { className: string }) {
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex h-5 shrink-0 items-center gap-1 border px-1.5 font-mono text-[9px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
+      className={`group inline-flex h-5 shrink-0 items-center gap-1 border px-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok bg-ok/15 text-ok' : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2'} ${className}`}
     >
       {copied ? (
         <>

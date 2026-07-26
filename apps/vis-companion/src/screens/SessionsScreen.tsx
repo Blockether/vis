@@ -242,8 +242,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
                 Refresh
               </Button>
               <Button
-                variant="ghost"
-                className="min-h-6 border-accent px-2 py-0.5 font-mono text-[9px] text-accent hover:bg-accent/10 hover:text-accent sm:min-h-6"
+                variant="solid"
+                className="min-h-6 px-2 py-0.5 font-mono text-[9px] sm:min-h-6"
                 disabled={createBusy || !active}
                 onClick={() => void createSession()}
               >
