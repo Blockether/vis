@@ -1261,6 +1261,24 @@
     ;; chat thread renders top-to-bottom with no reverse.
     (wire/canonical (vec (concat persisted live)))))
 
+(defn list-queued-turns
+  "ONLY the still-queued rows for `sid`, oldest-first — the exact slice a tray
+   polls for, and nothing else.
+
+   A queued turn lives solely in the in-memory registry overlay: persistence
+   never holds one (a row reaches the DB after it RUNS). So this reads the
+   overlay and skips [[list-turns]]'s whole-history DB hydration. That matters
+   on the wire, not just in the server: a companion polling the backlog every
+   5s was pulling the session's ENTIRE turn history — 600KB of completed
+   `:content` for a long session — just to learn the queue is empty."
+  [sid]
+  (let [{:keys [turns turn-order]} (get @registry sid)]
+    (->> (or turn-order [])
+         (keep #(some-> (get turns %)
+                        wire-turn))
+         (filterv #(= "queued" (:status %)))
+         wire/canonical)))
+
 (defn- with-display-iteration
   "Normalize reasoning and attach the same cached ruff-formatted Python that the
    local TUI paints. The wire therefore remains identical after reconnects."
@@ -1540,11 +1558,10 @@
    Streaming callbacks carry cumulative text plus `:delta`; an empty delta is
    an SSE heartbeat/no-op and must not keep a wedged turn alive."
   [state chunk now]
-  (let [meaningful? (or (not (contains? chunk :delta))
-                        (seq (:delta chunk))
-                        (:done? chunk))]
+  (let [meaningful? (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))]
     (cond-> (assoc state :phase (:phase chunk))
-      meaningful? (assoc :last-ms now))))
+      meaningful?
+      (assoc :last-ms now))))
 
 (defn- start-turn-stall-watchdog!
   "Daemon thread guarding ONE running turn against a stalled provider stream.
@@ -1610,8 +1627,7 @@
        ;; Empty cumulative stream callbacks are transport heartbeats, not model
        ;; progress. Keep their live phase for diagnostics without moving the
        ;; stall deadline.
-       (when stall
-         (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
+       (when stall (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
        (try
          (when caller-on-chunk
            (try (caller-on-chunk chunk)
@@ -2099,14 +2115,15 @@
     sid
     (fn [entry]
       (if (and entry (get-in entry [:turns tid]))
-        (update-in entry
-                   [:turns tid]
-                   (fn [turn]
-                     (-> turn
-                         (dissoc :content :error :eval :completed_at :duration_ms
-                                 :cancel-token :cancelling_at)
-                         (assoc :status "queued"
-                                :queued_at (System/currentTimeMillis)))))
+        (update-in
+          entry
+          [:turns tid]
+          (fn [turn]
+            (->
+              turn
+              (dissoc :content :error :eval :completed_at :duration_ms :cancel-token :cancelling_at)
+              (assoc :status "queued"
+                     :queued_at (System/currentTimeMillis)))))
         entry))))
 
 (defn- schedule-auto-resume!

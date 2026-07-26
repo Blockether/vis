@@ -3915,27 +3915,43 @@
              (expect (= true (deref child-interrupted 2000 ::timeout))))
            (finally (Thread/interrupted) (.shutdownNow exec))))))
 
-(defdescribe parallel-sub-loops-cancel-test
-             ;; `(mapv deref futs)` propagated an interrupt from the COORDINATING thread
-             ;; but never cancelled the child futures — a cancelled parallel sub-loop
-             ;; batch left orphaned full LLM turns running to completion.
-             (it "hard-cancels child sub-loops and rethrows when the coordinator is interrupted"
-                 (let [child-interrupted (promise)]
-                   (with-redefs-fn {#'lp/run-spec! (fn [_ _]
-                                                     (try (Thread/sleep 60000)
-                                                          :never
-                                                          (catch InterruptedException _
-                                                            (deliver child-interrupted true)
-                                                            :interrupted)))}
-                     #(try (let
-                             [thrown (try (.interrupt (Thread/currentThread))
-                                          (lp/parallel-sub-loops! nil [{:prompt "x"}])
-                                          nil
-                                          (catch InterruptedException e e)
-                                          (finally (Thread/interrupted)))]
-                             (expect (some? thrown))
-                             (expect (= true (deref child-interrupted 2000 ::timeout))))
-                           (finally (Thread/interrupted)))))))
+(defdescribe
+  parallel-sub-loops-cancel-test
+  ;; `(mapv deref futs)` propagated an interrupt from the COORDINATING thread
+  ;; but never cancelled active child futures, orphaning full LLM turns.
+  (it
+    "hard-cancels child sub-loops and rethrows when the coordinator is interrupted"
+    (let
+      [child-started
+       (promise)
+
+       child-interrupted
+       (promise)
+
+       coordinator-outcome
+       (promise)]
+
+      (with-redefs-fn {#'lp/run-spec! (fn [_ _]
+                                        (deliver child-started true)
+                                        (try (Thread/sleep 60000)
+                                             :never
+                                             (catch InterruptedException _
+                                               (deliver child-interrupted true)
+                                               :interrupted)))}
+        #(let
+           [coordinator
+            (Thread/startVirtualThread (fn []
+                                         (deliver coordinator-outcome
+                                                  (try (lp/parallel-sub-loops! nil [{:prompt "x"}])
+                                                       nil
+                                                       (catch InterruptedException e e)))))]
+
+           (try (when (= ::timeout (deref child-started 5000 ::timeout))
+                  (throw (ex-info "child did not start" {})))
+                (.interrupt coordinator)
+                (expect (instance? InterruptedException (deref coordinator-outcome 5000 ::timeout)))
+                (expect (= true (deref child-interrupted 2000 ::timeout)))
+                (finally (.interrupt coordinator) (.join coordinator 5000))))))))
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))

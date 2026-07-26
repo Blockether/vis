@@ -444,6 +444,67 @@
            (finally (reset! registry saved))))))
 
 (defdescribe
+  list-queued-turns-test
+  "`GET /turns?status=queued` is a poll: a tray asks it every few seconds only to
+  learn whether anything is waiting. It must therefore return the queued overlay
+  rows and NOTHING else — no completed history, and no DB hydration at all."
+  (it
+    "returns only queued rows and never touches turn-history persistence"
+    (let
+      [sid
+       (java.util.UUID/randomUUID)
+
+       registry
+       @#'state/registry
+
+       saved
+       @registry]
+
+      (try (reset! registry {sid {:next-seq 0
+                                  :turn-order ["done" "waiting"]
+                                  :turns {"done" {:turn_id "done"
+                                                  :session_id (str sid)
+                                                  :status "completed"
+                                                  :request "already answered"
+                                                  :content
+                                                  [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                                                  :started_at 1000}
+                                          "waiting" {:turn_id "waiting"
+                                                     :session_id (str sid)
+                                                     :status "queued"
+                                                     :request "next please"
+                                                     :queued_at 2000}}}})
+           (with-redefs
+             [persistance/db-list-session-turns
+              (fn [_ _]
+                (throw (ex-info "queued poll must not hydrate history" {})))]
+             (let [turns (state/list-queued-turns sid)]
+               (expect (= 1 (count turns)))
+               (expect (= "waiting" (get (first turns) "turn_id")))
+               (expect (= "queued" (get (first turns) "status")))))
+           (finally (reset! registry saved)))))
+  (it "is empty for a session with nothing waiting"
+      (let
+        [sid
+         (java.util.UUID/randomUUID)
+
+         registry
+         @#'state/registry
+
+         saved
+         @registry]
+
+        (try (reset! registry {sid {:next-seq 0
+                                    :turn-order ["done"]
+                                    :turns {"done" {:turn_id "done"
+                                                    :session_id (str sid)
+                                                    :status "completed"
+                                                    :request "already answered"
+                                                    :started_at 1000}}}})
+             (expect (= [] (state/list-queued-turns sid)))
+             (finally (reset! registry saved))))))
+
+(defdescribe
   queued-update-payload-test
   "Editing a queued request must also edit the provider message payload;
   otherwise the drained queued turn answers the pre-edit prompt."
@@ -915,20 +976,26 @@
                  :else (do (Thread/sleep 25) (recur))))))]
 
     (it "does not treat empty streaming callbacks as progress"
-      (let [initial {:phase :reasoning :last-ms 10}
-            content-heartbeat (advance initial {:phase :content :delta ""} 20)
-            reasoning-heartbeat (advance content-heartbeat {:phase :reasoning :delta ""} 30)]
-        (expect (= {:phase :reasoning :last-ms 10} reasoning-heartbeat))
-        (expect (= 40 (:last-ms (advance reasoning-heartbeat
-                                      {:phase :reasoning :delta "more"}
-                                      40))))
-        (expect (= 50 (:last-ms (advance reasoning-heartbeat
-                                      {:phase :reasoning :delta "" :done? true}
-                                      50))))
-        (expect (= 60 (:last-ms (advance reasoning-heartbeat
-                                      {:phase :response-parse :status :started}
-                                      60))))))
+        (let
+          [initial
+           {:phase :reasoning :last-ms 10}
 
+           content-heartbeat
+           (advance initial {:phase :content :delta ""} 20)
+
+           reasoning-heartbeat
+           (advance content-heartbeat {:phase :reasoning :delta ""} 30)]
+
+          (expect (= {:phase :reasoning :last-ms 10} reasoning-heartbeat))
+          (expect (= 40
+                     (:last-ms (advance reasoning-heartbeat {:phase :reasoning :delta "more"} 40))))
+          (expect (= 50
+                     (:last-ms
+                       (advance reasoning-heartbeat {:phase :reasoning :delta "" :done? true} 50))))
+          (expect (= 60
+                     (:last-ms (advance reasoning-heartbeat
+                                        {:phase :response-parse :status :started}
+                                        60))))))
     (it "force-cancels a turn stuck in :provider-call past the ceiling"
         (let
           [sid

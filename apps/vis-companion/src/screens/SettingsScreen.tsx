@@ -610,18 +610,6 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
             </div>
           );
         })}
-
-        {!!providers?.length && (
-          <div className="flex justify-end pt-1">
-            <Button
-              variant="ghost"
-              disabled={pending === 'reload'}
-              onClick={() => void auth.refresh()}
-            >
-              {pending === 'reload' ? 'Re-checking…' : 'Re-check all'}
-            </Button>
-          </div>
-        )}
       </div>
     </SettingsPanel>
   );

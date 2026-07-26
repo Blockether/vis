@@ -493,7 +493,7 @@ function toolLabel(name?: string): string {
 
 function toolRole(role?: string): { border: string; text: string } {
   const normalized = role?.replace(/^:/, '');
-  return (normalized && toolRoleClasses[normalized]) || { border: 'border-accent', text: 'text-accent' };
+  return (normalized && toolRoleClasses[normalized]) || { border: 'border-accent', text: 'text-accent-ink' };
 }
 
 function resultBody(form: TranscriptForm): string {
@@ -922,7 +922,7 @@ export const UserMessage = memo(function UserMessage(
           </span>
         ) : (
           <details key={part.key} className="group my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
-            <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-meta font-semibold text-accent marker:hidden [&::-webkit-details-marker]:hidden">
+            <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
               <span className="mr-1 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
               {part.summary}
             </summary>

@@ -2107,12 +2107,12 @@ export function SessionScreen({
         <div className="flex w-full items-center gap-2 pt-1">
           <button
             type="button"
-            className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none motion-reduce:transition-none"
+            className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
           >
-            <span aria-hidden="true" className="text-accent/60 transition-colors duration-150 group-hover:text-accent motion-reduce:transition-none">◇</span>
+            <span aria-hidden="true" className="text-accent-ink/80 transition-colors duration-150 group-hover:text-accent-ink motion-reduce:transition-none">◇</span>
             <span className="truncate">{modelPref?.model ?? 'model'}</span>
             <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
@@ -2126,7 +2126,7 @@ export function SessionScreen({
               {usageTokens && usageCost && (
                 <span aria-hidden="true" className="opacity-40">·</span>
               )}
-              {usageCost && <span className="whitespace-nowrap text-accent/80">{usageCost}</span>}
+              {usageCost && <span className="whitespace-nowrap text-accent-ink">{usageCost}</span>}
             </span>
           )}
         </div>

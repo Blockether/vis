@@ -461,7 +461,7 @@ export function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
       </p>
 
       {flow.user_code && (
-        <p className="select-all break-all border border-dialog-edge bg-input px-3 py-2 text-center font-mono text-display font-bold tracking-[0.2em] text-accent">
+        <p className="select-all break-all border border-dialog-edge bg-input px-3 py-2 text-center font-mono text-display font-bold tracking-[0.2em] text-accent-ink">
           {flow.user_code}
         </p>
       )}

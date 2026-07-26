@@ -1430,10 +1430,22 @@
               (error-response 400 :invalid-request (or (:message result) "invalid request")))))))
 
 (defn- list-turns-handler
+  "GET the session's turns. `?status=queued` narrows the response to the live
+   queued backlog — the tray's poll — which is served straight from the
+   registry overlay with no turn-history hydration. Without the filter this
+   ships the FULL history (every completed turn's content), so a poller that
+   only wants the backlog must pass it."
   [request]
-  (let [sid (path-sid request)]
+  (let
+    [sid
+     (path-sid request)
+
+     queued-only?
+     (= "queued" (get-in request [:query-params "status"]))]
+
     (if (and sid (state/soul sid))
-      (json-response {:turns (state/list-turns sid)})
+      (json-response {:turns
+                      (if queued-only? (state/list-queued-turns sid) (state/list-turns sid))})
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- get-turn-handler

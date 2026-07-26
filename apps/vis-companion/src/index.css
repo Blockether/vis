@@ -141,8 +141,11 @@
   --color-accent: var(--primary);
   --color-accent-foreground: var(--primary-fg);
   --color-accent-2: var(--accent);
-  /* Legible amber for accent TEXT on surfaces (button bg amber is illegible as text). */
-  --color-accent-ink: var(--tool-edit);
+  /* Legible amber for accent TEXT on surfaces. --primary is a BUTTON FILL
+     (light theme #ffc420 on #faf3eb = 1.45:1) and is unreadable as text at any
+     size; --warning is the palette's per-theme amber INK (light #7a4a00 = 6.8:1,
+     dark #fde68a). Amber text uses accent-ink; amber fills use accent. */
+  --color-accent-ink: var(--warning);
   --color-ok: var(--ok);
   --color-warn: var(--warning);
   --color-warn-strong: var(--warning-border);
@@ -158,7 +161,10 @@
   --color-input: var(--input-field-bg);
   --color-button: var(--button-bg);
   --color-button-foreground: var(--button-fg);
-  --color-thinking: var(--iteration-header-fg);
+  /* Thinking prose is de-emphasised, not invisible: --iteration-header-fg is a
+     TUI rule/heading tint (#b0a798 on #f5eee4 = 2.1:1). Blend the message ink
+     into the band instead, so every palette lands on readable-but-quiet. */
+  --color-thinking: color-mix(in oklab, var(--ai-bubble-fg) 62%, var(--iteration-header-bg));
   --color-thinking-surface: var(--iteration-header-bg);
   --color-you-message: var(--user-bubble-bg);
   --color-you-message-foreground: var(--user-bubble-fg);

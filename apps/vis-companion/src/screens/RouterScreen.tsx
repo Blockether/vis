@@ -184,7 +184,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                                 type="button"
                                 className={`flex w-full min-h-9 items-center border px-2 py-1.5 text-left font-mono text-ui transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
                                   active
-                                    ? 'border-accent bg-hover text-accent'
+                                    ? 'border-accent bg-hover text-accent-ink'
                                     : 'border-dialog-edge text-white/85'
                                 }`}
                                 disabled={picking === `${provider.id}:${model}`}

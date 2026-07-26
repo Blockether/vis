@@ -846,11 +846,17 @@ export class GatewayClient {
    * subscribed — so a session opened (or reloaded, or backgrounded by iOS)
    * while messages sit queued must read the backlog back from here. Same
    * source and same filter the TUI resumes from (`chat/resume-session`).
+   *
+   * `?status=queued` is what keeps this poll cheap: unfiltered, this endpoint
+   * returns the session's ENTIRE turn history with content (600KB+ on a long
+   * session) every 5s just to learn the queue is empty. The client-side
+   * `status === 'queued'` filter below stays as the compatibility net for a
+   * gateway that predates the query param and ignores it.
    */
   async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
     const response = await this.request<{ turns?: SubmittedTurn[] }>(
       'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/turns`,
+      `/v1/sessions/${encodeURIComponent(sid)}/turns?status=queued`,
       undefined,
       signal,
     );

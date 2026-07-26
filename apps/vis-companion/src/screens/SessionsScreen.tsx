@@ -433,7 +433,7 @@ function SessionRow({
               <>
                 <span className="opacity-40" aria-hidden="true">·</span>
                 <span className="inline-flex items-center gap-1 font-bold text-accent-ink">
-                  <span className="size-1 bg-accent" /> OPEN
+                  <span className="size-1 bg-accent-ink" /> OPEN
                 </span>
               </>
             )}

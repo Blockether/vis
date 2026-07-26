@@ -46,6 +46,33 @@
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))
 
+(deftest list-turns-status-filter-routes-to-queued-overlay
+  (let
+    [sid
+     (random-uuid)
+
+     calls
+     (atom [])
+
+     request
+     {:path-params {:sid (str sid)}}]
+
+    (with-redefs-fn {#'state/soul (fn [actual]
+                                    (= sid actual))
+                     #'state/list-queued-turns (fn [actual]
+                                                 (swap! calls conj [:queued actual])
+                                                 [])
+                     #'state/list-turns (fn [actual]
+                                          (swap! calls conj [:all actual])
+                                          [])}
+      #(do (is (= 200
+                  (:status ((rv 'list-turns-handler)
+                             (assoc request :query-params {"status" "queued"})))))
+           (is (= [[:queued sid]] @calls))
+           (reset! calls [])
+           (is (= 200 (:status ((rv 'list-turns-handler) request))))
+           (is (= [[:all sid]] @calls))))))
+
 (deftest draft-management-client-builds-canonical-routes
   (let
     [sent
