@@ -177,7 +177,7 @@ export function GatewaySettingsDialog({
           </div>
           <button
             type="button"
-            className="grid min-w-12 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-base leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-sm leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close gateway settings"
           >
@@ -304,7 +304,7 @@ export function GatewaySettingsDialog({
                           key={choice.key}
                           disabled={pending?.startsWith('theme:') ?? false}
                           onClick={() => chooseTheme(choice.key)}
-                          className={`flex min-h-12 min-w-0 items-center justify-between gap-3 px-3 py-2 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-11 ${
+                          className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${
                             selected
                               ? 'bg-accent text-accent-foreground'
                               : 'bg-input text-white hover:bg-hover'
@@ -434,7 +434,7 @@ export function GatewaySettingsDialog({
                                   key={choice}
                                   disabled={busy}
                                   onClick={() => pick(toggle, choice)}
-                                  className={`min-h-11 border px-2.5 py-1 font-mono text-[9px] font-bold transition-[background-color,border-color,color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-7 ${
+                                  className={`min-h-8 border px-2 py-0.5 font-mono text-[9px] font-bold transition-[background-color,border-color,color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
                                     selected
                                       ? 'border-accent bg-accent text-accent-foreground'
                                       : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong hover:text-white'

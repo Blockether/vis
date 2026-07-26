@@ -1608,10 +1608,10 @@ export function SessionScreen({
           <>
               {!turns.length && !liveTurn ? (
             <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
-              <div className="grid size-11 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
+              <div className="grid size-9 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
                 <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
               </div>
-              <h2 className="mb-1 mt-3 text-base font-semibold">Start a conversation</h2>
+              <h2 className="mb-1 mt-3 text-sm font-semibold">Start a conversation</h2>
               <p className="max-w-sm text-xs leading-5 text-dialog-hint">
                 This session is ready. Ask Vis to inspect, explain, or change your project.
               </p>
@@ -1903,13 +1903,13 @@ export function SessionScreen({
 
             <button
               type="button"
-              className="grid size-11 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9"
+              className="grid size-9 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-8"
               onClick={() => void addAttachments()}
               disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
               aria-label="Add images"
               title="Add images"
             >
-              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" strokeLinecap="square" />
               </svg>
             </button>
@@ -1917,7 +1917,7 @@ export function SessionScreen({
             {voiceSupported && (
               <button
                 type="button"
-                className={`grid size-11 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-9 ${
+                className={`grid size-9 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:size-8 ${
                   voicePhase === 'recording'
                     ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
                     : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
@@ -1927,7 +1927,7 @@ export function SessionScreen({
                 aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
                 title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
               >
-                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                   <rect x="9" y="3" width="6" height="11" rx="3" />
                   <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
                 </svg>
@@ -1943,7 +1943,7 @@ export function SessionScreen({
               aria-label="Message Vis"
               aria-controls={slashMatches.length ? 'slash-command-list' : undefined}
               aria-expanded={slashMatches.length > 0}
-              className="h-11 min-h-11 max-h-28 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-base leading-6 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-9 sm:min-h-9 sm:py-2 sm:text-[12px] sm:leading-5"
+              className="h-9 min-h-9 max-h-24 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2 text-sm leading-5 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-8 sm:min-h-8 sm:py-1.5 sm:text-[11px] sm:leading-5"
               onPaste={handlePaste}
               onSelect={(event) =>
                 setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -2007,7 +2007,7 @@ export function SessionScreen({
             {(!running || !!(prompt.trim() || attachments.length)) && (
               <button
                 type="button"
-                className="grid size-11 shrink-0 place-items-center border border-dialog-edge bg-dialog-title font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-9"
+                className="grid size-9 shrink-0 place-items-center border border-dialog-edge bg-dialog-title font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-8"
                 onClick={send}
                 disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
                 aria-label={running ? 'Queue message' : 'Send message'}
@@ -2019,11 +2019,11 @@ export function SessionScreen({
             {running && (
               <button
                 type="button"
-                className="grid size-11 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-9"
+                className="grid size-9 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-8"
                 onClick={cancel}
                 aria-label="Stop response"
               >
-                <span className="size-2.5 bg-err" />
+                <span className="size-2 bg-err" />
               </button>
             )}
           </div>

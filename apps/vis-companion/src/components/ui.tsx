@@ -91,12 +91,12 @@ export function DialogFrame({
       aria-modal="true"
       aria-label={title}
     >
-      <header className="relative flex min-h-11 items-center justify-center bg-dialog-title px-12 py-2 text-dialog-title-foreground sm:min-h-10">
+      <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground sm:min-h-8">
         <h2 className="truncate font-mono text-xs font-bold tracking-wide">{title}</h2>
         {onClose && (
           <button
             type="button"
-            className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-base leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none sm:min-w-10"
+            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-sm leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none sm:min-w-8"
             onClick={onClose}
             aria-label="Close dialog"
           >

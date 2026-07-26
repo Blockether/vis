@@ -240,7 +240,7 @@ export function App() {
   const hasConn = conns.length > 0 && !!active;
 
   return (
-    <div className="isolate flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-[13px]">
+    <div className="isolate flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-[12px]">
       {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
 
       <main className={`min-h-0 flex-1 ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>

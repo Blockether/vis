@@ -209,7 +209,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:border">
-        <header className="relative flex min-h-11 items-center justify-center bg-dialog-title px-4 py-2 text-dialog-title-foreground sm:min-h-10">
+        <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-4 py-1.5 text-dialog-title-foreground sm:min-h-8">
           <h1 className="truncate font-mono text-[11px] font-black uppercase tracking-[0.1em]">Session navigator</h1>
         </header>
 
@@ -341,7 +341,7 @@ function ProjectGroup({
 
   return (
     <section className="border-t border-dialog-edge first:border-t-0">
-      <header className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <header className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
         <div className="hidden min-w-20 place-items-center bg-dialog-title px-3 font-mono text-[9px] font-black tracking-[0.14em] text-dialog-title-foreground sm:grid">
           PROJECT
         </div>

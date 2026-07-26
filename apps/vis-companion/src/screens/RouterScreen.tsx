@@ -298,7 +298,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
           </div>
           <button
             type="button"
-            className="grid min-h-12 min-w-12 place-items-center border-l border-dialog-title-foreground/20 font-mono text-base leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-sm leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close router"
           >
@@ -479,7 +479,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
                             <li key={model}>
                               <button
                                 type="button"
-                                className={`flex w-full min-h-11 items-center gap-2 px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
+                                className={`flex w-full min-h-9 items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
                                   active ? 'bg-hover text-accent' : 'text-white/85'
                                 }`}
                                 disabled={pending === `${provider.id}:${model}`}
