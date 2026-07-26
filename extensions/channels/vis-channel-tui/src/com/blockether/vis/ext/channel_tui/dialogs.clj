@@ -5072,10 +5072,10 @@
            (if (> u budget) k (recur (dec i) u i)))))]
 
     (min (long tail-start)
-         (loop [s (min (max 0 (long scroll)) selected)]
-           (if (and (< s selected) (> (long (reduce + 1 (subvec heights s selected))) budget))
-             (recur (inc s))
-             s)))))
+         (long (loop [s (min (max 0 (long scroll)) selected)]
+                 (if (and (< s selected) (> (long (reduce + 1 (subvec heights s selected))) budget))
+                   (recur (inc s))
+                   s))))))
 
 (defn- navigator-visible-blocks
   "Paint plan from `start`, clipped by terminal lines. Every session keeps its
