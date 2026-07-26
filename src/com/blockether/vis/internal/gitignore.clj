@@ -119,15 +119,15 @@
     (when (seq rules) rules)))
 
 (defn tool-ignore-present?
-  "True when `root` has a tool-only ignore file (`.ignore` or `.rgignore`) — the
-   ones git never reads. Their `!` rules can RE-INCLUDE paths `.gitignore` hid, so
-   an index/cache that only knows `.gitignore` (e.g. fff) can't be trusted: a
-   caller that finds this true must walk the tree directly and evaluate the full
-   layered `load-matcher` instead."
+  "True when `root` has a `.rgignore` — the ONE ignore file neither git nor fff
+   reads. fff's walker is ripgrep's `ignore` crate, so `.gitignore`, `.git/info/exclude`,
+   the global gitignore AND `.ignore` (including nested ones and their `!`
+   re-includes) are already honored natively by the index; only ripgrep's
+   `.rgignore` needs a custom filename fff does not register. A caller that finds
+   this true must walk the tree directly and evaluate the full layered
+   `load-matcher` instead of trusting the index."
   [^File root]
-  (boolean (some (fn [^String n]
-                   (.exists (io/file root ^String n)))
-                 (rest ignore-file-names))))
+  (.exists (io/file root ".rgignore")))
 
 (defn ignored?
   "True when the `/`-separated relative path `rel` (with `path-dir?` telling

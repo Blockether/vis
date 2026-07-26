@@ -370,3 +370,60 @@
            (expect (= ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]
                       (mapv #(.getName (io/file ^String %)) (@#'config/global-config-yaml-paths))))
            (finally (rm-rf! dir))))))
+
+(defdescribe
+  load-config-raw-cache-test
+  "`load-config-raw` parses four YAML tiers (~60ms) and is called on EVERY
+   tool call — `search-overlay` alone made it the dominant cost of a warm
+   grep. It is memoized against the sources' mtime+size, so the memo must be
+   INVISIBLE: an edit, a delete, and a fresh file all still show through."
+  (it
+    "reuses the parsed value until a source changes, then reparses"
+    (let
+      [dir
+       (io/file "target/config-cache-test")
+
+       gstate
+       (io/file dir "state.yml")
+
+       none
+       (fn []
+         [])]
+
+      (try (.mkdirs dir)
+           (spit gstate "system_prompt: ONE\n")
+           (with-redefs
+             [config/state-path
+              (.getPath gstate)
+
+              config/global-config-yaml-paths
+              none
+
+              config/project-root-yaml-paths
+              none
+
+              config/project-config-yaml-paths
+              none]
+
+             (config/invalidate-config-cache!)
+             (let
+               [a
+                (config/load-config-raw)
+
+                b
+                (config/load-config-raw)]
+
+               ;; cache HIT: the very same parsed map, no re-read
+               (expect (identical? a b))
+               (expect (= "ONE" (get a "system_prompt")))
+               ;; an edit is picked up live (no /reload needed)
+               (spit gstate "system_prompt: TWO\n")
+               (expect (= "TWO" (get (config/load-config-raw) "system_prompt")))
+               ;; so is a delete
+               (.delete gstate)
+               (expect (nil? (config/load-config-raw)))
+               ;; and an explicit invalidation never breaks the value
+               (spit gstate "system_prompt: THREE\n")
+               (config/invalidate-config-cache!)
+               (expect (= "THREE" (get (config/load-config-raw) "system_prompt")))))
+           (finally (config/invalidate-config-cache!) (rm-rf! dir))))))

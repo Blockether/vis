@@ -756,6 +756,48 @@
   []
   (some read-yaml-config-map-lenient (project-root-yaml-paths)))
 
+(defn- config-source-paths
+  "Every YAML path that can contribute to `load-config-raw`, existing or not."
+  []
+  (-> []
+      (into (global-config-yaml-paths))
+      (conj state-path)
+      (into (project-root-yaml-paths))
+      (into (project-config-yaml-paths))))
+
+(def ^:private config-raw-cache
+  "`{:stamp … :value …}` memo for `load-config-raw`. Parsing the four YAML tiers
+   costs ~60ms; `search-overlay` (and friends) call it on EVERY grep/tool call,
+   so it dominated warm search latency. Keyed by an mtime+size stamp of every
+   candidate file, so an EDIT to any tier — or `/reload` — is still picked up
+   live: 9 `stat`s (~50µs) replace 9 YAML parses."
+  (atom nil))
+
+(defn invalidate-config-cache!
+  "Drop the `load-config-raw` memo. Called on every config WRITE, because two
+   writes inside one filesystem mtime tick could otherwise stamp identically."
+  []
+  (reset! config-raw-cache nil))
+
+(defn- config-source-stamp
+  "mtime+size fingerprint of every config source. Uses NIO's NANOSECOND mtime
+   (not `File.lastModified`'s millisecond truncation) so two writes inside one
+   millisecond still invalidate; `invalidate-config-cache!` covers our own
+   writes regardless."
+  []
+  (mapv (fn [^String p]
+          (let [f (io/file p)]
+            (if (.isFile f)
+              (let
+                [^java.nio.file.attribute.FileTime ft
+                 (try (Files/getLastModifiedTime (.toPath f)
+                                                 (make-array java.nio.file.LinkOption 0))
+                      (catch Throwable _ nil))]
+                [p (if ft (.to ft java.util.concurrent.TimeUnit/NANOSECONDS) (.lastModified f))
+                 (.length f)])
+              [p nil nil])))
+        (config-source-paths)))
+
 (defn load-config-raw
   "Load raw config as the deep-merge of four YAML sources — later sources win,
    nested maps merge, scalar/vector values replace:
@@ -767,12 +809,26 @@
    3. `<cwd>/vis.yml` (or `vis.yaml`) — visible project root, the committed team
       config
    4. `<cwd>/.vis/config.yml` (or `.yaml`) — hidden project overlay; the NESTED
-      overlay wins over the root file (personal beats committed)"
+      overlay wins over the root file (personal beats committed)
+
+   Memoized against the sources' mtime+size (see `config-raw-cache`)."
   []
-  (deep-merge-config (load-global-yaml-config-raw)
-                     (load-global-config-raw)
-                     (load-project-root-config-raw)
-                     (load-project-config-raw)))
+  (let
+    [stamp
+     (config-source-stamp)
+
+     cached
+     @config-raw-cache]
+
+    (if (and cached (= (:stamp cached) stamp))
+      (:value cached)
+      (let
+        [value (deep-merge-config (load-global-yaml-config-raw)
+                                  (load-global-config-raw)
+                                  (load-project-root-config-raw)
+                                  (load-project-config-raw))]
+        (reset! config-raw-cache {:stamp stamp :value value})
+        value))))
 
 (defn config-problems
   "Model-readable, per-top-level-key reasons the currently merged live config
@@ -927,6 +983,7 @@
 
        (ensure-private-dir! config-dir)
        (spit-private! state-path (yamlstar/dump wire-config))
+       (invalidate-config-cache!)
        (when (provider-selection-changed? previous-provider selected-provider)
          (emit-provider-selected! {:previous-provider previous-provider
                                    :provider selected-provider

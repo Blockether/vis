@@ -43,6 +43,7 @@
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.fff-index :as fff-index]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.gitignore :as gitignore]
@@ -82,139 +83,18 @@
    (`total_file_count_is_exact` false)."
   5000)
 
-(def ^:private rg-fff-scan-timeout-ms
-  "Ceiling on how long `rg-fff-open` blocks for fff's initial scan (paths +
-   content index) to COMPLETE before the instance is usable. wait-for-scan
-   returns false on timeout; a half-built index silently under-reports
-   grep/search hits, so past this ceiling we fail loud instead of searching a
-   partial index."
-  30000)
 
-;; rg is fff-first: fff owns workspace discovery/ranking, this namespace only
-;; re-reads returned candidate files to preserve exact line semantics + patch
-;; anchors. We deliberately do NOT cache fff instances and disable fff's
-;; on-disk mmap cache (`:enable-mmap-cache? false`): a cached/persisted
-;; snapshot from a `:watch? false` instance silently goes stale and never sees
-;; files written after its first scan — the `rg returns nothing that should not
-;; be empty` bug (verified). A cold create + full scan of the whole repo is
-;; ~11ms, so a FRESH instance per search is effectively free and always
-;; current. Callers MUST close it (use `with-open`).
 
-(def ^:private fff-scan-max-concurrency
-  "Permit count for `fff-scan-semaphore`: the max number of FRESH fff index
-   scans (grep / struct_occurrences — everything that goes through
-   `rg-fff-open`) allowed to run at once. A fresh scan spins fff's own worker
-   threads over the whole tree — cheap for a small repo (~11ms), but up to the
-   `rg-fff-scan-timeout-ms` (~30s) ceiling for a large one — so an UNBOUNDED
-   `gather(rg, rg, …)` of N searches could fan out into N simultaneous
-   full-tree scans, N CPU-heavy scan groups grinding at once (the orphan-CPU
-   shape). A small bound caps that blast radius while still overlapping enough
-   scans to keep `gather` worthwhile. Cheap reads (cat / index) never spin an
-   index and are NEVER bounded — they don't pass through here."
-  4)
-
-(defonce ^:private ^java.util.concurrent.Semaphore fff-scan-semaphore
-  ;; FAIR (true) so a queued burst of scans drains in arrival order — no scan
-  ;; starves behind a steady stream of later arrivals.
-  (java.util.concurrent.Semaphore. fff-scan-max-concurrency true))
-
-(defn- with-fff-scan-permit*
-  "Run `thunk` holding ONE fff-scan permit: block (interruptibly) until a permit
-   is free, then ALWAYS release it — even when `thunk` throws, or the waiting
-   thread is interrupted (turn `cancel!` / eval timeout, which surfaces as an
-   `InterruptedException` from `.acquire` and propagates, releasing nothing it
-   never took). Guards ONLY the index BUILD (create + `wait-for-scan`);
-   searching an already-scanned index is cheap and needs no permit, so the
-   permit is dropped the moment the scan is ready — maximizing scan overlap."
-  [thunk]
-  (.acquire fff-scan-semaphore)
-  (try (thunk) (finally (.release fff-scan-semaphore))))
-
-(defn- rg-fff-open
-  "Create a FRESH fff instance scoped to `root`, blocking until its initial
-   scan completes. The caller owns the instance and must close it. The
-   CPU-heavy build (create + scan) runs under `with-fff-scan-permit*`, so no
-   more than `fff-scan-max-concurrency` fresh scans ever run at once — a
-   `gather(rg, …)` fan-out queues past the bound instead of stampeding."
-  ^java.io.Closeable [^File root]
-  (when-not (.isDirectory root)
-    (throw (ex-info "rg fff index root must be a directory"
-                    {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
-  (with-fff-scan-permit*
-    (fn []
-      (let
-        [k
-         (.getCanonicalPath root)
-
-         idx
-         (try (fff/create {:base-path k
-                           :watch? false
-                           :ai-mode? true
-                           :enable-content-indexing? true
-                           :enable-mmap-cache? false})
-              (catch Throwable t
-                (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
-                                {:type :ext.foundation.editing/fff-unavailable :path k}
-                                t))))]
-
-        (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
-          (.close ^java.io.Closeable idx)
-          (throw (ex-info "rg fff scan did not complete in time"
-                          {:type :ext.foundation.editing/fff-scan-timeout
-                           :path k
-                           :timeout-ms rg-fff-scan-timeout-ms})))
-        idx))))
 
 (defn- rg-needle-hostile-to-fff?
-  "fff's candidate pre-filter (fuzzy path + content grep) honors a needle as a
-   REGEX/glob, so a needle with a quantifier/bracket char — e.g. an ear-muffed
-   Clojure var `*workspace-root*`, `(defn foo`, `arr[0]` — matches NOTHING (or
-   errors) and yields zero candidate files. With no fallback the literal
-   `make-line-matcher` then never runs, so a query that SHOULD hit returns empty.
-   `.`/`|`/`^`/`$` only OVER-match (still correct after the literal filter) and
-   `.` is ubiquitous, so they stay on the fff fast path."
+  "True when a needle is meaningless to fff's FUZZY PATH search — it honors
+   quantifier/bracket chars as regex/glob, so `*workspace-root*`, `(defn foo` or
+   `arr[0]` match nothing there. Only the path side is affected: fff's CONTENT
+   grep runs in `:mode :plain`, which is a pure literal substring scan with the
+   same smart-case rule as `make-line-matcher` (measured: `?`, `(`, `[`, `{`, `+`
+   all match literally), so content discovery needs no bypass for any needle."
   [^String needle]
   (boolean (re-find #"[*+?(){}\[\]]" needle)))
-
-(def ^:private rg-fff-enumerate-page-size 5000)
-
-(defn- rg-fff-enumerate-all
-  "The FULL file universe under `roots` via fff — the native, nested-`.gitignore`-aware
-   index — INCLUDING dotfiles (the caller applies hidden/include filtering). Returns a
-   File vec, deduped nowhere (roots are pre-deduped upstream). Pages through fff/search
-   so a huge repo isn't silently truncated at one page.
-
-   This is the hostile-needle fallback (a needle fff reads as regex/glob and can't grep):
-   we still hand the literal `make-line-matcher` the correct git-respecting universe
-   instead of a raw filesystem walk that would descend `.gitignored` trees (node_modules,
-   target, …) at ~280× the cost."
-  [roots]
-  (vec
-    (mapcat (fn [^File root]
-              (if (.isFile root)
-                [root]
-                (with-open [idx (rg-fff-open root)]
-                  (let [base (.getCanonicalFile root)]
-                    (loop
-                      [page-index 0
-                       acc (transient [])]
-
-                      (let
-                        [{:keys [items total-matched]}
-                         (fff/search
-                           idx
-                           {:query "" :page-index page-index :page-size rg-fff-enumerate-page-size})
-                         acc (reduce (fn [a {:keys [relative-path]}]
-                                       (cond-> a
-                                         relative-path
-                                         (conj! (io/file base relative-path))))
-                                     acc
-                                     items)]
-
-                        (if (or (empty? items) (>= (count acc) (long (or total-matched 0))))
-                          (persistent! acc)
-                          (recur (inc page-index) acc))))))))
-            roots)))
 
 (defn- rg-hidden-below-root?
   "True when `f` sits under a HIDDEN segment BELOW one of `roots` (a dotdir/dotfile the
@@ -231,55 +111,116 @@
                                (iterator-seq (.iterator (.relativize rp fp)))))))
                    roots))))
 
+(def ^:private rg-fff-grep-page-limit
+  "Matches per native-grep page. With `:max-matches-per-file 1` this is also the
+   number of FILES a page can report, so a page is a file page."
+  2000)
+
+(def ^:private rg-fff-grep-max-pages
+  "Hard ceiling on native-grep pages per needle (see `rg-fff-grep-files`). At
+   `rg-fff-grep-page-limit` files a page that is 10k candidate files — far past
+   any result cap — so a pathological needle can't page the whole tree."
+  5)
+
+(defn- rg-fff-grep-files
+  "Every file fff's native grep sees `query` in, PAGED to exhaustion (bounded by
+   `rg-fff-grep-max-pages`). A single page stops at `page-limit` matches and hands
+   back `:next-file-offset`; dropping that resume cursor silently truncated the
+   candidate set to one page, which the old fuzzy-path union then papered over."
+  [idx ^String query]
+  (loop
+    [offset
+     0
+
+     page
+     0
+
+     acc
+     (transient [])]
+
+    (let
+      [{:keys [matches next-file-offset]}
+       (fff/grep idx
+                 {:query query
+                  :mode :plain
+                  :file-offset offset
+                  :page-limit rg-fff-grep-page-limit
+                  :max-matches-per-file 1
+                  :time-budget-ms 1500})
+
+       acc
+       (reduce conj! acc matches)
+
+       next-offset
+       (long (or next-file-offset 0))]
+
+      (if (or (zero? next-offset) (>= (inc page) (long rg-fff-grep-max-pages)))
+        (persistent! acc)
+        (recur next-offset (inc page) acc)))))
+
 (defn- rg-fff-candidate-files
   "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
    `.gitignore`-aware universe rg then RE-VALIDATES with the literal `make-line-matcher`.
    fff-first: NO raw filesystem walk, so a `.gitignored` subtree is never descended.
 
-   Normal needles → the union of fff fuzzy-PATH hits and fff native-GREP content hits
-   (a superset of true matches; a path-only hit whose content doesn't match is harmlessly
-   dropped downstream). A needle HOSTILE to fff (a quantifier/bracket char fff reads as
-   regex/glob and would match nothing) → the FULL fff enumeration, so the literal matcher
-   still sees every candidate. Returns a File vec, deduped by canonical path."
-  [roots needles]
-  (if (some rg-needle-hostile-to-fff? needles)
-    (rg-fff-enumerate-all roots)
-    (let
-      [rel-files (fn [^File base items]
-                   (keep (fn [{:keys [relative-path]}]
-                           (some->> relative-path
-                                    (io/file base)))
-                         items))]
-      (->> roots
-           (mapcat
-             (fn [^File root]
-               (cond (.isFile root) [root]
-                     :else (with-open [idx (rg-fff-open root)]
-                             (let [base (.getCanonicalFile root)]
-                               ;; doall: realize the lazy hits INSIDE with-open, before the fresh
-                               ;; instance is closed.
-                               (doall
-                                 (mapcat
-                                   (fn [query]
-                                     (let
-                                       [path-items
-                                        (:items (fff/search idx {:query query :page-size 1000}))
-                                        grep-items (:matches (fff/grep idx
-                                                                       {:query query
-                                                                        :mode :plain
-                                                                        :page-limit 1000
-                                                                        :max-matches-per-file 1
-                                                                        :time-budget-ms 1500}))]
+   Normal needles → fff's native-GREP content hits (paged to exhaustion) plus the
+   fff fuzzy-PATH hits whose path LITERALLY contains the needle. The path side is
+   deliberately literal-filtered: fff's path search is FUZZY and happily returns a
+   full page of unrelated paths (1000 files for a 1-word needle on this repo), and
+   every one of those became a file rg then OPENED AND READ to find nothing —
+   ~95% of the read budget spent on noise. Native grep already owns content
+   discovery; the path side only carries the `foo.clj`-names-itself case.
 
-                                       (concat (rel-files base path-items)
-                                               (rel-files base grep-items))))
-                                   needles)))))))
-           ;; dedup by canonical path, keep File objects
-           (reduce (fn [acc ^File f]
-                     (assoc acc (.getCanonicalPath f) f))
-                   {})
-           vals
-           vec))))
+   A needle HOSTILE to fff's FUZZY PATH search (a quantifier/bracket char it reads
+   as regex/glob) simply skips the path side for that needle: native grep is
+   `:mode :plain` — literal, smart-case, the same rule as `make-line-matcher` — so
+   it already sees every content candidate. This used to fall back to the FULL fff
+   enumeration, which then had rg OPEN AND READ every file in the tree (measured
+   170ms vs 8ms on this repo for `tool-ignore-present?`) for no extra recall.
+   Returns a File vec, deduped by canonical path."
+  [roots needles respect-ignore-files?]
+  (let
+    [rel-files
+     (fn [^File base items]
+       (keep (fn [{:keys [relative-path]}]
+               (some->> relative-path
+                        (io/file base)))
+             items))
+
+     path-hit?
+     (fn [^String query {:keys [relative-path]}]
+       (boolean (and relative-path
+                     (str/includes? (str/lower-case ^String relative-path)
+                                    (str/lower-case query)))))]
+
+    (->> roots
+         (mapcat
+           (fn [^File root]
+             (cond (.isFile root) [root]
+                   :else (fff-index/with-index
+                           [idx (fff-index/lease root respect-ignore-files?)]
+                           (let [base (.getCanonicalFile root)]
+                             ;; doall: realize the lazy hits INSIDE with-open, before the fresh
+                             ;; instance is closed.
+                             (doall (mapcat (fn [query]
+                                              (let
+                                                [path-items
+                                                 (when-not (rg-needle-hostile-to-fff? query)
+                                                   (->> (:items (fff/search idx
+                                                                            {:query query
+                                                                             :page-size 1000}))
+                                                        (filter #(path-hit? query %))))
+                                                 grep-items (rg-fff-grep-files idx query)]
+
+                                                (concat (rel-files base path-items)
+                                                        (rel-files base grep-items))))
+                                            needles)))))))
+         ;; dedup by canonical path, keep File objects
+         (reduce (fn [acc ^File f]
+                   (assoc acc (.getCanonicalPath f) f))
+                 {})
+         vals
+         vec)))
 
 
 (def ^:private default-find-limit 50)
@@ -363,21 +304,6 @@
   (try (when (under-temp-root? f) (mpl-capture/record-file! (.toPath f))) (catch Throwable _ nil))
   nil)
 
-(defn- expand-home
-  "Expand a leading `~` / `~/…` to the user's home dir so a model-supplied path
-   like `~/bridge` resolves to a real absolute path instead of being treated as
-   a literal `~` segment UNDER cwd (which silently produces a non-existent path
-   that still passes confinement). Bare `~` → home; `~/x` → `<home>/x`; anything
-   else (including a mid-path `~`) is returned unchanged. Nil-safe; a no-op when
-   `user.home` is unset."
-  ^String [^String s]
-  (let [home (System/getProperty "user.home")]
-    (cond (nil? s) s
-          (not (seq home)) s
-          (= s "~") home
-          (str/starts-with? s "~/") (str home (subs s 1))
-          :else s)))
-
 (defn- safe-path
   ^File [p]
   ;; Resolve `p` and confine it to the union of ALLOWED ROOTS: the primary
@@ -406,8 +332,8 @@
      ;; relative → under cwd; absolute → as-is. Canonical throughout so
      ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
      ^java.nio.file.Path canonical
-     (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath
-                                                        (fs/path cwd (expand-home (str p))))))))
+     (.toPath (.getCanonicalFile
+                (.toFile (.normalize (.toAbsolutePath (fs/path cwd (paths/expand-home (str p))))))))
 
      mappings
      (workspace/filesystem-root-mappings)
@@ -1907,12 +1833,12 @@
    itself at score 1.0. The single-query building block `find-search` runs
    once for the strict whole-query pass and once per token for the fallback.
 
-   Directory roots go through fff (fast, frecency-ranked) — but fff's index
-   HONORS `.gitignore`, so when the caller opted OUT (`is_respect_gitignore`
-   false) we bypass fff and walk the tree directly, otherwise the ignored files
-   would never surface no matter what the flag says. `walk-cache` (a root→delay
-   atom) memoizes that direct walk so the strict + per-token passes share ONE
-   filesystem traversal instead of re-walking the whole tree each time."
+   Directory roots go through fff (fast, frecency-ranked) — including when the
+   caller opted OUT of gitignore: `is_respect_gitignore` is passed THROUGH to
+   fff's native walker, so ignored files surface without ever paying a raw
+   filesystem walk. `walk-cache` (a root→delay atom) memoizes the direct walk
+   still used for the overlay/tool-ignore cases so the strict + per-token passes
+   share ONE filesystem traversal instead of re-walking the whole tree each time."
   [roots query is_hidden is_respect_gitignore candidate-page walk-cache overlay]
   (->>
     roots
@@ -1924,18 +1850,18 @@
                                :binary? false
                                :source :direct-file
                                :score 1.0}]
-              ;; Walk the tree directly (bypassing fff) when the caller opted
-              ;; OUT of gitignore entirely, OR when tool-only `.ignore`/`.rgignore`
-              ;; files are present: fff's index only knows `.gitignore`, so it
-              ;; would re-drop what those files' `!` rules re-included. `ignore-node`
-              ;; is the FULL layered matcher while still respecting gitignore (nil
-              ;; on full opt-out), so `find-walk-files` keeps `.gitignore`'d files
-              ;; hidden yet surfaces the `!`-negated ones.
-              (or (not is_respect_gitignore)
-                  ;; …OR when the `:search` config overlay is active: fff's
-                  ;; gitignore-honoring index can't see the re-included subtrees.
-                  (some? overlay)
-                  (gitignore/tool-ignore-present? (.getCanonicalFile root)))
+              ;; Walk the tree directly (bypassing fff) ONLY when a `.rgignore`
+              ;; is present — fff's walker IS ripgrep's `ignore` crate, so
+              ;; `.gitignore`, `.git/info/exclude`, the global gitignore and
+              ;; `.ignore` (nested ones and their `!` re-includes included) are
+              ;; already honored natively; `.rgignore` is the one filename it does
+              ;; not register — or when the `:search` config overlay is active (its
+              ;; re-included subtrees are invisible to the index). A plain
+              ;; `is_respect_gitignore false` is NOT a bypass: fff itself honors
+              ;; the flag, so no-ignore stays on the fast native path.
+              (or (some? overlay)
+                  (and is_respect_gitignore
+                       (gitignore/tool-ignore-present? (.getCanonicalFile root))))
               (let
                 [base
                  (.getCanonicalFile root)
@@ -1954,35 +1880,37 @@
                       (get base))]
 
                 (score-walked-candidates entries query))
-              :else (with-open [idx (rg-fff-open root)]
-                      (let [base (.getCanonicalFile root)]
-                        ;; doall: realize hits INSIDE with-open, before the
-                        ;; fresh instance is closed.
-                        (doall
-                          (->> (:items (fff/search idx {:query query :page-size candidate-page}))
-                               (keep
-                                 (fn
-                                   [{:keys [relative-path file-name git-status size modified
-                                            frecency-score binary?]}]
-                                   (let
-                                     [f (io/file base relative-path)
-                                      rel (rel-path f)
-                                      score (find-relevance query rel)]
+              :else
+              (fff-index/with-index
+                [idx (fff-index/lease root is_respect_gitignore)]
+                (let [base (.getCanonicalFile root)]
+                  ;; doall: realize hits INSIDE with-open, before the
+                  ;; fresh instance is closed.
+                  (doall
+                    (->> (:items (fff/search idx {:query query :page-size candidate-page}))
+                         (keep
+                           (fn
+                             [{:keys [relative-path file-name git-status size modified
+                                      frecency-score binary?]}]
+                             (let
+                               [f (io/file base relative-path)
+                                rel (rel-path f)
+                                score (find-relevance query rel)]
 
-                                     (when (and (>= (double score)
-                                                    #_{:clj-kondo/ignore
-                                                       [:redundant-primitive-coercion]}
-                                                    (double find-min-score))
-                                                (or is_hidden (not (.isHidden f)))
-                                                (not (ignored? (load-ignore-node base) f base)))
-                                       {:path rel
-                                        :file-name (or file-name (.getName f))
-                                        :size size
-                                        :modified modified
-                                        :frecency-score frecency-score
-                                        :git-status git-status
-                                        :binary? (boolean binary?)
-                                        :score score})))))))))))
+                               (when (and (>= (double score)
+                                              #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                                              (double find-min-score))
+                                          (or is_hidden (not (.isHidden f)))
+                                          (or (not is_respect_gitignore)
+                                              (not (ignored? (load-ignore-node base) f base))))
+                                 {:path rel
+                                  :file-name (or file-name (.getName f))
+                                  :size size
+                                  :modified modified
+                                  :frecency-score frecency-score
+                                  :git-status git-status
+                                  :binary? (boolean binary?)
+                                  :score score})))))))))))
     (distinct)
     vec))
 
@@ -2020,8 +1948,8 @@
                                   :binary? false
                                   :source :direct-file
                                   :score 1.0}]
-                 (or (not is_respect_gitignore)
-                     (gitignore/tool-ignore-present? (.getCanonicalFile root)))
+                 (and is_respect_gitignore
+                      (gitignore/tool-ignore-present? (.getCanonicalFile root)))
                  (let
                    [base
                     (.getCanonicalFile root)
@@ -2031,27 +1959,30 @@
 
                    (map #(assoc % :score 1.0) (find-walk-files base is_hidden ignore-node nil)))
                  :else
-                 (with-open [idx (rg-fff-open root)]
+                 (fff-index/with-index
+                   [idx (fff-index/lease root is_respect_gitignore)]
                    (let [base (.getCanonicalFile root)]
                      (doall
                        (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
-                            (keep (fn
-                                    [{:keys [relative-path file-name git-status size modified
-                                             frecency-score binary?]}]
-                                    (let
-                                      [f (io/file base relative-path)
-                                       rel (rel-path f)]
+                            (keep
+                              (fn
+                                [{:keys [relative-path file-name git-status size modified
+                                         frecency-score binary?]}]
+                                (let
+                                  [f (io/file base relative-path)
+                                   rel (rel-path f)]
 
-                                      (when (and (or is_hidden (not (.isHidden f)))
-                                                 (not (ignored? (load-ignore-node base) f base)))
-                                        {:path rel
-                                         :file-name (or file-name (.getName f))
-                                         :size size
-                                         :modified modified
-                                         :frecency-score frecency-score
-                                         :git-status git-status
-                                         :binary? (boolean binary?)
-                                         :score 1.0})))))))))))
+                                  (when (and (or is_hidden (not (.isHidden f)))
+                                             (or (not is_respect_gitignore)
+                                                 (not (ignored? (load-ignore-node base) f base))))
+                                    {:path rel
+                                     :file-name (or file-name (.getName f))
+                                     :size size
+                                     :modified modified
+                                     :frecency-score frecency-score
+                                     :git-status git-status
+                                     :binary? (boolean binary?)
+                                     :score 1.0})))))))))))
        (distinct)
        (sort-by (fn [it]
                   [(- (long (or (:frecency-score it) 0))) (- (long (or (:modified it) 0)))
@@ -2209,23 +2140,19 @@
          (:source it)
          (assoc "source" (name (:source it)))))]
 
-    ;; Model-facing grep result — string keys, no keyword values.
-    (cond->
-      {"items" (mapv ->item items)
-       "item_count" (count items)
-       "paths" (mapv :path items)
-       "query" query
-       "searched_paths" searched-paths
-       "limit" limit
-       "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")}
-      fuzzy?
-      (assoc "fuzzy" true)
-
-      (seq matched-terms)
-      (assoc "matched_terms" matched-terms)
-
-      (seq (into (missing-search-paths find-resolutions) scope-misses))
-      (assoc "missing_paths" (into (missing-search-paths find-resolutions) scope-misses)))))
+    ;; Model-facing grep result — string keys, no keyword values, and TOTAL:
+    ;; every key ships on every call (empty vector / false, never absent) so
+    ;; caller code can index a field without a `contains?` dance first.
+    {"items" (mapv ->item items)
+     "item_count" (count items)
+     "paths" (mapv :path items)
+     "query" query
+     "searched_paths" searched-paths
+     "limit" limit
+     "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")
+     "fuzzy" (boolean fuzzy?)
+     "matched_terms" (vec matched-terms)
+     "missing_paths" (into (missing-search-paths find-resolutions) scope-misses)}))
 
 (declare ^:private rg-search ^:private coerce-rg-spec)
 
@@ -2284,9 +2211,6 @@
       total-files
       (:total-file-count out)
 
-      more-files?
-      (> (long total-files) (count ordered-paths))
-
       matches
       (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
         (doseq [p ordered-paths]
@@ -2318,28 +2242,23 @@
           (.put fc p (count (get by-path p))))
         fc)]
 
-     (cond->
-       {"needles" needles
-        "matches" matches
-        "hit_count" (count hits)
-        "file_count" (count ordered-paths)
-        "first_hit" (when (pos? (count hits))
-                      (let [{:keys [path line]} (nth hits 0)]
-                        (str path ":" line)))}
-       (> (count ordered-paths) 1)
-       (assoc "file_counts" file-counts)
-
-       more-files?
-       (assoc "total_file_count" total-files)
-
-       (and more-files? (not (:total-file-count-exact? out)))
-       (assoc "total_file_count_is_exact" false)
-
-       ;; CONTENT truncation is its OWN signal: the top-level `truncated_by` is
-       ;; the NAME search's, so a capped content sweep would otherwise read as
-       ;; `end_of_results` and the model would treat a slice as the whole answer.
-       (contains? #{:limit :bytes} (:truncated-by out))
-       (assoc "hits_truncated_by" (name (:truncated-by out))))))
+     ;; TOTAL result: breadth and truncation keys ALWAYS ship (nil / false when
+     ;; there is nothing to report), so `r["hits_truncated_by"]` is a value test
+     ;; rather than a key test. CONTENT truncation stays its OWN signal: the
+     ;; top-level `truncated_by` is the NAME search's, so a capped content sweep
+     ;; would otherwise read as `end_of_results` and a slice would pass as whole.
+     {"needles" needles
+      "matches" matches
+      "hit_count" (count hits)
+      "file_count" (count ordered-paths)
+      "file_counts" file-counts
+      "total_file_count" total-files
+      "total_file_count_is_exact" (boolean (get out :total-file-count-exact? true))
+      "hits_truncated_by" (when (contains? #{:limit :bytes} (:truncated-by out))
+                            (name (:truncated-by out)))
+      "first_hit" (when (pos? (count hits))
+                    (let [{:keys [path line]} (nth hits 0)]
+                      (str path ":" line)))}))
   ([out needles _former-context] (content-result out needles)))
 
 (defn- name-relevant-paths
@@ -2403,13 +2322,14 @@
    Alongside it: `hit_count`, `file_count`, `file_counts`, `first_hit`, the
    ranked NAME matches in `paths`, `searched_paths` naming every physical root
    actually scanned (including the default `.` expansion), and `missing_paths`
-   for a scope that does not exist (never silently absorbed).
+   for a scope that does not exist (never silently absorbed) — every one of them
+   TOTAL: present on every result, `[]`/`null` when there is nothing to report.
    A blank query is ls mode: it lists scoped files by frecency/recency without
    running CONTENT search or fuzzy query scoring.
 
    Truncation is explicit on BOTH axes: `truncated_by` covers the NAME list,
-   `hits_truncated_by` (`limit`/`bytes`) appears only when the CONTENT sweep was
-   capped — its absence means the content result is complete. A query that reads
+   `hits_truncated_by` (`limit`/`bytes`) names a capped CONTENT sweep and is
+   `null` when the content result is complete. A query that reads
    like a regex but matches no content gets a `hint` saying so, since CONTENT
    matching never interprets regex syntax.
 
@@ -2474,7 +2394,10 @@
      (cond->
        (-> name-out
            (dissoc "items" "fuzzy" "matched_terms" "item_count")
-           (assoc "paths" kept-paths)
+           ;; `hint` is TOTAL too: present on every grep result, nil when the
+           ;; search has nothing to explain.
+           (assoc "paths" kept-paths
+                  "hint" nil)
            (merge content))
        (and (not ls?) (zero? (long (or item_count 0))) (zero? content-hits))
        (assoc "hint"
@@ -2874,24 +2797,23 @@
              (and (.isFile f) (include-file? f)) [f]
              :else []))
 
-     ;; fff-first: on the DEFAULT gitignore-respecting path fff OWNS discovery. It
-     ;; enumerates the correct universe (nested `.gitignore`-aware — NEVER descends
-     ;; node_modules/target/…) and needle-narrows via native grep, ~280× faster than a
-     ;; raw walk. The result is IDENTICAL to the old `walk ∩ fff` (fff already dropped
-     ;; the ignored files the walk kept), just without paying the walk. Skip fff — walk
-     ;; instead — only when the caller opted OUT of gitignore, a tool-only
-     ;; `.ignore`/`.rgignore` is present (its `!` rules re-include files fff would never
-     ;; surface), or the `:search` overlay is active (its gitignore-honoring index would
-     ;; re-drop the re-included files). fff surfaces dotfiles the walk hid by descent, so
-     ;; re-apply the include globs + hidden-below-root guard on the fff path.
+     ;; fff-first: fff OWNS discovery. It enumerates the correct universe (nested
+     ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
+     ;; native grep, ~280× faster than a raw walk. `is_respect_gitignore` is passed THROUGH
+     ;; to fff's walker, so even a no-ignore sweep stays native instead of raw-walking every
+     ;; workspace root (that bypass cost 120s on this workspace). Skip fff — walk instead —
+     ;; only when a `.rgignore` is present (the one ignore filename fff's ripgrep
+     ;; walker does not register; `.ignore` IS native) or the `:search` overlay is active (its
+     ;; gitignore-honoring index would re-drop the re-included files). fff surfaces dotfiles
+     ;; the walk hid by descent, so re-apply the include globs + hidden-below-root guard on
+     ;; the fff path.
      fff-first?
-     (and is_respect_gitignore
-          (nil? search-overlay)
-          (not (some gitignore/tool-ignore-present? roots)))
+     (and (nil? search-overlay)
+          (or (not is_respect_gitignore) (not (some gitignore/tool-ignore-present? roots))))
 
      candidates
      (if fff-first?
-       (->> (rg-fff-candidate-files roots needles)
+       (->> (rg-fff-candidate-files roots needles is_respect_gitignore)
             (filter include-file?)
             (remove (fn [^File f]
                       (and (not is_hidden) (rg-hidden-below-root? roots f)))))
@@ -3457,6 +3379,7 @@
   [plans]
   (doseq [{:keys [file after]} plans]
     (spit file after)
+    (fff-index/note-fs-write!)
     (capture-temp-write! file))
   (doseq [{:keys [file]} plans]
     (clear-patch-fail-count! file)))
@@ -3705,6 +3628,7 @@
                         (str "\n" (patch-loop-hint n rel)))})
           (do (ensure-parent-dirs! file)
               (spit file content)
+              (fff-index/note-fs-write!)
               (capture-temp-write! file)
               (clear-patch-fail-count! file)
               {:success? true
@@ -3730,6 +3654,7 @@
 
      (ensure-parent-dirs! dest-file)
      (fs/copy src-file dest-file (or opts {}))
+     (fff-index/note-fs-write!)
      (rel-path dest-file))))
 
 (defn- move-safe
@@ -3744,6 +3669,7 @@
 
      (ensure-parent-dirs! dest-file)
      (fs/move src-file dest-file (or opts {}))
+     (fff-index/note-fs-write!)
      (rel-path dest-file))))
 
 (defn- delete-path!
@@ -3751,6 +3677,7 @@
   [path]
   (let [f (safe-path path)]
     (if (fs/directory? f) (fs/delete-tree f) (fs/delete f))
+    (fff-index/note-fs-write!)
     true))
 
 (defn- delete-safe [path] (delete-path! path))
@@ -3758,7 +3685,9 @@
 (defn- delete-if-exists-safe
   [path]
   (let [f (safe-path path)]
-    (if (fs/exists? f) (do (if (fs/directory? f) (fs/delete-tree f) (fs/delete f)) true) false)))
+    (if (fs/exists? f)
+      (do (if (fs/directory? f) (fs/delete-tree f) (fs/delete f)) (fff-index/note-fs-write!) true)
+      false)))
 
 (defn- exists-safe? [path] (fs/exists? (safe-path path)))
 
@@ -3804,9 +3733,9 @@
 
          (contains? m :range)
          (assoc "range" (:range m))))]
-    (cond-> (->win out)
-      (seq (:ranges out))
-      (assoc "ranges" (mapv ->win (:ranges out))))))
+    ;; TOTAL: `ranges` ships on every read — nil for a single window, a vector of
+    ;; window maps for a multi-window read — so the caller never key-probes.
+    (assoc (->win out) "ranges" (when (seq (:ranges out)) (mapv ->win (:ranges out))))))
 
 (defn- normalize-cat-anchor-option
   "Accept the documented anchor shapes plus the common model mistakes: a
@@ -4593,22 +4522,29 @@
       {:op :struct_index
        :path path
        :kind :file
-       :result (cond idx (cond->
-                           {"skeleton" (:skeleton idx)
-                            "definitions" (mapv def->wire (:definitions idx))
-                            "imports" (mapv import->wire (:imports idx))
-                            "language" (:language idx)
-                            "line_count" (:line-count idx)
-                            "path" path}
-                           (and (nil? ranges) (some? range))
-                           (assoc "range" range)
-
-                           (some? ranges)
-                           (assoc "ranges" ranges))
-                     language {"language" language
-                               "path" path
-                               "note" "No structural index for this language yet — use cat(path)."}
-                     :else {"path" path "note" "Unknown language — use cat(path)."})})))
+       ;; TOTAL: every branch answers with the SAME key set, nil-filled — an
+       ;; unindexed language is a `note` next to nil structure, not a foreign map.
+       :result (let
+                 [base {"skeleton" nil
+                        "definitions" []
+                        "imports" []
+                        "language" nil
+                        "line_count" nil
+                        "path" path
+                        "range" (when (nil? ranges) range)
+                        "ranges" ranges
+                        "note" nil}]
+                 (cond idx (assoc base
+                             "skeleton" (:skeleton idx)
+                             "definitions" (mapv def->wire (:definitions idx))
+                             "imports" (mapv import->wire (:imports idx))
+                             "language" (:language idx)
+                             "line_count" (:line-count idx))
+                       language (assoc base
+                                  "language" language
+                                  "note"
+                                  "No structural index for this language yet — use cat(path).")
+                       :else (assoc base "note" "Unknown language — use cat(path).")))})))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -5426,10 +5362,10 @@
      :call {:pos ["path"] :rest :opt}
      :description
      (str
-       "Read one sufficient file region as patch-ready `lineno:hash` anchored lines. "
-       "A DIRECTORY path lists its entries instead (shallow one level; `depth` recurses). "
-       "Use exact physical paths returned by `grep`/`struct_index`; never reconstruct a path from a language namespace or module name. "
-       "For supported code, use `struct_index` first; every write invalidates returned anchors.")
+       "Read ONE sufficient file region as patch-ready `lineno:hash` anchored lines. "
+       "A DIRECTORY path switches to listing mode (entries one level deep; `depth`/`is_hidden`/`is_respect_gitignore` apply only there). "
+       "Pass physical paths exactly as `grep`/`struct_index` returned them; never reconstruct a path from a language namespace or module name. "
+       "For supported code run `struct_index` first, then read only the body you need; every write invalidates returned anchors.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema
@@ -5477,11 +5413,11 @@
      :native-tool? true
      :description
      (str
-       "Grep workspace CONTENT (literal smart-case) plus fuzzy file names/paths. Pass `query: \"\"` "
-       "to list scoped files. Returns patch-ready `matches`, hit/file counts, ranked name matches in "
-       "`paths`, and `missing_paths` for stale scopes. Returned paths are authoritative physical paths: "
-       "pass unchanged to `cat`/`struct_index`; never rebuild from a language namespace or module name. "
-       "`hits_truncated_by` appears only when the content sweep was capped; otherwise content results are complete.")
+       "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when you do not "
+       "know where something lives; `query: \"\"` lists scoped files instead. Returns patch-ready `matches`, "
+       "hit/file counts, ranked name hits in `paths`, `missing_paths` for stale scopes. Returned paths are "
+       "authoritative: pass them to `cat`/`struct_index` unchanged, never rebuild from a language namespace "
+       "or module name. Every result key always ships; content is complete when `hits_truncated_by` is null.")
      :render render-grep-result
      :color-role :tool-color/search
      :schema
@@ -5490,12 +5426,12 @@
       {"query"
        {:oneOf [{:type "string"} {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
         :description
-        "The search term: a literal content substring and/or filename fragment. Pass an empty string to list scoped files, ranked by frecency/recency. Lists are OR for content search; filename matching uses the joined terms."}
+        "Literal content substring and/or filename fragment; an empty string lists scoped files ranked by frecency/recency. A list is OR for content search; filename matching uses the joined terms."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Scopes (default: whole tree). An existing file is searched first, then its parent on zero content hits. A missing scope searches its nearest existing directory and appears in missing_paths. Returned `paths` values are exact physical paths for direct handoff to cat/struct_index."}
+        "Scopes (default: whole tree). A file scope is searched first, then its parent on zero content hits; a missing scope falls back to its nearest existing directory and is echoed in missing_paths. Returned values are exact physical paths for direct handoff to cat/struct_index."}
        "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
                   :description "Restrict content search to these globs, e.g. [\"**/*.clj\"]."}
        "context" {:type "integer"
@@ -5857,7 +5793,7 @@
        "anchor"
        {:type "string"
         :description
-        "Dual use: for move_before/move_after the def NAME to relocate next to; otherwise a `lineno:hash` anchor (from struct_index/struct_occurrences/cat) that enters the zipper at the node starting on that line (compose with `nav`)."}
+        "Target selector: for move_before/move_after the def NAME to move next to; for every other op a `lineno:hash` row (from struct_index/struct_occurrences/cat) that enters the zipper at the node starting on that line (compose with `nav`)."}
        "at"
        {:type "array"
         :items {:type "integer" :minimum 0}
@@ -6540,7 +6476,7 @@
     {:symbol 'fs
      :native-tool? true
      :description
-     "One confined filesystem tool — `op` ∈ copy | move | delete | create_dirs | exists. copy/move take src+dest and fail on an existing dest unless is_overwrite; delete is destructive and needs explicit user intent (is_missing_ok no-ops when absent); create_dirs makes missing parents; exists checks without reading."
+     "One confined filesystem tool: `op` picks the verb and which params it reads. copy/move take src+dest and refuse an existing dest unless is_overwrite. delete takes path, is destructive, and needs explicit user intent (is_missing_ok no-ops when absent). create_dirs takes path and makes missing parents. exists takes path and checks without reading."
      :render render-fs-result
      :color-role :tool-color/move
      :schema

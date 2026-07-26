@@ -5,7 +5,10 @@
   ;; `vis/validator-fn` is an authoring sugar over `(fn arglist body)`.
   ;; Same arglist semantics; tell kondo to lint it as a plain fn so
   ;; destructured bindings in the body resolve.
-  com.blockether.vis.core/validator-fn clojure.core/fn}
+  com.blockether.vis.core/validator-fn clojure.core/fn
+  ;; `fff-index/with-index` leases a pooled fff index: `[binding (lease …)]`,
+  ;; exactly a `let` binding pair, so kondo resolves the bound index symbol.
+  com.blockether.vis.internal.fff-index/with-index clojure.core/let}
 
  ;; `with-python-context` (sandbox-shim tests) is an anaphoric macro that binds
  ;; `python-context`; tell kondo the symbol is intentional, not a typo.

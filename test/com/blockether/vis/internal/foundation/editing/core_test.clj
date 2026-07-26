@@ -30,6 +30,11 @@
   [name]
   (deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" name))))
 
+(defn- fff-index-fn
+  "Same, for the canonical pooled-fff namespace the index lifecycle lives in."
+  [name]
+  (deref (resolve (symbol "com.blockether.vis.internal.fff-index" name))))
+
 (defn- temp-root
   "Cwd-relative path string for the shared temp root, idempotently
    created. Stays relative on purpose: `safe-path` resolves against
@@ -41,10 +46,15 @@
     rel))
 
 (defn- write-temp!
+  "Writes a temp fixture file, mirroring the production invariant that EVERY
+   in-process mutation announces itself via `note-fs-write!` so a pooled fff
+   index resyncs before the next search (an edited `.gitignore`/`.ignore`
+   changes the index's universe, not just one file's bytes)."
   [name content]
   (let [rel (str (temp-root) "/" name)]
     (fs/create-dirs (fs/parent rel))
     (spit (fs/file rel) content)
+    ((fff-index-fn "note-fs-write!"))
     rel))
 
 (defn- temp-dir-path
@@ -192,19 +202,35 @@
           (expect (= ["alpha" "gamma"] (mapv :text (:hits out))))))
     (it "rg-needle-hostile-to-fff? flags quantifier/bracket needles (fff fast-path gate)"
         (let [hostile? (private-fn "rg-needle-hostile-to-fff?")]
-          ;; These make fff match NOTHING/error → zero candidate files → the
-          ;; literal matcher never ran → 0 hits (the regression).
+          ;; These make fff's FUZZY PATH search match NOTHING, so that side is
+          ;; skipped for such a needle. Content discovery is unaffected: native
+          ;; grep runs in `:mode :plain` (literal, smart-case) for every needle.
           (expect (hostile? "*workspace-root*"))
           (expect (hostile? "(defn foo"))
           (expect (hostile? "arr[0]"))
           (expect (hostile? "foo{bar"))
-          ;; No quantifier/bracket char → stays on the fff fast path.
+          ;; No quantifier/bracket char → the fuzzy path side runs too.
           (expect (not (hostile? "workspace-root")))
           (expect (not (hostile? "config.json")))))
+    (it "a hostile needle still hits through fff's LITERAL native grep (no enumeration)"
+        ;; Regression guard for the old fallback: a quantifier/bracket needle used
+        ;; to force a full fff enumeration that rg then read file-by-file. fff's
+        ;; plain-mode grep is literal, so the candidate set stays tiny AND exact.
+        (let
+          [_
+           (write-temp! "rghostile/a.clj" "(get-in m [:a 0])\n(defn foo [x] x)\n")
+
+           _
+           (write-temp! "rghostile/b.clj" "nothing interesting here\n")
+
+           out
+           (grep {"query" ["[:a 0]"] "paths" [(temp-dir-path "rghostile")]})]
+
+          (expect (= 1 (count (:hits out))))
+          (expect (= "(get-in m [:a 0])" (:text (first (:hits out)))))))
     (it "rg-search finds an ear-muffed *var* (fff pre-filter bypassed, literal match)"
-        ;; fff honors `*workspace-root*` as a regex/glob → 0 candidate files →
-        ;; the literal `make-line-matcher` never ran → 0 hits. Bypass fff for
-        ;; such needles so the literal-substring contract holds.
+        ;; fff's fuzzy PATH search honors `*workspace-root*` as a regex/glob, so the
+        ;; hit must come from the literal native grep + `make-line-matcher`.
         (let
           [_
            (write-temp! "rgstar/a.clj" "(def ^:dynamic *workspace-root* \"/x\")\n")
@@ -3499,8 +3525,8 @@
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "file_count"])))
           (expect (= 1 (get-in r [:result "hit_count"])))
-          ;; an existing path is never reported missing
-          (expect (nil? (get-in r [:result "missing_paths"]))))
+          ;; an existing path is never reported missing — but the key still ships
+          (expect (= [] (get-in r [:result "missing_paths"]))))
         ;; a path that does NOT exist CLIMBS to its nearest existing ancestor dir
         ;; (here `dir`, holding a.clj + b.clj) so the search still runs — and the
         ;; ghost is REPORTED in missing_paths, never a hard error, never silent
@@ -3781,7 +3807,7 @@
           (expect (= 0 (get result "hit_count")))
           (expect (empty? (get result "matches")))
           (expect (not (contains? result "items")))
-          (expect (not (contains? result "hint")))))))
+          (expect (nil? (get result "hint")))))))
 
 (defdescribe
   grep-searched-paths-reporting-test
@@ -3852,13 +3878,18 @@
                                          :total-file-count-exact? true}
                                         ["x"])
                         "hits_truncated_by"))))
-    (it "a COMPLETE content sweep carries no hits_truncated_by at all"
-        (expect (not (contains? (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
-                                                 :truncated-by :end-of-results
-                                                 :total-file-count 1
-                                                 :total-file-count-exact? true}
-                                                ["x"])
-                                "hits_truncated_by"))))
+    (it "a COMPLETE content sweep still SHIPS hits_truncated_by, as null"
+        (let
+          [r (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
+                              :truncated-by :end-of-results
+                              :total-file-count 1
+                              :total-file-count-exact? true}
+                             ["x"])]
+          ;; TOTAL result: the key is a VALUE test, never a `contains?` test.
+          (expect (contains? r "hits_truncated_by"))
+          (expect (nil? (get r "hits_truncated_by")))
+          (expect (true? (get r "total_file_count_is_exact")))
+          (expect (= 1 (get r "total_file_count")))))
     (it "a regex-looking query that matches no CONTENT says the search is literal"
         (let
           [_
@@ -3897,7 +3928,7 @@
            (:result (find-files {"query" "defn needle" "paths" [dir]}))]
 
           (expect (pos? (get result "hit_count")))
-          (expect (not (contains? result "hint")))))))
+          (expect (nil? (get result "hint")))))))
 
 (defdescribe
   rg-stringified-list-coercion-test
@@ -4029,7 +4060,7 @@
            dir (temp-dir-path "findprecise")
            out (find-search [{"query" "channel tui footer" "paths" [dir]}])]
 
-          (expect (nil? (get out "fuzzy")))
+          (expect (false? (get out "fuzzy")))
           (expect (some #{"channel_tui_footer.clj"}
                         (map #(last (string/split % #"/")) (get out "paths"))))))
     (it "a BLANK query lists every file under the paths like ls (no scoring)"
@@ -4042,10 +4073,31 @@
            names (set (map #(last (string/split % #"/")) (get out "paths")))]
 
           (expect (= "" (get out "query")))
-          (expect (nil? (get out "fuzzy")))
+          (expect (false? (get out "fuzzy")))
+          (expect (= [] (get out "matched_terms")))
           (expect (= 3 (get out "item_count")))
           (expect (= #{"one.clj" "two.md" "three.txt"} names))
           (expect (every? #(get % "path") (get out "items")))))
+    (it "EVERY grep result carries the SAME TOTAL key set — hit, miss, ls, stale scope"
+        (let
+          [gt (private-fn "grep-tool")
+           _ (write-temp! "greptotal/one.clj" ";; needle-total\n")
+           dir (temp-dir-path "greptotal")
+           ks #(set (keys (:result %)))
+           hit (gt {"query" "needle-total" "paths" [dir]})
+           miss (gt {"query" "zzz-nothing-here-xyz" "paths" [dir]})
+           ls (gt {"query" "" "paths" [dir]})
+           stale (gt {"query" "needle-total" "paths" [(str dir "/gone/deeper.clj")]})]
+
+          ;; One shape for every outcome: caller code indexes a field instead of
+          ;; probing for it, so a nil-valued signal can never read as a tool bug.
+          (expect (= (ks hit) (ks miss) (ks ls) (ks stale)))
+          (expect (every? (ks hit)
+                          ["missing_paths" "hits_truncated_by" "file_counts" "total_file_count"
+                           "total_file_count_is_exact" "first_hit"]))
+          (expect (nil? (get-in hit [:result "hits_truncated_by"])))
+          (expect (= [] (get-in hit [:result "missing_paths"])))
+          (expect (seq (get-in stale [:result "missing_paths"])))))
     (it "a genuinely-unmatchable query still returns nothing (fuzzy can't invent hits)"
         (let
           [_ (write-temp! "findnone/alpha.clj" ";; x\n")
@@ -4297,9 +4349,9 @@
   is-respect-gitignore-override-test
   ;; `.gitignore`d files are hidden from rg/find_files by default, but a caller
   ;; must be able to reach vendored / corporate repos the project ignores by
-  ;; passing is_respect_gitignore=false. rg walks the tree manually (skipping the
-  ;; fff candidate-narrowing, whose index also honors .gitignore); find_files
-  ;; swaps its fff scan for a direct filesystem walk.
+  ;; passing is_respect_gitignore=false. That flag is handed THROUGH to fff
+  ;; (`:respect-ignore-files? false`), so both rg and find_files stay on the
+  ;; native index — no raw filesystem walk anywhere on the opt-out path.
   (let
     [grep
      (private-fn "rg-search")
@@ -4324,12 +4376,13 @@
             (expect (= 1 (:total-file-count r)))
             (expect (some #(string/includes? (:path %) "vendor/corp/secret.txt") (:hits r))))))
     (it
-      "is_respect_gitignore=false walks each root's tree ONCE across the strict + fallback token scans"
+      "is_respect_gitignore=false never walks a root's tree — fff itself serves the no-ignore index"
       ;; "secret token" strict-matches nothing (no single path holds BOTH
       ;; words), so the relaxed fallback fires a per-token scan for "secret"
-      ;; AND "token" — 3 find-scan passes total. The shared walk-cache must
-      ;; collapse those to a SINGLE find-walk-files traversal, not one walk
-      ;; per pass (the up-to-6x perf bug).
+      ;; AND "token" — 3 find-scan passes total. None of them may fall back to
+      ;; a direct filesystem walk: the fff index is created with
+      ;; `:respect-ignore-files? false`, so it already contains the ignored
+      ;; file and every pass is served natively.
       (let
         [path
          (fixture! "gitignore-override-walkonce")
@@ -4351,7 +4404,7 @@
              (expect (some (fn [p]
                              (string/includes? p "vendor/corp/secret.txt"))
                            (get r "paths")))))
-        (expect (= 1 @calls))))
+        (expect (zero? @calls))))
     (it "the default (respect-gitignore) path never triggers a direct filesystem walk"
         ;; With the flag left on, find_files stays on the fff index — the direct
         ;; walk (find-walk-files) is the OPT-OUT branch only and must not run.
@@ -4586,16 +4639,16 @@
    serializing it, and never leaks a permit."
   (let
     [guard
-     (private-fn "with-fff-scan-permit*")
+     (fff-index-fn "with-scan-permit*")
 
      semaphore
-     (private-fn "fff-scan-semaphore")
+     (fff-index-fn "scan-semaphore")
 
      permits
-     (private-fn "fff-scan-max-concurrency")]
+     (fff-index-fn "scan-max-concurrency")]
 
     (describe
-      "with-fff-scan-permit*"
+      "with-scan-permit*"
       (it "caps concurrent scans at the permit count yet still overlaps them"
           ;; N > permits threads all pile into the guard at once; each records
           ;; the live in-flight count while inside. The peak must NEVER exceed
@@ -4645,7 +4698,7 @@
                                        (throw (ex-info "boom" {}))))))
             (expect (= before (.availablePermits semaphore))))))
     (describe
-      "rg-fff-open wiring"
+      "fff-index/open! wiring"
       (it "holds exactly one scan permit while fff builds its index, then releases it"
           ;; Prove the heavy op is actually GUARDED without a real fff scan:
           ;; stub create + wait-for-scan, capture the live permit count at the
@@ -4660,8 +4713,8 @@
                java.io.Closeable
                  (close [_] nil))
 
-             rg-fff-open
-             (private-fn "rg-fff-open")]
+             open-index!
+             (fff-index-fn "open!")]
 
             (with-redefs
               [fff/create
@@ -4673,13 +4726,13 @@
                (fn [_idx _timeout]
                  true)]
 
-              (rg-fff-open (java.io.File. ".")))
+              (open-index! (java.io.File. ".")))
             ;; one permit taken while the (stubbed) scan ran
             (expect (= (dec permits) @seen-during-build))
             ;; released once the build returned
             (expect (= permits (.availablePermits semaphore)))))
       (it "releases the permit when fff's scan times out"
-          ;; wait-for-scan false → rg-fff-open closes the idx and throws; the
+          ;; wait-for-scan false → open! closes the idx and throws; the
           ;; permit must still come back (finally), or a timeout would slowly
           ;; drain the pool to deadlock.
           (let
@@ -4694,8 +4747,8 @@
                java.io.Closeable
                  (close [_] (reset! closed? true)))
 
-             rg-fff-open
-             (private-fn "rg-fff-open")]
+             open-index!
+             (fff-index-fn "open!")]
 
             (with-redefs
               [fff/create
@@ -4706,7 +4759,7 @@
                (fn [_idx _timeout]
                  false)]
 
-              (expect (throws? clojure.lang.ExceptionInfo #(rg-fff-open (java.io.File. ".")))))
+              (expect (throws? clojure.lang.ExceptionInfo #(open-index! (java.io.File. ".")))))
             (expect @closed?)
             (expect (= before (.availablePermits semaphore))))))))
 
@@ -4782,3 +4835,112 @@
           ;; and an action-less result says something useful, never the tool twice
           (expect (= "fs `a/b.txt`" (:summary (render {"op" "fs" "path" "a/b.txt"}))))
           (expect (= "fs" (:summary (render {"op" "fs"}))))))))
+
+(defdescribe
+  fff-index-pool-test
+  (describe
+    "pooled fff index"
+    (it
+      "is REUSED across searches and still sees a file written microseconds ago"
+      (let
+        [_
+         (write-temp! "fffpool/seed.txt" "seed marker zzpoolseed\n")
+
+         dir
+         (temp-dir-path "fffpool")
+
+         rg
+         (private-fn "rg-search")
+
+         pool
+         (fff-index-fn "pool")
+
+         files
+         (fn [q]
+           (set (:files
+                  (rg
+                    {"query" q "paths" [dir] "is_files_only" true "is_respect_gitignore" false}))))
+
+         _
+         (files "zzpoolseed")
+
+         pooled
+         (count @pool)
+
+         fresh
+         (str "zzpoolfresh" (System/nanoTime))
+
+         _
+         (write-temp! "fffpool/fresh.txt" (str "hello " fresh "\n"))
+
+         ;; every Vis write path calls this; it is what makes the NEXT search
+         ;; rescan instead of waiting on the (async, ~100ms) watcher
+         _
+         ((fff-index-fn "note-fs-write!"))
+
+         hit
+         (files fresh)]
+
+        ;; the search left a live index in the pool …
+        (expect (pos? pooled))
+        ;; … and the NEXT search reuses it instead of building another
+        (expect (= pooled (count @pool)))
+        ;; … yet a file written after that index was built is still found,
+        ;; because the write bumped the epoch and the lease resynced
+        (expect (some (fn [p]
+                        (re-find #"fresh\.txt" p))
+                      hit))))
+    (it
+      "does NOT rescan when nothing was written between searches"
+      (let
+        [_
+         (write-temp! "fffnoscan/seed.txt" "zznoscanseed\n")
+
+         dir
+         (temp-dir-path "fffnoscan")
+
+         rg
+         (private-fn "rg-search")
+
+         pool
+         (fff-index-fn "pool")
+
+         note!
+         (fff-index-fn "note-fs-write!")
+
+         run
+         (fn []
+           (rg {"query" "zznoscanseed" "paths" [dir]}))
+
+         _
+         (run)
+
+         entry
+         (some (fn [[[p _] e]]
+                 (when (re-find #"fffnoscan" p) e))
+               @pool)
+
+         ^java.util.concurrent.atomic.AtomicLong synced
+         (:synced-epoch entry)
+
+         before
+         (.get synced)
+
+         _
+         (do (run) (run))
+
+         idle
+         (.get synced)
+
+         _
+         (do (note!) (run))
+
+         after
+         (.get synced)]
+
+        ;; steady state is FREE: no write => no rescan => epoch never moves
+        (expect (some? entry))
+        (expect (= before idle))
+        ;; a write moves it exactly once
+        (expect (< idle after))
+        (expect (= after (do (run) (.get synced))))))))
