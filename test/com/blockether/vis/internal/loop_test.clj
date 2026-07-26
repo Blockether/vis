@@ -3877,6 +3877,9 @@
       [exec
        (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)
 
+       child-started
+       (promise)
+
        child-interrupted
        (promise)]
 
@@ -3885,11 +3888,16 @@
               [(.submit exec
                         ^java.util.concurrent.Callable
                         (fn []
+                          (deliver child-started true)
                           (try (Thread/sleep 60000)
                                :never
                                (catch InterruptedException _
                                  (deliver child-interrupted true)
                                  :interrupted))))]
+
+              _
+              (when (= ::timeout (deref child-started 5000 ::timeout))
+                (throw (ex-info "child did not start" {})))
 
               _
               (.interrupt (Thread/currentThread))
