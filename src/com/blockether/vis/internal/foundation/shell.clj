@@ -27,42 +27,12 @@
       is not auto-pruned, so its output and exit code stay readable until it is
       stopped.
 
-   ONE `cmd` slot, two spellings: the lone positional, or `"
-  cmd
-  "` INSIDE the
-   options map — `shell({"
-  cmd
-  ": "
-  npm
-  run
-  dev
-  ", "
-  op
-  ": "
-  bg
-  ", "
-  id
-  ": "
-  dev
-  "})` IS
-   `shell("
-  npm
-  run
-  dev
-  ", {"
-  op
-  ": "
-  bg
-  ", "
-  id
-  ": "
-  dev
-  "})`. A native JSON call has no
-   positional at all (`:call {:opt-pos ["
-  cmd
-  "]}` lands its `cmd` property there),
-   so the two spellings must never drift. For logs/send/stop that same slot
-   carries the shell's ID, and an explicit `id` wins over it.
+   ONE `cmd` slot, two spellings: the lone positional, or a `cmd` KEY inside the
+   options map — `shell({:cmd c :op :bg :id :dev})` IS `shell(c {:op :bg :id
+   :dev})`. A native JSON call has no positional at all (`:call {:opt-pos
+   [cmd]}` lands its `cmd` property there), so the two spellings must never
+   drift. For logs/send/stop that same slot carries the shell's ID, and an
+   explicit `id` wins over it.
 
    Every op answers with the SAME key set (`shell-result-base`): keys a stage
    does not fill are nil / false / 0 instead of absent, so model Python indexes

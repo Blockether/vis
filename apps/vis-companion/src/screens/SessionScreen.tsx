@@ -1644,7 +1644,7 @@ export function SessionScreen({
         </button>
       )}
 
-      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.4rem,env(safe-area-inset-bottom))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
+      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.875rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
         {fileMatches.length > 0 && (
           <div
             id="file-mention-list"
@@ -2020,16 +2020,17 @@ export function SessionScreen({
           </div>
         </div>
 
-        <div className="flex w-full pt-1.5">
+        <div className="flex w-full justify-center pt-1">
           <button
             type="button"
-            className="inline-flex h-5 w-full min-w-0 items-center justify-center gap-1.5 border border-dialog-edge bg-panel px-2 font-mono text-[9px] font-bold uppercase leading-none tracking-wide text-dialog-hint transition-colors hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none"
+            className="group inline-flex min-w-0 max-w-full items-center gap-1.5 px-1 py-1 font-mono text-[9px] font-bold uppercase leading-none tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
           >
-            <span aria-hidden="true" className="opacity-50">◇</span>
+            <span aria-hidden="true" className="text-accent/60 transition-colors duration-150 group-hover:text-accent motion-reduce:transition-none">◇</span>
             <span className="truncate">{modelPref?.model ?? 'model'}</span>
+            <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
         </div>
       </footer>
