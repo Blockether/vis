@@ -104,15 +104,52 @@
   [s]
   (when s (json/read-json s)))
 
+(def ^:private assistant-wire-key->canonical
+  {"role" :role
+   "content" :content
+   "model" :model
+   "type" :type
+   "text" :text
+   "thinking" :thinking
+   "thinking_signature" :thinking-signature
+   "is_redacted" :redacted?
+   "data" :data
+   "id" :id
+   "name" :name
+   "input" :input
+   "tool_use_id" :tool-use-id
+   "is_error" :is-error
+   "image_url" :image_url
+   "source" :source
+   "url" :url
+   "detail" :detail
+   "media_type" :media_type
+   "cache_control" :cache_control})
+
+(defn- canonical-assistant-value
+  "Restore Vis' persisted wire envelope to Svar's canonical keyword shape.
+   Tool input remains opaque so user map keys are never rewritten."
+  ([value] (canonical-assistant-value value false))
+  ([value opaque?]
+   (cond
+     opaque? value
+     (vector? value) (mapv canonical-assistant-value value)
+     (map? value)
+     (persistent!
+       (reduce-kv
+         (fn [out k v]
+           (let [canonical-k (get assistant-wire-key->canonical k k)]
+             (assoc! out canonical-k
+               (canonical-assistant-value v (= :input canonical-k)))))
+         (transient {})
+         value))
+     :else value)))
+
 (defn- <-json-lazy
-  "Like `<-json` but DEFERRED: returns a `delay` that parses on first `force`.
-   Used for `llm_assistant_message` — a per-iteration blob a session restore
-   materialises for EVERY turn but that only the resume / transcript surfaces
-   read. Restore keeps the small raw string and parses only when a reader
-   `force`s it. Readers must `force` — `clojure.core/force` is a no-op on the
-   plain values that LIVE turns build, so mixed live/restored data is safe."
+  "Lazily restores one persisted canonical Svar assistant message.
+   Storage uses Vis wire strings; replay requires Svar's keyword envelope."
   [s]
-  (delay (<-json s)))
+  (delay (some-> s <-json canonical-assistant-value)))
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."

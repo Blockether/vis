@@ -124,6 +124,57 @@ const stamped = readFileSync(pbxproj, 'utf8')
 writeFileSync(pbxproj, stamped);
 console.log(`· stamped App.xcodeproj  ${marketingVersion} (${buildNumber})`);
 
+// Push notifications are a NATIVE capability, and `ios/` is gitignored and
+// regenerable — so the entitlement, its wiring into the target, and the
+// AppDelegate token forwarding are stamped here rather than committed.
+const entitlementsPath = join(projectDir, 'App', 'App.entitlements');
+if (!existsSync(entitlementsPath)) {
+  writeFileSync(
+    entitlementsPath,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>aps-environment</key>
+  <string>production</string>
+</dict>
+</plist>
+`,
+  );
+  console.log(`· wrote ${entitlementsPath}`);
+}
+
+// Point every build configuration of the App target at it. Without this the
+// archive is signed with no `aps-environment` and APNs rejects every token.
+let project = readFileSync(pbxproj, 'utf8');
+if (!project.includes('CODE_SIGN_ENTITLEMENTS')) {
+  project = project.replaceAll(
+    /(\n(\s*)PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/g,
+    '$1\n$2CODE_SIGN_ENTITLEMENTS = App/App.entitlements;',
+  );
+  writeFileSync(pbxproj, project);
+  console.log('· enabled Push Notifications capability (CODE_SIGN_ENTITLEMENTS)');
+}
+
+// Capacitor's push plugin receives the APNs token through NotificationCenter;
+// the generated AppDelegate does not forward it, so registration would hang.
+const appDelegate = join(projectDir, 'App', 'AppDelegate.swift');
+const delegateSrc = readFileSync(appDelegate, 'utf8');
+if (!delegateSrc.includes('didRegisterForRemoteNotificationsWithDeviceToken')) {
+  const forwarding = `
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
+    }
+`;
+  const at = delegateSrc.lastIndexOf('}');
+  writeFileSync(appDelegate, delegateSrc.slice(0, at) + forwarding + delegateSrc.slice(at));
+  console.log('· wired AppDelegate push-token forwarding');
+}
+
 if (has('prepare')) {
   console.log(
     `\n✓ prepared ${marketingVersion} (${buildNumber}).\n` +

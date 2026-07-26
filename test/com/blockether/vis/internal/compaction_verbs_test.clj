@@ -792,10 +792,14 @@
         (expect (some? (eng/over-budget-hint over 8 6)))
         ;; delta = 3 → past the window, suppressed even while still over budget
         (expect (nil? (eng/over-budget-hint over 9 6))))
-    (it "names both numbers with the shared estimator spelling"
-        (expect
-          (= "handled context 210k over the 144k compaction budget — fold settled turns to compact"
-             (eng/over-budget-hint over 6 6))))
+    (it "is imperative, names both numbers, and prescribes one broad verified fold"
+        (let [hint (eng/over-budget-hint over 6 6)]
+          (doseq
+            [required ["ACTION REQUIRED" "210k" "144k" "Fold settled search/tool sweeps"
+                       "one broad session_fold" "last completed scope"
+                       "preserve decisions, edits, and verification"
+                       "confirm the receipt saved tokens"]]
+            (expect (str/includes? hint required)))))
     (it "nil when unarmed, under budget, or missing the ceiling"
         (expect (nil? (eng/over-budget-hint over 6 nil)))
         (expect (nil? (eng/over-budget-hint under 6 6)))

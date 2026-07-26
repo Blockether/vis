@@ -29,6 +29,10 @@ import type {
   SubmittedTurn,
   Toggle,
   TranscriptTurn,
+  PushDevice,
+  PushDeviceInput,
+  PushSendResult,
+  PushStatus,
   VoiceModelState,
   VoiceTranscript,
 } from './types';
@@ -343,6 +347,34 @@ export class GatewayClient {
 
   capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
     return this.request<GatewayCapabilities>('GET', '/v1/capabilities', undefined, signal);
+  }
+
+  // ── Native push devices ─────────────────────────────────────────
+  /**
+   * Devices this gateway will push to (tokens masked), plus whether it can
+   * push at all — the app needs both to tell "push impossible here" apart from
+   * "push possible, this phone just isn't registered".
+   */
+  devices(signal?: AbortSignal): Promise<{ devices: PushDevice[]; push: PushStatus }> {
+    return this.request('GET', '/v1/devices', undefined, signal);
+  }
+
+  /** Idempotent: re-registering the same token refreshes it, never duplicates. */
+  registerDevice(input: PushDeviceInput): Promise<{ device: PushDevice; push: PushStatus }> {
+    return this.request('POST', '/v1/devices', input);
+  }
+
+  unregisterDevice(token: string): Promise<{ is_removed: boolean }> {
+    return this.request('DELETE', `/v1/devices/${encodeURIComponent(token)}`);
+  }
+
+  /**
+   * One test alert to every registered device, with APNs' per-device verdict —
+   * the only way to prove key, topic, environment and token line up without
+   * waiting for a real turn to finish.
+   */
+  testPush(): Promise<{ results: PushSendResult[]; push: PushStatus }> {
+    return this.request('POST', '/v1/devices/actions/test', {});
   }
 
   voiceModel(sid: string, start = false, signal?: AbortSignal): Promise<VoiceModelState> {

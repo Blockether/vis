@@ -260,6 +260,7 @@ export interface GatewayCapabilities {
       transcription: 'gateway-local';
       model: VoiceModelState;
     };
+    push?: PushStatus;
   };
 }
 
@@ -274,6 +275,52 @@ export interface GatewayStatus {
   clients?: number;
   auth?: string;
   [k: string]: unknown;
+}
+
+/**
+ * Whether THIS gateway can deliver a native push at all: it needs an APNs key,
+ * key id, team id and topic. `missing` names what is absent, so the app can say
+ * why instead of just failing to notify.
+ */
+export interface PushStatus {
+  is_available: boolean;
+  provider: 'apns';
+  environment?: 'sandbox' | 'production';
+  topic?: string | null;
+  missing?: string[];
+  devices: number;
+}
+
+/** One device registered with the gateway. The raw token never leaves it. */
+export interface PushDevice {
+  token_preview: string;
+  platform?: string;
+  environment?: 'sandbox' | 'production';
+  client?: string;
+  client_version?: string;
+  label?: string;
+  bundle_id?: string;
+  registered_at?: number;
+  last_seen?: number;
+}
+
+/** Body of `POST /v1/devices`. */
+export interface PushDeviceInput {
+  token: string;
+  platform?: string;
+  environment?: 'sandbox' | 'production';
+  client?: string;
+  client_version?: string;
+  label?: string;
+  bundle_id?: string;
+}
+
+/** APNs' verdict per device for `POST /v1/devices/actions/test`. */
+export interface PushSendResult {
+  token_preview: string;
+  status: number;
+  reason?: string;
+  is_delivered: boolean;
 }
 
 /** One SSE event as delivered by GET /v1/events?sids=… */

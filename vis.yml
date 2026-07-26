@@ -96,15 +96,3 @@ workspace:
 #     # Empty / unset = no extra inbound ports (the secure default).
 #     inbound_ports:
 #       - 5273
-
-
-# ── Gateway turn-queue tuning ────────────────────────────────────────────────
-# Failure handling for the per-session message queue. Every value is a number;
-# omit the block (or any key) to keep the built-in defaults shown here. A
-# `/reload` applies changes.
-#
-message_queue:
-  breaker_threshold: 3        # consecutive fails before the breaker holds the backlog
-  retry_backoff_ms: [2000, 8000, 30000]  # head-retry backoff (ms) after a transient fail
-  halfopen_probe_ms: 60000    # half-open probe cadence (ms) once the breaker is OPEN
-  retry_after_cap_ms: 120000  # clamp (ms) on a provider-supplied Retry-After

@@ -23,6 +23,14 @@ import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, sessionHash, tabHash } from './lib/router';
 import { useVisualViewportShell } from './lib/viewport';
+import {
+  acquirePushToken,
+  clearDeliveredPushes,
+  deviceRegistration,
+  isPushSupported,
+  onPushTap,
+  pushPermission,
+} from './lib/push';
 
 type Tab = 'sessions' | 'connect';
 
@@ -227,6 +235,37 @@ export function App() {
       ctrl.abort();
     };
   }, [client, compatNonce]);
+
+  // Native push: keep this device's token fresh with the active gateway, and
+  // reopen the session a tapped alert came from. Registration only refreshes a
+  // permission the user ALREADY granted (in Settings ▸ Notifications) — the app
+  // never prompts on launch, and the web build no-ops.
+  useEffect(() => {
+    if (!client || !isPushSupported()) return;
+    let cancelled = false;
+    void (async () => {
+      if ((await pushPermission()) !== 'granted') return;
+      try {
+        const token = await acquirePushToken();
+        if (!cancelled) await client.registerDevice(deviceRegistration(token));
+      } catch {
+        // A gateway that cannot push, or an OS that withheld the token, is not
+        // a reason to degrade the session UI.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  useEffect(() => {
+    void clearDeliveredPushes();
+    return onPushTap((tap) => {
+      const conn = active;
+      if (!conn || !tap.sessionId) return;
+      void openGatewaySession(conn, tap.sessionId);
+    });
+  }, [active, openGatewaySession]);
 
   // Backfill each paired gateway's stable id (from /healthz) so a shareable link
   // can name its gateway by id instead of leaking the gateway URL. Cheap: it

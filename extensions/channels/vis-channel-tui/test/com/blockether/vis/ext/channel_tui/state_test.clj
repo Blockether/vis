@@ -1676,6 +1676,71 @@
           (expect (not-any? #(= "Cancelled by user." (:text %)) (:messages restored-db))))))))
 
 (defdescribe
+  gateway-disconnect-reattach-test
+  (let
+    [session-turn-fx
+     (get @@#'state/fx-registry :session-turn)
+
+     session-attach-fx
+     (get @@#'state/fx-registry :session-attach)
+
+     reattach-fn
+     (:fn (get @@#'state/event-registry :reattach-disconnected-turn))
+
+     session
+     {:id "session-1"}
+
+     token
+     (Object.)
+
+     disconnect
+     (ex-info "SSE disconnected" {:gateway-disconnected true :turn-id "turn-1"})]
+
+    (it "reattaches a submitted turn instead of rendering a false terminal error"
+        (let [events (atom [])]
+          (with-redefs
+            [vis/worker-future (fn [_ thunk]
+                                 (thunk)
+                                 :future)
+             vis/cancellation-set-future! (fn [_ _])
+             state/dispatch #(swap! events conj %)
+             chat/turn! (fn [& _]
+                          (throw disconnect))]
+
+            (session-turn-fx :main session "hello" token nil nil {} {} "client-1")
+            (expect (= [[:reattach-disconnected-turn :main session "turn-1" token "client-1"]]
+                       @events)))))
+    (it "reattaches again when an attach stream disconnects"
+        (let [events (atom [])]
+          (with-redefs
+            [vis/worker-future (fn [_ thunk]
+                                 (thunk)
+                                 :future)
+             vis/cancellation-set-future! (fn [_ _])
+             state/dispatch #(swap! events conj %)
+             chat/attach! (fn [& _]
+                            (throw disconnect))]
+
+            (session-attach-fx :main session "turn-1" token "client-1")
+            (expect (= [[:reattach-disconnected-turn :main session "turn-1" token "client-1"]]
+                       @events)))))
+    (it
+      "reattaches only while the same tab turn is still live"
+      (let [db {:active-tab-id :main :loading? true :cancel-token token :gateway-turn-id "turn-1"}]
+        (with-redefs [vis/cancellation-token (constantly :next-token)]
+          (let
+            [accepted
+             (reattach-fn db [:reattach-disconnected-turn :main session "turn-1" token "client-1"])
+             stale (reattach-fn db
+                                [:reattach-disconnected-turn :main session "turn-1" (Object.)
+                                 "client-1"])]
+
+            (expect (= [[:session-attach :main session "turn-1" :next-token "client-1"]]
+                       (:fx accepted)))
+            (expect (= :next-token (:cancel-token (:db accepted))))
+            (expect (nil? (:fx stale)))))))))
+
+(defdescribe
   pending-send-queue-test
   (it "registers a busy-tab submission with the gateway instead of inventing a row"
       ;; NO OPTIMISTIC ROW: the gateway is the queue of record, so the submission

@@ -203,6 +203,11 @@
   (contains? #{:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout}
              (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn context-overflow-error?
+  "True only for the canonical typed context-window failure."
+  [err]
+  (= :svar.tokens/context-overflow (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (defn- provider-id-of [data] (or (:provider-id data) (:provider data) (:provider/id data)))
 
 (defn auth-provider-next-step
@@ -230,7 +235,7 @@
      (or (ex-message err) (:message err) (str err))
 
      data
-     (:data err)
+     (or (:data err) (ex-data err) err)
 
      body-raw
      (some-> (:body data)
@@ -252,6 +257,12 @@
      (:tool-schema-field data)]
 
     (cond
+      (context-overflow-error? err)
+      (str "WHAT HAPPENED: the request exceeded the model's context window."
+           (when-let [input (:input-tokens data)]
+             (str " Input: " input " tokens."))
+           (when-let [limit (:max-input-tokens data)]
+             (str " Limit: " limit " tokens.")))
       (stream-timeout-error? err)
       (let
         [data
@@ -315,9 +326,12 @@
      (or (ex-message err) (:message err) (str err))
 
      data
-     (:data err)]
+     (or (:data err) (ex-data err) err)]
 
     (case (provider-error-kind err)
+      :context-overflow
+      "Context window exceeded"
+
       :stream-timeout
       "Stream went quiet — Vis timed out"
 
@@ -357,9 +371,12 @@
      (or (ex-message err) (:message err) (str err))
 
      data
-     (:data err)]
+     (or (:data err) (ex-data err) err)]
 
     (case (provider-error-kind err)
+      :context-overflow
+      "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
+
       :stream-timeout
       (str "NEXT STEP: retry — a stall is auto-retried on a backoff. If long reasoning "
            "turns keep tripping it, raise `idle-timeout-ms`.")
@@ -424,7 +441,7 @@
      (or (ex-message err) (:message err) (str err))
 
      data
-     (:data err)
+     (or (:data err) (ex-data err) err)
 
      body-raw
      (some-> (:body data)
@@ -439,7 +456,8 @@
      schema-rejection?
      (tool-schema-rejection-message? (str provider-message "\n" message))]
 
-    (cond (stream-timeout-error? err) :stream-timeout
+    (cond (context-overflow-error? err) :context-overflow
+          (stream-timeout-error? err) :stream-timeout
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           schema-rejection? :tool-schema

@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { GatewayError, type GatewayClient } from '../lib/gateway';
-import type { GatewayConn, GatewayTheme, ThemePref, Toggle, ToggleGroup } from '../lib/types';
+import type {
+  GatewayConn,
+  GatewayTheme,
+  PushDevice,
+  PushStatus,
+  ThemePref,
+  Toggle,
+  ToggleGroup,
+} from '../lib/types';
+import {
+  acquirePushToken,
+  cachedPushToken,
+  deviceRegistration,
+  isPushSupported,
+  maskToken,
+  pushPermission,
+  type PushPermission,
+} from '../lib/push';
 import { applyGatewayTheme, resolveTheme } from '../lib/theme';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { Banner, Button, Input } from '../components/ui';
@@ -300,6 +317,8 @@ export function GatewaySettingsDialog({
           </SettingsPanel>
 
           {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
+
+          {!unreachable && !unauthorized && <NotificationsPanel client={client} />}
 
           {!unreachable && !unauthorized && theme && (
             <SettingsPanel
@@ -610,6 +629,216 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
             </div>
           );
         })}
+      </div>
+    </SettingsPanel>
+  );
+}
+
+/**
+ * Native push ON THIS GATEWAY: whether it can push at all, whether THIS device
+ * is registered, and a live test that proves the whole APNs chain (key, topic,
+ * environment, token) without waiting for a real turn to finish.
+ *
+ * The token itself never round-trips through the UI — the gateway masks every
+ * token it stores, and the app matches its own row by computing the same mask.
+ */
+function NotificationsPanel({ client }: { client: GatewayClient }) {
+  const [push, setPush] = useState<PushStatus | null>(null);
+  const [devices, setDevices] = useState<PushDevice[] | null>(null);
+  const [perm, setPerm] = useState<PushPermission>('unsupported');
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'enable' | 'disable' | 'test' | null>(null);
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const [state, permission] = await Promise.all([client.devices(signal), pushPermission()]);
+        if (signal?.aborted) return;
+        setPush(state.push);
+        setDevices(state.devices);
+        setPerm(permission);
+        setErr(null);
+      } catch (e) {
+        if (signal?.aborted) return;
+        setDevices([]);
+        setErr(e instanceof GatewayError ? e.message : String(e));
+      }
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
+
+  const token = cachedPushToken();
+  const mask = token ? maskToken(token) : null;
+  const mine = mask ? (devices ?? []).find((d) => d.token_preview === mask) : undefined;
+  const registered = Boolean(mine);
+  const supported = isPushSupported();
+
+  const enable = useCallback(async () => {
+    setBusy('enable');
+    setErr(null);
+    setNote(null);
+    try {
+      const fresh = await acquirePushToken();
+      await client.registerDevice(deviceRegistration(fresh));
+      setNote('This device will be notified when a turn finishes.');
+      await load();
+    } catch (e) {
+      setErr(e instanceof GatewayError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [client, load]);
+
+  const disable = useCallback(async () => {
+    const current = cachedPushToken();
+    if (!current) return;
+    setBusy('disable');
+    setErr(null);
+    setNote(null);
+    try {
+      await client.unregisterDevice(current);
+      setNote('This device will no longer be notified.');
+      await load();
+    } catch (e) {
+      setErr(e instanceof GatewayError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [client, load]);
+
+  const test = useCallback(async () => {
+    setBusy('test');
+    setErr(null);
+    setNote(null);
+    try {
+      const { results } = await client.testPush();
+      const ok = results.filter((r) => r.is_delivered).length;
+      setNote(
+        results.length === 0
+          ? 'No devices registered yet.'
+          : `Sent to ${ok}/${results.length} device${results.length === 1 ? '' : 's'}` +
+              (ok < results.length
+                ? ` — ${results.find((r) => !r.is_delivered)?.reason ?? 'rejected'}`
+                : '.'),
+      );
+      await load();
+    } catch (e) {
+      setErr(e instanceof GatewayError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [client, load]);
+
+  const available = push?.is_available ?? false;
+
+  return (
+    <SettingsPanel
+      title="Notifications"
+      meta={
+        push
+          ? available
+            ? `${push.devices} device${push.devices === 1 ? '' : 's'} · ${push.environment ?? 'production'}`
+            : 'not configured'
+          : 'checking…'
+      }
+    >
+      <div className="space-y-2 p-3">
+        {err && <Banner kind="err">{err}</Banner>}
+        {note && <Banner kind="ok">{note}</Banner>}
+
+        <p className="font-mono text-meta text-dialog-hint">
+          The gateway sends one alert when a turn finishes or fails, to every device you
+          register with it.
+        </p>
+
+        {push && !available && (
+          <Banner kind="warn">
+            This gateway cannot push yet — missing {(push.missing ?? ['APNs credentials']).join(', ')}.
+          </Banner>
+        )}
+
+        {!supported && (
+          <Banner kind="warn">
+            Native alerts need the iOS or Android app. The web build can stay open instead.
+          </Banner>
+        )}
+
+        {supported && perm === 'denied' && (
+          <Banner kind="warn">
+            Notifications are turned off for Vis in system Settings — enable them there first.
+          </Banner>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {supported && !registered && (
+            <Button
+              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              disabled={busy !== null || !available}
+              onClick={() => void enable()}
+            >
+              {busy === 'enable' ? 'Registering…' : 'Notify this device'}
+            </Button>
+          )}
+          {supported && registered && (
+            <Button
+              variant="danger"
+              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              disabled={busy !== null}
+              onClick={() => void disable()}
+            >
+              {busy === 'disable' ? 'Removing…' : 'Stop notifying this device'}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            className="min-h-9 flex-1 px-3 font-mono text-meta"
+            disabled={busy !== null || !available || (push?.devices ?? 0) === 0}
+            onClick={() => void test()}
+          >
+            {busy === 'test' ? 'Sending…' : 'Send a test'}
+          </Button>
+        </div>
+
+        {devices === null && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            Checking registered devices…
+          </p>
+        )}
+
+        {devices?.map((device) => (
+          <div
+            key={device.token_preview}
+            className="flex min-h-12 items-center gap-2 border border-dialog-edge bg-panel-2 px-3 py-2"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-ui text-white">
+                {device.label ?? device.platform ?? 'device'}
+                {device.token_preview === mask && (
+                  <span className="ml-2 text-chip font-bold uppercase tracking-wider text-accent">
+                    this device
+                  </span>
+                )}
+              </span>
+              <span className="block truncate font-mono text-meta text-dialog-hint">
+                {device.token_preview} · {device.environment ?? 'production'}
+                {device.client_version ? ` · v${device.client_version}` : ''}
+              </span>
+            </span>
+          </div>
+        ))}
+
+        {devices?.length === 0 && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            No devices registered with this gateway.
+          </p>
+        )}
       </div>
     </SettingsPanel>
   );

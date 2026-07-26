@@ -3349,6 +3349,29 @@
                                                    :paste-counter (or (:paste-counter head) 0))))
                                :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
 
+(reg-event-fx :reattach-disconnected-turn
+              (fn [db [_ workspace-id session tid token client-turn-id]]
+                (let
+                  [workspace-id
+                   (or workspace-id (current-tab-id db))
+
+                   target
+                   (db-for-tab db workspace-id)]
+
+                  (if (and workspace-id
+                           tid
+                           (:loading? target)
+                           (identical? token (:cancel-token target))
+                           (or (nil? (:gateway-turn-id target)) (= tid (:gateway-turn-id target))))
+                    (let [next-token (vis/cancellation-token)]
+                      {:db (update-tab db
+                                       workspace-id
+                                       #(assoc %
+                                          :gateway-turn-id tid
+                                          :cancel-token next-token))
+                       :fx [[:session-attach workspace-id session tid next-token client-turn-id]]})
+                    {:db db}))))
+
 (reg-event-fx
   :attach-running-turn
   ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
@@ -4021,6 +4044,14 @@
 
               (vis/refresh-cached-routers! router)))))
 
+(defn- gateway-disconnect-data
+  "Return gateway disconnect metadata from a throwable cause chain."
+  [t]
+  (loop [^Throwable cause t]
+    (when cause
+      (let [data (ex-data cause)]
+        (if (:gateway-disconnected data) data (recur (.getCause cause)))))))
+
 (reg-fx
   :session-turn
   (fn
@@ -4147,25 +4178,33 @@
                             (dispatch [:set-ctx-panel sid {}]))
                           (catch Throwable _ nil)))))
              (catch Throwable t
-               ;; channels.cancellation/cancellation? folds in
-               ;; InterruptedException, CancellationException, and
-               ;; runtime wrappers around them - keep all the
-               ;; channel-shaped logic in one place. The bubble
-               ;; renderer dims the result based on `:status
-               ;; :cancelled`, so we attach it explicitly here.
-               (let
-                 [message (if (vis/cancellation? t)
-                            "Cancelled by user."
-                            (vis/format-error (or (ex-message t) (str t))))
-                  block {"id" (str (java.util.UUID/randomUUID))
-                         "type" (if (vis/cancellation? t) "notice" "error")
-                         "code" (if (vis/cancellation? t) "turn_cancelled" "turn_failed")
-                         "message" message}]
+               (if-let [disconnect (gateway-disconnect-data t)]
+                 (if-let [tid (:turn-id disconnect)]
+                   (dispatch [:reattach-disconnected-turn workspace-id session tid token
+                              client-turn-id])
+                   (let
+                     [message (vis/format-error (or (ex-message t) (str t)))
+                      block {"id" (str (java.util.UUID/randomUUID))
+                             "type" "error"
+                             "code" "turn_failed"
+                             "message" message}]
 
-                 (dispatch [:message-received workspace-id [block]
-                            (cond-> {:client-turn-id client-turn-id}
-                              (vis/cancellation? t)
-                              (assoc :status :cancelled))]))))))]
+                     (dispatch [:message-received workspace-id [block]
+                                {:client-turn-id client-turn-id}])))
+                 (let
+                   [cancelled? (vis/cancellation? t)
+                    message (if cancelled?
+                              "Cancelled by user."
+                              (vis/format-error (or (ex-message t) (str t))))
+                    block {"id" (str (java.util.UUID/randomUUID))
+                           "type" (if cancelled? "notice" "error")
+                           "code" (if cancelled? "turn_cancelled" "turn_failed")
+                           "message" message}]
+
+                   (dispatch [:message-received workspace-id [block]
+                              (cond-> {:client-turn-id client-turn-id}
+                                cancelled?
+                                (assoc :status :cancelled))])))))))]
       (vis/cancellation-set-future! token fut))))
 
 (reg-fx
@@ -4253,19 +4292,23 @@
                             (dispatch [:set-ctx-panel sid {}]))
                           (catch Throwable _ nil)))))
              (catch Throwable t
-               (let
-                 [message (if (vis/cancellation? t)
-                            "Cancelled by user."
-                            (vis/format-error (or (ex-message t) (str t))))
-                  block {"id" (str (java.util.UUID/randomUUID))
-                         "type" (if (vis/cancellation? t) "notice" "error")
-                         "code" (if (vis/cancellation? t) "turn_cancelled" "turn_failed")
-                         "message" message}]
+               (if (gateway-disconnect-data t)
+                 (dispatch [:reattach-disconnected-turn workspace-id session tid token
+                            client-turn-id])
+                 (let
+                   [cancelled? (vis/cancellation? t)
+                    message (if cancelled?
+                              "Cancelled by user."
+                              (vis/format-error (or (ex-message t) (str t))))
+                    block {"id" (str (java.util.UUID/randomUUID))
+                           "type" (if cancelled? "notice" "error")
+                           "code" (if cancelled? "turn_cancelled" "turn_failed")
+                           "message" message}]
 
-                 (dispatch [:message-received workspace-id [block]
-                            (cond-> {:client-turn-id client-turn-id}
-                              (vis/cancellation? t)
-                              (assoc :status :cancelled))]))))))]
+                   (dispatch [:message-received workspace-id [block]
+                              (cond-> {:client-turn-id client-turn-id}
+                                cancelled?
+                                (assoc :status :cancelled))])))))))]
       (vis/cancellation-set-future! token fut))))
 
 ;; ── Gateway queue I/O ──────────────────────────────────────────────────────

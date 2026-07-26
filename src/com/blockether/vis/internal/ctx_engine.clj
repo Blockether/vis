@@ -798,11 +798,12 @@
                since-turn
                current-turn
                (< (- (long current-turn) (long since-turn)) 3))
-      (str "handled context "
-           (fmt-toks req)
-           " over the "
-           (fmt-toks cap)
-           " compaction budget — fold settled turns to compact"))))
+      (str
+        "ACTION REQUIRED: handled context "
+        (fmt-toks req)
+        " exceeds the "
+        (fmt-toks cap)
+        " compaction budget. Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope; preserve decisions, edits, and verification, then confirm the receipt saved tokens."))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing

@@ -1213,13 +1213,10 @@
                  (assoc :block {:source code :phase (or phase :preflight)})))))
 
 (def ^:private INFRASTRUCTURE_ERROR_TYPES
-  ;; These are provider/runtime failures, not model strategy failures.
-  ;; svar already performs its own transport retry/fallback policy before
-  ;; surfacing them to Vis, so feeding them back into the RLM only burns
-  ;; visible iterations and cannot help the model self-correct.
+  ;; Provider/runtime failures cannot be repaired by feeding them to the model.
   #{:svar.core/http-error :svar.core/stream-cancelled :svar.core/stream-idle-timeout
     :svar.core/stream-semantic-timeout :svar.llm/all-providers-exhausted :svar.llm/circuit-open
-    :svar.llm/provider-exhausted :svar.llm/provider-unavailable})
+    :svar.llm/provider-exhausted :svar.llm/provider-unavailable :svar.tokens/context-overflow})
 
 (defn- infrastructure-error?
   [ex-data-map]

@@ -206,6 +206,66 @@ Bump `protocol-version` in `gateway/protocol.clj` (and `APP_PROTOCOL` in the
 companion's `lib/compat.ts`) only for a breaking wire change, and raise
 `min-client-protocol` only when the old shape genuinely cannot be served.
 
+## Push notifications (iOS / Android)
+
+The gateway pushes exactly **one alert per finished turn** — `turn.completed` or
+`turn.failed` — to every device registered with it, so you can leave the app and
+still learn when the model is done. Nothing else is pushed, and the alert carries
+only the session title plus `session_id`, `turn_id`, `status`; the transcript
+never leaves over APNs.
+
+### Gateway side (APNs credentials)
+
+Push is **off until the gateway holds an APNs key**. Give it one of:
+
+```bash
+export VIS_APNS_KEY_PATH=~/.vis/apns/AuthKey_ABCD123456.p8
+export VIS_APNS_KEY_ID=ABCD123456
+export VIS_APNS_TEAM_ID=YOURTEAMID                  # your Apple team id
+export VIS_APNS_TOPIC=com.example.yourapp           # the app's bundle id
+export VIS_APNS_ENV=production                      # or sandbox for Xcode builds
+```
+
+or drop the `.p8` into `~/.vis/apns/` (the key id is read from its filename) and
+put the rest in `~/.vis/apns/apns.edn`:
+
+```clojure
+{:team-id "YOURTEAMID" :topic "com.example.yourapp" :environment "production"}
+```
+
+Create the key once at *Apple Developer -> Certificates, Identifiers & Profiles
+-> Keys*, with the **Apple Push Notifications service (APNs)** capability
+enabled; the same key signs for every app of the team and never expires.
+
+`GET /v1/capabilities` reports readiness as `features.push`, naming what is
+missing when it is not ready.
+
+### Device registry
+
+| Route | What it does |
+| --- | --- |
+| `GET /v1/devices` | registered devices (tokens **masked**) + this gateway's push readiness |
+| `POST /v1/devices` | idempotently register `{token, platform, environment, client, client_version, label}` |
+| `DELETE /v1/devices/:token` | stop pushing to one device |
+| `POST /v1/devices/actions/test` | one test alert to every device, with APNs' per-device verdict |
+
+Tokens live in `~/.vis/devices.edn`, are never echoed back in full, and a device
+Apple reports as `Unregistered`/`BadDeviceToken` is evicted automatically. A
+token registered under the wrong APNs environment is retried once against the
+other one and then re-labelled — the single most common misconfiguration fixes
+itself.
+
+### App side
+
+Companion -> gateway **Settings -> Notifications**: *Notify this device* asks iOS
+for permission, registers the APNs token with that gateway, and *Send a test*
+proves the whole chain. Tapping an alert reopens the session it came from.
+
+The iOS capability itself (`aps-environment` entitlement + AppDelegate token
+forwarding) is stamped into the regenerable `ios/` project by
+`npm run release:ios -- --prepare`, so it survives a `cap add ios`.
+
+
 ## Shared slash commands
 
 `GET /v1/slashes` returns the channel-safe command palette used by web clients.

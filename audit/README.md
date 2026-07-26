@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-12.
+> Generated 2026-07-26.
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -41,8 +41,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 60 unique, across 15 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~221 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 67 unique, across 13 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~192 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -174,38 +174,47 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `babashka/fs` | `0.5.33` | EPL-1.0 | 28 KB | 3rd-party |
+| `babashka/fs` | `0.5.34` | EPL-1.0 | 35 KB | 3rd-party |
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
-| `com.blockether/fff` | `0.9.6-8` | MIT | 11 KB | Blockether (in-house) |
+| `com.blockether/fff` | `0.12.0` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.1.2` | MIT | 9 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.57` | Apache-2.0 | 449 KB | Blockether (in-house) |
-| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.10` | MIT | 164 KB | Blockether (in-house) |
-| `com.cnuernber/charred` | `1.039` | MIT | 48 KB | 3rd-party |
+| `com.blockether/svar` | `0.7.81` | Apache-2.0 | 493 KB | Blockether (in-house) |
+| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.25` | MIT | 164 KB | Blockether (in-house) |
+| `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
+| `com.github.mwiede/jsch` | `2.28.4` | BSD | 696 KB | 3rd-party |
+| `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
+| `com.taoensso/nippy` | `3.7.0-RC3` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `criterium/criterium` | `0.4.6` | EPL-1.0 | 21 KB | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
 | `io.github.noahtheduke/lazytest` | `2.0.0` | EPL-1.0 | 46 KB | 3rd-party |
-| `io.github.tonsky/clj-reload` | `1.0.0` | MIT | 19 KB | 3rd-party |
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/malli` | `0.20.1` | EPL-2.0 | 97 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
-| `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |
+| `net.mikera/core.matrix` | `0.63.0` | EPL-1.0 | 130 KB | 3rd-party |
+| `net.mikera/vectorz-clj` | `0.48.0` | LGPL-3.0 | 23 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
+| `org.apache.poi/poi-ooxml` | `5.5.1` | Apache-2.0 | 2.0 MB | 3rd-party |
+| `org.apache.sshd/sshd-core` | `2.15.0` | Apache-2.0 | 934 KB | 3rd-party |
+| `org.babashka/http-client` | `0.4.23` | MIT | 16 KB | 3rd-party |
+| `org.bouncycastle/bcpkix-jdk18on` | `1.78.1` | Bouncy Castle Licence | 1.1 MB | 3rd-party |
+| `org.bouncycastle/bcprov-jdk18on` | `1.78.1` | Bouncy Castle Licence | 7.9 MB | 3rd-party |
 | `org.clojure/core.memoize` | `1.2.281` | EPL-1.0 | 8 KB | 3rd-party |
 | `org.clojure/tools.deps` | `0.31.1629` | EPL-1.0 | 49 KB | 3rd-party |
 | `org.commonmark/commonmark` | `0.29.0` | BSD-2-Clause | 211 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-strikethrough` | `0.29.0` | BSD-2-Clause | 13 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-tables` | `0.29.0` | BSD-2-Clause | 23 KB | 3rd-party |
+| `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
 | `org.graalvm.polyglot/polyglot` | `25.1.3` | UPL-1.0 | 502 KB | 3rd-party |
 | `org.graalvm.python/python-language` | `25.1.3` | UPL-1.0 + MIT + PSF | 90.7 MB | 3rd-party |
 | `org.graalvm.python/python-resources` | `25.1.3` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
 | `org.graalvm.truffle/truffle-runtime` | `25.1.3` | UPL-1.0 | 913 KB | 3rd-party |
-| `org.yamlstar/yamlstar` | `0.1.11` | MIT | 40 KB | 3rd-party |
+| `org.yamlstar/yamlstar` | `0.1.15` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
@@ -216,7 +225,8 @@ _Terminal UI (Lanterna)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.23` | LGPL-3.0 | 592 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.35` | LGPL-3.0 | 599 KB | Blockether (in-house) |
+| `org.clojure/clojure` | `1.12.5` | EPL-1.0 | 4.0 MB | 3rd-party |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 | `org.jcodec/jcodec-javase` | `0.2.5` | BSD | 14 KB | 3rd-party |
 
@@ -226,7 +236,7 @@ _Bridge verification tool surface._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/bridge` | `0.1.2` | Apache-2.0 | 69 KB | Blockether (in-house) |
+| `com.blockether/bridge` | `0.2.1` | Apache-2.0 | 74 KB | Blockether (in-house) |
 
 ### `vis-foundation-voice` extension
 
@@ -235,7 +245,7 @@ _Local speech (sherpa-onnx / ONNX Runtime)._
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | Apache-2.0 | 7.7 MB | 3rd-party |
-| `com.microsoft.onnxruntime/onnxruntime` | `1.17.1` | MIT | 83.5 MB | 3rd-party |
+| `com.microsoft.onnxruntime/onnxruntime` | `1.27.0` | MIT | 41.4 MB | 3rd-party |
 
 ### `vis-language-clojure` extension
 
@@ -243,14 +253,15 @@ _Clojure language pack (format/lint/structural edits)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `borkdude/edamame` | `1.5.39` | EPL-1.0 | 26 KB | 3rd-party |
+| `borkdude/edamame` | `1.6.42` | EPL-1.0 | 32 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.05.25` | EPL-1.0 | 701 KB | 3rd-party |
-| `com.fasterxml.jackson.core/jackson-core` | `2.21.1` | Apache-2.0 | 581 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.21.1` | Apache-2.0 | 72 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.21.1` | Apache-2.0 | 95 KB | 3rd-party |
-| `dev.weavejester/cljfmt` | `0.16.4` | EPL-1.0 | 19 KB | 3rd-party |
+| `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.1` | Apache-2.0 | 72 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.1` | Apache-2.0 | 95 KB | 3rd-party |
+| `dev.weavejester/cljfmt` | `0.16.5` | EPL-1.0 | 20 KB | 3rd-party |
+| `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |
 | `parinferish/parinferish` | `0.8.0` | Public-Domain | 8 KB | 3rd-party |
-| `zprint/zprint` | `1.2.9` | MIT | 220 KB | 3rd-party |
+| `zprint/zprint` | `1.3.0` | MIT | 228 KB | 3rd-party |
 
 ### `vis-persistance-sqlite` extension
 
@@ -260,10 +271,9 @@ _Durable session store (SQLite + Flyway migrations)._
 |---|---|---|---|---|
 | `com.github.seancorfield/honeysql` | `2.7.1399` | EPL-2.0 | 43 KB | 3rd-party |
 | `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
-| `com.taoensso/nippy` | `3.7.0-RC2` | EPL-1.0 | 51 KB | 3rd-party |
 | `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
-| `org.flywaydb/flyway-core` | `12.10.0` | Apache-2.0 | 789 KB | 3rd-party |
-| `org.flywaydb/flyway-database-nc-sqlite` | `12.10.0` | Apache-2.0 | 6 KB | 3rd-party |
+| `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
+| `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
 | `org.xerial/sqlite-jdbc` | `3.53.2.0` | Apache-2.0 | 11.4 MB | 3rd-party |
 
 ### `vis-workspace-rift` extension
@@ -272,7 +282,7 @@ _Rift workspace/FFM integration._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/rift` | `0.0.10-5` | MIT | 11 KB | Blockether (in-house) |
+| `com.blockether/rift` | `0.0.10-7` | MIT | 11 KB | Blockether (in-house) |
 
 ---
 
@@ -282,23 +292,29 @@ _Rift workspace/FFM integration._
 
 | License | Count |
 |---|---|
-| EPL-1.0 | 19 |
-| MIT | 14 |
-| Apache-2.0 | 12 |
+| EPL-1.0 | 20 |
+| Apache-2.0 | 15 |
+| MIT | 13 |
 | BSD-2-Clause | 3 |
+| BSD | 3 |
 | EPL-2.0 | 3 |
 | UPL-1.0 | 2 |
 | UPL-1.0 + MIT + PSF | 2 |
-| BSD | 2 |
+| Bouncy Castle Licence | 2 |
+| LGPL-3.0 | 2 |
 | (floating) | 1 |
 | Public-Domain | 1 |
-| LGPL-3.0 | 1 |
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
 under **Apache-2.0** — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.23`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> **WARNING — `net.mikera/vectorz-clj` (`0.48.0`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> linking, but **static linking into the GraalVM native image** can trigger
+> relinking obligations. Action: confirm distribution terms with legal, or keep
+> the owning extension as an optional (droppable) jar rather than baking it into
+> the distributed binary (see §4.3).
+> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.35`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
@@ -376,12 +392,15 @@ Heaviest direct artifacts (>= 1 MB):
 | Dependency | Version | Jar size |
 |---|---|---|
 | `org.graalvm.python/python-language` | `25.1.3` | 90.7 MB |
-| `com.microsoft.onnxruntime/onnxruntime` | `1.17.1` | 83.5 MB |
+| `com.microsoft.onnxruntime/onnxruntime` | `1.27.0` | 41.4 MB |
 | `org.graalvm.python/python-resources` | `25.1.3` | 13.8 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.2.0` | 11.4 MB |
+| `org.bouncycastle/bcprov-jdk18on` | `1.78.1` | 7.9 MB |
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | 7.7 MB |
 | `org.clojure/clojure` | `1.12.5` | 4.0 MB |
 | `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |
+| `org.apache.poi/poi-ooxml` | `5.5.1` | 2.0 MB |
+| `org.bouncycastle/bcpkix-jdk18on` | `1.78.1` | 1.1 MB |
 | `org.apache.commons/commons-compress` | `1.28.0` | 1.1 MB |
 
 Notes:

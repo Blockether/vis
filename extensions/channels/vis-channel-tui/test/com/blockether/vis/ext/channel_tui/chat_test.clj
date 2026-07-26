@@ -648,6 +648,24 @@
                    (expect (str/includes? (get-in out [0 "message"]) "boom")))))
 
 (defdescribe
+  gateway-disconnect-propagation-test
+  (let [disconnect (ex-info "SSE disconnected" {:gateway-disconnected true :turn-id "turn-1"})]
+    (it "preserves submit disconnect metadata for the TUI reattach path"
+        (with-redefs
+          [vis/gateway-submit-turn-sync! (fn [& _]
+                                           (throw disconnect))]
+          (try (chat/turn! {:id "session-1"} "hello")
+               (expect false)
+               (catch clojure.lang.ExceptionInfo e (expect (identical? disconnect e))))))
+    (it "preserves attach disconnect metadata for the TUI reattach path"
+        (with-redefs
+          [vis/gateway-attach-turn-sync! (fn [& _]
+                                           (throw disconnect))]
+          (try (chat/attach! {:id "session-1"} "turn-1")
+               (expect false)
+               (catch clojure.lang.ExceptionInfo e (expect (identical? disconnect e))))))))
+
+(defdescribe
   queue-sync-event-chunk-test
   ;; Queue lifecycle events (from ANY sibling channel) project to :queue-sync
   ;; chunks so every attached TUI mirrors the gateway's queued backlog live.

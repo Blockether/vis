@@ -220,6 +220,30 @@
   [sid]
   {:next-seq (bus/journal-high-water-seq sid)})
 
+(defonce ^:private event-taps
+  ;; key -> (fn [sid event]) run AFTER an event is stored, fanned out and
+  ;; published. Side-channel observers (push notifications) attach here so
+  ;; they see every locally-produced event without this ns depending on them.
+  (atom {}))
+
+(defn add-event-tap!
+  "Register `f` (`[sid event]`, canonical string-keyed event) under `k`, replacing
+   any previous tap with that key. A tap that throws is swallowed — an observer
+   must never break the appender."
+  [k f]
+  (swap! event-taps assoc k f)
+  k)
+
+(defn remove-event-tap! [k] (swap! event-taps dissoc k) k)
+
+(defn- run-event-taps!
+  [sid event]
+  (doseq [[k f] @event-taps]
+    (try (f sid event)
+         (catch Throwable t
+           (tel/log!
+             {:level :debug :id ::event-tap-failed :data {:tap k :error (ex-message t)}})))))
+
 (defn append-event!
   "Append one event for `sid`, fan it out to LOCAL subscribers, and publish
    it on the cross-process bus so watchers in OTHER processes stream it too.
@@ -266,6 +290,7 @@
        ;; Mirror to sibling processes. `turn.started` truncates the journal so
        ;; a file only ever holds the current turn's live deltas.
        (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+       (run-event-taps! sid event)
        event))))
 
 (defn ingest-mirrored-event!

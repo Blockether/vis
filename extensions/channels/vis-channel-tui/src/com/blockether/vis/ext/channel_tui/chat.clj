@@ -1176,13 +1176,13 @@
                                       (seq workspace)
                                       (assoc :workspace workspace)))
      (catch Exception e
-       (if (vis/cancellation? e)
-         {"content" [{"id" (str (java.util.UUID/randomUUID))
-                      "type" "notice"
-                      "code" "turn_cancelled"
-                      "message" "Cancelled by user."}]
-          "status" "cancelled"}
-         {"error" (or (ex-message e) (str e))})))))
+       (cond (:gateway-disconnected (ex-data e)) (throw e)
+             (vis/cancellation? e) {"content" [{"id" (str (java.util.UUID/randomUUID))
+                                                "type" "notice"
+                                                "code" "turn_cancelled"
+                                                "message" "Cancelled by user."}]
+                                    "status" "cancelled"}
+             :else {"error" (or (ex-message e) (str e))})))))
 
 (defn attach!
   "Attach to an already submitted gateway turn and return canonical content."
@@ -1194,13 +1194,13 @@
                                                     (when-let [chunk (gateway-event->chunk event)]
                                                       (when on-chunk (on-chunk chunk))))})
         (catch Exception e
-          (if (vis/cancellation? e)
-            {"content" [{"id" (str (java.util.UUID/randomUUID))
-                         "type" "notice"
-                         "code" "turn_cancelled"
-                         "message" "Cancelled by user."}]
-             "status" "cancelled"}
-            {"error" (or (ex-message e) (str e))})))))
+          (cond (:gateway-disconnected (ex-data e)) (throw e)
+                (vis/cancellation? e) {"content" [{"id" (str (java.util.UUID/randomUUID))
+                                                   "type" "notice"
+                                                   "code" "turn_cancelled"
+                                                   "message" "Cancelled by user."}]
+                                       "status" "cancelled"}
+                :else {"error" (or (ex-message e) (str e))})))))
 
 (defn dispose!
   "Release the TUI's env handle. Session data stays in

@@ -248,3 +248,55 @@
       (let [err {:message "Provider unavailable" :data {}}]
         (expect (= :generic (perr/provider-error-kind err)))
         (expect (= "Provider unavailable" (perr/provider-error-title err))))))
+
+(defdescribe
+  context-overflow-presentation-test
+  (let
+    [data
+     {:type :svar.tokens/context-overflow
+      :source :provider
+      :status 400
+      :provider-error-code "context_length_exceeded"
+      :provider-message "maximum context length exceeded"
+      :input-tokens 210000
+      :max-input-tokens 200000}
+
+     map-err
+     {:message "Provider stream failed" :data data}
+
+     throwable
+     (ex-info "Provider stream failed" data)]
+
+    (doseq [[label err] [["trace map" map-err] ["throwable" throwable]]]
+      (it (str "recognizes canonical type from " label)
+          (expect (true? (perr/context-overflow-error? err)))
+          (expect (= :context-overflow (perr/provider-error-kind err)))
+          (expect (= "Context window exceeded" (perr/provider-error-title err))))
+      (it (str "renders measured limits from " label)
+          (let [explanation (perr/provider-error-explanation err)]
+            (expect (str/includes? explanation "210000"))
+            (expect (str/includes? explanation "200000"))))
+      (it (str "never recommends unchanged retry for " label)
+          (let [next-step (perr/provider-error-next-step err)]
+            (expect (str/includes? next-step "fold older settled history"))
+            (expect (str/includes? next-step "larger-context model"))
+            (expect (not (re-find #"(?i)next step: retry" next-step))))))
+    (it "supports provider-confirmed overflow without local token counts"
+        (let
+          [err {:message "failed"
+                :data {:type :svar.tokens/context-overflow :provider-error-code "prompt_too_long"}}]
+          (expect (= :context-overflow (perr/provider-error-kind err)))
+          (expect (str/includes? (perr/provider-error-explanation err) "context window"))))
+    (it "does not classify matching prose without the canonical type"
+        (let [err {:message "context_length_exceeded" :data {:status 400}}]
+          (expect (false? (perr/context-overflow-error? err)))
+          (expect (= :generic (perr/provider-error-kind err)))))
+    (it "keeps the separate Extra inputs request-schema failure generic"
+        (let
+          [err {:message "Provider stream failed"
+                :data {:type :svar.core/stream-failed
+                       :status 400
+                       :provider-error-code "invalid_request_error"
+                       :provider-message "Extra inputs are not permitted"}}]
+          (expect (= :generic (perr/provider-error-kind err)))
+          (expect (not= "Context window exceeded" (perr/provider-error-title err)))))))

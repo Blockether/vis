@@ -26,6 +26,7 @@
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.protocol :as protocol]
+            [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
@@ -1897,6 +1898,70 @@
     (:error st)
     (assoc :error (:error st))))
 
+;; --- Native push devices (APNs) ---
+
+(defn- device-wire
+  "One registered device in wire shape — the raw token NEVER leaves the gateway."
+  [device]
+  (-> device
+      (dissoc :token)
+      (assoc :token_preview (push/mask (:token device)))))
+
+(defn- list-devices-handler
+  "GET /v1/devices — registered push devices (tokens masked) plus this gateway's
+   APNs readiness, so a client can tell \"push impossible here\" apart from
+   \"push possible, this device just isn't registered\"."
+  [_]
+  (json-response {:devices (push/list-devices) :push (push/status)}))
+
+(defn- register-device-handler
+  "POST /v1/devices — idempotently register one native push token.
+   `{token, platform?, environment?, client?, client_version?, label?, bundle_id?}`.
+   Re-registering the same token refreshes it instead of duplicating."
+  [request]
+  (let
+    [body
+     (body-json request)
+
+     token
+     (some-> (get body "token")
+             str
+             str/trim)]
+
+    (if (str/blank? token)
+      (error-response 400 :bad-request "token is required")
+      (if-let
+        [device (push/register-device! {:token token
+                                        :platform (get body "platform")
+                                        :environment (get body "environment")
+                                        :client (get body "client")
+                                        :client-version (get body "client_version")
+                                        :label (get body "label")
+                                        :bundle-id (get body "bundle_id")})]
+        (json-response {:device (device-wire device) :push (push/status)})
+        (error-response 400 :bad-request "unusable device token")))))
+
+(defn- delete-device-handler
+  "DELETE /v1/devices/:token — stop pushing to this device (logout, permission
+   revoked, app uninstalled)."
+  [request]
+  (let [token (str (get-in request [:path-params :token]))]
+    (json-response {:is_removed (push/unregister-device! token)})))
+
+(defn- test-device-handler
+  "POST /v1/devices/actions/test — send one test alert to every registered device
+   and report APNs' per-device verdict. The ONLY way to prove the whole chain
+   (key, topic, environment, token) without waiting for a real turn."
+  [_]
+  (if-not (push/configured?)
+    (error-response 503
+                    :push-unavailable "push is not configured on this gateway"
+                    :push (push/status))
+    (json-response {:results (push/broadcast! {:title "Vis"
+                                               :body "Push notifications are working."
+                                               :data {:type "test"}})
+                    :push (push/status)})))
+
 (defn- capabilities-handler
   "GET /v1/capabilities — stable feature negotiation for remote/native clients.
    Availability describes what THIS gateway can accept; device-side permissions
@@ -1938,7 +2003,8 @@
                                                            "image/webp" "image/bmp"]
                                              :max-files attachments/max-image-count
                                              :max-file-bytes attachments/max-image-bytes}
-                               :voice voice}})))
+                               :voice voice
+                               :push (push/status)}})))
 
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length — the CHEAP pre-filter that turns an
@@ -2306,6 +2372,9 @@
                 (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
        ["/v1" ["/models" {:get models-handler}] ["/events" {:get multi-events-handler}]
         ["/capabilities" {:get capabilities-handler}]
+        ["/devices" {:get list-devices-handler :post register-device-handler}]
+        ["/devices/actions/test" {:post test-device-handler}]
+        ["/devices/:token" {:delete delete-device-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
         ["/slashes" {:get slashes-handler}]
@@ -2605,6 +2674,15 @@
       ;; listener so web/gateway-driven flips survive restarts.
       _
       (install-toggle-persistence!)
+
+      ;; Native push: one tap on the event appender turns every terminal turn
+      ;; into an APNs alert. Silent no-op until a device registers AND an APNs
+      ;; key is configured, so this costs one set lookup per event otherwise.
+      _
+      (do (push/set-session-describer! (fn [sid]
+                                         (try {:title (get (state/soul sid) "title")}
+                                              (catch Throwable _ nil))))
+          (state/add-event-tap! ::push push/on-event!))
 
       server
       (try (start-jetty!

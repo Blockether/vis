@@ -64,7 +64,8 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 3800))
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.5k.
+      (expect (< (count text) 4500))
       (let
         [steps (mapv #(str/index-of text %)
                      ["use `grep` to locate unknown code" "known supported file" "`struct_index`"
@@ -97,8 +98,11 @@
           "never use `ctx` or `context`" "reproduce before editing"
           "rerun the same check after the fix" "batch independent reads" "Create no unrequested"
           "without asking permission or offering optional" "Never expose or log secrets"
-          "commit, push, publish" "retry any blocked fold" "`session_fold` owns the mechanics"
-          "preserve only decisions,\n  findings, edits"
+          "commit, push, publish" "Treat context as a budget" "do not wait for provider failure"
+          "approaches `auto_compress_above`" "immediately when its `hint` asks"
+          "one broad `through`/range fold" "Fold settled search sweeps" "superseded reads"
+          "Never fold the live iteration" "last completed scope" "confirm meaningful reduction"
+          "saved nothing"
           ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
           ;; it started, or every session leaks a JVM/interpreter child.
           "Before `repl_eval` or any REPL lifecycle change"
