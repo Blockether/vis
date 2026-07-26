@@ -1514,9 +1514,9 @@
 (defn- queue-retry-after-cap-ms ^long [] (long (:retry-after-cap-ms (queue-tuning))))
 
 (def ^:private TURN_STALL_TIMEOUT_MS
-  "Daemon backstop: force-cancel a turn wedged with NO chunk activity for this
-   long. Set ABOVE svar's 4-minute semantic stream timeout so it fires ONLY when
-   svar's own idle/semantic stream watchdogs miss a stalled connection — the
+  "Daemon backstop: force-cancel a turn wedged with NO meaningful progress for
+   this long. Set ABOVE svar's 5-minute semantic stream timeout so it fires ONLY
+   when svar's own idle/semantic stream watchdogs miss a stalled connection — the
    'calling the provider… 8m, nothing moving' hang that freezes the session's
    turn queue. Gated on [[stall-exempt-phases]] (NOT just `:provider-call`) so a
    legitimately long tool / Python-eval phase is never force-cancelled, while a
@@ -1535,14 +1535,24 @@
    never sit idle for `TURN_STALL_TIMEOUT_MS`."
   #{:form-start :form-result :tool-start :shell-run :shell-bg})
 
+(defn- advance-turn-stall-state
+  "Records the live phase, but moves the deadline only for real progress.
+   Streaming callbacks carry cumulative text plus `:delta`; an empty delta is
+   an SSE heartbeat/no-op and must not keep a wedged turn alive."
+  [state chunk now]
+  (let [meaningful? (or (not (contains? chunk :delta))
+                        (seq (:delta chunk))
+                        (:done? chunk))]
+    (cond-> (assoc state :phase (:phase chunk))
+      meaningful? (assoc :last-ms now))))
+
 (defn- start-turn-stall-watchdog!
   "Daemon thread guarding ONE running turn against a stalled provider stream.
    While `tid` remains the session's current turn, it polls the shared `stall`
-   atom (updated by `run-turn!`'s on-chunk with the live phase + last-chunk
-   wall-clock). If the live phase is `:provider-call` and no chunk has landed
-   for `TURN_STALL_TIMEOUT_MS`, it flags the turn stalled and `cancel!`s the
-   token — which closes the in-flight provider stream (svar's cancel-watchdog),
-   so the blocked worker unwinds into a `turn.failed` and the queue drains.
+   atom (updated by `run-turn!` with the live phase + last meaningful-progress
+   wall-clock). If no meaningful progress lands for `TURN_STALL_TIMEOUT_MS`, it
+   flags the turn stalled and `cancel!`s the token, closing the in-flight
+   provider stream so the blocked worker unwinds and the queue drains.
    Self-terminating: exits as soon as `tid` is no longer the current turn."
   [sid tid cancel-token stall]
   (let
@@ -1597,10 +1607,11 @@
 
      on-chunk
      (fn [chunk]
-       ;; Feed the stall-watchdog BEFORE any coalescing drop: record the live
-       ;; phase + wall-clock of the latest provider chunk so a wedged
-       ;; `:provider-call` phase (no chunks arriving at all) is detectable.
-       (when stall (swap! stall assoc :phase (:phase chunk) :last-ms (System/currentTimeMillis)))
+       ;; Empty cumulative stream callbacks are transport heartbeats, not model
+       ;; progress. Keep their live phase for diagnostics without moving the
+       ;; stall deadline.
+       (when stall
+         (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
        (try
          (when caller-on-chunk
            (try (caller-on-chunk chunk)

@@ -896,7 +896,10 @@
    This covers a stuck `:provider-call` AND the between-iteration
    `:iteration-final` gap. A legitimately long tool/eval phase is left untouched."
   (let
-    [watchdog
+    [advance
+     @#'state/advance-turn-stall-state
+
+     watchdog
      @#'state/start-turn-stall-watchdog!
 
      registry
@@ -910,6 +913,21 @@
            (cond (cancellation/cancelled? token) true
                  (>= (System/currentTimeMillis) deadline) false
                  :else (do (Thread/sleep 25) (recur))))))]
+
+    (it "does not treat empty streaming callbacks as progress"
+      (let [initial {:phase :reasoning :last-ms 10}
+            content-heartbeat (advance initial {:phase :content :delta ""} 20)
+            reasoning-heartbeat (advance content-heartbeat {:phase :reasoning :delta ""} 30)]
+        (expect (= {:phase :reasoning :last-ms 10} reasoning-heartbeat))
+        (expect (= 40 (:last-ms (advance reasoning-heartbeat
+                                      {:phase :reasoning :delta "more"}
+                                      40))))
+        (expect (= 50 (:last-ms (advance reasoning-heartbeat
+                                      {:phase :reasoning :delta "" :done? true}
+                                      50))))
+        (expect (= 60 (:last-ms (advance reasoning-heartbeat
+                                      {:phase :response-parse :status :started}
+                                      60))))))
 
     (it "force-cancels a turn stuck in :provider-call past the ceiling"
         (let
