@@ -628,7 +628,9 @@
   macos-jailed-pty-e2e-test
   (it
     "keeps PTY/send/attach while nested shells inherit Seatbelt filesystem denial"
-    (if (or (not (process-jail/supported?)) (= "1" (System/getenv "VIS_SEATBELT_ACTIVE")))
+    (if (or (not (str/starts-with? (System/getProperty "os.name" "") "Mac"))
+            (not (process-jail/supported?))
+            (= "1" (System/getenv "VIS_SEATBELT_ACTIVE")))
       (expect true)
       (let
         [ws

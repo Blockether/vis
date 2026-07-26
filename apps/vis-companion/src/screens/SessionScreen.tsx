@@ -548,6 +548,7 @@ export function SessionScreen({
   sid,
   onBack,
   onOpenSession,
+  onManageProviders,
   fresh = false,
 }: {
   client: GatewayClient;
@@ -555,6 +556,8 @@ export function SessionScreen({
   sid: string;
   onBack: () => void;
   onOpenSession: (sid: string, fresh?: boolean) => void;
+  /** Open this gateway's settings, where provider accounts and OAuth live. */
+  onManageProviders?: () => void;
   fresh?: boolean;
 }) {
   // Every screen-level snapshot is seeded from the client's cache: reopening a
@@ -695,42 +698,71 @@ export function SessionScreen({
     }
   }, []);
 
-  const loadTranscript = useCallback(async () => {
-    try {
-      const next = await client.transcript(sid);
-      setTurns(next);
-      setError(null);
-      // With turns present, the scroll effect drops the overlay only after it
-      // pins the viewport to the bottom; an empty transcript has nothing to
-      // scroll, so reveal it immediately.
-      if (!next.length) {
+  // Pass the session's meta `row` and the transcript is re-read ONLY when that
+  // row says a turn was persisted since the copy already on screen — a long
+  // session's transcript is tens of megabytes, so a blind re-read is the most
+  // expensive thing this screen can do. Called with no row it always refetches.
+  const loadTranscript = useCallback(
+    async (row?: Session | null) => {
+      try {
+        const next =
+          row === undefined
+            ? await client.transcript(sid)
+            : await client.transcriptIfMoved(sid, row);
+        if (!next) {
+          // Unchanged: keep the painted turns, their object identities, and the
+          // scroll position exactly as they are.
+          if (!turnsRef.current.length) {
+            initialScrollPendingRef.current = false;
+            setLoading(false);
+          }
+          return turnsRef.current;
+        }
+        setTurns(next);
+        setError(null);
+        // With turns present, the scroll effect drops the overlay only after it
+        // pins the viewport to the bottom; an empty transcript has nothing to
+        // scroll, so reveal it immediately.
+        if (!next.length) {
+          initialScrollPendingRef.current = false;
+          setLoading(false);
+        }
+        return next;
+      } catch (cause) {
+        setError((cause as Error).message);
         initialScrollPendingRef.current = false;
         setLoading(false);
+        return null;
       }
-      return next;
-    } catch (cause) {
-      setError((cause as Error).message);
-      initialScrollPendingRef.current = false;
-      setLoading(false);
-      return null;
-    }
-  }, [client, sid]);
+    },
+    [client, sid],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([
-      // Transcript fetch: every state write happens after the request settles.
-      loadTranscript(),
-      client.session(sid, controller.signal).then(setSession).catch(() => undefined),
-      // The queue tray paints ONLY gateway truth, and SSE carries just the
-      // deltas that happen while we are subscribed — so read the existing
-      // backlog on open. Without this, messages queued from the TUI (or
-      // before a browser reload) are invisible here until they drain.
-      client
-        .queuedTurns(sid, controller.signal)
-        .then(setQueued)
-        .catch(() => undefined),
-    ]);
+    // Meta FIRST: it is a tiny payload whose stamp decides whether the transcript
+    // has to be read back at all. Re-entering a session that has not moved then
+    // costs one small request and no re-render, instead of refetching, reparsing
+    // and re-rendering the whole history every time you walk back into it.
+    void (async () => {
+      let row: Session | null = null;
+      try {
+        row = await client.session(sid, controller.signal);
+        setSession(row);
+      } catch {
+        /* Unreachable gateway: fall through, the transcript read reports it. */
+      }
+      if (controller.signal.aborted) return;
+      await loadTranscript(row);
+    })();
+    // The queue tray paints ONLY gateway truth, and SSE carries just the
+    // deltas that happen while we are subscribed — so read the existing
+    // backlog on open. Without this, messages queued from the TUI (or
+    // before a browser reload) are invisible here until they drain.
+    void client
+      .queuedTurns(sid, controller.signal)
+      .then(setQueued)
+      .catch(() => undefined);
     return () => controller.abort();
   }, [client, sid, loadTranscript]);
 
@@ -765,7 +797,9 @@ export function SessionScreen({
       const liveId = liveTurnRef.current?.id ?? '';
       let nextTurns: TranscriptTurn[] | null = null;
       try {
-        nextTurns = await client.transcript(sid);
+        // Gated on the row this tick just read: an idle session costs one tiny
+        // request per tick instead of re-reading its whole transcript.
+        nextTurns = await client.transcriptIfMoved(sid, next);
       } catch {
         nextTurns = null;
       }
@@ -900,6 +934,13 @@ export function SessionScreen({
       // turn's gateway id, so `visibleTurns` can't filter it out — if `setTurns`
       // rendered before `setLiveTurn(null)`, both would show for a frame (dup).
       let next: TranscriptTurn[] | null = null;
+      // Refresh the meta row alongside the transcript: the transcript read stamps
+      // itself with the freshest row it can see, so the next reconcile tick knows
+      // this copy is current and skips its own read.
+      void client
+        .session(sid)
+        .then(setSession)
+        .catch(() => undefined);
       try {
         next = await client.transcript(sid);
       } catch {
@@ -1601,6 +1642,7 @@ export function SessionScreen({
           sid={sid}
           onClose={() => setRouterOpen(false)}
           onPicked={setModelPref}
+          onManageProviders={onManageProviders}
         />
       )}
 

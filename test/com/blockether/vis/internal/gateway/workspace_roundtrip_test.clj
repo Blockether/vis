@@ -37,6 +37,17 @@
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
 
+(defn- local-test-backend
+  []
+  (ws/workspace-backend {:workspace.backend/id :live
+                         :workspace.backend/capabilities ws/workspace-capabilities
+                         :workspace.backend/available-fn (constantly true)
+                         :workspace.backend/fork-fn (fn [{:keys [store-root name]}]
+                                                      (let [root (io/file store-root name)]
+                                                        (.mkdirs root)
+                                                        (.getCanonicalPath root)))
+                         :workspace.backend/discard-fn (constantly nil)}))
+
 (defn- pin-session!
   [store workspace-id]
   (let
@@ -102,7 +113,10 @@
                (:id seed)]
 
               ;; C-a: add `extra` as an extra filesystem root (trunk session → live).
-              (ws/add-filesystem-root! store wid extra)
+              (with-redefs
+                [ws/select-backend (fn [_ _ _]
+                                     (local-test-backend))]
+                (ws/add-filesystem-root! store wid extra))
               (let
                 [info
                  (session-workspace-shape (ws/get store wid))
@@ -229,7 +243,10 @@
               (binding [ws/*drafts-home* (io/file drafts-home)]
                 (with-redefs [lp/db-info (constantly store)]
                   (let
-                    [created (state/create-draft! sid "picker-created" false)
+                    [created (with-redefs
+                               [ws/select-backend (fn [_ _ _]
+                                                    (local-test-backend))]
+                               (state/create-draft! sid "picker-created" false))
                      draft-id (get created "id")]
 
                     (expect (true? (get created "is_draft")))

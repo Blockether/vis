@@ -176,6 +176,8 @@
    roll-up (file-count order), for exercising handler-resolution heuristics."
   [primary scanned handlers]
   {:session-id (str "ls-test-" (random-uuid))
+   :jail-policy-fn (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")])
+                                :net-enabled? false})
    :env/project {:primary_language primary}
    :env/languages {:languages (mapv (fn [l]
                                       {:language l})

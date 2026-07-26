@@ -72,8 +72,9 @@
          out
          (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"explored auth\")")]
 
-        (expect (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "gist" "explored auth"}]
-                   (get @ca "session_summaries")))
+        (expect
+          (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "explored auth"}]
+             (get @ca "session_summaries")))
         (expect (re-find #"^folded " out))
         (expect (re-find #"explored auth" out))))
   (it "session_fold excludes an active skill scope and folds the remaining target"
@@ -89,7 +90,7 @@
          out
          (ev "session_fold([\"t1/i1\", \"t1/i2\"], \"trim\")")]
 
-        (expect (= [{"scopes" #{"t1/i2"} "issued_turn" 99 "gist" "trim"}]
+        (expect (= [{"scopes" #{"t1/i2"} "issued_turn" 99 "at_turn" 99 "gist" "trim"}]
                    (get @ca "session_summaries")))
         (expect (str/includes? out "kept active skill t1/i1"))))
   (it "session_fold records nothing when every selected scope is an active skill"
@@ -113,7 +114,7 @@
          out
          (ev "session_fold({\"through\": \"t1/i5\"}, \"early reads\")")]
 
-        (expect (= [{"through" "t1/i5" "issued_turn" 99 "gist" "early reads"}]
+        (expect (= [{"through" "t1/i5" "issued_turn" 99 "at_turn" 99 "gist" "early reads"}]
                    (get @ca "session_summaries")))
         (expect (re-find #"through t1/i5" out))))
   (it "session_fold({\"from\": …, \"to\": …}): a WINDOW dict marshals to from/to keys"
@@ -124,7 +125,7 @@
          out
          (ev "session_fold({\"from\": \"t1/i2\", \"to\": \"t1/i4\"}, \"middle\")")]
 
-        (expect (= [{"from" "t1/i2" "to" "t1/i4" "issued_turn" 99 "gist" "middle"}]
+        (expect (= [{"from" "t1/i2" "to" "t1/i4" "issued_turn" 99 "at_turn" 99 "gist" "middle"}]
                    (get @ca "session_summaries")))
         (expect (re-find #"window t1/i2\.\.t1/i4" out))))
   (it "session_fold({\"since\": …}): a SINCE dict marshals to a since cursor"
@@ -135,7 +136,7 @@
          out
          (ev "session_fold({\"since\": \"t2/i1\"})")]
 
-        (expect (= [{"since" "t2/i1" "issued_turn" 99}] (get @ca "session_summaries")))
+        (expect (= [{"since" "t2/i1" "issued_turn" 99 "at_turn" 99}] (get @ca "session_summaries")))
         (expect (re-find #"^folded since t2/i1" out))))
   (it
     "session_fold({\"since\": …}) FREEZES to concrete scopes at fold time when a universe exists — no rolling swallow of future work"
@@ -153,7 +154,7 @@
        (get @ca "session_summaries")]
 
       ;; frozen to the scopes present NOW — the raw `since` selector is gone
-      (expect (= {"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "gist" "tail"} intent))
+      (expect (= {"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "tail"} intent))
       (expect (not (contains? intent "since")))
       (expect (re-find #"^folded since t1/i2" out))
       ;; and because it's frozen, a LATER-grown universe can't swallow new iters
@@ -177,8 +178,9 @@
         ;; frozen scopes PLUS the whole-turn intent the open range carried at
         ;; fold time (it covered ALL of t2) — dropping it on freeze would
         ;; resurrect t2's Q/A recap downstream.
-        (expect (= {"scopes" #{"t1/i2" "t2/i1"} "issued_turn" 99 "gist" "open" "turns" #{2}}
-                   intent))
+        (expect
+          (= {"scopes" #{"t1/i2" "t2/i1"} "issued_turn" 99 "at_turn" 99 "gist" "open" "turns" #{2}}
+             intent))
         (expect (not (contains? intent "from")))
         (expect (= #{"t1/i2" "t2/i1"}
                    (get (first (expand-through [intent] ["t1/i1" "t1/i2" "t2/i1" "t2/i2"]))
@@ -195,7 +197,7 @@
        _
        (ev "session_fold({\"through\": \"t1/i2\"}, \"early\")")]
 
-      (expect (= [{"through" "t1/i2" "issued_turn" 99 "gist" "early"}]
+      (expect (= [{"through" "t1/i2" "issued_turn" 99 "at_turn" 99 "gist" "early"}]
                  (get @ca "session_summaries")))))
   (it "session_fold([\"t2\"]): a bare turn id records as a whole-turn scope token"
       (let
@@ -205,7 +207,7 @@
          out
          (ev "session_fold([\"t2\"], \"whole turn 2\")")]
 
-        (expect (= [{"scopes" #{"t2"} "issued_turn" 99 "gist" "whole turn 2"}]
+        (expect (= [{"scopes" #{"t2"} "issued_turn" 99 "at_turn" 99 "gist" "whole turn 2"}]
                    (get @ca "session_summaries")))
         (expect (re-find #"^folded t2 " out))))
   (it "session_fold WITHOUT a gist records a gist-less collapse (replaces session_drop)"
@@ -216,7 +218,8 @@
          out
          (ev "session_fold([\"t1/i1\"])")]
 
-        (expect (= [{"scopes" #{"t1/i1"} "issued_turn" 99}] (get @ca "session_summaries")))
+        (expect (= [{"scopes" #{"t1/i1"} "issued_turn" 99 "at_turn" 99}]
+                   (get @ca "session_summaries")))
         (expect (re-find #"^folded t1/i1" out))))
   (it "an empty/blank target is a no-op: records nothing, returns a hint"
       (let
@@ -281,7 +284,7 @@
          (get (compaction-verbs ca) 'session-fold)]
 
         (expect (re-find #"^folded t1" (sf ["t1"] "done")))
-        (expect (= [{"scopes" #{"t1"} "issued_turn" 2 "gist" "done"}]
+        (expect (= [{"scopes" #{"t1"} "issued_turn" 2 "at_turn" 2 "gist" "done"}]
                    (get @ca "session_summaries")))))
   (it "fails closed when the current turn is unavailable"
       (let
@@ -550,7 +553,7 @@
                                     :input {"target" ["t2/i4"] "gist" "native"}})]
 
         (ev src)
-        (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "gist" "native"}]
+        (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "at_turn" 99 "gist" "native"}]
                    (get @ca "session_summaries"))))))
 
 ;; ── layer 5: session-bag reflection (the CTX delta) ──────────────────────────

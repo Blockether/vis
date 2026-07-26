@@ -24,9 +24,11 @@
 (def ^:private on-path? @#'interp/on-path?)
 (def ^:private test-session-id "python-pack-test")
 
-(process-jail/register-session-jail!
-  test-session-id
-  (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")]) :net-enabled? true}))
+(process-jail/register-session-jail! test-session-id
+                                     (constantly {:roots-fn (constantly [(System/getProperty
+                                                                           "java.io.tmpdir")])
+                                                  :net-enabled? true
+                                                  :disabled? true}))
 
 (defn- has-python? [] (boolean (or (on-path? "python3") (on-path? "python"))))
 

@@ -1756,10 +1756,16 @@
    each form's scope is normalized via `iter-of-scope` before matching. (This is
    the fix for the latent bug where a raw form-scope lookup against the
    iteration-keyed drop/gist sets NEVER hit — so folds silently failed to apply
-   in resume context.) Both a fold and a drop collapse their iteration to ONE
-   deduped breadcrumb (not repeated per form): a fold → `{:scope tN/iN :gist g}`,
-   a drop → `{:scope tN/iN :dropped? true :note why}` (the reason is kept so
-   introspection never loses what went or why); every other live form keeps its
+   in resume context.)
+
+   Both a fold and a drop collapse to ONE breadcrumb per distinct GIST/reason —
+   NOT one per form and NOT one per covered iteration. One `session_fold` over 40
+   iterations carries one gist, so repeating that gist 40 times is 40x the tokens
+   for zero information; every later request (and every message queued behind a
+   running turn) paid it. Dedup therefore keys on the breadcrumb TEXT: a fold →
+   `{:scope tN/iN :gist g}`, a drop → `{:scope tN/iN :dropped? true :note why}`
+   (the reason is kept so introspection never loses what went or why), `:scope`
+   being the FIRST iteration the summary covers. Every other live form keeps its
    `{:scope tN/iN/fN :src …}` line. `:drop?` — not gist presence — picks the
    label. A `:through` range cursor is resolved against this turn's own iteration
    scopes. Pure."
@@ -1800,17 +1806,31 @@
                    isc
                    (iter-of-scope sc)]
 
-                  (cond (and isc (contains? drop-of isc)) ; dropped → ONE audit line
-                        (if (contains? seen isc)
-                          [acc seen]
-                          [(conj acc
-                                 (cond-> {:scope isc :dropped? true}
-                                   (get drop-of isc)
-                                   (assoc :note (get drop-of isc)))) (conj seen isc)])
-                        (and isc (contains? gist-of isc))                 ; folded → ONE gist line
-                        (if (contains? seen isc)
-                          [acc seen]
-                          [(conj acc {:scope isc :gist (get gist-of isc)}) (conj seen isc)])
+                  (cond (and isc (contains? drop-of isc)) ; dropped → ONE audit line per reason
+                        (let
+                          [note
+                           (get drop-of isc)
+
+                           k
+                           [:dropped note]]
+
+                          (if (contains? seen k)
+                            [acc seen]
+                            [(conj acc
+                                   (cond-> {:scope isc :dropped? true}
+                                     note
+                                     (assoc :note note))) (conj seen k)]))
+                        (and isc (contains? gist-of isc)) ; folded → ONE line per distinct gist
+                        (let
+                          [gist
+                           (get gist-of isc)
+
+                           k
+                           [:gist gist]]
+
+                          (if (contains? seen k)
+                            [acc seen]
+                            [(conj acc {:scope isc :gist gist}) (conj seen k)]))
                         (and sc
                              (or (some? (:result f)) (some? (:stdout f))) ; live, worth listing
                              (not= "vis_silent" (:result f)))

@@ -3,34 +3,35 @@ import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
 import { Banner, Button } from '../components/ui';
 import {
-  ProviderFlowPanel,
-  ProviderSignOutButton,
   isProviderAuthed,
   providerLimitsLine,
   providerStatusDot,
   providerStatusLine,
-  useProviderAuth,
+  useProviderFleet,
 } from '../components/ProviderAuth';
 
 interface Props {
   client: GatewayClient;
-  /** Session whose model preference a pick writes. Omit for auth-only use. */
+  /** Session whose model preference a pick writes. */
   sid?: string;
   onClose: () => void;
   onPicked?: (pref: ModelPref) => void;
+  /** Jump to gateway settings, where provider accounts and OAuth live. */
+  onManageProviders?: () => void;
 }
 
 /**
- * The companion's provider router: every configured provider with its live
- * auth state, its models, and the ability to sign in, re-check status, and
- * sign out WITHOUT a terminal.
+ * Pick the model this session runs on. Nothing here signs in or out: provider
+ * ACCOUNTS — OAuth, API keys, sign-out, re-check — live in one place, the
+ * gateway's settings, so a credential is never managed from two screens.
  *
- * The whole exchange lives in `useProviderAuth`, shared with gateway settings,
- * so both surfaces drive the identical daemon-side flow and never drift.
+ * This dialog reads the same cached `/v1/router` fleet those settings write, so
+ * a sign-in there is reflected here without a refetch, and a signed-out
+ * provider is shown as such with a direct way over to fix it.
  */
-export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) {
-  const auth = useProviderAuth(client);
-  const { providers, err, note, pending } = auth;
+export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageProviders }: Props) {
+  const fleet = useProviderFleet(client);
+  const { providers, err, note, pending, refresh } = fleet;
   const [pref, setPref] = useState<ModelPref | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
@@ -44,7 +45,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
         setPref(current);
       } catch {
         // The fleet is the point of this dialog: an unreadable pin paints as
-        // "no model pinned" instead of blocking sign-in.
+        // "no model pinned" instead of blocking the picker.
       }
     },
     [client, sid],
@@ -73,10 +74,15 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
       if (next) onPicked?.(next);
       onClose();
     } catch (e) {
-      auth.setErr((e as Error).message);
+      fleet.setErr((e as Error).message);
     } finally {
       setPicking(null);
     }
+  }
+
+  function manageProviders() {
+    onClose();
+    onManageProviders?.();
   }
 
   return (
@@ -98,7 +104,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
               id="provider-router-title"
               className="truncate font-mono text-body font-bold tracking-wide"
             >
-              Router — providers &amp; models
+              Model
             </h2>
             <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
               {pref?.model ? `Current: ${pref.provider ?? '?'}/${pref.model}` : 'No model pinned'}
@@ -108,7 +114,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
             type="button"
             className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
-            aria-label="Close router"
+            aria-label="Close model picker"
           >
             ✕
           </button>
@@ -118,10 +124,8 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
           {err && <Banner kind="err">{err}</Banner>}
           {note && <Banner kind="ok">{note}</Banner>}
 
-          <ProviderFlowPanel auth={auth} />
-
           {providers === null && (
-            <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading router…</p>
+            <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading models…</p>
           )}
 
           {providers?.length === 0 && (
@@ -163,31 +167,12 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
                     <p className="font-mono text-meta text-dialog-hint">
                       {providerStatusLine(provider)}
                     </p>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <Button
-                        className="flex-1"
-                        variant={authed ? 'ghost' : 'solid'}
-                        disabled={pending === `auth:${provider.id}`}
-                        onClick={() => void auth.signIn(provider)}
-                      >
-                        {pending === `auth:${provider.id}`
-                          ? 'Starting…'
-                          : authed
-                            ? 'Sign in again'
-                            : 'Sign in'}
+
+                    {!authed && (
+                      <Button className="w-full" onClick={manageProviders}>
+                        Sign in — gateway settings
                       </Button>
-                      <Button
-                        variant="ghost"
-                        className="flex-1"
-                        disabled={pending === `status:${provider.id}`}
-                        onClick={() => void auth.recheck(provider)}
-                      >
-                        {pending === `status:${provider.id}` ? 'Checking…' : 'Check status'}
-                      </Button>
-                      {authed && (
-                        <ProviderSignOutButton auth={auth} provider={provider} className="flex-1" />
-                      )}
-                    </div>
+                    )}
 
                     {sid && provider.models.length > 0 && (
                       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -219,6 +204,22 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
             );
           })}
         </div>
+
+        <footer className="flex shrink-0 flex-col gap-2 border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:p-4">
+          <p className="font-mono text-meta text-dialog-hint">
+            Sign-in, OAuth, and API keys live in gateway settings.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              disabled={pending === 'reload'}
+              onClick={() => void refresh()}
+            >
+              {pending === 'reload' ? 'Refreshing…' : 'Refresh'}
+            </Button>
+            <Button onClick={manageProviders}>Manage providers</Button>
+          </div>
+        </footer>
       </section>
     </div>
   );

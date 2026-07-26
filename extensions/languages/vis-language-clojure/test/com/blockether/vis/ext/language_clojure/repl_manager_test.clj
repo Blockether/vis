@@ -19,7 +19,8 @@
   (process-jail/register-session-jail! sid
                                        (constantly {:roots-fn (constantly [(System/getProperty
                                                                              "java.io.tmpdir")])
-                                                    :net-enabled? true})))
+                                                    :net-enabled? true
+                                                    :disabled? true})))
 
 (defn- tmp-dir
   ^String []

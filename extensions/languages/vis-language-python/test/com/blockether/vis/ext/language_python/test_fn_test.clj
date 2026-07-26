@@ -6,6 +6,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             ;; side-effecting require: registers the built-in pytest shim so
             ;; `extension/sandbox-shims` can hand the runner its preamble.
             [com.blockether.vis.internal.foundation.shim-pytest]
@@ -82,11 +83,22 @@
       ;; the project backend shells a process and returns a "project" runner tag
       ;; with the resolved cmd — never the graalpy shape.
       (when (has-python?)
-        (let [root (tmp-dir)]
-          (try (let
-                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+        (let
+          [root
+           (tmp-dir)
+
+           session-id
+           (str "python-test-fn-" (random-uuid))]
+
+          (try (process-jail/register-session-jail!
+                 session-id
+                 (constantly
+                   {:roots-fn (constantly [(.getPath root)]) :net-enabled? true :disabled? true}))
+               (let
+                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)
+                                                 :session-id session-id}
                                                 {"interpreter" true}))]
                  (expect (= "project" (get res "runner")))
                  (expect (vector? (get res "cmd")))
                  (expect (some #{"-m" "pytest"} (get res "cmd"))))
-               (finally (cleanup root)))))))
+               (finally (process-jail/unregister-session-jail! session-id) (cleanup root)))))))

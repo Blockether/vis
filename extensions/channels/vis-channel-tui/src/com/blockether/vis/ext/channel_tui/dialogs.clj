@@ -5078,8 +5078,8 @@
                    s))))))
 
 (defn- navigator-visible-blocks
-  "Paint plan from `start`, clipped by terminal lines. Every session keeps its
-   hierarchy/title/metadata base; only overflow transcript snippets are dropped."
+  "Paint plan from `start`, clipped by terminal lines. Every emitted session
+   keeps its hierarchy/title/metadata base; only overflow snippets are dropped."
   [visible-rows start budget]
   (let
     [n
@@ -5105,17 +5105,20 @@
            (nth visible-rows i)
 
            base
-           (+ 2 (if (:group-start? entry) 1 0))
+           (+ 2 (if (:group-start? entry) 1 0))]
 
-           remaining
-           (max 0 (- budget (long used) base))
+          (if (> (+ (long used) base) budget)
+            acc
+            (let
+              [remaining
+               (max 0 (- budget (long used) base))
 
-           hits
-           (vec (take remaining (navigator-hit-entries entry)))]
+               hits
+               (vec (take remaining (navigator-hit-entries entry)))]
 
-          (recur (inc i)
-                 (+ (long used) base (count hits))
-                 (conj acc {:idx i :entry entry :hits hits})))))))
+              (recur (inc i)
+                     (+ (long used) base (count hits))
+                     (conj acc {:idx i :entry entry :hits hits})))))))))
 
 (defn- draw-navigator-group!
   [g x row width {:keys [dir work-dir group-count]}]

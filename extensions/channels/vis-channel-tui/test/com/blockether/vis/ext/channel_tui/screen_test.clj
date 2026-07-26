@@ -125,7 +125,10 @@
            (swap! calls conj event)))]
 
       (with-redefs
-        [input/enable-bracketed-paste!
+        [vis/tty-out
+         (delay (java.io.ByteArrayOutputStream.))
+
+         input/enable-bracketed-paste!
          (record :enable-paste)
 
          input/enable-sgr-mouse!

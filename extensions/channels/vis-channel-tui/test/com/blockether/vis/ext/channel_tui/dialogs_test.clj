@@ -496,6 +496,10 @@
           ;; a block that only partly fits keeps title + metadata and clips hits
           (expect (= [1] (mapv #(count (:hits %)) (blocks vis 0 3))))
           (expect (= [3] (mapv #(count (:hits %)) (blocks vis 0 5))))
+          ;; Never leave a project heading orphaned at the bottom of the viewport.
+          (let [grouped [(assoc (hit 0) :group-start? true)]]
+            (expect (empty? (blocks grouped 0 2)))
+            (expect (= 1 (count (blocks grouped 0 3)))))
           ;; scroll advances only as far as the selected row needs
           (expect (= 1 (scroll-start hs 2 0 4)))
           (expect (= 2 (scroll-start hs 2 2 4)))

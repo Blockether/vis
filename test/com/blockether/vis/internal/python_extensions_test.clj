@@ -1011,7 +1011,7 @@ vis.extension(
                (str
                  "import os, subprocess, tempfile\n"
                  "p = os.path.join(os.path.expanduser('~'), '.vis-extension-trust-test')\n" "try:\n"
-                 "    open(p, 'w').write('trusted')\n"
+                 "    with open(p, 'w') as f: f.write('trusted')\n"
                  "    _ok = open(p).read() == 'trusted' and subprocess.run(['/usr/bin/true']).returncode == 0\n"
                  "finally:\n" "    try: os.unlink(p)\n"
                  "    except FileNotFoundError: pass\n" "_ok")))]

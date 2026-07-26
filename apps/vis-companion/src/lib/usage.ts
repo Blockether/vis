@@ -58,33 +58,73 @@ export function exactCost(value: number): string {
   return `$${value.toFixed(value >= 1 ? 4 : 6)}`;
 }
 
+/**
+ * One turn's totals, memoized on the turn OBJECT. A decoded turn never mutates,
+ * and `GatewayClient.transcript` hands back the SAME object for a row the
+ * gateway repeated, so re-rendering a long session re-reads these numbers
+ * instead of re-deriving them per bubble, per frame.
+ */
+const turnTotals = new WeakMap<TranscriptTurn, Omit<Usage, 'turns'>>();
+
 /** One turn's token + cost slots, tolerating every shape the wire has carried. */
 export function turnUsage(turn: TranscriptTurn): Omit<Usage, 'turns'> {
+  const memo = turnTotals.get(turn);
+  if (memo) return memo;
   const costMap = typeof turn.cost === 'object' && turn.cost ? turn.cost : undefined;
-  return {
+  const usage = {
     input: finiteNumber(turn.tokens?.input, turn.input_tokens) ?? 0,
     output: finiteNumber(turn.tokens?.output, turn.output_tokens) ?? 0,
     cached: finiteNumber(turn.tokens?.cached, turn.input_cache_read_tokens) ?? 0,
     cost:
       finiteNumber(turn.total_cost, typeof turn.cost === 'number' ? turn.cost : undefined, costMap?.total_cost) ?? 0,
   };
+  turnTotals.set(turn, usage);
+  return usage;
 }
 
 /**
- * Cumulative usage across a session's transcript. Cheap enough to memoize on the
- * turns array identity — the same trick the TUI plays on its messages vector, so
- * a long session never re-folds on every keystroke.
+ * Running totals of the LAST transcript folded: `prefix[i]` is the cumulative
+ * usage through turn `i`. Turn objects stay identity-stable across a refetch, so
+ * an update that only appends to (or rewrites the tail of) a long session reuses
+ * the shared prefix instead of re-folding the whole history.
+ */
+let prefixCache: { turns: readonly TranscriptTurn[]; prefix: Usage[] } | null = null;
+
+/**
+ * Cumulative usage across a session's transcript — the SAME fold the TUI footer
+ * runs over its message vector (`footer/session-usage`), so both surfaces read
+ * one number. Costs O(turns that actually changed), not O(session), for every
+ * update after the first.
  */
 export function sessionUsage(turns: TranscriptTurn[]): Usage {
-  return turns.reduce<Usage>((total, turn) => {
-    const usage = turnUsage(turn);
+  const cached = prefixCache;
+  let shared = 0;
+  if (cached) {
+    const limit = Math.min(cached.turns.length, turns.length);
+    while (shared < limit && cached.turns[shared] === turns[shared]) shared += 1;
+  }
+  if (cached && shared === turns.length && shared === cached.turns.length) {
+    return prefixTotal(cached.prefix, shared);
+  }
+  const prefix = cached ? cached.prefix.slice(0, shared) : [];
+  let total = prefixTotal(prefix, shared);
+  for (let index = shared; index < turns.length; index += 1) {
+    const usage = turnUsage(turns[index]);
     const reported = usage.input > 0 || usage.output > 0 || usage.cost > 0;
-    return {
+    total = {
       input: total.input + usage.input,
       output: total.output + usage.output,
       cached: total.cached + usage.cached,
       cost: total.cost + usage.cost,
       turns: total.turns + (reported ? 1 : 0),
     };
-  }, EMPTY_USAGE);
+    prefix.push(total);
+  }
+  prefixCache = { turns, prefix };
+  return total;
+}
+
+/** Cumulative total through `count` turns — empty usage when nothing is shared. */
+function prefixTotal(prefix: Usage[], count: number): Usage {
+  return count > 0 ? (prefix[count - 1] ?? EMPTY_USAGE) : EMPTY_USAGE;
 }

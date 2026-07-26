@@ -96,6 +96,21 @@ const routerInflight = new Map<string, Promise<RouterProvider[]>>();
  */
 const snapshots = new Map<string, unknown>();
 
+/**
+ * Freshness stamp of the transcript snapshot we hold, per gateway+session. A
+ * long session's transcript is TENS OF MEGABYTES; refetching it on a timer, or
+ * on every re-entry, is by far the most expensive thing this client can do. The
+ * transcript only moves when a turn is persisted, and that always bumps the meta
+ * row — so this string turns a whole-transcript revalidation into a comparison
+ * against the tiny `/v1/sessions/:id` payload we already fetch.
+ */
+const transcriptStamps = new Map<string, string>();
+
+function transcriptStamp(row: Session | null | undefined): string {
+  if (!row) return '';
+  return `${row.turn_count ?? ''}\u0000${row.modified_at ?? ''}`;
+}
+
 /** Bound the cache so hopping through many sessions cannot pin every transcript. */
 const SNAPSHOT_LIMIT = 32;
 
@@ -115,6 +130,53 @@ function writeSnapshot(key: string, value: unknown): void {
     if (snapshots.size <= SNAPSHOT_LIMIT) break;
     snapshots.delete(oldest);
   }
+}
+
+/**
+ * Structural equality over decoded JSON. `JSON.parse` builds a BRAND-NEW object
+ * graph for every response, so identity alone reports "changed" for a payload
+ * that is byte-for-byte what we already hold — and React then re-renders a whole
+ * transcript that did not move.
+ */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => sameJson(item, b[index]));
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every(
+    (key) => Object.prototype.hasOwnProperty.call(right, key) && sameJson(left[key], right[key]),
+  );
+}
+
+/**
+ * Splice a freshly fetched list onto the one we already painted: KEEP the old
+ * object for every row whose content is unchanged, and the old ARRAY when
+ * nothing changed at all. React bails out of an identical state write, and
+ * `memo`'d rows keep their identity — so re-entering a session or the periodic
+ * liveness refetch costs no re-render instead of re-parsing every markdown
+ * block in the history.
+ */
+function reconcileRows<T>(previous: T[] | null, next: T[]): T[] {
+  if (!previous) return next;
+  let changed = previous.length !== next.length;
+  const merged = next.map((row, index) => {
+    const old = previous[index];
+    if (old !== undefined && sameJson(old, row)) return old;
+    changed = true;
+    return row;
+  });
+  return changed ? merged : previous;
+}
+
+/** Single-payload variant: keep the cached object when the wire repeats itself. */
+function reconcileRow<T>(previous: T | null, next: T): T {
+  return previous !== null && sameJson(previous, next) ? previous : next;
 }
 
 function normalizeBase(url: string): string {
@@ -589,6 +651,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('session', sid));
     snapshots.delete(this.snapshotKey('transcript', sid));
     snapshots.delete(this.snapshotKey('queued', sid));
+    transcriptStamps.delete(this.snapshotKey('transcript', sid));
   }
 
   async listSessions(signal?: AbortSignal): Promise<Session[]> {
@@ -598,7 +661,7 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    const rows = res.sessions ?? [];
+    const rows = reconcileRows(this.cachedSessions(), res.sessions ?? []);
     writeSnapshot(this.snapshotKey('sessions'), rows);
     return rows;
   }
@@ -667,8 +730,9 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    writeSnapshot(this.snapshotKey('session', sid), row);
-    return row;
+    const merged = reconcileRow(this.cachedSession(sid), row);
+    writeSnapshot(this.snapshotKey('session', sid), merged);
+    return merged;
   }
 
   async deleteSession(sid: string): Promise<unknown> {
@@ -688,8 +752,31 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    const turns = response.turns ?? [];
+    const turns = reconcileRows(this.cachedTranscript(sid), response.turns ?? []);
     writeSnapshot(this.snapshotKey('transcript', sid), turns);
+    // Stamp with the freshest meta row we hold, so a caller that already knows
+    // the session did not move can skip the next fetch entirely.
+    transcriptStamps.set(this.snapshotKey('transcript', sid), transcriptStamp(this.cachedSession(sid)));
+    return turns;
+  }
+
+  /**
+   * Revalidate the transcript against a session meta row and fetch ONLY when
+   * that row says a turn was actually persisted. Returns `null` when the cached
+   * rows are still current — the caller keeps its state, its scroll, and its
+   * rendered markdown, and the tens-of-megabytes body never crosses the wire.
+   */
+  async transcriptIfMoved(
+    sid: string,
+    row: Session | null,
+    signal?: AbortSignal,
+  ): Promise<TranscriptTurn[] | null> {
+    const key = this.snapshotKey('transcript', sid);
+    const stamp = transcriptStamp(row);
+    const cached = this.cachedTranscript(sid);
+    if (stamp && cached?.length && transcriptStamps.get(key) === stamp) return null;
+    const turns = await this.transcript(sid, signal);
+    if (stamp) transcriptStamps.set(key, stamp);
     return turns;
   }
 
@@ -767,11 +854,12 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    const rows = (response.turns ?? [])
+    const fetched = (response.turns ?? [])
       .filter((turn) => String(turn.status ?? '') === 'queued')
       .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
       .map((turn) => queuedTurnFromWire(turn as unknown as Record<string, unknown>))
       .filter((row) => row.turnId !== '');
+    const rows = reconcileRows(this.cachedQueuedTurns(sid), fetched);
     writeSnapshot(this.snapshotKey('queued', sid), rows);
     return rows;
   }

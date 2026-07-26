@@ -279,6 +279,7 @@ export function App() {
             fresh={openTarget.fresh}
             onBack={() => setOpenTarget(null)}
             onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
+            onManageProviders={() => setSettingsTarget(openTarget.conn)}
           />
         ) : (
           <SessionsScreen

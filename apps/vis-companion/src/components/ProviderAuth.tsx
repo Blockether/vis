@@ -123,8 +123,10 @@ export function providerLimitsLine(provider: RouterProvider): string | null {
   return text || null;
 }
 
-export interface ProviderAuth {
+export interface ProviderFleet {
   providers: RouterProvider[] | null;
+  /** Patch one row in place (a live status re-check) without a refetch. */
+  setProviders: (update: (rows: RouterProvider[] | null) => RouterProvider[] | null) => void;
   err: string | null;
   note: string | null;
   /** Surface a caller-side failure (a model pick, say) in the same banner. */
@@ -132,13 +134,17 @@ export interface ProviderAuth {
   setNote: (value: string | null) => void;
   /** `auth:<id>` · `logout:<id>` · `status:<id>` · `auth:complete` · `reload`. */
   pending: string | null;
+  setPending: (value: string | null) => void;
+  reload: (signal?: AbortSignal, opts?: { force?: boolean }) => Promise<void>;
+  refresh: () => Promise<void>;
+}
+
+export interface ProviderAuth extends ProviderFleet {
   flow: AuthFlow | null;
   redirectUrl: string;
   setRedirectUrl: (value: string) => void;
   apiKey: string;
   setApiKey: (value: string) => void;
-  reload: (signal?: AbortSignal, opts?: { force?: boolean }) => Promise<void>;
-  refresh: () => Promise<void>;
   signIn: (provider: RouterProvider) => Promise<void>;
   signOut: (provider: RouterProvider) => Promise<void>;
   recheck: (provider: RouterProvider) => Promise<void>;
@@ -148,34 +154,18 @@ export interface ProviderAuth {
 }
 
 /**
- * Every provider's live auth state plus the whole headless OAuth exchange,
- * shared by the router dialog and gateway settings so both screens sign in,
- * sign out, and re-check the SAME way.
- *
- * The daemon runs the exchange end to end. `device` providers (GitHub Copilot)
- * show a code and finish by polling — the best phone UX, since nothing has to
- * be pasted back. `pkce` providers (Anthropic, Codex) open a browser and take
- * the final redirect URL back. `api-key` providers take the key. No token,
- * verifier, or device code ever lands on this device.
+ * The gateway's provider fleet, READ-only: every provider with its live auth
+ * verdict, models, and quota report, plus the banners and the reload that keep
+ * them honest. This is all a model picker needs — signing in is a different
+ * job, and lives in `useProviderAuth` below.
  */
-export function useProviderAuth(client: GatewayClient): ProviderAuth {
+export function useProviderFleet(client: GatewayClient): ProviderFleet {
   // Paint whatever the shared router cache already holds (prefetched at
   // connect time) so a screen opens instantly; `reload` revalidates under it.
   const [providers, setProviders] = useState<RouterProvider[] | null>(() => client.cachedRouter());
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const [flow, setFlow] = useState<AuthFlow | null>(null);
-  const [redirectUrl, setRedirectUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const pollRef = useRef<number | null>(null);
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current !== null) {
-      window.clearTimeout(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
 
   const reload = useCallback(
     async (signal?: AbortSignal, opts?: { force?: boolean }) => {
@@ -208,6 +198,45 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     void reload(controller.signal);
     return () => controller.abort();
   }, [reload]);
+
+  return {
+    providers,
+    setProviders,
+    err,
+    note,
+    setErr,
+    setNote,
+    pending,
+    setPending,
+    reload,
+    refresh,
+  };
+}
+
+/**
+ * The whole headless OAuth exchange on top of the fleet, used by the ONE
+ * surface that owns provider accounts: gateway settings.
+ *
+ * The daemon runs the exchange end to end. `device` providers (GitHub Copilot)
+ * show a code and finish by polling — the best phone UX, since nothing has to
+ * be pasted back. `pkce` providers (Anthropic, Codex) open a browser and take
+ * the final redirect URL back. `api-key` providers take the key. No token,
+ * verifier, or device code ever lands on this device.
+ */
+export function useProviderAuth(client: GatewayClient): ProviderAuth {
+  const fleet = useProviderFleet(client);
+  const { setProviders, setErr, setNote, setPending, reload } = fleet;
+  const [flow, setFlow] = useState<AuthFlow | null>(null);
+  const [redirectUrl, setRedirectUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const pollRef = useRef<number | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   useEffect(() => stopPolling, [stopPolling]);
 
@@ -400,19 +429,12 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
   }, [client, flow, stopPolling]);
 
   return {
-    providers,
-    err,
-    note,
-    setErr,
-    setNote,
-    pending,
+    ...fleet,
     flow,
     redirectUrl,
     setRedirectUrl,
     apiKey,
     setApiKey,
-    reload,
-    refresh,
     signIn,
     signOut,
     recheck,

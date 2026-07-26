@@ -276,8 +276,7 @@
   (it "/draft remains discoverable when no isolation backend is available"
       (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
         (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-          (expect (= #{"draft" "new" "apply" "abandon" "stash" "resume" "draft-blank" "cd" "fs"
-                       "add" "remove" "list" "create"}
+          (expect (= #{"draft" "new" "apply" "abandon" "stash" "resume" "draft-blank" "list" "cd"}
                      names)))))
   (it "/draft new reports the unavailable capability matrix"
       (with-store

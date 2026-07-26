@@ -1211,6 +1211,35 @@
           (expect (= {:scope "t1/i1" :gist "explored"} (first (filter :gist out))))
           (expect (some #(= "t1/i2/f1" (:scope %)) out))))
     (it
+      "prior-turn-scope-index: ONE fold over many iterations emits ONE gist line, not one per iteration"
+      ;; The resume-bloat regression: dedup used to key on the ITERATION scope, so a
+      ;; single session_fold covering 40 iterations replayed its identical gist 40
+      ;; times in every later request (and in every message queued behind a running
+      ;; turn). Dedup keys on the breadcrumb TEXT, so one fold costs one line.
+      (let
+        [forms
+         (vec (for [i (range 1 21)]
+                {:scope (str "t1/i" i "/f1") :result "r" :src "(cat)"}))
+
+         out
+         (prior-scope-index forms
+                            [{"scopes" (into #{} (map #(str "t1/i" %)) (range 1 21))
+                              "gist" "one big gist"}])]
+
+        (expect (= [{:scope "t1/i1" :gist "one big gist"}] out))))
+    (it "prior-turn-scope-index: distinct gists stay distinct while each collapses to one line"
+        (let
+          [forms
+           [{:scope "t1/i1/f1" :result "a" :src "(cat)"} {:scope "t1/i2/f1" :result "b" :src "(rg)"}
+            {:scope "t1/i3/f1" :result "c" :src "(ls)"} {:scope "t1/i4/f1" :result "d" :src "(ls)"}]
+
+           out
+           (prior-scope-index forms
+                              [{"scopes" #{"t1/i1" "t1/i2"} "gist" "A"}
+                               {"scopes" #{"t1/i3" "t1/i4"} "gist" "B"}])]
+
+          (expect (= [{:scope "t1/i1" :gist "A"} {:scope "t1/i3" :gist "B"}] out))))
+    (it
       "prior-turn-scope-index: a dropped iteration collapses to ONE dropped breadcrumb keeping the why"
       (let
         [forms
