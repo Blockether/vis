@@ -426,7 +426,7 @@
 (defdescribe
   shell-bg-lifecycle-op-test
   (it
-    "drives start -> logs -> send -> stop through ONE tool keyed by one id"
+    "drives start -> logs -> send -> stop through ONE tool with id in the map"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -440,30 +440,29 @@
                    (expect (= "running" (get start "status")))
                    (expect (false? (get start "already_running"))))
                  (let
-                   [logs (:result (poll #(shell* env "ops" {"op" "logs" "n" 5})
+                   [logs (:result (poll #(shell* env {"op" "logs" "id" "ops" "n" 5})
                                         (fn [_]
                                           true)))]
                    (expect (= "running" (get logs "status"))))
-                 (let [sent (:result (shell* env "ops" {"op" "send" "text" "hello"}))]
+                 (let [sent (:result (shell* env {"op" "send" "id" "ops" "text" "hello"}))]
                    (expect (= 6 (get sent "sent"))))
                  (let
-                   [logs (poll #(:result (shell* env "ops" {"op" "logs"}))
+                   [logs (poll #(:result (shell* env {"op" "logs" "id" "ops"}))
                                #(some (fn [[_ line]]
                                         (str/includes? line "GOT:hello"))
                                       (get % "lines")))]
                    (expect (some (fn [[_ line]]
                                    (str/includes? line "GOT:hello"))
                                  (get logs "lines"))))
-                 ;; The whole point of the merge: stop is an OP on the tool, not an
-                 ;; undiscoverable sandbox builtin — and it lands on the same registry
-                 ;; path resource_stop uses, so the resource really disappears.
-                 (let [stop (:result (shell* env "ops" {"op" "stop"}))]
+                 ;; Stop uses the same id field and the same registry path as
+                 ;; resource_stop, so the resource really disappears.
+                 (let [stop (:result (shell* env {"op" "stop" "id" "ops"}))]
                    (expect (= "stopped" (get stop "status")))
                    (expect (true? (get stop "stopped")))
                    (expect (empty? (resources/list-resources sid)))
-                   (expect (threw? #(shell* env "ops" {"op" "logs"}))))
+                   (expect (threw? #(shell* env {"op" "logs" "id" "ops"}))))
                  (finally (resources/stop-all! sid))))))))
-  (it "makes an id mean background, takes cmd positionally or in opts, and rejects a bogus op"
+  (it "makes an id mean background and rejects a bogus op"
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -473,58 +472,33 @@
 
               (try
                 (expect (= "running" (get (:result (shell* env "sleep 30" {"id" "a"})) "status")))
-                ;; An explicit op is allowed but never required: the ID is what
+                ;; An explicit op is allowed but never required: the id is what
                 ;; makes a shell background.
                 (expect (= "running"
                            (get (:result (shell* env "sleep 30" {"op" "bg" "id" "b"})) "status")))
-                ;; cmd may ride the opts map instead of the positional slot
-                (expect (= "running"
-                           (get (:result (shell* env {"cmd" "sleep 30" "id" "c"})) "status")))
                 (let
-                  [msg (try (shell* env "a" {"op" "nope"}) nil (catch Throwable t (ex-message t)))]
+                  [msg
+                   (try (shell* env "unused" {"op" "nope"}) nil (catch Throwable t (ex-message t)))]
                   (expect (str/includes? msg "Unknown shell op"))
                   (expect (str/includes? msg "\"stop\"")))
                 (finally (resources/stop-all! sid))))))))
   (it "stopping an id that was never started is a typed error, not a silent no-op"
-      (expect (threw? #(shell* {:session-id "shell-ext-ops-none"} "ghost" {"op" "stop"})))))
+      (expect (threw? #(shell* {:session-id "shell-ext-ops-none"} {"op" "stop" "id" "ghost"})))))
 
-(defdescribe
-  shell-cmd-slot-test
-  "`cmd` is ONE slot in two spellings — the lone positional, and `\"cmd\"` INSIDE
-   the options map, which is the only shape a native JSON call ever has. Both
-   must resolve identically for every op, or the tool's own schema describes a
-   call the dispatcher cannot make."
-  (it "runs a command that arrives inside the options map"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let [r (:result (shell* {} {"cmd" "echo from-map"}))]
-          (expect (= "run" (get r "stage")))
-          (expect (= 0 (get r "exit")))
-          (expect (= "from-map\n" (get r "stdout")))
-          (expect (= "echo from-map" (get r "cmd"))))))
-  (it "backgrounds, tails and stops through the map form alone"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let
-          [sid (str "cmd-slot-" (System/nanoTime))
-           env {:session-id sid}]
-
-          (try (let [b (:result (shell* env {"cmd" "echo alive; sleep 30" "op" "bg" "id" "job"}))]
-                 (expect (= "bg" (get b "stage")))
-                 (expect (= "echo alive; sleep 30" (get b "cmd")))
-                 (expect (some? (get b "pid"))))
-               ;; logs/send/stop address an EXISTING shell, so the same slot then
-               ;; carries that shell's id.
-               (let [l (:result (shell* env {"cmd" "job" "op" "logs"}))]
-                 (expect (= "logs" (get l "stage")))
-                 (expect (= "job" (get l "id"))))
-               (let [s (:result (shell* env {"op" "stop" "id" "job"}))]
-                 (expect (= "stop" (get s "stage")))
-                 (expect (true? (get s "stopped"))))
-               (finally (resources/stop-all! sid))))))
-  (it "lets an explicit positional command win over the map's cmd"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let [r (:result (shell* {} "echo positional" {"cmd" "echo mapped"}))]
-          (expect (= "echo positional" (get r "cmd")))
-          (expect (= "positional\n" (get r "stdout")))))))
+(defdescribe shell-argument-contract-test
+             "Commands are positional. Resource ids live only in the options map."
+             (it "rejects a cmd key in the options map"
+                 (expect (threw? #(shell* {} {"cmd" "echo wrong"})))
+                 (expect (threw? #(shell* {} "echo right" {"cmd" "echo wrong"}))))
+             (it "rejects a lifecycle id passed positionally"
+                 (expect (threw?
+                           #(shell* {:session-id "shell-positional-id"} "ghost" {"op" "logs"}))))
+             (it "runs a command from the one canonical positional slot"
+                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                   (let [r (:result (shell* {} "echo positional"))]
+                     (expect (= "run" (get r "stage")))
+                     (expect (= "echo positional" (get r "cmd")))
+                     (expect (= "positional\n" (get r "stdout")))))))
 
 (defdescribe
   shell-render-test
@@ -593,9 +567,10 @@
                  (let [d (:ext.symbol/description shell/shell-symbol)]
                    (expect (str/includes? d "THE one shell tool"))
                    (expect (str/includes? d "stop what you started"))
-                   ;; a native JSON call has NO positional: the description must name
-                   ;; `cmd` as the slot, not "the lone positional" alone
-                   (expect (str/includes? d "`cmd` is the COMMAND"))
+                   ;; Native JSON carries `cmd`; the model-facing description must
+                   ;; distinguish its Python positional from the map-only id.
+                   (expect (str/includes? d "`cmd` is the positional command"))
+                   (expect (str/includes? d "`id` always stays in the options map"))
                    (expect (str/includes? d "session[\"resources\"]"))
                    ;; the truncation warning is the exact gap that let a truncated
                    ;; stdout reach json.loads and read as a tool bug
@@ -711,12 +686,11 @@
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
         (expect (= ['shell] (sort (filter #(str/includes? (name %) "shell") (keys bind)))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
-  (it "accepts the whole call in ONE map, exactly like a native JSON call"
-      (let [c (py-ctx {})]
-        (expect (= ["run" 0 "in-map" "echo in-map"]
-                   (py c
-                       (str "m = __vis_settle__(shell({'cmd': 'echo in-map'}))\n"
-                            "[m['stage'], m['exit'], m['stdout'].strip(), m['cmd']]"))))))
+  (it "documents one command spelling and keeps lifecycle ids in the options map"
+      (let [d (str (py (py-ctx {}) "doc('shell')"))]
+        (expect (str/includes? d "`cmd` is the positional command"))
+        (expect (str/includes? d "`id` always stays in the options map"))
+        (expect (not (str/includes? d "cmd in the map")))))
   (it "runs a command through the bare `shell` global and answers the TOTAL map"
       (let [c (py-ctx {})]
         (expect (true? (py c "'shell' in globals() and callable(shell)")))
@@ -742,8 +716,8 @@
                         (py c
                             (str "import time\n" "b = __vis_settle__(shell('echo alive; sleep 30',"
                                  " {'op':'bg','id':'pyjob'}))\n" "time.sleep(0.5)\n"
-                                 "l = __vis_settle__(shell('pyjob', {'op':'logs','n':10}))\n"
-                                 "s = __vis_settle__(shell('pyjob', {'op':'stop'}))\n"
+                                 "l = __vis_settle__(shell({'op':'logs','id':'pyjob','n':10}))\n"
+                                 "s = __vis_settle__(shell({'op':'stop','id':'pyjob'}))\n"
                                  "[b['stage'], b['pid'] is not None, l['stage'],"
                                  " l['line_count'] >= 0, s['stage'], s['stopped']]"))))
              (finally (resources/stop-all! sid)))))

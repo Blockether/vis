@@ -505,6 +505,61 @@
              (finally (reset! registry saved))))))
 
 (defdescribe
+  transcript-page-test
+  "The transcript window exists so a client never pays for history it will not
+   paint: a long session is tens of megabytes and nearly all of that cost is
+   per-turn hydration. The window must therefore be sliced BEFORE hydration,
+   and the cursor must be an index — `:position` is neither unique nor
+   monotonic in real sessions, so it cannot page anything."
+  (it
+    "hydrates ONLY the requested window and reports the full total"
+    (let
+      [sid
+       (java.util.UUID/randomUUID)
+
+       rows
+       (mapv (fn [n]
+               {:id (str "turn-" n) :position 1})
+             (range 10))
+
+       hydrated
+       (atom [])]
+
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turns (fn [_ _]
+                                                             rows)
+                       #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                 (zipmap ids (repeat [])))
+                       #'state/transcript-turn (fn [_db _att row]
+                                                 (swap! hydrated conj (:id row))
+                                                 {:turn_id (:id row)})}
+        (fn []
+          ;; Newest page: no offset given, so the window is the LAST `limit` rows.
+          (let [page (state/transcript-page sid {:limit 3})]
+            (expect (= ["turn-7" "turn-8" "turn-9"] (mapv #(get % "turn_id") (:turns page))))
+            (expect (= 10 (:total page)))
+            (expect (= 7 (:offset page)))
+            (expect (:has-more page))
+            ;; The saving IS this: seven older turns were never hydrated.
+            (expect (= ["turn-7" "turn-8" "turn-9"] @hydrated)))
+          ;; Paging backwards from that window reaches the very beginning.
+          (reset! hydrated [])
+          (let [page (state/transcript-page sid {:offset 0 :limit 7})]
+            (expect (= "turn-0" (get (first (:turns page)) "turn_id")))
+            (expect (= "turn-6" (get (last (:turns page)) "turn_id")))
+            (expect (= 0 (:offset page)))
+            (expect (not (:has-more page)))
+            (expect (= 7 (count @hydrated))))
+          ;; No window asked for = the whole transcript, so an older client that
+          ;; sends no params still gets exactly what it always got.
+          (expect (= 10 (count (:turns (state/transcript-page sid {})))))
+          ;; A cursor past the end is clamped, never an exception or a wrap-around.
+          (let [page (state/transcript-page sid {:offset 99999 :limit 5})]
+            (expect (= [] (:turns page)))
+            (expect (= 10 (:offset page)))
+            (expect (:has-more page))))))))
+
+(defdescribe
   queued-update-payload-test
   "Editing a queued request must also edit the provider message payload;
   otherwise the drained queued turn answers the pre-edit prompt."

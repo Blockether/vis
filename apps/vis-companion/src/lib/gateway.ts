@@ -106,6 +106,32 @@ const snapshots = new Map<string, unknown>();
  */
 const transcriptStamps = new Map<string, string>();
 
+/** Turns per windowed transcript fetch — the page the UI pulls and pushes. */
+export const TRANSCRIPT_PAGE = 24;
+
+/** One windowed transcript response. */
+export interface TranscriptPage {
+  turns: TranscriptTurn[];
+  /** Turns in the session, not in this page. */
+  total: number;
+  /** 0-based start of this window in the oldest-first list. */
+  offset: number;
+  /** Older turns exist before this window. */
+  hasMore: boolean;
+}
+
+/** How much of a session's history a client currently holds. */
+export interface TranscriptWindow {
+  offset: number;
+  total: number;
+}
+
+/**
+ * Oldest row held per transcript snapshot, so "load earlier" knows where to
+ * continue and the UI can say how much history is still on the gateway.
+ */
+const transcriptWindows = new Map<string, TranscriptWindow>();
+
 function transcriptStamp(row: Session | null | undefined): string {
   if (!row) return '';
   return `${row.turn_count ?? ''}\u0000${row.modified_at ?? ''}`;
@@ -652,6 +678,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('transcript', sid));
     snapshots.delete(this.snapshotKey('queued', sid));
     transcriptStamps.delete(this.snapshotKey('transcript', sid));
+    transcriptWindows.delete(this.snapshotKey('transcript', sid));
   }
 
   async listSessions(signal?: AbortSignal): Promise<Session[]> {
@@ -745,18 +772,136 @@ export class GatewayClient {
     return result;
   }
 
-  async transcript(sid: string, signal?: AbortSignal): Promise<TranscriptTurn[]> {
-    const response = await this.request<{ turns: TranscriptTurn[] }>(
+  /**
+   * Merge a freshly fetched slice onto the rows we already hold, BY TURN ID.
+   * Windowed fetches overlap (the newest page re-covers turns we painted an hour
+   * ago), so positional splicing would duplicate or reorder them; matching on id
+   * keeps one row per turn and reuses the old object whenever the wire repeated
+   * itself, which is what makes the memoised usage fold and `memo`'d rows hit.
+   */
+  private mergeTurns(
+    previous: TranscriptTurn[] | null,
+    incoming: TranscriptTurn[],
+    where: 'tail' | 'head',
+  ): TranscriptTurn[] {
+    if (!previous?.length) return incoming;
+    if (!incoming.length) return previous;
+    const index = new Map(previous.map((turn, at) => [turn.id, at]));
+    const merged = previous.slice();
+    const fresh: TranscriptTurn[] = [];
+    let changed = false;
+    for (const turn of incoming) {
+      const at = index.get(turn.id);
+      if (at === undefined) {
+        fresh.push(turn);
+        changed = true;
+        continue;
+      }
+      const kept = reconcileRow(merged[at], turn);
+      if (kept !== merged[at]) changed = true;
+      merged[at] = kept;
+    }
+    if (!fresh.length) return changed ? merged : previous;
+    return where === 'head' ? fresh.concat(merged) : merged.concat(fresh);
+  }
+
+  /**
+   * One windowed transcript request. `limit`/`offset` are sliced by the gateway
+   * BEFORE it hydrates iterations and attachments, which is the whole saving: a
+   * 247-turn session costs ~750 ms and 40 MB whole, ~50 ms and 4 MB for the
+   * newest 30. A gateway too old to know the params answers with the full
+   * transcript and no `total`, so we synthesise the window from what arrived and
+   * everything below still works.
+   */
+  private async fetchTranscriptPage(
+    sid: string,
+    query: Record<string, number>,
+    signal?: AbortSignal,
+  ): Promise<TranscriptPage> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) search.set(key, String(value));
+    const suffix = search.toString();
+    const response = await this.request<{
+      turns?: TranscriptTurn[];
+      total?: number;
+      offset?: number;
+      has_more?: boolean;
+    }>(
       'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/transcript`,
+      `/v1/sessions/${encodeURIComponent(sid)}/transcript${suffix ? `?${suffix}` : ''}`,
       undefined,
       signal,
     );
-    const turns = reconcileRows(this.cachedTranscript(sid), response.turns ?? []);
-    writeSnapshot(this.snapshotKey('transcript', sid), turns);
+    const turns = response.turns ?? [];
+    const total = typeof response.total === 'number' ? response.total : turns.length;
+    const offset =
+      typeof response.offset === 'number' ? response.offset : Math.max(0, total - turns.length);
+    return {
+      turns,
+      total,
+      offset,
+      hasMore: typeof response.has_more === 'boolean' ? response.has_more : offset > 0,
+    };
+  }
+
+  /** How much of `sid`'s transcript we hold, and how much older history exists. */
+  transcriptWindow(sid: string): TranscriptWindow {
+    return (
+      transcriptWindows.get(this.snapshotKey('transcript', sid)) ?? {
+        offset: 0,
+        total: this.cachedTranscript(sid)?.length ?? 0,
+      }
+    );
+  }
+
+  /**
+   * The NEWEST page of a session's transcript, merged onto whatever we already
+   * hold (so earlier pages the user pulled in stay loaded).
+   */
+  async transcript(
+    sid: string,
+    signal?: AbortSignal,
+    limit: number = TRANSCRIPT_PAGE,
+  ): Promise<TranscriptTurn[]> {
+    const key = this.snapshotKey('transcript', sid);
+    const page = await this.fetchTranscriptPage(sid, { limit }, signal);
+    const cached = this.cachedTranscript(sid);
+    const turns = this.mergeTurns(cached, page.turns, 'tail');
+    writeSnapshot(key, turns);
+    // The window starts at the OLDEST row we hold, which may predate this page.
+    const held = transcriptWindows.get(key);
+    transcriptWindows.set(key, {
+      offset: cached?.length ? Math.min(held?.offset ?? page.offset, page.offset) : page.offset,
+      total: page.total,
+    });
     // Stamp with the freshest meta row we hold, so a caller that already knows
     // the session did not move can skip the next fetch entirely.
-    transcriptStamps.set(this.snapshotKey('transcript', sid), transcriptStamp(this.cachedSession(sid)));
+    transcriptStamps.set(key, transcriptStamp(this.cachedSession(sid)));
+    return turns;
+  }
+
+  /**
+   * Pull the page of history immediately BEFORE the oldest row we hold. Returns
+   * `null` when the beginning is already loaded, so the caller can hide its
+   * "load earlier" affordance without a round-trip.
+   */
+  async transcriptEarlier(
+    sid: string,
+    signal?: AbortSignal,
+    limit: number = TRANSCRIPT_PAGE,
+  ): Promise<TranscriptTurn[] | null> {
+    const key = this.snapshotKey('transcript', sid);
+    const window = this.transcriptWindow(sid);
+    if (window.offset <= 0) return null;
+    const offset = Math.max(0, window.offset - limit);
+    const page = await this.fetchTranscriptPage(
+      sid,
+      { offset, limit: window.offset - offset },
+      signal,
+    );
+    const turns = this.mergeTurns(this.cachedTranscript(sid), page.turns, 'head');
+    writeSnapshot(key, turns);
+    transcriptWindows.set(key, { offset: page.offset, total: page.total });
     return turns;
   }
 
@@ -764,7 +909,7 @@ export class GatewayClient {
    * Revalidate the transcript against a session meta row and fetch ONLY when
    * that row says a turn was actually persisted. Returns `null` when the cached
    * rows are still current — the caller keeps its state, its scroll, and its
-   * rendered markdown, and the tens-of-megabytes body never crosses the wire.
+   * rendered markdown, and the body never crosses the wire.
    */
   async transcriptIfMoved(
     sid: string,

@@ -589,6 +589,13 @@ export function SessionScreen({
   const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
+  // Turns that exist on the gateway BEFORE the window we hold. The transcript is
+  // fetched newest-page-first (a long session is tens of megabytes whole), so
+  // "earlier" can mean rows we have but hide, or rows we have not read yet.
+  const [earlierRemaining, setEarlierRemaining] = useState(
+    () => client.transcriptWindow(sid).offset,
+  );
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -637,6 +644,8 @@ export function SessionScreen({
     void recordingRef.current?.cancel();
     recordingRef.current = null;
     setTurns(client.cachedTranscript(sid) ?? []);
+    setEarlierRemaining(client.transcriptWindow(sid).offset);
+    setLoadingEarlier(false);
     setLiveTurn(null);
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueueBusy(new Set());
@@ -719,6 +728,7 @@ export function SessionScreen({
           return turnsRef.current;
         }
         setTurns(next);
+        setEarlierRemaining(client.transcriptWindow(sid).offset);
         setError(null);
         // With turns present, the scroll effect drops the overlay only after it
         // pins the viewport to the bottom; an empty transcript has nothing to
@@ -1534,6 +1544,8 @@ export function SessionScreen({
     .filter((part): part is string => Boolean(part))
     .join(' · ');
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
+  // Everything older than the first bubble on screen, wherever it lives.
+  const earlierTotal = visibleStart + earlierRemaining;
   const liveTurnId = liveTurn?.id;
   // While a live turn streams, drop the transcript's own copy of that same turn
   // (a running turn is persisted as a bare 'running' row) so it isn't rendered
@@ -1603,11 +1615,38 @@ export function SessionScreen({
       ),
     [liveTurn, turns.length],
   );
-  const loadEarlierTurns = () => {
+  // Pin the viewport to the content it is already showing, so rows added ABOVE
+  // do not shove it. The layout effect reads this height on the next paint.
+  const anchorPrepend = () => {
     const viewport = scrollRef.current;
     if (viewport) prependScrollHeightRef.current = viewport.scrollHeight;
     followingRef.current = false;
-    setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
+  };
+
+  // "Earlier" has two sources: rows already fetched but hidden by the render
+  // window, and history still on the gateway. Reveal local rows first — that is
+  // free — and only page the daemon once they run out.
+  const loadEarlierTurns = () => {
+    if (visibleStart > 0) {
+      anchorPrepend();
+      setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
+      return;
+    }
+    if (loadingEarlier || earlierRemaining <= 0) return;
+    setLoadingEarlier(true);
+    const held = turns.length;
+    void client
+      .transcriptEarlier(sid)
+      .then((older) => {
+        if (!older) return;
+        anchorPrepend();
+        // Keep every bubble that was on screen, plus the page that just landed.
+        setVisibleTurnCount((count) => count + Math.max(0, older.length - held));
+        setTurns(older);
+        setEarlierRemaining(client.transcriptWindow(sid).offset);
+      })
+      .catch((cause: unknown) => setError((cause as Error).message))
+      .finally(() => setLoadingEarlier(false));
   };
 
   return (
@@ -1673,14 +1712,17 @@ export function SessionScreen({
             </div>
               ) : null}
 
-          {visibleStart > 0 && (
+          {earlierTotal > 0 && (
             <div className="mb-5 flex justify-center">
               <button
                 type="button"
                 className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-chip font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
                 onClick={loadEarlierTurns}
+                disabled={loadingEarlier}
               >
-                ↑ Load {Math.min(INITIAL_VISIBLE_TURNS, visibleStart)} earlier · {visibleStart} remaining
+                {loadingEarlier
+                  ? 'Loading earlier…'
+                  : `↑ Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`}
               </button>
             </div>
           )}

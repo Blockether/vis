@@ -2308,10 +2308,10 @@
 (defn- folded-kwargs->positional
   "Inverse of the engine's `synth-call` for the DIRECT-python surface. When the
    agent writes a native tool call in a `python_execution` block with ALL-KEYWORD
-   args (`shell(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
+   args (`tool(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
    dict positional (see `__vis_exec_call__` in `env-python`). A fixed-arity impl
-   like `shell-logs-impl [env id n]` would then receive the whole `{id n}` map in
-   its `id` slot (`No background shell '{id …, n …}'`). Re-expand that lone map
+   `[env id n]` would then receive the whole `{id n}` map in its `id` slot.
+   Re-expand that lone map
    into the positional args the symbol's `:call` SHAPE describes, so keyword and
    positional calls bind IDENTICALLY.
 

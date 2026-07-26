@@ -166,7 +166,10 @@
         (expect (< (count text) 1500))
         (expect (str/includes? text "`shell` is a bound global"))
         (expect (str/includes? text "shell(cmd)"))
-        (expect (str/includes? text "\"op\": \"bg\""))
+        (expect (str/includes? text "shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})"))
+        (expect (str/includes? text "shell({\"op\": \"logs\", \"id\": \"dev\"})"))
+        (expect (not (str/includes? text "shell({\"cmd\":")))
+        (expect (not (str/includes? text "all in one map")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system")))))
 

@@ -1397,6 +1397,57 @@
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))
 
+(defn transcript-page
+  "A WINDOW of `sid`'s transcript, hydrated LAZILY — the whole point is that only
+  the rows in the window pay for iteration/attachment hydration, which is where
+  a big session's cost lives (a 247-turn session: ~26 ms to list, ~750 ms to
+  hydrate all of it, ~50 ms to hydrate the newest 30).
+
+  The cursor is an INDEX into the oldest-first list, NOT `:position` — positions
+  are neither unique nor monotonic in practice (one real 247-turn session has
+  172 distinct positions), so they cannot page anything. New turns only ever
+  append, so an offset counted from the OLDEST row is stable while paging
+  backwards.
+
+  `opts`: `:limit` window size (nil = every row), `:offset` 0-based start in the
+  oldest-first list (nil = the NEWEST `:limit` rows).
+
+  Returns `{:turns <oldest-first window> :total <turn count> :offset <window
+  start> :has-more <older rows exist>}`."
+  [sid {:keys [limit offset]}]
+  (try (let
+         [db
+          (lp/db-info)
+
+          all
+          (vec (persistance/db-list-session-turns db sid))
+
+          total
+          (long (count all))
+
+          lim
+          (long (if limit (max 0 (min (long limit) total)) total))
+
+          start
+          (long (if offset (max 0 (min (long offset) total)) (max 0 (- total lim))))
+
+          end
+          (long (min total (+ start lim)))
+
+          window
+          (subvec all start end)
+
+          att-by-soul
+          (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))]
+
+         {:turns (wire/canonical (mapv (partial transcript-turn db att-by-soul) window))
+          :total total
+          :offset start
+          :has-more (pos? start)})
+       (catch Throwable t
+         (tel/log! :warn ["gateway: transcript page hydration failed" (ex-message t)])
+         {:turns [] :total 0 :offset 0 :has-more false})))
+
 (defn turn-trace
   "THE canonical wire trace of ONE persisted turn: its iteration rows (each
   with hydrated `:attachments` re-read from the attachment store) through

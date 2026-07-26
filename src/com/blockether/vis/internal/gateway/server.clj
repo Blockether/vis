@@ -359,6 +359,18 @@
   (some-> (get-in request [:path-params :sid])
           parse-uuid))
 
+(defn- parse-long-param
+  "Non-negative long query param `k`, or nil when absent/blank/unparsable — a
+  garbage cursor degrades to \"unwindowed\", never to a 500. `:zero-ok?` keeps a
+  literal 0 (a valid offset); by default only positive values survive."
+  ([request k] (parse-long-param request k nil))
+  ([request k {:keys [zero-ok?]}]
+   (some-> (get-in request [:query-params k])
+           str/trim
+           not-empty
+           parse-long
+           (as-> n (when (if zero-ok? (nat-int? n) (pos? (long n))) n)))))
+
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
 (defn- sid-route
@@ -1575,9 +1587,22 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- transcript-handler
+  "Transcript rows for a session, optionally WINDOWED: `?limit=` (window size,
+  defaulting to the NEWEST rows) and `?offset=` (0-based start in the
+  oldest-first list). Without them the whole transcript is returned, so an older
+  client is unaffected. The window is sliced BEFORE hydration, so a page costs
+  page-sized work instead of session-sized work."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:turns (state/transcript sid)})
+    (let
+      [limit (parse-long-param request "limit")
+       offset (parse-long-param request "offset" {:zero-ok? true})
+       page (state/transcript-page sid {:limit limit :offset offset})]
+
+      (json-response {:turns (:turns page)
+                      :total (:total page)
+                      :offset (:offset page)
+                      :has-more (:has-more page)}))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- transcript-md-handler

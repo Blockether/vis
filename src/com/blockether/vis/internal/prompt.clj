@@ -608,10 +608,11 @@
                               (str/join "`, `" shim-globals)
                               "`."))
                        (when shell?
-                         (str "\n`shell` is a bound global there too — `shell(cmd)`, "
-                              "`shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})`, or all in one map "
-                              "`shell({\"cmd\": cmd, \"op\": \"bg\", \"id\": \"dev\"})` — and "
-                              "`subprocess` / `os.system` / `os.popen` route to it."))))))
+                         (str "\n`shell` is a bound global there too — run with `shell(cmd)`; "
+                              "background with `shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})`; "
+                              "keep lifecycle ids in the options map, e.g. "
+                              "`shell({\"op\": \"logs\", \"id\": \"dev\"})`. `subprocess` / "
+                              "`os.system` / `os.popen` route to it."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime
