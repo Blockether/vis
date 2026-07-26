@@ -75,6 +75,45 @@ npm install @capacitor-mlkit/barcode-scanning
 
 On the web, scanning falls back to pasting the pairing link.
 
+## Release to TestFlight (iOS)
+
+One command builds the bundle, syncs Capacitor, archives, exports a signed
+`.ipa`, and uploads it to App Store Connect:
+
+```sh
+npm run release:ios                 # full run
+npm run release:ios -- --no-upload  # stop at the signed .ipa
+npm run release:ios -- --version 1.2.0 --build 4711
+```
+
+Versioning has **no hand-edited state** — the script passes both numbers to
+`xcodebuild` as build settings, so the gitignored `ios/` project never has to be
+touched:
+
+| Store field | Source |
+| --- | --- |
+| `CFBundleShortVersionString` (version) | `package.json` `"version"` — the same value the app stamps on every gateway request and shows on the version-mismatch screen |
+| `CFBundleVersion` (build) | `git rev-list --count HEAD` — strictly monotonic, so two uploads can never collide |
+
+Bump `package.json` `version` for a user-visible release; the build number takes
+care of itself.
+
+Signing uses Xcode-managed (cloud) distribution certificates for team
+`JSZTFUBUBB`; `-allowProvisioningUpdates` creates what is missing. For the
+upload step, set an App Store Connect API key (no 2FA prompt):
+
+```sh
+export VIS_ASC_KEY_ID=XXXXXXXXXX
+export VIS_ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+export VIS_ASC_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
+```
+
+or `VIS_ASC_APPLE_ID` + `VIS_ASC_APP_PASSWORD` (app-specific password). With
+neither set, the upload falls back to `xcodebuild -exportArchive
+-exportOptionsPlist … destination=upload`, which authenticates as the Apple
+account signed into **Xcode → Settings → Accounts** — that is what a local
+release from this machine uses. Artifacts land in `build/ios/`.
+
 ## Layout
 
 ```
