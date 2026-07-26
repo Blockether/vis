@@ -489,6 +489,44 @@
       (expect (threw? #(shell* {:session-id "shell-ext-ops-none"} "ghost" {"op" "stop"})))))
 
 (defdescribe
+  shell-cmd-slot-test
+  "`cmd` is ONE slot in two spellings — the lone positional, and `\"cmd\"` INSIDE
+   the options map, which is the only shape a native JSON call ever has. Both
+   must resolve identically for every op, or the tool's own schema describes a
+   call the dispatcher cannot make."
+  (it "runs a command that arrives inside the options map"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [r (:result (shell* {} {"cmd" "echo from-map"}))]
+          (expect (= "run" (get r "stage")))
+          (expect (= 0 (get r "exit")))
+          (expect (= "from-map\n" (get r "stdout")))
+          (expect (= "echo from-map" (get r "cmd"))))))
+  (it "backgrounds, tails and stops through the map form alone"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [sid (str "cmd-slot-" (System/nanoTime))
+           env {:session-id sid}]
+
+          (try (let [b (:result (shell* env {"cmd" "echo alive; sleep 30" "op" "bg" "id" "job"}))]
+                 (expect (= "bg" (get b "stage")))
+                 (expect (= "echo alive; sleep 30" (get b "cmd")))
+                 (expect (some? (get b "pid"))))
+               ;; logs/send/stop address an EXISTING shell, so the same slot then
+               ;; carries that shell's id.
+               (let [l (:result (shell* env {"cmd" "job" "op" "logs"}))]
+                 (expect (= "logs" (get l "stage")))
+                 (expect (= "job" (get l "id"))))
+               (let [s (:result (shell* env {"op" "stop" "id" "job"}))]
+                 (expect (= "stop" (get s "stage")))
+                 (expect (true? (get s "stopped"))))
+               (finally (resources/stop-all! sid))))))
+  (it "lets an explicit positional command win over the map's cmd"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [r (:result (shell* {} "echo positional" {"cmd" "echo mapped"}))]
+          (expect (= "echo positional" (get r "cmd")))
+          (expect (= "positional\n" (get r "stdout")))))))
+
+(defdescribe
   shell-render-test
   (it "renders the run op like a REPL-style collapsible card"
       (let
@@ -555,6 +593,9 @@
                  (let [d (:ext.symbol/description shell/shell-symbol)]
                    (expect (str/includes? d "THE one shell tool"))
                    (expect (str/includes? d "stop what you started"))
+                   ;; a native JSON call has NO positional: the description must name
+                   ;; `cmd` as the slot, not "the lone positional" alone
+                   (expect (str/includes? d "`cmd` is the COMMAND"))
                    (expect (str/includes? d "session[\"resources\"]"))
                    ;; the truncation warning is the exact gap that let a truncated
                    ;; stdout reach json.loads and read as a tool bug
@@ -668,6 +709,12 @@
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
         (expect (= ['shell] (sort (filter #(str/includes? (name %) "shell") (keys bind)))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
+  (it "accepts the whole call in ONE map, exactly like a native JSON call"
+      (let [c (py-ctx {})]
+        (expect (= ["run" 0 "in-map" "echo in-map"]
+                   (py c
+                       (str "m = __vis_settle__(shell({'cmd': 'echo in-map'}))\n"
+                            "[m['stage'], m['exit'], m['stdout'].strip(), m['cmd']]"))))))
   (it "runs a command through the bare `shell` global and answers the TOTAL map"
       (let [c (py-ctx {})]
         (expect (true? (py c "'shell' in globals() and callable(shell)")))

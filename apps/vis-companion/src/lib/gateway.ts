@@ -71,6 +71,19 @@ interface RawSessionMatch {
   hits?: { side?: string; snippet?: string | null; at?: number | null }[];
 }
 
+/**
+ * How long a `/v1/router` payload stays good. Assembling it costs the daemon a
+ * live auth + limits probe per provider, so five minutes of reuse turns "open
+ * the model picker" from a multi-second wait into an instant paint.
+ */
+export const ROUTER_TTL_MS = 5 * 60 * 1000;
+
+/** Router rows per gateway base URL, shared by every screen and client instance. */
+const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
+
+/** In-flight router reads per base URL, so concurrent opens cost one request. */
+const routerInflight = new Map<string, Promise<RouterProvider[]>>();
+
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -224,14 +237,69 @@ export class GatewayClient {
   // TUI's router dialog renders. Auth is driven step-by-step over HTTP: the
   // daemon owns the PKCE verifier, the device code, and the credential file,
   // so no token ever reaches this device.
-  async router(signal?: AbortSignal): Promise<RouterProvider[]> {
-    const response = await this.request<{ providers?: RouterProvider[] }>(
-      'GET',
-      '/v1/router',
-      undefined,
-      signal,
-    );
-    return response.providers ?? [];
+  //
+  // Assembling that payload costs the daemon a real auth/limits probe per
+  // provider (seconds on a cold gateway), so the answer is cached here for
+  // ROUTER_TTL_MS, shared by every screen, prefetched at connect time, and
+  // served stale-while-revalidating: opening the picker paints instantly and
+  // any refresh lands underneath. Every mutation below drops the entry.
+
+  /** Cached rows at ANY age — paint these first, then revalidate. */
+  cachedRouter(): RouterProvider[] | null {
+    return routerCache.get(this.base)?.rows ?? null;
+  }
+
+  /** True when the cached rows are younger than the TTL. */
+  isRouterFresh(): boolean {
+    const entry = routerCache.get(this.base);
+    return !!entry && Date.now() - entry.at < ROUTER_TTL_MS;
+  }
+
+  /** Forget the cached fleet so the next read re-probes the daemon. */
+  invalidateRouter(): void {
+    routerCache.delete(this.base);
+    routerInflight.delete(this.base);
+  }
+
+  /**
+   * Warm the router cache in the background. Fire-and-forget: never throws,
+   * never blocks a render, and collapses into any request already in flight.
+   */
+  prefetchRouter(): void {
+    if (this.isRouterFresh()) return;
+    void this.router().catch(() => undefined);
+  }
+
+  async router(
+    signal?: AbortSignal,
+    opts?: { force?: boolean },
+  ): Promise<RouterProvider[]> {
+    const key = this.base;
+    if (opts?.force) this.invalidateRouter();
+    else {
+      const entry = routerCache.get(key);
+      if (entry && Date.now() - entry.at < ROUTER_TTL_MS) return entry.rows;
+    }
+
+    // One shared request per gateway: three screens opening at once cost the
+    // daemon one probe, and an aborted caller never cancels the others.
+    let inflight = routerInflight.get(key);
+    if (!inflight) {
+      inflight = this.request<{ providers?: RouterProvider[] }>('GET', '/v1/router')
+        .then((response) => {
+          const rows = response.providers ?? [];
+          routerCache.set(key, { at: Date.now(), rows });
+          return rows;
+        })
+        .finally(() => {
+          routerInflight.delete(key);
+        });
+      routerInflight.set(key, inflight);
+    }
+    // The shared request is deliberately NOT tied to one caller's signal:
+    // callers check `signal.aborted` after awaiting instead.
+    void signal;
+    return inflight;
   }
 
   async sessionModel(sid: string, signal?: AbortSignal): Promise<ModelPref | null> {
@@ -265,37 +333,44 @@ export class GatewayClient {
     );
   }
 
-  completeProviderAuth(
+  async completeProviderAuth(
     providerId: string,
     flowId: string,
     redirectUrl: string,
   ): Promise<AuthVerdict> {
-    return this.request<AuthVerdict>(
+    const verdict = await this.request<AuthVerdict>(
       'POST',
       `/v1/providers/${encodeURIComponent(providerId)}/auth/complete`,
       { flow_id: flowId, redirect_url: redirectUrl },
     );
+    this.invalidateRouter();
+    return verdict;
   }
 
   /** Finish an `api-key` flow: the DAEMON persists the key in its own config. */
-  submitProviderKey(
+  async submitProviderKey(
     providerId: string,
     flowId: string,
     apiKey: string,
   ): Promise<AuthVerdict> {
-    return this.request<AuthVerdict>(
+    const verdict = await this.request<AuthVerdict>(
       'POST',
       `/v1/providers/${encodeURIComponent(providerId)}/auth/complete`,
       { flow_id: flowId, api_key: apiKey },
     );
+    this.invalidateRouter();
+    return verdict;
   }
 
-  pollProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
-    return this.request<AuthVerdict>(
+  async pollProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
+    const verdict = await this.request<AuthVerdict>(
       'POST',
       `/v1/providers/${encodeURIComponent(providerId)}/auth/poll`,
       { flow_id: flowId },
     );
+    // A settled verdict changed the daemon's credentials; a pending one did not.
+    if (verdict?.status !== 'pending') this.invalidateRouter();
+    return verdict;
   }
 
   cancelProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
@@ -306,11 +381,13 @@ export class GatewayClient {
     );
   }
 
-  logoutProvider(providerId: string): Promise<AuthVerdict> {
-    return this.request<AuthVerdict>(
+  async logoutProvider(providerId: string): Promise<AuthVerdict> {
+    const verdict = await this.request<AuthVerdict>(
       'POST',
       `/v1/providers/${encodeURIComponent(providerId)}/logout`,
     );
+    this.invalidateRouter();
+    return verdict;
   }
 
   // ── Theme (same persisted selection and palette as the TUI) ─────

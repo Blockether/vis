@@ -1976,6 +1976,53 @@
                     db
                     specs))))
 
+(reg-event-db :order-project-tabs
+              ;; Re-seat the tabs bound to a PROJECT so the strip reads in the
+              ;; gateway's stored `project_position` order (`session-ids`). Only the
+              ;; slots those tabs already occupy are rewritten, so tabs of another
+              ;; project — and unbound/building ones — never move. Focus follows the
+              ;; tab ENTRY, not its index, so re-seating never switches session.
+              ;;
+              ;; Startup mints the eagerly-resumed tab BEFORE the member list is
+              ;; known, so without this the strip is "startup tab first, rest in
+              ;; stored order" and the follow-up persist rewrites `project_position`
+              ;; to match — rotating the tab order by one on EVERY relaunch.
+              (fn [db [_ session-ids]]
+                (let
+                  [entries
+                   (vec (:tabs db))
+
+                   rank
+                   (into {}
+                         (map-indexed (fn [i sid]
+                                        [(str sid) i]))
+                         (distinct (map str session-ids)))
+
+                   sid-of
+                   (fn [entry]
+                     (some-> (tab-session-id db (:id entry))
+                             str))
+
+                   member?
+                   (fn [entry]
+                     (contains? rank (sid-of entry)))
+
+                   slots
+                   (vec (keep-indexed (fn [i entry]
+                                        (when (member? entry) i))
+                                      entries))
+
+                   ordered
+                   (vec (sort-by (comp rank sid-of) (filterv member? entries)))]
+
+                  (if (< (count slots) 2)
+                    db
+                    (assoc db
+                      :tabs (reduce (fn [es [i entry]]
+                                      (assoc es i entry))
+                                    entries
+                                    (map vector slots ordered)))))))
+
 (reg-event-db :mark-tab-loading
               ;; Flip a tab's `:loading?` while its PENDING transcript hydrates on a
               ;; worker (screen.clj's hydrate-pending-tab!): the spinner shows and any

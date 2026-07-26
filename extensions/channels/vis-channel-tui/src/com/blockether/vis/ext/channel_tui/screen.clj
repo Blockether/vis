@@ -4102,15 +4102,34 @@
         (when pid (reset! active-project-id* pid))
         pid)))
 
-(defn- project-member-session-ids
-  "Session ids belonging to `pid`, in manual (`project_position`) order — the
+(defonce ^:private launch-member-ids*
+  ;; Session ids of the launch project's members AS THEY WERE ON DISK at startup.
+  ;; A startup tab already in this set must NOT be persisted alone: a one-tab
+  ;; reorder promotes it to `project_position` 0 and rotates the whole strip by
+  ;; one on every relaunch.
+  (atom #{}))
+
+(defn- project-member-sessions
+  "Souls belonging to `pid`, in manual (`project_position`) order — the
    project's tab set, oldest-position first."
   [pid]
   (when pid
     (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ nil))
          (filter #(= (str pid) (str (get % "project_id"))))
          (sort-by #(or (get % "project_position") Long/MAX_VALUE))
-         (mapv #(str (get % "id"))))))
+         vec)))
+
+(defn- most-recent-session-ids
+  "`sessions` as id strings, most recently active FIRST. This picks only WHICH
+   member the startup tab resumes eagerly — the strip's ORDER stays the stored
+   `project_position` (see `:order-project-tabs`)."
+  [sessions]
+  (->> sessions
+       (sort-by #(- (long (or (date->millis (get % "modified_at"))
+                              (date->millis (get % "last_active_at"))
+                              (date->millis (get % "created_at"))
+                              0))))
+       (mapv #(str (get % "id")))))
 
 (defn- persist-tabs-order!
   "Persist an EXPLICIT project + ordered tab ids in ONE gateway call. LOOSE tabs
@@ -4562,8 +4581,15 @@
                         ;; members → fall back to the newest non-empty session
                         ;; pinned to this root, else a fresh session.
                         :else (let
-                                [preferred (reverse (project-member-session-ids
-                                                      (ensure-active-project-id!)))]
+                                [members (project-member-sessions (ensure-active-project-id!))
+                                 ;; Remember the ON-DISK member set: a startup tab
+                                 ;; that is already a member must not be persisted
+                                 ;; alone (see below).
+                                 _ (reset! launch-member-ids*
+                                           (into #{} (map #(str (get % "id"))) members))
+                                 ;; Recency picks WHICH member opens eagerly; the
+                                 ;; strip order stays `project_position`.
+                                 preferred (most-recent-session-ids members)]
                                 (or (some chat/resume-session preferred)
                                     (some-> (latest-project-session-id)
                                             chat/resume-session)
@@ -4594,7 +4620,14 @@
                ;; — otherwise a session never persists and a plain relaunch
                ;; wouldn't restore it. Also self-heals a stale multi-tab
                ;; sidecar down to what is actually open.
-               (persist-tabs!)
+               ;;
+               ;; NOT when the startup session is ALREADY a project member: its
+               ;; order is on disk and the rest of the set is still being
+               ;; restored, so persisting this ONE tab renumbers
+               ;; `project_position` with it first — which rotated the strip by
+               ;; one on every relaunch. `restore-project-tabs!` persists once
+               ;; the full set is back.
+               (when-not (contains? @launch-member-ids* (str id)) (persist-tabs!))
                ;; Kick off background pre-warm of the LRU. Walks the
                ;; history bottom-up calling project + bubble-height,
                ;; so by the time the user scrolls UP the cache is
@@ -5296,17 +5329,23 @@
                     (fn []
                       (try (let
                              [root (launch-root)
-                              specs (->> (try (vis/gateway-list-sessions :all)
-                                              (catch Throwable _ nil))
-                                         (filter #(= (str pid) (str (get % "project_id"))))
-                                         (sort-by #(or (get % "project_position") Long/MAX_VALUE))
-                                         (mapv (fn [s]
-                                                 (let [title (str (or (get s "title") (:title s)))]
-                                                   {:session-id (str (or (get s "id") (:id s)))
-                                                    :label (when-not (str/blank? title) title)
-                                                    :root root}))))]
+                              specs (mapv (fn [s]
+                                            (let [title (str (get s "title"))]
+                                              {:session-id (str (get s "id"))
+                                               :label (when-not (str/blank? title) title)
+                                               :root root}))
+                                          (project-member-sessions pid))]
 
-                             (when (seq specs) (preallocate-project-tabs! specs)))
+                             (when (seq specs)
+                               (preallocate-project-tabs! specs)
+                               ;; The eagerly-resumed startup tab was minted BEFORE
+                               ;; the member list was known, so it sits at the head
+                               ;; of the strip whatever its stored slot. Re-seat the
+                               ;; member tabs into `project_position` order, THEN
+                               ;; persist — the persisted order is the restored
+                               ;; order, so a relaunch is a fixed point.
+                               (state/dispatch [:order-project-tabs (mapv :session-id specs)])
+                               (persist-tabs!)))
                            (catch Throwable _ nil))))))
               ;; C-x w — switch the ACTIVE project (its tab set). Pick a
               ;; project, re-point `active-project-id*`, and open that
@@ -5368,11 +5407,7 @@
                              ;; One list-sessions scan — the target project's
                              ;; members in manual tab order, like startup's
                              ;; restore-project-tabs!.
-                             members (->> (try (vis/gateway-list-sessions :all)
-                                               (catch Throwable _ nil))
-                                          (filter #(= pid (str (get % "project_id"))))
-                                          (sort-by #(or (get % "project_position") Long/MAX_VALUE))
-                                          vec)
+                             members (project-member-sessions pid)
                              specs (mapv (fn [s]
                                            (let [title (str (get s "title"))]
                                              {:session-id (str (get s "id"))
@@ -5409,6 +5444,11 @@
                             ;; now that they are closed (idempotent — open
                             ;; sessions are deduped).
                             (preallocate-project-tabs! specs)
+                            ;; Same fixed-point rule as startup: re-seat the
+                            ;; member tabs into stored `project_position` order
+                            ;; BEFORE persisting, so the persist is a no-op
+                            ;; instead of a rotation.
+                            (state/dispatch [:order-project-tabs (mapv :session-id specs)])
                             (persist-tabs!))))))))]
 
              ;; --resume opens the session picker at startup, like `pi -r`.

@@ -27,6 +27,43 @@
       is not auto-pruned, so its output and exit code stay readable until it is
       stopped.
 
+   ONE `cmd` slot, two spellings: the lone positional, or `"
+  cmd
+  "` INSIDE the
+   options map — `shell({"
+  cmd
+  ": "
+  npm
+  run
+  dev
+  ", "
+  op
+  ": "
+  bg
+  ", "
+  id
+  ": "
+  dev
+  "})` IS
+   `shell("
+  npm
+  run
+  dev
+  ", {"
+  op
+  ": "
+  bg
+  ", "
+  id
+  ": "
+  dev
+  "})`. A native JSON call has no
+   positional at all (`:call {:opt-pos ["
+  cmd
+  "]}` lands its `cmd` property there),
+   so the two spellings must never drift. For logs/send/stop that same slot
+   carries the shell's ID, and an explicit `id` wins over it.
+
    Every op answers with the SAME key set (`shell-result-base`): keys a stage
    does not fill are nil / false / 0 instead of absent, so model Python indexes
    any field without a KeyError.
@@ -1033,10 +1070,13 @@
    lifecycle grammar.
 
    Grammar: the lone positional is the COMMAND for run/bg and the resource ID for
-   logs/send/stop (`id` in the options map wins either way). `op` defaults to
-   \"run\", or to \"bg\" as soon as an `id` is present — the id IS what makes a
-   shell a background session resource. Unknown ops and a missing id fail loudly
-   rather than silently running something."
+   logs/send/stop, and `\"cmd\"` in the options map is that SAME slot — a native
+   JSON call carries no positional, so `shell({\"cmd\": c, \"op\": \"bg\", \"id\": i})`
+   and `shell(c, {\"op\": \"bg\", \"id\": i})` are ONE call (`id` in the options map
+   wins for the id either way). `op` defaults to \"run\", or to \"bg\" as soon as an
+   `id` is present — the id IS what makes a shell a background session resource.
+   Unknown ops and a missing id fail loudly rather than silently running
+   something."
   ([env] (shell-dispatch env nil nil))
   ([env a] (if (opts-arg? a) (shell-dispatch env nil a) (shell-dispatch env a nil)))
   ([env arg opts]
@@ -1158,12 +1198,13 @@
   ^{:doc
     "await shell(\"git status\")
 await shell(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})
+await shell({\"cmd\": \"npm run build\", \"cwd\": \"web\"})   # same call, cmd in the map
 await shell(\"npm run dev\", {\"op\": \"bg\", \"id\": \"dev-server\"})
 await shell(\"dev-server\", {\"op\": \"logs\", \"n\": 500})
 await shell(\"dev-server\", {\"op\": \"send\", \"text\": \"y\"})
 await shell(\"dev-server\", {\"op\": \"stop\"})
 
-THE one shell tool. The lone positional is the COMMAND for run/bg and the shell's ID for logs/send/stop. op (default \"run\", or \"bg\" as soon as an id is given):
+THE one shell tool. `cmd` is the COMMAND for run/bg and the shell's ID for logs/send/stop — pass it as the lone positional OR as `\"cmd\"` in the options map; `shell(c, {\"op\": \"bg\", \"id\": i})` and `shell({\"cmd\": c, \"op\": \"bg\", \"id\": i})` are the same call. op (default \"run\", or \"bg\" as soon as an id is given):
   run   shell(cmd) — bash -lc in the workspace root, blocks until the command exits. opts: timeout_secs (default 120, max 600), cwd. A non-zero exit is DATA to read, not a tool failure.
   bg    shell(cmd, {\"op\": \"bg\", \"id\": id}) — no timeout; the shell becomes an OWNED session resource under id (daemons, watchers, long builds, interactive work). Re-starting a LIVE id does NOT spawn a second process and is not an error: you get that shell back with \"already_running\": true. Reusing an EXITED id discards its retained logs.
   logs  shell(id, {\"op\": \"logs\"}) — last 200 lines, or n up to 2000.
@@ -1172,7 +1213,7 @@ THE one shell tool. The lone positional is the COMMAND for run/bg and the shell'
 EVERY op returns the SAME keys — {\"stage\", \"id\", \"cmd\", \"cwd\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\", \"stdout_truncated\", \"stderr_truncated\", \"stdout_omitted_chars\", \"stderr_omitted_chars\", \"pid\", \"status\", \"uptime_ms\", \"attach\", \"socket\", \"already_running\", \"note\", \"lines\", \"line_count\", \"dropped\", \"sent\", \"stopped\"} — always present, None/false/0 rather than missing, with \"stage\" naming the op that ran (r[\"op\"] is the tool origin every native result carries, always \"shell\").
 Gotcha: oversized run output is truncated in the MIDDLE with an inline \"…[N chars omitted]…\" marker, so a truncated stream is NOT parseable — check \"stdout_truncated\" before json.loads(r[\"stdout\"]) and re-run with a narrower or aggregated command.
 Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines), \"line_count\" is total-ever. Only a RUNNING shell accepts send. A step only a HUMAN can finish (browser OAuth, a device-code prompt) can't be typed by the agent — tell the user to run `vis extension shell attach <id>` in their own terminal, then detach with Ctrl-] (the child keeps running); the result carries the exact `attach` command."
-    :arglists '([cmd] [cmd opts])}
+    :arglists '([cmd] [cmd opts] [opts])}
   shell
   shell-dispatch)
 
@@ -1520,14 +1561,17 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
        "bash -lc that BLOCKS until the command exits; non-zero exit is data, not a failure) and to "
        "\"bg\" as soon as you pass an `id`, which makes the shell an OWNED session resource for "
        "servers, watchers or other long-running / interactive work; \"logs\" tails it, \"send\" "
-       "types into its pty, \"stop\" kills it — stop what you started. The lone positional is the "
-       "COMMAND for run/bg and the shell's ID for logs/send/stop. Re-starting a LIVE id returns "
+       "types into its pty, \"stop\" kills it — stop what you started. `cmd` is the COMMAND for "
+       "run/bg and the shell's ID for logs/send/stop (in Python it is also the lone positional). "
+       "Re-starting a LIVE id returns "
        "that same shell (`already_running`), never a second process; live ids are listed in "
        "`session[\"resources\"]`. EVERY op returns the SAME total key set with `stage` naming the "
        "op that ran and no key ever missing; huge run output is truncated MID-stream — check "
        "`stdout_truncated` before parsing it.")
      ;; shell(cmd) / shell(id, {opts}) — one optional positional, the rest an options
      ;; dict, so the most common call (a bounded run) keeps its bare one-arg shape.
+     ;; `:opt-pos ["cmd"]` is also what makes a native JSON call's `cmd` property land
+     ;; in that positional: the map form and the positional form are ONE call.
      :call {:opt-pos ["cmd"] :rest :opt}
      :render render-shell-result
      :color-role :tool-color/shell
@@ -1539,7 +1583,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
               :description
               (str
                 "run/bg: the command line (bash -lc, workspace root). For logs/send/stop pass the "
-                "background shell's id here instead, or as `id`.")}
+                "background shell's id here instead, or as `id`. In Python this is the lone "
+                "positional; shell({\"cmd\": …}) is the very same call.")}
        "op" {:type "string"
              :enum ["run" "bg" "logs" "send" "stop"]
              :description "Operation (default \"run\", or \"bg\" when an `id` is given)."}

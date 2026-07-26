@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GatewayConn } from './lib/types';
-import { GatewayClient } from './lib/gateway';
+import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
 import {
   getActiveConnection,
   loadConnections,
@@ -180,6 +180,17 @@ export function App() {
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [active]);
+
+  // Precache the provider/model fleet. `/v1/router` costs the daemon a live
+  // auth + limits probe per provider, so warming it at connect time (and once
+  // per TTL after) is what makes the model picker open instantly instead of
+  // spinning for seconds on first use.
+  useEffect(() => {
+    if (!client) return;
+    client.prefetchRouter();
+    const timer = window.setInterval(() => client.prefetchRouter(), ROUTER_TTL_MS);
+    return () => window.clearInterval(timer);
+  }, [client]);
 
   // Backfill each paired gateway's stable id (from /healthz) so a shareable link
   // can name its gateway by id instead of leaking the gateway URL. Cheap: it

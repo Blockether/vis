@@ -54,7 +54,11 @@ function limitsLine(provider: RouterProvider): string | null {
  * back. No token, verifier, or device code ever reaches this device.
  */
 export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) {
-  const [providers, setProviders] = useState<RouterProvider[] | null>(null);
+  // Paint whatever the shared router cache already holds (prefetched at
+  // connect time) so the picker opens instantly; `load` revalidates under it.
+  const [providers, setProviders] = useState<RouterProvider[] | null>(() =>
+    client.cachedRouter(),
+  );
   const [pref, setPref] = useState<ModelPref | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);

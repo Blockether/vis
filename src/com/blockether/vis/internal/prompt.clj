@@ -600,7 +600,8 @@
                               "`."))
                        (when shell?
                          (str "\n`shell` is a bound global there too — `shell(cmd)`, "
-                              "`shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})` — and "
+                              "`shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})`, or all in one map "
+                              "`shell({\"cmd\": cmd, \"op\": \"bg\", \"id\": \"dev\"})` — and "
                               "`subprocess` / `os.system` / `os.popen` route to it."))))))
 
 (defn- turn-system-context-block
