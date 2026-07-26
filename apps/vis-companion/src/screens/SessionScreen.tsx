@@ -456,7 +456,7 @@ function LoadingSession() {
   const frame = LOADING_SPINNER_FRAMES[Math.floor(now / 100) % LOADING_SPINNER_FRAMES.length];
   return (
     <div
-      className="flex min-h-[55vh] items-center justify-center font-mono text-[12px] text-white"
+      className="flex min-h-[55vh] items-center justify-center font-mono text-body text-white"
       role="status"
       aria-label="Loading session"
     >
@@ -487,7 +487,7 @@ function CopyableId({ id, className }: { id: string; className: string }) {
       onClick={copy}
       title={`Copy session id\n${id}`}
       aria-label="Copy session id"
-      className={`group inline-flex h-5 min-w-0 items-center gap-1 border border-dialog-edge px-1.5 font-mono text-[9px] leading-none transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
+      className={`group inline-flex h-6 min-w-0 items-center gap-1 border border-dialog-edge px-2 font-mono text-chip transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
     >
       <span aria-hidden="true" className="opacity-50 transition-opacity group-hover:opacity-100">#</span>
       <span className="truncate">{copied ? 'Copied' : short}</span>
@@ -520,7 +520,7 @@ function ShareLink({ className }: { className: string }) {
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex h-5 shrink-0 items-center gap-1 border px-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok bg-ok/15 text-ok' : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2'} ${className}`}
+      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok bg-ok/15 text-ok' : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2'} ${className}`}
     >
       {copied ? (
         <>
@@ -1552,18 +1552,18 @@ export function SessionScreen({
 
   return (
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none">
-      <header className="z-10 flex min-h-10 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
+      <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
         <button
           type="button"
-          className="grid w-9 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-base font-bold leading-none text-dialog-title-foreground transition-[background-color,transform] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-8"
+          className="grid w-11 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-10"
           onClick={onBack}
           aria-label="Back to sessions"
         >
           <span aria-hidden="true">‹</span>
         </button>
-        <div className="min-w-0 flex-1 self-center px-3">
-          <h1 className="truncate font-mono text-xs font-bold text-white">{title}</h1>
-          <div className="flex items-center gap-1.5 font-mono text-[10px] text-dialog-hint">
+        <div className="min-w-0 flex-1 self-center px-3 py-1.5">
+          <h1 className="truncate font-mono text-body font-bold text-white">{title}</h1>
+          <div className="flex items-center gap-1.5 font-mono text-meta text-dialog-hint">
             <span
               className={`size-1.5 ${connected ? 'bg-ok' : 'animate-pulse bg-turn-edge motion-reduce:animate-none'}`}
             />
@@ -1605,8 +1605,8 @@ export function SessionScreen({
               <div className="grid size-9 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
                 <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
               </div>
-              <h2 className="mb-1 mt-3 text-sm font-semibold">Start a conversation</h2>
-              <p className="max-w-sm text-xs leading-5 text-dialog-hint">
+              <h2 className="mb-1 mt-3 text-title font-semibold">Start a conversation</h2>
+              <p className="max-w-sm text-body text-dialog-hint">
                 This session is ready. Ask Vis to inspect, explain, or change your project.
               </p>
             </div>
@@ -1616,7 +1616,7 @@ export function SessionScreen({
             <div className="mb-5 flex justify-center">
               <button
                 type="button"
-                className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-[9px] font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
+                className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-chip font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
                 onClick={loadEarlierTurns}
               >
                 ↑ Load {Math.min(INITIAL_VISIBLE_TURNS, visibleStart)} earlier · {visibleStart} remaining
@@ -1637,17 +1637,20 @@ export function SessionScreen({
         )}
       </div>
 
-      {showJump && (
-        <button
-          type="button"
-          className="absolute bottom-24 left-1/2 z-20 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-[10px] font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none max-sm:bottom-24"
-          onClick={() => scrollToEnd('smooth')}
-        >
-          ↓ Latest
-        </button>
-      )}
-
       <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.875rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
+        {/* Anchored to the footer's top edge, so it always clears the queue
+            tray and composer no matter how tall they grow. Hidden while a
+            completion list occupies the same strip. */}
+        {showJump && !fileMatches.length && !slashMatches.length && (
+          <button
+            type="button"
+            className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
+            onClick={() => scrollToEnd('smooth')}
+          >
+            ↓ Latest
+          </button>
+        )}
+
         {fileMatches.length > 0 && (
           <div
             id="file-mention-list"
@@ -1655,7 +1658,7 @@ export function SessionScreen({
             aria-label="File mentions"
             className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
           >
-            <div className="bg-dialog-title px-3 py-2 font-mono text-[10px] font-bold text-dialog-title-foreground">
+            <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
               Attach a file
             </div>
             {fileMatches.map((file, index) => (
@@ -1672,10 +1675,10 @@ export function SessionScreen({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeFile(file.name)}
               >
-                <code className="truncate font-mono text-xs font-semibold text-accent-ink">
+                <code className="truncate font-mono text-body font-semibold text-accent-ink">
                   {file.name}
                 </code>
-                <span className="shrink-0 font-mono text-[10px] text-dialog-hint">
+                <span className="shrink-0 font-mono text-meta text-dialog-hint">
                   {[file.size, file.age, file.status && file.status !== 'clean' ? file.status : '']
                     .filter(Boolean)
                     .join(' · ')}
@@ -1692,7 +1695,7 @@ export function SessionScreen({
             aria-label="Slash commands"
             className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
           >
-            <div className="bg-dialog-title px-3 py-2 font-mono text-[10px] font-bold text-dialog-title-foreground">
+            <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
               Slash commands
             </div>
             {slashMatches.map((command, index) => (
@@ -1709,17 +1712,17 @@ export function SessionScreen({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeSlash(command)}
               >
-                <code className="break-words font-mono text-xs font-semibold text-accent-ink">
+                <code className="break-words font-mono text-body font-semibold text-accent-ink">
                   {command.name}
                 </code>
-                <span className="line-clamp-2 text-xs leading-5 text-dialog-hint">{command.doc}</span>
+                <span className="line-clamp-2 text-body text-dialog-hint">{command.doc}</span>
               </button>
             ))}
           </div>
         )}
 
         {queuePaused && (
-          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border border-warn-strong bg-warn-surface px-2.5 py-1.5 font-mono text-[10px] text-warn-strong">
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border border-warn-strong bg-warn-surface px-2.5 py-1.5 font-mono text-meta text-warn-strong">
             <span className="size-1.5 shrink-0 bg-warn-strong" aria-hidden="true" />
             <span className="font-bold text-warn-strong">
               {queuePaused.isBreakerOpen ? 'Provider unhealthy' : 'Queue paused'}
@@ -1747,7 +1750,7 @@ export function SessionScreen({
 
         {queued.length > 0 && (
           <div className="mb-1.5 border border-dialog-edge bg-panel">
-            <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-[10px] font-bold text-dialog-title-foreground">
+            <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
               <span aria-hidden="true">┌</span>
               Queued · {queued.length}
             </div>
@@ -1759,7 +1762,7 @@ export function SessionScreen({
                 key={item.turnId}
                 className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? ' opacity-50' : ''}`}
               >
-                <span className="shrink-0 font-mono text-[10px] font-bold text-accent-ink">#{index + 1}</span>
+                <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">#{index + 1}</span>
                 {editing ? (
                   <input
                     autoFocus
@@ -1784,7 +1787,7 @@ export function SessionScreen({
                       }
                     }}
                     onBlur={() => setEditingQueued(null)}
-                    className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-[11px] text-dialog-foreground outline-none"
+                    className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-ui text-dialog-foreground outline-none"
                     aria-label={`Edit queued message ${index + 1}`}
                   />
                 ) : (
@@ -1792,7 +1795,7 @@ export function SessionScreen({
                     type="button"
                     disabled={busy}
                     onClick={() => setEditingQueued({ turnId: item.turnId, text: item.request })}
-                    className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-[11px] text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
+                    className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-ui text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
                     title="Tap to edit"
                   >
                     {/* Image chips first: a queued screenshot reads as its filename,
@@ -1800,7 +1803,7 @@ export function SessionScreen({
                     {item.attachments.map((attachment) => (
                       <span
                         key={attachment.filename}
-                        className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-[9px] text-dialog-hint"
+                        className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-chip text-dialog-hint"
                         title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ''}`}
                       >
                         <span aria-hidden="true">🖼</span>
@@ -1841,7 +1844,7 @@ export function SessionScreen({
           {activePastes.length > 0 && (
             <div className="flex gap-1 overflow-x-auto border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
               {activePastes.map((paste) => (
-                <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-[9px] text-accent-ink">
+                <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip text-accent-ink">
                   <span className="max-w-56 truncate px-2">{paste.token}</span>
                   <button
                     type="button"
@@ -1867,12 +1870,12 @@ export function SessionScreen({
                     alt=""
                     className="size-8 shrink-0 object-cover"
                   />
-                  <span className="truncate font-mono text-[9px] text-dialog-hint-key">
+                  <span className="truncate font-mono text-chip text-dialog-hint-key">
                     {attachment.filename}
                   </span>
                   <button
                     type="button"
-                    className="absolute inset-y-0 right-0 grid w-6 place-items-center text-xs text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                    className="absolute inset-y-0 right-0 grid w-6 place-items-center text-body text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
                     onClick={() => removeAttachment(attachment.id)}
                     aria-label={`Remove ${attachment.filename}`}
                   >
@@ -1884,7 +1887,7 @@ export function SessionScreen({
           )}
 
           {(composerNotice || voicePhase !== 'idle' || (voiceRequested && voiceModel?.status !== 'ready')) && (
-            <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-[9px] text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+            <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
               {voicePhase === 'recording' ? (
                 <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
               ) : voicePhase === 'transcribing' ? (
@@ -1951,7 +1954,7 @@ export function SessionScreen({
               aria-label="Message Vis"
               aria-controls={slashMatches.length ? 'slash-command-list' : undefined}
               aria-expanded={slashMatches.length > 0}
-              className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-[11px] leading-4 text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-7 sm:min-h-7 sm:py-1 sm:text-[10px] sm:leading-4"
+              className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-7 sm:min-h-7 sm:py-[0.4375rem] sm:text-meta"
               onPaste={handlePaste}
               onSelect={(event) =>
                 setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -2015,7 +2018,7 @@ export function SessionScreen({
             {(!running || !!(prompt.trim() || attachments.length)) && (
               <button
                 type="button"
-                className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-[11px] font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
+                className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
                 onClick={send}
                 disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
                 aria-label={running ? 'Queue message' : 'Send message'}
@@ -2040,7 +2043,7 @@ export function SessionScreen({
         <div className="flex w-full justify-center pt-1">
           <button
             type="button"
-            className="group inline-flex min-w-0 max-w-full items-center gap-1.5 px-1 py-1 font-mono text-[9px] font-bold uppercase leading-none tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none motion-reduce:transition-none"
+            className="group inline-flex min-w-0 max-w-full items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}

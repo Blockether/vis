@@ -674,9 +674,25 @@ def __vis_pyify__(x):
     if hasattr(x, 'keys'):
         try:
             d = {__k__: __vis_pyify__(__v__) for __k__, __v__ in x.items()}
-            return __VisResult__(d) if 'op' in d else __VisDict__(d)
         except Exception:
-            return x
+            # NEVER hand back the RAW proxy: a proxy read of a key it does not have
+            # yields a HOST NULL, and the next touch (print, slice, len) dies with
+            # Truffle's null-receiver NPE instead of a normal KeyError. Rebuild
+            # key-by-key so ONE hostile value degrades to None, not the whole map.
+            d = {}
+            try:
+                for __k__ in list(x.keys()):
+                    try:
+                        __vis_v2__ = __vis_pyify__(x[__k__])
+                    except Exception:
+                        __vis_v2__ = None
+                    try:
+                        d[__k__] = __vis_v2__
+                    except Exception:
+                        pass
+            except Exception:
+                d = {}
+        return __VisResult__(d) if 'op' in d else __VisDict__(d)
     try:
         return [__vis_pyify__(__e__) for __e__ in x]
     except Exception:
@@ -3643,9 +3659,11 @@ def network_probe(method='GET', url=None, headers=None, body=None):
                         "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
                         "statement must start at column 0. Re-indent that region. Original error: ")
            host-npe? (str "This is an INTERNAL engine/tool fault — a host call returned null "
-                          "(a Java NullPointerException), NOT a bug in your Python. Retrying the "
-                          "SAME code will fail identically. Take a different approach (another "
-                          "tool, different arguments, or read the inputs first); if it keeps "
+                          "(a Java NullPointerException). It is usually NOT your Python: the "
+                          "common cause is a value the engine handed back as null (a tool that "
+                          "returned nothing), so check what the failing expression is indexing / "
+                          "printing first. Then take a different approach (another tool, "
+                          "different arguments, or read the inputs first); if it keeps "
                           "happening, tell the USER — it likely needs a fix in vis itself. "
                           "Original error: ")
            sandbox-denied?

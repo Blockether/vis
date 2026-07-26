@@ -169,15 +169,15 @@ export function GatewaySettingsDialog({
           <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
             <h2
               id="gateway-settings-title"
-              className="shrink-0 font-mono text-xs font-black uppercase tracking-[0.12em]"
+              className="shrink-0 font-mono text-body font-black uppercase tracking-[0.12em]"
             >
               Gateway settings
             </h2>
-            <p className="truncate font-mono text-[10px] opacity-65">{gateway.url}</p>
+            <p className="truncate font-mono text-meta opacity-65">{gateway.url}</p>
           </div>
           <button
             type="button"
-            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-sm leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close gateway settings"
           >
@@ -186,7 +186,7 @@ export function GatewaySettingsDialog({
         </header>
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-          <p className="text-[11px] leading-4 text-dialog-hint">
+          <p className="text-ui text-dialog-hint">
             Stored on this gateway and shared with its connected TUI and clients.
           </p>
         </div>
@@ -200,7 +200,7 @@ export function GatewaySettingsDialog({
           >
             <div className="space-y-3 p-3">
               <label className="block">
-                <span className="mb-1 block font-mono text-[9px] font-bold uppercase tracking-wider text-dialog-hint">
+                <span className="mb-1 block font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
                   Display name
                 </span>
                 <div className="flex gap-2">
@@ -209,7 +209,7 @@ export function GatewaySettingsDialog({
                     placeholder={gatewayHost(gateway.url)}
                     autoCapitalize="none"
                     autoCorrect="off"
-                    className="h-10 min-w-0 flex-1 text-xs sm:h-9"
+                    className="h-10 min-w-0 flex-1 text-body sm:h-9"
                     onChange={(event) => setLabelDraft(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') void onRename?.(labelDraft.trim() || undefined);
@@ -219,7 +219,7 @@ export function GatewaySettingsDialog({
                     type="button"
                     disabled={(labelDraft.trim() || undefined) === (gateway.label ?? undefined)}
                     onClick={() => void onRename?.(labelDraft.trim() || undefined)}
-                    className="h-10 shrink-0 border border-dialog-edge bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white disabled:border-dialog-edge disabled:bg-panel disabled:text-dialog-hint disabled:opacity-45 disabled:hover:bg-panel disabled:hover:text-dialog-hint sm:h-9"
+                    className="h-10 shrink-0 border border-dialog-edge bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white disabled:border-dialog-edge disabled:bg-panel disabled:text-dialog-hint disabled:opacity-45 disabled:hover:bg-panel disabled:hover:text-dialog-hint sm:h-9"
                   >
                     Save
                   </button>
@@ -231,7 +231,7 @@ export function GatewaySettingsDialog({
                   <button
                     type="button"
                     onClick={() => onDeactivate?.()}
-                    className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
+                    className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
                   >
                     Deactivate
                   </button>
@@ -242,28 +242,28 @@ export function GatewaySettingsDialog({
                       onActivate?.();
                       onClose();
                     }}
-                    className="h-9 border border-accent bg-accent px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-accent-foreground transition-opacity hover:opacity-90"
+                    className="h-9 border border-accent bg-accent px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-accent-foreground transition-opacity hover:opacity-90"
                   >
                     Activate
                   </button>
                 )}
                 {confirmRemove ? (
                   <span className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-err">Remove?</span>
+                    <span className="font-mono text-meta font-bold uppercase tracking-[0.12em] text-err">Remove?</span>
                     <button
                       type="button"
                       onClick={async () => {
                         await onRemove?.();
                         onClose();
                       }}
-                      className="h-9 border border-err bg-err px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-white transition-opacity hover:opacity-90"
+                      className="h-9 border border-err bg-err px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-white transition-opacity hover:opacity-90"
                     >
                       Yes, remove
                     </button>
                     <button
                       type="button"
                       onClick={() => setConfirmRemove(false)}
-                      className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
+                      className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
                     >
                       Cancel
                     </button>
@@ -272,7 +272,7 @@ export function GatewaySettingsDialog({
                   <button
                     type="button"
                     onClick={() => setConfirmRemove(true)}
-                    className="h-9 border border-err/40 bg-panel px-4 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-err transition-colors hover:border-err hover:bg-err hover:text-white"
+                    className="h-9 border border-err/40 bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-err transition-colors hover:border-err hover:bg-err hover:text-white"
                   >
                     Remove
                   </button>
@@ -312,14 +312,14 @@ export function GatewaySettingsDialog({
                           aria-pressed={selected}
                         >
                           <span className="min-w-0">
-                            <span className="block truncate font-mono text-[11px] font-bold">
+                            <span className="block truncate font-mono text-ui font-bold">
                               {choice.name}
                             </span>
-                            <span className="block font-mono text-[8px] uppercase tracking-wider opacity-65">
+                            <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
                               {choice.sub}
                             </span>
                           </span>
-                          <span className="shrink-0 font-mono text-[10px] font-black" aria-hidden="true">
+                          <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
                             {selected ? '●' : '○'}
                           </span>
                         </button>
@@ -334,14 +334,14 @@ export function GatewaySettingsDialog({
           {unreachable ? (
             <SettingsPanel title="Settings">
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-xs font-bold text-err">Gateway unreachable</p>
-                <p className="font-mono text-[10px] leading-relaxed text-dialog-hint">
+                <p className="font-mono text-body font-bold text-err">Gateway unreachable</p>
+                <p className="font-mono text-meta text-dialog-hint">
                   Can't load settings — the gateway isn't responding.
                 </p>
                 <button
                   type="button"
                   onClick={() => void load()}
-                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-[10px] font-bold text-white hover:bg-hover"
+                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-meta font-bold text-white hover:bg-hover"
                 >
                   Retry
                 </button>
@@ -350,8 +350,8 @@ export function GatewaySettingsDialog({
           ) : unauthorized ? (
             <SettingsPanel title="Settings" meta="unauthorized">
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-xs font-bold text-warn-strong">Token missing or invalid</p>
-                <p className="max-w-sm font-mono text-[10px] leading-relaxed text-dialog-hint">
+                <p className="font-mono text-body font-bold text-warn-strong">Token missing or invalid</p>
+                <p className="max-w-sm font-mono text-meta text-dialog-hint">
                   The gateway is online, but rejected this token. Re-pair from{' '}
                   <code className="text-accent-ink">vis gateway pair</code> and paste the fresh
                   link to load its settings.
@@ -359,7 +359,7 @@ export function GatewaySettingsDialog({
                 <button
                   type="button"
                   onClick={() => void load()}
-                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-[10px] font-bold text-white hover:bg-hover"
+                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-meta font-bold text-white hover:bg-hover"
                 >
                   Retry
                 </button>
@@ -375,7 +375,7 @@ export function GatewaySettingsDialog({
             </SettingsPanel>
           ) : groups.length === 0 ? (
             <SettingsPanel title="Settings">
-              <p className="px-4 py-6 text-center font-mono text-xs text-dialog-hint">
+              <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
                 No settings exposed by this gateway.
               </p>
             </SettingsPanel>
@@ -395,7 +395,7 @@ export function GatewaySettingsDialog({
                         className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
                       >
                         <span
-                          className={`pt-0.5 font-mono text-xs ${
+                          className={`pt-0.5 font-mono text-body ${
                             toggle.type === 'boolean' && toggle.enabled ? 'text-ok' : 'text-dialog-hint'
                           }`}
                           aria-hidden="true"
@@ -404,11 +404,11 @@ export function GatewaySettingsDialog({
                         </span>
 
                         <div className="min-w-0">
-                          <p className="break-words font-mono text-[11px] font-bold leading-5 text-white">
+                          <p className="break-words font-mono text-ui font-bold text-white">
                             {toggle.label}
                           </p>
                           {toggle.description && (
-                            <p className="mt-0.5 hyphens-auto break-words text-justify text-[10px] leading-[1.45] text-dialog-hint">
+                            <p className="mt-0.5 hyphens-auto break-words text-justify text-meta text-dialog-hint">
                               {toggle.description}
                             </p>
                           )}
@@ -434,7 +434,7 @@ export function GatewaySettingsDialog({
                                   key={choice}
                                   disabled={busy}
                                   onClick={() => pick(toggle, choice)}
-                                  className={`min-h-8 border px-2 py-0.5 font-mono text-[9px] font-bold transition-[background-color,border-color,color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
+                                  className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
                                     selected
                                       ? 'border-accent bg-accent text-accent-foreground'
                                       : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong hover:text-white'
@@ -456,7 +456,7 @@ export function GatewaySettingsDialog({
           )}
         </div>
 
-        <footer className="flex shrink-0 items-center border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-[9px] text-dialog-hint sm:px-4 sm:py-2">
+        <footer className="flex shrink-0 items-center border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-chip text-dialog-hint sm:px-4 sm:py-2">
           <span>{settingCount} {settingCount === 1 ? 'option' : 'options'}</span>
         </footer>
       </section>
@@ -476,11 +476,11 @@ function SettingsPanel({
   return (
     <section className="min-w-0 overflow-hidden border border-dialog-edge bg-panel transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       <header className="flex min-h-8 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
-        <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-white">
+        <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
           {title}
         </h3>
         {meta && (
-          <span className="shrink-0 font-mono text-[8px] font-bold uppercase tracking-wider text-dialog-hint">
+          <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
             {meta}
           </span>
         )}
@@ -512,7 +512,7 @@ function Switch({
       aria-busy={busy}
       disabled={disabled}
       onClick={onClick}
-      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-[9px] font-black leading-none tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 sm:h-6 ${
+      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 sm:h-6 ${
         on
           ? 'border-accent bg-accent text-accent-foreground'
           : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong'

@@ -302,7 +302,10 @@
        [_ fail]
        (re-find #"(?m)^\s*(\d+) fail" s)]
 
-      (extension/success {:result {"cmd" (vec cmd)
+      (extension/success {:result {"mode" "cli"
+                                   "framework" "bun:test"
+                                   "tool" "bun"
+                                   "cmd" (vec cmd)
                                    "dir" dir
                                    "exit" (if done? (.exitValue p) nil)
                                    "timed_out" (not done?)

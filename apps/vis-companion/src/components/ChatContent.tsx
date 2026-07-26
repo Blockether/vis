@@ -33,7 +33,7 @@ import type {
 } from '../lib/types';
 
 const disclosureClass =
-  'inline-block shrink-0 text-[11px] transition-transform duration-150 group-open:rotate-90';
+  'inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90';
 
 const toolRoleClasses: Record<string, { border: string; text: string }> = {
   'tool-color/read': { border: 'border-tool-read', text: 'text-tool-read' },
@@ -70,7 +70,7 @@ function CopyButton({ value }: { value: string }) {
   return (
     <button
       type="button"
-      className="absolute right-2 top-2 z-10 border border-dialog-edge bg-button px-1.5 py-0.5 font-mono text-[9px] text-button-foreground transition-colors hover:bg-hover"
+      className="absolute right-2 top-2 z-10 border border-dialog-edge bg-button px-1.5 py-0.5 font-mono text-chip text-button-foreground transition-colors hover:bg-hover"
       onClick={copy}
       aria-label="Copy code"
     >
@@ -110,7 +110,7 @@ const DiffBlock = memo(function DiffBlock({ value, compact }: { value: string; c
     >
       <CopyButton value={value} />
       <pre
-        className={`${compact ? 'text-[10px] leading-4' : 'text-[11px] leading-5'} m-0 max-w-full overflow-x-auto py-2 font-mono`}
+        className={`${compact ? 'text-meta ' : 'text-ui '} m-0 max-w-full overflow-x-auto py-2 font-mono`}
       >
         {value.split('\n').map((line, index) => (
           <span
@@ -214,7 +214,7 @@ function segmentsToLines(segments: SyntaxSegment[]): SyntaxSegment[][] {
 const GUTTER_LINE = /^(\s*\d+) {2}(.*)$/;
 const GUTTER_DIVIDER = /^(\s*\u22ef)\s*$/;
 
-// `cat` bodies arrive as a numbered gutter (`  12  <code>`) fenced with the
+// `cat` bodies arrive as a numbered gutter (` 12 <code>`) fenced with the
 // file language. Feeding those line numbers to Prism poisons the grammar, so
 // peel the gutter off, highlight the code, and restore the gutter uncolored —
 // exactly what the TUI does.
@@ -268,7 +268,7 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   return (
     <div className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden border border-code-edge bg-code`}>
       <CopyButton value={source} />
-      <pre className={`${compact ? 'py-2 text-[10px] leading-4' : 'py-2.5 text-[11px] leading-5'} m-0 max-w-full overflow-x-auto font-mono text-code-foreground`}>
+      <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto font-mono text-code-foreground`}>
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
             <div key={index} className="flex w-fit min-w-full whitespace-pre px-3 first:pr-16">
@@ -324,22 +324,22 @@ export const Markdown = memo(function Markdown({
             </blockquote>
           ),
           h1: ({ children: heading }) => (
-            <h1 className={`${compact ? 'mb-1 mt-3 text-sm' : 'mb-1.5 mt-5 text-xl'} font-semibold leading-tight tracking-[-0.015em] text-heading-1`}>
+            <h1 className={`${compact ? 'mb-1 mt-3 text-title' : 'mb-1.5 mt-5 text-head'} font-semibold tracking-[-0.015em] text-heading-1`}>
               {heading}
             </h1>
           ),
           h2: ({ children: heading }) => (
-            <h2 className={`${compact ? 'mb-1 mt-3 text-[13px]' : 'mb-1.5 mt-5 text-[17px]'} font-semibold leading-tight tracking-[-0.01em] text-heading-2`}>
+            <h2 className={`${compact ? 'mb-1 mt-3 text-title' : 'mb-1.5 mt-5 text-head'} font-semibold tracking-[-0.01em] text-heading-2`}>
               {heading}
             </h2>
           ),
           h3: ({ children: heading }) => (
-            <h3 className={`${compact ? 'mb-1 mt-2.5 text-xs' : 'mb-1.5 mt-4 text-[15px]'} font-semibold leading-tight text-heading-3`}>
+            <h3 className={`${compact ? 'mb-1 mt-2.5 text-body' : 'mb-1.5 mt-4 text-subhead'} font-semibold text-heading-3`}>
               {heading}
             </h3>
           ),
           h4: ({ children: heading }) => (
-            <h4 className={`${compact ? 'mb-1 mt-2.5 text-xs' : 'mb-1.5 mt-4 text-sm'} font-semibold leading-tight text-heading-3`}>
+            <h4 className={`${compact ? 'mb-1 mt-2.5 text-body' : 'mb-1.5 mt-4 text-title'} font-semibold text-heading-3`}>
               {heading}
             </h4>
           ),
@@ -349,7 +349,7 @@ export const Markdown = memo(function Markdown({
             <ol className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-decimal space-y-0.5`}>{list}</ol>
           ),
           p: ({ children: paragraph }) => (
-            <p className={compact ? 'my-2 leading-5' : 'my-2.5 leading-6'}>{paragraph}</p>
+            <p className={compact ? 'my-2 ' : 'my-2.5 '}>{paragraph}</p>
           ),
           pre: ({ children: codeNode }) => {
             const raw = extractText(codeNode).replace(/\n$/, '');
@@ -362,7 +362,7 @@ export const Markdown = memo(function Markdown({
           strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
           table: ({ children: table }) => (
             <div className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto`}>
-              <table className="w-full border-collapse text-[11px]">{table}</table>
+              <table className="w-full border-collapse text-ui">{table}</table>
             </div>
           ),
           td: ({ children: cell }) => <td className="border border-code-edge px-2 py-1.5 text-left">{cell}</td>,
@@ -374,7 +374,7 @@ export const Markdown = memo(function Markdown({
           ),
         }}
       >
-        {hardBreaks ? children.replace(/\n/g, '  \n') : children}
+        {hardBreaks ? children.replace(/\n/g, ' \n') : children}
       </ReactMarkdown>
     </div>
   );
@@ -412,7 +412,7 @@ function formatDuration(value?: number): string | null {
   return `${minutes}m ${Math.floor((milliseconds % 60_000) / 1_000)}s`;
 }
 
-const META_SEPARATOR = '  ·  ';
+const META_SEPARATOR = ' · ';
 
 function finiteNumber(...values: unknown[]): number | undefined {
   return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
@@ -559,7 +559,7 @@ function compactToolSummary(name: string | undefined, summary: string): string {
 function ToolSummary({ children, className }: { children: string; className: string }) {
   return (
     <span
-      className={`min-w-0 flex-1 truncate text-[9px] font-medium leading-3 ${className}`}
+      className={`min-w-0 flex-1 truncate text-chip font-medium ${className}`}
       title={children}
     >
       <ReactMarkdown
@@ -572,7 +572,7 @@ function ToolSummary({ children, className }: { children: string; className: str
           em: ({ children: content }) => <em>{content}</em>,
           del: ({ children: content }) => <del>{content}</del>,
           code: ({ children: code }) => (
-            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono text-[8px] font-medium text-result-path-foreground">
+            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono text-chip font-medium text-result-path-foreground">
               {code}
             </code>
           ),
@@ -609,11 +609,11 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const summaryClass = failed ? 'text-err' : running ? 'text-code-result' : role.text;
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-      <span className={`shrink-0 font-mono text-[8px] font-extrabold tracking-[0.06em] ${failed ? 'text-err' : role.text}`}>
+      <span className={`shrink-0 font-mono text-chip font-extrabold tracking-[0.06em] ${failed ? 'text-err' : role.text}`}>
         {toolLabel(form.tool_name)}
       </span>
       {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
-      {duration && <span className="shrink-0 font-mono text-[8px] tabular-nums text-code-duration">{duration}</span>}
+      {duration && <span className="shrink-0 font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
     </div>
   );
 
@@ -631,8 +631,8 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
         <span className={`${disclosureClass} ${failed ? 'text-err' : role.text}`} aria-hidden="true">›</span>
         {headline}
       </summary>
-      <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-3 py-2 text-[11px] text-code-result ${failed ? 'text-code-error-result' : ''}`}>
-        {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4">{body}</pre> : <Markdown compact>{body}</Markdown>}
+      <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-3 py-2 text-ui text-code-result ${failed ? 'text-code-error-result' : ''}`}>
+        {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact>{body}</Markdown>}
       </div>
     </details>
   );
@@ -659,7 +659,7 @@ const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
   return (
     <div className="min-w-0">
       {showCode && form.comment?.trim() && (
-        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-[11px] not-italic leading-5 text-vis-message">
+        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
           <Markdown compact>{form.comment.trim()}</Markdown>
         </div>
       )}
@@ -727,17 +727,17 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
   const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
-    <section className="my-2 bg-thinking-surface px-3 py-2 text-[11px] leading-5 text-thinking">
+    <section className="my-2 bg-thinking-surface px-3 py-2 text-ui text-thinking">
       {collapsible && (
         <button
           type="button"
           data-disclosure-toggle
-          className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-[9px] font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
+          className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-chip font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
           aria-expanded={expanded}
           onClick={() => setExpandRequested((value) => !value)}
         >
           <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
-          <span>{expanded ? 'THINKING' : `THINKING  +${hiddenRows} more`}</span>
+          <span>{expanded ? 'THINKING' : `THINKING +${hiddenRows} more`}</span>
         </button>
       )}
       <div
@@ -775,7 +775,7 @@ export const IterationTrace = memo(function IterationTrace({
         <section key={iteration.id ?? iteration.position ?? index} className="min-w-0">
           {thinking && <ThinkingBand>{thinking}</ThinkingBand>}
           {prose && (
-            <div className="my-2.5 text-[12px] leading-5 text-vis-message">
+            <div className="my-2.5 text-body text-vis-message">
               <Markdown>{prose}</Markdown>
             </div>
           )}
@@ -810,18 +810,18 @@ export const ContentBlockView = memo(function ContentBlockView({ block }: { bloc
     }
     case 'error':
       return (
-        <div className="my-2 flex gap-2 border border-warn-edge bg-warn-surface px-2.5 py-2 font-mono text-[10px] text-err">
+        <div className="my-2 flex gap-2 border border-warn-edge bg-warn-surface px-2.5 py-2 font-mono text-meta text-err">
           <strong>{block.code}</strong><span>{block.message}</span>
         </div>
       );
     case 'attachment':
       return (
-        <div className="my-2 w-fit border border-dialog-edge bg-panel px-2.5 py-1.5 font-mono text-[10px] text-dialog-foreground">
+        <div className="my-2 w-fit border border-dialog-edge bg-panel px-2.5 py-1.5 font-mono text-meta text-dialog-foreground">
           ↗ {block.name ?? 'Attachment'} <small className="ml-2 text-dialog-hint">{block.media_type}</small>
         </div>
       );
     case 'notice':
-      return <div className="my-2 border border-dialog-edge bg-panel px-2.5 py-2 font-mono text-[10px] text-dialog-hint">{block.message}</div>;
+      return <div className="my-2 border border-dialog-edge bg-panel px-2.5 py-2 font-mono text-meta text-dialog-hint">{block.message}</div>;
     default:
       return null;
   }
@@ -870,7 +870,7 @@ function LiveProgress({ phase, startedAt }: { phase: string; startedAt?: number 
   return (
     <>
       <div
-        className="mt-5 truncate whitespace-nowrap font-mono text-[11px] leading-5 text-vis-message"
+        className="mt-5 truncate whitespace-nowrap font-mono text-ui text-vis-message"
         aria-hidden="true"
       >
         <span className="motion-reduce:hidden">{frame}</span>
@@ -903,10 +903,10 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <article className="mt-4 w-full [contain:layout_style]" aria-busy={streaming}>
-      <div className={`mb-1 font-mono text-[10px] font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
+      <div className={`mb-1 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
       <div className="min-w-0">
         <IterationTrace iterations={turn.iterations ?? []} />
-        <div className={`bg-answer text-[12px] leading-5 ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
+        <div className={`bg-answer text-body ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
           {blocks.map((block) => <ContentBlockView key={block.id} block={block} />)}
           {fallback && <Markdown>{fallback}</Markdown>}
           {!streaming && !blocks.length && !fallback && turn.status !== 'completed' && turn.status !== 'running' && (
@@ -919,7 +919,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <LiveProgress phase={runningTurnPhase(turn)} startedAt={turn.created_at} />
         ) : null}
         {meta && (
-          <footer className="mt-5 min-w-0 text-right font-mono text-[9px] leading-4 text-footer-muted">
+          <footer className="mt-5 min-w-0 text-right font-mono text-chip text-footer-muted">
             <div className="overflow-hidden text-ellipsis whitespace-nowrap" title={meta}>{meta}</div>
             {fallbackNote && (
               <div className="overflow-hidden text-ellipsis whitespace-nowrap italic text-footer-muted" title={fallbackNote}>
@@ -945,21 +945,21 @@ export const UserMessage = memo(function UserMessage(
   );
   return (
     <article className="mt-4 w-full [contain:layout_style]">
-      <div className="mb-1 font-mono text-[10px] font-bold text-you-role">You</div>
-      <div className="inline-block max-w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-[12px] leading-5 text-you-message-foreground">
+      <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
+      <div className="inline-block max-w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-body text-you-message-foreground">
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (
-          <span key={part.key} className="my-0.5 inline-flex items-center gap-1 border border-code-edge bg-code px-1.5 py-0.5 align-middle font-mono text-[10px] text-dialog-hint first:mt-0">
+          <span key={part.key} className="my-0.5 inline-flex items-center gap-1 border border-code-edge bg-code px-1.5 py-0.5 align-middle font-mono text-meta text-dialog-hint first:mt-0">
             <span aria-hidden>⇗</span>{part.summary}
           </span>
         ) : (
           <details key={part.key} className="group my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
-            <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-[10px] font-semibold text-accent marker:hidden [&::-webkit-details-marker]:hidden">
+            <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-meta font-semibold text-accent marker:hidden [&::-webkit-details-marker]:hidden">
               <span className="mr-1 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
               {part.summary}
             </summary>
-            <pre className="max-h-[min(28rem,60dvh)] overflow-auto border-t border-code-edge px-2 py-2 font-mono text-[10px] leading-4 [tab-size:2]">
+            <pre className="max-h-[min(28rem,60dvh)] overflow-auto border-t border-code-edge px-2 py-2 font-mono text-meta [tab-size:2]">
               <code>{part.content}</code>
             </pre>
           </details>

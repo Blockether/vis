@@ -22,7 +22,7 @@ export function Button({
 
   return (
     <button
-      className={`min-h-7 rounded-none border px-2 py-0.5 text-[10px] font-bold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-dialog-edge disabled:bg-transparent disabled:text-dialog-hint disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-6 ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2 py-0.5 text-meta font-bold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-dialog-edge disabled:bg-transparent disabled:text-dialog-hint disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-6 ${styles} ${className}`}
       {...props}
     />
   );
@@ -33,7 +33,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     return (
       <input
         ref={ref}
-        className={`min-h-9 w-full rounded-none border border-dialog-edge bg-input px-2.5 py-1.5 font-mono text-sm leading-tight text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-[11px] ${className}`}
+        className={`min-h-9 w-full rounded-none border border-dialog-edge bg-input px-2.5 py-1.5 font-mono text-title text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${className}`}
         {...props}
       />
     );
@@ -54,7 +54,7 @@ export function Banner({ kind, children }: { kind: 'ok' | 'warn' | 'err'; childr
   }[kind];
 
   return (
-    <div className={`border px-3 py-2 font-mono text-xs ${colors}`} role="status">
+    <div className={`border px-3 py-2 font-mono text-body ${colors}`} role="status">
       {children}
     </div>
   );
@@ -63,7 +63,7 @@ export function Banner({ kind, children }: { kind: 'ok' | 'warn' | 'err'; childr
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
-      <h2 className="border-l-2 border-accent px-2 font-mono text-xs font-bold uppercase tracking-[0.1em] text-white/70">
+      <h2 className="border-l-2 border-accent px-2 font-mono text-body font-bold uppercase tracking-[0.1em] text-white/70">
         {title}
       </h2>
       {children}
@@ -92,11 +92,11 @@ export function DialogFrame({
       aria-label={title}
     >
       <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground sm:min-h-8">
-        <h2 className="truncate font-mono text-xs font-bold tracking-wide">{title}</h2>
+        <h2 className="truncate font-mono text-body font-bold tracking-wide">{title}</h2>
         {onClose && (
           <button
             type="button"
-            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-sm leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none sm:min-w-8"
+            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none sm:min-w-8"
             onClick={onClose}
             aria-label="Close dialog"
           >
@@ -106,7 +106,7 @@ export function DialogFrame({
       </header>
       <div className="border-t border-dialog-edge">{children}</div>
       {footer && (
-        <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-[10px] text-dialog-hint">
+        <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
           {footer}
         </footer>
       )}

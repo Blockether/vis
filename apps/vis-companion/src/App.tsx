@@ -251,7 +251,7 @@ export function App() {
   const hasConn = conns.length > 0 && !!active;
 
   return (
-    <div className="isolate flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-[12px]">
+    <div className="isolate flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body">
       {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
 
       <main className={`min-h-0 flex-1 ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>
@@ -320,7 +320,7 @@ function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (t
       <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center justify-between px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-6">
         <div className="flex items-center gap-2.5" aria-label="Vis">
           <img src="/vis-logo.png" alt="" className="h-[18px] w-5 object-contain" />
-          <span className="font-mono text-[13px] font-black tracking-[0.18em] text-white">VIS</span>
+          <span className="font-mono text-title font-black tracking-[0.18em] text-white">VIS</span>
         </div>
         <nav className="hidden h-full items-stretch sm:flex" aria-label="Primary navigation">
           {(hasConn ? (['sessions', 'connect'] as Tab[]) : (['connect'] as Tab[])).map((item) => (
@@ -328,7 +328,7 @@ function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (t
               type="button"
               key={item}
               onClick={() => onTab(item)}
-              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-[10px] font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
+              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-meta font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
                 tab === item
                   ? 'bg-panel text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent'
                   : 'text-dialog-hint hover:bg-hover hover:text-white'
@@ -361,7 +361,7 @@ function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
           type="button"
           key={item.id}
           onClick={() => onTab(item.id)}
-          className={`relative flex min-h-12 items-center justify-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.08em] transition-[color,background-color,transform] duration-150 active:scale-[0.98] motion-reduce:transition-none ${
+          className={`relative flex min-h-12 items-center justify-center gap-2 font-mono text-meta font-bold uppercase tracking-[0.08em] transition-[color,background-color,transform] duration-150 active:scale-[0.98] motion-reduce:transition-none ${
             tab === item.id
               ? 'bg-panel text-white after:absolute after:inset-x-5 after:top-0 after:h-0.5 after:bg-accent'
               : 'text-dialog-hint active:bg-hover active:text-white'

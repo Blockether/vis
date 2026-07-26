@@ -8,7 +8,8 @@
   stops one by id. Live REPLs also surface in the ctx `resources` block."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension]))
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.surface-contract :as contract]))
 
 (defn- normalize-language
   [x]
@@ -231,19 +232,29 @@
                     {:type :language-surface/bad-args :got args}))))
 
 (defn- dispatch!
-  [env capability args]
-  (let
-    [{:keys [opts payload]}
-     (parse-language-call args)
+  "Run `capability`'s handler for the chosen language. `post` (default: the raw
+   result) sees the CHOSEN handler alongside its result, so a caller can stamp
+   handler-derived facts — the language that actually ran — without re-resolving
+   it."
+  ([env capability args]
+   (dispatch! env
+              capability
+              args
+              (fn [_handler result]
+                result)))
+  ([env capability args post]
+   (let
+     [{:keys [opts payload]}
+      (parse-language-call args)
 
-     handler
-     (choose-handler env capability opts)]
+      handler
+      (choose-handler env capability opts)]
 
-    ;; A live environment may predate a process-jail namespace reload. Refresh the
-    ;; session binding immediately before a handler that may spawn a child. Clojure
-    ;; repl_eval can auto-start its managed nREPL when none is running.
-    (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
-    ((:handler handler) env payload)))
+     ;; A live environment may predate a process-jail namespace reload. Refresh the
+     ;; session binding immediately before a handler that may spawn a child. Clojure
+     ;; repl_eval can auto-start its managed nREPL when none is running.
+     (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
+     (post handler ((:handler handler) env payload)))))
 
 (def ^:private repl-ops #{"status" "start" "stop" "restart" "connect"})
 
@@ -590,7 +601,7 @@
      ok
      (and (not error)
           (cond (number? fail) (zero? (long fail))
-                (contains? r "is_pass") (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
+                (some? (get r "is_pass")) (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
                 :else (boolean (get r "pass"))))
 
      parts
@@ -876,9 +887,21 @@
      (System/currentTimeMillis)
 
      result
-     (extension/run-outside-tool-wall env #(dispatch! env :test-fn args))]
+     (extension/run-outside-tool-wall
+       env
+       ;; ONE result shape for every pack: whatever the handler measured is
+       ;; completed onto the contract's TOTAL key set (missing keys get neutral
+       ;; values, per-pack key vocabulary is folded onto the canonical names), so
+       ;; caller code never KeyErrors on a run that took an error branch.
+       #(dispatch! env
+                   :test-fn
+                   args
+                   (fn [handler result]
+                     (contract/complete-test-result (:language handler) result))))]
 
-    (if (map? result) (assoc result :ms (- (System/currentTimeMillis) start)) result)))
+    ;; STRING key: the whole result crosses the Python boundary string-keyed, and
+    ;; the RUN_TESTS card reads `(get r "ms")`.
+    (if (map? result) (assoc result "ms" (- (System/currentTimeMillis) start)) result)))
 
 (defn repl-eval
   "Evaluate code in an already-running project REPL. ALWAYS pass the language

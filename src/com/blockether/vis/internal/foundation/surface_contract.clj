@@ -20,7 +20,8 @@
    run on every format/lint result before handing it back through the surface.
    `capability->spec` is the single source of truth mapping a capability keyword
    to its result spec."
-  (:require [clojure.spec.alpha :as s]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]))
 
 ;; =============================================================================
 ;; Shared: the directory-nested grouping BOTH format and lint expose
@@ -32,11 +33,13 @@
 (s/def ::by-dir (s/map-of string? (s/map-of string? map?)))
 
 (defn- opt
-  "A predicate over string key `k`: true when `m` lacks `k`, else `pred` holds
-   on its value. Optional keys never fail merely by being absent."
+  "A predicate over string key `k`: true when `m` lacks `k` OR holds nil there,
+   else `pred` holds on its value. Optional keys never fail merely by being
+   absent — nor by being PRESENT-but-nil, which is what a total key set (see
+   `test-result-base`) makes of \"the runner did not report this\"."
   [k pred]
   (fn [m]
-    (or (not (contains? m k)) (pred (get m k)))))
+    (or (not (contains? m k)) (nil? (get m k)) (pred (get m k)))))
 
 ;; =============================================================================
 ;; format_code result
@@ -123,6 +126,129 @@
          (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
          (opt "errors" #(s/valid? (s/coll-of ::test-failure) %))
          (opt "by-dir" #(s/valid? ::by-dir %))))
+
+;; =============================================================================
+;; run_tests: the TOTAL key set
+;; =============================================================================
+
+(def test-result-base
+  "TOTAL key set of EVERY `run_tests` result — one tool, ONE result shape across
+   every language pack. A pack fills what its runner measured; the keys it does
+   NOT fill keep these neutral values instead of VANISHING, so ordinary model
+   Python (`r[\"failures\"][:3]`, `r[\"total\"]`) can never KeyError, and never
+   reads None where a collection belongs.
+
+   Counts stay nil when the runner reported none — UNKNOWN is not zero — while
+   collections default empty and flags default false. Applied ONCE at the
+   language surface (`language-surface/run-tests`), AFTER the pack's own
+   `check`, so packs keep returning only what they know."
+  {"mode" nil
+   "language" nil
+   "framework" nil
+   "runner" nil
+   "tool" nil
+   "command" nil
+   "dir" nil
+   "ns" nil
+   "port" nil
+   "exit" nil
+   "ms" nil
+   "is_pass" nil
+   ;; counts — nil means "the runner did not report it"
+   "total" nil
+   "pass" nil
+   "fail" nil
+   "selected" nil
+   "skipped" nil
+   ;; structured faults + their directory-nested view
+   "failures" []
+   "errors" []
+   "by-dir" {}
+   ;; narrative
+   "output" nil
+   "note" nil
+   "hint" nil
+   "error" nil
+   ;; flags
+   "timed_out" false
+   "repl_unusable" false
+   "repl_wedged" false
+   "recovered" false})
+
+(defn- ->count
+  "A reported count as a long, or nil when the runner reported nothing."
+  [v]
+  (when (number? v) (long v)))
+
+(defn- ->faults
+  "A fault collection as a vector; anything else (nil included) is no faults."
+  [v]
+  (if (coll? v) (vec v) []))
+
+(defn complete-test-result
+  "One pack's raw run_tests `result` onto `test-result-base` — the SINGLE place
+   the uniform shape is made true.
+
+   Per-pack key VOCABULARY is folded onto the canonical names, so the caller
+   reads `pass`/`fail` whatever ran: pytest/bun `passed`/`failed`/`errored` ->
+   `pass`/`fail` (errored counts as failed), an argv `cmd` -> a `command`
+   string. `total`, `is_pass` and `language` are DERIVED only when the pack
+   reported none — nothing a pack said is ever overwritten.
+
+   Non-map results (a pack that returned something else) pass through."
+  [language result]
+  (if-not (map? result)
+    result
+    (let
+      [pass
+       (or (->count (get result "pass")) (->count (get result "passed")))
+
+       errored
+       (->count (get result "errored"))
+
+       fail
+       (or (->count (get result "fail"))
+           (when-let [f (->count (get result "failed"))]
+             (+ (long f) (long (or errored 0))))
+           errored)
+
+       skipped
+       (->count (get result "skipped"))
+
+       total
+       (or (->count (get result "total"))
+           (when (and pass fail) (+ (long pass) (long fail) (long (or skipped 0)))))
+
+       exit
+       (->count (get result "exit"))
+
+       is-pass
+       (cond (some? (get result "is_pass")) (boolean (get result "is_pass"))
+             (some? (get result "ok")) (boolean (get result "ok"))
+             (seq (str (get result "error"))) false
+             (some? fail) (zero? (long fail))
+             (some? exit) (zero? (long exit))
+             :else nil)
+
+       cmd
+       (get result "cmd")
+
+       command
+       (or (get result "command")
+           (cond (coll? cmd) (str/join " " (map str cmd))
+                 (some? cmd) (str cmd)))]
+
+      (assoc (merge test-result-base result)
+        "language" (or (get result "language") language)
+        "pass" pass
+        "fail" fail
+        "total" total
+        "skipped" skipped
+        "is_pass" is-pass
+        "command" command
+        "failures" (->faults (get result "failures"))
+        "errors" (->faults (get result "errors"))
+        "by-dir" (or (get result "by-dir") {})))))
 
 ;; =============================================================================
 ;; Capability -> spec + the check the packs run

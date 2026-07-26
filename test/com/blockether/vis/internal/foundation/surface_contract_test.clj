@@ -123,4 +123,55 @@
       (expect (contract/valid? :repl-eval-fn {:anything :goes}))
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
   (it "capability->spec is the single source of truth for format + lint + test"
-      (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->spec))))))
+      (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->spec)))))
+  (it "completes an error-branch test result onto the TOTAL key set"
+      ;; The reported crash: a run that errored out returned NO "failures" key, so
+      ;; `r["failures"][:3]` in ordinary model Python blew up on None.
+      (let
+        [r (contract/complete-test-result
+             "clojure"
+             {"mode" "repl" "ns" "my.app.core-test" "port" 7888 "error" "nREPL is down"})]
+        (expect (every? #(contains? r %) (keys contract/test-result-base)))
+        (expect (= [] (get r "failures")))
+        (expect (= [] (get r "errors")))
+        (expect (= {} (get r "by-dir")))
+        (expect (nil? (get r "total")))
+        (expect (false? (get r "is_pass")))
+        (expect (false? (get r "timed_out")))))
+  (it "never overwrites what the pack measured"
+      (let [r (contract/complete-test-result "clojure" test-ok)]
+        (expect (= 3 (get r "total")))
+        (expect (= 3 (get r "pass")))
+        (expect (= 0 (get r "fail")))
+        (expect (= "clojure" (get r "language")))
+        (expect (true? (get r "is_pass")))
+        (expect (contract/valid? :test-fn r))))
+  (it "folds pytest/bun key vocabulary onto the canonical count names"
+      (let
+        [r (contract/complete-test-result "python"
+                                          {"mode" "cli"
+                                           "runner" "project"
+                                           "cmd" ["pytest" "tests"]
+                                           "exit" 1
+                                           "passed" 7
+                                           "failed" 2
+                                           "errored" 1
+                                           "skipped" 3})]
+        (expect (= 7 (get r "pass")))
+        (expect (= 3 (get r "fail"))) ; failed + errored
+        (expect (= 13 (get r "total"))) ; derived: pass + fail + skipped
+        (expect (= "pytest tests" (get r "command")))
+        (expect (= "python" (get r "language")))
+        (expect (false? (get r "is_pass")))))
+  (it "derives is_pass from ok / exit when the pack reports no counts"
+      (expect (true? (get (contract/complete-test-result "python" {"ok" true}) "is_pass")))
+      (expect (false? (get (contract/complete-test-result "python" {"ok" false}) "is_pass")))
+      (expect (true? (get (contract/complete-test-result "typescript" {"exit" 0}) "is_pass")))
+      (expect (false? (get (contract/complete-test-result "typescript" {"exit" 2}) "is_pass")))
+      (expect (nil? (get (contract/complete-test-result "typescript" {}) "is_pass"))))
+  (it "stamps the language that actually ran, and passes a non-map through"
+      (expect (= "typescript" (get (contract/complete-test-result "typescript" {}) "language")))
+      (expect (= "clojure"
+                 (get (contract/complete-test-result "typescript" {"language" "clojure"})
+                      "language")))
+      (expect (= :untouched (contract/complete-test-result "clojure" :untouched)))))

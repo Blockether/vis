@@ -658,6 +658,10 @@
      (get @processes k)]
 
     (clear-failure! session-id dir)
+    ;; The client-side connection cache is keyed by [host port]; a REPL that
+    ;; goes away MUST evict it or its transport thread + socket leak for the
+    ;; life of the process (ports are per-start, so they never get reused).
+    (when port (nrepl-client/evict! (or host "localhost") port))
     (cond external? (do (swap! processes dissoc k)
                         {"result" "detached"
                          "id" (id-of dir)

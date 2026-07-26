@@ -19,7 +19,8 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot PolyglotException]))
+  (:import [org.graalvm.polyglot PolyglotException]
+           [org.graalvm.polyglot.proxy ProxyArray ProxyHashMap]))
 
 (def ^:private py-ctx
   ;; One shared GraalPy sandbox for parsing + eval cases. Parser helpers live in
@@ -778,11 +779,17 @@ await patch({'path': css})" "t1/i1")]
     (it "IndentationError → an indentation-specific hint"
         (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1") [:error :message])]
           (expect (clojure.string/includes? (str m) "INDENTATION"))))
-    (it ".get on a FOREIGN tool result → bracket/index hint"
+    (it ".get on a LIST-shaped tool result answers the uniform dict probe"
+        ;; A native result whose top level is a list is re-typed __VisResultList__, so
+        ;; the documented `res.get('op')` sweep works on EVERY stored result instead of
+        ;; blowing up with `'list' object has no attribute 'get'`.
         (let
-          [m (get-in (ep/run-python-block (mk) "r = await lst()\nprint(r.get(\"x\"))" "t1/i1")
-                     [:error :message])]
-          (expect (clojure.string/includes? (str m) "FOREIGN"))))))
+          [r (ep/run-python-block (mk)
+                                  (str "r = await lst()\n"
+                                       "[list(r), r.get('op'), r.get('x', 'dflt')]")
+                                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= [[1 2 3] nil "dflt"] (:result r)))))))
 
 (defdescribe
   source-context-test
@@ -1038,6 +1045,39 @@ await patch({'path': css})" "t1/i1")]
         (expect (str/includes? (:message err) "NoneType"))
         (expect (not (str/includes? (:message err) "NullPointerException")))
         (expect (not (str/includes? (:message err) "Null receiver"))))))
+
+(defdescribe pyify-never-leaks-a-raw-proxy-test
+             ;; REGRESSION: when the one-shot rebuild of a foreign map failed,
+             ;; `__vis_pyify__` returned the RAW proxy. A proxy read of a key it does not
+             ;; have can come back as a HOST NULL, and the next touch (print / slice) dies
+             ;; with Truffle's null-receiver NPE instead of a normal KeyError. The rebuild
+             ;; now degrades key-by-key, so python ALWAYS gets a real dict.
+             (it "degrades a hostile foreign map to a real dict with a normal KeyError"
+                 (let
+                   [weird
+                    (ProxyHashMap/from
+                      (doto (java.util.LinkedHashMap.)
+                        (.put "op" "probe")
+                        ;; A foreign LIST key is unhashable in python, so the dict
+                        ;; comprehension raises and the fallback path runs.
+                        (.put (ProxyArray/fromList (java.util.ArrayList. [1 2])) "x")))
+
+                    pc
+                    (ep/create-python-context {'weird weird})
+
+                    res
+                    (ep/run-python-block (:python-context pc)
+                                         (str "d = __vis_pyify__(weird)\n"
+                                              "[isinstance(d, dict), list(d.keys()), d['op']]"))
+
+                    err
+                    (:error (ep/run-python-block (:python-context pc) "d['content']"))]
+
+                   (expect (nil? (:error res)))
+                   (expect (= [true ["op"] "probe"] (:result res)))
+                   (expect (str/includes? (:message err) "KeyError"))
+                   (expect (not (str/includes? (:message err) "Null receiver")))
+                   (expect (not (str/includes? (:message err) "NullPointerException"))))))
 
 (defdescribe truffle-null-receiver-hint-test
              ;; Truffle's INTERNAL null-receiver NPE is NOT reported as a host exception, so

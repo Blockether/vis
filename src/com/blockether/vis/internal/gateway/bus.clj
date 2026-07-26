@@ -33,7 +33,7 @@
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent ArrayBlockingQueue]))
+           [java.util.concurrent ArrayBlockingQueue TimeUnit]))
 
 (def ^:private POLL_MS
   "Sleep between tail polls while a sibling process is actively streaming."
@@ -94,6 +94,34 @@
       (Files/createDirectories dir (make-array FileAttribute 0)))
     dir))
 
+;; sid-str -> byte offset already consumed
+(defonce ^:private offsets (atom {}))
+
+(defonce ^:private monitors (atom {}))
+
+(defn- tail-monitor
+  "Per-sid lock object owning this process's TAIL of `sid`'s journal. `hydrate!`
+   runs on HTTP threads while `drain-file!` runs on the tailer thread; both read
+   the same file and move the same cursor, so unsynchronized they hand the SAME
+   lines to the deliver-fn twice and clobber each other's offset."
+  ^Object [sid]
+  (let [k (str sid)]
+    (or (get @monitors k)
+        (get (swap! monitors (fn [m]
+                               (if (get m k) m (assoc m k (Object.)))))
+             k))))
+
+(defn- advance-offset!
+  "Move `sid`'s tail cursor to `n`. It only ever moves FORWARD — except when it
+   already sits past EOF (`len`), the truncation case, which rewinds it."
+  [sid n len]
+  (swap! offsets update
+    (str sid)
+    (fn [cur]
+      (let [cur (long (or cur 0))]
+        (if (> cur (long len)) (long n) (max cur (long n))))))
+  nil)
+
 ;; ---------------------------------------------------------------------------
 ;; Producer
 ;; ---------------------------------------------------------------------------
@@ -111,7 +139,7 @@
 (defonce ^:private writer (atom nil))
 
 (defn- write-event!
-  "Write one already-shaped (canonical string-keyed) event to the shared\n   journal. Never throws."
+  "Write one already-shaped (canonical string-keyed) event to the shared\n   journal. Runs ONLY on the single FIFO writer thread — that, not a lock, is\n   what serializes writes (`session-file` hands back a FRESH File per call, so\n   `locking` it would take a brand-new monitor every time and guard nothing).\n   Never throws."
   [sid event {:keys [store? truncate?]}]
   (try (ensure-dir!)
        (let
@@ -125,13 +153,12 @@
                                 "_store" (boolean store?)))
                "\n")]
 
-         (locking f
-           (with-open [raf (RandomAccessFile. f "rw")]
-             (let [len (.length raf)]
-               (cond truncate? (.setLength raf 0)
-                     (> len MAX_FILE_BYTES) (.setLength raf 0)))
-             (.seek raf (.length raf))
-             (.write raf (.getBytes ^String line StandardCharsets/UTF_8)))))
+         (with-open [raf (RandomAccessFile. f "rw")]
+           (let [len (.length raf)]
+             (cond truncate? (.setLength raf 0)
+                   (> len MAX_FILE_BYTES) (.setLength raf 0)))
+           (.seek raf (.length raf))
+           (.write raf (.getBytes ^String line StandardCharsets/UTF_8))))
        (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))
   nil)
 
@@ -140,21 +167,29 @@
    fan out to local subscribers without waiting for ndjson I/O; cross-process
    ordering is preserved by this one FIFO writer thread."
   []
-  (when (compare-and-set! writer nil ::starting)
-    (let
-      [t (Thread. ^Runnable
-                  (fn []
-                    (while (not (Thread/interrupted))
-                      (try (let [{:keys [sid event opts done]} (.take writer-queue)]
-                             (write-event! sid event opts)
-                             (when done (deliver done true)))
-                           (catch InterruptedException _ (.interrupt (Thread/currentThread)))
-                           (catch Throwable t
-                             (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
-                  "gateway-bus-writer")]
-      (.setDaemon t true)
-      (.start t)
-      (reset! writer t)))
+  (let [cur @writer]
+    ;; Resurrect a DEAD writer, not just a missing one: the loop exits on
+    ;; interrupt, and a `writer` atom still holding that corpse made every later
+    ;; durable `publish!` block the full timeout and then vanish — the process
+    ;; silently stops journalling (no cross-process mirror, no orphan-reap
+    ;; terminal) for the rest of its life.
+    (when (and (not= ::starting cur)
+               (or (nil? cur) (not (.isAlive ^Thread cur)))
+               (compare-and-set! writer cur ::starting))
+      (let
+        [t (Thread. ^Runnable
+                    (fn []
+                      (while (not (Thread/interrupted))
+                        (try (let [{:keys [sid event opts done]} (.take writer-queue)]
+                               (write-event! sid event opts)
+                               (when done (deliver done true)))
+                             (catch InterruptedException _ (.interrupt (Thread/currentThread)))
+                             (catch Throwable t
+                               (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
+                    "gateway-bus-writer")]
+        (.setDaemon t true)
+        (.start t)
+        (reset! writer t))))
   nil)
 
 (defn- enqueue-write!
@@ -165,8 +200,14 @@
     ;; queue mutations, titles). Put them behind any already-enqueued transient
     ;; deltas and wait, so the file is ordered and tests/hydration see them.
     (let [done (promise)]
-      (.put writer-queue {:sid sid :event event :opts opts :done done})
-      (deref done 5000 false)
+      ;; Bounded: never park a turn/provider thread forever on a wedged writer.
+      (if (.offer writer-queue
+                  {:sid sid :event event :opts opts :done done}
+                  5000
+                  TimeUnit/MILLISECONDS)
+        (deref done 5000 false)
+        (tel/log! :debug
+                  ["gateway-bus: dropped durable event; writer queue wedged" (get event "type")]))
       nil)
     ;; Transient deltas are live hints. Never block provider/input threads on disk;
     ;; if the queue is saturated, sibling processes will catch the final canonical
@@ -218,7 +259,10 @@
   "Drop a session's journal (on session close). Never throws."
   [sid]
   (try (.delete (session-file sid)) (catch Throwable _ nil))
-  (swap! reaped-turns dissoc (str sid))
+  (let [k (str sid)]
+    (swap! reaped-turns dissoc k)
+    (swap! offsets dissoc k)
+    (swap! monitors dissoc k))
   nil)
 
 ;; ---------------------------------------------------------------------------
@@ -273,9 +317,6 @@
   ^String [^String n]
   (when (str/ends-with? n ".ndjson") (subs n 0 (- (count n) (count ".ndjson")))))
 
-;; sid-str -> byte offset already consumed
-(defonce ^:private offsets (atom {}))
-
 (defonce ^:private tailer (atom nil))
 
 (def ^:private ^String self-marker
@@ -317,51 +358,59 @@
      (.getName f)
 
      sid
-     (subs name 0 (- (count name) (count ".ndjson")))
+     (subs name 0 (- (count name) (count ".ndjson")))]
 
-     len
-     (.length f)
+    ;; ONE tail owner per sid: `hydrate!` reads the same file and claims the same
+    ;; cursor from an HTTP thread, so without this both deliver the same lines.
+    #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+    (locking (tail-monitor sid)
+      (let
+        [len
+         (.length f)
 
-     off0
-     (long (get @offsets sid 0))
+         off0
+         (long (get @offsets sid 0))
 
-     ;; truncation/rotation: file shrank under our cursor -> rewind
-     off
-     (if (> off0 len) 0 off0)]
+         ;; truncation/rotation: file shrank under our cursor -> rewind
+         off
+         (if (> off0 len) 0 off0)]
 
-    (when (> len off)
-      (with-open [raf (RandomAccessFile. f "r")]
-        (.seek raf (long off))
-        (let
-          [remaining (int (- len off))
-           ;; Reuse one growable buffer across polls (single tailer thread) so
-           ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
-           ^bytes buf (let [^bytes b @drain-buf]
-                        (if (>= (alength b) remaining) b (reset! drain-buf (byte-array remaining))))
-           _ (.readFully raf buf 0 remaining)]
+        (when (> len off)
+          (with-open [raf (RandomAccessFile. f "r")]
+            (.seek raf (long off))
+            (let
+              [remaining (int (- len off))
+               ;; Reuse one growable buffer across polls (single tailer thread) so
+               ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
+               ^bytes buf
+               (let [^bytes b @drain-buf]
+                 (if (>= (alength b) remaining) b (reset! drain-buf (byte-array remaining))))
+               _ (.readFully raf buf 0 remaining)]
 
-          ;; ONE forward pass over the tail: decode each COMPLETE line in
-          ;; isolation and deliver it inline — no whole-tail String, no regex
-          ;; `split-lines`, no backward pre-scan, no re-encode to count bytes.
-          ;; `last-nl` tracks the last newline seen; the cursor advances exactly
-          ;; past it, leaving any trailing partial line for the next drain.
-          (loop
-            [start 0
-             i 0
-             last-nl -1]
+              ;; ONE forward pass over the tail: decode each COMPLETE line in
+              ;; isolation and deliver it inline — no whole-tail String, no regex
+              ;; `split-lines`, no backward pre-scan, no re-encode to count bytes.
+              ;; `last-nl` tracks the last newline seen; the cursor advances exactly
+              ;; past it, leaving any trailing partial line for the next drain.
+              (loop
+                [start 0
+                 i 0
+                 last-nl -1]
 
-            (if (< i remaining)
-              (if (== (aget buf i) 10)
-                (let
-                  [end (if (and (> i start) (== (aget buf (dec i)) 13))
-                         (dec i) ; strip a CR from a CRLF line ending
-                         i)]
-                  (when (> end start)
-                    (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
-                      (when-not (str/blank? line) (deliver-line! sid line))))
-                  (recur (inc i) (inc i) i))
-                (recur start (inc i) last-nl))
-              (when (>= last-nl 0) (swap! offsets assoc sid (+ off (inc last-nl))) true))))))))
+                (if (< i remaining)
+                  (if (== (aget buf i) 10)
+                    (let
+                      [end (if (and (> i start) (== (aget buf (dec i)) 13))
+                             (dec i) ; strip a CR from a CRLF line ending
+                             i)]
+                      (when (> end start)
+                        (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
+                          (when-not (str/blank? line) (deliver-line! sid line))))
+                      (recur (inc i) (inc i) i))
+                    (recur start (inc i) last-nl))
+                  (when (>= last-nl 0)
+                    (advance-offset! sid (+ off (inc last-nl)) len)
+                    true))))))))))
 
 (defn journal-high-water-seq
   "Highest `\"seq\"` persisted in `sid`'s journal file, or 0 when there is none.
@@ -405,59 +454,63 @@
    instead land a synthetic `turn.failed` so the queue drains, clients get
    closure, and no later hydrate replays it again.
 
-   Rewinds this process's tail cursor to the file's current end first, so the
-   background tailer won't re-deliver what we hand over here. Never throws."
+   Runs under the sid's `tail-monitor` and rewinds this process's tail cursor to
+   the file's current end, so neither the background tailer nor a concurrent
+   hydrate re-delivers what we hand over here. Never throws."
   [sid]
   (try
     (when-let [f (session-file sid)]
       (when (.exists f)
-        (let
-          [len (.length f)
-           events (->> (str/split-lines (slurp f))
-                       (remove str/blank?)
-                       (keep wire/parse-json))
-           foreign (remove #(= (get % "_producer") producer-id) events)
-           ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
-           ;; THIS process) means the turn is done — don't re-stream it.
-           terminal? (some #(contains? #{"turn.completed" "turn.failed" "turn.cancelled"}
-                                       (get % "type"))
-                           events)]
+        #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+        (locking (tail-monitor sid)
+          (let
+            [len (.length f)
+             events (->> (str/split-lines (slurp f))
+                         (remove str/blank?)
+                         (keep wire/parse-json))
+             foreign (remove #(= (get % "_producer") producer-id) events)
+             ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
+             ;; THIS process) means the turn is done — don't re-stream it.
+             terminal? (some #(contains? #{"turn.completed" "turn.failed" "turn.cancelled"}
+                                         (get % "type"))
+                             events)]
 
-          (when (and (seq foreign) (not terminal?))
-            ;; claim everything up to EOF so poll-once! won't re-deliver it
-            (swap! offsets assoc (str sid) len)
-            (let [started (some #(when (= "turn.started" (get % "type")) %) foreign)]
-              (if (producer-alive? (get (or started (last foreign)) "_pid"))
-                ;; Live sibling: mirror its in-flight turn into the registry.
-                (when-let [f' @deliver-fn]
-                  (doseq [ev foreign]
-                    (try
-                      (f' sid (boolean (get ev "_store")) (dissoc ev "_producer" "_pid" "_store"))
-                      (catch Throwable t
-                        (tel/log! :debug ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
-                ;; Orphan: producer process is gone. Reap it terminally.
-                (when-let [tid (get started "turn_id")]
-                  ;; CAS-claim the reap BEFORE publishing: `publish!` lands the
-                  ;; terminal ASYNCHRONOUSLY, so two hydrates inside that write
-                  ;; window would each read `terminal? = false` and each emit
-                  ;; its own `turn.failed` for the same turn.
-                  (when (claim-reap! sid tid)
-                    (let
-                      [term {"schema" 1
-                             "type" "turn.failed"
-                             "session_id" (str sid)
-                             "turn_id" tid
-                             "status" "interrupted"
-                             "error" "gateway producer exited before the turn finished"}]
-                      ;; Durable + cross-process: appended (no truncate), so any
-                      ;; process hydrating later sees `terminal?` and skips.
-                      (publish! sid term {:store? true})
-                      (when-let [f' @deliver-fn]
-                        (try (f' sid true term)
-                             (catch Throwable t
-                               (tel/log! :debug
-                                         ["gateway-bus: orphan-reap deliver failed"
-                                          (ex-message t)])))))))))))))
+            (when (and (seq foreign) (not terminal?))
+              ;; claim everything up to EOF so poll-once! won't re-deliver it
+              (advance-offset! sid len len)
+              (let [started (some #(when (= "turn.started" (get % "type")) %) foreign)]
+                (if (producer-alive? (get (or started (last foreign)) "_pid"))
+                  ;; Live sibling: mirror its in-flight turn into the registry.
+                  (when-let [f' @deliver-fn]
+                    (doseq [ev foreign]
+                      (try
+                        (f' sid (boolean (get ev "_store")) (dissoc ev "_producer" "_pid" "_store"))
+                        (catch Throwable t
+                          (tel/log! :debug
+                                    ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
+                  ;; Orphan: producer process is gone. Reap it terminally.
+                  (when-let [tid (get started "turn_id")]
+                    ;; CAS-claim the reap BEFORE publishing: `publish!` lands the
+                    ;; terminal ASYNCHRONOUSLY, so two hydrates inside that write
+                    ;; window would each read `terminal? = false` and each emit
+                    ;; its own `turn.failed` for the same turn.
+                    (when (claim-reap! sid tid)
+                      (let
+                        [term {"schema" 1
+                               "type" "turn.failed"
+                               "session_id" (str sid)
+                               "turn_id" tid
+                               "status" "interrupted"
+                               "error" "gateway producer exited before the turn finished"}]
+                        ;; Durable + cross-process: appended (no truncate), so any
+                        ;; process hydrating later sees `terminal?` and skips.
+                        (publish! sid term {:store? true})
+                        (when-let [f' @deliver-fn]
+                          (try (f' sid true term)
+                               (catch Throwable t
+                                 (tel/log! :debug
+                                           ["gateway-bus: orphan-reap deliver failed"
+                                            (ex-message t)]))))))))))))))
     (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
   nil)
 
@@ -466,7 +519,7 @@
    sessions `forget!` never got to clean, which otherwise pile up forever and get
    re-scanned by every `poll-once!`. A live session rewrites its journal each
    turn, so a stale mtime proves the producer is gone. Drops the swept file's
-   tail offset too. Never throws."
+   tail offset (and lock) too. Never throws."
   []
   (try (let
          [dir
@@ -479,7 +532,9 @@
            (doseq [^File f (.listFiles dir)]
              (let [n (.getName f)]
                (when (and (str/ends-with? n ".ndjson") (< (.lastModified f) cutoff) (.delete f))
-                 (swap! offsets dissoc (subs n 0 (- (count n) (count ".ndjson")))))))))
+                 (let [swept (subs n 0 (- (count n) (count ".ndjson")))]
+                   (swap! offsets dissoc swept)
+                   (swap! monitors dissoc swept)))))))
        (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
 
 (defn- poll-once!

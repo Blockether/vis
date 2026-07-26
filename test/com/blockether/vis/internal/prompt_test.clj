@@ -85,32 +85,33 @@
       (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`"]]
         (expect (not (str/includes? text tool))))
       (doseq
-        [required ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
-                   "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
-                   "hard preconditions" "`python_execution`" "`await gather(...)` independent calls"
-                   "anything complicated" "direct native tools for single operations"
-                   "Call advertised native tools directly" "never preflight a visible native tool"
-                   "read-only `session`" "never use `ctx` or `context`" "reproduce before editing"
-                   "rerun the same check after the fix" "batch independent reads"
-                   "Create no unrequested" "without asking permission or offering optional"
-                   "Never expose or log secrets" "commit, push, publish" "retry any blocked fold"
-                   "`session_fold` owns the mechanics" "preserve only decisions,\n  findings, edits"
-                   ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
-                   ;; it started, or every session leaks a JVM/interpreter child.
-                   "Before `repl_eval` or any REPL lifecycle change"
-                   "`session[\"resources\"][\"repls\"][language][dir]`"
-                   "Reuse managed REPLs across turns" "stop the ones you"
-                   "External REPLs are user-owned" "detach, never kill"
-                   ;; Anchor staleness: without this the agent chains small writes on
-                   ;; anchors invalidated by its own previous edit.
-                   "Anchors are positional and EVERY write stales them"
-                   "ONE atomic\n  `patch`/`struct_patch` call" "After any write, re-read"
-                   "never\n  reuse a pre-write anchor"
-                   "Lead with the answer. Be terse; depth only when earned."
-                   ;; End-of-turn teardown: without this the session leaks every REPL and
-                   ;; background shell the agent spawned.
-                   "Finish clean: stop every session resource you started" "`shell` op \"stop\""
-                   "nothing of yours running" "Confirm destructive actions."]]
+        [required
+         ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
+          "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
+          "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
+          "Direct native tools: single operations" "simple edits" "small fixed call sets"
+          "dependent chains" "fan-out" "output shaping" "Call advertised native tools directly"
+          "never preflight a visible native tool" "read-only `session`"
+          "never use `ctx` or `context`" "reproduce before editing"
+          "rerun the same check after the fix" "batch independent reads" "Create no unrequested"
+          "without asking permission or offering optional" "Never expose or log secrets"
+          "commit, push, publish" "retry any blocked fold" "`session_fold` owns the mechanics"
+          "preserve only decisions,\n  findings, edits"
+          ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
+          ;; it started, or every session leaks a JVM/interpreter child.
+          "Before `repl_eval` or any REPL lifecycle change"
+          "`session[\"resources\"][\"repls\"][language][dir]`" "Reuse managed REPLs across turns"
+          "stop the ones you" "External REPLs are user-owned" "detach, never kill"
+          ;; Anchor staleness: without this the agent chains small writes on
+          ;; anchors invalidated by its own previous edit.
+          "Anchors are positional and EVERY write stales them"
+          "ONE atomic\n  `patch`/`struct_patch` call" "After any write, re-read"
+          "never\n  reuse a pre-write anchor"
+          "Lead with the answer. Be terse; depth only when earned."
+          ;; End-of-turn teardown: without this the session leaks every REPL and
+          ;; background shell the agent spawned.
+          "Finish clean: stop every session resource you started" "`shell` op \"stop\""
+          "nothing of yours running" "Confirm destructive actions."]]
         (expect (str/includes? text required)))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.
@@ -118,7 +119,7 @@
       (doseq
         [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
-                  "canonical decision table"
+                  "canonical decision table" "anything complicated"
                   ;; schema-owned or removed contracts stay out of the core prompt
                   "stales anchors" "benchmark/profile" "Route vis issues upstream"
                   "Before every `session_fold`" "`await session_state" "≤120 words"

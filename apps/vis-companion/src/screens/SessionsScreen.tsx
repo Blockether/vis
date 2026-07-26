@@ -186,19 +186,19 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
     return (
       <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col px-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:py-6">
         <div className="flex h-full min-h-0 flex-col items-center justify-center gap-4 border-y border-dialog-edge bg-panel px-6 py-16 text-center sm:border">
-          <span className="font-mono text-3xl leading-none text-err" aria-hidden="true">○</span>
+          <span className="font-mono text-display text-err" aria-hidden="true">○</span>
           <div className="space-y-1.5">
-            <p className="font-mono text-sm font-black uppercase tracking-[0.1em] text-err">Gateway offline</p>
-            <p className="mx-auto max-w-sm font-mono text-[11px] leading-relaxed text-dialog-hint">
+            <p className="font-mono text-title font-black uppercase tracking-[0.1em] text-err">Gateway offline</p>
+            <p className="mx-auto max-w-sm font-mono text-ui text-dialog-hint">
               {gatewayCount > 1
                 ? 'This gateway is not responding. Switch to another from the Gateways tab, or retry.'
                 : 'The gateway is not responding. Check the URL, your network / Tailscale, or that the gateway is running.'}
             </p>
-            <p className="mx-auto max-w-sm break-all font-mono text-[10px] text-dialog-hint/60" title={loadError}>
+            <p className="mx-auto max-w-sm break-all font-mono text-meta text-dialog-hint/60" title={loadError}>
               {loadError}
             </p>
           </div>
-          <Button variant="ghost" className="px-4 py-1.5 text-xs" onClick={() => void load()}>
+          <Button variant="ghost" className="px-4 py-1.5 text-body" onClick={() => void load()}>
             Retry
           </Button>
         </div>
@@ -210,14 +210,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:border">
         <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-4 py-1.5 text-dialog-title-foreground sm:min-h-8">
-          <h1 className="truncate font-mono text-[11px] font-black uppercase tracking-[0.1em]">Session navigator</h1>
+          <h1 className="truncate font-mono text-ui font-black uppercase tracking-[0.1em]">Session navigator</h1>
         </header>
 
         <div className="border-t border-dialog-edge bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="font-mono text-xs font-bold text-white">Projects</p>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-1 font-mono text-[10px] text-dialog-hint">
+              <p className="font-mono text-body font-bold text-white">Projects</p>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1 font-mono text-meta text-dialog-hint">
                 {sessions === null ? (
                   'Reading sessions...'
                 ) : (
@@ -236,14 +236,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
             <div className="grid shrink-0 grid-cols-2 gap-1">
               <Button
                 variant="ghost"
-                className="min-h-6 px-2 py-0.5 font-mono text-[9px] sm:min-h-6"
+                className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 onClick={() => void load()}
               >
                 Refresh
               </Button>
               <Button
                 variant="solid"
-                className="min-h-6 px-2 py-0.5 font-mono text-[9px] sm:min-h-6"
+                className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || !active}
                 onClick={() => void createSession()}
               >
@@ -265,11 +265,11 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
         </div>
 
         <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
-          <span className="shrink-0 font-mono text-xs text-accent-ink">›</span>
+          <span className="shrink-0 font-mono text-body text-accent-ink">›</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent px-2 py-2 font-mono text-sm text-white outline-none placeholder:text-dialog-hint sm:text-xs"
+            className="min-w-0 flex-1 bg-transparent px-2 py-2 font-mono text-title text-white outline-none placeholder:text-dialog-hint sm:text-body"
             placeholder="Filter title, project, session"
             aria-label="Filter sessions"
           />
@@ -280,16 +280,16 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
           <NavigatorSkeleton />
         ) : visible?.length === 0 ? (
           <div className="px-5 py-16 text-center">
-            <p className="font-mono text-xs font-bold text-white/70">
+            <p className="font-mono text-body font-bold text-white/70">
               {query ? 'No matching sessions' : 'No sessions yet'}
             </p>
-            <p className="mt-2 font-mono text-[11px] text-dialog-hint">
+            <p className="mt-2 font-mono text-ui text-dialog-hint">
               {query ? 'Clear the filter to see all sessions.' : 'Use New session to get started.'}
             </p>
           </div>
         ) : (
           <div className="border-t border-dialog-edge">
-            <div className="hidden grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] bg-ink/45 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-dialog-hint md:grid">
+            <div className="hidden grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] bg-ink/45 font-mono text-chip font-bold uppercase tracking-[0.1em] text-dialog-hint md:grid">
               <div className="border-r border-dialog-edge px-3 py-2">Title</div>
               <div className="border-r border-dialog-edge px-3 py-2">Session</div>
               <div className="border-r border-dialog-edge px-3 py-2">Status</div>
@@ -311,7 +311,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
         )}
         </div>
 
-        <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-[10px] text-dialog-hint sm:flex sm:px-4">
+        <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:px-4">
           <span>{sessions ? `${totals.shown} of ${totals.all} sessions` : 'Reading sessions...'}</span>
         </footer>
       </div>
@@ -343,24 +343,24 @@ function ProjectGroup({
   return (
     <section className="border-t border-dialog-edge first:border-t-0">
       <header className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
-        <div className="hidden min-w-20 place-items-center bg-dialog-title px-3 font-mono text-[9px] font-black tracking-[0.14em] text-dialog-title-foreground sm:grid">
+        <div className="hidden min-w-20 place-items-center bg-dialog-title px-3 font-mono text-chip font-black tracking-[0.14em] text-dialog-title-foreground sm:grid">
           PROJECT
         </div>
         <div className="min-w-0 border-l-2 border-accent px-3 py-1.5 sm:border-l-0 sm:border-r sm:border-dialog-edge">
-          <h2 className="truncate font-mono text-[11px] font-bold leading-tight text-white">{project}</h2>
-          <p className="mt-0.5 truncate font-mono text-[9px] text-dialog-hint" title={root}>
+          <h2 className="truncate font-mono text-ui font-bold text-white">{project}</h2>
+          <p className="mt-0.5 truncate font-mono text-chip text-dialog-hint" title={root}>
             {root || 'No workspace path'}
           </p>
         </div>
         <div className="flex min-w-[4.5rem] flex-col items-center justify-center gap-0.5 border-l border-dialog-edge px-2 text-center font-mono sm:min-w-20 sm:border-l-0 sm:px-3">
-          <span className="leading-none">
-            <strong className="text-[11px] text-white">{sessions.length}</strong>
-            <span className="ml-1 text-[9px] text-dialog-hint sm:ml-0 sm:block">
+          <span className="">
+            <strong className="text-ui text-white">{sessions.length}</strong>
+            <span className="ml-1 text-chip text-dialog-hint sm:ml-0 sm:block">
               {sessions.length === 1 ? 'session' : 'sessions'}
             </span>
           </span>
           {liveCount > 0 && (
-            <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ok">
+            <span className="flex items-center gap-1 text-chip font-bold uppercase tracking-wide text-ok">
               <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
               {liveCount} live
             </span>
@@ -415,13 +415,13 @@ function SessionRow({
       <span className="relative flex min-w-0 flex-col justify-center px-3 py-2 sm:px-4 md:border-r md:border-dialog-edge md:py-2">
         <span className="absolute inset-y-2 left-0 w-0.5 bg-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
         <span
-          className={`block truncate font-mono text-[11px] font-semibold ${
+          className={`block truncate font-mono text-ui font-semibold ${
             session.title?.trim() ? 'text-white' : 'text-white/45'
           }`}
         >
           {title}
         </span>
-        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] text-dialog-hint md:hidden">
+        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint md:hidden">
           <span className={`inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] ${statusTone(session)}`}>
             <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
             {status}
@@ -439,18 +439,18 @@ function SessionRow({
           </span>
         </span>
       </span>
-      <span className="hidden items-center border-r border-dialog-edge px-3 font-mono text-[10px] text-white/55 md:flex">
+      <span className="hidden items-center border-r border-dialog-edge px-3 font-mono text-meta text-white/55 md:flex">
         {shortId(session.id)}
       </span>
       <span
-        className={`hidden items-center gap-2 border-r border-dialog-edge px-3 font-mono text-[10px] font-bold tracking-[0.08em] md:flex ${statusTone(session)}`}
+        className={`hidden items-center gap-2 border-r border-dialog-edge px-3 font-mono text-meta font-bold tracking-[0.08em] md:flex ${statusTone(session)}`}
         title={`${Number(session.turn_count ?? 0)} turns`}
       >
         <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
         {status}
       </span>
       <span
-        className="hidden items-center justify-end px-3 font-mono text-[10px] text-dialog-hint md:flex"
+        className="hidden items-center justify-end px-3 font-mono text-meta text-dialog-hint md:flex"
         title={formatExact(timestamp)}
       >
         {relativeTime(timestamp)}
@@ -638,14 +638,14 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
       {rows.map((hit, index) => (
         <div key={`${hit.side}-${hit.at ?? index}`}>
           <div
-            className={`mb-1 font-mono text-[10px] font-bold ${
+            className={`mb-1 font-mono text-meta font-bold ${
               hit.side === 'request' ? 'text-you-role' : 'text-vis-role'
             }`}
           >
             {hit.side === 'request' ? 'You' : 'Vis'}
           </div>
           <p
-            className={`whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-5 ${
+            className={`whitespace-pre-wrap break-words px-3 py-2 font-mono text-ui ${
               hit.side === 'request'
                 ? 'border-l-2 border-you-role bg-code text-you-message-foreground'
                 : 'bg-answer text-answer-foreground'

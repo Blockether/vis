@@ -292,17 +292,17 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
           <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
             <h2
               id="provider-router-title"
-              className="truncate font-mono text-xs font-bold tracking-wide"
+              className="truncate font-mono text-body font-bold tracking-wide"
             >
               Router — providers &amp; models
             </h2>
-            <p className="truncate font-mono text-[10px] text-dialog-title-foreground/70">
+            <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
               {pref?.model ? `Current: ${pref.provider ?? '?'}/${pref.model}` : 'No model pinned'}
             </p>
           </div>
           <button
             type="button"
-            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-sm leading-none text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close router"
           >
@@ -316,18 +316,18 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
 
           {flow && (
             <div className="space-y-3 border border-accent/50 bg-panel-2 p-3">
-              <p className="font-mono text-xs font-bold text-white">
+              <p className="font-mono text-body font-bold text-white">
                 {flow.kind === 'device' ? 'Waiting for authorization…' : 'Finish sign-in'}
               </p>
 
               {flow.user_code && (
-                <p className="select-all break-all border border-dialog-edge bg-input px-3 py-2 text-center font-mono text-2xl font-bold tracking-[0.2em] text-accent">
+                <p className="select-all break-all border border-dialog-edge bg-input px-3 py-2 text-center font-mono text-display font-bold tracking-[0.2em] text-accent">
                   {flow.user_code}
                 </p>
               )}
 
               {flow.instructions?.length ? (
-                <ol className="list-inside list-decimal space-y-1 font-mono text-[11px] text-dialog-hint">
+                <ol className="list-inside list-decimal space-y-1 font-mono text-ui text-dialog-hint">
                   {flow.instructions.map((line) => (
                     <li key={line}>{line}</li>
                   ))}
@@ -347,7 +347,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
               {flow.kind === 'pkce' && (
                 <div className="space-y-2">
                   <label
-                    className="block font-mono text-[10px] uppercase tracking-[0.1em] text-dialog-hint"
+                    className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
                     htmlFor="redirect-url"
                   >
                     Paste the final redirect URL
@@ -368,7 +368,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
               {flow.kind === 'api-key' && (
                 <div className="space-y-2">
                   <label
-                    className="block font-mono text-[10px] uppercase tracking-[0.1em] text-dialog-hint"
+                    className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
                     htmlFor="provider-api-key"
                   >
                     Paste the provider API key
@@ -413,11 +413,11 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
           )}
 
           {providers === null && (
-            <p className="py-8 text-center font-mono text-xs text-dialog-hint">Loading router…</p>
+            <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading router…</p>
           )}
 
           {providers?.length === 0 && (
-            <p className="py-8 text-center font-mono text-xs text-dialog-hint">
+            <p className="py-8 text-center font-mono text-body text-dialog-hint">
               No providers configured.
             </p>
           )}
@@ -436,18 +436,18 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
                   onClick={() => setExpanded(open ? null : provider.id)}
                   aria-expanded={open}
                 >
-                  <span className={`font-mono text-xs ${dot.tone}`} aria-label={dot.label}>
+                  <span className={`font-mono text-body ${dot.tone}`} aria-label={dot.label}>
                     {dot.glyph}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-xs font-bold text-white">
+                    <span className="block truncate font-mono text-body font-bold text-white">
                       {provider.label}
                     </span>
-                    <span className="block truncate font-mono text-[10px] text-dialog-hint">
+                    <span className="block truncate font-mono text-meta text-dialog-hint">
                       {limits ?? `${provider.models.length} models`}
                     </span>
                   </span>
-                  <span className="font-mono text-[10px] text-dialog-hint">{open ? '▾' : '▸'}</span>
+                  <span className="font-mono text-meta text-dialog-hint">{open ? '▾' : '▸'}</span>
                 </button>
 
                 {open && (
@@ -483,7 +483,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked }: Props) 
                             <li key={model}>
                               <button
                                 type="button"
-                                className={`flex w-full min-h-9 items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
+                                className={`flex w-full min-h-9 items-center gap-2 px-3 py-1.5 text-left font-mono text-ui transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
                                   active ? 'bg-hover text-accent' : 'text-white/85'
                                 }`}
                                 disabled={pending === `${provider.id}:${model}`}

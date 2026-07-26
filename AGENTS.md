@@ -17,6 +17,21 @@ treat mobile as a reduced or deferred version of the web interface.
 - Keep `src/index.css` limited to Tailwind imports, shared gateway/TUI theme token
   declarations, bundled font setup, and unavoidable document-level base rules.
   Express component styling in JSX with Tailwind utilities.
+- **One canonical type scale, no ad-hoc font sizes.** `index.css` clears
+  Tailwind's default size scale (`--text-*: initial`) and defines the only
+  eight steps: `text-chip` 9px, `text-meta` 10px, `text-ui` 11px, `text-body`
+  12px (document default), `text-title` 13px, `text-subhead` 15px, `text-head`
+  17px, `text-display` 24px — each with its canonical line-height. Never write
+  `text-[13px]`, `text-xs`, `text-sm`, or `text-base`: they no longer exist, so
+  every screen (session, settings, router, sessions, connect) stays typo-
+  graphically identical. Add a step to the scale rather than a one-off size.
+- **Line-height belongs to the type step, never to a utility.** Each of the
+  eight steps declares its own `--text-*--line-height` in WHOLE PIXELS (9/12,
+  10/14, 11/16, 12/18, 13/20, 15/22, 17/24, 24/30), so a line box never lands
+  on a half pixel. Never write `leading-none`, `leading-tight`, `leading-5`, or
+  `leading-[1.45]`: an override is exactly how vertical rhythm drifts between
+  screens. Size a control with `h-*`/`py-*` that matches its step's line-height
+  instead.
 - Design mobile-first, then add deliberate `sm:`, `md:`, and wider adaptations.
   Check narrow phones, desktop widths, wrapping/overflow, touch targets, safe-area
   insets, virtual-keyboard/composer behavior, and both light and dark gateway

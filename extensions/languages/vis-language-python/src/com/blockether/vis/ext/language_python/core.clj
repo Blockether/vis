@@ -199,6 +199,10 @@
 
     (cond->
       {"runner" "graalpy"
+       ;; In-process contexts, no shell — the surface contract's "repl" mode.
+       "mode" "repl"
+       "framework" "pytest"
+       "tool" "graalpy"
        "files" (:files res)
        "ok" (boolean (:ok? res))
        "passed" (or (:passed res) 0)
@@ -263,6 +267,9 @@
        (re-find #"(?m)(\d+) error(?:ed|s)?\b" s)]
 
       {"runner" "project"
+       "mode" "cli"
+       "framework" "pytest"
+       "tool" "pytest"
        "cmd" (vec cmd)
        "dir" dir
        "exit" (when done? (.exitValue p))

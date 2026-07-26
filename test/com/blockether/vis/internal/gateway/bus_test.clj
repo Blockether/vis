@@ -150,3 +150,83 @@
   (it "is 0 when the session has no journal file yet"
       (with-temp-journal (fn [_capture _write!]
                            (expect (= 0 (bus/journal-high-water-seq "sid-none")))))))
+
+(defdescribe
+  tail-cursor-race-test
+  "`hydrate!` (HTTP thread) and `drain-file!` (tailer thread) own the SAME tail
+   cursor. Unsynchronized, a drain that read a PREFIX writes its stale, smaller
+   offset back over hydrate's EOF claim — and the next poll re-delivers events
+   the watcher already rendered."
+  (it
+    "a concurrent drain never rewinds hydrate!'s EOF claim"
+    (with-temp-journal
+      (fn [capture write!]
+        (let
+          [prod
+           (str (java.util.UUID/randomUUID))
+
+           sid
+           "sid-cursor"
+
+           f
+           (#'bus/session-file sid)]
+
+          (write! sid [(turn-started prod (var-get #'bus/producer-pid) sid "T-cursor")])
+          (let
+            [gate
+             (promise)
+
+             orig
+             @#'bus/deliver-line!
+
+             ;; park the drain mid-file, holding the cursor it read at entry
+             drain
+             (future (with-redefs
+                       [bus/deliver-line! (fn [s l]
+                                            @gate
+                                            (orig s l))]
+                       (#'bus/drain-file! f)))]
+
+            (Thread/sleep 100)
+            ;; producer appends while the drain is parked, then a subscriber hydrates
+            (spit f
+                  (str (wire/json-str (delta prod (var-get #'bus/producer-pid) "T-cursor")) "\n")
+                  :append
+                  true)
+            (future (bus/hydrate! sid))
+            (Thread/sleep 100)
+            (deliver gate true)
+            @drain
+            (Thread/sleep 200)
+            (expect (= (.length f) (long (get @(var-get #'bus/offsets) sid))))
+            (reset! capture [])
+            (#'bus/drain-file! f)
+            (expect (empty? @capture))))))))
+
+(defdescribe
+  writer-liveness-test
+  "The journal writer loop EXITS on interrupt. A `writer` atom still holding that
+   corpse used to make every later durable `publish!` block the full timeout and
+   then vanish — the process silently stops journalling (no cross-process mirror,
+   no orphan-reap terminal) for the rest of its life."
+  (it "revives a dead writer instead of dropping every later durable event"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (bus/publish! "sid-writer" {"type" "turn.started" "seq" 1} {:store? true})
+          (let [dead @(var-get #'bus/writer)]
+            (.interrupt ^Thread dead)
+            (Thread/sleep 200)
+            (expect (not (.isAlive ^Thread dead)))
+            (let
+              [t0 (System/currentTimeMillis)
+               _ (bus/publish! "sid-writer" {"type" "turn.completed" "seq" 2} {:store? true})
+               ms (- (System/currentTimeMillis) t0)]
+
+              (expect (< ms 2000))
+              (expect (not (identical? dead @(var-get #'bus/writer))))
+              (Thread/sleep 200)
+              (expect (= ["turn.started" "turn.completed"]
+                         (mapv #(get (wire/parse-json %) "type")
+                               (remove str/blank?
+                                 (str/split-lines (slurp (#'bus/session-file
+                                                          "sid-writer")))))))))))))

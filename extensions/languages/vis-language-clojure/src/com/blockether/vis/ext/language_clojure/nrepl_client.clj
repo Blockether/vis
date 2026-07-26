@@ -106,10 +106,13 @@
            :port port
            :cause (.getMessage t)})))))
 
-(defn- evict!
+(defn evict!
   "Drop the cached connection (and its long-lived session) for `[host port]`,
-   CLOSING the socket so the server promptly reaps the session's executor
-   thread — nothing is left to leak. The next call re-dials and re-clones."
+   CLOSING the socket so BOTH sides let go: the server reaps the session's
+   executor thread and OUR client transport thread dies instead of parking
+   forever. Call it whenever a REPL at `[host port]` goes away (stop, reap,
+   crash) — a cache entry outliving its process leaks one thread + one socket
+   per REPL. The next call re-dials and re-clones."
   [host port]
   (let
     [k
@@ -1080,24 +1083,22 @@
               {:status :unresponsive
                :form health-form
                :ms ms
-               :hint
-               (str "nREPL eval timed out after "
-                    timeout-ms
-                    "ms on "
-                    health-form
-                    " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl) or reprobe.")}
+               :hint (str "nREPL eval timed out after "
+                          timeout-ms
+                          "ms on "
+                          health-form
+                          " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl) or reprobe.")}
               (= "2" (str/trim (str (get combined "value")))) {:status :up :ms ms}
               :else
               {:status :unresponsive
                :form health-form
                :ms ms
                :hint
-               (str
-                 "nREPL returned "
-                 (pr-str (get combined "value"))
-                 " for "
-                 health-form
-                 " (expected \"2\") — the REPL is UNHEALTHY. Kill & restart it (F4 / repl).")})))
+               (str "nREPL returned "
+                    (pr-str (get combined "value"))
+                    " for "
+                    health-form
+                    " (expected \"2\") — the REPL is UNHEALTHY. Kill & restart it (F4 / repl).")})))
         (catch clojure.lang.ExceptionInfo e
           (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
             {:status :down :form health-form}
