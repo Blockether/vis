@@ -359,17 +359,19 @@
   (some-> (get-in request [:path-params :sid])
           parse-uuid))
 
-(defn- parse-long-param
-  "Non-negative long query param `k`, or nil when absent/blank/unparsable — a
-  garbage cursor degrades to \"unwindowed\", never to a 500. `:zero-ok?` keeps a
-  literal 0 (a valid offset); by default only positive values survive."
-  ([request k] (parse-long-param request k nil))
-  ([request k {:keys [zero-ok?]}]
-   (some-> (get-in request [:query-params k])
-           str/trim
-           not-empty
-           parse-long
-           (as-> n (when (if zero-ok? (nat-int? n) (pos? (long n))) n)))))
+(defn- query-long
+  "Long value of query param `k`, or nil when it is absent, blank or unparsable.
+
+  Ring hands back a VECTOR when a param repeats (`?limit=1&limit=2`), so read the
+  LAST value — a duplicated param is a client bug, not a ClassCastException.
+  Range policy belongs to the caller: 0 and negatives come back as themselves."
+  [request k]
+  (let [v (get-in request [:query-params k])]
+    (some-> (if (sequential? v) (last v) v)
+            str
+            str/trim
+            not-empty
+            parse-long)))
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
@@ -1591,18 +1593,28 @@
   defaulting to the NEWEST rows) and `?offset=` (0-based start in the
   oldest-first list). Without them the whole transcript is returned, so an older
   client is unaffected. The window is sliced BEFORE hydration, so a page costs
-  page-sized work instead of session-sized work."
+  page-sized work instead of session-sized work.
+
+  A window param that is PRESENT but unparsable is a 400, never a silent
+  fallback: falling back would answer garbage with the whole (40 MB on a big
+  session) transcript — the exact cost this endpoint exists to avoid. In-range
+  policy is `state/transcript-page`'s: it clamps, so `?limit=0` honestly means
+  zero rows."
   [request]
   (if-let [sid (path-sid request)]
     (let
-      [limit (parse-long-param request "limit")
-       offset (parse-long-param request "offset" {:zero-ok? true})
-       page (state/transcript-page sid {:limit limit :offset offset})]
+      [given? (fn [k]
+                (some? (get-in request [:query-params k])))
+       limit (query-long request "limit")
+       offset (query-long request "offset")]
 
-      (json-response {:turns (:turns page)
-                      :total (:total page)
-                      :offset (:offset page)
-                      :has-more (:has-more page)}))
+      (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
+        (error-response 400 :invalid-window "limit and offset must be integers")
+        (let [page (state/transcript-page sid {:limit limit :offset offset})]
+          (json-response {:turns (:turns page)
+                          :total (:total page)
+                          :offset (:offset page)
+                          :has-more (:has-more page)}))))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- transcript-md-handler

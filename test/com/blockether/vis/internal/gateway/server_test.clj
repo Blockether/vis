@@ -451,6 +451,51 @@
                      (parse {:query-params {"sids" (str a ":3")}
                              :headers {"last-event-id" ""}}))))))))))
 
+(deftest transcript-window-params-never-degrade-to-the-full-transcript
+  (let
+    [q
+     (fn [qs]
+       (ring-params/assoc-query-params {:path-params {:sid (str (java.util.UUID/randomUUID))}
+                                        :query-string qs}
+                                       "UTF-8"))
+
+     query-long
+     (rv 'query-long)
+
+     seen
+     (atom nil)
+
+     call
+     (fn [qs]
+       (reset! seen ::unset)
+       (with-redefs-fn {#'state/transcript-page (fn [_sid opts]
+                                                  (reset! seen opts)
+                                                  {:turns [] :total 0 :offset 0 :has-more false})}
+         #(let
+            [r
+             ((rv 'transcript-handler) (q qs))]
+
+            [(:status r) @seen])))]
+
+    (testing "ring hands back a VECTOR for a repeated param, so parsing must not throw"
+      (is (= ["1" "2"] (get-in (q "limit=1&limit=2") [:query-params "limit"])))
+      (is (= 2 (query-long (q "limit=1&limit=2") "limit"))))
+    (testing "absent or blank stays nil — that is what 'unwindowed' means"
+      (is (nil? (query-long (q "") "limit")))
+      (is (nil? (query-long (q "limit=  ") "limit"))))
+    (testing "0 and negatives reach the caller verbatim; clamping is transcript-page's job"
+      (is (= 0 (query-long (q "limit=0") "limit")))
+      (is (= -5 (query-long (q "limit=-5") "limit"))))
+    (testing "no window params = the whole transcript, so an older client is unaffected"
+      (is (= [200 {:limit nil :offset nil}] (call ""))))
+    (testing "?limit=0 honestly means zero rows, never the whole transcript"
+      (is (= [200 {:limit 0 :offset nil}] (call "limit=0"))))
+    (testing "a duplicated param answers on its last value instead of a 500"
+      (is (= [200 {:limit 2 :offset nil}] (call "limit=1&limit=2"))))
+    (testing "a present-but-unparsable window param is a 400, not a silent full-transcript fallback"
+      (is (= 400 (first (call "limit=abc"))))
+      (is (= 400 (first (call "limit=10&offset=nope")))))))
+
 (deftest multi-sse-fans-many-sessions-down-one-stream
   (testing
     "every listed session's events ride ONE connection, tagged by :session_id, deduped per session"
