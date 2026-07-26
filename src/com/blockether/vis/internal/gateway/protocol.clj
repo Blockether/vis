@@ -1,0 +1,343 @@
+(ns com.blockether.vis.internal.gateway.protocol
+  "THE single source of truth for gateway <-> client version compatibility.
+
+   Vis ships three INDEPENDENTLY updatable halves that share one HTTP/SSE
+   wire: the gateway daemon, the TUI/CLI client, and the Vis Companion app.
+   Any of them can lag. A daemon started by yesterday's binary keeps running
+   across `brew upgrade`; a phone holds a cached web build for weeks; a
+   Tailscale peer runs last month's release. Without an explicit contract a
+   breaking wire change surfaces as a mystery 404, a missing field, or an
+   event type nobody renders.
+
+   So every peer publishes two numbers next to its human release version:
+
+     `protocol`     the wire protocol IT speaks
+     `min-*`        the OLDEST counterpart it still speaks to
+
+   Compatibility is then a pure comparison ([[verdict]]) — never feature
+   sniffing, never guessing from a release string. Both halves advertise, both
+   halves judge, so whichever side is newer can explain the mismatch even when
+   the other side is too old to know the concept exists.
+
+   Bump [[protocol-version]] on any BREAKING wire change (a removed field, a
+   renamed event type, a changed status shape). Raise [[min-client-protocol]]
+   or [[min-gateway-protocol]] only when the old shape genuinely stops
+   working — additive changes keep the number and are negotiated through
+   `/v1/capabilities` features instead.
+
+   Wire shape (snake_case strings, per the gateway wire contract):
+
+     {\"protocol\": 1, \"min_client\": 1, \"min_gateway\": 1, \"version\": \"0.1.5\"}"
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]))
+
+(def protocol-version
+  "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
+   change to the gateway HTTP/SSE surface."
+  1)
+
+(def min-client-protocol
+  "Oldest CLIENT protocol this gateway still serves. Raise only when a client
+   at the old protocol can no longer be served correctly — a client below this
+   is refused with 426 instead of being fed a shape it cannot read."
+  1)
+
+(def min-gateway-protocol
+  "Oldest GATEWAY protocol this client still accepts. Raise only when this
+   client can no longer drive an older daemon correctly."
+  1)
+
+(def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
+
+(def min-gateway-header
+  "Request header carrying the oldest gateway protocol the client accepts."
+  "x-vis-min-gateway-protocol")
+
+(def client-header
+  "Request header naming the client (`vis-tui`, `vis-cli`, `vis-companion`)."
+  "x-vis-client")
+
+(def client-version-header
+  "Request header carrying the client's human release version."
+  "x-vis-client-version")
+
+(defn release-version
+  "Human release version of this build: the `vis/VERSION` resource written at
+   build time (git describe), else \"dev\". Purely informational — never
+   compared; [[protocol-version]] is the contract."
+  []
+  (or (some-> (io/resource "vis/VERSION")
+              slurp
+              str/trim
+              not-empty)
+      "dev"))
+
+(defn handshake
+  "What THIS build advertises about itself. Emitted by the gateway on
+   `/healthz`, `/v1/admin/status`, and `/v1/capabilities` so even the cheapest
+   probe a client already makes carries the verdict inputs."
+  []
+  {:protocol protocol-version
+   :min-client min-client-protocol
+   :min-gateway min-gateway-protocol
+   :version (release-version)})
+
+(defn client-headers
+  "Headers every Vis client stamps on every gateway request so the gateway can
+   judge it without a separate negotiation round-trip. `client-name` is a short
+   stable id (`vis-tui`, `vis-cli`)."
+  [client-name]
+  {"X-Vis-Protocol" (str protocol-version)
+   "X-Vis-Min-Gateway-Protocol" (str min-gateway-protocol)
+   "X-Vis-Client" (str client-name)
+   "X-Vis-Client-Version" (release-version)})
+
+(defn- ->int
+  [x]
+  (cond (integer? x) (long x)
+        (number? x) (long x)
+        (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
+        :else nil))
+
+(defn wire->handshake
+  "Read a peer's advertised handshake out of the canonical string-keyed wire
+   map (`{\"protocol\" 1 \"min_client\" 1 ...}`), tolerating a peer old enough
+   to advertise nothing at all (every field comes back nil)."
+  [m]
+  {:protocol (->int (get m "protocol"))
+   :min-client (->int (get m "min_client"))
+   :min-gateway (->int (get m "min_gateway"))
+   :version (some-> (get m "version")
+                    str
+                    not-empty)})
+
+(defn request->client
+  "Read the client's advertised protocol out of a Ring request's headers. A
+   client that stamps nothing yields nils and is GRANDFATHERED by [[verdict]]:
+   an unknown peer is never refused, only an explicitly too-old one."
+  [request]
+  (let [h (:headers request)]
+    {:protocol (->int (get h protocol-header))
+     :min-gateway (->int (get h min-gateway-header))
+     :name (some-> (get h client-header)
+                   str
+                   not-empty)
+     :version (some-> (get h client-version-header)
+                      str
+                      not-empty)}))
+
+(defn verdict
+  "PURE compatibility verdict between a gateway and a client. Both sides pass
+   the same keys and get the same answer, so the TUI, the companion app, and
+   the gateway itself never disagree about who is out of date.
+
+   Reasons:
+     `ok`               both halves speak a protocol the other still accepts
+     `client-too-old`   client protocol < the gateway's `min-client`
+     `gateway-too-old`  gateway protocol < the client's `min-gateway`
+     `unknown`          a peer advertised nothing — grandfathered as compatible
+
+   `:upgrade` names WHICH half the user must update, so a UI can render one
+   unambiguous instruction instead of \"something is out of date\"."
+  [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
+           client-version client-name]}]
+  (let
+    [gp
+     (->int gateway-protocol)
+
+     cp
+     (->int client-protocol)
+
+     gmin
+     (or (->int gateway-min-client) gp)
+
+     cmin
+     (or (->int client-min-gateway) cp)
+
+     reason
+     (cond (or (nil? gp) (nil? cp)) "unknown"
+           (< (long cp) (long gmin)) "client-too-old"
+           (< (long gp) (long cmin)) "gateway-too-old"
+           :else "ok")]
+
+    {:is-compatible (not (contains? #{"client-too-old" "gateway-too-old"} reason))
+     :reason reason
+     :upgrade (case reason
+                "client-too-old"
+                "client"
+
+                "gateway-too-old"
+                "gateway"
+
+                nil)
+     :gateway-protocol gp
+     :gateway-min-client gmin
+     :gateway-version gateway-version
+     :client-protocol cp
+     :client-min-gateway cmin
+     :client-version client-version
+     :client-name (or client-name "client")}))
+
+(defn gateway-verdict
+  "The gateway's own judgement of one inbound request: [[verdict]] with this
+   build filled in as the gateway half."
+  [request]
+  (let [{:keys [protocol min-gateway name version]} (request->client request)]
+    (verdict {:gateway-protocol protocol-version
+              :gateway-min-client min-client-protocol
+              :gateway-version (release-version)
+              :client-protocol protocol
+              :client-min-gateway min-gateway
+              :client-name name
+              :client-version version})))
+
+(defn client-verdict
+  "A client's judgement of the gateway it just probed, given that gateway's
+   ENGINE handshake map (the [[wire->handshake]] of its advertised `protocol`
+   block; nil/all-nil = a gateway too old to advertise one). `client-name` names
+   this client in the rendered copy."
+  [client-name gateway-handshake]
+  (let [{:keys [protocol min-client version]} (or gateway-handshake {})]
+    (verdict {:gateway-protocol protocol
+              :gateway-min-client min-client
+              :gateway-version version
+              :client-protocol protocol-version
+              :client-min-gateway min-gateway-protocol
+              :client-name client-name
+              :client-version (release-version)})))
+
+(defn explain
+  "Human copy for a verdict: a title, one plain-language summary, and ORDERED
+   remedy steps. One writer for every surface (terminal panel, gateway 426
+   body, companion screen) so the wording never drifts between them."
+  [{:keys [reason gateway-protocol gateway-min-client client-protocol client-min-gateway
+           client-name]}]
+  (case reason
+    "client-too-old"
+    {:title "Update this client"
+     :summary (str "The gateway speaks protocol "
+                   gateway-protocol
+                   " and no longer serves clients below protocol "
+                   gateway-min-client
+                   ". This "
+                   (or client-name "client")
+                   " speaks protocol "
+                   client-protocol
+                   ".")
+     :remedy ["Update Vis on this device to the version running the gateway."
+              "Reload the app (or restart the TUI) once the update lands."]}
+
+    "gateway-too-old"
+    {:title "Update the gateway"
+     :summary (str "This "
+                   (or client-name "client")
+                   " needs gateway protocol "
+                   client-min-gateway
+                   " or newer, but the gateway speaks protocol "
+                   gateway-protocol
+                   ".")
+     :remedy ["Update Vis on the machine hosting the gateway."
+              "Restart it: vis gateway stop && vis gateway start"]}
+
+    {:title (if (= "unknown" reason) "Version unknown" "Versions match")
+     :summary
+     (if (= "unknown" reason)
+       "One side did not advertise a protocol version, so compatibility could not be verified."
+       (str "Gateway and "
+            (or client-name "client")
+            " both speak protocol "
+            (or gateway-protocol client-protocol)
+            "."))
+     :remedy (if (= "unknown" reason) ["Update both halves to the same Vis release."] [])}))
+
+(def ^:private panel-width 70)
+
+(defn- wrap-words
+  "Greedy word wrap to `width` columns. The panel is plain text on a terminal we
+   do not control, so long copy folds instead of being clipped."
+  [s ^long width]
+  (reduce (fn [lines ^String word]
+            (let [^String tail (peek lines)]
+              (if (or (nil? tail) (> (+ (count tail) 1 (count word)) width))
+                (conj lines word)
+                (conj (pop lines) (str tail " " word)))))
+          []
+          (remove str/blank? (str/split (str s) #"\s+"))))
+
+(defn- panel-row
+  [s]
+  (let
+    [w
+     (long panel-width)
+
+     body
+     (str "  " s)
+
+     clipped
+     (if (> (count body) (- w 2)) (subs body 0 (- w 2)) body)]
+
+    (str "│" clipped (apply str (repeat (- w 2 (count clipped)) \space)) "│")))
+
+(defn- peer-row
+  [label name-str version protocol note]
+  (format "%-9s %-14s %-10s protocol %s%s"
+          label
+          (or name-str "-")
+          (or version "unknown")
+          (or protocol "unknown")
+          (if note (str "   " note) "")))
+
+(defn panel-lines
+  "The terminal SCREEN for an incompatible peer: a boxed, colour-free panel of
+   plain lines. Returned as data (never printed here) so the CLI, the TUI, and
+   tests all render the exact same block."
+  [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
+           client-version client-name upgrade]
+    :as v}]
+  (let
+    [{:keys [title summary remedy]}
+     (explain v)
+
+     w
+     (long panel-width)
+
+     rule
+     (apply str (repeat (- w 2) "─"))]
+
+    (concat [(str "╭" rule "╮") (panel-row "VIS · VERSION MISMATCH") (str "├" rule "┤")
+             (panel-row title) (panel-row "")]
+            (map panel-row (wrap-words summary (- w 6)))
+            [(panel-row "")
+             (panel-row (peer-row "client"
+                                  (or client-name "client")
+                                  client-version
+                                  client-protocol
+                                  (when (= "client" upgrade) "<- too old")))
+             (panel-row (peer-row "gateway"
+                                  "vis"
+                                  gateway-version
+                                  gateway-protocol
+                                  (when (= "gateway" upgrade) "<- too old"))) (panel-row "")]
+            (map panel-row
+                 (wrap-words (str "gateway serves clients >= protocol " (or gateway-min-client "?")
+                                  " · client needs gateway >= protocol " (or client-min-gateway
+                                                                             "?"))
+                             (- w 6)))
+            (when (seq remedy)
+              (concat [(panel-row "") (panel-row "Do this")]
+                      (map-indexed (fn [^long i step]
+                                     (panel-row (str "  " (inc i) ". " step)))
+                                   remedy)))
+            [(str "╰" rule "╯")])))
+
+(defn incompatible-ex
+  "The ex-info a client throws when it refuses to drive an incompatible
+   gateway. Carries `:vis/user-error` (so the top-level CLI prints it clean and
+   exits 2) plus `:vis/panel`, the pre-rendered [[panel-lines]] screen."
+  [verdict-map]
+  (let [{:keys [title summary]} (explain verdict-map)]
+    (ex-info (str title " — " summary)
+             {:type :gateway/incompatible
+              :vis/user-error true
+              :vis/panel (vec (panel-lines verdict-map))
+              :compatibility verdict-map})))

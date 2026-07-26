@@ -8155,17 +8155,19 @@
 
 (defn- parse-bang
   "Parse a `!`/`!&` shell-sugar user message into `{:kind :run|:bg :cmd :id?}`,
-   or nil when `text` is NOT a bang. `!<cmd>` desugars to `shell(cmd)`
-   (synchronous); `!&<cmd>` desugars to the same tool's background op in
-   under an auto-generated resource id. A blank command (a bare `!`) is ordinary
+   or nil when `text` is NOT a bang. `!<cmd>` invokes the shell tool's synchronous
+   run op; `!&<cmd>` invokes its background op under an auto-generated resource id.
+   A blank command (a bare `!`) is ordinary
    prose, so it returns nil and the message runs as a normal turn."
   [text]
   (when (string? text)
     (let [t (str/triml text)]
-      (cond (str/starts-with? t "!&")
-            (let [cmd (str/trim (subs t 2))]
-              (when (seq cmd)
-                {:kind :bg :cmd cmd :id (str "bg-" (subs (str (java.util.UUID/randomUUID)) 0 8))}))
+      (cond (str/starts-with? t "!&") (let [cmd (str/trim (subs t 2))]
+                                        (when (seq cmd)
+                                          {:kind :bg
+                                           :cmd cmd
+                                           :id (str "background-"
+                                                    (subs (str (java.util.UUID/randomUUID)) 0 8))}))
             (str/starts-with? t "!") (let [cmd (str/trim (subs t 1))]
                                        (when (seq cmd) {:kind :run :cmd cmd}))))))
 
@@ -8256,7 +8258,7 @@
      envelope
      (when enabled?
        (try (let [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell)]
-              (if (= kind :bg) (shell-fn env cmd {"op" "bg" "id" id}) (shell-fn env cmd)))
+              (if (= kind :bg) (shell-fn env cmd {"op" "background" "id" id}) (shell-fn env cmd)))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))
@@ -8297,9 +8299,10 @@
 
      block
      (cond->
-       {:code (if (= kind :bg)
-                (str "shell(" (pr-str cmd) ", {\"op\": \"bg\", \"id\": " (pr-str id) "})")
-                (str "shell(" (pr-str cmd) ")"))
+       {:code
+        (if (= kind :bg)
+          (str "await shell(" (pr-str cmd) ", {\"op\": \"background\", \"id\": " (pr-str id) "})")
+          (str "await shell(" (pr-str cmd) ")"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
         :tool-color-role (get color-roles tool-name)

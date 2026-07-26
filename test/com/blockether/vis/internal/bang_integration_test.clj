@@ -106,6 +106,7 @@
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
           (expect (= "shell" (:vis/tool-name form)))
+          (expect (= "await shell(\"echo hi-from-bang\")" (:src form)))
           (expect (= "hi-from-bang\n" (get (:result form) "stdout")))
           (expect (= 0 (get (:result form) "exit"))))))))
 

@@ -170,6 +170,42 @@ Because a non-loopback bind always requires the token, keep
 `--require-token` on for any remote/Tailscale exposure — the bearer token is
 the only thing standing between the tailnet and your sessions.
 
+## Protocol version and compatibility
+
+The gateway, the TUI, and the companion app update on different clocks: a phone
+keeps a cached build for weeks while `brew upgrade` moves the daemon, or a
+long-lived gateway serves a client shipped months later. So both halves publish
+two numbers next to their release version — the wire `protocol` they speak, and
+the oldest counterpart they still serve.
+
+The gateway advertises its contract on every open endpoint (`GET /healthz`,
+`GET /v1/capabilities`, `GET /v1/admin/status`):
+
+```json
+{"protocol": {"protocol": 1, "min_client": 1, "min_gateway": 1, "version": "…"}}
+```
+
+Every client stamps the mirror image on each request:
+
+| Header | Meaning |
+| --- | --- |
+| `X-Vis-Protocol` | wire protocol the client speaks |
+| `X-Vis-Min-Gateway-Protocol` | oldest gateway it can drive |
+| `X-Vis-Client` / `X-Vis-Client-Version` | who is calling, and its release |
+
+A client below `min_client` gets **HTTP 426 Upgrade Required** with a plain
+explanation instead of a payload it would misread; `/healthz`, `/readyz`,
+`/v1/capabilities`, and `/docs` stay open so the refusal can explain itself. A
+gateway older than the client's floor is caught client-side from the same
+advertised block. Both directions render the SAME verdict — the TUI prints it as
+a panel, the companion replaces its UI with a version-mismatch screen naming
+which half is stale and how to update it. A peer that advertises nothing is
+grandfathered in, never refused.
+
+Bump `protocol-version` in `gateway/protocol.clj` (and `APP_PROTOCOL` in the
+companion's `lib/compat.ts`) only for a breaking wire change, and raise
+`min-client-protocol` only when the old shape genuinely cannot be served.
+
 ## Shared slash commands
 
 `GET /v1/slashes` returns the channel-safe command palette used by web clients.

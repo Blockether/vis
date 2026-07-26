@@ -10,15 +10,20 @@
   (:import [org.graalvm.polyglot Context]))
 
 (defn- fake-shell
-  "Records calls into `calls`; emulates exit 0 normally, exit 7 + stderr for a
-   command containing 'boom'. `wrap-ifn` marshals the Python args to Clojure
-   before we see them, so `opts` is already a Clojure map (string keys)."
+  "Records canonical command/opts calls and returns small lifecycle-shaped results."
   [calls]
-  (fn shell ([cmd] (shell cmd nil))
+  (fn shell ([arg] (if (map? arg) (shell nil arg) (shell arg nil)))
     ([cmd opts] (swap! calls conj {:cmd cmd :opts opts})
-     (if (str/includes? (str cmd) "boom")
-       {"cmd" cmd "exit" 7 "stdout" "partial\n" "stderr" "boom!\n" "duration_ms" 3}
-       {"cmd" cmd "exit" 0 "stdout" "hello\n" "duration_ms" 2}))))
+     (case (get opts "op")
+       "logs"
+       {"status" "running" "exit" nil "lines" []}
+
+       "stop"
+       {"status" "stopped" "stopped" true}
+
+       (if (str/includes? (str cmd) "boom")
+         {"cmd" cmd "exit" 7 "stdout" "partial\n" "stderr" "boom!\n" "duration_ms" 3}
+         {"cmd" cmd "exit" 0 "stdout" "hello\n" "duration_ms" 2})))))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
@@ -43,7 +48,7 @@
       ;; argv list was shell-quoted + joined into the command `shell` received
       (expect (= "echo hi" (:cmd (last @calls))))))
   (it
-    "passes timeout/cwd through as shell opts"
+    "passes run options and keeps Popen lifecycle ids inside the options map"
     (let
       [calls
        (atom [])
@@ -53,15 +58,18 @@
 
       (.eval python-context "python" "import subprocess")
       (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30, cwd='src')")
-      ;; strings-only boundary: the crossed opts dict keeps VERBATIM string
-      ;; keys, so the recorded key is "timeout_secs"
       (expect (= 30 (get (:opts (last @calls)) "timeout_secs")))
       (expect (= "src" (get (:opts (last @calls)) "cwd")))
-      ;; Popen is the bg op — its cwd must reach the tool too, or the child
-      ;; silently runs in the workspace root.
-      (.eval python-context "python" "subprocess.Popen('sleep 1', shell=True, cwd='src')")
-      (expect (= "bg" (get (:opts (last @calls)) "op")))
-      (expect (= "src" (get (:opts (last @calls)) "cwd")))))
+      (.eval python-context "python" "p = subprocess.Popen('sleep 1', shell=True, cwd='src')")
+      (let [popen-id (get (:opts (last @calls)) "id")]
+        (expect (= "background" (get (:opts (last @calls)) "op")))
+        (expect (= "src" (get (:opts (last @calls)) "cwd")))
+        (.eval python-context "python" "p.poll()")
+        (expect (nil? (:cmd (last @calls))))
+        (expect (= {"op" "logs" "id" popen-id} (:opts (last @calls))))
+        (.eval python-context "python" "p.terminate()")
+        (expect (nil? (:cmd (last @calls))))
+        (expect (= {"op" "stop" "id" popen-id} (:opts (last @calls)))))))
   (it "check_output returns stdout and raises on a non-zero exit"
       (let
         [calls

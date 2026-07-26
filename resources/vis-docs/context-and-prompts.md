@@ -110,15 +110,17 @@ channels:
 
 ```
 !git status            # run synchronously, foreground (shell)
-!&npm run dev          # run in the background (shell op "bg"), returns immediately
+!&npm run dev          # run in the background (shell op "background"), returns immediately
 ```
 
-- `!<cmd>` desugars to `shell(cmd)` and blocks until the command exits.
-- `!&<cmd>` desugars to `shell(cmd, {"op": "bg", "id": …})` under an
-  auto-generated resource id (`bg-<hex>`) and returns right away — use it for
-  servers, watchers, and other long-lived processes. Read its output later with
-  `shell({"id": id, "op": "logs"})` and stop it with
-  `shell({"id": id, "op": "stop"})`.
+- `!<cmd>` invokes the run operation, equivalent to Python `await shell(cmd)`, and
+  blocks until the command exits. Use it for short bounded commands.
+- `!&<cmd>` invokes `await shell(cmd, {"op": "background", "id": …})` under an
+  auto-generated resource id (`background-<hex>`) and returns right away. Prefer it
+  for commands that may take a while: builds, test suites, servers, watchers, and
+  interactive processes. Read output with
+  `await shell({"op": "logs", "id": id})` and stop it with
+  `await shell({"op": "stop", "id": id})`.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.
 

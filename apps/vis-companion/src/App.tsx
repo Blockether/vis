@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GatewayConn } from './lib/types';
+import { type Compat, compatOf } from './lib/compat';
 import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
 import {
   getActiveConnection,
@@ -19,6 +20,7 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
+import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, sessionHash, tabHash } from './lib/router';
 import { useVisualViewportShell } from './lib/viewport';
 
@@ -35,6 +37,9 @@ export function App() {
   const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(null);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
+  const [compat, setCompat] = useState<Compat | null>(null);
+  const [compatChecking, setCompatChecking] = useState(false);
+  const [compatNonce, setCompatNonce] = useState(0);
 
   const sessionConn = openTarget?.conn ?? active;
   // Transport identity is the URL/token pair — the only fields `GatewayClient`
@@ -193,6 +198,36 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [client]);
 
+  // Version handshake, once per gateway. `/healthz` stays open even to a client
+  // the gateway refuses to serve, so a protocol mismatch can explain itself
+  // instead of surfacing as a stream of payloads neither side can read. An
+  // unreachable gateway yields no verdict — that is a connection problem, and
+  // the screens below already report it.
+  useEffect(() => {
+    if (!client) {
+      setCompat(null);
+      return;
+    }
+    let cancelled = false;
+    const ctrl = new AbortController();
+    setCompatChecking(true);
+    void client
+      .health(ctrl.signal)
+      .then((h) => {
+        if (!cancelled) setCompat(compatOf(h?.protocol));
+      })
+      .catch(() => {
+        if (!cancelled) setCompat(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCompatChecking(false);
+      });
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
+  }, [client, compatNonce]);
+
   // Backfill each paired gateway's stable id (from /healthz) so a shareable link
   // can name its gateway by id instead of leaking the gateway URL. Cheap: it
   // only probes a connection that has no id captured yet, then converges.
@@ -269,6 +304,17 @@ export function App() {
             active={active}
             onAdd={addConnection}
             onSettings={setSettingsTarget}
+          />
+        ) : sessionConn && compat && !compat.isCompatible ? (
+          <IncompatibleScreen
+            compat={compat}
+            conn={sessionConn}
+            isChecking={compatChecking}
+            onRetry={() => setCompatNonce((n) => n + 1)}
+            onBack={() => {
+              setOpenTarget(null);
+              setTab('connect');
+            }}
           />
         ) : openTarget && client && subscriptions ? (
           <SessionScreen

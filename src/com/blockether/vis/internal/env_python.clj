@@ -1878,17 +1878,17 @@ def __vis_native_result_scan__(__vis_tree__):
 (def ^:private posix-compat-shim-src
   "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`
    with thin wrappers that DELEGATE to the ONE vis shell tool (`shell`, whose
-   `op` covers run / bg / logs / send / stop) plus `resource_stop`. INLINED here (eval'd into every
+   `op` covers run / background / logs / send / stop). INLINED here (eval'd into every
    sandbox context) so the shim ships in-jar with NO separate `.py` resource.
    Tool callables are looked up in `globals()` at CALL time, so it self-adapts:
    when the shell tool is absent or its toggle is off it raises a clear 'enable
-   the shell tool' message. Soft string-level coupling to the tool NAMES only."
+   the shell tool' message. Soft string-level coupling to the tool NAME only."
   "# vis sandbox POSIX-compat shim.
 #
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL (`shell`, one name whose `op` covers run / bg / logs / send / stop), so the
+# TOOL (`shell`, one name whose `op` covers run / background / logs / send / stop), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
@@ -1914,7 +1914,7 @@ def __vis_install_posix_compat__():
     )
 
     def _shell():
-        # ONE tool for every stage (run / bg / logs / send / stop); op is an argument.
+        # ONE tool for every stage (run / background / logs / send / stop); op is an argument.
         fn = globals().get(\"shell\")
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
@@ -2032,10 +2032,9 @@ def __vis_install_posix_compat__():
         return getstatusoutput(cmd)[1]
 
     class Popen(object):
-        # Background process backed by the `shell` tool's bg op (a session
-        # resource). Auto picks a resource id; stop it via .terminate()/.kill()
-        # (resource_stop), poll/wait via the logs op's status, communicate()
-        # drains the log buffer.
+        # Background process backed by the `shell` tool's background op (a
+        # session resource). Auto picks an id; terminate/kill use its stop op,
+        # poll/wait use logs status, and communicate drains the log buffer.
         _counter = [0]
 
         def __init__(self, args, shell=False, cwd=None, **kwargs):
@@ -2043,7 +2042,7 @@ def __vis_install_posix_compat__():
             Popen._counter[0] += 1
             self._id = \"popen_\" + str(Popen._counter[0])
             self.args = args
-            opts = {\"op\": \"bg\", \"id\": self._id}
+            opts = {\"op\": \"background\", \"id\": self._id}
             if cwd is not None:
                 opts[\"cwd\"] = str(cwd)
             reg = sb(_to_cmd(args, shell), opts)
@@ -2052,7 +2051,7 @@ def __vis_install_posix_compat__():
 
         def _logs(self):
             sl = _shell()
-            return sl(self._id, {\"op\": \"logs\"})
+            return sl({\"op\": \"logs\", \"id\": self._id})
 
         def poll(self):
             r = self._logs()
@@ -2075,10 +2074,8 @@ def __vis_install_posix_compat__():
             return (out, \"\")
 
         def terminate(self):
-            rs = globals().get(\"resource_stop\")
-            if rs is not None:
-                settle = globals().get(\"__vis_settle__\")
-                settle(rs(self._id)) if settle else rs(self._id)
+            ss = _shell()
+            ss({\"op\": \"stop\", \"id\": self._id})
             self.returncode = self.returncode if self.returncode is not None else -15
 
         kill = terminate

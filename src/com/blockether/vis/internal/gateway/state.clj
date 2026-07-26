@@ -1281,9 +1281,19 @@
 
 (defn- with-display-iteration
   "Normalize reasoning and attach the same cached ruff-formatted Python that the
-   local TUI paints. The wire therefore remains identical after reconnects."
+   local TUI paints. The wire therefore remains identical after reconnects.
+
+   `:llm-assistant-message` is dropped: persistence hands it back as a
+   `<-json-lazy` DELAY (the raw provider envelope, forced only by a replay), and
+   a Delay JSON-encodes to the useless string `\"clojure.lang.Delay@1f2e3d\"` —
+   3031 of a real 247-turn session's 3098 iterations shipped exactly that. No
+   consumer needs the field; forcing it would instead paste every tool envelope onto the wire.
+   `transcript/transcript` already dissoc's it for the same reason."
   [iteration]
-  (cond-> (update iteration :thinking normalize-thinking-text)
+  (cond->
+    (-> iteration
+        (dissoc :llm-assistant-message)
+        (update :thinking normalize-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display-code %))))
 
@@ -1397,6 +1407,62 @@
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))
 
+(def ^:private TRANSCRIPT_PAGE_MAX_BYTES
+  "Byte ceiling for ONE WINDOWED transcript page — the fact that makes a page a
+   page, because turn COUNT does not bound BYTES. Real sessions carry single
+   turns of 5 MB (one grep whose result held a 2.9 MB file), so the newest 24
+   turns of a 38-turn session encode to 9.5 MB: the exact cost paging exists to
+   avoid, silently back. A windowed request therefore hydrates NEWEST-FIRST and
+   stops BEFORE the encoded rows exceed this many bytes — the page shrinks in ROWS
+   instead of growing without bound, and the rows it drops raise `:offset`,
+   which is precisely where the client's next `load earlier` resumes. Never
+   applies to an UNWINDOWED request (the TUI's whole-transcript GET). At least
+   one row always comes back, so an oversized turn still arrives and paging
+   always advances. Override with `VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES`;
+   values <= 0 use the default of 2 MiB."
+  (let
+    [configured (some-> (System/getenv "VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES")
+                        str/trim
+                        parse-long)]
+    (if (pos? (long (or configured 0))) (long configured) (* 2 1024 1024))))
+
+(defn- budgeted-page-turns
+  "Hydrate `window` (oldest-first rows) from its NEWEST row BACKWARDS, stopping
+   before the canonical rows exceed `TRANSCRIPT_PAGE_MAX_BYTES` (the first row is
+   always kept, so a page is never empty). Hydration is where a page's cost
+   lives, so a stopped page never pays for the rows it does
+   not send. Returns `[rows dropped]` — `rows` still oldest-first, `dropped` the
+   number of OLDEST window rows left out, which the caller adds to `:offset`."
+  [db att-by-soul window]
+  (loop
+    [i
+     (dec (count window))
+
+     rows
+     '()
+
+     bytes
+     0]
+
+    (if (neg? i)
+      [(vec rows) 0]
+      (let
+        [row
+         (wire/canonical (transcript-turn db att-by-soul (nth window i)))
+
+         bytes'
+         (+ (long bytes)
+            (long (alength (.getBytes ^String (wire/json-str row)
+                                      java.nio.charset.StandardCharsets/UTF_8))))]
+
+        ;; The row that busts the budget is left for the NEXT page rather than
+        ;; overshooting by its whole size — one 5 MB turn would otherwise blow a
+        ;; nearly-full page out to 7 MB. It costs re-hydrating that one row when
+        ;; the client pages back, and it is what keeps a page a page.
+        (if (and (seq rows) (> bytes' (long TRANSCRIPT_PAGE_MAX_BYTES)))
+          [(vec rows) (inc i)]
+          (recur (dec i) (conj rows row) bytes'))))))
+
 (defn transcript-page
   "A WINDOW of `sid`'s transcript, hydrated LAZILY — the whole point is that only
   the rows in the window pay for iteration/attachment hydration, which is where
@@ -1409,44 +1475,56 @@
   append, so an offset counted from the OLDEST row is stable while paging
   backwards.
 
-  `opts`: `:limit` window size (nil = every row), `:offset` 0-based start in the
-  oldest-first list (nil = the NEWEST `:limit` rows).
+  A windowed request is ALSO capped in bytes (`TRANSCRIPT_PAGE_MAX_BYTES`): the
+  newest rows are hydrated first and the oldest ones fall out of the page, so
+  `:offset` can come back HIGHER than the one asked for. Clients must page from
+  the RETURNED `:offset`, never from their own arithmetic.
+
+  `opts`: `:limit` window size (nil = every row, unbudgeted — the TUI's
+  whole-transcript read), `:offset` 0-based start in the oldest-first list
+  (nil = the NEWEST `:limit` rows).
 
   Returns `{:turns <oldest-first window> :total <turn count> :offset <window
   start> :has-more <older rows exist>}`."
   [sid {:keys [limit offset]}]
-  (try (let
-         [db
-          (lp/db-info)
+  (try
+    (let
+      [db
+       (lp/db-info)
 
-          all
-          (vec (persistance/db-list-session-turns db sid))
+       all
+       (vec (persistance/db-list-session-turns db sid))
 
-          total
-          (long (count all))
+       total
+       (long (count all))
 
-          lim
-          (long (if limit (max 0 (min (long limit) total)) total))
+       lim
+       (long (if limit (max 0 (min (long limit) total)) total))
 
-          start
-          (long (if offset (max 0 (min (long offset) total)) (max 0 (- total lim))))
+       start
+       (long (if offset (max 0 (min (long offset) total)) (max 0 (- total lim))))
 
-          end
-          (long (min total (+ start lim)))
+       end
+       (long (min total (+ start lim)))
 
-          window
-          (subvec all start end)
+       window
+       (subvec all start end)
 
-          att-by-soul
-          (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))]
+       att-by-soul
+       (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
 
-         {:turns (wire/canonical (mapv (partial transcript-turn db att-by-soul) window))
-          :total total
-          :offset start
-          :has-more (pos? start)})
-       (catch Throwable t
-         (tel/log! :warn ["gateway: transcript page hydration failed" (ex-message t)])
-         {:turns [] :total 0 :offset 0 :has-more false})))
+       [rows dropped]
+       (if limit
+         (budgeted-page-turns db att-by-soul window)
+         [(wire/canonical (mapv (partial transcript-turn db att-by-soul) window)) 0])
+
+       from
+       (long (+ start (long dropped)))]
+
+      {:turns rows :total total :offset from :has-more (pos? from)})
+    (catch Throwable t
+      (tel/log! :warn ["gateway: transcript page hydration failed" (ex-message t)])
+      {:turns [] :total 0 :offset 0 :has-more false})))
 
 (defn turn-trace
   "THE canonical wire trace of ONE persisted turn: its iteration rows (each

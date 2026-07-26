@@ -207,8 +207,37 @@ export interface GatewayAttachment {
   base64: string;
 }
 
+/**
+ * The gateway's version contract, mirrored from
+ * `com.blockether.vis.internal.gateway.protocol`. `protocol` is the wire
+ * number it speaks; `min_client` / `min_gateway` are the oldest counterparts it
+ * still serves; `version` is the human Vis release.
+ */
+export interface GatewayProtocol {
+  protocol?: number;
+  min_client?: number;
+  min_gateway?: number;
+  version?: string;
+}
+
+/** `GET /healthz` — always open, so it answers even for a rejected client. */
+export interface GatewayHealth {
+  status?: string;
+  id?: string;
+  protocol?: GatewayProtocol;
+}
+
 export interface GatewayCapabilities {
   version: number;
+  protocol?: GatewayProtocol;
+  /** The gateway's own verdict on the caller that asked. */
+  compatibility?: {
+    is_compatible?: boolean;
+    reason?: string;
+    client?: string;
+    client_protocol?: number;
+    client_version?: string;
+  };
   features: {
     chat: { enabled: boolean };
     pastes?: {

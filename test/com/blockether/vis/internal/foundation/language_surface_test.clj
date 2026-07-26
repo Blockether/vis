@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
@@ -13,6 +14,7 @@
    :jail-policy-fn (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")])
                                 :net-enabled? false})
    :env/project {:primary_language "clojure"}
+   :env/languages {:languages []}
    :extensions (atom [{:ext/name "fake-clj" :ext/language-tools handlers}])})
 
 (defdescribe
@@ -36,14 +38,36 @@
         (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
   (it "uses an explicit language to disambiguate handlers"
       (let
-        [env (fake-env [{:language "clojure"
-                         :test-fn (fn [_ arg]
-                                    {:success? true :result {:language "clojure" :arg arg}})}
-                        {:language "python"
-                         :test-fn (fn [_ arg]
-                                    {:success? true :result {:language "python" :arg arg}})}])]
-        (expect (= {:language "python" :arg {"language" "python" "ns" "x"}}
-                   (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))))))
+        [env
+         (fake-env [{:language "clojure"
+                     :test-fn (fn [_ arg]
+                                {:success? true :result {:language "clojure" :arg arg}})}
+                    {:language "python"
+                     :test-fn (fn [_ arg]
+                                {:success? true :result {:language "python" :arg arg}})}])
+
+         result
+         (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))]
+
+        (expect (= "python" (:language result)))
+        (expect (= {"language" "python" "ns" "x"} (:arg result)))))
+  (it "puts the completed verdict and elapsed time inside the public test result"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :test-fn (fn [_ _]
+                                {:success? true :result {"pass" 2 "fail" 0}})}])
+
+         envelope
+         (language-surface/run-tests env {})
+
+         result
+         (:result envelope)]
+
+        (expect (true? (get result "is_pass")))
+        (expect (= 2 (get result "total")))
+        (expect (nat-int? (get result "ms")))
+        (expect (nil? (get envelope "ms")))))
   (it "parks the test run OUTSIDE the native tool wall"
       (let
         [parked
@@ -212,6 +236,17 @@
                        ["clojure" "typescript"]
                        [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
         (expect (= "clojure" (resolved-language env)))))
+  (it "uses the file-count primary from the workspace snapshot when tool env metadata is absent"
+      (let
+        [env (dissoc (scan-env nil [] [(echo-lang-handler "python") (echo-lang-handler "clojure")])
+               :env/project
+               :env/languages)]
+        (with-redefs
+          [environment/snapshot (constantly {:languages {:primary "clojure"
+                                                         :languages
+                                                         [{:language "clojure" :files 260}
+                                                          {:language "python" :files 47}]}})]
+          (expect (= "clojure" (resolved-language env))))))
   (it "resolves a grammar variant to its base family handler via the alias map"
       ;; a pack registering only 'typescript'/'javascript' still serves tsx/jsx.
       (let

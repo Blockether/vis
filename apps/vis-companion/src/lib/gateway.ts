@@ -17,6 +17,7 @@ import type {
   RouterProvider,
   GatewayAttachment,
   GatewayCapabilities,
+  GatewayHealth,
   GatewayConn,
   FileSuggestion,
   GatewayStatus,
@@ -31,6 +32,7 @@ import type {
   VoiceModelState,
   VoiceTranscript,
 } from './types';
+import { PROTOCOL_HEADERS } from './compat';
 
 export class GatewayError extends Error {
   status: number;
@@ -256,6 +258,10 @@ export class GatewayClient {
   private headers(extra?: HeadersInit): Headers {
     const h = new Headers(extra);
     if (this.token) h.set('Authorization', `Bearer ${this.token}`);
+    // Announce which wire protocol this build speaks on EVERY request, so a
+    // gateway that no longer serves us answers 426 with a real explanation
+    // instead of a shape we would misread.
+    for (const [k, v] of Object.entries(PROTOCOL_HEADERS)) h.set(k, v);
     return h;
   }
 
@@ -320,11 +326,19 @@ export class GatewayClient {
    */
   async identify(signal?: AbortSignal): Promise<string | null> {
     try {
-      const h = await this.request<{ id?: string }>('GET', '/healthz', undefined, signal);
-      return h?.id ?? null;
+      return (await this.health(signal)).id ?? null;
     } catch {
       return null;
     }
+  }
+
+  /**
+   * `/healthz` is open even to a client the gateway refuses to serve, so this
+   * is how the app learns WHY it was refused — and how it detects the reverse
+   * case, a gateway too old to know it is too old.
+   */
+  health(signal?: AbortSignal): Promise<GatewayHealth> {
+    return this.request<GatewayHealth>('GET', '/healthz', undefined, signal);
   }
 
   capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
@@ -809,7 +823,10 @@ export class GatewayClient {
    * One windowed transcript request. `limit`/`offset` are sliced by the gateway
    * BEFORE it hydrates iterations and attachments, which is the whole saving: a
    * 247-turn session costs ~750 ms and 40 MB whole, ~50 ms and 4 MB for the
-   * newest 30. A gateway too old to know the params answers with the full
+   * newest 30 — and the gateway caps a page in BYTES too, so it may answer with
+   * FEWER rows than asked and a HIGHER `offset` than the one requested. Page
+   * from the returned `offset`; it is the only cursor that is true. A gateway
+   * too old to know the params answers with the full
    * transcript and no `total`, so we synthesise the window from what arrived and
    * everything below still works.
    */
@@ -866,12 +883,31 @@ export class GatewayClient {
     const key = this.snapshotKey('transcript', sid);
     const page = await this.fetchTranscriptPage(sid, { limit }, signal);
     const cached = this.cachedTranscript(sid);
-    const turns = this.mergeTurns(cached, page.turns, 'tail');
+    const held = transcriptWindows.get(key);
+    const heldOffset = cached?.length ? (held?.offset ?? 0) : page.offset;
+    // We hold rows [heldOffset, heldOffset + cached.length). A newest page that
+    // starts BEYOND that runs past a GAP: the session grew by more than one page
+    // since we last looked (app backgrounded while the TUI kept working), and
+    // concatenating would paint turn 123 straight into turn 223 — a hole no
+    // "load earlier" can reach, because it only ever walks back from turn 123.
+    // Drop the stale rows and restart the window at this page instead.
+    const adjoins = !cached?.length || page.offset <= heldOffset + cached.length;
+    // Both sides are contiguous slices with a known offset, so split the page at
+    // our oldest row instead of trusting "unseen id ⇒ newer": a page that reaches
+    // FURTHER BACK than we hold (a deleted turn, a smaller earlier limit) would
+    // otherwise append ancient turns to the BOTTOM of the transcript.
+    const before = adjoins ? Math.max(0, Math.min(page.turns.length, heldOffset - page.offset)) : 0;
+    const turns = adjoins
+      ? this.mergeTurns(
+          this.mergeTurns(cached, page.turns.slice(before), 'tail'),
+          page.turns.slice(0, before),
+          'head',
+        )
+      : page.turns;
     writeSnapshot(key, turns);
     // The window starts at the OLDEST row we hold, which may predate this page.
-    const held = transcriptWindows.get(key);
     transcriptWindows.set(key, {
-      offset: cached?.length ? Math.min(held?.offset ?? page.offset, page.offset) : page.offset,
+      offset: adjoins ? Math.min(heldOffset, page.offset) : page.offset,
       total: page.total,
     });
     // Stamp with the freshest meta row we hold, so a caller that already knows

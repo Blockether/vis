@@ -3759,7 +3759,13 @@
 
 (defn- exit-with-user-error!
   [^Throwable t]
-  (stdout! (str "vis: " (or (ex-message t) "error")))
+  ;; Some user errors ship a pre-rendered SCREEN (`:vis/panel`) — a boxed panel
+  ;; naming what is wrong and the exact fix (e.g. a gateway/client version
+  ;; mismatch). Print that instead of flattening it into one line.
+  (if-let [panel (seq (:vis/panel (ex-data t)))]
+    (doseq [line panel]
+      (stdout! (str line)))
+    (stdout! (str "vis: " (or (ex-message t) "error"))))
   (shutdown-agents)
   (System/exit 2))
 

@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.file-picker :as file-picker]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
+            [com.blockether.vis.internal.gateway.protocol :as protocol]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
@@ -211,6 +212,7 @@
 
     {:status (if @server-state "running" "stopped")
      :id (gateway-instance-id db host port)
+     :protocol (protocol/handshake)
      :pid (discovery/current-pid)
      :host host
      :port port
@@ -1593,7 +1595,10 @@
   defaulting to the NEWEST rows) and `?offset=` (0-based start in the
   oldest-first list). Without them the whole transcript is returned, so an older
   client is unaffected. The window is sliced BEFORE hydration, so a page costs
-  page-sized work instead of session-sized work.
+  page-sized work instead of session-sized work, and it is ALSO capped in bytes
+  (turn count does not bound bytes: one real session's newest 24 turns encode to
+  9.5 MB). The reply's `offset` can therefore be HIGHER than the one asked for —
+  page from the RETURNED offset, never from your own arithmetic.
 
   A window param that is PRESENT but unparsable is a 400, never a silent
   fallback: falling back would answer garbage with the whole (40 MB on a big
@@ -1896,8 +1901,10 @@
   "GET /v1/capabilities — stable feature negotiation for remote/native clients.
    Availability describes what THIS gateway can accept; device-side permissions
    remain the client's responsibility. Voice reports the local model state without
-   starting its download."
-  [_]
+   starting its download. `protocol` carries the VERSION contract
+   ([[protocol/handshake]]) and `compatibility` this gateway's verdict on the
+   CALLER, so one request answers both \"what can you do\" and \"can we talk\"."
+  [request]
   (let
     [model-state
      (voice-asr-resolve "model-state")
@@ -1922,6 +1929,8 @@
         :model {:status "unavailable"}})]
 
     (json-response {:version 1
+                    :protocol (protocol/handshake)
+                    :compatibility (protocol/gateway-verdict request)
                     :features {:chat {:enabled true}
                                :attachments {:enabled true
                                              :transport "inline-base64"
@@ -2196,6 +2205,35 @@
                       contribs)
                 (error-response 401 :unauthorized "missing or invalid bearer token"))))))))
 
+(def ^:private protocol-open-uris
+  "Paths that answer EVEN an unsupported client. They are HOW a peer learns the
+   gateway's protocol and reads the mismatch verdict, so refusing them would
+   leave an old client with nothing but an opaque failure."
+  #{"/healthz" "/readyz" "/v1/capabilities"})
+
+(defn- wrap-protocol
+  "Wire-protocol gate (§3). A client that EXPLICITLY advertises a protocol this
+   gateway no longer serves is refused ONCE, up front, with 426 and the same
+   verdict + copy every surface renders — instead of being fed a shape it cannot
+   read and failing later as a mystery 404 or a missing field. A client that
+   advertises nothing is GRANDFATHERED: unknown is never refused."
+  [handler]
+  (fn [request]
+    (let [uri (str (:uri request))]
+      (if (or (contains? protocol-open-uris uri) (str/starts-with? uri "/docs"))
+        (handler request)
+        (let [v (protocol/gateway-verdict request)]
+          (if (:is-compatible v)
+            (handler request)
+            (let [{:keys [title summary remedy]} (protocol/explain v)]
+              (json-response 426
+                             {:error {:type "incompatible_protocol"
+                                      :message (str title " — " summary)
+                                      :title title
+                                      :remedy remedy}
+                              :protocol (protocol/handshake)
+                              :compatibility v}))))))))
+
 (defn- wrap-errors
   [handler]
   (fn [request]
@@ -2398,6 +2436,9 @@
            :method-not-allowed (fn [_]
                                  (error-response 405 :method-not-allowed "method not allowed"))})))
     (wrap-auth token contribs)
+    ;; Runs BEFORE the token gate: an out-of-date client deserves the version
+    ;; verdict, not a 401 that hides it.
+    (wrap-protocol)
     (wrap-scoped-params contribs)
     (wrap-scoped-multipart contribs)
     (ring-cookies/wrap-cookies)

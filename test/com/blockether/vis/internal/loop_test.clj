@@ -3522,8 +3522,8 @@
                    (synth {:name "delete_if_exists" :input {"path" "d"}})))
         ;; ONE `shell` tool: every op synthesizes through the same lone-positional
         ;; `cmd` shape, with the rest riding the trailing opts dict.
-        (expect (= "shell(\"sleep 1\", {\"id\": \"x\", \"op\": \"bg\"})"
-                   (synth {:name "shell" :input {"id" "x" "cmd" "sleep 1" "op" "bg"}})))
+        (expect (= "shell(\"sleep 1\", {\"id\": \"x\", \"op\": \"background\"})"
+                   (synth {:name "shell" :input {"id" "x" "cmd" "sleep 1" "op" "background"}})))
         (expect (= "shell({\"id\": \"x\", \"n\": 50, \"op\": \"logs\"})"
                    (synth {:name "shell" :input {"id" "x" "n" 50 "op" "logs"}})))
         (expect (= "struct_rename(\"a\", \"b\")"

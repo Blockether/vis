@@ -566,10 +566,8 @@
    `:shim/name` is internal identity only; imports and direct globals come from
    their explicit metadata so an id such as `attach` is never presented as a module.
 
-   When the shell layer is ACTIVE it also names the shell surface INSIDE the
-   sandbox: `shell` is an ordinary bound global there, and the POSIX-compat shim
-   routes `subprocess` / `os.system` / `os.popen` to it. That shim is inlined in
-   `env_python` rather than registered in the extension registry."
+   When shell is active, name only the POSIX compatibility routing. The shell
+   symbol's own docs remain the single authority for its invocation grammar."
   [active-extensions]
   (let
     [shims
@@ -608,11 +606,9 @@
                               (str/join "`, `" shim-globals)
                               "`."))
                        (when shell?
-                         (str "\n`shell` is a bound global there too — run with `shell(cmd)`; "
-                              "background with `shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})`; "
-                              "keep lifecycle ids in the options map, e.g. "
-                              "`shell({\"op\": \"logs\", \"id\": \"dev\"})`. `subprocess` / "
-                              "`os.system` / `os.popen` route to it."))))))
+                         (str
+                           "\n`subprocess`, `os.system`, and `os.popen` route through the active "
+                           "`shell` tool; use that tool's authoritative contract for calls."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

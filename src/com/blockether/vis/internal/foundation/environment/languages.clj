@@ -179,8 +179,8 @@
       :primary       \"clojure\"   ;; nil when no source detected
       :languages     [{:language :files :bytes :files-pct :bytes-pct} ...]}
 
-   Languages are sorted by total bytes descending. `:primary` is the
-   first entry's `:language` (max-bytes wins).
+   Languages are sorted by file count descending (bytes break ties).
+   `:primary` is the first entry's `:language` (max file count wins).
 
    Options:
      :max-files    soft cap on visited files (default 10000).

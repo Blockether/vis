@@ -7246,7 +7246,11 @@
              ;; session id, etc. Print the message clean and let the
              ;; process exit non-zero - no Java stack trace, no rethrow
              ;; (which would trigger clojure.main's auto-trace dump).
-             (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: " (.getMessage t)))
+             (do (if-let [panel (seq (:vis/panel (ex-data t)))]
+                   (doseq [line panel]
+                     (.println ^java.io.PrintStream vis/original-stdout ^String (str line)))
+                   (.println ^java.io.PrintStream vis/original-stdout
+                             (str "vis: " (.getMessage t))))
                  (reset! exit-code 2))
              ;; Genuine fatal: dump the trace to the terminal AND the log
              ;; so we can post-mortem it.

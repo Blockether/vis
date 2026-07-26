@@ -10,26 +10,28 @@
    meant four call shapes and four result shapes for what is a single process
    lifecycle. One tool, one `op` grammar, one TOTAL result map:
 
-   1. RUN (default) `shell(cmd)` / `shell(cmd, opts)` — `bash -lc` in the
+   1. RUN (default) `await shell(cmd)` / `await shell(cmd, opts)` — `bash -lc` in the
       workspace root, waits up to a timeout. Output is bounded at READ time to a
       head+tail budget per stream, so only the MIDDLE of a huge stream is
       dropped, never its start or end (a chatty-then-killed command cannot
       balloon the heap). A non-zero exit is DATA the model reads, not an error.
 
-   2. BG `shell(cmd, {op: bg, id: dev})` — an `id` MAKES it background (the
-      op may stay implicit): spawned under a REAL pty, its merged output pumped
-      into a bounded ring buffer, registered as a session RESOURCE in
-      `internal.resources` (footer count, F4 dialog, `resources` ctx block).
+   2. BACKGROUND `await shell(cmd, {\"op\": \"background\", \"id\": \"dev\"})` — an `id`
+      makes it background (the op may stay implicit): spawned under a REAL pty,
+      its merged output pumped into a bounded ring buffer, registered as a session
+      RESOURCE in `internal.resources` (footer count, F4 dialog, `resources` ctx
+      block). Prefer this for long builds, test suites, servers, watchers, and
+      interactive commands; reserve run for short bounded work.
 
-   3. LOGS / SEND / STOP `shell({:op :logs :id :dev})` — tail the ring buffer,
-      type into the pty, or kill the tree and drop the resource. `stop` and
-      `resource_stop(id)` land on the same `resources/stop!`. An EXITED process
+   3. LOGS / SEND / STOP `await shell({\"op\": \"logs\", \"id\": \"dev\"})` — tail the ring
+      buffer, type into the pty, or kill the tree and drop the resource. Shell stop
+      and `await resource_stop(id)` land on the same `resources/stop!`. An EXITED process
       is not auto-pruned, so its output and exit code stay readable until it is
       stopped.
 
    Commands have ONE spelling in Python: the first positional argument for
-   run/bg. Resource IDs also have ONE spelling: `id` inside the options map for
-   bg/logs/send/stop. Native JSON still carries a `cmd` property; the symbol's
+   run/background. Resource IDs also have ONE spelling: `id` inside the options map
+   for background/logs/send/stop. Native JSON still carries a `cmd` property; the symbol's
    `:call` shape converts that transport field to the Python positional before
    dispatch.
 
@@ -382,7 +384,7 @@
     ;; pty is POSIX-only (openpty/posix_spawnp). On native Windows fall back to
     ;; a plain merged-output ProcessBuilder wrapped in the same handle shape —
     ;; no real TTY (isatty() false, no "send" interactivity, no attach
-    ;; bridge), but the "bg" op still runs/captures/stops cleanly instead of
+    ;; bridge), but the "background" op still runs/captures/stops cleanly instead of
     ;; throwing. (ConPTY could restore a real TTY here later.)
     (process->handle (spawn! cmd dir true policy))
     (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
@@ -450,7 +452,7 @@
   nil)
 
 ;; =============================================================================
-;; SYNC run — `shell(cmd)`
+;; SYNC run — Python sandbox: `await shell(cmd)`
 ;; =============================================================================
 
 (defn- clamp-timeout-secs
@@ -463,8 +465,8 @@
 
 (def ^:private shell-result-base
   "TOTAL key set of EVERY `shell` result — one tool, ONE result shape. `stage`
-   names the stage that produced it (run / bg / logs / send / stop); the keys that
-   stage does not fill keep these neutral values instead of vanishing, so ordinary
+   names the stage that produced it (run / background / logs / send / stop); the keys
+   that stage does not fill keep these neutral values instead of vanishing, so ordinary
    model Python (`r[\"exit\"]`, `r[\"lines\"]`) can never KeyError on a shell result.
 
    NOT `\"op\"`: the extension boundary stamps `\"op\"` on EVERY tool result with the
@@ -579,7 +581,7 @@
                        :duration-ms (- t1 t0)}}))))))
 
 ;; =============================================================================
-;; BACKGROUND — `shell(cmd, {op: bg, id: …})` session resources
+;; BACKGROUND — Python sandbox: `await shell(cmd, {"op": "background", "id": …})`
 ;; =============================================================================
 
 (defonce ^:private bg-procs
@@ -719,11 +721,10 @@
      (str cmd)]
 
     (when (str/blank? id)
-      (throw (ex-info "The shell bg op needs a non-blank resource id ({\"id\": …})."
+      (throw (ex-info "The shell background op needs a non-blank resource id ({\"id\": …})."
                       {:type ::blank-id})))
     (when (str/blank? cmd)
-      (throw (ex-info (str "The shell bg op needs a non-blank command string — the first argument,"
-                           " or {\"cmd\": \"…\"} in the options map.")
+      (throw (ex-info "The shell background op needs a non-blank command as its first argument."
                       {:type ::blank-command})))
     (when (bg-entry session id) (resources/unregister! session id) (drop-bg-entry! session id))
     (let
@@ -824,11 +825,11 @@
                                                :else :failed))})
       (extension/success
         ;; TOTAL result shape, shared with every other stage through `bg-core`:
-        ;; run / bg / logs / send / stop all answer with the same key set (`op`
-        ;; says which stage ran), so model Python never KeyErrors on a field
+        ;; run / background / logs / send / stop all answer with the same key set
+        ;; (`op` says which stage ran), so model Python never KeyErrors on a field
         ;; another stage would have carried. `already_running` false on a fresh
         ;; spawn, `note` nil when there is nothing to say.
-        {:result (assoc (bg-core "bg" id (bg-entry session id))
+        {:result (assoc (bg-core "background" id (bg-entry session id))
                    "already_running" false
                    "note" nil)
          :op :shell
@@ -836,7 +837,7 @@
          {:command cmd :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
 (defn- shell-bg-impl
-  "`shell(cmd, {\"op\": \"bg\", \"id\": id})` — IDEMPOTENT on a live id.
+  "`await shell(cmd, {\"op\": \"background\", \"id\": id})` — IDEMPOTENT on a live id.
 
    Re-using an id whose process is still running used to THROW. That reads as a
    plain tool failure: a model that already started the shell (or that lost the
@@ -859,16 +860,19 @@
 
     (if live
       (extension/success
-        {:result (assoc (bg-core "bg" id live)
-                   "already_running" true
-                   "note" (str "Background shell '"
-                               id
-                               "' was ALREADY running — nothing was restarted. Read its output "
-                               "with shell(\""
-                               id
-                               "\", {\"op\": \"logs\"}); shell(\""
-                               id
-                               "\", {\"op\": \"stop\"}) first if you really need a fresh process."))
+        {:result
+         (assoc (bg-core "background" id live)
+           "already_running" true
+           "note"
+           (str
+             "Background shell '"
+             id
+             "' was ALREADY running — nothing was restarted. Read its output "
+             "with await shell({\"op\": \"logs\", \"id\": \""
+             id
+             "\"}). To start a fresh process, first run await shell({\"op\": \"stop\", \"id\": \""
+             id
+             "\"})."))
          :op :shell
          :metadata {:command (:cmd live)
                     :pid (:pid (:proc live))
@@ -894,7 +898,7 @@
        (throw (ex-info (str "No background shell '"
                             id
                             "' in this session — start one with"
-                            " shell(cmd, {\"op\": \"bg\", \"id\": id});"
+                            " await shell(cmd, {\"op\": \"background\", \"id\": id});"
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (let
@@ -932,7 +936,7 @@
    true) a trailing newline SUBMITS the line — exactly what an interactive prompt
    (password, `read`, a REPL, a y/N confirm) waits for. The send-keys equivalent:
    the agent drives an interactive program whose output the pump captured. Read the
-   response with shell({\"op\": \"logs\", \"id\": id}). Returns the total shell result."
+   response with `await shell({\"op\": \"logs\", \"id\": id})`. Returns the total shell result."
   ([env id text] (shell-send-impl env id text nil))
   ([env id text opts]
    (let
@@ -953,7 +957,7 @@
        (throw (ex-info (str "No background shell '"
                             id
                             "' in this session — start one with"
-                            " shell(cmd, {\"op\": \"bg\", \"id\": id});"
+                            " await shell(cmd, {\"op\": \"background\", \"id\": id});"
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (when-not ((:alive? (:proc entry)))
@@ -976,7 +980,7 @@
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; -----------------------------------------------------------------------------
-;; ONE lifecycle entry point — `shell(cmd, opts)` / `shell({"op": …, "id": …})`
+;; ONE lifecycle entry point — Python: `await shell(cmd, opts)` / `await shell({"op": …, "id": …})`
 ;; -----------------------------------------------------------------------------
 
 (defn- opts-arg?
@@ -994,7 +998,7 @@
       (if (nil? v) (get opts (keyword k)) v))))
 
 (defn- shell-stop-impl
-  "`shell({\"op\": \"stop\", \"id\": id})` — the TERMINAL lifecycle stage, and part of why
+  "`await shell({\"op\": \"stop\", \"id\": id})` — the TERMINAL lifecycle stage, and part of why
    the four shell tools became one: stopping was only reachable through
    `resource_stop`, a sandbox builtin absent from the native tool list, so the end
    of a background shell's life was undiscoverable from the schema. Routes through
@@ -1039,9 +1043,9 @@
 (defn- shell-dispatch
   "One shell lifecycle grammar with no field aliases.
 
-   `cmd` is positional only and is used only by run/bg. `id` lives only in the
-   options map and is used by bg/logs/send/stop. Native JSON calls still carry a
-   `cmd` property, but the symbol's `:call` shape converts it to the positional
+   `cmd` is positional only and is used only by run/background. `id` lives only in
+   the options map and is used by background/logs/send/stop. Native JSON calls still
+   carry a `cmd` property, but the symbol's `:call` shape converts it to the positional
    argument before this dispatcher runs. Unknown ops and missing fields fail
    loudly rather than silently choosing another spelling."
   ([env] (shell-dispatch env nil nil))
@@ -1062,7 +1066,7 @@
       (when mapped-command?
         (throw
           (ex-info
-            "shell command must be the first argument — use shell(cmd, opts), not a cmd key in the options map."
+            "shell command must be positional. In python_execution use await shell(cmd, opts), not a cmd key in the options map."
             {:type ::mapped-command})))
 
       id
@@ -1077,7 +1081,7 @@
                   str/trim
                   str/lower-case
                   not-empty)
-          (if id "bg" "run"))
+          (if id "background" "run"))
 
       command
       (some-> command
@@ -1086,12 +1090,15 @@
 
       need-command
       (fn []
-        (or command
-            (throw (ex-info (str
-                              "shell op \""
-                              op
-                              "\" needs the command as its first argument — use shell(cmd, opts).")
-                            {:type ::missing-command :op op}))))
+        (or
+          command
+          (throw
+            (ex-info
+              (str
+                "shell op \""
+                op
+                "\" needs the command as its first argument. In python_execution use await shell(cmd, opts).")
+              {:type ::missing-command :op op}))))
 
       need-id
       (fn []
@@ -1118,7 +1125,7 @@
        "run"
        (shell-run-impl env (need-command) opts)
 
-       "bg"
+       "background"
        (shell-bg-impl env (need-id) (need-command) opts)
 
        "logs"
@@ -1130,10 +1137,11 @@
        "stop"
        (do (reject-command) (shell-stop-impl env (need-id)))
 
-       (throw (ex-info (str "Unknown shell op "
-                            (pr-str op)
-                            " — use \"run\" (default), \"bg\", \"logs\", \"send\" or \"stop\".")
-                       {:type ::unknown-op :op op}))))))
+       (throw (ex-info
+                (str "Unknown shell op "
+                     (pr-str op)
+                     " — use \"run\" (default), \"background\", \"logs\", \"send\" or \"stop\".")
+                {:type ::unknown-op :op op}))))))
 
 
 ;; =============================================================================
@@ -1187,19 +1195,21 @@
 
 (def
   ^{:doc
-    "await shell(\"git status\")
-await shell(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})
-await shell(\"npm run dev\", {\"op\": \"bg\", \"id\": \"dev-server\"})
+    "In `python_execution`, await every call:
+await shell(\"git status\")
+await shell(\"npm run build\", {\"op\": \"background\", \"id\": \"build\", \"cwd\": \"web\"})
+await shell(\"npm run dev\", {\"op\": \"background\", \"id\": \"dev-server\"})
 await shell({\"op\": \"logs\", \"id\": \"dev-server\", \"n\": 500})
 await shell({\"op\": \"send\", \"id\": \"dev-server\", \"text\": \"y\"})
 await shell({\"op\": \"stop\", \"id\": \"dev-server\"})
 
-THE one shell tool. Commands have one Python spelling: the first positional argument to run/bg. Resource ids also have one spelling: `\"id\"` in the options map for bg/logs/send/stop. op defaults to \"run\", or to \"bg\" when an id is present:
-  run   shell(cmd) — bash -lc in the workspace root, blocks until the command exits. opts: timeout_secs (default 120, max 600), cwd. A non-zero exit is DATA to read, not a tool failure.
-  bg    shell(cmd, {\"op\": \"bg\", \"id\": id}) — no timeout; the shell becomes an OWNED session resource under id (daemons, watchers, long builds, interactive work). Re-starting a LIVE id does NOT spawn a second process and is not an error: you get that shell back with \"already_running\": true. Reusing an EXITED id discards its retained logs.
-  logs  shell({\"op\": \"logs\", \"id\": id}) — last 200 lines, or n up to 2000.
-  send  shell({\"op\": \"send\", \"id\": id, \"text\": t}) — write t to its pty stdin; enter (default true) appends the newline that SUBMITS the line.
-  stop  shell({\"op\": \"stop\", \"id\": id}) — kill the process tree, discard the retained logs, drop the session resource. Same path as resource_stop(id).
+THE one shell tool. Commands have one Python spelling: the first positional argument to run/background. Resource ids also have one spelling: `\"id\"` in the options map for background/logs/send/stop. op defaults to \"run\", or to \"background\" when an id is present.
+Stages:
+  run — bash -lc in the workspace root; blocks until the command exits. Reserve it for short bounded commands. opts: timeout_secs (default 120, max 600), cwd. A non-zero exit is DATA to read, not a tool failure.
+  background — returns immediately with no timeout and makes the shell an OWNED session resource under id. PREFER it for commands that may take a while: builds, test suites, daemons, watchers, and interactive work. Poll with logs instead of blocking a run call. Re-starting a LIVE id does NOT spawn a second process and is not an error: you get that shell back with \"already_running\": true. Reusing an EXITED id discards its retained logs.
+  logs — last 200 lines, or n up to 2000.
+  send — write text to the pty stdin; enter (default true) appends the newline that SUBMITS the line.
+  stop — kill the process tree, discard retained logs, and drop the session resource. Uses the same stop path as resource_stop.
 EVERY op returns the SAME keys — {\"stage\", \"id\", \"cmd\", \"cwd\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\", \"stdout_truncated\", \"stderr_truncated\", \"stdout_omitted_chars\", \"stderr_omitted_chars\", \"pid\", \"status\", \"uptime_ms\", \"attach\", \"socket\", \"already_running\", \"note\", \"lines\", \"line_count\", \"dropped\", \"sent\", \"stopped\"} — always present, None/false/0 rather than missing, with \"stage\" naming the op that ran (r[\"op\"] is the tool origin every native result carries, always \"shell\").
 Gotcha: oversized run output is truncated in the MIDDLE with an inline \"…[N chars omitted]…\" marker, so a truncated stream is NOT parseable — check \"stdout_truncated\" before json.loads(r[\"stdout\"]) and re-run with a narrower or aggregated command.
 Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines), \"line_count\" is total-ever. Only a RUNNING shell accepts send. A step only a HUMAN can finish (browser OAuth, a device-code prompt) can't be typed by the agent — tell the user to run `vis extension shell attach <id>` in their own terminal, then detach with Ctrl-] (the child keeps running); the result carries the exact `attach` command."
@@ -1407,8 +1417,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-bg-result
-  "shell op `bg` → lifecycle card with the command, pid, and human attach hint in
-   expandable body."
+  "shell op `background` → lifecycle card with the command, pid, and human attach
+   hint in the expandable body."
   [r]
   (let
     [id
@@ -1418,7 +1428,7 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
      (or (get r "status") "started")
 
      summary
-     (str "⚙ bg `"
+     (str "⚙ background `"
           id
           "` "
           status
@@ -1506,7 +1516,7 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
 (defn- render-shell-stop-result
   "shell op `stop` → terminal lifecycle card."
   [r]
-  {:summary (str "✕ bg `" (get r "id") "` stopped")
+  {:summary (str "✕ background `" (get r "id") "` stopped")
    :body (shell-section "STATUS"
                         (kv-lines [["id" (get r "id")] ["status" "stopped"] ["pid" (get r "pid")]
                                    ["cmd" (shell-one-line (get r "cmd"))]
@@ -1514,10 +1524,10 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
 
 (defn- render-shell-result
   "`shell` → the card of whichever op ran, read off the result's OWN `stage` field
-   (run / bg / logs / send / stop). Every stage returns the same TOTAL key set, so
-   key-presence sniffing (`lines` → logs, `sent` → send) is not a valid dispatch:
-   the stage is declared, not guessed. (`op` is NOT it — the boundary stamps that
-   with the tool origin \"shell\" on every result.)"
+   (run / background / logs / send / stop). Every stage returns the same TOTAL key
+   set, so key-presence sniffing (`lines` → logs, `sent` → send) is not a valid
+   dispatch: the stage is declared, not guessed. (`op` is NOT it — the boundary
+   stamps that with the tool origin \"shell\" on every result.)"
   [r]
   (case (str (get r "stage"))
     "run"
@@ -1554,18 +1564,18 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
      :name "shell"
      :description
      (str
-       "THE one shell tool — run, background, logs, send, stop. `op` defaults to \"run\" (a bounded "
-       "bash -lc that BLOCKS until the command exits; non-zero exit is data, not a failure) and to "
-       "\"bg\" as soon as you pass an `id`, which makes the shell an OWNED session resource for "
-       "servers, watchers or other long-running / interactive work; \"logs\" tails it, \"send\" "
-       "types into its pty, \"stop\" kills it — stop what you started. In Python, `cmd` is the "
-       "positional command for run/bg; `id` always stays in the options map for bg/logs/send/stop. "
-       "Re-starting a LIVE id returns "
-       "that same shell (`already_running`), never a second process; live ids are listed in "
-       "`session[\"resources\"]`. EVERY op returns the SAME total key set with `stage` naming the "
-       "op that ran and no key ever missing; huge run output is truncated MID-stream — check "
+       "THE one shell tool — quick bounded run, background, logs, send, stop. `op` defaults to \"run\" "
+       "(a bounded bash -lc that BLOCKS until exit; non-zero exit is data) and to \"background\" when "
+       "an `id` is passed. PREFER background for commands that may take a while — builds, test suites, "
+       "servers, watchers, or interactive work. It returns immediately as an OWNED session resource; "
+       "poll it with \"logs\" instead of blocking a run call. Reserve run for short commands. \"send\" "
+       "types into its pty; \"stop\" kills it — stop what you started. In `python_execution`, await "
+       "`shell`; `cmd` is positional for run/background and `id` stays in the options map for "
+       "background/logs/send/stop. Re-starting a LIVE id returns that shell (`already_running`), never "
+       "a second process; live ids are in `session[\"resources\"]`. EVERY op returns the SAME total key "
+       "set with `stage` naming the op; huge run output is truncated MID-stream — check "
        "`stdout_truncated` before parsing it.")
-     ;; Python uses shell(cmd, opts), while native JSON necessarily carries `cmd` as
+     ;; Python's shell call shape keeps cmd positional, while native JSON necessarily carries `cmd` as
      ;; a property. The call shape converts that transport field to the positional;
      ;; every remaining property, including `id`, stays in the options map.
      :call {:opt-pos ["cmd"] :rest :opt}
@@ -1578,14 +1588,15 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
               :minLength 1
               :description
               (str
-                "run/bg only: the command line (bash -lc, workspace root). In Python this becomes "
+                "run/background only: command line (bash -lc, workspace root). In Python this is "
                 "the first positional argument; resource ids never use `cmd`.")}
        "op" {:type "string"
-             :enum ["run" "bg" "logs" "send" "stop"]
-             :description "Operation (default \"run\", or \"bg\" when an `id` is given)."}
+             :enum ["run" "background" "logs" "send" "stop"]
+             :description "Operation (default \"run\", or \"background\" when an `id` is given)."}
        "id" {:type "string"
              :minLength 1
-             :description "Background shell resource id — the SAME id for bg / logs / send / stop."}
+             :description
+             "Background shell resource id — the SAME id for background / logs / send / stop."}
        "timeout_secs" {:type "integer"
                        :minimum 1
                        :maximum 600
@@ -1634,7 +1645,7 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
   "CLI surface mounted under `vis extension shell`. Only `attach` for now — the human
    passthrough onto a background PTY the agent spawned."
   [{:cmd/name "shell"
-    :cmd/doc "Attach a real terminal to a live background shell (shell op \"bg\")."
+    :cmd/doc "Attach a real terminal to a live background shell (shell op \"background\")."
     :cmd/usage "vis extension shell attach <id>"
     :cmd/subcommands
     [{:cmd/name "attach"
@@ -1650,8 +1661,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
   {:id "shell"
    :label "Shell commands"
    :description (str "Expose the ONE `shell` tool: bounded runs plus the background lifecycle "
-                     "(bg / logs / send / stop). When OFF the shell compatibility layer is not "
-                     "bound at all. Contained by the OS process jail whenever it is ON.")
+                     "(background / logs / send / stop). When OFF the shell compatibility layer "
+                     "is not bound. Contained by the OS process jail whenever it is ON.")
    :default true
    :owner :vis
    :persist? true
@@ -1661,7 +1672,7 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "Shell compatibility layer: ONE `shell` tool. `shell(cmd)` runs a bounded command via bash -lc; adding an `id` (op \"bg\") starts a background PTY registered as a session resource, and the same tool's `op` (logs / send / stop) covers the rest of that shell's life — stop also reachable via resource_stop. Bound when the `shell` toggle is ON (default); contained by the OS process jail."
+     "Shell compatibility layer: ONE `shell` tool for bounded commands and background PTY resources. Its op (run / background / logs / send / stop) covers the full process lifecycle; stop is also reachable through resource_stop. Bound when the `shell` toggle is ON (default); contained by the OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

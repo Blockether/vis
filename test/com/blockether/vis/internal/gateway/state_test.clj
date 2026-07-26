@@ -540,8 +540,10 @@
             (expect (= 10 (:total page)))
             (expect (= 7 (:offset page)))
             (expect (:has-more page))
-            ;; The saving IS this: seven older turns were never hydrated.
-            (expect (= ["turn-7" "turn-8" "turn-9"] @hydrated)))
+            ;; The saving IS this: seven older turns were never hydrated. A
+            ;; windowed page hydrates NEWEST-first so the byte budget can stop
+            ;; early, so that is the order the rows are visited in.
+            (expect (= ["turn-9" "turn-8" "turn-7"] @hydrated)))
           ;; Paging backwards from that window reaches the very beginning.
           (reset! hydrated [])
           (let [page (state/transcript-page sid {:offset 0 :limit 7})]
@@ -557,7 +559,106 @@
           (let [page (state/transcript-page sid {:offset 99999 :limit 5})]
             (expect (= [] (:turns page)))
             (expect (= 10 (:offset page)))
-            (expect (:has-more page))))))))
+            (expect (:has-more page)))))))
+  (it "caps a WINDOWED page in BYTES, dropping the oldest rows and raising the offset"
+      ;; Turn COUNT does not bound bytes: one real 38-turn session encodes its
+      ;; newest 24 turns to 9.5 MB because a single turn carried a 5 MB tool
+      ;; result. A page that big is the cost paging exists to avoid.
+      (let
+        [sid
+         (java.util.UUID/randomUUID)
+
+         rows
+         (mapv (fn [n]
+                 {:id (str "turn-" n) :position 1})
+               (range 10))
+
+         hydrated
+         (atom [])]
+
+        (with-redefs-fn
+          {#'lp/db-info (constantly ::db)
+           #'persistance/db-list-session-turns (fn [_ _]
+                                                 rows)
+           #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                     (zipmap ids (repeat [])))
+           (ns-resolve 'com.blockether.vis.internal.gateway.state 'TRANSCRIPT_PAGE_MAX_BYTES) 2000
+           #'state/transcript-turn (fn [_db _att row]
+                                     (swap! hydrated conj (:id row))
+                                     {:turn_id (:id row) :text (apply str (repeat 900 "x"))})}
+          (fn []
+            (let [page (state/transcript-page sid {:limit 10})]
+              ;; ~930 encoded bytes per row against a 2000-byte budget: two rows
+              ;; fit, the third busts it and is left for the next page.
+              (expect (= ["turn-8" "turn-9"] (mapv #(get % "turn_id") (:turns page))))
+              (expect (= 10 (:total page)))
+              ;; The dropped rows raise the offset — which is exactly where the
+              ;; client's next `load earlier` resumes, so nothing is skipped.
+              (expect (= 8 (:offset page)))
+              (expect (:has-more page))
+              ;; Newest-first hydration: the seven rows older than the buster are
+              ;; never hydrated at all.
+              (expect (= ["turn-9" "turn-8" "turn-7"] @hydrated)))
+            (reset! hydrated [])
+            ;; NO window asked for is the TUI's whole-transcript read: never
+            ;; budgeted, or resuming the TUI would silently lose history.
+            (let [page (state/transcript-page sid {})]
+              (expect (= 10 (count (:turns page))))
+              (expect (= 0 (:offset page)))
+              (expect (not (:has-more page))))))))
+  (it "keeps one row even when that row alone busts the budget, so paging always advances"
+      (let
+        [sid
+         (java.util.UUID/randomUUID)
+
+         rows
+         (mapv (fn [n]
+                 {:id (str "turn-" n) :position 1})
+               (range 10))]
+
+        (with-redefs-fn
+          {#'lp/db-info (constantly ::db)
+           #'persistance/db-list-session-turns (fn [_ _]
+                                                 rows)
+           #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                     (zipmap ids (repeat [])))
+           (ns-resolve 'com.blockether.vis.internal.gateway.state 'TRANSCRIPT_PAGE_MAX_BYTES) 100
+           #'state/transcript-turn (fn [_db _att row]
+                                     {:turn_id (:id row) :text (apply str (repeat 900 "x"))})}
+          (fn []
+            ;; An empty page would strand the client: it would fetch forever and
+            ;; paint nothing.
+            (let [page (state/transcript-page sid {:limit 5})]
+              (expect (= ["turn-9"] (mapv #(get % "turn_id") (:turns page))))
+              (expect (= 9 (:offset page)))
+              (expect (:has-more page)))
+            ;; And the page BEFORE it advances by one too, so a walk terminates.
+            (let [page (state/transcript-page sid {:offset 4 :limit 5})]
+              (expect (= ["turn-8"] (mapv #(get % "turn_id") (:turns page))))
+              (expect (= 8 (:offset page))))))))
+  (it "drops the lazy provider envelope instead of shipping a Delay"
+      (let [sid (java.util.UUID/randomUUID)]
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'persistance/db-list-session-turns (fn [_ _]
+                                                               [{:id "turn-0" :position 1}])
+                         #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                   (zipmap ids (repeat [])))
+                         #'persistance/db-list-session-turn-iterations
+                         (fn [_ _]
+                           [{:id "it-0"
+                             :position 1
+                             :llm-assistant-message (delay {:content [{:type "text"}]})}])}
+          (fn []
+            (let
+              [turn (first (:turns (state/transcript-page sid {})))
+               iteration (first (get turn "iterations"))]
+
+              ;; Guard against a swallowed hydration failure passing this vacuously.
+              (expect (= "it-0" (get iteration "id")))
+              ;; Persistence hands the envelope back as a `<-json-lazy` DELAY, which
+              ;; JSON-encodes to the useless string "clojure.lang.Delay@1f2e3d" —
+              ;; 3031 of a real 247-turn session's 3098 iterations shipped that.
+              (expect (not (contains? iteration "llm_assistant_message")))))))))
 
 (defdescribe
   queued-update-payload-test
@@ -1666,3 +1767,40 @@
                (= 1 (count (filter #(= "turn.started" (get % "type")) (:events (get @reg sid))))))
              (expect (= "T-race" (:current-turn (get @reg sid))))
              (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid))))))))
+
+(defdescribe
+  transcript-byte-budget-test
+  "Windowed transcript pages stay bounded even when individual turns are large."
+  (it "caps a window by encoded size and advances from the returned offset"
+      (let
+        [sid
+         (java.util.UUID/randomUUID)
+
+         rows
+         (mapv (fn [n]
+                 {:id (str "turn-" n) :position n})
+               (range 5))]
+
+        (with-redefs-fn
+          {#'lp/db-info (constantly ::db)
+           #'persistance/db-list-session-turns (fn [_ _]
+                                                 rows)
+           #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                     (zipmap ids (repeat [])))
+           (ns-resolve 'com.blockether.vis.internal.gateway.state 'TRANSCRIPT_PAGE_MAX_BYTES) 180
+           #'state/transcript-turn (fn [_db _att row]
+                                     {:turn_id (:id row) :payload (apply str (repeat 100 "x"))})}
+          (fn []
+            (let
+              [newest
+               (state/transcript-page sid {:limit 5})
+
+               earlier
+               (state/transcript-page sid {:offset 0 :limit (:offset newest)})]
+
+              (expect (= ["turn-4"] (mapv #(get % "turn_id") (:turns newest))))
+              (expect (= 4 (:offset newest)))
+              (expect (:has-more newest))
+              (expect (= ["turn-3"] (mapv #(get % "turn_id") (:turns earlier))))
+              (expect (= 3 (:offset earlier)))
+              (expect (:has-more earlier))))))))

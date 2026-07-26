@@ -1722,7 +1722,9 @@ export function SessionScreen({
               >
                 {loadingEarlier
                   ? 'Loading earlier…'
-                  : `↑ Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`}
+                  : visibleStart > 0
+                    ? `↑ Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
+                    : `↑ Load earlier · ${earlierTotal} remaining`}
               </button>
             </div>
           )}

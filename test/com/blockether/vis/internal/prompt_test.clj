@@ -158,20 +158,17 @@
             (expect (not (str/includes? text "subprocess")))
             (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
               (expect (str/includes? text (str "`" name "`"))))))))
-  (it "names the in-sandbox shell surface when the shell layer is active"
-      ;; `shell` is an ordinary bound global in `python_execution` and the
-      ;; POSIX-compat shim routes subprocess/os.system to it — neither fact is
-      ;; discoverable from the shim NAME list, so the prompt has to say it.
+  (it "names POSIX routing without duplicating the shell contract"
+      ;; Invocation syntax belongs to the shell symbol docs; this supplemental
+      ;; block only exposes otherwise-undiscoverable compatibility routing.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
         (expect (< (count text) 1500))
-        (expect (str/includes? text "`shell` is a bound global"))
-        (expect (str/includes? text "shell(cmd)"))
-        (expect (str/includes? text "shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})"))
-        (expect (str/includes? text "shell({\"op\": \"logs\", \"id\": \"dev\"})"))
-        (expect (not (str/includes? text "shell({\"cmd\":")))
-        (expect (not (str/includes? text "all in one map")))
+        (expect (str/includes? text "active `shell` tool"))
         (expect (str/includes? text "subprocess"))
-        (expect (str/includes? text "os.system")))))
+        (expect (str/includes? text "os.system"))
+        (expect (str/includes? text "os.popen"))
+        (expect (not (str/includes? text "shell(")))
+        (expect (not (str/includes? text "\"id\""))))))
 
 (defdescribe
   project-instructions-hoist-test

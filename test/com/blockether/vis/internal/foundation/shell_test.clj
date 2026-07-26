@@ -17,7 +17,7 @@
 (def ^:private shell-run* @#'shell/shell-run-impl)
 
 (defn- shell-bg*
-  "bg impl with the options map optional — most cases need no cwd/opts."
+  "Background impl with the options map optional — most cases need no cwd/opts."
   ([env id cmd] (shell-bg* env id cmd nil))
   ([env id cmd opts] (@#'shell/shell-bg-impl env id cmd opts)))
 
@@ -318,9 +318,10 @@
                      (expect (= (get first-run "pid") (get again "pid")))
                      (expect (true? (get again "already_running")))
                      (expect (= "running" (get again "status")))
-                     (expect (str/includes? (get again "note") "{\"op\": \"logs\"}"))
+                     (expect (str/includes? (get again "note")
+                                            "await shell({\"op\": \"logs\", \"id\": \"dup\"})"))
                      ;; the shared identity core rides EVERY stage
-                     (expect (= "bg" (get again "stage")))
+                     (expect (= "background" (get again "stage")))
                      (expect (contains? again "attach"))
                      (expect (contains? again "socket"))
                      (expect (nil? (get first-run "note"))))
@@ -435,8 +436,9 @@
              env {:session-id sid}]
 
             (try (let
-                   [start (:result
-                            (shell* env "read x; echo GOT:$x; sleep 30" {"op" "bg" "id" "ops"}))]
+                   [start (:result (shell* env
+                                           "read x; echo GOT:$x; sleep 30"
+                                           {"op" "background" "id" "ops"}))]
                    (expect (= "running" (get start "status")))
                    (expect (false? (get start "already_running"))))
                  (let
@@ -462,7 +464,7 @@
                    (expect (empty? (resources/list-resources sid)))
                    (expect (threw? #(shell* env {"op" "logs" "id" "ops"}))))
                  (finally (resources/stop-all! sid))))))))
-  (it "makes an id mean background and rejects a bogus op"
+  (it "makes an id mean background and rejects the retired bg abbreviation"
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -472,15 +474,16 @@
 
               (try
                 (expect (= "running" (get (:result (shell* env "sleep 30" {"id" "a"})) "status")))
-                ;; An explicit op is allowed but never required: the id is what
-                ;; makes a shell background.
+                ;; The full operation name is allowed but never required: the id is
+                ;; what makes a shell background.
                 (expect (= "running"
-                           (get (:result (shell* env "sleep 30" {"op" "bg" "id" "b"})) "status")))
+                           (get (:result (shell* env "sleep 30" {"op" "background" "id" "b"}))
+                                "status")))
                 (let
                   [msg
-                   (try (shell* env "unused" {"op" "nope"}) nil (catch Throwable t (ex-message t)))]
+                   (try (shell* env "unused" {"op" "bg"}) nil (catch Throwable t (ex-message t)))]
                   (expect (str/includes? msg "Unknown shell op"))
-                  (expect (str/includes? msg "\"stop\"")))
+                  (expect (str/includes? msg "\"background\"")))
                 (finally (resources/stop-all! sid))))))))
   (it "stopping an id that was never started is a typed error, not a silent no-op"
       (expect (threw? #(shell* {:session-id "shell-ext-ops-none"} {"op" "stop" "id" "ghost"})))))
@@ -547,7 +550,7 @@
          (render-shell-logs-result
            {"id" "srv" "status" "running" "lines" [[1 "ready"]] "line_count" 1 "uptime_ms" 1500})]
 
-        (expect (str/includes? (:summary bg) "⚙ bg `srv` running · pid 123"))
+        (expect (str/includes? (:summary bg) "⚙ background `srv` running · pid 123"))
         (expect (str/includes? (:body bg) "**COMMAND**"))
         (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
         (expect (str/includes? (:body logs) "**LOGS**")))))
@@ -566,26 +569,28 @@
              (it "tells the whole lifecycle in ONE compact native description"
                  (let [d (:ext.symbol/description shell/shell-symbol)]
                    (expect (str/includes? d "THE one shell tool"))
+                   (expect (str/includes? d "PREFER background"))
+                   (expect (str/includes? d "Reserve run for short commands"))
                    (expect (str/includes? d "stop what you started"))
                    ;; Native JSON carries `cmd`; the model-facing description must
                    ;; distinguish its Python positional from the map-only id.
-                   (expect (str/includes? d "`cmd` is the positional command"))
-                   (expect (str/includes? d "`id` always stays in the options map"))
+                   (expect (str/includes? d "`cmd` is positional"))
+                   (expect (str/includes? d "`id` stays in the options map"))
                    (expect (str/includes? d "session[\"resources\"]"))
                    ;; the truncation warning is the exact gap that let a truncated
                    ;; stdout reach json.loads and read as a tool bug
                    (expect (str/includes? d "stdout_truncated"))
                    ;; one description for five ops still costs less than the four it
                    ;; replaces — but it must not sprawl
-                   (expect (< (count d) 1100))))
-             (it "puts every op in the schema, where the model cannot miss it"
-                 (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
-                   (expect (= ["run" "bg" "logs" "send" "stop"] (get-in props ["op" :enum])))
-                   (expect (every? #(contains? props %)
-                                   ["cmd" "op" "id" "timeout_secs" "cwd" "n" "text" "enter"]))
-                   ;; the common bounded run keeps its bare one-positional shape
-                   (expect (= {:opt-pos ["cmd"] :rest :opt}
-                              (:ext.symbol/call shell/shell-symbol)))))
+                   (expect (< (count d) 1200))))
+             (it
+               "puts every op in the schema, where the model cannot miss it"
+               (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
+                 (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
+                 (expect (every? #(contains? props %)
+                                 ["cmd" "op" "id" "timeout_secs" "cwd" "n" "text" "enter"]))
+                 ;; the common bounded run keeps its bare one-positional shape
+                 (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))))
              (it "closes every native shell input schema"
                  (doseq [s shell/shell-symbols]
                    (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
@@ -679,18 +684,31 @@
 
 (defdescribe
   python-sandbox-surface-test
-  "ONE bare `shell` global (never a shell_run/bg/logs quartet), the whole op
+  "ONE bare `shell` global (never separate shell lifecycle globals), the whole op
    grammar reachable through it from Python, a real `doc('shell')`, and the
    `shell` toggle actually removing the binding when it is off."
   (it "binds exactly ONE shell symbol into the sandbox globals, with a doc"
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
         (expect (= ['shell] (sort (filter #(str/includes? (name %) "shell") (keys bind)))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
-  (it "documents one command spelling and keeps lifecycle ids in the options map"
-      (let [d (str (py (py-ctx {}) "doc('shell')"))]
-        (expect (str/includes? d "`cmd` is the positional command"))
-        (expect (str/includes? d "`id` always stays in the options map"))
-        (expect (not (str/includes? d "cmd in the map")))))
+  (it "documents awaited calls, the background preference, and one canonical op name"
+      (let
+        [source-doc
+         (:doc (meta #'shell/shell))
+
+         d
+         (str (py (py-ctx {}) "doc('shell')"))]
+
+        (expect (= 6 (count (re-seq #"shell\(" source-doc))))
+        (expect (= (count (re-seq #"shell\(" source-doc))
+                   (count (re-seq #"await shell\(" source-doc))))
+        (expect (not (str/includes? source-doc "shell({\"cmd\"")))
+        (expect (not (str/includes? source-doc "\"op\": \"bg\"")))
+        (expect (str/includes? source-doc "PREFER it for commands that may take a while"))
+        (expect (str/includes? d "`cmd` is positional"))
+        (expect (str/includes? d "`id` stays in the options map"))
+        (expect (str/includes? d "PREFER background"))
+        (expect (str/includes? d "await `shell`"))))
   (it "runs a command through the bare `shell` global and answers the TOTAL map"
       (let [c (py-ctx {})]
         (expect (true? (py c "'shell' in globals() and callable(shell)")))
@@ -704,7 +722,7 @@
                    (py c
                        (str "[k for k in ['lines','pid','status','sent','stopped','cwd',"
                             "'timed_out','stderr'] if k not in r]"))))))
-  (it "drives the whole op grammar (bg -> logs -> stop) from Python"
+  (it "drives the whole op grammar (background -> logs -> stop) from Python"
       (let
         [sid
          (str "py-shell-" (System/nanoTime))
@@ -712,10 +730,10 @@
          c
          (py-ctx {:session-id sid})]
 
-        (try (expect (= ["bg" true "logs" true "stop" true]
+        (try (expect (= ["background" true "logs" true "stop" true]
                         (py c
                             (str "import time\n" "b = __vis_settle__(shell('echo alive; sleep 30',"
-                                 " {'op':'bg','id':'pyjob'}))\n" "time.sleep(0.5)\n"
+                                 " {'op':'background','id':'pyjob'}))\n" "time.sleep(0.5)\n"
                                  "l = __vis_settle__(shell({'op':'logs','id':'pyjob','n':10}))\n"
                                  "s = __vis_settle__(shell({'op':'stop','id':'pyjob'}))\n"
                                  "[b['stage'], b['pid'] is not None, l['stage'],"

@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.protocol :as protocol]
             [com.blockether.vis.internal.gateway.wire :as wire])
   (:import (java.io BufferedReader InputStream InputStreamReader)
            (java.net URLEncoder)
@@ -55,6 +56,17 @@
 
 (defonce ^:private client-finalizing? (atom false))
 
+(def ^:private client-label
+  "How this process names itself in the version handshake — what the mismatch
+   panel prints as the client half."
+  "vis")
+
+(defonce ^:private gateway-handshake*
+  ;; The daemon's advertised {:protocol :min-client :min-gateway :version},
+  ;; captured from the /healthz probe every attach already pays for. nil until
+  ;; the first probe; all-nil fields when the daemon is too old to advertise.
+  (atom nil))
+
 (defn- db-target [] (config/resolve-db-spec))
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
@@ -73,23 +85,49 @@
    byte-live for the line reader + idle watchdog."
   [{:keys [secret] :as _entry} method path
    {:keys [body as timeout-ms] :or {as :string timeout-ms 30000}}]
-  (http/request (cond->
-                  {:client @http-client
-                   :method (keyword (str/lower-case method))
-                   :uri (str (base-url _entry) path)
-                   :timeout timeout-ms
-                   :throw false
-                   :as as
-                   :headers (cond->
-                              {"Accept" (if (= as :stream) "text/event-stream" "application/json")
-                               "X-Vis-Gateway-Secret" (str secret)}
-                              (= as :stream)
-                              (assoc "Accept-Encoding" "identity"))}
-                  (some? body)
-                  (-> (assoc :body (wire/json-str body))
-                      (assoc-in [:headers "Content-Type"] "application/json")))))
+  (http/request
+    (cond->
+      {:client @http-client
+       :method (keyword (str/lower-case method))
+       :uri (str (base-url _entry) path)
+       :timeout timeout-ms
+       :throw false
+       :as as
+       :headers (cond->
+                  (merge (protocol/client-headers client-label)
+                         {"Accept" (if (= as :stream) "text/event-stream" "application/json")
+                          "X-Vis-Gateway-Secret" (str secret)})
+                  (= as :stream)
+                  (assoc "Accept-Encoding" "identity"))}
+      (some? body)
+      (-> (assoc :body (wire/json-str body))
+          (assoc-in [:headers "Content-Type"] "application/json")))))
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
+
+(defn- note-handshake!
+  "Record the daemon's advertised version contract from a `/healthz` body — the
+   probe EVERY attach already pays for, so compatibility costs no extra round
+   trip. A daemon too old to advertise a `protocol` block records all-nils and is
+   grandfathered. Returns the body unchanged."
+  [body]
+  (reset! gateway-handshake* (protocol/wire->handshake (get body "protocol")))
+  body)
+
+(defn compatibility
+  "This client's verdict on the daemon it last probed — the SAME pure comparison
+   the gateway runs on us ([[protocol/verdict]]), so the two halves never
+   disagree about which one is out of date."
+  []
+  (protocol/client-verdict client-label @gateway-handshake*))
+
+(defn- assert-compatible!
+  "Refuse to drive a daemon whose wire protocol this build cannot speak, with the
+   rendered mismatch screen attached. Returns `entry` when compatible."
+  [entry]
+  (let [v (compatibility)]
+    (when-not (:is-compatible v) (throw (protocol/incompatible-ex v)))
+    entry))
 
 (declare ensure-gateway! ensure-client! ensure-gateway-serving! port-free? shutdown-subscriptions!)
 
@@ -136,7 +174,7 @@
           (gw-send! entry "GET" "/healthz" {:timeout-ms health-probe-timeout-ms})
 
           body
-          (parse-json-body (:body response))]
+          (note-handshake! (parse-json-body (:body response)))]
 
          (and (= 200 (:status response))
               (= "ok" (get body "status"))
@@ -171,7 +209,7 @@
            (gw-send! candidate "GET" "/healthz" {:timeout-ms health-probe-timeout-ms}))
 
          body
-         (when (= 200 (:status response)) (parse-json-body (:body response)))
+         (when (= 200 (:status response)) (note-handshake! (parse-json-body (:body response))))
 
          pid
          (get body "pid")
@@ -339,7 +377,7 @@
                    true))]
 
        (if fresh?
-         cached
+         (assert-compatible! cached)
          (let
            ;; First recover the exact failure mode where a live standard daemon
            ;; owns 7890 but its registry was removed. Never enter discovery's
@@ -349,7 +387,7 @@
              (do (reset! cached-entry entry)
                  (reset! entry-fresh-until-ns (+ (System/nanoTime)
                                                  (* (long entry-probe-ttl-ms) 1000000)))
-                 entry)
+                 (assert-compatible! entry))
              (throw (ex-info "gateway daemon did not become ready"
                              (assoc result :type :gateway/start-timeout))))))))))
 

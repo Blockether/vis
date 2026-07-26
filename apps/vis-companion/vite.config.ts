@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
+import pkg from './package.json' with { type: 'json' };
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -13,6 +14,9 @@ export default defineConfig(({ mode }) => {
   const gatewayTarget = env.VIS_COMPANION_GATEWAY_TARGET || 'http://127.0.0.1:7890';
 
   return {
+    // The app stamps its release version on every gateway request and shows it
+    // on the version-mismatch screen; package.json stays the only source.
+    define: { __VIS_APP_VERSION__: JSON.stringify(pkg.version) },
     plugins: [
       {
         name: 'vis-gateway-proxy-auth',

@@ -9,6 +9,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]))
 
 (defn- normalize-language
@@ -21,14 +22,25 @@
           str
           str/lower-case))
 
+(defn- language-scan
+  "Embedded scan data in tests/legacy callers, otherwise the cached scan for the
+   dynamically bound workspace root. The production tool env does not carry the
+   model-facing session digest, so dispatch must consult the environment source."
+  [env]
+  (or (:env/languages env)
+      (:languages env)
+      (try (:languages (environment/snapshot)) (catch Throwable _ nil))))
+
 (defn- env-language
   [env]
-  (or (normalize-language (get-in env [:env/project :primary_language]))
-      (normalize-language (get-in env [:project :primary_language]))
-      (some->> (get-in env [:env/languages :languages])
-               (map #(normalize-language (or (:language %) (:name %) %)))
-               (remove nil?)
-               first)))
+  (let [scan (language-scan env)]
+    (or (normalize-language (get-in env [:env/project :primary_language]))
+        (normalize-language (get-in env [:project :primary_language]))
+        (normalize-language (:primary scan))
+        (some->> (:languages scan)
+                 (map #(normalize-language (or (:language %) (:name %) %)))
+                 (remove nil?)
+                 first))))
 
 (defn- active-extensions
   [env]
@@ -135,7 +147,7 @@
   "The workspace scan's languages in FILE-COUNT order (most files first),
    normalized to lowercase strings, nil-free."
   [env]
-  (->> (get-in env [:env/languages :languages])
+  (->> (:languages (language-scan env))
        (keep #(normalize-language (or (:language %) (:name %) %)))))
 
 (defn- candidate-languages
@@ -874,34 +886,26 @@
 (defn run-tests
   "Run tests using a language extension. ALWAYS pass the language FIRST — run_tests(language, arg). `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
   [env & args]
-  ;; Wall-clock the whole run so the RUN_TESTS card can headline how long it
-  ;; took (parity with repl_eval's `(Nms)`); language handlers don't time
-  ;; themselves, and this captures dispatch + run end-to-end.
-  ;; The run is parked OUTSIDE the native tool wall (NATIVE_TOOL_TIMEOUT_MS,
-  ;; 30s): run_tests offers no `timeout_ms` and real suites routinely take
-  ;; minutes, so the language pack's OWN budget bounds the run (e.g. the
-  ;; clojure pack's 290s nREPL eval timeout), wedge-guarded by
-  ;; MAX_EVAL_TIMEOUT_MS while the wall is parked.
-  (let
-    [start
-     (System/currentTimeMillis)
-
-     result
-     (extension/run-outside-tool-wall
-       env
-       ;; ONE result shape for every pack: whatever the handler measured is
-       ;; completed onto the contract's TOTAL key set (missing keys get neutral
-       ;; values, per-pack key vocabulary is folded onto the canonical names), so
-       ;; caller code never KeyErrors on a run that took an error branch.
-       #(dispatch! env
-                   :test-fn
-                   args
-                   (fn [handler result]
-                     (contract/complete-test-result (:language handler) result))))]
-
-    ;; STRING key: the whole result crosses the Python boundary string-keyed, and
-    ;; the RUN_TESTS card reads `(get r "ms")`.
-    (if (map? result) (assoc result "ms" (- (System/currentTimeMillis) start)) result)))
+  ;; Park outside the generic 30s native wall. Language packs own the test budget.
+  (let [started-at (System/nanoTime)]
+    (extension/run-outside-tool-wall
+      env
+      #(dispatch!
+         env
+         :test-fn
+         args
+         (fn [handler envelope]
+           ;; Language handlers return extension envelopes. Complete and time
+           ;; the PUBLIC payload; metadata added beside :result gets unwrapped.
+           (if (and (map? envelope) (contains? envelope :result))
+             (update envelope
+                     :result
+                     (fn [result]
+                       (let [completed (contract/complete-test-result (:language handler) result)]
+                         (if (map? completed)
+                           (assoc completed "ms" (quot (- (System/nanoTime) started-at) 1000000))
+                           completed))))
+             envelope))))))
 
 (defn repl-eval
   "Evaluate code in an already-running project REPL. ALWAYS pass the language

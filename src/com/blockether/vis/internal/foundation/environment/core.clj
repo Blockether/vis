@@ -6,7 +6,7 @@
      * git repository facts via the git binary (root, branch, dirty status,
        submodules, worktree),
      * a bounded language scan over the working tree (top languages
-       by total bytes, primary language),
+       by file count, primary language),
      * monorepo / multi-package shape detection (polylith, workspace,
        submodules) by counting per-ecosystem manifests.
 

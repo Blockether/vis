@@ -4479,7 +4479,7 @@
           (when sid (try (vis/gateway-close-session! sid) (catch Throwable _ nil)))))
 
 (reg-fx :release-session-runtime
-        ;; Stop a session's live daemon runtime + background children (`shell` op "bg",
+        ;; Stop a session's live daemon runtime + background children (`shell` op "background",
         ;; managed REPLs) WITHOUT dropping the process client lease — fired by
         ;; `:close-tab` when the LAST view of an idle session closes. Keeps the
         ;; transcript resumable; best-effort, never daemon-spawning.
