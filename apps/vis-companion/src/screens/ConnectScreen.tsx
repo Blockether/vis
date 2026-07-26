@@ -246,10 +246,10 @@ export function ConnectScreen({
                 autoCorrect="off"
               />
               <div className="flex gap-2">
-                <Button className="min-h-11 flex-1 sm:min-h-10" onClick={addFromPayload} disabled={busy || !payload}>
+                <Button className="min-h-9 flex-1 sm:min-h-8" onClick={addFromPayload} disabled={busy || !payload}>
                   {busy ? 'Checking\u2026' : 'Pair'}
                 </Button>
-                <Button variant="ghost" className="min-h-11 sm:min-h-10" onClick={scan} disabled={busy}>
+                <Button variant="ghost" className="min-h-9 sm:min-h-8" onClick={scan} disabled={busy}>
                   Scan QR
                 </Button>
               </div>
@@ -278,7 +278,7 @@ export function ConnectScreen({
                 autoCapitalize="none"
                 autoCorrect="off"
               />
-              <Button className="min-h-11 w-full sm:min-h-10" onClick={addManual} disabled={busy || !url}>
+              <Button className="min-h-9 w-full sm:min-h-8" onClick={addManual} disabled={busy || !url}>
                 {busy ? 'Checking\u2026' : 'Connect'}
               </Button>
             </div>
