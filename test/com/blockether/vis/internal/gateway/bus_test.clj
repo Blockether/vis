@@ -30,6 +30,9 @@
     (with-redefs
       [bus/events-dir (fn []
                         tmp)]
+      ;; a fresh journal dir is a fresh world: drop this process's orphan-reap
+      ;; markers so re-running in one JVM doesn't suppress a reap
+      (reset! (var-get #'bus/reaped-turns) {})
       (bus/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture

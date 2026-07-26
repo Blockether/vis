@@ -2018,19 +2018,19 @@ export function SessionScreen({
               </button>
             )}
           </div>
+        </div>
 
-          <div className="flex items-center gap-1 px-1.5 pb-1">
-            <button
-              type="button"
-              className="inline-flex h-5 min-w-0 max-w-[14rem] shrink items-center gap-1 border border-dialog-edge bg-panel px-1.5 font-mono text-[9px] font-bold leading-none text-dialog-hint-key transition-colors hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none"
-              onClick={() => setRouterOpen(true)}
-              aria-label="Change provider and model"
-              title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
-            >
-              <span aria-hidden="true" className="opacity-50">◇</span>
-              <span className="truncate">{modelPref?.model ?? 'model'}</span>
-            </button>
-          </div>
+        <div className="flex justify-center pt-1.5">
+          <button
+            type="button"
+            className="inline-flex h-4 min-w-0 max-w-[12rem] items-center gap-1 border border-dialog-edge bg-panel px-1.5 font-mono text-[8px] font-bold uppercase leading-none tracking-wide text-dialog-hint transition-colors hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none"
+            onClick={() => setRouterOpen(true)}
+            aria-label="Change provider and model"
+            title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
+          >
+            <span aria-hidden="true" className="opacity-50">◇</span>
+            <span className="truncate">{modelPref?.model ?? 'model'}</span>
+          </button>
         </div>
       </footer>
     </section>
