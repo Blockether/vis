@@ -486,7 +486,7 @@ function CopyableId({ id, className }: { id: string; className: string }) {
       onClick={copy}
       title={`Copy session id\n${id}`}
       aria-label="Copy session id"
-      className={`group inline-flex h-6 min-w-0 items-center gap-1 border border-dialog-edge px-2 font-mono text-[10px] leading-none transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
+      className={`group inline-flex h-5 min-w-0 items-center gap-1 border border-dialog-edge px-1.5 font-mono text-[9px] leading-none transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
     >
       <span aria-hidden="true" className="opacity-50 transition-opacity group-hover:opacity-100">#</span>
       <span className="truncate">{copied ? 'Copied' : short}</span>
@@ -519,7 +519,7 @@ function ShareLink({ className }: { className: string }) {
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-[10px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
+      className={`group inline-flex h-5 shrink-0 items-center gap-1 border px-1.5 font-mono text-[9px] uppercase tracking-[0.08em] leading-none transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok text-ok' : 'border-dialog-edge text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-white'} ${className}`}
     >
       {copied ? (
         <>
@@ -1549,10 +1549,10 @@ export function SessionScreen({
 
   return (
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none">
-      <header className="z-10 flex min-h-12 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
+      <header className="z-10 flex min-h-10 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
         <button
           type="button"
-          className="grid w-12 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-xl font-bold leading-none text-dialog-title-foreground transition-[background-color,transform] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-10"
+          className="grid w-9 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-base font-bold leading-none text-dialog-title-foreground transition-[background-color,transform] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-8"
           onClick={onBack}
           aria-label="Back to sessions"
         >
@@ -1567,16 +1567,7 @@ export function SessionScreen({
             {connected ? 'Gateway connected' : 'Reconnecting'}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 self-center pr-2 pl-1 sm:pr-3">
-          <button
-            type="button"
-            className="grid min-h-9 max-w-[8rem] place-items-center border border-dialog-edge bg-panel px-2 font-mono text-[10px] font-bold text-dialog-hint-key transition-colors hover:border-accent hover:text-white focus-visible:outline-none focus-visible:border-accent sm:min-h-8 sm:max-w-[12rem]"
-            onClick={() => setRouterOpen(true)}
-            aria-label="Change provider and model"
-            title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
-          >
-            <span className="truncate">{modelPref?.model ?? 'model'}</span>
-          </button>
+        <div className="flex shrink-0 items-center gap-1 self-center pr-2 pl-1 sm:pr-3">
           <CopyableId id={sid} className="hidden max-w-[9rem] sm:inline-flex" />
           <ShareLink className="" />
         </div>
@@ -2026,6 +2017,19 @@ export function SessionScreen({
                 <span className="size-2 bg-err" />
               </button>
             )}
+          </div>
+
+          <div className="flex items-center gap-1 px-1.5 pb-1">
+            <button
+              type="button"
+              className="inline-flex h-5 min-w-0 max-w-[14rem] shrink items-center gap-1 border border-dialog-edge bg-panel px-1.5 font-mono text-[9px] font-bold leading-none text-dialog-hint-key transition-colors hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none"
+              onClick={() => setRouterOpen(true)}
+              aria-label="Change provider and model"
+              title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
+            >
+              <span aria-hidden="true" className="opacity-50">◇</span>
+              <span className="truncate">{modelPref?.model ?? 'model'}</span>
+            </button>
           </div>
         </div>
       </footer>
