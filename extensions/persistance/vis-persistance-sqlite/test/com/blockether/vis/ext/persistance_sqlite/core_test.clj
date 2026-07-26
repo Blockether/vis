@@ -2770,3 +2770,37 @@
                    (mapv
                      :field
                      (vis/db-search s {:any ["literal" "missing"]} {:field "user_request"})))))))
+
+(defdescribe
+  canonical-assistant-message-restart-test
+  (it "restores persisted wire keys to Svar canonical keys without rewriting tool input"
+      (let
+        [s
+         (h/store)
+
+         session-id
+         (h/store-session! s {:channel :tui})
+
+         turn-id
+         (vis/db-store-session-turn!
+           s
+           {:parent-session-id session-id :user-request "resume" :status :running})
+
+         message
+         {:role "assistant"
+          :content [{:type "thinking" :thinking "reason" :thinking-signature "sig" :redacted? false}
+                    {:type "tool_use"
+                     :id "tool-1"
+                     :name "demo"
+                     :input {"type" "user-data" "snake_case" 1}}]}]
+
+        (h/store-iteration!
+          s
+          {:session-turn-id turn-id :code "" :duration-ms 1 :llm-assistant-message message})
+        (let
+          [restored (-> (vis/db-list-session-turn-iterations s turn-id)
+                        first
+                        :llm-assistant-message
+                        force)]
+          (expect (= message restored))
+          (expect (= {"type" "user-data" "snake_case" 1} (get-in restored [:content 1 :input])))))))

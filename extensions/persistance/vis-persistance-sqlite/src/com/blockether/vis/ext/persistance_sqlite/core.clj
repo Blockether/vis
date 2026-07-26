@@ -131,25 +131,25 @@
    Tool input remains opaque so user map keys are never rewritten."
   ([value] (canonical-assistant-value value false))
   ([value opaque?]
-   (cond
-     opaque? value
-     (vector? value) (mapv canonical-assistant-value value)
-     (map? value)
-     (persistent!
-       (reduce-kv
-         (fn [out k v]
-           (let [canonical-k (get assistant-wire-key->canonical k k)]
-             (assoc! out canonical-k
-               (canonical-assistant-value v (= :input canonical-k)))))
-         (transient {})
-         value))
-     :else value)))
+   (cond opaque? value
+         (vector? value) (mapv canonical-assistant-value value)
+         (map? value)
+         (persistent! (reduce-kv (fn [out k v]
+                                   (let [canonical-k (get assistant-wire-key->canonical k k)]
+                                     (assoc! out
+                                             canonical-k
+                                             (canonical-assistant-value v (= :input canonical-k)))))
+                                 (transient {})
+                                 value))
+         :else value)))
 
 (defn- <-json-lazy
   "Lazily restores one persisted canonical Svar assistant message.
    Storage uses Vis wire strings; replay requires Svar's keyword envelope."
   [s]
-  (delay (some-> s <-json canonical-assistant-value)))
+  (delay (some-> s
+                 <-json
+                 canonical-assistant-value)))
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
