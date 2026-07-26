@@ -16,6 +16,8 @@
  *   npm run release:ios -- --no-upload  # stop at the .ipa (no App Store Connect call)
  *   npm run release:ios -- --version 1.2.0 --build 4711
  *   npm run release:ios -- --skip-web   # reuse dist/ and the last `cap sync`
+ *   npm run release:ios -- --prepare    # web + cap sync + stamp versions, then STOP
+ *                                       # (archive by hand in Xcode: Product > Archive)
  *
  * Upload auth, in order of preference:
  *   1. App Store Connect API key (headless, CI-friendly, no 2FA prompt):
@@ -111,6 +113,24 @@ console.log(
 if (!has('skip-web')) {
   run('npm', ['run', 'build']);
   run('npx', ['cap', 'sync', 'ios']);
+}
+
+// A hand-made Xcode archive reads the PROJECT, not our build settings, so stamp the
+// pbxproj too — otherwise Product > Archive ships MARKETING_VERSION 1.0 / build 1.
+const pbxproj = join(projectDir, 'App.xcodeproj', 'project.pbxproj');
+const stamped = readFileSync(pbxproj, 'utf8')
+  .replaceAll(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${marketingVersion};`)
+  .replaceAll(/CURRENT_PROJECT_VERSION = [^;]+;/g, `CURRENT_PROJECT_VERSION = ${buildNumber};`);
+writeFileSync(pbxproj, stamped);
+console.log(`· stamped App.xcodeproj  ${marketingVersion} (${buildNumber})`);
+
+if (has('prepare')) {
+  console.log(
+    `\n✓ prepared ${marketingVersion} (${buildNumber}).\n` +
+      `  Open:    open ${join(projectDir, 'App.xcworkspace')}\n` +
+      '  Archive: scheme App, destination "Any iOS Device (arm64)", Product > Archive\n',
+  );
+  process.exit(0);
 }
 
 // App Store Connect API key: also lets xcodebuild create signing assets itself.

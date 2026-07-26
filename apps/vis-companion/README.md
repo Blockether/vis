@@ -84,6 +84,7 @@ One command builds the bundle, syncs Capacitor, archives, exports a signed
 npm run release:ios                 # full run
 npm run release:ios -- --no-upload  # stop at the signed .ipa
 npm run release:ios -- --version 1.2.0 --build 4711
+npm run release:ios -- --prepare    # web + cap sync + stamp versions, then STOP
 ```
 
 Versioning has **no hand-edited state** — the script passes both numbers to
@@ -97,6 +98,15 @@ touched:
 
 Bump `package.json` `version` for a user-visible release; the build number takes
 care of itself.
+
+To archive by hand in Xcode, run `--prepare` first: it builds the bundle, syncs
+Capacitor, and writes the same two numbers into `App.xcodeproj` — a GUI archive
+reads the project, not our build settings, so without the stamp *Product >
+Archive* would ship `1.0 (1)` and App Store Connect would reject it. Then:
+
+```sh
+open ios/App/App.xcworkspace   # scheme App, destination "Any iOS Device (arm64)"
+```
 
 Signing uses Xcode-managed (cloud) distribution certificates for team
 `JSZTFUBUBB`; `-allowProvisioningUpdates` creates what is missing. For the
