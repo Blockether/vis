@@ -7,6 +7,670 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.5] - 2026-07-26
+
+### Changed
+- feat: harden context handling and push notifications
+- fix(runtime): rescue provider auth failures
+- fix(companion): prepare manual iOS archives
+- fix(loop): let repeated actions continue
+- feat(companion): automate TestFlight releases
+- fix: harden gateway compatibility and runtime lifecycle
+- fix(gateway): validate transcript window parameters
+- feat: page companion transcripts and clarify shell calls
+- fix: streamline queued polling and session surfaces
+- test: synchronize interrupted gather child
+- fix: harden session recovery and provider surfaces
+- fix(ci): restore local provider presets
+- fix(tui): keep navigator scroll arithmetic primitive
+- feat: harden queues, tools, and companion
+- fix(gateway): refresh stall watchdog on real progress
+- companion: canonical type scale, line-height in the scale, taller session header
+- perf(search): fff owns every ignore decision (overlay), no Clojure walk left
+- fix(queue): images in queued turns render as chips, not raw paths
+- fix(companion): smaller composer text and narrower +/mic buttons on phone
+- fix(companion): model badge is a quiet centered caption; composer no longer hugs the screen edge
+- perf(companion): cache /v1/router for 5 minutes and prefetch it at connect
+- fix(companion): New session back to solid primary; Share chip primary
+- fix(companion): model badge spans the composer width
+- fix(companion): model badge centered below the composer box, smaller
+- fix(companion): smaller Button chrome; sessions header actions share one palette
+- fix(companion): shrink session header chrome; move model picker under the composer as a badge
+- fix(companion): shrink composer + chrome — 36px icon buttons, smaller input text, 12px base
+- style(companion): bold button labels, smaller buttons and input text
+- fix(companion): point Capacitor ios.scheme at the real Xcode scheme
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning
+- perf(search): canonical pooled-fff search path
+- fix(lint): clear every eslint + clj-kondo finding
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background
+- Show authenticated OAuth providers in Router/Models manager
+- deps: bump svar to 0.7.77 (claude-opus-5)
+- Upstream vis config
+- Move network egress config under jail.network, gated by jail.enabled
+- Fix fold-card savings note breaking intent recording; type levels param
+- Fold card always reports savings, even a no-op re-fold
+- chore: sync working tree
+- fix(companion): point session search client at /v1/sessions/actions/search
+- fix(sandbox): align config-spec test + docs to jail.enabled rename (off by default)
+- Session search: title-first transcript preview across TUI and Companion
+- Group GitHub Copilot tiers and filter to active variant (#47, #48)
+- chore: working-tree updates (companion screens, copilot provider)
+- Merge remote-tracking branch 'origin/main'
+- Normalize toggle values to strings; surface config-denial hint in access view
+- chore(tui): channel-tui dialog/test updates
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.23
+- vis-companion: TS7-compatible capacitor config codegen + build:ios
+- chore(sandbox): sandbox off by default; config-spec rooted paths + deny-exec + ports; net-probe; docs + repo-wide reformat
+- Fix lint warning in oauth_test and stage pending workspace changes
+- Fixes
+- feat(providers): surface & route authenticated OAuth providers; bound gather pool
+- Suggest Tailscale IP when pairing a loopback-bound gateway
+- feat(streaming): distinct native-call preview phase + svar 0.7.75
+- fix(streaming): render native tool previews distinctly
+- fix(tui): scope Codex verbosity to session provider
+- chore(deps): bump tree-sitter-language-pack .20 -> .21 (TSX value bindings + arities)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.20
+- feat(editing): struct_index range/ranges windows + resilient edit-kind resolution
+- feat(editing): fold rg into find_files (name+content search); assorted WIP
+- feat(sandbox): per-session Seatbelt jail + gateway MITM egress proxy
+- chore(deps): bump svar to 0.7.73 (health-gated connect-blip retry)
+- chore: remove committed transcript scratch artifacts
+- Fix ForeignObject leak in session_state transcript projection
+- feat(transcript): canonical /export dialog with gateway md+html routes
+- feat(transcript): surface python stdout and attachments in transcript (#40)
+- fix(env-python): make tool failures catchable in-block (#42)
+- Fix Blockether light theme tab colors and dialog margins
+- fix(paramiko): drop shared MINA SSHD io-factory so every server negotiates
+- Render fixes
+- fix(channel-tui): restore result-row copy alignment for baked output indent
+- fix(paramiko-shim): self-reap MINA sshd host-side on session close
+- fix(gateway/bus): treat turn.cancelled as terminal in hydrate!
+- fix(channel-tui): declare flatland/ordered dep + align queue-close test
+- fix(prompt): gate user-pasted images on model vision + steer PIL fallback
+- deps: bump com.blockether/bridge 0.1.2 -> 0.2.1
+- Fix cat tool to accept all-kwargs spec map with path key
+- fix(editing): steer append_child/prepend_child used with a NAME locator
+- fix: preserve summary-only printed results
+- deps: bump svar 0.7.69 -> 0.7.70 (transient-message classifier: statusless/wrapper/gRPC transients + mid-stream code casing)
+- fix(tui): Linux clipboard OSC 52 fallback + scroll-safe transcript copy
+- Remove Piper TTS (speaking) from voice extension
+- Fix the errors
+- wip: in-progress vis changes
+- chore(deps): bump com.blockether/svar 0.7.66 -> 0.7.67 (catalog-driven Copilot vision)
+- chore(deps): bump com.blockether/svar 0.7.65 -> 0.7.66
+- Optimizations
+- Render doc/apropos native cards as authored markdown
+- refactor(lint): drop redundant coercions; suppress clj-kondo false positives
+- style: blank line between all top-level forms
+- feat(clojure-format): report which backend formatted each result
+- style: full-project cljfmt reformat
+- fix(tui-magit): make status keybindings faithful to vanilla magit
+- fix(clojure-test): relativize fault file paths in repl-mode test output
+- fix(python-cli): wire caller stdin into CLI context so -c/FILE can read sys.stdin
+- fix(self-docs): vis_docs both arities return {"pages": [...]} shape
+- Fixes to anchored editing
+- fix(provider): name rejected tool schemas
+- fix(tools): reject nonportable schema roots
+- fix(prompt): enforce compact actionable style
+- perf(tui): drop lazy-mapcat counter atom in list->lines; StringBuilder CLI lists
+- docs(extensions): prefer native agent tools
+- perf(render): drop per-list counter atoms for pure map-indexed
+- test(tui): recording proxies reconstruct pre-segmented styled runs
+- Performance improvements
+- perf(tui): single StringBuilder pass in run->sentinel-segment
+- Performance fixes for TUI!
+- perf(tui): halve styled-line paint allocation via sentinel split
+- perf(tui): skip grapheme array on plain lines in paint-styled-line!
+- Bump lanterna
+- deps(tui): bump com.blockether/lanterna to 3.1.5-vis.32
+- Better error signal for the compiler exceptions
+- perf(tui): identity-memoize layout height-key vector
+- fix(clj-test): honor run_tests :dir so sibling-project tests hit their own nREPL
+- perf(tui): O(log n) binary-search visible-window for scroll layout
+- perf(tui): replace pass-1 est mapv with primitive transient loop
+- perf(tui): cache last-bubble tail projection; coalesce tab-switch refresh
+- Performance fixes
+- fix(prompt): resolve guidance and error rendering regressions
+- Fixes to rendering
+- feat: refine prompts, errors, and TUI caching
+- Stage changes to prompts
+- Prompt changes, tui optimizations
+- Fixes to highlighting
+- Test runner fixes
+- Gateway fixes
+- Update language surface contract
+- Fixes to prompt and python env
+- Optimize prompt
+- test: align failing tests with current code
+- style: reformat with zprint (.zprint.edn) across src, extensions, test
+- chore: scrub residual telegram & web-channel mentions from comments and docs
+- refactor(gateway): resolve workspace via live-env fallback so root ops work pre-first-turn
+- chore(channels): remove telegram bot channel
+- fix(gateway): decouple SSE delivery from the turn thread via bounded per-connection queues
+- refactor(telegram): require transcript directly, drop requiring-resolve
+- fix(transcript): make HTML session export work without channel-web
+- fix(locks): drop obsolete call-py monitor, bound close!/close-all! turn-lock waits
+- chore(channels): remove web channel and react-native companion
+- refactor(env-python): one session context, one shared engine — pure-JVM renderer, in-context parser
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.18
+- fix(outline): surface the native cause, not opaque "FFI call failed"
+- fix(env-python): freeze-proof every GraalPy context + dict-safe ntr results
+- docs: add full security audit (AUDIT.md)
+- feat(loop): self-heal empty model replies via svar 0.7.63 same-model resend
+- Revert "fix(security): bound gateway JSON request body to 4 MiB (#6)"
+- fix(security): bound gateway JSON request body to 4 MiB (#6)
+- fix(security): allowlist markdown link schemes in server render (#2)
+- fix(editing): bound nearest-existing-dir climb to allowed roots; drop stale ls test
+- feat(editing): climb missing search paths to nearest existing dir + report missing_paths
+- refactor(rg): search paths as named (file OR dir), skip missing
+- fix(security): harden credential storage and token comparison (Batch A)
+- fix(python): seed apropos/doc for aliased extension symbols; apropos returns {name: gist} dict; clarify mcp double- vs single-underscore naming
+- chore(deps): update dependencies via antq
+- chore(deps): bump com.blockether/fff to 0.10.0-2
+- fix(editing): rg/find resolve paths to nearest existing directory instead of erroring
+- fix(clojure): reuse one nREPL session per connection + eval-based (+ 1 1) health check in ctx
+- refactor(repl): remove bin/dev launcher and clj_repl references
+- fix(clojure): fail eval fast on nREPL eval-error, interrupt the eval on timeout
+- feat(language-surface): aggregate lint findings by path
+- fix(channel-tui): keep the cost/token bubble footer on a cancelled turn that spent tokens
+- fix(loop): normalize svar 0.7 canonical token usage + append-only live tool-code fence
+- test(language-clojure): cover blank snippet defaults
+- feat(introspection): include session modified time
+- fix(language-clojure): ignore blank snippet defaults
+- fix(channel-tui): expand tabs before markdown wrapping
+- feat(paramiko): support key generation in shim
+- fix(channel-tui): preserve account plan quota windows
+- docs(ctx-engine): clarify compact-src docstring
+- feat(channel-tui): tint diff fence add/del rows and fix scrollbar flicker
+- refactor(foundation-search): drop Exa MCP env toggles from extension registration
+- feat(channel-web): colorize language-diff fences in static export
+- fix(channel-tui): read gateway project fields by string key
+- docs(fold): require full workspace-relative path:line anchors in gists
+- big refactor
+- feat(python-sandbox): auto-settle deferred tool calls on subscript/len/in
+- fix(tui): wire Esc to clear the pending-sends queue
+- fix(clojure): evict wedged nrepl connection on eval timeout
+- feat(python-cli): forward script argv and caller env into vis python sandbox
+- fix(channel-tui): reserve exact inline-image box from real terminal cell size
+- fix(tui): stop slash/file suggestion overlay flicker during live stream
+- fix(tui): ellipsize bubble footer meta line on narrow terminals
+- fix(shim-matplotlib): resolve per-element hex color lists without float() crash
+- fix(loop): eliminate boxed-math + recur-primitive warnings in re-entrant park/retry loop
+- fix(channel-tui): gate provider-limits poll resolve to cut idle CPU
+- fix(transcript): fence folded-gist body so it renders verbatim
+- fix(clojure-test-runner): silence framework reporter, structured failure digest
+- feat(self-docs): render vis_docs op-card as a table
+- perf(providers): cache fleet enumeration for footer-frequency reads (#29)
+- docs(readme): correct java prereq to 25+
+- chore(docs): drop Windows/PowerShell support from docs, readme, and installers
+- fix(test-runner): pr-str result under pinned print vars to survive truncating nREPL sessions
+- fix(self-docs): treat blank/absent vis_docs slug as list request
+- fix(gateway): parse /v1/events sids as UUIDs and persist cancel stamp
+- feat(editing): name the searched directory scope in rg & find_files op-card headlines
+- fix(loop): make the native-tool park re-entrant so nested run_tests keeps its budget
+- fix(compaction): show fold card savings as % of window, not a rising projected level
+- docs(channel-tui): document queue, cancel & Ctrl+C behavior
+- feat(compaction): project next-request % on fold cards and freeze unbounded fold selectors
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight
+
+### Package changes
+
+#### com.blockether/vis
+- feat: harden context handling and push notifications (445e449fd)
+- fix(runtime): rescue provider auth failures (2b51f2973)
+- fix(companion): prepare manual iOS archives (d15887c94)
+- fix(loop): let repeated actions continue (fd36551a1)
+- feat(companion): automate TestFlight releases (17596e521)
+- fix: harden gateway compatibility and runtime lifecycle (690669489)
+- fix(gateway): validate transcript window parameters (bc23c3cb9)
+- feat: page companion transcripts and clarify shell calls (9091fb3d1)
+- fix: streamline queued polling and session surfaces (7c6bc8b19)
+- test: synchronize interrupted gather child (24f5604a9)
+- fix: harden session recovery and provider surfaces (96d755216)
+- fix(ci): restore local provider presets (9ecddf6ac)
+- feat: harden queues, tools, and companion (5d773f2cf)
+- fix(gateway): refresh stall watchdog on real progress (553626fe1)
+- companion: canonical type scale, line-height in the scale, taller session header (f095e603a)
+- perf(search): fff owns every ignore decision (overlay), no Clojure walk left (760197012)
+- fix(queue): images in queued turns render as chips, not raw paths (5c5e4c6e5)
+- fix(companion): smaller composer text and narrower +/mic buttons on phone (dc16e6641)
+- fix(companion): model badge is a quiet centered caption; composer no longer hugs the screen edge (75869fb6f)
+- perf(companion): cache /v1/router for 5 minutes and prefetch it at connect (90474b8ce)
+- fix(companion): New session back to solid primary; Share chip primary (955a1fa32)
+- fix(companion): model badge spans the composer width (e6d773d80)
+- fix(companion): model badge centered below the composer box, smaller (043ee1209)
+- fix(companion): smaller Button chrome; sessions header actions share one palette (2e76aa43c)
+- fix(companion): shrink session header chrome; move model picker under the composer as a badge (e8bf1f0b8)
+- fix(companion): shrink composer + chrome — 36px icon buttons, smaller input text, 12px base (c46fe10ba)
+- style(companion): bold button labels, smaller buttons and input text (78651b508)
+- fix(companion): point Capacitor ios.scheme at the real Xcode scheme (26d282c43)
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- perf(search): canonical pooled-fff search path (6e71ab1e5)
+- fix(lint): clear every eslint + clj-kondo finding (dc0af88d3)
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background (3bbf8f888)
+- Show authenticated OAuth providers in Router/Models manager (776afc717)
+- deps: bump svar to 0.7.77 (claude-opus-5) (54ea9c8e2)
+- Upstream vis config (4d4e34a10)
+- Move network egress config under jail.network, gated by jail.enabled (20c3e3521)
+- Fix fold-card savings note breaking intent recording; type levels param (b3aedb4d6)
+- Fold card always reports savings, even a no-op re-fold (b4914e5cc)
+- chore: sync working tree (b1a3ee0e1)
+- fix(companion): point session search client at /v1/sessions/actions/search (ecf9b20d2)
+- fix(sandbox): align config-spec test + docs to jail.enabled rename (off by default) (1e629070a)
+- Session search: title-first transcript preview across TUI and Companion (762455312)
+- Group GitHub Copilot tiers and filter to active variant (#47, #48) (00ef8a991)
+- chore: working-tree updates (companion screens, copilot provider) (850cfb30f)
+- Normalize toggle values to strings; surface config-denial hint in access view (379d5d9e1)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.23 (acffb332c)
+- vis-companion: TS7-compatible capacitor config codegen + build:ios (945833600)
+- chore(sandbox): sandbox off by default; config-spec rooted paths + deny-exec + ports; net-probe; docs + repo-wide reformat (82db9d860)
+- Fix lint warning in oauth_test and stage pending workspace changes (5ca75032c)
+- Fixes (0b734bad0)
+- feat(providers): surface & route authenticated OAuth providers; bound gather pool (403e7982c)
+- Suggest Tailscale IP when pairing a loopback-bound gateway (a60702ba5)
+- feat(streaming): distinct native-call preview phase + svar 0.7.75 (b2488cca3)
+- fix(streaming): render native tool previews distinctly (b14c1ec69)
+- fix(tui): scope Codex verbosity to session provider (e4fa8fa83)
+- chore(deps): bump tree-sitter-language-pack .20 -> .21 (TSX value bindings + arities) (30396f84c)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.20 (1d8a6a28d)
+- feat(editing): struct_index range/ranges windows + resilient edit-kind resolution (929ff267c)
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- feat(sandbox): per-session Seatbelt jail + gateway MITM egress proxy (6dad9340e)
+- chore(deps): bump svar to 0.7.73 (health-gated connect-blip retry) (39497c64b)
+- chore: remove committed transcript scratch artifacts (546f44e2e)
+- Fix ForeignObject leak in session_state transcript projection (846a29df6)
+- feat(transcript): canonical /export dialog with gateway md+html routes (1f090ce6f)
+- feat(transcript): surface python stdout and attachments in transcript (#40) (5bab7111e)
+- fix(env-python): make tool failures catchable in-block (#42) (a0353dd0a)
+- Fix Blockether light theme tab colors and dialog margins (d8d06f748)
+- fix(paramiko): drop shared MINA SSHD io-factory so every server negotiates (a4f71b963)
+- Render fixes (cf9b43414)
+- fix(paramiko-shim): self-reap MINA sshd host-side on session close (3b5bbeff2)
+- fix(gateway/bus): treat turn.cancelled as terminal in hydrate! (1e82589d2)
+- fix(channel-tui): declare flatland/ordered dep + align queue-close test (88668e84d)
+- fix(prompt): gate user-pasted images on model vision + steer PIL fallback (be8cf6554)
+- deps: bump com.blockether/bridge 0.1.2 -> 0.2.1 (bc7ef6ad4)
+- Fix cat tool to accept all-kwargs spec map with path key (9cfef1a60)
+- fix(editing): steer append_child/prepend_child used with a NAME locator (781f4bf47)
+- fix: preserve summary-only printed results (aff9a70b6)
+- deps: bump svar 0.7.69 -> 0.7.70 (transient-message classifier: statusless/wrapper/gRPC transients + mid-stream code casing) (e97085cfb)
+- fix(tui): Linux clipboard OSC 52 fallback + scroll-safe transcript copy (6803f3396)
+- Remove Piper TTS (speaking) from voice extension (cb60b8e08)
+- Fix the errors (afe668357)
+- wip: in-progress vis changes (3efbfa51d)
+- chore(deps): bump com.blockether/svar 0.7.66 -> 0.7.67 (catalog-driven Copilot vision) (a057751a2)
+- chore(deps): bump com.blockether/svar 0.7.65 -> 0.7.66 (6e93506f2)
+- Optimizations (c847659af)
+- Render doc/apropos native cards as authored markdown (5f28638c0)
+- refactor(lint): drop redundant coercions; suppress clj-kondo false positives (62722c45b)
+- style: blank line between all top-level forms (d6fd30b17)
+- feat(clojure-format): report which backend formatted each result (4a140c50d)
+- style: full-project cljfmt reformat (5f81e3684)
+- fix(tui-magit): make status keybindings faithful to vanilla magit (bd8c1a958)
+- fix(clojure-test): relativize fault file paths in repl-mode test output (075d68353)
+- fix(python-cli): wire caller stdin into CLI context so -c/FILE can read sys.stdin (73d2c5e77)
+- fix(self-docs): vis_docs both arities return {"pages": [...]} shape (c4bd0865e)
+- Fixes to anchored editing (c9746b69d)
+- fix(provider): name rejected tool schemas (8b7d86986)
+- fix(tools): reject nonportable schema roots (836cd507b)
+- fix(prompt): enforce compact actionable style (9ef8c92fc)
+- perf(tui): drop lazy-mapcat counter atom in list->lines; StringBuilder CLI lists (1f9eb889c)
+- docs(extensions): prefer native agent tools (c7e167e21)
+- perf(render): drop per-list counter atoms for pure map-indexed (d1cf76102)
+- Performance improvements (5857ca85b)
+- Performance fixes for TUI! (cb2460d7a)
+- Bump lanterna (cf28b89fb)
+- Better error signal for the compiler exceptions (4b96c7cd5)
+- fix(clj-test): honor run_tests :dir so sibling-project tests hit their own nREPL (8cde86af8)
+- perf(tui): cache last-bubble tail projection; coalesce tab-switch refresh (4b2acd233)
+- Performance fixes (8be5edce6)
+- fix(prompt): resolve guidance and error rendering regressions (9b53851aa)
+- Fixes to rendering (8d80c62cf)
+- feat: refine prompts, errors, and TUI caching (ae55718d0)
+- Stage changes to prompts (72916fea4)
+- Prompt changes, tui optimizations (ecf8c0edc)
+- Fixes to highlighting (b4d1c8dfe)
+- Test runner fixes (2b1e8f754)
+- Gateway fixes (ad3ff3325)
+- Update language surface contract (bebfe1cdd)
+- Fixes to prompt and python env (14a075275)
+- Optimize prompt (98d24612f)
+- test: align failing tests with current code (6810dff21)
+- style: reformat with zprint (.zprint.edn) across src, extensions, test (7eecbe1e6)
+- chore: scrub residual telegram & web-channel mentions from comments and docs (1135b69c9)
+- refactor(gateway): resolve workspace via live-env fallback so root ops work pre-first-turn (bdb475d40)
+- chore(channels): remove telegram bot channel (503f82937)
+- fix(gateway): decouple SSE delivery from the turn thread via bounded per-connection queues (0c5fca9f9)
+- fix(transcript): make HTML session export work without channel-web (e47208045)
+- fix(locks): drop obsolete call-py monitor, bound close!/close-all! turn-lock waits (5ede59ced)
+- chore(channels): remove web channel and react-native companion (d73b78a4e)
+- refactor(env-python): one session context, one shared engine — pure-JVM renderer, in-context parser (1dea108d3)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.18 (48996c12c)
+- fix(outline): surface the native cause, not opaque "FFI call failed" (35711bbb4)
+- fix(env-python): freeze-proof every GraalPy context + dict-safe ntr results (5bd507d9b)
+- docs: add full security audit (AUDIT.md) (59e4c13bf)
+- feat(loop): self-heal empty model replies via svar 0.7.63 same-model resend (703e76484)
+- Revert "fix(security): bound gateway JSON request body to 4 MiB (#6)" (dd9899ff8)
+- fix(security): bound gateway JSON request body to 4 MiB (#6) (ada976fa7)
+- fix(security): allowlist markdown link schemes in server render (#2) (eef312469)
+- fix(editing): bound nearest-existing-dir climb to allowed roots; drop stale ls test (164ad4b19)
+- feat(editing): climb missing search paths to nearest existing dir + report missing_paths (b3d9bfd1f)
+- refactor(rg): search paths as named (file OR dir), skip missing (eb0e2fc7a)
+- fix(security): harden credential storage and token comparison (Batch A) (4c63a2534)
+- fix(python): seed apropos/doc for aliased extension symbols; apropos returns {name: gist} dict; clarify mcp double- vs single-underscore naming (1d55f071f)
+- chore(deps): update dependencies via antq (de1c707ff)
+- chore(deps): bump com.blockether/fff to 0.10.0-2 (0a98070dd)
+- fix(editing): rg/find resolve paths to nearest existing directory instead of erroring (0cbc9f802)
+- fix(clojure): reuse one nREPL session per connection + eval-based (+ 1 1) health check in ctx (74852acea)
+- refactor(repl): remove bin/dev launcher and clj_repl references (05f9ebaa2)
+- feat(language-surface): aggregate lint findings by path (7b5cbbc63)
+- fix(loop): normalize svar 0.7 canonical token usage + append-only live tool-code fence (dc04a9a8f)
+- feat(introspection): include session modified time (e85582900)
+- feat(paramiko): support key generation in shim (86df6895d)
+- fix(channel-tui): preserve account plan quota windows (3e3546dd5)
+- docs(ctx-engine): clarify compact-src docstring (cdf6bfa68)
+- feat(channel-tui): tint diff fence add/del rows and fix scrollbar flicker (928c43b56)
+- docs(fold): require full workspace-relative path:line anchors in gists (c158a5b5b)
+- big refactor (be1dbaa62)
+- feat(python-sandbox): auto-settle deferred tool calls on subscript/len/in (a7584b3fe)
+- feat(python-cli): forward script argv and caller env into vis python sandbox (3c0552d57)
+- fix(tui): stop slash/file suggestion overlay flicker during live stream (a3cf4971e)
+- fix(tui): ellipsize bubble footer meta line on narrow terminals (cad17abdb)
+- fix(shim-matplotlib): resolve per-element hex color lists without float() crash (42127aacc)
+- fix(loop): eliminate boxed-math + recur-primitive warnings in re-entrant park/retry loop (5a6aa5721)
+- fix(transcript): fence folded-gist body so it renders verbatim (b1f7baf9c)
+- feat(self-docs): render vis_docs op-card as a table (9af4039c9)
+- perf(providers): cache fleet enumeration for footer-frequency reads (#29) (bd821219f)
+- docs(readme): correct java prereq to 25+ (e8e01f2f3)
+- chore(docs): drop Windows/PowerShell support from docs, readme, and installers (47056f6ca)
+- fix(self-docs): treat blank/absent vis_docs slug as list request (4de0642ef)
+- fix(gateway): parse /v1/events sids as UUIDs and persist cancel stamp (fc79477ce)
+- feat(editing): name the searched directory scope in rg & find_files op-card headlines (3e30c97ea)
+- fix(loop): make the native-tool park re-entrant so nested run_tests keeps its budget (2aceff86c)
+- fix(compaction): show fold card savings as % of window, not a rising projected level (e5b277650)
+- docs(channel-tui): document queue, cancel & Ctrl+C behavior (2673fbf62)
+- feat(compaction): project next-request % on fold cards and freeze unbounded fold selectors (a8f835102)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-channel-tui
+- feat: harden context handling and push notifications (445e449fd)
+- fix: harden gateway compatibility and runtime lifecycle (690669489)
+- fix: harden session recovery and provider surfaces (96d755216)
+- fix(tui): keep navigator scroll arithmetic primitive (30891138f)
+- feat: harden queues, tools, and companion (5d773f2cf)
+- fix(queue): images in queued turns render as chips, not raw paths (5c5e4c6e5)
+- perf(companion): cache /v1/router for 5 minutes and prefetch it at connect (90474b8ce)
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background (3bbf8f888)
+- Show authenticated OAuth providers in Router/Models manager (776afc717)
+- chore: sync working tree (b1a3ee0e1)
+- Session search: title-first transcript preview across TUI and Companion (762455312)
+- Group GitHub Copilot tiers and filter to active variant (#47, #48) (00ef8a991)
+- Merge remote-tracking branch 'origin/main' (ecfb8df36)
+- Normalize toggle values to strings; surface config-denial hint in access view (379d5d9e1)
+- chore(tui): channel-tui dialog/test updates (69e1f775e)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.23 (acffb332c)
+- chore(sandbox): sandbox off by default; config-spec rooted paths + deny-exec + ports; net-probe; docs + repo-wide reformat (82db9d860)
+- Fix lint warning in oauth_test and stage pending workspace changes (5ca75032c)
+- Fixes (0b734bad0)
+- feat(providers): surface & route authenticated OAuth providers; bound gather pool (403e7982c)
+- feat(streaming): distinct native-call preview phase + svar 0.7.75 (b2488cca3)
+- fix(streaming): render native tool previews distinctly (b14c1ec69)
+- fix(tui): scope Codex verbosity to session provider (e4fa8fa83)
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- feat(sandbox): per-session Seatbelt jail + gateway MITM egress proxy (6dad9340e)
+- Fix ForeignObject leak in session_state transcript projection (846a29df6)
+- feat(transcript): canonical /export dialog with gateway md+html routes (1f090ce6f)
+- feat(transcript): surface python stdout and attachments in transcript (#40) (5bab7111e)
+- Fix Blockether light theme tab colors and dialog margins (d8d06f748)
+- Render fixes (cf9b43414)
+- fix(channel-tui): restore result-row copy alignment for baked output indent (88a58bf47)
+- fix(channel-tui): declare flatland/ordered dep + align queue-close test (88668e84d)
+- fix(prompt): gate user-pasted images on model vision + steer PIL fallback (be8cf6554)
+- fix(editing): steer append_child/prepend_child used with a NAME locator (781f4bf47)
+- deps: bump svar 0.7.69 -> 0.7.70 (transient-message classifier: statusless/wrapper/gRPC transients + mid-stream code casing) (e97085cfb)
+- fix(tui): Linux clipboard OSC 52 fallback + scroll-safe transcript copy (6803f3396)
+- Remove Piper TTS (speaking) from voice extension (cb60b8e08)
+- Optimizations (c847659af)
+- refactor(lint): drop redundant coercions; suppress clj-kondo false positives (62722c45b)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- fix(tui-magit): make status keybindings faithful to vanilla magit (bd8c1a958)
+- fix(clojure-test): relativize fault file paths in repl-mode test output (075d68353)
+- fix(python-cli): wire caller stdin into CLI context so -c/FILE can read sys.stdin (73d2c5e77)
+- fix(self-docs): vis_docs both arities return {"pages": [...]} shape (c4bd0865e)
+- perf(tui): drop lazy-mapcat counter atom in list->lines; StringBuilder CLI lists (1f9eb889c)
+- test(tui): recording proxies reconstruct pre-segmented styled runs (08c3e66f5)
+- Performance improvements (5857ca85b)
+- perf(tui): single StringBuilder pass in run->sentinel-segment (5ed478b6b)
+- Performance fixes for TUI! (cb2460d7a)
+- perf(tui): halve styled-line paint allocation via sentinel split (64e4d6db0)
+- perf(tui): skip grapheme array on plain lines in paint-styled-line! (285a07af4)
+- deps(tui): bump com.blockether/lanterna to 3.1.5-vis.32 (ba40cc26a)
+- Better error signal for the compiler exceptions (4b96c7cd5)
+- perf(tui): identity-memoize layout height-key vector (5f32d67d6)
+- perf(tui): O(log n) binary-search visible-window for scroll layout (0b01e116f)
+- perf(tui): replace pass-1 est mapv with primitive transient loop (f64f5dfdb)
+- perf(tui): cache last-bubble tail projection; coalesce tab-switch refresh (4b2acd233)
+- Performance fixes (8be5edce6)
+- Fixes to rendering (8d80c62cf)
+- feat: refine prompts, errors, and TUI caching (ae55718d0)
+- Prompt changes, tui optimizations (ecf8c0edc)
+- Fixes to highlighting (b4d1c8dfe)
+- Test runner fixes (2b1e8f754)
+- Gateway fixes (ad3ff3325)
+- Update language surface contract (bebfe1cdd)
+- Fixes to prompt and python env (14a075275)
+- Optimize prompt (98d24612f)
+- chore: scrub residual telegram & web-channel mentions from comments and docs (1135b69c9)
+- fix(python): seed apropos/doc for aliased extension symbols; apropos returns {name: gist} dict; clarify mcp double- vs single-underscore naming (1d55f071f)
+- chore(deps): update dependencies via antq (de1c707ff)
+- fix(editing): rg/find resolve paths to nearest existing directory instead of erroring (0cbc9f802)
+- fix(clojure): reuse one nREPL session per connection + eval-based (+ 1 1) health check in ctx (74852acea)
+- refactor(repl): remove bin/dev launcher and clj_repl references (05f9ebaa2)
+- fix(channel-tui): keep the cost/token bubble footer on a cancelled turn that spent tokens (ab7560bab)
+- fix(channel-tui): expand tabs before markdown wrapping (a1cd5b01e)
+- fix(channel-tui): preserve account plan quota windows (3e3546dd5)
+- feat(channel-tui): tint diff fence add/del rows and fix scrollbar flicker (928c43b56)
+- fix(channel-tui): read gateway project fields by string key (aa61779e0)
+- big refactor (be1dbaa62)
+- fix(tui): wire Esc to clear the pending-sends queue (f147d7b7c)
+- fix(channel-tui): reserve exact inline-image box from real terminal cell size (ca7b9426d)
+- fix(tui): stop slash/file suggestion overlay flicker during live stream (a3cf4971e)
+- fix(tui): ellipsize bubble footer meta line on narrow terminals (cad17abdb)
+- fix(channel-tui): gate provider-limits poll resolve to cut idle CPU (171abd2bf)
+- perf(providers): cache fleet enumeration for footer-frequency reads (#29) (bd821219f)
+- docs(channel-tui): document queue, cancel & Ctrl+C behavior (2673fbf62)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-foundation-bridge
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- Fixes (0b734bad0)
+- deps: bump com.blockether/bridge 0.1.2 -> 0.2.1 (bc7ef6ad4)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to rendering (8d80c62cf)
+- Fixes to highlighting (b4d1c8dfe)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-foundation-search
+- feat: harden queues, tools, and companion (5d773f2cf)
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background (3bbf8f888)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Bump lanterna (cf28b89fb)
+- Better error signal for the compiler exceptions (4b96c7cd5)
+- Fixes to highlighting (b4d1c8dfe)
+- chore: scrub residual telegram & web-channel mentions from comments and docs (1135b69c9)
+- refactor(repl): remove bin/dev launcher and clj_repl references (05f9ebaa2)
+- refactor(foundation-search): drop Exa MCP env toggles from extension registration (6bce7d3a0)
+- big refactor (be1dbaa62)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-foundation-voice
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- feat(streaming): distinct native-call preview phase + svar 0.7.75 (b2488cca3)
+- Remove Piper TTS (speaking) from voice extension (cb60b8e08)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- fix(prompt): resolve guidance and error rendering regressions (9b53851aa)
+- Fixes to rendering (8d80c62cf)
+- Fixes to highlighting (b4d1c8dfe)
+- chore: scrub residual telegram & web-channel mentions from comments and docs (1135b69c9)
+- chore(deps): update dependencies via antq (de1c707ff)
+- big refactor (be1dbaa62)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-language-clojure
+- fix: harden session recovery and provider surfaces (96d755216)
+- feat: harden queues, tools, and companion (5d773f2cf)
+- companion: canonical type scale, line-height in the scale, taller session header (f095e603a)
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background (3bbf8f888)
+- Show authenticated OAuth providers in Router/Models manager (776afc717)
+- chore(sandbox): sandbox off by default; config-spec rooted paths + deny-exec + ports; net-probe; docs + repo-wide reformat (82db9d860)
+- Fixes (0b734bad0)
+- feat(streaming): distinct native-call preview phase + svar 0.7.75 (b2488cca3)
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- Render fixes (cf9b43414)
+- fix(editing): steer append_child/prepend_child used with a NAME locator (781f4bf47)
+- deps: bump svar 0.7.69 -> 0.7.70 (transient-message classifier: statusless/wrapper/gRPC transients + mid-stream code casing) (e97085cfb)
+- Optimizations (c847659af)
+- refactor(lint): drop redundant coercions; suppress clj-kondo false positives (62722c45b)
+- style: blank line between all top-level forms (d6fd30b17)
+- feat(clojure-format): report which backend formatted each result (4a140c50d)
+- style: full-project cljfmt reformat (5f81e3684)
+- fix(clojure-test): relativize fault file paths in repl-mode test output (075d68353)
+- Fixes to anchored editing (c9746b69d)
+- Performance fixes for TUI! (cb2460d7a)
+- Better error signal for the compiler exceptions (4b96c7cd5)
+- fix(clj-test): honor run_tests :dir so sibling-project tests hit their own nREPL (8cde86af8)
+- Performance fixes (8be5edce6)
+- Prompt changes, tui optimizations (ecf8c0edc)
+- Fixes to highlighting (b4d1c8dfe)
+- Test runner fixes (2b1e8f754)
+- Gateway fixes (ad3ff3325)
+- Update language surface contract (bebfe1cdd)
+- Fixes to prompt and python env (14a075275)
+- Optimize prompt (98d24612f)
+- chore(deps): update dependencies via antq (de1c707ff)
+- fix(editing): rg/find resolve paths to nearest existing directory instead of erroring (0cbc9f802)
+- fix(clojure): reuse one nREPL session per connection + eval-based (+ 1 1) health check in ctx (74852acea)
+- refactor(repl): remove bin/dev launcher and clj_repl references (05f9ebaa2)
+- fix(clojure): fail eval fast on nREPL eval-error, interrupt the eval on timeout (2361ecb6e)
+- test(language-clojure): cover blank snippet defaults (9e398bd6b)
+- fix(language-clojure): ignore blank snippet defaults (f9c9490c1)
+- big refactor (be1dbaa62)
+- fix(clojure): evict wedged nrepl connection on eval timeout (47fc63e2c)
+- fix(clojure-test-runner): silence framework reporter, structured failure digest (bc84dd95e)
+- perf(providers): cache fleet enumeration for footer-frequency reads (#29) (bd821219f)
+- fix(test-runner): pr-str result under pinned print vars to survive truncating nREPL sessions (dfa51f7dd)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-language-python
+- fix: harden session recovery and provider surfaces (96d755216)
+- companion: canonical type scale, line-height in the scale, taller session header (f095e603a)
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background (3bbf8f888)
+- Show authenticated OAuth providers in Router/Models manager (776afc717)
+- Fixes (0b734bad0)
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-language-typescript-bun
+- companion: canonical type scale, line-height in the scale, taller session header (f095e603a)
+- feat(tui): flatten dialog, footer, and button chrome onto terminal background (3bbf8f888)
+- Show authenticated OAuth providers in Router/Models manager (776afc717)
+- Fixes (0b734bad0)
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-persistance-sqlite
+- feat: harden context handling and push notifications (445e449fd)
+- fix(runtime): rescue provider auth failures (2b51f2973)
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- chore: sync working tree (b1a3ee0e1)
+- Normalize toggle values to strings; surface config-denial hint in access view (379d5d9e1)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.23 (acffb332c)
+- chore(sandbox): sandbox off by default; config-spec rooted paths + deny-exec + ports; net-probe; docs + repo-wide reformat (82db9d860)
+- Fix lint warning in oauth_test and stage pending workspace changes (5ca75032c)
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- feat(sandbox): per-session Seatbelt jail + gateway MITM egress proxy (6dad9340e)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- Gateway fixes (ad3ff3325)
+- Fixes to prompt and python env (14a075275)
+- chore: scrub residual telegram & web-channel mentions from comments and docs (1135b69c9)
+- fix(security): harden credential storage and token comparison (Batch A) (4c63a2534)
+- fix(python): seed apropos/doc for aliased extension symbols; apropos returns {name: gist} dict; clarify mcp double- vs single-underscore naming (1d55f071f)
+- chore(deps): update dependencies via antq (de1c707ff)
+- big refactor (be1dbaa62)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-provider-anthropic
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- Fix lint warning in oauth_test and stage pending workspace changes (5ca75032c)
+- Fixes (0b734bad0)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- chore(deps): update dependencies via antq (de1c707ff)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-provider-github-copilot
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- chore: sync working tree (b1a3ee0e1)
+- Group GitHub Copilot tiers and filter to active variant (#47, #48) (00ef8a991)
+- chore: working-tree updates (companion screens, copilot provider) (850cfb30f)
+- Fixes (0b734bad0)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- chore(deps): update dependencies via antq (de1c707ff)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-provider-openai-codex
+- feat(providers): per-gateway providers, gateway-side auth, and session model pinning (ae734a66f)
+- Normalize toggle values to strings; surface config-denial hint in access view (379d5d9e1)
+- Fix lint warning in oauth_test and stage pending workspace changes (5ca75032c)
+- Fixes (0b734bad0)
+- feat(streaming): distinct native-call preview phase + svar 0.7.75 (b2488cca3)
+- style: blank line between all top-level forms (d6fd30b17)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- chore(deps): update dependencies via antq (de1c707ff)
+- big refactor (be1dbaa62)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-provider-standard
+- fix(ci): restore local provider presets (9ecddf6ac)
+- Fixes (0b734bad0)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- Optimize prompt (98d24612f)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-provider-zai
+- Fixes (0b734bad0)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- chore(deps): update dependencies via antq (de1c707ff)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+#### com.blockether/vis-workspace-rift
+- feat(editing): fold rg into find_files (name+content search); assorted WIP (1f798cef4)
+- fix(tui): Linux clipboard OSC 52 fallback + scroll-safe transcript copy (6803f3396)
+- style: full-project cljfmt reformat (5f81e3684)
+- Fixes to highlighting (b4d1c8dfe)
+- big refactor (be1dbaa62)
+- fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
+
+
+
 ### Changed
 - feat(workspace): rename `/draft-fresh` slash command to `/draft-blank` (empty drafts start with no HEAD files)
 
@@ -706,8 +1370,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.5...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
 [v0.1.4]: https://github.com/Blockether/vis/releases/tag/v0.1.4
+[v0.1.5]: https://github.com/Blockether/vis/releases/tag/v0.1.5
