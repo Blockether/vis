@@ -510,7 +510,9 @@
   ([env cmd opts]
    (let [cmd (str cmd)]
      (when (str/blank? cmd)
-       (throw (ex-info "shell(cmd) needs a non-blank command string." {:type ::blank-command})))
+       (throw (ex-info (str "shell needs a non-blank command — pass it as the lone positional"
+                            " or as {\"cmd\": \"…\"} in the options map.")
+                       {:type ::blank-command})))
      (let
        [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
         dir (resolve-cwd (assoc (or opts {}) ::environment env))
@@ -721,7 +723,8 @@
       (throw (ex-info "The shell bg op needs a non-blank resource id ({\"id\": …})."
                       {:type ::blank-id})))
     (when (str/blank? cmd)
-      (throw (ex-info "The shell bg op needs a non-blank command string (first argument)."
+      (throw (ex-info (str "The shell bg op needs a non-blank command string — the first argument,"
+                           " or {\"cmd\": \"…\"} in the options map.")
                       {:type ::blank-command})))
     (when (bg-entry session id) (resources/unregister! session id) (drop-bg-entry! session id))
     (let
