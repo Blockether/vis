@@ -20,6 +20,7 @@ import { SessionsScreen } from './screens/SessionsScreen';
 import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { parseRoute, sessionHash, tabHash } from './lib/router';
+import { useVisualViewportShell } from './lib/viewport';
 
 type Tab = 'sessions' | 'connect';
 
@@ -246,15 +247,22 @@ export function App() {
 
   useEffect(() => () => subscriptions?.dispose(), [subscriptions]);
 
+  // iOS shrinks the visual viewport for the keyboard instead of the layout one;
+  // without this the header slides up under the status bar while typing.
+  const shellStyle = useVisualViewportShell();
+
   if (!ready) return <Splash />;
 
   const hasConn = conns.length > 0 && !!active;
 
   return (
-    <div className="isolate flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body">
+    <div
+      className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
+      style={shellStyle}
+    >
       {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
 
-      <main className={`min-h-0 flex-1 ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <main className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {!hasConn || tab === 'connect' ? (
           <ConnectScreen
             conns={conns}
@@ -353,7 +361,7 @@ function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
 
   return (
     <nav
-      className="relative z-30 grid shrink-0 grid-cols-2 border-t border-dialog-edge bg-panel-2 px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 sm:hidden"
+      className="relative z-30 grid shrink-0 grid-cols-2 border-t border-dialog-edge bg-panel-2 px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.35rem,var(--safe-bottom,env(safe-area-inset-bottom)))] pt-1 sm:hidden"
       aria-label="Primary navigation"
     >
       {items.map((item) => (

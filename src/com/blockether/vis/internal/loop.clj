@@ -4115,6 +4115,30 @@
 
       (str fs-part " " net-part))))
 
+(defn- finalize-engine-native-tool
+  "Require and project the raw-result contract for one engine-owned native tool."
+  [{:keys [name description result] :as tool}]
+  (when-not (and (string? description) (not (str/blank? description)))
+    (throw (ex-info
+             (str "Engine native tool " name " is missing a non-blank :description contract.")
+             {:type :loop/missing-engine-native-description :name name})))
+  (when-not (and (string? result) (not (str/blank? result)))
+    (throw (ex-info (str "Engine native tool " name " is missing a non-blank :result contract.")
+                    {:type :loop/missing-engine-native-result :name name})))
+  (when (str/includes? description "Raw result:")
+    (throw (ex-info (str "Engine native tool "
+                         name
+                         " embeds the reserved `Raw result:` label in :description.")
+                    {:type :loop/engine-native-result-in-description :name name})))
+  (when (str/includes? result "Raw result:")
+    (throw (ex-info (str "Engine native tool "
+                         name
+                         " includes the reserved `Raw result:` label in :result.")
+                    {:type :loop/engine-native-result-has-label :name name})))
+  (-> tool
+      (assoc :description (str description "\n\nRaw result: " result))
+      (dissoc :result)))
+
 (defn- python-execution-tool
   "The engine-level `python_execution` tool schema. Preferred for batched,
    transformed, filtered, chained, and structural workflows so intermediate data
@@ -4132,6 +4156,8 @@
         "callable as bare snake_case, native-only ones are absent."
         (when-let [cap (python-execution-capability-line caps)]
           (str " " cap)))
+   :result
+   "String containing exactly the captured `print(...)` output; an empty print stream returns an empty string. Evaluation failures surface as failed tool results, not result objects."
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to evaluate in the sandbox."}}
@@ -4143,6 +4169,7 @@
   {:name "retry_native"
    :description
    "Retry a policy-approved failed native call by id, reusing its exact stored arguments."
+   :result "The retried tool's raw result unchanged; use that tool's `Raw result` contract."
    :schema {:type "object"
             :properties {"tool_call_id" {:type "string"
                                          :description "Id shown by a retryable tool result."}}
@@ -4169,6 +4196,8 @@
         "`await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
         "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
         "gist; partial overlaps remain.")
+   :result
+   "String receipt naming the folded scope and, when retained, its `ntr[...]` recovery accessors."
    :schema
    {:type "object"
     :properties
@@ -4197,6 +4226,7 @@
    (str "Discover live Python sandbox capabilities not already advertised as native tools. "
         "Do not call this to preflight a visible tool whose schema is already present. "
         "Returns compact name/gist results; the in-Python form returns a filterable dict.")
+   :result "Object mapping each matching capability name to its compact gist string."
    :schema {:type "object"
             :properties {"query" {:type "string"
                                   :description "Optional substring used to filter tool names."}}
@@ -4212,6 +4242,8 @@
    (str "Read one discovered Python sandbox capability's authoritative contract. "
         "Use it when that capability is not already advertised or its call shape is unclear; "
         "do not routinely preflight visible native tools.")
+   :result
+   "String containing the named capability's authoritative documentation, including its raw-result contract when it is a native tool."
    :schema {:type "object"
             :properties {"name" {:type "string"
                                  :description
@@ -4225,19 +4257,20 @@
    "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
 (defn- native-tools
-  "The native tool surface advertised to the model: the file tools declared via
-   each extension's `vis/symbol` `:native-tool` opt (single source of truth —
-   schema lives WITH the symbol), plus native discovery, reference retry, context
-  folding, and `python_execution`. `caps` (`:sandbox-caps` from the env) tailors
-  the latter's fs/network line."
+  "The complete provider-visible native surface. Extension tools arrive finalized
+   by `native-tool-schemas`; every engine-owned tool is finalized here, so no tool
+   can be advertised without an explicit raw-result contract."
   [active-extensions caps env]
-  (let [base (conj (extension/native-tool-schemas active-extensions env) (apropos-tool) (doc-tool))]
-    (cond-> base
-      (seq (extension/native-tool-replay-policies active-extensions env))
-      (conj (retry-native-tool))
+  (let
+    [engine-tools (cond-> [(apropos-tool) (doc-tool)]
+                    (seq (extension/native-tool-replay-policies active-extensions env))
+                    (conj (retry-native-tool))
 
-      true
-      (conj (session-fold-tool) (python-execution-tool caps)))))
+                    true
+                    (conj (session-fold-tool) (python-execution-tool caps)))]
+    (into (extension/native-tool-schemas active-extensions env)
+          (map finalize-engine-native-tool)
+          engine-tools)))
 
 (defn- advertised-native-capability-names
   "Provider-visible names plus Python compatibility names for active extension
@@ -10997,17 +11030,25 @@
        ;; or a router/extension reseat may have swapped it since we captured
        ;; `entry`, so the queued turn runs against the CURRENT context.
        (turn! (:environment (or (get @cache k) entry)) message-vec opts)
-       (finally (let [cur (or (get @cache k) entry)]
-                  (touch-entry! cur)
-                  (let [n (bump-turns! cur)]
-                    (if (and (pos? (long env-max-turns-per-ctx))
-                             (>= (long n) (long env-max-turns-per-ctx)))
-                      ;; Layer 2: recycle this session's Context between turns so a
-                      ;; single never-idle session can't grow it unbounded.
-                      (try (recycle-env! k) (catch Throwable _ nil))
-                      ;; Layer 1: best-effort guest gc.collect() between turns.
-                      (env/collect-garbage! (:environment cur)))))
-                (.unlock lock))))))
+       (finally
+         ;; Housekeeping must NEVER strand the lock. A throw from `touch-entry!`,
+         ;; `bump-turns!` or the guest-side `collect-garbage!` used to skip the
+         ;; `.unlock` below, pinning this session's entry as permanently
+         ;; "busy": `evict-if-idle!` tryLocks, fails forever, and the Context
+         ;; (plus its actions-pool thread and native heap) leaks for the life of
+         ;; the gateway. Unlock in an inner `finally` so it is unconditional.
+         (try (let [cur (or (get @cache k) entry)]
+                (touch-entry! cur)
+                (let [n (bump-turns! cur)]
+                  (if (and (pos? (long env-max-turns-per-ctx))
+                           (>= (long n) (long env-max-turns-per-ctx)))
+                    ;; Layer 2: recycle this session's Context between turns so a
+                    ;; single never-idle session can't grow it unbounded.
+                    (try (recycle-env! k) (catch Throwable _ nil))
+                    ;; Layer 1: best-effort guest gc.collect() between turns.
+                    (env/collect-garbage! (:environment cur)))))
+              (catch Throwable _ nil)
+              (finally (.unlock lock))))))))
 
 (defn close!
   [id]

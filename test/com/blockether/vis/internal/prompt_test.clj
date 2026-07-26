@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.env-python :as env-python]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -92,6 +93,7 @@
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "dependent chains" "fan-out" "output shaping" "Call advertised native tools directly"
           "never preflight a visible native tool" "read-only `session`"
+          "raw structured values, not UI-rendered text" "never infer fields from presentation"
           "never use `ctx` or `context`" "reproduce before editing"
           "rerun the same check after the fix" "batch independent reads" "Create no unrequested"
           "without asking permission or offering optional" "Never expose or log secrets"
@@ -125,26 +127,43 @@
                   "Before every `session_fold`" "`await session_state" "≤120 words"
                   "never offer a menu"]]
         (expect (not (str/includes? text surplus))))))
-  (it "advertises concise Python guidance and every auto-imported name"
-      (let [text (#'prompt/sandbox-shims-prompt-block nil)]
-        (expect (< (count text) 800))
-        (expect (not (str/includes? text "Not supported:")))
-        (expect (not (str/includes? text "apropos")))
-        (expect (not (str/includes? text "doc(name)")))
-        (expect (str/includes? text "Auto-imported by `python_execution`"))
-        (expect (str/includes? text "Preinstalled shims"))
-        (expect (str/includes? text "import numpy as np"))
-        (expect (str/includes? text "never auto-created"))
-        ;; No shell layer active ⇒ no shell sentence.
-        (expect (not (str/includes? text "subprocess")))
-        (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
-          (expect (str/includes? text (str "`" name "`"))))))
+  (it "advertises exact model-facing Python capabilities, never internal shim ids"
+      (let
+        [shims [{:shim/name "attach"
+                 :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments"
+                                "vis_read_attachment" "vis_reinspect_attachment"]}
+                {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
+                {:shim/name "numpy" :shim/imports ["numpy"]}
+                {:shim/name "pil" :shim/imports ["PIL"]}
+                {:shim/name "tzdata" :shim/imports ["zoneinfo"]}]]
+        (with-redefs [extension/sandbox-shims (constantly shims)]
+          (let [text (#'prompt/sandbox-shims-prompt-block nil)]
+            (expect (< (count text) 1200))
+            (expect (not (str/includes? text "Not supported:")))
+            (expect (not (str/includes? text "apropos")))
+            (expect (not (str/includes? text "doc(name)")))
+            (expect (str/includes? text "Auto-imported by `python_execution`"))
+            (expect (str/includes? text "Preinstalled shim modules"))
+            (expect (str/includes? text "import numpy as np"))
+            (expect (str/includes? text "never auto-created"))
+            (doseq [module ["PIL" "brotli" "fontTools" "numpy" "zoneinfo"]]
+              (expect (str/includes? text (str "`" module "`"))))
+            (expect (str/includes? text "Prebound shim globals"))
+            (doseq
+              [global ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
+                       "vis_reinspect_attachment"]]
+              (expect (str/includes? text (str "`" global "`"))))
+            (expect (not (str/includes? text "`attach`")))
+            ;; No shell layer active ⇒ no shell sentence.
+            (expect (not (str/includes? text "subprocess")))
+            (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
+              (expect (str/includes? text (str "`" name "`"))))))))
   (it "names the in-sandbox shell surface when the shell layer is active"
       ;; `shell` is an ordinary bound global in `python_execution` and the
       ;; POSIX-compat shim routes subprocess/os.system to it — neither fact is
       ;; discoverable from the shim NAME list, so the prompt has to say it.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (< (count text) 800))
+        (expect (< (count text) 1500))
         (expect (str/includes? text "`shell` is a bound global"))
         (expect (str/includes? text "shell(cmd)"))
         (expect (str/includes? text "\"op\": \"bg\""))

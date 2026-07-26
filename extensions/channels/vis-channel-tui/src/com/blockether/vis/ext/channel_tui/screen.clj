@@ -1431,17 +1431,20 @@
                (cond
                  ;; Fully on screen — unchanged.
                  (and (zero? crop-top) (zero? crop-bot)) topmost
-                 ;; Kitty: show the visible vertical slice at native scale via the
-                 ;; protocol's source rectangle — top AND bottom overflow both work.
-                 kitty? (assoc topmost
-                          :img (assoc img
-                                 :crop-top crop-top
-                                 :crop-bottom crop-bot))
-                 ;; iTerm2 can't source-crop. A top-cropped image can't be shown
-                 ;; partially, so drop it; a bottom-overflowing one shrinks
-                 ;; (aspect-preserving) to the visible rows so it doesn't bleed over
-                 ;; the input / footer.
+                 ;; Kitty, scrolled INTO the picture (its top edge is above the
+                 ;; band): show that vertical slice at native scale via the
+                 ;; protocol's source rectangle.
+                 (and kitty? (pos? crop-top))
+                 (assoc topmost
+                   :img (assoc img
+                          :crop-top crop-top
+                          :crop-bottom crop-bot))
+                 ;; iTerm2 can't source-crop, so a top-cropped image can't be
+                 ;; shown partially at all — drop it.
                  (pos? crop-top) nil
+                 ;; Bottom overflow only (BOTH protocols): the whole picture
+                 ;; shrinks, aspect-preserving, into the rows that are left —
+                 ;; never a decapitated top slice.
                  :else (assoc topmost
                          :img (assoc img
                                 :rows visible
@@ -6783,11 +6786,15 @@
                                ;; another command. `command-palette!`
                                ;; re-concats `dlg/palette-commands` internally.
                                ;; Keep extension slash roots out of. Ctrl+K;
-                               ;; typed `/` suggestion owns those.
+                               ;; typed `/` suggestion owns those. The ctx drops
+                               ;; turnless-illegal verbs (fork) from the list.
                                (when-let
                                  [cmd (with-dialog-lock #(dlg/command-palette!
                                                            screen
-                                                           (command-palette-extra-commands)))]
+                                                           (command-palette-extra-commands)
+                                                           {:has-turns? (boolean
+                                                                          (seq (:messages
+                                                                                 @state/app-db)))}))]
                                  (run-command! cmd)))
                              (recur))
 

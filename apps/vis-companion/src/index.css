@@ -220,6 +220,11 @@
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* The shell is a fixed viewport — every scroller is an inner element. Lock
+       the document itself so a sideways drag can never pan or rubber-band the
+       whole UI (WKWebView bounce, Android overscroll). */
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   html,

@@ -23,6 +23,7 @@ import 'prismjs/components/prism-yaml';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
+import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -110,7 +111,7 @@ const DiffBlock = memo(function DiffBlock({ value, compact }: { value: string; c
     >
       <CopyButton value={value} />
       <pre
-        className={`${compact ? 'text-meta ' : 'text-ui '} m-0 max-w-full overflow-x-auto py-2 font-mono`}
+        className={`${compact ? 'text-meta ' : 'text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}
       >
         {value.split('\n').map((line, index) => (
           <span
@@ -268,7 +269,7 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   return (
     <div className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden border border-code-edge bg-code`}>
       <CopyButton value={source} />
-      <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto font-mono text-code-foreground`}>
+      <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}>
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
             <div key={index} className="flex w-fit min-w-full whitespace-pre px-3 first:pr-16">
@@ -361,7 +362,7 @@ export const Markdown = memo(function Markdown({
           },
           strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
           table: ({ children: table }) => (
-            <div className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto`}>
+            <div className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto overscroll-x-contain`}>
               <table className="w-full border-collapse text-ui">{table}</table>
             </div>
           ),
@@ -414,21 +415,6 @@ function formatDuration(value?: number): string | null {
 
 const META_SEPARATOR = ' · ';
 
-function finiteNumber(...values: unknown[]): number | undefined {
-  return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
-}
-
-function humanizeCount(value: number): string {
-  const count = Math.trunc(value);
-  if (count < 1_000) return String(count);
-  const scale = count < 1_000_000 ? 1_000 : 1_000_000;
-  const unit = count < 1_000_000 ? 'k' : 'M';
-  const tenths = Math.round(count / (scale / 10));
-  const whole = Math.floor(tenths / 10);
-  const fraction = tenths % 10;
-  return `${whole}${fraction ? `.${fraction}` : ''}${unit}`;
-}
-
 function modelPair(value?: { provider?: string; model?: string }): string | null {
   const provider = value?.provider?.replace(/^:/, '').trim();
   const model = value?.model?.trim().replaceAll('/', '-');
@@ -455,20 +441,9 @@ function turnMetaSummary(turn: TranscriptTurn): string | null {
     provider: turn.provider ?? cost?.provider,
     model: turn.model ?? cost?.model,
   });
-  const input = finiteNumber(turn.tokens?.input, turn.input_tokens);
-  const output = finiteNumber(turn.tokens?.output, turn.output_tokens);
-  const cached = finiteNumber(turn.tokens?.cached, turn.input_cache_read_tokens);
-  const tokens = (input && input > 0) || (output && output > 0)
-    ? `${humanizeCount(input ?? 0)}→${humanizeCount(output ?? 0)}${cached && cached > 0 ? ` (cached ${humanizeCount(cached)})` : ''}`
-    : null;
-  const totalCost = finiteNumber(
-    turn.total_cost,
-    typeof turn.cost === 'number' ? turn.cost : undefined,
-    cost?.total_cost,
-  );
-  const price = totalCost && totalCost > 0
-    ? `~$${totalCost.toFixed(totalCost >= 1 ? 2 : totalCost >= 0.0001 ? 4 : 6)}`
-    : null;
+  const usage = turnUsage(turn);
+  const tokens = formatTokens(usage);
+  const price = formatCost(usage.cost);
   const duration = formatDuration(turn.duration_ms);
   const parts = [model, tokens, price, duration].filter((part): part is string => Boolean(part));
   return parts.length ? parts.join(META_SEPARATOR) : null;
@@ -502,16 +477,8 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
 }
 
 function assistantUsage(turn: TranscriptTurn): boolean {
-  const cost = typeof turn.cost === 'object' && turn.cost ? turn.cost : undefined;
-  return [
-    turn.tokens?.input,
-    turn.tokens?.output,
-    turn.input_tokens,
-    turn.output_tokens,
-    turn.total_cost,
-    typeof turn.cost === 'number' ? turn.cost : undefined,
-    cost?.total_cost,
-  ].some((value) => typeof value === 'number' && value > 0);
+  const usage = turnUsage(turn);
+  return usage.input > 0 || usage.output > 0 || usage.cost > 0;
 }
 
 function commandTurn(turn: TranscriptTurn): boolean {
@@ -951,7 +918,7 @@ export const UserMessage = memo(function UserMessage(
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (
           <span key={part.key} className="my-0.5 inline-flex items-center gap-1 border border-code-edge bg-code px-1.5 py-0.5 align-middle font-mono text-meta text-dialog-hint first:mt-0">
-            <span aria-hidden>⇗</span>{part.summary}
+            {part.summary}
           </span>
         ) : (
           <details key={part.key} className="group my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
@@ -959,7 +926,7 @@ export const UserMessage = memo(function UserMessage(
               <span className="mr-1 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
               {part.summary}
             </summary>
-            <pre className="max-h-[min(28rem,60dvh)] overflow-auto border-t border-code-edge px-2 py-2 font-mono text-meta [tab-size:2]">
+            <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-2 py-2 font-mono text-meta [tab-size:2]">
               <code>{part.content}</code>
             </pre>
           </details>

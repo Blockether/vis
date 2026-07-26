@@ -257,6 +257,7 @@ del __vis_install_urllib3__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "urllib3"
+       :shim/imports ["urllib3"]
        :shim/description
        "urllib3-compatible `urllib3` (PoolManager/HTTPResponse/request) wrapping the requests shim. Not supported: retries, connection pooling, and low-level TLS options are best-effort no-ops."
        :shim/preamble urllib3-compat-shim-src}]}))

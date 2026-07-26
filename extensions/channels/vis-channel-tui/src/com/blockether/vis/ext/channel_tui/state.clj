@@ -3068,7 +3068,10 @@
                                 (update w
                                         :pending-sends
                                         (fn [q]
-                                          (conj (vec (or q [])) (assoc entry :mine? true)))))))))
+                                          (conj (vec (or q []))
+                                                (assoc entry
+                                                  :mine? true
+                                                  :unsent? true)))))))))
 
 (reg-event-fx :sync-turn-clock
               ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
@@ -4265,6 +4268,50 @@
                               (assoc :status :cancelled))]))))))]
       (vis/cancellation-set-future! token fut))))
 
+;; ── Gateway queue I/O ──────────────────────────────────────────────────────
+;;
+;; Every gateway call in this section is a BLOCKING HTTP round-trip, and
+;; `dispatch` runs effects on the thread that dispatched — for a submission that
+;; is the TUI's INPUT thread. Inline, one unreachable daemon froze the editor for
+;; the whole `ensure-gateway!` respawn wait plus the request timeout: keys
+;; ignored, nothing on screen, no way to tell a slow send from a dead one. One
+;; FIFO thread fixes both halves at once — the input thread never waits on the
+;; network, and queue mutations still reach the daemon in the order they were
+;; typed (an add and its delete must not invert).
+(def ^:private gateway-queue-executor
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+           (reify
+             java.util.concurrent.ThreadFactory
+               (newThread [_ r]
+                 (doto (Thread. ^Runnable r "vis-tui-gateway-queue") (.setDaemon true)))))))
+
+(defn- gateway-queue-io!
+  "Run `f` on the single FIFO gateway-queue thread. Returns its Future so a
+   caller (or a test) can await the round-trip; the TUI never does."
+  [f]
+  (.submit ^java.util.concurrent.ExecutorService @gateway-queue-executor ^Runnable f))
+
+(def ^:private gateway-queue-attempts
+  "Total submit attempts before a queued submission falls back to a local row."
+  3)
+
+(def ^:private gateway-queue-retry-ms 400)
+
+(defn- submit-queued-turn!
+  "Submit `opts` for `sid`, retrying a TRANSPORT failure. Repeating is safe by
+   construction, not by hope: `:idempotency-key` is the gateway's dedup key, so a
+   resubmit whose first response was lost returns THE SAME turn (HTTP 200)
+   instead of queueing a second one. That is what carries a submission across the
+   seconds a killed daemon needs to respawn. Throws the last failure once the
+   attempts are spent — the caller then stages the text locally."
+  [sid opts]
+  (loop [attempt 1]
+    (let [res (try {:ok (vis/gateway-submit-turn! sid opts)} (catch Throwable t {:err t}))]
+      (cond (contains? res :ok) (:ok res)
+            (>= (long attempt) (long gateway-queue-attempts)) (throw (:err res))
+            :else (do (Thread/sleep (* (long attempt) (long gateway-queue-retry-ms)))
+                      (recur (inc (long attempt))))))))
+
 (reg-fx :gateway-enqueue
         ;; Register a busy-time submission as a REAL gateway queued turn (the ONE queue
         ;; of record) and paint the row from the ACK, through the same
@@ -4274,6 +4321,8 @@
         ;; of queueing it (the session went idle in the round-trip) there is no queued
         ;; row at all and the attach machinery renders it as the live turn. Only a
         ;; submission that never reached the queue is staged locally, so no text is lost.
+        ;; Runs on the FIFO queue thread (see above): pressing Enter is never blocked by
+        ;; the network.
         (fn [workspace-id session entry reasoning-level extra-body turn-features workspace]
           (let
             [sid
@@ -4283,53 +4332,85 @@
              (:client-id entry)
 
              agent-text
-             (:agent-text entry)]
+             (:agent-text entry)
+
+             ;; The COLLAPSED copy: paste/image tokens still folded into their
+             ;; `vis-paste`/`vis-image` fences. Sent so the queued record — and the
+             ;; `turn.started` every channel replays from — carries what the USER
+             ;; wrote, not the expanded agent text whose image path is a raw
+             ;; `/var/folders/…/clipboard-….png`.
+             display-text
+             (let [p (:preview-text entry)]
+               (when (and p (not= p agent-text)) p))
+
+             ;; RESCUE: the submission never reached the queue of record. Keep the
+             ;; text as a local row (marked `:unsent?`, so the strip says so rather
+             ;; than implying the server has it) and nudge the drain — the turn we
+             ;; queued BEHIND may well have finished while this round-trip was
+             ;; failing, and its terminal (the only other thing that pops the queue)
+             ;; has already passed. `:drain-pending` is a no-op while still busy.
+             stage!
+             (fn []
+               (dispatch [:stage-queued-locally workspace-id entry])
+               (try (dispatch [:drain-pending workspace-id]) (catch Throwable _ nil)))]
 
             (when sid
-              (try
-                (let
-                  [res
-                   (vis/gateway-submit-turn! sid
-                                             (cond->
-                                               {:request agent-text
-                                                ;; The gateway echoes this back on
-                                                ;; turn.queued and every wire view of the
-                                                ;; turn: the ONE key that tells us the row
-                                                ;; it broadcasts is our own submission.
-                                                :idempotency-key client-id}
-                                               reasoning-level
-                                               (assoc :reasoning-default reasoning-level)
+              (gateway-queue-io!
+                (fn []
+                  (try
+                    (let
+                      [res
+                       (submit-queued-turn! sid
+                                            (cond->
+                                              {:request agent-text
+                                               ;; The gateway echoes this back on
+                                               ;; turn.queued and every wire view of the
+                                               ;; turn: the ONE key that tells us the row
+                                               ;; it broadcasts is our own submission —
+                                               ;; and the key that makes the retry above
+                                               ;; idempotent.
+                                               :idempotency-key client-id}
+                                              reasoning-level
+                                              (assoc :reasoning-default reasoning-level)
 
-                                               extra-body
-                                               (assoc :extra-body extra-body)
+                                              extra-body
+                                              (assoc :extra-body extra-body)
 
-                                               (seq turn-features)
-                                               (assoc :turn-features turn-features)
+                                              (seq turn-features)
+                                              (assoc :turn-features turn-features)
 
-                                               (seq workspace)
-                                               (assoc :workspace workspace)))
+                                              display-text
+                                              (assoc :display-request display-text)
 
-                   turn
-                   (:turn res)
+                                              (seq workspace)
+                                              (assoc :workspace workspace)))
 
-                   tid
-                   (get turn "turn_id")]
+                       turn
+                       (:turn res)
 
-                  (cond (and tid (= "queued" (get turn "status")))
-                        (dispatch [:sync-queued-turn workspace-id
-                                   {:op :add
-                                    :turn-id tid
-                                    :client-id client-id
-                                    :text (or (get turn "request") agent-text)}])
-                        ;; Accepted but already RUNNING: not a queue row.
-                        tid nil
-                        :else (dispatch [:stage-queued-locally workspace-id entry])))
-                (catch Throwable t
-                  (dispatch [:stage-queued-locally workspace-id entry])
-                  (try (vis/notify! (str "Queue via gateway failed: " (or (ex-message t) (str t)))
-                                    :level :warn
-                                    :ttl-ms 3000)
-                       (catch Throwable _ nil))))))))
+                       tid
+                       (get turn "turn_id")]
+
+                      (cond (and tid (= "queued" (get turn "status")))
+                            (dispatch [:sync-queued-turn workspace-id
+                                       {:op :add
+                                        :turn-id tid
+                                        :client-id client-id
+                                        :text (or (get turn "request") agent-text)
+                                        :preview-text (or (get turn "request_preview")
+                                                          display-text
+                                                          (get turn "request")
+                                                          agent-text)}])
+                            ;; Accepted but already RUNNING: not a queue row.
+                            tid nil
+                            :else (stage!)))
+                    (catch Throwable t
+                      (stage!)
+                      (try (vis/notify! (str "Queue via gateway failed — kept locally: "
+                                             (or (ex-message t) (str t)))
+                                        :level :warn
+                                        :ttl-ms 3000)
+                           (catch Throwable _ nil))))))))))
 
 (reg-fx :gateway-delete-queued
         ;; Drop a gateway queued record. The local row is removed by the caller as a
@@ -4341,17 +4422,21 @@
         ;; 409 (already started — the attach machinery paints it) stay removed.
         (fn [sid tid workspace-id entry]
           (when (and sid tid)
-            (let
-              [failed?
-               (try (not= "deleted" (get (vis/gateway-delete-queued-turn! sid tid) "status"))
-                    (catch Throwable t (not (contains? #{404 409} (:http-status (ex-data t))))))]
-              (when (and failed? workspace-id)
-                (dispatch [:sync-queued-turn workspace-id
-                           {:op :add
-                            :turn-id tid
-                            :text (:text entry)
-                            :client-id (:client-id entry)
-                            :mine? (:mine? entry)}]))))))
+            (gateway-queue-io!
+              (fn []
+                (let
+                  [failed? (try (not= "deleted"
+                                      (get (vis/gateway-delete-queued-turn! sid tid) "status"))
+                                (catch Throwable t
+                                  (not (contains? #{404 409} (:http-status (ex-data t))))))]
+                  (when (and failed? workspace-id)
+                    (dispatch [:sync-queued-turn workspace-id
+                               {:op :add
+                                :turn-id tid
+                                :text (:text entry)
+                                :preview-text (:preview-text entry)
+                                :client-id (:client-id entry)
+                                :mine? (:mine? entry)}]))))))))
 
 (reg-fx :submit-orphan-sends
         ;; A closing tab still held AUTHORED submissions that never reached the
@@ -4360,8 +4445,7 @@
         ;; session and is visible on the next reattach. Best effort off the input
         ;; thread; a failure surfaces as a warning notification, never a throw.
         (fn [sid texts]
-          (vis/worker-future "tui-submit-orphan-sends"
-                             (fn []
+          (gateway-queue-io! (fn []
                                (doseq [text texts]
                                  (try (vis/gateway-submit-turn! sid {:request text})
                                       (catch Throwable t
@@ -4386,7 +4470,9 @@
         ;; subscription turns into :sibling-turn-started -> :attach-running-turn.
         ;; Best-effort; a stopped daemon or lost race simply leaves it queued.
         (fn [sid]
-          (when sid (try (vis/gateway-drain-idle! sid) (catch Throwable _ nil)))))
+          (when sid
+            (gateway-queue-io! (fn []
+                                 (try (vis/gateway-drain-idle! sid) (catch Throwable _ nil)))))))
 
 (reg-fx :gateway-close-session
         (fn [sid]

@@ -427,43 +427,47 @@
      {:attached [] :skipped []}
      (or attachments []))))
 
+(defn text->inline-chips
+  "`text` with every image-shaped PATH token replaced by a short `name.png`
+   chip, and NOTHING else touched — line breaks, indentation and the prose around
+   each path all survive.
+
+   Pure string work: no filesystem access, no pixel bytes, so it is safe on a
+   paint path and on text whose files have since been deleted. Use it wherever a
+   user message is DISPLAYED (transcript bubble, notification body); the original
+   text is never mutated, so re-send/edit still ships the path that re-attaches
+   the picture."
+  [text]
+  (let [s (str (or text ""))]
+    (if-not (re-find image-extension-present-pattern s)
+      s
+      (str/replace s
+                   image-path-token-pattern
+                   (fn [m]
+                     (let
+                       [clean (-> (str m)
+                                  (str/replace #"^[\"'(\[{<]+" "")
+                                  (str/replace #"[\"')\]}>.,;:!?]+$" "")
+                                  unescape-token
+                                  strip-file-url)
+                        base (last (str/split clean #"[/\\\\]"))]
+
+                       (if (str/blank? (str base)) clean base)))))))
+
 (defn text->chip-preview
   "One-line, path-free rendering of ONE user message for compact previews
    (queue rows, tab titles, notifications).
 
-   Every image-shaped path token collapses to a short `🖼 name.png` chip, the
-   prose around it survives, and whitespace collapses to single spaces. Pure
-   string work — no filesystem access, no pixel bytes — so it is safe on a
-   paint path and on text whose files have since been deleted. That is the
-   whole point: a queued message authored by dropping a screenshot used to
-   render as a raw `/var/folders/…/clipboard-….png`, which tells the user
+   Every image-shaped path token collapses to a short `name.png` chip (see
+   `text->inline-chips`), the prose around it survives, and whitespace collapses
+   to single spaces. Pure string work — no filesystem access, no pixel bytes — so
+   it is safe on a paint path and on text whose files have since been deleted.
+   That is the whole point: a queued message authored by dropping a screenshot
+   used to render as a raw `/var/folders/…/clipboard-….png`, which tells the user
    nothing about what they queued.
 
    Returns nil when the message is nothing but images — the caller should paint
    attachment chips alone rather than an empty row. The ORIGINAL text is never
    mutated; callers keep it for re-send/edit so the paths still re-attach."
   [text]
-  (let
-    [s
-     (str (or text ""))
-
-     collapse
-     #(not-empty (str/trim (str/replace % #"\s+" " ")))]
-
-    (if-not (re-find image-extension-present-pattern s)
-      (collapse s)
-      (collapse (str/replace s
-                             image-path-token-pattern
-                             (fn [m]
-                               (let
-                                 [clean
-                                  (-> (str m)
-                                      (str/replace #"^[\"'(\[{<]+" "")
-                                      (str/replace #"[\"')\]}>.,;:!?]+$" "")
-                                      unescape-token
-                                      strip-file-url)
-
-                                  base
-                                  (last (str/split clean #"[/\\\\]"))]
-
-                                 (str "🖼 " (if (str/blank? (str base)) clean base)))))))))
+  (not-empty (str/trim (str/replace (text->inline-chips text) #"\s+" " "))))

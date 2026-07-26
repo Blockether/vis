@@ -6,6 +6,7 @@
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context Value]
@@ -186,21 +187,41 @@
                    (expect (re-find #"RAISED" (str (:stdout out))))
                    (expect (empty? (:attachments out))))))
 
-(defdescribe vis-attach-discovery-test
-             (it "surfaces vis_attach / vis_attach_bytes / vis_attachments via apropos and doc"
-                 (let [pctx (ctx-with-root (temp-root))]
-                   (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachments"]
-                              (vec (ev pctx "sorted(apropos('vis_attach'))"))))
-                   (expect (true? (ev pctx "'callable' in doc('vis_attach')")))
-                   (expect (true? (ev pctx "'callable' in doc('vis_reinspect_attachment')")))))
-             (it "raises when called with no active capture sink (outside a driven block)"
-                 (let [pctx (ctx-with-root (temp-root))]
-                   ;; a bare .eval does NOT bind the per-block sink, so the bridge refuses
-                   (expect (re-find #"no active capture sink"
-                                    (ev pctx
-                                        (str "\ntry:\n" "    vis_attach_bytes('x', 'y.txt')\n"
-                                             "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
-                                             "    _r = str(e)\n" "_r")))))))
+(defdescribe
+  vis-attach-discovery-test
+  (it "surfaces vis_attach / vis_attach_bytes / vis_attachments via apropos and doc"
+      (let [pctx (ctx-with-root (temp-root))]
+        (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachments"]
+                   (vec (ev pctx "sorted(apropos('vis_attach'))"))))
+        (expect (false? (ev pctx "'attach' in apropos('attach')")))
+        (expect (true? (ev pctx "'callable' in doc('vis_attach')")))
+        (expect (true? (ev pctx "'callable' in doc('vis_reinspect_attachment')")))))
+  (it "discovers declared capabilities instead of the internal shim identity"
+      (with-redefs
+        [extension/sandbox-shims
+         (constantly [{:shim/name "internal-id"
+                       :shim/imports ["actual_module"]
+                       :shim/globals ["actual_global"]
+                       :shim/description "Synthetic discovery contract."
+                       :shim/preamble (str "import sys, types\n"
+                                           "actual_module = types.ModuleType('actual_module')\n"
+                                           "actual_module.answer = 42\n"
+                                           "sys.modules['actual_module'] = actual_module\n"
+                                           "def actual_global(): return 42\n")}])]
+        (let [pctx (ctx-with-root (temp-root))]
+          (expect (= ["actual_global" "actual_module"] (vec (ev pctx "sorted(apropos('actual'))"))))
+          (expect (= 42 (ev pctx "import actual_module; actual_module.answer")))
+          (expect (= 42 (ev pctx "actual_global()")))
+          (expect (false? (ev pctx "'internal-id' in apropos('internal')")))
+          (expect (true? (ev pctx "'Synthetic discovery contract.' in doc('actual_module')"))))))
+  (it "raises when called with no active capture sink (outside a driven block)"
+      (let [pctx (ctx-with-root (temp-root))]
+        ;; a bare .eval does NOT bind the per-block sink, so the bridge refuses
+        (expect (re-find #"no active capture sink"
+                         (ev pctx
+                             (str "\ntry:\n" "    vis_attach_bytes('x', 'y.txt')\n"
+                                  "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
+                                  "    _r = str(e)\n" "_r")))))))
 
 (defdescribe
   vis-outbox-capture-test

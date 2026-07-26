@@ -26,6 +26,20 @@
                        :visible-fn (fn []
                                      (boolean (vis/has-provider? :openai-codex)))})
 
+(defn- await-enqueue!
+  "Gateway queue effects post on the FIFO gateway-queue thread and hand back that
+   Future. Tests await the round-trip the TUI deliberately does not."
+  [^java.util.concurrent.Future fut]
+  (when fut (.get fut 10 java.util.concurrent.TimeUnit/SECONDS)))
+
+(defn- flush-queue-io!
+  "Block until the queue thread has drained everything posted so far: one no-op
+   queued BEHIND the work under test, which suffices because it is one FIFO thread."
+  []
+  (await-enqueue! (#'state/gateway-queue-io!
+                   (fn []
+                     :flushed))))
+
 (defdescribe turn-extra-body-test
              (it "omits OpenAI verbosity when the session selects Claude"
                  (with-redefs
@@ -1198,6 +1212,7 @@
           (state/dispatch
             [:attach-running-turn "s1"
              {:id "s1" :status "idle" :queued-turns [{:turn-id "q1" :text "hi" :queued-at-ms 1}]}])
+          (flush-queue-io!)
           (expect (= "s1" @drained)))))
   (it "does not drain when the idle session has no queued backlog"
       (let [drained (atom :unset)]
@@ -1986,7 +2001,10 @@
 
         (expect (= "second" (:text row)))
         (expect (nil? (:turn-id row)))
-        (expect (true? (:mine? row)))))
+        (expect (true? (:mine? row)))
+        ;; …and FLAGGED as never-sent, so the queued strip can say so instead of
+        ;; painting it exactly like a server-backed row.
+        (expect (true? (:unsent? row)))))
   (it "paints the queued row from the gateway ACK, and the broadcast is a no-op"
       ;; The enqueue fx feeds the SAME `:sync-queued-turn` writer the `turn.queued`
       ;; broadcast feeds, keyed by the same gateway turn id: whichever lands first
@@ -2004,13 +2022,14 @@
           [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
            client-id (#'state/mint-client-id :main)]
 
-          (enqueue-fx :main
-                      {:id "c1"}
-                      {:text "second" :agent-text "second" :client-id client-id :mine? true}
-                      nil
-                      nil
-                      {}
-                      nil)
+          (await-enqueue! (enqueue-fx
+                            :main
+                            {:id "c1"}
+                            {:text "second" :agent-text "second" :client-id client-id :mine? true}
+                            nil
+                            nil
+                            {}
+                            nil))
           (expect (= ["t-7"] (mapv :turn-id (:pending-sends @state/app-db))))
           ;; ours, because the id came back from the gateway unchanged
           (expect (true? (:mine? (first (:pending-sends @state/app-db)))))
@@ -2018,6 +2037,42 @@
           (state/dispatch [:sync-queued-turn :main
                            {:op :add :turn-id "t-7" :client-id client-id :text "second"}])
           (expect (= 1 (count (:pending-sends @state/app-db)))))))
+  (it "a queued image submit sends the COLLAPSED display copy, not the raw temp path"
+      ;; Regression: `:gateway-enqueue` sent only `:agent-text` (paste placeholders
+      ;; EXPANDED, so a pasted screenshot is a bare `/var/folders/…/clipboard-….png`).
+      ;; The gateway then stored that as the turn's request and every channel — this
+      ;; TUI's own transcript and the companion — painted the raw path. The collapsed
+      ;; `vis-image` copy must ride along as `:display-request`.
+      (let
+        [sent
+         (atom nil)
+
+         preview
+         "\n````vis-image\n[Image #1: shot.png, 44KB]\n/tmp/shot.png\nimage/png\n\n44KB\n````\n"]
+
+        (with-redefs
+          [vis/gateway-submit-turn!
+           (fn [_ opts]
+             (reset! sent opts)
+             {:turn {"turn_id" "t-9" "status" "queued" "request" (:request opts)}})]
+          (reset! state/app-db
+            {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
+          (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)]
+            (await-enqueue! (enqueue-fx :main
+                                        {:id "c1"}
+                                        {:text "look [Image #1: shot.png, 44KB]"
+                                         :preview-text preview
+                                         :agent-text "look \n/tmp/shot.png\n"
+                                         :client-id "x"
+                                         :mine? true}
+                                        nil
+                                        nil
+                                        {}
+                                        nil))
+            (expect (= preview (:display-request @sent)))
+            (expect (= "look \n/tmp/shot.png\n" (:request @sent)))
+            ;; and the queue row itself shows the collapsed copy
+            (expect (= preview (:preview-text (first (:pending-sends @state/app-db)))))))))
   (it "an accepted turn the gateway STARTED is never mirrored as queued"
       (with-redefs
         [vis/gateway-submit-turn! (fn [_ _]
@@ -2025,14 +2080,157 @@
         (reset! state/app-db
           {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
         (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)]
-          (enqueue-fx :main
-                      {:id "c1"}
-                      {:text "second" :agent-text "second" :client-id "x" :mine? true}
-                      nil
-                      nil
-                      {}
-                      nil)
+          (await-enqueue! (enqueue-fx
+                            :main
+                            {:id "c1"}
+                            {:text "second" :agent-text "second" :client-id "x" :mine? true}
+                            nil
+                            nil
+                            {}
+                            nil))
           (expect (= [] (:pending-sends @state/app-db)))))))
+
+(defdescribe
+  gateway-enqueue-off-input-thread-test
+  (it "a busy-time submit never blocks the caller — the TUI input thread"
+      ;; Regression: `dispatch` runs effects on the DISPATCHING thread, and for a
+      ;; submission that thread is the key loop (`screen/submit-input!`). The
+      ;; enqueue POST was inline, so one unreachable daemon froze the editor for
+      ;; the whole `ensure-gateway!` respawn wait plus the request timeout — with
+      ;; no cursor, no feedback, nothing. It now hands off to the FIFO queue thread.
+      (with-redefs
+        [vis/gateway-submit-turn!
+         (fn [_ _]
+           (Thread/sleep 1500)
+           {:turn {"turn_id" "t-slow" "status" "queued"}})
+
+         vis/notify!
+         (fn [& _]
+           nil)]
+
+        (reset! state/app-db {:session {:id "c1"}
+                              :active-tab-id :main
+                              :render-version 0
+                              :loading? true
+                              :pending-sends []})
+        (let
+          [t0
+           (System/currentTimeMillis)
+
+           _
+           (state/dispatch [:enqueue-message "while busy"])
+
+           blocked
+           (- (System/currentTimeMillis) t0)]
+
+          (expect (< blocked 500))
+          ;; …and the row still lands, painted from the gateway ACK.
+          (Thread/sleep 2500)
+          (expect (= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db)))))))
+  (it "a lost round-trip is retried under the idempotency key, never duplicated"
+      ;; The daemon can die mid-POST and respawn seconds later. Retrying is safe BY
+      ;; CONSTRUCTION, not by hope: `:idempotency-key` is the gateway's dedup key,
+      ;; so the second attempt replays THE SAME turn instead of queueing a twin.
+      (let [calls (atom 0)]
+        (with-redefs
+          [vis/gateway-submit-turn! (fn [_ opts]
+                                      (if (= 1 (swap! calls inc))
+                                        (throw (java.net.ConnectException. "Connection refused"))
+                                        {:turn {"turn_id" "t-same"
+                                                "status" "queued"
+                                                "idempotency_key" (:idempotency-key opts)}}))
+           vis/notify! (fn [& _]
+                         nil)]
+
+          (reset! state/app-db {:session {:id "c1"}
+                                :active-tab-id :main
+                                :render-version 0
+                                :loading? true
+                                :pending-sends []})
+          (await-enqueue! ((get @@#'state/fx-registry :gateway-enqueue)
+                            :main
+                            {:id "c1"}
+                            {:text "x" :agent-text "x" :client-id "cid" :mine? true}
+                            nil
+                            nil
+                            {}
+                            nil))
+          (expect (= 2 @calls))
+          (expect (= ["t-same"] (mapv :turn-id (:pending-sends @state/app-db)))))))
+  (it "a submission the gateway never took is staged unsent AND drained, not orphaned"
+      ;; Both halves of the rescue. The row is FLAGGED (the strip must not imply the
+      ;; server has it), and the drain is nudged: the turn we queued behind may have
+      ;; finished DURING the failing round-trip, and its terminal — the only other
+      ;; thing that pops the queue — has already passed, so nothing would ever send it.
+      (let
+        [sent
+         (atom [])
+
+         prev
+         (get @@#'state/fx-registry :session-turn)]
+
+        (state/reg-fx :session-turn
+                      (fn [_ _ text & _]
+                        (swap! sent conj text)))
+        (try (with-redefs
+               [vis/gateway-submit-turn!
+                (fn [_ _]
+                  (throw (java.net.ConnectException. "refused")))
+
+                vis/notify!
+                (fn [& _]
+                  nil)]
+
+               (reset! state/app-db {:session {:id "c1"}
+                                     :active-tab-id :main
+                                     :render-version 0
+                                     :loading? false
+                                     :pending-sends []})
+               (await-enqueue!
+                 ((get @@#'state/fx-registry :gateway-enqueue)
+                   :main
+                   {:id "c1"}
+                   {:text "rescue me" :agent-text "rescue me" :client-id "cid3" :mine? true}
+                   nil
+                   nil
+                   {}
+                   nil))
+               (expect (= ["rescue me"] @sent))
+               (expect (empty? (:pending-sends @state/app-db))))
+             (finally (state/reg-fx :session-turn prev)))))
+  (it "queue posts reach the daemon in the order they were typed"
+      ;; One FIFO thread, not a thread per submit: an add and its delete may never
+      ;; invert, so ordering is part of the fix — not a side effect of it.
+      (let [seen (atom [])]
+        (with-redefs
+          [vis/gateway-submit-turn! (fn [_ opts]
+                                      (Thread/sleep 60)
+                                      (swap! seen conj (:request opts))
+                                      {:turn {"turn_id" (str "t-" (:request opts))
+                                              "status" "running"}})
+           vis/notify! (fn [& _]
+                         nil)]
+
+          (reset! state/app-db {:session {:id "c1"}
+                                :active-tab-id :main
+                                :render-version 0
+                                :loading? true
+                                :pending-sends []})
+          (let
+            [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
+             futs (mapv (fn [n]
+                          (enqueue-fx :main
+                                      {:id "c1"}
+                                      {:text n :agent-text n :client-id n :mine? true}
+                                      nil
+                                      nil
+                                      {}
+                                      nil))
+                        ["1" "2" "3"])]
+
+            (doseq [f futs]
+              (await-enqueue! f))
+            (expect (= ["1" "2" "3"] @seen)))))))
 
 (defdescribe set-title-background-tab-test
              (it "relabels a background tab live without touching the active tab"
@@ -2686,11 +2884,11 @@
                                            (throw (ex-info "connection refused" {})))]
         (reset! state/app-db
           {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
-        ((get @@#'state/fx-registry :gateway-delete-queued)
-          "s1"
-          "q1"
-          "s1"
-          {:text "still queued" :client-id "c1" :mine? true})
+        (await-enqueue! ((get @@#'state/fx-registry :gateway-delete-queued)
+                          "s1"
+                          "q1"
+                          "s1"
+                          {:text "still queued" :client-id "c1" :mine? true}))
         (let [row (first (:pending-sends @state/app-db))]
           (expect (= "q1" (:turn-id row)))
           (expect (= "still queued" (:text row)))
@@ -2703,18 +2901,21 @@
                                              (throw (ex-info "nope" {:http-status status})))]
           (reset! state/app-db
             {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
-          ((get @@#'state/fx-registry :gateway-delete-queued)
-            "s1"
-            "q1"
-            "s1"
-            {:text "gone" :mine? true})
+          (await-enqueue! ((get @@#'state/fx-registry :gateway-delete-queued)
+                            "s1"
+                            "q1"
+                            "s1"
+                            {:text "gone" :mine? true}))
           (expect (= [] (:pending-sends @state/app-db))))))
-  (it
-    "does nothing more when the delete succeeds"
-    (with-redefs
-      [vis/gateway-delete-queued-turn! (fn [_ _]
-                                         {"status" "deleted"})]
-      (reset! state/app-db
-        {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
-      ((get @@#'state/fx-registry :gateway-delete-queued) "s1" "q1" "s1" {:text "gone" :mine? true})
-      (expect (= [] (:pending-sends @state/app-db))))))
+  (it "does nothing more when the delete succeeds"
+      (with-redefs
+        [vis/gateway-delete-queued-turn! (fn [_ _]
+                                           {"status" "deleted"})]
+        (reset! state/app-db
+          {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+        (await-enqueue! ((get @@#'state/fx-registry :gateway-delete-queued)
+                          "s1"
+                          "q1"
+                          "s1"
+                          {:text "gone" :mine? true}))
+        (expect (= [] (:pending-sends @state/app-db))))))

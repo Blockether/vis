@@ -374,6 +374,8 @@ del __vis_install_attach__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "attach"
+       :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
+                      "vis_reinspect_attachment"]
        :shim/description
        "vis_attach / vis_attach_bytes: persist a produced artifact as a durable iteration attachment (DB-owned bytes, media-type sniffed). vis-native helper — no upstream Python library."
        :shim/bindings attach-bridge-bindings

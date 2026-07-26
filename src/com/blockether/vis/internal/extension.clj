@@ -461,6 +461,9 @@
 ;; Compact model-facing routing/semantics. REQUIRED when `:native-tool?`; the
 ;; implementation docstring is developer documentation and never substitutes for it.
 (s/def :ext.symbol/description non-blank-string?)
+;; Exact raw return contract for Python/native callers. REQUIRED when
+;; `:native-tool?`; projected into every model-facing description and `doc(name)`.
+(s/def :ext.symbol/result non-blank-string?)
 ;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
 ;; shared by every surface (native tool_result card + a Python-path surfaced value).
 (s/def :ext.symbol/render fn?)
@@ -496,8 +499,8 @@
                 :ext.symbol/before-fn :ext.symbol/engine-bound? :ext.symbol/active-fn
                 :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
                 :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
-                :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/render
-                :ext.symbol/color-role :ext.symbol/replay]))
+                :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/result
+                :ext.symbol/render :ext.symbol/color-role :ext.symbol/replay]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -888,7 +891,11 @@
 ;; consumes `extension/sandbox-shims` GENERICALLY — nothing about yaml or
 ;; matplotlib is special-cased in the engine.
 ;;
-;;   :shim/name        identity string (dedup / logging).
+;;   :shim/name        identity string (dedup / logging), never an import contract.
+;;   :shim/imports     exact top-level module names users may import (optional).
+;;   :shim/globals     exact names users call directly without importing (optional).
+;;                     These two fields drive prompt and `apropos` discovery; do not
+;;                     infer either from :shim/name.
 ;;   :shim/description one-liner (optional): what library it shims AND what is
 ;;                     NOT supported, e.g. "... Not supported: X, Y." — a shim
 ;;                     with no caveat is 100% compatible.
@@ -903,6 +910,10 @@
 ;;                     (for autoload) staple it onto builtins.
 (s/def :shim/name non-blank-string?)
 
+(s/def :shim/imports (s/coll-of non-blank-string? :kind vector? :distinct true))
+
+(s/def :shim/globals (s/coll-of non-blank-string? :kind vector? :distinct true))
+
 (s/def :shim/description non-blank-string?)
 
 (s/def :shim/bindings
@@ -914,7 +925,8 @@
         :fn ifn?))
 
 (s/def ::sandbox-shim
-  (s/keys :req [:shim/name :shim/preamble] :opt [:shim/description :shim/bindings]))
+  (s/keys :req [:shim/name :shim/preamble]
+          :opt [:shim/imports :shim/globals :shim/description :shim/bindings]))
 
 (s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
 ;; Python sandbox contribution.
@@ -983,17 +995,17 @@
 (defn native-tools-for
   "Every native tool on `active-extensions`' symbols — ONE walk, the single source
    the schemas / handlers / renderers / colours all project from, NORMALIZED to
-  `{:symbol :name :description :schema :handler :render :color-role :replay :active?}`.
+  `{:symbol :name :description :result :schema :handler :render :color-role :replay :active?}`.
 
-   A symbol IS a native tool IFF it declares `:native-tool? true` (which REQUIRES
-   `:schema`). Every field is FLAT on the symbol — no legacy `:native-tool` map.
-   `:description` is the required compact routing/semantics contract. Implementation
-   docstrings never enter the native surface. Input mechanics belong in `:schema`,
-   and `doc(name)` appends those schema parameters exactly once. `:name` is the
-   `:name` wire-name override else the symbol name (so `exists?` advertises
-   `file_exists`). `:symbol` is internal identity metadata used to relate a provider
-   tool to any Python compatibility aliases; model-facing projections omit it.
-   `:active?` is the `:active-fn` against `env` (default true). `env` may be nil."
+   A symbol IS a native tool IFF it declares `:native-tool? true`, which REQUIRES
+   `:schema`, `:description`, and `:result`. Every field is FLAT on the symbol — no
+   legacy `:native-tool` map. `:description` is compact routing/semantics;
+   `:result` is the exact raw return contract. Implementation docstrings never
+   enter the native surface. Input mechanics belong in `:schema`, and `doc(name)`
+   appends the result contract and schema parameters exactly once. `:name` is the
+   wire-name override else the symbol name. `:symbol` is internal identity metadata;
+   model-facing projections omit it. `:active?` is the `:active-fn` against `env`
+   (default true). `env` may be nil."
   ([active-extensions] (native-tools-for active-extensions nil))
   ([active-extensions env]
    (->> (or active-extensions [])
@@ -1003,6 +1015,7 @@
                   {:symbol (:ext.symbol/symbol e)
                    :name (or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
                    :description (:ext.symbol/description e)
+                   :result (:ext.symbol/result e)
                    :schema (:ext.symbol/schema e)
                    :handler (:ext.symbol/handler e)
                    :call (:ext.symbol/call e)
@@ -1040,16 +1053,17 @@
 
 (defn native-tool-schemas
   "The model-facing `:tools` surface: `{:name :description :schema}` for every
-   ACTIVE native tool, in extension/symbol order. Single source — schema lives
-   WITH its symbol; validation-only constraint keys are stripped at this wire
-   boundary (see `wire-schema-constraint-keys`)."
+   ACTIVE native tool, in extension/symbol order. Each description automatically
+   includes the symbol's mandatory raw-result contract. Validation-only schema
+   constraints are stripped at this wire boundary."
   ([active-extensions] (native-tool-schemas active-extensions nil))
   ([active-extensions env]
    (->> (native-tools-for active-extensions env)
         (filter :active?)
-        (mapv #(-> %
-                   (select-keys [:name :description :schema])
-                   (update :schema strip-schema-constraints))))))
+        (mapv (fn [{:keys [name description result schema]}]
+                {:name name
+                 :description (str description "\n\nRaw result: " result)
+                 :schema (strip-schema-constraints schema)})))))
 
 (defn native-tool-handlers
   "Map wire-name → `:handler` `(fn [env input] -> result)` for every ACTIVE native
@@ -1304,10 +1318,9 @@
        (assoc :ext.symbol/tag (:tag opts))
 
        ;; STRONG flat native-tool spec — the SINGLE source of truth. `:native-tool?`
-       ;; marks the symbol as a native tool (advertised in `:tools`; REQUIRES
-       ;; `:schema`). name/handler/description live flat; wire name defaults to the
-       ;; symbol name. Keep `:description` compact and semantic; its JSON Schema owns
-       ;; input details and `doc(name)` renders both without copied parameter prose.
+       ;; marks the symbol as a native tool and requires `:schema`, `:description`,
+       ;; and `:result`. The latter is the exact raw return contract automatically
+       ;; projected into provider descriptions and `doc(name)`.
        (contains? opts :native-tool?)
        (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
 
@@ -1328,6 +1341,9 @@
 
        (:description opts)
        (assoc :ext.symbol/description (:description opts))
+
+       (:result opts)
+       (assoc :ext.symbol/result (:result opts))
 
        (:replay opts)
        (assoc :ext.symbol/replay (:replay opts))
@@ -1377,13 +1393,33 @@
                             " has a non-portable :schema root — use type object without "
                             "top-level oneOf, allOf, or anyOf; nested property unions are allowed.")
                           {:type :extension/native-tool-nonportable-schema :symbol sym}))
-    (when (and (:ext.symbol/native-tool? entry) (not (:ext.symbol/description entry)))
+    (when (and (:ext.symbol/native-tool? entry)
+               (not (and (string? (:ext.symbol/description entry))
+                         (not (str/blank? (:ext.symbol/description entry))))))
       (anomaly/incorrect! (str "Native tool "
                                sym
-                               " declares :native-tool? but no :description — "
+                               " declares :native-tool? but no non-blank :description — "
                                "native routing/semantics MUST be explicit and compact; "
                                "implementation docstrings never substitute for it.")
                           {:type :extension/native-tool-missing-description :symbol sym}))
+    (when (and (:ext.symbol/native-tool? entry)
+               (not (and (string? (:ext.symbol/result entry))
+                         (not (str/blank? (:ext.symbol/result entry))))))
+      (anomaly/incorrect! (str "Native tool " sym
+                               " declares :native-tool? but no non-blank :result — "
+                               "the exact raw return contract MUST be explicit.")
+                          {:type :extension/native-tool-missing-result :symbol sym}))
+    (when (and (:ext.symbol/native-tool? entry)
+               (str/includes? (:ext.symbol/description entry) "Raw result:"))
+      (anomaly/incorrect! (str "Native tool " sym
+                               " embeds `Raw result:` in :description — put the unlabeled "
+                               "contract in :result so projection cannot duplicate or drift.")
+                          {:type :extension/native-tool-result-in-description :symbol sym}))
+    (when (and (:ext.symbol/native-tool? entry)
+               (str/includes? (:ext.symbol/result entry) "Raw result:"))
+      (anomaly/incorrect!
+        (str "Native tool " sym " includes the reserved `Raw result:` label in :result.")
+        {:type :extension/native-tool-result-has-label :symbol sym}))
     (validate-symbol-entry! entry)))
 
 (defn symbol
@@ -3574,26 +3610,32 @@
 
 (defn symbol-doc-text
   "Model-facing doc text for ONE symbol ENTRY: a native tool's required compact
-   `:ext.symbol/description`, or a non-native symbol's implementation docstring,
-   plus one generated `params:` block from `:ext.symbol/schema`. Native
-   implementation docstrings never enter model context. Returns nil when the entry
-   carries no usable prose. The SINGLE source of truth for `sandbox-symbol-docs` (the
-   eager built-in seed) AND the per-binding `__vis_docs__` seeding that ALIASED
-   extensions do at bind time (see `loop/sync-active-extension-symbols!`), so
-   `doc(name)` / `apropos(pat)` read the same text no matter which path bound
-   the symbol."
+   description plus mandatory raw-result contract, or a non-native symbol's
+   implementation docstring, followed by one generated params block. Native
+   implementation docstrings never enter model context. Returns nil without prose.
+   This is the single source for sandbox docs, so `doc(name)` and provider tool
+   descriptions expose the same result contract."
   [entry]
   (let
-    [prose
-     (if (:ext.symbol/native-tool? entry)
+    [native?
+     (:ext.symbol/native-tool? entry)
+
+     prose
+     (if native?
        (:ext.symbol/description entry)
        (or (:ext.symbol/description entry) (:ext.symbol/doc entry)))
+
+     result
+     (when native? (:ext.symbol/result entry))
 
      params
      (schema->param-doc (:ext.symbol/schema entry))
 
      text
      (cond-> prose
+       (and (string? prose) result)
+       (str "\n\nRaw result: " result)
+
        (and (string? prose) params)
        (str "\n\n" params))]
 

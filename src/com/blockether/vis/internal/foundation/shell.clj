@@ -1527,6 +1527,13 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     #'shell
     {:symbol 'shell
      :native-tool? true
+     :result
+     (str
+       "Fixed-key object with `stage`, `op`, `cmd`, `cwd`, `id`, `pid`, `status`, `exit`, `stdout`, "
+       "`stderr`, `stdout_truncated`, `stderr_truncated`, `stdout_omitted_chars`, "
+       "`stderr_omitted_chars`, `timed_out`, `timeout_secs`, `duration_ms`, `uptime_ms`, "
+       "`line_count`, `lines`, `sent`, `stopped`, `already_running`, `attach`, `socket`, "
+       "`dropped`, and `note`; keys remain present with null/empty values when inapplicable.")
      :name "shell"
      :description
      (str

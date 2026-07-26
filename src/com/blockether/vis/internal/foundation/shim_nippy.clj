@@ -120,6 +120,8 @@ del __vis_install_nippy__")
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "nippy"
+       :shim/imports ["nippy"]
+       :shim/globals ["nippy_decode" "nippy_encode"]
        :shim/description
        "Lazy nippy_decode(bytes) and nippy.decode(bytes) decode trusted Vis-owned Nippy persistence BLOBs to native Python data, including nippy-stream Vectorz vectors as lists; nippy_encode(value) and nippy.encode(value) encode Python plain data. Vectorz codecs install only on first codec use. Not supported: exact Clojure type preservation (keys/values canonicalize for Python), Java Serializable fallback, encrypted Nippy payloads, or untrusted input."
        :shim/bindings nippy-bridge-bindings

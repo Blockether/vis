@@ -566,6 +566,7 @@ del __vis_install_sqlite3__")
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "sqlite3"
+       :shim/imports ["sqlite3"]
        :shim/description
        "DB-API 2.0 sqlite3 backed by JVM xerial sqlite-jdbc (connections by integer handle). Not supported: bound parameters other than int/float/str/None raise `InterfaceError`."
        :shim/bindings sqlite-bridge-bindings

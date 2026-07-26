@@ -121,6 +121,10 @@
                   true)
      :tag :observation
      :native-tool? true
+     :result (str
+               "Loaded: `{name,description,body,dir,resources}`. Already active: "
+               "`{name,status,scope,note}`. Unknown name: `{error,available}`. Every branch also "
+               "includes string `op`; all keys are strings.")
      :name "skill"
      :description
      "Activate one advertised harness skill on demand. Returns the full SKILL.md once while it remains on the live provider tape; repeated calls return a compact already-active receipt. If the body changed or is no longer live, it is returned once again."

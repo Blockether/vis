@@ -3339,6 +3339,38 @@
    (usually the plan) stays visible without the full wall of text."
   vis/reasoning-preview-line-limit)
 
+(defn- image-safe-split-n
+  "Preview cut point for `entries` that never BISECTS a reserved image box.
+
+   A `vis-image` block reserves its WHOLE cell box up front as blank rows that
+   all carry the same `:img` map; the picture is painted over that run and is
+   source-cropped to however many of those rows survived. So a collapse that
+   keeps only the first few of them does NOT shrink the picture — it
+   decapitates it (1 kept row of a 40-row box = the top 1/40th sliver). Push a
+   cut that lands INSIDE such a run to the run's end: an image box is either
+   reserved whole or hidden whole, never halved."
+  [entries n]
+  (let
+    [n
+     (max 0 (long n))
+
+     cnt
+     (count entries)
+
+     img-at
+     (fn [i]
+       (some-> (nth entries i nil)
+               :meta
+               :img))]
+
+    (if (or (zero? n) (>= n cnt))
+      n
+      (let [cur (img-at n)]
+        (if (and (some? cur) (= cur (img-at (dec n))))
+          (loop [i n]
+            (if (and (< i cnt) (= cur (img-at i))) (recur (inc i)) i))
+          n)))))
+
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -3852,7 +3884,7 @@
          ;; (a peek still copies everything the model reasoned).
          full-copy (entries->body-text entries)
          ;; Collapsed shows the first-N PEEK; expanded shows all.
-         preview-n reasoning-auto-collapse-line-threshold
+         preview-n (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
          hidden-n (max 0 (- (count entries) (long preview-n)))
          shown (if expanded? entries (vec (take preview-n entries)))
          label (if (or expanded? (zero? hidden-n)) "THINKING" (str "THINKING  +" hidden-n " more"))
@@ -4666,7 +4698,7 @@
                (:label card)
 
                preview-n
-               reasoning-auto-collapse-line-threshold
+               (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
 
                hidden
                (vec (drop preview-n entries))
@@ -5157,16 +5189,23 @@
       (if (nil? xs)
         (persistent! out)
         (let [e (first xs)]
-          (cond (and (blank? e) (= :thinking (family e)))
-                ;; Thinking band: emit verbatim, reset family so a
-                ;; following gap row still counts as a fresh blank.
-                (recur (conj! out e) :thinking (next xs))
-                (blank? e) (let [f (family e)]
-                             (if (= f prev-family)
-                               ;; Same-family duplicate — drop.
-                               (recur out prev-family (next xs))
-                               (recur (conj! out e) f (next xs))))
-                :else (recur (conj! out e) nil (next xs))))))))
+          (cond ;; Reserved inline-image rows LOOK blank, but each one is a
+                ;; ROW OF THE PICTURE's cell box. Coalescing them folds a
+                ;; 40-row box down to one row while `:img` still claims 40,
+                ;; so the paint layer crops to the top 1/40th — the sliver.
+                ;; Emit verbatim; reset family so the row after the box is
+                ;; still treated as a fresh blank.
+            (#{:image :image-pad} (:kind (:meta e))) (recur (conj! out e) nil (next xs))
+            (and (blank? e) (= :thinking (family e)))
+            ;; Thinking band: emit verbatim, reset family so a
+            ;; following gap row still counts as a fresh blank.
+            (recur (conj! out e) :thinking (next xs))
+            (blank? e) (let [f (family e)]
+                         (if (= f prev-family)
+                           ;; Same-family duplicate — drop.
+                           (recur out prev-family (next xs))
+                           (recur (conj! out e) f (next xs))))
+            :else (recur (conj! out e) nil (next xs))))))))
 
 (defn- mergeable-iteration-forms
   "Forms of an iteration when it is a PLAIN tool iteration — has forms, carries no
@@ -5355,7 +5394,7 @@
 (defn- queued-preview
   "One clipped line describing a queued submission.
 
-   Image paths collapse to `🖼 name.png` chips, so a message authored by
+   Image paths collapse to `name.png` chips, so a message authored by
    dropping a screenshot reads as its filename instead of the raw
    `/var/folders/…/clipboard-….png` the terminal pasted. Gateway-mirrored rows
    already arrive with `:preview-text` derived the same way; local rows are
@@ -5396,9 +5435,14 @@
                        [ord (str (inc (long idx)) ". ")
                         gutter-n (count ord)
                         avail (max 1 (- (long content-w) (long rail-w) (long gutter-n)))
-                        preview (ellipsize-cols (queued-preview (or (:preview-text entry)
-                                                                    (:text entry)))
-                                                avail)]
+                        ;; A row the gateway never accepted (`:stage-queued-locally`)
+                        ;; says so: it is held in THIS client only, so painting it
+                        ;; identically to a server-backed row is a lie.
+                        preview (ellipsize-cols
+                                  (cond->> (queued-preview (or (:preview-text entry) (:text entry)))
+                                    (:unsent? entry)
+                                    (str "⚠ unsent · "))
+                                  avail)]
 
                        {:line (str queue-item-marker ord preview) :meta {:queue-gutter gutter-n}}))
          ;; Items stack directly, one line each — no blank rows between them.
@@ -5931,23 +5975,15 @@
 
     (vec (concat header body))))
 
-(def ^:private image-max-cols
-  "Ceiling on the inline-image box WIDTH in cells. The box otherwise fills the
-   bubble's content width, so on a wide terminal a screenshot is no longer
-   pinned to a tiny 60-cell strip; this only caps the pathological ultra-wide
-   case. Height is bounded separately (see the `cell-size` call) so a filled-
-   width portrait/4:3 image still fits a normal viewport instead of being
-   dropped by `fitting-image-placements`."
-  90)
-
 (def ^:private image-max-rows
-  "Ceiling on the inline-image box HEIGHT in cells. Sized so a width-filled
-   portrait / near-square image is NOT pinned to a short strip on a wide
-   terminal (with a 30-row cap a 206×164 grab maxed at 76×30 and could never
-   reach the 90-col width cap). An image whose box overflows the transcript
-   viewport is no longer dropped — `fitting-image-placements` clamps a
-   bottom-overflowing box down to the visible rows (aspect-preserving) and
-   Kitty source-crops a scrolled one — so a taller ceiling stays placeable."
+  "Ceiling on the inline-image box HEIGHT in cells. The box WIDTH is NOT
+   capped: it fills the bubble's content width, so a picture is normalized to
+   the terminal instead of pinned to a fixed strip. This row ceiling is all
+   that keeps a portrait image from reserving an absurd column of transcript;
+   a box that still overflows the viewport is never dropped —
+   `fitting-image-placements` shrinks a bottom-overflowing box
+   (aspect-preserving) to the visible rows, and Kitty source-crops only a
+   picture the user has actually scrolled INTO."
   40)
 
 (defn- image-disclosure-entries
@@ -5991,7 +6027,7 @@
        (let
          [box
           (timg/cell-size {:w width :h height}
-                          (min (long image-max-cols) (max 1 (long content-w)))
+                          (max 1 (long content-w))
                           ;; Height ceiling in cells (see `image-max-rows`):
                           ;; large enough that a width-filled portrait fills
                           ;; the width cap, while an over-tall box is clamped

@@ -4753,10 +4753,50 @@
 ;; no "Kind" column and no session/workspace mode split. The old design
 ;; emitted both a session row AND a workspace row per entry, so every
 ;; entry showed up twice with a contradictory "Kind".
-(def ^:private navigator-columns
-  [{:id :title :label "Title" :flex 1} {:id :session :label "Session" :width 8}
-   {:id :draft :label "Draft" :width 8} {:id :dir :label "Project" :width 22}
-   {:id :status :label "Status" :width 10}])
+(def ^:private navigator-search-delay-ms 180)
+
+(defn- schedule-navigator-search!
+  "Debounce transcript lookup off the modal paint/input thread. Replacing a
+   query cancels its sleeping predecessor; generation guards discard any stale
+   request that was already in flight."
+  [task generation result query search-fn]
+  (let
+    [q
+     (str/trim (or query ""))
+
+     token
+     (swap! generation inc)]
+
+    (when-let [running @task]
+      (future-cancel running))
+    (reset! result nil)
+    (if (or (empty? q) (nil? search-fn))
+      (do (reset! task nil) token)
+      (let
+        [next-task (future (try (Thread/sleep (long navigator-search-delay-ms))
+                                (when (= token @generation)
+                                  (let [matches (or (search-fn q) {})]
+                                    (when (= token @generation)
+                                      (reset! result {:token token :query q :matches matches}))))
+                                (catch InterruptedException _)
+                                (catch Throwable _
+                                  (when (= token @generation)
+                                    (reset! result {:token token :query q :matches {}})))))]
+        (reset! task next-task)
+        token))))
+
+(defn- read-navigator-key!
+  "Keep input responsive while a transcript lookup runs. Poll only during that
+   short async window so its completed result can repaint without waiting for
+   another keystroke; otherwise use Lanterna's blocking modal read."
+  [^TerminalScreen screen task result]
+  (loop []
+
+    (cond (some? @result) nil
+          (nil? @task) (read-modal-key! screen)
+          (modal-input-pending? screen) (read-modal-key! screen)
+          (future-done? @task) (read-modal-key! screen)
+          :else (do (Thread/sleep 12) (recur)))))
 
 (defn- navigator-stamp
   "Compact `MM-dd HH:mm` timestamp (year dropped — these are recent
@@ -4766,14 +4806,8 @@
     (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
 
 (defn- navigator-session-row
-  "One unified row per session — a session IS its workspace (locked 1:1),
-   so there is no separate workspace row or `kind`. Columns mirror the
-   session picker: title, short id, activity, created/modified stamps.
-
-   `:focused?` marks the session you are CURRENTLY in (the active
-   workspace). The render loop pins it to the top and paints it in the
-   dialog accent + bold so it reads as 'you are here', visually distinct
-   from the switch-to-other rows; its status shows `● focused`."
+  "Normalize one session for the full-width navigator list. Project owns the
+   hierarchy; title and compact metadata stay inside the session block."
   [active-session-id session]
   (let
     [id
@@ -4782,32 +4816,31 @@
      active?
      (= (str id)
         (some-> active-session-id
-                str))]
+                str))
+
+     project
+     (or (not-empty (get session "project_name")) (not-empty (:work-dir session)) "No project")]
 
     {:id (str "session:" id)
      :focused? active?
      :title (session-title session)
      :session (short-session-id session)
-     ;; Enriched by the caller (screen/show-sessions!) from each session's
-     ;; pinned workspace: whether it's in a draft, and the directory it works
-     ;; in. `—` = trunk / no draft.
-     :draft (or (not-empty (:draft-label session)) "—")
-     ;; The persistent Project wins as the cluster/label; sessions with no
-     ;; project fall back to their project dir (the pre-project behaviour).
+     :draft (or (not-empty (:draft-label session)) "trunk")
      :group (not-empty (get session "project_name"))
-     ;; Manual order within the project (movable tabs); nil for projectless.
      :position (get session "project_position")
-     :dir (or (not-empty (get session "project_name")) (not-empty (:work-dir session)) "—")
+     :dir project
+     :work-dir (or (not-empty (:work-dir session)) "")
      :status (if active? "● focused" (str (long (or (get session "turn_count") 0)) " turns"))
      :created (navigator-stamp (get session "created_at"))
-     :modified (navigator-stamp (get session "modified_at"))
+     :modified (navigator-stamp (or (get session "modified_at")
+                                    (get session "last_active_at")
+                                    (get session "created_at")))
      :target {:action :switch :id id}}))
 
 (defn- group-rows-by-dir
-  "Regroup navigator rows so sessions of the SAME project (`:dir`) sit
-   adjacent. Rows arrive newest-first, so first-appearance group order =
-   projects by their most recent session; within a group the recency order
-   is preserved."
+  "Keep each project contiguous. The focused project's group comes first and
+   its focused session leads that group; persisted project order remains intact
+   for every other row."
   [rows]
   (let
     [order
@@ -4816,23 +4849,23 @@
      by-dir
      (group-by :dir rows)]
 
-    ;; Within each project group, honour the persisted manual order
-    ;; (`:position`); projectless rows (nil position) keep recency order.
-    (vec (mapcat (fn [d]
-                   (sort-by #(or (:position %) Long/MAX_VALUE) (by-dir d)))
+    (vec (mapcat (fn [dir]
+                   (let
+                     [group-rows
+                      (get by-dir dir)
+
+                      focused
+                      (filter :focused? group-rows)
+
+                      others
+                      (remove :focused? group-rows)]
+
+                     (concat focused (sort-by #(or (:position %) Long/MAX_VALUE) others))))
                  order))))
 
 (defn- navigator-all-rows
-  "Sessions arrive newest-modified-first from `tui-session-summaries`. The
-   focused session pins to the top; the rest are grouped by PROJECT
-   (`:work-dir`), groups ordered by their most recent session, rows inside a
-   group keeping recency order. Empty untitled
-   shells are hidden by default; Ctrl+U in the navigator reveals them.
-
-   No synthetic `+ New Session` row — creating a session is the `N`
-   modifier (shown in the hint bar), not a list entry. A real-looking
-   action row mixed in with actual sessions read as just another session
-   and pushed the newest real one down."
+  "Build the project-grouped session list. Empty untitled shells stay hidden by
+   default, but the focused session always survives and its project is first."
   [{:keys [sessions active-session-id show-empty-untitled?]}]
   (let
     [focused-id
@@ -4840,100 +4873,80 @@
              str)
 
      focused?
-     (fn [s]
-       (= (str (get s "id")) focused-id))
+     #(= (str (get % "id")) focused-id)
 
-     rows
-     (->> sessions
-          ;; Keep the FOCUSED session even when it is an empty
-          ;; untitled shell — you must always see "you are here".
-          (remove #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %))))
-          (mapv #(navigator-session-row active-session-id %)))]
+     kept
+     (remove #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %)))
+       sessions)
 
-    ;; Focused row pinned to the top; the rest regrouped by project, each
-    ;; group ordered by its most recent session (see `group-rows-by-dir`).
-    (vec (concat (filter :focused? rows) (group-rows-by-dir (remove :focused? rows))))))
+     focused-first
+     (concat (filter focused? kept) (remove focused? kept))]
+
+    (group-rows-by-dir (mapv #(navigator-session-row active-session-id %) focused-first))))
+
+(defn- navigator-row-matches?
+  [row query]
+  (let [needle (str/lower-case (str/trim (or query "")))]
+    (or (empty? needle)
+        (some #(str/includes? (str/lower-case (str (get row % ""))) needle)
+              [:title :session :draft :dir :work-dir :status]))))
 
 (defn- navigator-visible-rows
-  "Rows whose title/project cells match `query`, UNION rows whose id is in
-   `transcript-ids` (server-side matches on user request + LLM response text).
-   Blank query → `row-matches?` keeps everything, so the union is a no-op.
-
-   A row kept ONLY because its id is in `transcript-ids` (its title/project
-   did NOT match the typed query) is tagged `:transcript-match?` and its
-   `:status` cell overwritten with `in chat`, so the list shows WHY the row
-   is there — the hit is in the conversation body, not the visible columns."
+  "Union instant local metadata matches with async transcript matches, then tag
+   the first visible row of each project so rendering can emit one group header."
   [rows query transcript-ids]
-  (let [q (str/trim (or query ""))]
-    (vec
-      (keep
-        (fn [row]
-          (let
-            [title-hit? (table/row-matches? row query)
-             match (get transcript-ids (str (:id (:target row))))
-             body-hit? (some? match)
-             ;; Snippets ride along with EVERY row that has conversation
-             ;; hits — including the focused row and rows whose title also
-             ;; matched — so the list previews each match the way the
-             ;; companion app does, not just body-only ones.
-             hits (when (and body-hit? (map? match) (seq q)) (assoc match :title (:title row)))]
-
-            (cond
-              ;; Body-only match (query typed, title/project missed it):
-              ;; keep, mark it, and label the Status column by WHERE the
-              ;; hit landed — `in request` (user text), `in reply` (LLM
-              ;; text), or `in chat` (both). `match` is a map for the
-              ;; snippet-carrying caller, a bare id for legacy set callers.
-              (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
-              (assoc row
-                :transcript-match? true
-                :transcript-match hits
-                :status (case (:kind match)
-                          :request
-                          "in request"
-
-                          :reply
-                          "in reply"
-
-                          "in chat"))
-              (or title-hit? body-hit?) (cond-> row
-                                          hits
-                                          (assoc :transcript-match hits))
-              :else nil)))
-        rows))))
-
-(defn- navigator-cell-spans
-  "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
-   cell text can be overlaid on a border-colored frame."
-  [widths]
-  (first (reduce (fn [[acc off] w]
-                   [(conj acc [off (long w)]) (+ (long off) (long w) 3)])
-                 [[] 2]
-                 widths)))
-
-(defn- navigator-with-selection-gutter
-  "Reserve the shared selection-prefix gutter at the head of the first cell.
-   `p/draw-selection-marker!` paints into that gutter on selected rows."
-  [cells]
-  (update (vec cells) 0 #(str (p/selection-prefix false) %)))
-
-(defn- draw-navigator-row!
-  "Draw one boxed row with frame + separators in the shared dialog border
-   color and cell text in `text-fg` (bolded when `bold?`). Painting every
-   box character one consistent color fixes the gray/black border flicker
-   that came from drawing body rows in the text color."
-  [g x row widths cells aligns text-fg bold?]
-  (p/set-colors! g t/dialog-border t/dialog-bg)
-  (p/put-str! g x row (table/boxed-row-line widths (vec (repeat (count widths) "")) aligns))
-  (p/set-colors! g text-fg t/dialog-bg)
   (let
-    [draw (fn []
-            (doseq [[i [off w]] (map-indexed vector (navigator-cell-spans widths))]
-              (p/put-str! g
-                          (+ (long x) (long off))
-                          row
-                          (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
-    (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
+    [q
+     (str/trim (or query ""))
+
+     matched
+     (keep (fn [row]
+             (let
+               [local-hit?
+                (navigator-row-matches? row query)
+
+                match
+                (get transcript-ids (str (:id (:target row))))
+
+                body-hit?
+                (some? match)
+
+                hits
+                (when (and body-hit? (map? match) (seq q)) (assoc match :title (:title row)))]
+
+               (cond (and body-hit? (not local-hit?) (seq q) (not (:focused? row)))
+                     (assoc row
+                       :transcript-match? true
+                       :transcript-match hits
+                       :status (case (:kind match)
+                                 :request
+                                 "in request"
+
+                                 :reply
+                                 "in reply"
+
+                                 "in chat"))
+                     (or local-hit? body-hit?) (cond-> row
+                                                 hits
+                                                 (assoc :transcript-match hits))
+                     :else nil)))
+           rows)]
+
+    (vec (mapcat (fn [group]
+                   (let
+                     [group
+                      (vec group)
+
+                      n
+                      (count group)]
+
+                     (map-indexed (fn [idx row]
+                                    (assoc row
+                                      :group-start? (zero? (long idx))
+                                      :group-count n))
+                                  group)))
+                 (partition-by :dir matched)))))
+
 
 
 (defn- navigator-highlight-segments
@@ -5017,11 +5030,12 @@
   (vec (take navigator-inline-hits (navigator-preview-entries (:transcript-match entry)))))
 
 (defn- navigator-block-heights
-  "Painted line count per visible row: its own table row plus its inline
-   snippet lines. The list is variable-height, so scrolling is measured in
-   painted LINES, not row indexes."
+  "Painted line count per session: optional project heading, title row, compact
+   metadata row, then its transcript snippets."
   [visible-rows]
-  (mapv #(inc (count (navigator-hit-entries %))) visible-rows))
+  (mapv (fn [entry]
+          (+ 2 (if (:group-start? entry) 1 0) (count (navigator-hit-entries entry))))
+        visible-rows))
 
 (defn- navigator-scroll-start
   "First visible row index: the smallest scroll that still fits the selected
@@ -5058,16 +5072,14 @@
            (if (> u budget) k (recur (dec i) u i)))))]
 
     (min (long tail-start)
-         (loop [s (min (long (max 0 (long scroll))) selected)]
+         (loop [s (min (max 0 (long scroll)) selected)]
            (if (and (< s selected) (> (long (reduce + 1 (subvec heights s selected))) budget))
              (recur (inc s))
              s)))))
 
 (defn- navigator-visible-blocks
-  "Paint plan from `start`: `[{:idx :entry :hits […]} …]`, one block per session
-   row plus one line per inline snippet, cut to `budget` painted lines. A block
-   that only partly fits keeps its session row and drops the snippets that
-   would overflow — a match never disappears just because it is chatty."
+  "Paint plan from `start`, clipped by terminal lines. Every session keeps its
+   hierarchy/title/metadata base; only overflow transcript snippets are dropped."
   [visible-rows start budget]
   (let
     [n
@@ -5092,53 +5104,116 @@
           [entry
            (nth visible-rows i)
 
+           base
+           (+ 2 (if (:group-start? entry) 1 0))
+
+           remaining
+           (max 0 (- budget (long used) base))
+
            hits
-           (vec (take (max 0 (- budget (long used) 1)) (navigator-hit-entries entry)))]
+           (vec (take remaining (navigator-hit-entries entry)))]
 
           (recur (inc i)
-                 (+ (long used) 1 (count hits))
+                 (+ (long used) base (count hits))
                  (conj acc {:idx i :entry entry :hits hits})))))))
 
-(defn- draw-navigator-hit-line!
-  "Paint ONE inline snippet line inside the table box, directly under its own
-   session row: role label (`You` / `Vis`) in the transcript role color, then
-   the snippet with the searched term bolded, clipped to the box interior."
-  [g x row widths aligns query {:keys [label role text]}]
+(defn- draw-navigator-group!
+  [g x row width {:keys [dir work-dir group-count]}]
   (let
-    [line-w
-     (count (table/boxed-row-line widths (vec (repeat (count widths) "")) aligns))
+    [count-label
+     (str group-count " " (if (= 1 group-count) "session" "sessions"))
+
+     root-label
+     (when (and (seq work-dir) (not= dir work-dir)) work-dir)
 
      label
-     (str label)]
+     (str dir (when root-label (str "  ·  " root-label)) "  ·  " count-label)]
 
-    (p/set-colors! g t/dialog-border t/dialog-bg)
-    (p/put-str! g x row (str "│" (apply str (repeat (max 1 (- line-w 2)) \space)) "│"))
+    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+    (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize label (max 1 (long width)))))))
+
+(defn- draw-navigator-session!
+  [g x row width entry selected?]
+  (let
+    [focused?
+     (:focused? entry)
+
+     status
+     (str (:status entry))
+
+     status-w
+     (p/display-width status)
+
+     content-x
+     (+ (long x) 2)
+
+     title-w
+     (max 1 (- (long width) 2 status-w 2))
+
+     title
+     (p/ellipsize (:title entry) title-w)
+
+     status-x
+     (+ (long x) (max 2 (- (long width) status-w)))
+
+     metadata
+     (str (:session entry) "  ·  " (:draft entry) "  ·  " (:modified entry))]
+
+    (p/draw-selection-marker! g x row selected? t/dialog-hint-key)
+    (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-fg) t/dialog-bg)
+    (if (or selected? focused?)
+      (p/styled g [p/BOLD] (p/put-str! g content-x row title))
+      (p/put-str! g content-x row title))
+    (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
+    (p/put-str! g status-x row status)
+    (p/set-colors! g t/dialog-hint t/dialog-bg)
+    (p/put-str! g content-x (inc (long row)) (p/ellipsize metadata (max 1 (- (long width) 2))))))
+
+(defn- draw-navigator-hit-line!
+  "Paint one compact full-width transcript hit beneath its owning session."
+  [g x row width query {:keys [label role text]}]
+  (let
+    [label
+     (str label)
+
+     text-x
+     (+ (long x) 2 (count label) 2)
+
+     available
+     (max 0 (- (long width) 4 (count label)))]
+
     (p/set-colors! g (if (= role :user) t/user-role-fg t/ai-role-fg) t/dialog-bg)
-    (p/put-str! g (+ (long x) 4) row label)
+    (p/styled g [p/BOLD] (p/put-str! g (+ (long x) 2) row label))
     (loop
-      [segs
+      [segments
        (navigator-highlight-segments text query)
 
        cx
-       (+ (long x) 5 (count label))
+       text-x
 
        remaining
-       (max 0 (- line-w 6 (count label)))]
+       available]
 
-      (when (and (seq segs) (pos? (long remaining)))
+      (when (and (seq segments) (pos? (long remaining)))
         (let
-          [[seg bold?]
-           (first segs)
+          [[segment bold?]
+           (first segments)
 
-           seg
-           (if (> (count seg) (long remaining)) (subs seg 0 (long remaining)) seg)]
+           segment
+           (p/truncate-cols segment remaining)
+
+           segment-w
+           (p/display-width segment)]
 
           (p/set-colors! g t/dialog-fg t/dialog-bg)
-          (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row seg)) (p/put-str! g cx row seg))
-          (recur (rest segs) (+ (long cx) (count seg)) (- (long remaining) (count seg))))))))
+          (if bold?
+            (p/styled g [p/BOLD] (p/put-str! g cx row segment))
+            (p/put-str! g cx row segment))
+          (recur (rest segments) (+ (long cx) segment-w) (- (long remaining) segment-w)))))))
 
 (defn navigator-dialog!
-  "Global C-g picker. Returns a target action map or nil on Esc."
+  "Global C-g session picker. Full-width project/session hierarchy; transcript
+   lookup is debounced and asynchronous so typing never waits on the gateway."
   [^TerminalScreen screen opts]
   (let
     [query
@@ -5150,418 +5225,320 @@
      scroll
      (atom 0)
 
-     ;; Rows between the thumb top and the user's grip point, saved on
-     ;; CLICK_DOWN so a drag keeps the cursor glued to the same spot on
-     ;; the thumb. nil = not dragging.
      scrollbar-drag-offset
      (volatile! nil)
 
      show-empty-untitled?
      (atom (boolean (:show-empty-untitled? opts)))
 
-     ;; Server-side transcript search: ids whose user request / LLM response
-     ;; text matches the current query. Injected by the caller so this dialog
-     ;; stays decoupled from the gateway client. nil = feature unavailable.
      search-transcript-ids
      (:search-transcript-ids opts)
 
      transcript-ids
-     (atom #{})
+     (atom {})
 
      transcript-query
+     (atom nil)
+
+     search-task
+     (atom nil)
+
+     search-generation
+     (atom 0)
+
+     search-result
      (atom nil)]
 
-    (loop []
+    (letfn
+      [(start-search! []
+         (let [q (str/trim @query)]
+           (reset! transcript-ids {})
+           (reset! transcript-query nil)
+           (if (empty? q)
+             (do (swap! search-generation inc)
+                 (when-let [running @search-task]
+                   (future-cancel running))
+                 (reset! search-task nil)
+                 (reset! search-result nil))
+             (schedule-navigator-search! search-task
+                                         search-generation
+                                         search-result
+                                         q
+                                         search-transcript-ids))))
+       (reset-list! [search?] (reset! selected 0) (reset! scroll 0) (when search? (start-search!)))]
+      (try
+        (loop []
 
-      (let
-        [rows
-         (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
+          (when-let [{:keys [token query matches]} @search-result]
+            (reset! search-result nil)
+            (when (= token @search-generation)
+              (reset! transcript-query query)
+              (reset! transcript-ids matches)
+              (reset! search-task nil)))
+          (let
+            [rows
+             (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
 
-         visible-rows
-         (navigator-visible-rows rows @query @transcript-ids)
+             visible-rows
+             (navigator-visible-rows rows @query @transcript-ids)
 
-         total
-         (count visible-rows)
+             total
+             (count visible-rows)
 
-         size
-         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+             size
+             (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-         cols
-         (.getColumns size)
+             cols
+             (.getColumns size)
 
-         rows-n
-         (.getRows size)
+             rows-n
+             (.getRows size)
 
-         g
-         (.newTextGraphics screen)
+             g
+             (.newTextGraphics screen)
 
-         bounds
-         ;; Size the frame to the UNFILTERED row count (+ chrome/query/header
-         ;; rows) so few sessions get a compact box instead of a full-height
-         ;; frame with dead space, WITHOUT the box shrinking and re-centering
-         ;; as the query narrows the matches — that vertical jump left the
-         ;; taller previous frame as ghost rows behind the new one. Keeping the
-         ;; height fixed to the full list means filtering only repaints the body
-         ;; in place. golden-dialog-size still clamps to the terminal, so long
-         ;; lists stay full-height and scroll.
-         ;; Center within `rows-n - 6`, not the full terminal height, so the
-         ;; frame occupies the band from the tab-bar border to the composer.
-         ;; The six reserved rows cover footer chips, input, and echo/hint;
-         ;; golden-dialog-size adds matching breathing room inside that band.
-         (draw-dialog-chrome! g
-                              cols
-                              (- (long rows-n) 6)
-                              "Sessions"
-                              (- cols 4)
-                              ;; Plus a constant snippet reserve, so a small
-                              ;; store still has room for the inline hits and
-                              ;; the frame height never jitters as you type.
-                              (+ (long (count rows)) 6 navigator-inline-hits))
+             unfiltered
+             (navigator-visible-rows rows "" {})
 
-         {:keys [left right inner-w]}
-         bounds
+             desired-lines
+             (reduce + 0 (navigator-block-heights unfiltered))
 
-         ;; Input is pinned to a FIXED top position (no vertical
-         ;; centering) so it never jumps as the row count changes
-         ;; while typing. The table grows DOWN from there.
-         {:keys [content-top content-h hint-row]}
-         (dialog-layout bounds)
+             bounds
+             (draw-dialog-chrome! g
+                                  cols
+                                  (- (long rows-n) 6)
+                                  "Sessions"
+                                  (- cols 4)
+                                  (+ (long desired-lines) 4 (long navigator-inline-hits)))
 
-         table?
-         (pos? total)
+             {:keys [left right inner-w]}
+             bounds
 
-         query-row
-         content-top
+             {:keys [content-top content-h hint-row]}
+             (dialog-layout bounds)
 
-         ;; Reserve a right-side scrollbar gutter so the bar is a
-         ;; SEPARATE element, not painted on top of the table's right
-         ;; border. `content-w` shrinks BOTH the query box and the
-         ;; table by the gutter so their right edges stay aligned; the
-         ;; bar then floats one blank column clear of that edge.
-         sb-gutter
-         2
+             query-row
+             content-top
 
-         content-w
-         (long (max 1 (- (long inner-w) sb-gutter)))
+             sb-gutter
+             2
 
-         ;; Table is inset one column on each side, exactly matching the
-         ;; query box; the selection marker lives INSIDE the left
-         ;; padding, so there is no external gutter.
-         table-x
-         (+ (long left) 2)
+             content-w
+             (long (max 1 (- (long inner-w) sb-gutter)))
 
-         table-w
-         (long (max 1 (- content-w 2)))
+             body-x
+             (+ (long left) 2)
 
-         table-body-w
-         (long (max 1 (- table-w 2)))
+             body-w
+             (long (max 1 (- content-w 2)))
 
-         ;; table-x+table-w-1 is the table's right border; +1 leaves a
-         ;; blank separator column before the bar.
-         scrollbar-col
-         (+ table-x table-w 1)
+             scrollbar-col
+             (+ body-x body-w 1)
 
-         table-widths
-         (table/column-widths navigator-columns (max 1 table-body-w))
+             body-top
+             (+ (long content-top) 2)
 
-         aligns
-         (mapv #(or (:align %) :left) navigator-columns)
+             list-budget
+             (max 2 (- (long content-h) 2))
 
-         top-row
-         (+ (long content-top) 2)
+             _
+             (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-         header-row
-         (inc top-row)
+             block-heights
+             (navigator-block-heights visible-rows)
 
-         sep-row
-         (inc header-row)
+             _
+             (swap! scroll #(navigator-scroll-start block-heights @selected % list-budget))
 
-         body-top
-         (inc sep-row)
+             blocks
+             (navigator-visible-blocks visible-rows @scroll list-budget)
 
-         ;; Variable-height list: every matching row is followed by its OWN
-         ;; inline snippet lines (app parity), so the window is budgeted in
-         ;; painted lines and the page in session rows.
-         list-budget
-         (max 1 (- (long content-h) 6))
+             page-rows
+             (max 1 (count blocks))]
 
-         _
-         (swap! selected #(p/clamp % 0 (max 0 (dec total))))
-
-         block-heights
-         (navigator-block-heights visible-rows)
-
-         _
-         (swap! scroll #(navigator-scroll-start block-heights @selected % list-budget))
-
-         blocks
-         (navigator-visible-blocks visible-rows @scroll list-budget)
-
-         ;; Painted line count (scrollbar track) vs session rows on screen
-         ;; (scrollbar viewport) — they differ as soon as snippets show.
-         body-h
-         (max 1 (long (reduce + 0 (map #(inc (count (:hits %))) blocks))))
-
-         page-rows
-         (max 1 (count blocks))
-
-         bottom-row
-         (+ body-top body-h)]
-
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-        (let
-          [cursor-pos
-           (draw-text-input-field! g (inc (long left)) query-row content-w @query (count @query))]
-          ;; Border rule under the search field, T-joined to the dialog frame —
-          ;; the same framed-input look the C-x p command palette uses
-          ;; (`list-dialog!`), so the session switcher reads as one cohesive box.
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/draw-separator! g left right (inc (long content-top)))
-          (if-not table?
-            ;; Empty state: no skeleton table, just a quiet line below input.
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
             (let
-              [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
-               msg (cond (not (str/blank? @query)) "No matches"
-                         (and (pos? hidden-count) (not @show-empty-untitled?))
-                         "Only empty untitled sessions hidden"
-                         :else "No sessions yet")
-               msg-x (+ table-x (long (max 0 (quot (- table-w (count msg)) 2))))]
-
-              (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/put-str! g msg-x (+ (long content-top) 3) msg))
-            (do (p/set-colors! g t/dialog-border t/dialog-bg)
-                (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
-                (draw-navigator-row! g
-                                     table-x
-                                     header-row
-                                     table-widths
-                                     (navigator-with-selection-gutter (mapv #(or (:label %) "")
-                                                                            navigator-columns))
-                                     aligns
-                                     t/dialog-hint-key
-                                     true)
-                (p/set-colors! g t/dialog-border t/dialog-bg)
-                (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
-                (loop
-                  [bs blocks
-                   r body-top]
-
-                  (when-let [{:keys [idx entry hits]} (first bs)]
-                    (let
-                      [selected? (= idx @selected)
-                       ;; The currently-focused session paints in the dialog
-                       ;; accent + bold (always), so it pops as "you are
-                       ;; here" against the plain switch-to rows.
-                       focused? (:focused? entry)
-                       row-fg (if focused? t/dialog-hint-key t/dialog-fg)
-                       cells (navigator-with-selection-gutter (mapv (fn [{:keys [id]}]
-                                                                      (str (get entry id "")))
-                                                                    navigator-columns))]
-
-                      (draw-navigator-row! g
-                                           table-x
-                                           r
-                                           table-widths
-                                           cells
-                                           aligns
-                                           row-fg
-                                           (or selected? focused?))
-                      ;; Shared cursor marker, painted by the project-wide primitive into
-                      ;; the reserved `p/selection-prefix` first-cell gutter.
-                      (p/draw-selection-marker! g (+ table-x 2) r selected? t/dialog-hint-key)
-                      ;; Conversation snippets for THIS match, inline underneath it —
-                      ;; the same You/Vis transcript style the app uses per result.
-                      (doseq [[i hit] (map-indexed vector hits)]
-                        (draw-navigator-hit-line! g
-                                                  table-x
-                                                  (+ (long r) 1 (long i))
-                                                  table-widths
-                                                  aligns
+              [cursor-pos (draw-text-input-field! g
+                                                  (inc (long left))
+                                                  query-row
+                                                  content-w
                                                   @query
-                                                  hit))
-                      (recur (rest bs) (+ (long r) 1 (count hits))))))
-                (p/set-colors! g t/dialog-border t/dialog-bg)
-                (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
-                (when (> total page-rows)
-                  (scrollbar/draw! g
-                                   {:col scrollbar-col
-                                    :top body-top
-                                    :track-h body-h
-                                    :total-h total
-                                    :inner-h page-rows
-                                    :scroll @scroll}))))
-          (draw-hint-bar! g
-                          left
-                          hint-row
-                          inner-w
-                          [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"]
-                           ["C-d" "delete"] ["C-b" "project"]
-                           [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
-                           ["Esc" "cancel"]])
-          (.setCursorPosition screen cursor-pos)
-          (.refresh screen Screen$RefreshType/DELTA))
-        (let
-          [key
-           (read-modal-key! screen)
+                                                  (count @query))]
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/draw-separator! g left right (inc (long content-top)))
+              (if (zero? total)
+                (let
+                  [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
+                   message (cond (not (str/blank? @query)) "No matches"
+                                 (and (pos? hidden-count) (not @show-empty-untitled?))
+                                 "Only empty untitled sessions hidden"
+                                 :else "No sessions yet")
+                   message-x (+ body-x (long (max 0 (quot (- body-w (count message)) 2))))]
 
-           reset-list!
-           (fn []
-             (reset! selected 0)
-             (reset! scroll 0)
-             ;; Refresh the transcript matches when the query text changes
-             ;; (skip re-search on unrelated resets like the empty-untitled
-             ;; toggle). DEBOUNCED against the keyboard: while another keystroke
-             ;; is already queued we leave the query dirty and let the keystroke
-             ;; that lands in a typing PAUSE run the one search — typing
-             ;; "dialogs" costs ONE gateway round-trip, not seven.
-             (let [q (str/trim @query)]
-               (cond (empty? q) (do (reset! transcript-ids {}) (reset! transcript-query nil))
-                     (and (not= q @transcript-query) (not (modal-input-pending? screen)))
-                     (do (reset! transcript-query q)
-                         (reset! transcript-ids (if search-transcript-ids
-                                                  (or (try (search-transcript-ids q)
-                                                           (catch Throwable _ nil))
-                                                      {})
-                                                  {}))))))]
+                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/put-str! g message-x (+ body-top 1) message))
+                (loop
+                  [remaining blocks
+                   row body-top]
 
-          (when key
-            (cond
-              (modal-wheel-step key) (do (swap! selected #(p/clamp (+ (long %)
-                                                                      (long (modal-wheel-step key)))
-                                                                   0
-                                                                   (max 0 (dec total))))
-                                         (recur))
-              ;; Scrollbar mouse: grab the thumb, jump on a track click, and
-              ;; follow drags. The bar is the only mouse target here; row
-              ;; clicks fall through to the keyboard-driven flow. Dragging
-              ;; also pulls the SELECTION into the new window so the next
-              ;; render's `visible-window-start` doesn't yank scroll back to
-              ;; the (now off-screen) selected row.
-              (and (instance? MouseAction key)
-                   (> total page-rows)
-                   (let [action (.getActionType ^MouseAction key)]
-                     (or (= action MouseActionType/DRAG)
-                         (= action MouseActionType/CLICK_RELEASE)
-                         (and (= action MouseActionType/CLICK_DOWN)
-                              (let [pos (.getPosition ^MouseAction key)]
-                                (scrollbar/on-track?
-                                  (.getColumn pos)
-                                  (.getRow pos)
-                                  {:col scrollbar-col :top body-top :track-h body-h :x-band 2}))))))
-              (let
-                [^MouseAction ma
-                 key
+                  (when-let [{:keys [idx entry hits]} (first remaining)]
+                    (let
+                      [row (long row)
+                       row (if (:group-start? entry)
+                             (do (draw-navigator-group! g body-x row body-w entry) (inc row))
+                             row)]
 
-                 action
-                 (.getActionType ma)
+                      (when (< row (+ body-top list-budget))
+                        (draw-navigator-session! g body-x row body-w entry (= idx @selected)))
+                      (doseq [[hit-idx hit] (map-indexed vector hits)]
+                        (let [hit-row (+ row 2 (long hit-idx))]
+                          (when (< hit-row (+ body-top list-budget))
+                            (draw-navigator-hit-line! g body-x hit-row body-w @query hit))))
+                      (recur (rest remaining) (+ row 2 (count hits)))))))
+              (when (> total page-rows)
+                (scrollbar/draw! g
+                                 {:col scrollbar-col
+                                  :top body-top
+                                  :track-h list-budget
+                                  :total-h total
+                                  :inner-h page-rows
+                                  :scroll @scroll}))
+              (draw-hint-bar! g
+                              left
+                              hint-row
+                              inner-w
+                              [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"]
+                               ["C-d" "delete"] ["C-b" "project"]
+                               [(keymap/chord \u)
+                                (if @show-empty-untitled? "hide empty" "show empty")]
+                               ["Esc" "cancel"]])
+              (.setCursorPosition screen cursor-pos)
+              (.refresh screen Screen$RefreshType/DELTA))
+            (let [key (read-navigator-key! screen search-task search-result)]
+              (if-not key
+                (recur)
+                (cond
+                  (modal-wheel-step key)
+                  (do (swap! selected #(p/clamp (+ (long %) (long (modal-wheel-step key)))
+                                                0
+                                                (max 0 (dec total))))
+                      (recur))
+                  (and (instance? MouseAction key)
+                       (> total page-rows)
+                       (let [action (.getActionType ^MouseAction key)]
+                         (or (= action MouseActionType/DRAG)
+                             (= action MouseActionType/CLICK_RELEASE)
+                             (and (= action MouseActionType/CLICK_DOWN)
+                                  (let [pos (.getPosition ^MouseAction key)]
+                                    (scrollbar/on-track? (.getColumn pos)
+                                                         (.getRow pos)
+                                                         {:col scrollbar-col
+                                                          :top body-top
+                                                          :track-h list-budget
+                                                          :x-band 2}))))))
+                  (let
+                    [^MouseAction mouse key
+                     action (.getActionType mouse)
+                     pos (.getPosition mouse)
+                     mouse-x (.getColumn pos)
+                     mouse-y (.getRow pos)
+                     geometry (scrollbar/geometry total page-rows list-budget @scroll)
+                     apply-scroll! (fn [grip]
+                                     (let
+                                       [next-scroll (or (scrollbar/scroll-from-mouse-y mouse-y
+                                                                                       body-top
+                                                                                       list-budget
+                                                                                       total
+                                                                                       page-rows
+                                                                                       grip)
+                                                        0)]
+                                       (reset! scroll next-scroll)
+                                       (swap! selected #(p/clamp %
+                                                                 next-scroll
+                                                                 (min (dec total)
+                                                                      (+ (long next-scroll)
+                                                                         (dec page-rows)))))))]
 
-                 pos
-                 (.getPosition ma)
-
-                 mx
-                 (.getColumn pos)
-
-                 my
-                 (.getRow pos)
-
-                 geom
-                 (scrollbar/geometry total page-rows body-h @scroll)
-
-                 apply-scroll!
-                 (fn [grip]
-                   (let
-                     [ns (or (scrollbar/scroll-from-mouse-y my body-top body-h total page-rows grip)
-                             0)]
-                     (reset! scroll ns)
-                     (swap! selected #(p/clamp %
-                                               ns
-                                               (min (dec total) (+ (long ns) (dec page-rows)))))))]
-
-                (cond (= action MouseActionType/CLICK_RELEASE)
-                      (do (vreset! scrollbar-drag-offset nil) (recur))
-                      (and (= action MouseActionType/CLICK_DOWN)
-                           (some? geom)
-                           (scrollbar/on-thumb? mx
-                                                my
-                                                {:col scrollbar-col :top body-top :x-band 2}
-                                                geom))
-                      (let [thumb-top (+ body-top (long (:thumb-top-rel geom)))]
-                        (vreset! scrollbar-drag-offset (- (long my) thumb-top))
-                        (recur))
-                      ;; Track click off the thumb: jump-to-position, then arm a
-                      ;; centred grip so an immediate drag tracks naturally.
-                      (= action MouseActionType/CLICK_DOWN)
-                      (let [grip (long (quot (long (or (:thumb-h geom) 1)) 2))]
-                        (vreset! scrollbar-drag-offset grip)
-                        (apply-scroll! grip)
-                        (recur))
-                      (and (= action MouseActionType/DRAG) (some? @scrollbar-drag-offset))
-                      (do (apply-scroll! (long @scrollbar-drag-offset)) (recur))
-                      :else (recur)))
-              ;; New session is a MODIFIER (Ctrl+N), not a list row and not a
-              ;; bare key — so plain typing (incl. the letter `n`) filters.
-              (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (key-type key))
-                   (= (lower-key-character key) \n))
-              {:action :new}
-              ;; Ctrl+F → fork the highlighted session into a new tab.
-              (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (key-type key))
-                   (= (lower-key-character key) \f))
-              (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
-                {:action :fork :id id}
-                (recur))
-              ;; Ctrl+D → delete the highlighted session.
-              (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (key-type key))
-                   (= (lower-key-character key) \d))
-              (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
-                {:action :delete :id id}
-                (recur))
-              ;; Ctrl+B → move the highlighted session to a project.
-              (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (key-type key))
-                   (= (lower-key-character key) \b))
-              (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
-                {:action :project :id id}
-                (recur))
-              (input/ctrl-char? key \u) (do (swap! show-empty-untitled? not) (reset-list!) (recur))
-              ;; Clipboard paste → append into the query filter.
-              (input/paste-start? key) (do (let [pasted (drain-modal-paste! screen)]
-                                             (when (seq pasted)
-                                               (swap! query str (str/replace pasted #"\s+" " "))
-                                               (reset-list!)))
-                                           (recur))
-              :else
-              (condp = (key-type key)
-                KeyType/Escape nil
-                KeyType/ArrowUp
-                (if (and (input/reorder-modifier? key) (pos? total))
-                  (if-let [id (:id (:target (nth visible-rows @selected)))]
-                    {:action :reorder :id id :dir :up}
+                    (cond (= action MouseActionType/CLICK_RELEASE)
+                          (do (vreset! scrollbar-drag-offset nil) (recur))
+                          (and (= action MouseActionType/CLICK_DOWN)
+                               (some? geometry)
+                               (scrollbar/on-thumb? mouse-x
+                                                    mouse-y
+                                                    {:col scrollbar-col :top body-top :x-band 2}
+                                                    geometry))
+                          (let [thumb-top (+ body-top (long (:thumb-top-rel geometry)))]
+                            (vreset! scrollbar-drag-offset (- (long mouse-y) thumb-top))
+                            (recur))
+                          (= action MouseActionType/CLICK_DOWN)
+                          (let [grip (long (quot (long (or (:thumb-h geometry) 1)) 2))]
+                            (vreset! scrollbar-drag-offset grip)
+                            (apply-scroll! grip)
+                            (recur))
+                          (and (= action MouseActionType/DRAG) (some? @scrollbar-drag-offset))
+                          (do (apply-scroll! (long @scrollbar-drag-offset)) (recur))
+                          :else (recur)))
+                  (and (input/ctrl-modifier? key)
+                       (= KeyType/Character (key-type key))
+                       (= (lower-key-character key) \n))
+                  {:action :new}
+                  (and (input/ctrl-modifier? key)
+                       (= KeyType/Character (key-type key))
+                       (= (lower-key-character key) \f))
+                  (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                    {:action :fork :id id}
                     (recur))
-                  (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
-                KeyType/ArrowDown
-                (if (and (input/reorder-modifier? key) (pos? total))
-                  (if-let [id (:id (:target (nth visible-rows @selected)))]
-                    {:action :reorder :id id :dir :down}
+                  (and (input/ctrl-modifier? key)
+                       (= KeyType/Character (key-type key))
+                       (= (lower-key-character key) \d))
+                  (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                    {:action :delete :id id}
                     (recur))
-                  (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
-                KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
-                KeyType/Backspace
-                (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %)) (reset-list!) (recur))
-                ;; Plain printable character → filter query. Skip control
-                ;; chars and Alt/Ctrl-modified keys (those are commands).
-                KeyType/Character (let [c (key-character key)]
-                                    (when (and c
-                                               (not (input/alt-modifier? key))
-                                               (not (input/ctrl-modifier? key))
-                                               (not (iso-control-character? c)))
-                                      (swap! query str c)
-                                      (reset-list!))
-                                    (recur))
-                (recur)))))))))
+                  (and (input/ctrl-modifier? key)
+                       (= KeyType/Character (key-type key))
+                       (= (lower-key-character key) \b))
+                  (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                    {:action :project :id id}
+                    (recur))
+                  (input/ctrl-char? key \u)
+                  (do (swap! show-empty-untitled? not) (reset-list! false) (recur))
+                  (input/paste-start? key) (do (let [pasted (drain-modal-paste! screen)]
+                                                 (when (seq pasted)
+                                                   (swap! query str (str/replace pasted #"\s+" " "))
+                                                   (reset-list! true)))
+                                               (recur))
+                  :else
+                  (condp = (key-type key)
+                    KeyType/Escape nil
+                    KeyType/ArrowUp
+                    (if (and (input/reorder-modifier? key) (pos? total))
+                      (if-let [id (:id (:target (nth visible-rows @selected)))]
+                        {:action :reorder :id id :dir :up}
+                        (recur))
+                      (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
+                    KeyType/ArrowDown
+                    (if (and (input/reorder-modifier? key) (pos? total))
+                      (if-let [id (:id (:target (nth visible-rows @selected)))]
+                        {:action :reorder :id id :dir :down}
+                        (recur))
+                      (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
+                    KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
+                    KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                                          (reset-list! true)
+                                          (recur))
+                    KeyType/Character (let [character (key-character key)]
+                                        (when (and character
+                                                   (not (input/alt-modifier? key))
+                                                   (not (input/ctrl-modifier? key))
+                                                   (not (iso-control-character? character)))
+                                          (swap! query str character)
+                                          (reset-list! true))
+                                        (recur))
+                    (recur)))))))
+        (finally (swap! search-generation inc)
+                 (when-let [running @search-task]
+                   (future-cancel running)))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
 (defn draft-picker-items
@@ -5898,7 +5875,10 @@
    {:id :show-sessions :label "Switch Session"} {:id :open-drafts :label "Switch Draft…"}
    {:id :open-magit :label "Git Status (Magit)"} {:id :pick-file :label "Attach File"}
    {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
-   {:id :fork-session :label "Fork Session"} {:id :fork-at-turn :label "Fork Session at Turn…"}
+   ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
+   ;; nothing to fork, so the palette must not even offer them.
+   {:id :fork-session :label "Fork Session" :show-when :has-turns}
+   {:id :fork-at-turn :label "Fork Session at Turn…" :show-when :has-turns}
    {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
    {:id :settings :label "Settings"} {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
@@ -5954,20 +5934,42 @@
                   :enter-label (or enter-label "run")
                   :height :content})))
 
+(defn palette-commands-for
+  "`palette-commands` filtered to the entries that can ACT in `ctx`. Mirrors the
+   which-key strip's `:show-when` gating: an entry tagged `:has-turns` (both
+   Fork Session verbs) is DROPPED in a session with no turns — forking a
+   turnless session is prohibited, so it must not even be discoverable.
+
+   `ctx` is `{:has-turns? bool}`; a missing/nil ctx is the conservative
+   turnless case. Untagged entries always survive."
+  [{:keys [has-turns?]}]
+  (filterv (fn [{:keys [show-when]}]
+             (case show-when
+               :has-turns
+               (boolean has-turns?)
+
+               true))
+    palette-commands))
+
 (defn command-palette!
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
    on Esc. `extra-commands` are the engine slash roots appended after the
-   built-ins. Opened with C-x C-p (Emacs C-x prefix + Ctrl+P)."
-  ([^TerminalScreen screen] (command-palette! screen []))
-  ([^TerminalScreen screen extra-commands]
+   built-ins. Opened with C-x C-p (Emacs C-x prefix + Ctrl+P).
+
+   `ctx` (`{:has-turns? bool}`) gates context-only verbs via
+   [[palette-commands-for]] — without turns the Fork Session entries are not
+   listed at all."
+  ([^TerminalScreen screen] (command-palette! screen [] nil))
+  ([^TerminalScreen screen extra-commands] (command-palette! screen extra-commands nil))
+  ([^TerminalScreen screen extra-commands ctx]
    ;; Each built-in carries its direct keybind as a dim right-aligned `:hint`
    ;; (opencode-style), so the palette doubles as a live keymap reference;
    ;; palette-only verbs and slash roots have no chord, so no hint.
    (let
      [with-hints (mapv (fn [c]
                          (assoc c :hint (keymap/label-for (:id c))))
-                       palette-commands)]
+                       (palette-commands-for ctx))]
      (searchable-select! screen "Command Palette" (vec (concat with-hints extra-commands))))))
 
 (defn model-picker!

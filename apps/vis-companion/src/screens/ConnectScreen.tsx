@@ -12,6 +12,13 @@ interface Props {
   onSettings: (conn: GatewayConn) => void;
 }
 
+/**
+ * Last probed verdict per gateway URL, kept for the tab's lifetime. This screen
+ * unmounts whenever you leave the Connect tab; without this, every return would
+ * repaint each gateway as a pulsing "Checking…" until the next ping lands.
+ */
+const lastHealth: Record<string, GwHealth> = {};
+
 export function ConnectScreen({
   conns,
   active,
@@ -23,7 +30,7 @@ export function ConnectScreen({
   const [token, setToken] = useState('');
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [health, setHealth] = useState<Record<string, GwHealth>>({});
+  const [health, setHealth] = useState<Record<string, GwHealth>>(() => ({ ...lastHealth }));
   const probeInFlight = useRef(false);
 
   // One sweep at a time: a probe fans out to EVERY saved gateway, and an
@@ -32,26 +39,32 @@ export function ConnectScreen({
   const probe = useCallback(async (list: GatewayConn[]) => {
     if (probeInFlight.current) return;
     probeInFlight.current = true;
+    // One writer for both the rendered state and the cross-mount cache, so the
+    // dots survive leaving and re-entering this tab.
+    const remember = (url: string, entry: GwHealth) => {
+      lastHealth[url] = entry;
+      setHealth((h) => ({ ...h, [url]: entry }));
+    };
     try {
       await Promise.all(
         list.map(async (conn) => {
-          setHealth((h) => ({
-            ...h,
-            [conn.url]: { state: h[conn.url]?.state ?? 'checking', ms: h[conn.url]?.ms },
-          }));
+          remember(conn.url, {
+            state: lastHealth[conn.url]?.state ?? 'checking',
+            ms: lastHealth[conn.url]?.ms,
+          });
           const started = Date.now();
           try {
             const reachable = await new GatewayClient(conn).ping();
-            setHealth((h) => ({
-              ...h,
-              [conn.url]: { state: reachable ? 'online' : 'offline', ms: Date.now() - started },
-            }));
+            remember(conn.url, {
+              state: reachable ? 'online' : 'offline',
+              ms: Date.now() - started,
+            });
           } catch (e) {
             const unauthorized = e instanceof GatewayError && e.status === 401;
-            setHealth((h) => ({
-              ...h,
-              [conn.url]: { state: unauthorized ? 'auth' : 'offline', ms: Date.now() - started },
-            }));
+            remember(conn.url, {
+              state: unauthorized ? 'auth' : 'offline',
+              ms: Date.now() - started,
+            });
           }
         }),
       );

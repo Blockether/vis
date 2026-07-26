@@ -1673,6 +1673,7 @@ del __vis_install_pytest_compat__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "pytest"
+       :shim/imports ["pytest"]
        :shim/description
        "pytest-compatible `pytest` on the stdlib — collection, assert introspection, fixtures (`monkeypatch`/`capsys`/`capfd`/`tmp_path`/`tmp_path_factory`/`tmpdir`/`tmpdir_factory`/`caplog`/`recwarn`/`request`/`pytester`/`testdir`), `conftest.py` fixture discovery, parametrize, marks, raises/warns/approx, `pytest.main()`. The `pytester`/`testdir` fixture (makepyfile/makeconftest/runpytest → RunResult.assert_outcomes/stdout.fnmatch_lines) drives nested runs, so pytest's own acceptance-test style works. `pytest.main([paths])` discovers test_*.py / *_test.py under dirs/files on disk (assert introspection + conftest.py fixtures included), or with no args runs the current block's tests. Not supported: plugins/CLI options and import-time assertion rewrite."
        :shim/preamble pytest-compat-shim-src}]}))

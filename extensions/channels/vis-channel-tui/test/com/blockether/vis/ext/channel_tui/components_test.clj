@@ -137,3 +137,24 @@
                              (expect (every? well-formed-line? lines))
                              (expect (every? line-w-survives? lines))
                              (expect (every? well-formed-line? empty-lines))))))
+
+(defdescribe tab-cell-running-border-test
+             (it "keeps the running animation out of the close button"
+                 (let [underlined (atom [])]
+                   (with-redefs
+                     [p/underline-cell! (fn [_ col row & _]
+                                          (swap! underlined conj [col row]))]
+                     (comps/tab-cell! (noop-graphics)
+                                      {:left 10
+                                       :row 1
+                                       :width 12
+                                       :label "Running"
+                                       :tab-no 9
+                                       :status :running
+                                       :active? false
+                                       :workspace-id :running
+                                       :index 0
+                                       :register? false
+                                       :closable? true}))
+                   (expect (= (vec (range 10 19)) (mapv first @underlined)))
+                   (expect (empty? (filter (set (range 19 22)) (map first @underlined)))))))

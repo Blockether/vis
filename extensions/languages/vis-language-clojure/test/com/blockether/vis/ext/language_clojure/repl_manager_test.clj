@@ -67,6 +67,9 @@
       (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}") [:dev :test] 12345))]
         ;; user aliases come first, then the synthetic launch alias (last-wins)
         (expect (some #(= "-M:dev:test:vis/nrepl-launch" %) cmd))))
+  (it "launch aliases always include dev and test before explicit aliases"
+      (expect (= [:dev :test] (#'rm/launch-aliases nil)))
+      (expect (= [:dev :test :bench] (#'rm/launch-aliases ["dev" "bench"]))))
   (it "threads lein profiles via with-profile and passes our port"
       (let
         [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "project.clj" "(defproject x)")

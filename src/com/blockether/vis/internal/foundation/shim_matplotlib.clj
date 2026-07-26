@@ -1742,6 +1742,7 @@ del __vis_install_matplotlib__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "matplotlib"
+       :shim/imports ["matplotlib"]
        :shim/description
        "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with Java2D PNG and ASCII renderers. plt.show() is the ONE display call — it paints the real PNG INLINE on a graphics terminal (Kitty/iTerm2) and automatically falls back to ASCII on text-only terminals; savefig writes PNG (or *.txt/*.asc/format='txt' ASCII, honoring width/height/color kwargs). Not supported: animation, 3-D axes, full rcParams theming; only documented plot types render."
        :shim/bindings mpl-bridge-bindings

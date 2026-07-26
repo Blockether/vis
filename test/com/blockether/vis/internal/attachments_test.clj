@@ -240,21 +240,38 @@
   (describe
     "text->chip-preview"
     (it "collapses an image path to a named chip and keeps the prose"
-        (expect (= "🖼 clipboard-1.png LOOK AT THIS"
+        (expect (= "clipboard-1.png LOOK AT THIS"
                    (attachments/text->chip-preview
                      "/var/folders/x/T/clipboard-1.png\n LOOK AT THIS"))))
     (it "chips an image-only message instead of returning the path"
-        (expect (= "🖼 shot.png" (attachments/text->chip-preview "/tmp/shot.png"))))
+        (expect (= "shot.png" (attachments/text->chip-preview "/tmp/shot.png"))))
     (it "handles a quoted path with spaces"
-        (expect (= "check 🖼 my shot.png ok"
+        (expect (= "check my shot.png ok"
                    (attachments/text->chip-preview "check \"/tmp/my shot.png\" ok"))))
     (it "chips several images in one message"
-        (expect (= "🖼 a.png 🖼 b.jpg" (attachments/text->chip-preview "/tmp/a.png /tmp/b.jpg"))))
+        (expect (= "a.png b.jpg" (attachments/text->chip-preview "/tmp/a.png /tmp/b.jpg"))))
     (it "is pure — a path whose file is gone still chips"
-        (expect (= "🖼 vanished.png"
+        (expect (= "vanished.png"
                    (attachments/text->chip-preview "/tmp/definitely-not-here/vanished.png"))))
     (it "leaves prose untouched apart from whitespace collapsing"
         (expect (= "hello world" (attachments/text->chip-preview "hello   world"))))
     (it "returns nil for blank/nil input"
         (expect (nil? (attachments/text->chip-preview nil)))
         (expect (nil? (attachments/text->chip-preview "   "))))))
+
+(defdescribe text-inline-chips-test
+             "Transcript bubbles chip image paths WITHOUT collapsing their layout."
+             (describe "text->inline-chips"
+                       (it "chips the path but keeps the newline the prose sat on"
+                           (expect (= "clipboard-1.png\n LOOK AT THIS"
+                                      (attachments/text->inline-chips
+                                        "/var/folders/x/T/clipboard-1.png\n LOOK AT THIS"))))
+                       (it "keeps blank lines and indentation intact"
+                           (expect (= "one\n\n  two   spaced"
+                                      (attachments/text->inline-chips "one\n\n  two   spaced"))))
+                       (it "chips every image path in place"
+                           (expect (= "a.png\nb.jpg"
+                                      (attachments/text->inline-chips "/tmp/a.png\n/tmp/b.jpg"))))
+                       (it "passes blank/nil through unchanged"
+                           (expect (= "" (attachments/text->inline-chips nil)))
+                           (expect (= "   " (attachments/text->inline-chips "   "))))))

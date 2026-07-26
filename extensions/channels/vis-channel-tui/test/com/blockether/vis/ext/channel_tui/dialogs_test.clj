@@ -491,29 +491,58 @@
            vis [(hit 3) (hit 0) (hit 2)]
            hs (heights vis)]
 
-          ;; one line per row plus one per snippet
-          (expect (= [4 1 3] hs))
-          ;; a block that only partly fits keeps its ROW and drops the overflow
-          (expect (= [2] (mapv #(count (:hits %)) (blocks vis 0 3))))
-          (expect (= [3 0] (mapv #(count (:hits %)) (blocks vis 0 5))))
-          ;; scroll advances only as far as the selected row needs …
+          ;; two session lines per row plus one per snippet
+          (expect (= [5 2 4] hs))
+          ;; a block that only partly fits keeps title + metadata and clips hits
+          (expect (= [1] (mapv #(count (:hits %)) (blocks vis 0 3))))
+          (expect (= [3] (mapv #(count (:hits %)) (blocks vis 0 5))))
+          ;; scroll advances only as far as the selected row needs
           (expect (= 1 (scroll-start hs 2 0 4)))
-          ;; … and is pulled back so the window is never past the end (which is
-          ;; what left one lonely row painted over dead space).
-          (expect (= 1 (scroll-start hs 2 2 4)))
+          (expect (= 2 (scroll-start hs 2 2 4)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
     (it "highlight segments bold only the case-insensitive needle occurrences"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
           (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))
           (expect (= [["no needle here" false]] (segs "no needle here" "")))))
-    (it "visible-rows filters by query only"
+    (it "visible rows are project-grouped instead of table-shaped"
         (let
           [all-rows (var-get #'dlg/navigator-all-rows)
            visible-rows (var-get #'dlg/navigator-visible-rows)
-           rows (all-rows {:active-session-id "s1" :sessions sessions})]
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           visible (visible-rows rows "" {})]
 
+          (expect (= 1 (count (filter :group-start? visible))))
+          (expect (= [2 2] (mapv :group-count visible)))
           (expect (= 1 (count (visible-rows rows "second" #{}))))
-          (expect (= 2 (count (visible-rows rows "" #{}))))))))
+          (expect (= 2 (count visible)))))
+    (it "transcript lookup never blocks the typing thread"
+        (let
+          [schedule! (var-get #'dlg/schedule-navigator-search!)
+           task (atom nil)
+           generation (atom 0)
+           result (atom nil)
+           entered (promise)
+           release (promise)
+           _ (future (Thread/sleep 500) (deliver release true))
+           started (System/nanoTime)]
+
+          (schedule! task
+                     generation
+                     result
+                     "needle"
+                     (fn [query]
+                       (deliver entered query)
+                       @release
+                       {"s2" {:kind :reply}}))
+          (let [elapsed-ms (/ (- (System/nanoTime) started) 1000000.0)]
+            (expect (< elapsed-ms 250.0)))
+          (expect (= "needle" (deref entered 1000 ::timeout)))
+          (deliver release true)
+          (loop [attempts 50]
+            (when (and (nil? @result) (pos? attempts)) (Thread/sleep 20) (recur (dec attempts))))
+          (expect (= {"s2" {:kind :reply}} (:matches @result)))
+          (when-let [running @task]
+            (future-cancel running))))))
 
 (defdescribe scrollbar-geometry-test
              (it "scrollbar geometry sanity (canonical primitive)"
@@ -1119,6 +1148,29 @@
                         [:cycle-model :cycle-reasoning :search-open :show-sessions :open-drafts
                          :pick-file :new-session :fork-session]))
         (expect (not (contains? ids :open-resources)))))
+  (it "a turnless session hides BOTH fork verbs from the palette"
+      ;; Forking a session with no turns is prohibited, so it must not even be
+      ;; discoverable: `palette-commands-for` drops the `:has-turns` entries.
+      (let
+        [ids-for
+         (fn [ctx]
+           (set (mapv :id (dlg/palette-commands-for ctx))))
+
+         fresh
+         (ids-for {:has-turns? false})
+
+         with-turns
+         (ids-for {:has-turns? true})]
+
+        (expect (not (contains? fresh :fork-session)))
+        (expect (not (contains? fresh :fork-at-turn)))
+        (expect (contains? with-turns :fork-session))
+        (expect (contains? with-turns :fork-at-turn))
+        ;; nil ctx = the conservative turnless case
+        (expect (= fresh (ids-for nil)))
+        ;; gating touches ONLY the fork verbs
+        (expect (= #{:fork-session :fork-at-turn} (set (remove fresh with-turns))))
+        (expect (contains? fresh :new-session))))
   (it "command palette filters by a typed query (searchable)"
       ;; The palette is searchable: the filter is a case-insensitive substring
       ;; match on :label, the spine `searchable-select!` applies.
@@ -1158,13 +1210,12 @@
                    ;; blank message gets a placeholder
                    (expect (= "(no message)" (:label (nth rows 2)))))))
 
-;; Navigator PROJECT grouping: non-focused rows regroup by `:dir`
-;; (first-appearance order = projects by their most recent session),
-;; recency preserved inside a group; the focused row stays pinned on top.
+;; Navigator hierarchy: focused project's group comes first, every project stays
+;; contiguous, persisted order remains intact inside each project.
 (defdescribe
   navigator-project-grouping-test
   (it
-    "groups non-focused rows by project dir, groups ordered by recency"
+    "keeps the focused project first and every project contiguous"
     (let
       [all-rows
        (var-get #'dlg/navigator-all-rows)
@@ -1198,9 +1249,8 @@
        rows
        (all-rows {:active-session-id "s1" :sessions sessions})]
 
-      ;; s1 pinned (focused); remaining [s2 s3 s4] regroup to
-      ;; proj-b [s2 s4] (newest group first) then proj-a [s3].
-      (expect (= ["s1" "s2" "s4" "s3"] (mapv (comp str :id :target) rows)))))
+      ;; Focused project A is first and remains one coherent group, followed by B.
+      (expect (= ["s1" "s3" "s2" "s4"] (mapv (comp str :id :target) rows)))))
   (it "sessions without a work-dir share one group and keep recency order"
       (let
         [all-rows

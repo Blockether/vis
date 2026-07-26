@@ -211,8 +211,8 @@
     "- Direct native tools: single operations, simple edits, small fixed call sets.\n"
     "- `python_execution`: dependent chains, fan-out, loops, filters/transforms, output shaping;\n"
     "  `await gather(...)` only for independent calls within them.\n"
-    "- Native calls invoked from Python return inline and every result stays retrievable as\n"
-    "  `ntr[tool_id]`; compose, filter, and shape them there to control exactly what enters context.\n"
+    "- Python native results are raw structured values, not UI-rendered text. Use documented keys;\n"
+    "  never infer fields from presentation. Shape via `ntr[tool_id]` before printing.\n"
     "- `python_execution` persists Python state. Reading `session` is always live; `print`\n"
     "  only displays it—never probe merely to refresh it.\n"
     "- Call advertised native tools directly. Use `apropos`/`doc` only for unadvertised sandbox\n"
@@ -562,23 +562,28 @@
     (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
 (defn- sandbox-shims-prompt-block
-  "Advertise Python's execution boundary, auto-imports, and live shim names.
-   Full shim contracts stay in `doc(name)` so this provider prompt remains small.
+  "Advertise Python's execution boundary and exact model-facing shim capabilities.
+   `:shim/name` is internal identity only; imports and direct globals come from
+   their explicit metadata so an id such as `attach` is never presented as a module.
 
    When the shell layer is ACTIVE it also names the shell surface INSIDE the
    sandbox: `shell` is an ordinary bound global there, and the POSIX-compat shim
    routes `subprocess` / `os.system` / `os.popen` to it. That shim is inlined in
-   `env_python` rather than registered as a `:shim/name`, so it never appeared in
-   the list below — the model was left assuming ordinary Python process calls
-   simply cannot work in the sandbox."
+   `env_python` rather than registered in the extension registry."
   [active-extensions]
   (let
     [shims
      (try (extension/sandbox-shims) (catch Throwable _ nil))
 
-     shim-names
+     shim-imports
      (->> shims
-          (keep :shim/name)
+          (mapcat :shim/imports)
+          distinct
+          sort)
+
+     shim-globals
+     (->> shims
+          (mapcat :shim/globals)
           distinct
           sort)
 
@@ -592,11 +597,15 @@
                   (str "Auto-imported by `python_execution` (no `import`): `"
                        auto-imports
                        "`."
-                       (when (seq shim-names)
-                         (str "\nPreinstalled shims (no pip; import before use, alias in the same "
-                              "block — e.g. `import numpy as np`; `np`/`pd` are never "
+                       (when (seq shim-imports)
+                         (str "\nPreinstalled shim modules (no pip; import before use and alias in "
+                              "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
                               "auto-created): `"
-                              (str/join "`, `" shim-names)
+                              (str/join "`, `" shim-imports)
+                              "`."))
+                       (when (seq shim-globals)
+                         (str "\nPrebound shim globals (use directly; never import them): `"
+                              (str/join "`, `" shim-globals)
                               "`."))
                        (when shell?
                          (str "\n`shell` is a bound global there too — `shell(cmd)`, "

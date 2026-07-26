@@ -1813,6 +1813,7 @@ del __vis_install_numpy__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "numpy"
+       :shim/imports ["numpy"]
        :shim/description
        "numpy-compatible `numpy` in pure Python (ndarray, broadcasting, reductions with keepdims + tuple axis, linalg norm/det/inv/solve, random, split/take/repeat/histogram). Not supported: C-speed; slice views don't share memory; no linalg eig/svd/qr; a few ops limited to <=2-D — median/cumsum/sort/flip along an axis, `tile` with tuple reps, `pad` beyond 1-D, `dstack` raise `NotImplementedError`."
        :shim/preamble numpy-compat-shim-src}]}))

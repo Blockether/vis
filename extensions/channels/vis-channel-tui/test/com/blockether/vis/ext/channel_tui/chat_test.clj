@@ -424,6 +424,29 @@
             (expect (= "hello" (:request (second @seen))))
             (expect (= :deep (:reasoning-default (second @seen))))
             (expect (= {:text {:verbosity "high"}} (:extra-body (second @seen))))))))
+  (it "forwards the collapsed display copy as :display-request"
+      ;; Regression: `turn!` DROPPED `:display-text`, so the gateway only ever saw the
+      ;; expanded agent text. A pasted image expands to a bare temp path, which every
+      ;; channel then painted verbatim instead of the `vis-image` fence the user wrote.
+      (let [seen (atom nil)]
+        (with-redefs
+          [vis/gateway-submit-turn-sync! (fn [_ opts]
+                                           (reset! seen opts)
+                                           {"content" []})]
+          (chat/turn! {:id "c1"}
+                      "look \n/tmp/shot.png\n"
+                      {:display-text
+                       "\n````vis-image\n[Image #1: shot.png]\n/tmp/shot.png\n````\n"})
+          (expect (= "look \n/tmp/shot.png\n" (:request @seen)))
+          (expect (str/includes? (:display-request @seen) "````vis-image")))))
+  (it "omits :display-request when there is no separate display copy"
+      (let [seen (atom nil)]
+        (with-redefs
+          [vis/gateway-submit-turn-sync! (fn [_ opts]
+                                           (reset! seen opts)
+                                           {"content" []})]
+          (chat/turn! {:id "c1"} "plain")
+          (expect (not (contains? @seen :display-request))))))
   (it "returns canonical notice content when cancellation is raised"
       (with-redefs
         [vis/gateway-submit-turn-sync!

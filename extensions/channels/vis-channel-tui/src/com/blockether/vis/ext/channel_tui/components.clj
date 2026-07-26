@@ -451,8 +451,8 @@
        colour (no block glyphs, nothing to clash with the surface) and IS the
        status cue:
          :running -> a CONTINUOUS amber underline with a bright band sweeping
-                     left→right along the bottom edge (the \"working\" crawl,
-                     smooth — no gaps, no flicker);
+                     left→right along the title portion (the working crawl,
+                     smooth — no gaps, no flicker); the close button stays still;
          :ready   -> the whole cell glows GREEN (`status-ok`) under a steady,
                      solid underline \u2014 the \"ready to check\" outline;
          nil      -> NO border \u2014 an idle tab keeps the plain surface
@@ -556,7 +556,7 @@
         (p/underline-cell! g (+ left (long c)) row))
 
       :running
-      (running-border! g left row width)
+      (running-border! g left row inner-w)
 
       nil)))
 ;; ── inert title ─────────────────────────────────────────────────────────────

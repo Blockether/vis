@@ -28,6 +28,11 @@ const config: CapacitorConfig = {
   ios: {
     // Xcode scheme name in ios/App/App.xcodeproj — NOT a URL scheme.
     scheme: 'App',
+    // The web layer owns every scroller (body is overflow:hidden). Leaving
+    // WKWebView's own UIScrollView live let a sideways drag pan and rubber-band
+    // the entire UI, and each bounce re-composited the whole page.
+    scrollEnabled: false,
+    contentInset: 'never',
   },
 };
 

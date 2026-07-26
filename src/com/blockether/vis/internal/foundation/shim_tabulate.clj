@@ -260,6 +260,7 @@ del __vis_install_tabulate__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "tabulate"
+       :shim/imports ["tabulate"]
        :shim/description
        "tabulate-compatible `tabulate` in pure Python. Not supported: only common tablefmts (plain/simple/github/pipe/grid/fancy_grid/rst/tsv/html); exotic formats and colored output."
        :shim/preamble tabulate-compat-shim-src}]}))

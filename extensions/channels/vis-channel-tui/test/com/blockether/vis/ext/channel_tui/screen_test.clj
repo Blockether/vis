@@ -15,6 +15,7 @@
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -1534,3 +1535,38 @@
 
                      ((deref #'screen/persist-tabs-order!) pid ids))
                    (expect (= [[:reorder pid ids]] @calls)))))
+
+(defdescribe fitting-image-placements-test
+             ;; A picture whose reserved box runs past the BOTTOM of the transcript
+             ;; band must shrink whole (aspect-preserving) into the rows that are
+             ;; left — never source-crop to a decapitated top slice. Source-cropping
+             ;; is only right when the user has scrolled INTO the picture.
+             (let
+               [fit
+                (deref #'screen/fitting-image-placements)
+
+                img
+                {:path "/tmp/shot.png" :cols 40 :rows 40}
+
+                band
+                (fn [n first-idx row0]
+                  (mapv (fn [i]
+                          {:row (+ (long row0) i) :col 2 :img img :img-idx (+ (long first-idx) i)})
+                        (range n)))]
+
+               (it "kitty: a bottom-overflowing box shrinks to the visible rows"
+                   (with-redefs [timg/images-protocol (constantly :kitty)]
+                     (let [got (:img (first (fit (band 10 0 5) 0 15)))]
+                       (expect (= 10 (long (:rows got))))
+                       (expect (= 10 (long (:cols got))))
+                       (expect (nil? (:crop-bottom got))))))
+               (it "kitty: a box scrolled INTO still source-crops at native scale"
+                   (with-redefs [timg/images-protocol (constantly :kitty)]
+                     (let [got (:img (first (fit (band 20 20 0) 0 30)))]
+                       (expect (= 40 (long (:rows got))))
+                       (expect (= 20 (long (:crop-top got)))))))
+               (it "iterm2: a bottom-overflowing box shrinks, a top-cropped one is dropped"
+                   (with-redefs [timg/images-protocol (constantly :iterm2)]
+                     (let [got (:img (first (fit (band 10 0 5) 0 15)))]
+                       (expect (= 10 (long (:rows got)))))
+                     (expect (empty? (fit (band 20 20 0) 0 30)))))))

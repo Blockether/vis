@@ -776,60 +776,66 @@
           :else (str "linux-" (if arm? "aarch64" "x86_64")))))
 
 (defn- native-lib-jars
-  "Resolve the host-platform native artifacts of the FFM libs (fff / rift /
-   ruff `prebuilds/**`, tree-sitter pack `natives/<rid>/**`) — at the SAME
-   version as each main jar already in `basis` — so their native libs EMBED
-   into the image (fff/rift/ruff carry a `prebuilds/**` glob in their own
-   metadata; the pack ships NO glob, so native-image-args adds a host-scoped
-   one). ONLY the build host's jar goes on the classpath — that is the whole
-   per-platform guarantee: even the broad `prebuilds/**` glob can only match
-   host libs. A native image can't download natives, so without this the FFM
-   libs fall back to verbatim / fail in the binary. Returns the resolved
-   native-jar paths (empty if a lib isn't in the basis or its native jar
-   isn't published yet)."
+  "Resolve every host-platform FFM artifact at the exact version of its main jar
+   in `basis`. Only the host native jar enters the image classpath, so each
+   platform image embeds only its own fff/rift/ruff/tree-sitter library.
+
+   Native images cannot use the runtime tools.deps downloader. A missing main
+   dependency, failed resolution, or missing direct native jar is therefore a
+   hard build failure, never a warning."
   [basis]
   (let
     [tok
      (native-lib-token)
 
-     want
-     (keep (fn [[main artifact]]
-             (when-let
-               [v (some-> basis
-                          :libs
-                          (get main)
-                          :mvn/version)]
-               [(symbol "com.blockether" artifact) {:mvn/version v}]))
-           {'com.blockether/fff (str "fff-native-" tok)
-            'com.blockether/rift (str "rift-native-" tok)
-            'com.blockether/ruff (str "ruff-native-" tok)
-            'com.blockether/tree-sitter-language-pack (str "tree-sitter-language-pack-native-"
-                                                           (pack-native-token))})
+     native-artifacts
+     {'com.blockether/fff (str "fff-native-" tok)
+      'com.blockether/rift (str "rift-native-" tok)
+      'com.blockether/ruff (str "ruff-native-" tok)
+      'com.blockether/tree-sitter-language-pack (str "tree-sitter-language-pack-native-"
+                                                     (pack-native-token))}
 
-     deps
-     (into {} want)
+     missing-mains
+     (->> (keys native-artifacts)
+          (remove #(get-in basis [:libs % :mvn/version]))
+          vec)]
 
-     tree-sitter-native
-     (symbol "com.blockether" (str "tree-sitter-language-pack-native-" (pack-native-token)))]
+    (when (seq missing-mains)
+      (throw (ex-info "Native build requires every FFM main artifact." {:artifacts missing-mains})))
+    (let
+      [deps
+       (into {}
+             (map (fn [[main artifact]]
+                    [(symbol "com.blockether" artifact)
+                     {:mvn/version (get-in basis [:libs main :mvn/version])}]))
+             native-artifacts)
 
-    (when (seq deps)
-      (let
-        [b (try (b/create-basis {:project nil :extra {:deps deps}})
-                (catch Exception e (println "WARN native-lib-jars:" (ex-message e)) nil))]
-        (let
-          [jars (->> (keys deps)
-                     (mapcat #(some-> b
-                                      :libs
-                                      (get %)
-                                      :paths))
-                     (filter #(and % (str/ends-with? % ".jar"))))]
-          (when (and (contains? deps tree-sitter-native)
-                     (not-any? #(str/includes? % (name tree-sitter-native)) jars))
-            (throw
-              (ex-info
-                "Native build requires the tree-sitter native artifact for its target platform."
-                {:artifact tree-sitter-native :platform (pack-native-token)})))
-          jars)))))
+       native-basis
+       (b/create-basis {:project nil :extra {:deps deps}})
+
+       jars-by-artifact
+       (into {}
+             (map (fn [artifact]
+                    [artifact
+                     (->> (get-in native-basis [:libs artifact :paths])
+                          (filter #(str/ends-with? % ".jar"))
+                          vec)]))
+             (keys deps))
+
+       missing-natives
+       (->> jars-by-artifact
+            (keep (fn [[artifact jars]]
+                    (when (empty? jars) artifact)))
+            vec)]
+
+      (when (seq missing-natives)
+        (throw (ex-info "Native build requires every FFM native artifact for its target platform."
+                        {:artifacts missing-natives
+                         :platform tok
+                         :tree-sitter-platform (pack-native-token)})))
+      (->> (keys deps)
+           (mapcat jars-by-artifact)
+           vec))))
 
 (defn- native-classpath
   "Classpath for the native build: the AOT classes dir FIRST (so compiled app +

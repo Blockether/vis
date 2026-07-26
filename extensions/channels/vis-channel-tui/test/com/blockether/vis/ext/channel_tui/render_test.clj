@@ -1498,7 +1498,7 @@
                :pending-sends [{:text
                                 "/var/folders/67/T/clipboard-2026-07-26-151209.png\nLOOK AT THIS"}
                                ;; Gateway-mirrored row: the daemon already chipped it.
-                               {:text "/tmp/other.png" :preview-text "🖼 other.png"}]))
+                               {:text "/tmp/other.png" :preview-text "other.png"}]))
 
            lines
            (mapv str (:lines payload))
@@ -1508,10 +1508,10 @@
 
           (expect (some? queued-row))
           ;; The chip carries the filename …
-          (expect (str/includes? queued-row "🖼"))
+          (expect (str/includes? queued-row "clipboard-2026-07-26-151209.png"))
           ;; … and NOT the directory it was pasted from.
           (expect (not (some #(str/includes? % "/var/folders/67/T/") lines)))
-          (expect (some #(str/includes? % "🖼 other.png") lines))
+          (expect (some #(str/includes? % "other.png") lines))
           (expect (not (some #(str/includes? % "/tmp/other.png") lines)))))
     (it "queued sends still render after the spinner with the body split path"
         (render/invalidate-cache!)
@@ -3615,6 +3615,60 @@
                      ;; every reserved row (paint + pads) is present after compaction
                      (expect (= (long (:rows img)) (count img-rows)))
                      (expect (every? #(= "/tmp/shot.png" (:path (:img (:meta %)))) img-rows))))))
+
+(defdescribe image-box-survives-result-collapse-test
+             ;; Every reserved image row LOOKS blank, so two passes used to eat the
+             ;; box: the non-tool RESULT preview kept only the first `preview-n`
+             ;; rows, and `coalesce-bubble-blanks` folded the survivors into ONE
+             ;; row — while `:img` still claimed the full height, so the paint layer
+             ;; source-cropped the picture down to its top sliver.
+             (let
+               [fence
+                (fn [w h]
+                  (str "````vis-image\n[Image: shot.png "
+                       w
+                       "×"
+                       h
+                       ", 45.7 KB]\n"
+                       "/tmp/shot.png\nimage/png\n" w
+                       "x" h
+                       "\n45.7 KB\n````\n" "{'filename': 'shot.png'}"))
+
+                painted
+                (fn [w h fill-w]
+                  (with-redefs [timg/images-protocol (constantly :kitty)]
+                    (render/invalidate-cache!)
+                    (let
+                      [body (fence w h)
+                       {:keys [line-meta]} (render/format-answer-with-thinking-data
+                                             nil
+                                             [{:forms [{:code "print(vis_attach(\"/tmp/shot.png\"))"
+                                                        :stdout body
+                                                        :result body
+                                                        :duration-ms 1
+                                                        :success? true}]}]
+                                             fill-w
+                                             {:show-iterations true}
+                                             nil
+                                             false
+                                             {:session-id "s"
+                                              :session-turn-id
+                                              "123e4567-e89b-12d3-a456-426614174000"
+                                              :detail-expansions {}})
+                       rows (filter #(#{:image :image-pad} (:kind %)) line-meta)]
+
+                      {:rows (count rows) :img (:img (first rows))})))]
+
+               (it "the WHOLE reserved box survives the RESULT preview and blank coalescing"
+                   (let [{:keys [rows img]} (painted 1206 2622 180)]
+                     (expect (< 1 (long (:rows img))))
+                     ;; painted rows must MATCH the height `:img` advertises, or the
+                     ;; graphics layer crops the picture to the rows that survived
+                     (expect (= (long (:rows img)) rows))))
+               (it "the box is normalized to the terminal width, not a fixed cell cap"
+                   (let [{:keys [rows img]} (painted 1578 444 180)]
+                     (expect (= (long (:rows img)) rows))
+                     (expect (< 90 (long (:cols img))))))))
 
 (defdescribe
   iteration-merge-flush-test

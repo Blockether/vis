@@ -3,7 +3,16 @@ import { GatewayError, type GatewayClient } from '../lib/gateway';
 import type { GatewayConn, GatewayTheme, ThemePref, Toggle, ToggleGroup } from '../lib/types';
 import { applyGatewayTheme, resolveTheme } from '../lib/theme';
 import { getThemePref, setThemePref } from '../lib/storage';
-import { Banner, Input } from '../components/ui';
+import { Banner, Button, Input } from '../components/ui';
+import {
+  ProviderFlowPanel,
+  ProviderSignOutButton,
+  isProviderAuthed,
+  providerLimitsLine,
+  providerStatusDot,
+  providerStatusLine,
+  useProviderAuth,
+} from '../components/ProviderAuth';
 
 interface Props {
   client: GatewayClient;
@@ -26,7 +35,11 @@ export function GatewaySettingsDialog({
   onRemove,
   onClose,
 }: Props) {
-  const [groups, setGroups] = useState<ToggleGroup[] | null>(null);
+  // Reopening the dialog paints the gateway's last known toggles immediately;
+  // `load` below refreshes them (and `setSetting` patches the cache in place).
+  const [groups, setGroups] = useState<ToggleGroup[] | null>(
+    () => client.cachedSettings()?.groups ?? null,
+  );
   const [theme, setTheme] = useState<GatewayTheme | null>(null);
   const [pref, setPref] = useState<ThemePref>('light');
   const [err, setErr] = useState<string | null>(null);
@@ -98,13 +111,12 @@ export function GatewaySettingsDialog({
   }, [onClose]);
 
   function patch(updated: Toggle) {
-    setGroups((current) =>
-      current?.map((group) => ({
-        ...group,
-        toggles: group.toggles.map((toggle) =>
-          toggle.id === updated.id ? updated : toggle,
-        ),
-      })) ?? null,
+    setGroups(
+      (current) =>
+        current?.map((group) => ({
+          ...group,
+          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+        })) ?? null,
     );
   }
 
@@ -191,12 +203,16 @@ export function GatewaySettingsDialog({
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-4">
+        <div className="min-h-0 flex-1 touch-pan-y space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain p-3 sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
 
           <SettingsPanel
             title="Gateway"
-            meta={<span className={`font-black ${status.tone}`}>{status.dot} {status.label}</span>}
+            meta={
+              <span className={`font-black ${status.tone}`}>
+                {status.dot} {status.label}
+              </span>
+            }
           >
             <div className="space-y-3 p-3">
               <label className="block">
@@ -249,7 +265,9 @@ export function GatewaySettingsDialog({
                 )}
                 {confirmRemove ? (
                   <span className="flex items-center gap-2">
-                    <span className="font-mono text-meta font-bold uppercase tracking-[0.12em] text-err">Remove?</span>
+                    <span className="font-mono text-meta font-bold uppercase tracking-[0.12em] text-err">
+                      Remove?
+                    </span>
                     <button
                       type="button"
                       onClick={async () => {
@@ -281,6 +299,8 @@ export function GatewaySettingsDialog({
             </div>
           </SettingsPanel>
 
+          {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
+
           {!unreachable && !unauthorized && theme && (
             <SettingsPanel
               title="Theme"
@@ -289,15 +309,25 @@ export function GatewaySettingsDialog({
               {(() => {
                 const resolved = resolveTheme(theme, pref);
                 const options: { key: ThemePref; name: string; sub: string }[] = [
-                  { key: 'gateway', name: 'Follow gateway', sub: theme.display_name },
-                  ...theme.themes.map((t) => ({ key: t.id, name: t.display_name, sub: t.mode })),
+                  {
+                    key: 'gateway',
+                    name: 'Follow gateway',
+                    sub: theme.display_name,
+                  },
+                  ...theme.themes.map((t) => ({
+                    key: t.id,
+                    name: t.display_name,
+                    sub: t.mode,
+                  })),
                 ];
                 return (
                   <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
                     {options.map((choice) => {
                       const selected =
                         choice.key === pref ||
-                        (choice.key !== 'gateway' && pref !== 'gateway' && choice.key === resolved.id);
+                        (choice.key !== 'gateway' &&
+                          pref !== 'gateway' &&
+                          choice.key === resolved.id);
                       return (
                         <button
                           type="button"
@@ -319,7 +349,10 @@ export function GatewaySettingsDialog({
                               {choice.sub}
                             </span>
                           </span>
-                          <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
+                          <span
+                            className="shrink-0 font-mono text-meta font-black"
+                            aria-hidden="true"
+                          >
                             {selected ? '●' : '○'}
                           </span>
                         </button>
@@ -350,11 +383,13 @@ export function GatewaySettingsDialog({
           ) : unauthorized ? (
             <SettingsPanel title="Settings" meta="unauthorized">
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-body font-bold text-warn-strong">Token missing or invalid</p>
+                <p className="font-mono text-body font-bold text-warn-strong">
+                  Token missing or invalid
+                </p>
                 <p className="max-w-sm font-mono text-meta text-dialog-hint">
                   The gateway is online, but rejected this token. Re-pair from{' '}
-                  <code className="text-accent-ink">vis gateway pair</code> and paste the fresh
-                  link to load its settings.
+                  <code className="text-accent-ink">vis gateway pair</code> and paste the fresh link
+                  to load its settings.
                 </p>
                 <button
                   type="button"
@@ -396,7 +431,9 @@ export function GatewaySettingsDialog({
                       >
                         <span
                           className={`pt-0.5 font-mono text-body ${
-                            toggle.type === 'boolean' && toggle.enabled ? 'text-ok' : 'text-dialog-hint'
+                            toggle.type === 'boolean' && toggle.enabled
+                              ? 'text-ok'
+                              : 'text-dialog-hint'
                           }`}
                           aria-hidden="true"
                         >
@@ -457,10 +494,136 @@ export function GatewaySettingsDialog({
         </div>
 
         <footer className="flex shrink-0 items-center border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-chip text-dialog-hint sm:px-4 sm:py-2">
-          <span>{settingCount} {settingCount === 1 ? 'option' : 'options'}</span>
+          <span>
+            {settingCount} {settingCount === 1 ? 'option' : 'options'}
+          </span>
         </footer>
       </section>
     </div>
+  );
+}
+
+/**
+ * Provider accounts ON THIS GATEWAY: live auth status, sign-in, a manual
+ * re-check, and sign-out — the whole terminal-free equivalent of
+ * `vis auth login/logout/status`.
+ *
+ * Every credential lives on the daemon: this panel starts flows, polls them,
+ * and asks for verdicts, but never holds a token, verifier, or device code.
+ * The exchange itself is `useProviderAuth`, shared with the router dialog.
+ */
+function ProvidersPanel({ client }: { client: GatewayClient }) {
+  const auth = useProviderAuth(client);
+  const { providers, err, note, pending } = auth;
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
+
+  return (
+    <SettingsPanel
+      title="Providers"
+      meta={providers ? `${signedIn}/${providers.length} signed in` : 'checking…'}
+    >
+      <div className="space-y-2 p-3">
+        {err && <Banner kind="err">{err}</Banner>}
+        {note && <Banner kind="ok">{note}</Banner>}
+        <ProviderFlowPanel auth={auth} />
+
+        {providers === null && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            Checking provider sign-in…
+          </p>
+        )}
+
+        {providers?.length === 0 && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            No providers configured on this gateway.
+          </p>
+        )}
+
+        {providers?.map((provider) => {
+          const dot = providerStatusDot(provider);
+          const authed = isProviderAuthed(provider);
+          const limits = providerLimitsLine(provider);
+          const open = expanded === provider.id;
+
+          return (
+            <div key={provider.id} className="border border-dialog-edge bg-panel-2">
+              <button
+                type="button"
+                className="flex min-h-12 w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+                onClick={() => setExpanded(open ? null : provider.id)}
+                aria-expanded={open}
+              >
+                <span className={`font-mono text-body ${dot.tone}`} aria-label={dot.label}>
+                  {dot.glyph}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-ui font-bold text-white">
+                    {provider.label}
+                  </span>
+                  <span className="block truncate font-mono text-meta text-dialog-hint">
+                    {providerStatusLine(provider)}
+                  </span>
+                </span>
+                <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden="true">
+                  {open ? '▾' : '▸'}
+                </span>
+              </button>
+
+              {open && (
+                <div className="space-y-2 border-t border-dialog-edge p-3">
+                  {limits && (
+                    <p className="break-words font-mono text-meta text-dialog-hint">{limits}</p>
+                  )}
+                  <p className="break-words font-mono text-chip text-dialog-hint">
+                    {provider.id} · {provider.models.length}{' '}
+                    {provider.models.length === 1 ? 'model' : 'models'}
+                  </p>
+
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      className="flex-1"
+                      variant={authed ? 'ghost' : 'solid'}
+                      disabled={pending === `auth:${provider.id}`}
+                      onClick={() => void auth.signIn(provider)}
+                    >
+                      {pending === `auth:${provider.id}`
+                        ? 'Starting…'
+                        : authed
+                          ? 'Sign in again'
+                          : 'Sign in'}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="flex-1"
+                      disabled={pending === `status:${provider.id}`}
+                      onClick={() => void auth.recheck(provider)}
+                    >
+                      {pending === `status:${provider.id}` ? 'Checking…' : 'Check status'}
+                    </Button>
+                    {authed && (
+                      <ProviderSignOutButton auth={auth} provider={provider} className="flex-1" />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {!!providers?.length && (
+          <div className="flex justify-end pt-1">
+            <Button
+              variant="ghost"
+              disabled={pending === 'reload'}
+              onClick={() => void auth.refresh()}
+            >
+              {pending === 'reload' ? 'Re-checking…' : 'Re-check all'}
+            </Button>
+          </div>
+        )}
+      </div>
+    </SettingsPanel>
   );
 }
 

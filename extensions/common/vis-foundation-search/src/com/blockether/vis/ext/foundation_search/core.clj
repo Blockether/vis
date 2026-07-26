@@ -1374,6 +1374,11 @@
     #'search
     {:tag :observation
      :native-tool? true
+     :result
+     (str
+       "Object with string keys `op`, `query`, `citations`, `citation_count`, `truncated`, `source`, "
+       "and optional `endpoint`; each citation is a normalized source object with title, URL, "
+       "and excerpt/metadata when available.")
      :name "search"
      :color-role :tool-color/search
      :render render-search-result

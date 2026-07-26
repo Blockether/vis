@@ -2240,6 +2240,7 @@ del __vis_install_paramiko__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "paramiko"
+       :shim/imports ["paramiko"]
        :shim/description
        "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Supports key generation/loading for RSA/DSS/ECDSA/Ed25519 keys, SSHClient exec/SFTP client flows, and the server-side API surface (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) for server-oriented code. `Transport(sock).start_server()` starts a real Apache MINA SSHD only when given a real client socket — it serves reverse (`tcpip-forward`) port-forwarding over that socket, delegating password auth and forward approval to the Python `ServerInterface` (`check_auth_password`/`check_port_forward_request`). Nothing starts on `import` or on a socket-less `start_server()` (that degrades to a passive stub); every started server uses MINA's own per-server NIO2 io-service, is capped (max 32 live), and self-reaps when its connection ends. Also unsupported: interactive `invoke_shell`; prefer `SSHClient` + `exec_command`/SFTP for client flows."
        :shim/bindings paramiko-bridge-bindings

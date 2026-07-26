@@ -188,6 +188,7 @@ del __vis_install_toml__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "toml"
+       :shim/imports ["toml"]
        :shim/description
        "toml-compatible `toml`: loads/load via stdlib tomllib, dumps/dump via a pure-Python serializer. Not supported (writer): comment preservation and exotic formatting; reads are spec-correct."
        :shim/preamble toml-compat-shim-src}]}))

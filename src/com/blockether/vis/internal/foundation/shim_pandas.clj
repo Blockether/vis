@@ -1327,6 +1327,7 @@ del __vis_install_pandas__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "pandas"
+       :shim/imports ["pandas"]
        :shim/description
        "pandas-compatible `pandas` in pure Python (Series, DataFrame, groupby, merge, read_csv). Not supported: C-speed; `to_csv(path)` disabled (use `to_csv()` for a string); vectorized/IO-heavy APIs beyond the documented set."
        :shim/preamble pandas-compat-shim-src}]}))

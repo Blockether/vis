@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
+            [com.blockether.vis.internal.attachments :as attach]
             [com.blockether.vis.internal.iteration :as iteration]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
@@ -399,6 +400,40 @@
   [md]
   (str/replace (str md) vis-image-fence-re "\n"))
 
+(def ^:private vis-fence-re
+  ;; Any four-backtick `vis-*` disclosure block. Its body is DATA the renderer
+  ;; parses (image path, mime, the verbatim paste payload) and must survive
+  ;; display rewriting untouched.
+  #"(?s)\n?````vis-(?:image|paste)\n.*?\n````\n?")
+
+(defn- chip-image-paths
+  "`md` with every bare image path in the PROSE collapsed to a `name.png` chip,
+   leaving every `vis-image`/`vis-paste` fence body byte-identical. A turn
+   persisted with a raw `/var/folders/…/clipboard-….png` (no collapsed display
+   copy) then reads as the picture's name instead of an OS temp path, while the
+   fences the renderer parses to DRAW pictures keep their real paths."
+  [md]
+  (let
+    [s
+     (str md)
+
+     matcher
+     (re-matcher vis-fence-re s)
+
+     out
+     (StringBuilder.)]
+
+    (loop [pos 0]
+      (if (.find matcher)
+        (let
+          [start (.start matcher)
+           end (.end matcher)]
+
+          (.append out ^String (attach/text->inline-chips (subs s pos start)))
+          (.append out ^String (subs s start end))
+          (recur end))
+        (do (.append out ^String (attach/text->inline-chips (subs s pos))) (str out))))))
+
 (defn- attachment-image-fence
   "One `vis-image` fenced block pointing at a DURABLE cache file materialized from
    a persisted attachment, so a resumed session re-renders the picture from
@@ -428,8 +463,12 @@
    `vis-image` fences from `user-request` and append one durable fence per
    persisted USER image attachment (`attachments` are canonical wire maps). The
    bytes live in the DB, so the picture survives a TUI restart even after the
-   original clipboard/temp file is purged. Returns `user-request` unchanged when
-   the turn carried no usable user image."
+   original clipboard/temp file is purged.
+
+   Whatever prose survives goes through `attach/text->inline-chips`, so a turn
+   persisted with a BARE temp path (submitted before the collapsed display copy
+   rode along, or typed by hand) reads as `clipboard-….png` instead of a raw
+   `/var/folders/…` line. DISPLAY only — nothing re-sends this text."
   [user-request attachments]
   (let
     [descs (->> attachments
@@ -437,8 +476,8 @@
                 (keep timg/materialize-attachment)
                 vec)]
     (if (empty? descs)
-      (str user-request)
-      (str (str/trimr (strip-image-fences user-request))
+      (chip-image-paths user-request)
+      (str (str/trimr (chip-image-paths (strip-image-fences user-request)))
            (str/join ""
                      (map-indexed (fn [i d]
                                     (attachment-image-fence (inc (long i)) d))
@@ -1100,41 +1139,50 @@
   ([session text] (turn! session text {}))
   ([{:keys [id]} text
     {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace
-            idempotency-key]}]
-   (try (vis/gateway-submit-turn-sync! id
-                                       (cond->
-                                         {:request text
-                                          :on-event (fn [event]
-                                                      (when-let [chunk (gateway-event->chunk event)]
-                                                        (when on-chunk (on-chunk chunk))))}
-                                         ;; Client-minted correlation id: makes the submit
-                                         ;; idempotent AND lets this tab recognise its own
-                                         ;; turn in queue events by id, not by text.
-                                         idempotency-key
-                                         (assoc :idempotency-key idempotency-key)
+            idempotency-key display-text]}]
+   (try
+     (vis/gateway-submit-turn-sync! id
+                                    (cond->
+                                      {:request text
+                                       :on-event (fn [event]
+                                                   (when-let [chunk (gateway-event->chunk event)]
+                                                     (when on-chunk (on-chunk chunk))))}
+                                      ;; Client-minted correlation id: makes the submit
+                                      ;; idempotent AND lets this tab recognise its own
+                                      ;; turn in queue events by id, not by text.
+                                      idempotency-key
+                                      (assoc :idempotency-key idempotency-key)
 
-                                         cancel-token
-                                         (assoc :cancel-token cancel-token)
+                                      cancel-token
+                                      (assoc :cancel-token cancel-token)
 
-                                         reasoning-default
-                                         (assoc :reasoning-default reasoning-default)
+                                      reasoning-default
+                                      (assoc :reasoning-default reasoning-default)
 
-                                         extra-body
-                                         (assoc :extra-body extra-body)
+                                      extra-body
+                                      (assoc :extra-body extra-body)
 
-                                         turn-features
-                                         (assoc :turn-features turn-features)
+                                      turn-features
+                                      (assoc :turn-features turn-features)
 
-                                         (seq workspace)
-                                         (assoc :workspace workspace)))
-        (catch Exception e
-          (if (vis/cancellation? e)
-            {"content" [{"id" (str (java.util.UUID/randomUUID))
-                         "type" "notice"
-                         "code" "turn_cancelled"
-                         "message" "Cancelled by user."}]
-             "status" "cancelled"}
-            {"error" (or (ex-message e) (str e))})))))
+                                      ;; The user's COLLAPSED copy (paste/image tokens
+                                      ;; still folded into their `vis-paste`/`vis-image`
+                                      ;; fences). `:request` is the expanded agent text, so
+                                      ;; without this every channel paints the raw
+                                      ;; `/var/folders/…/clipboard-….png` the model reads.
+                                      display-text
+                                      (assoc :display-request display-text)
+
+                                      (seq workspace)
+                                      (assoc :workspace workspace)))
+     (catch Exception e
+       (if (vis/cancellation? e)
+         {"content" [{"id" (str (java.util.UUID/randomUUID))
+                      "type" "notice"
+                      "code" "turn_cancelled"
+                      "message" "Cancelled by user."}]
+          "status" "cancelled"}
+         {"error" (or (ex-message e) (str e))})))))
 
 (defn attach!
   "Attach to an already submitted gateway turn and return canonical content."

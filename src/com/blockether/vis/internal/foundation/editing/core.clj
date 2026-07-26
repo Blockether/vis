@@ -5186,6 +5186,8 @@
     #'index-tool
     {:symbol 'struct_index
      :native-tool? true
+     :result
+     "Object with string keys `op`, `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `range`, and `ranges`. No rendered source-text field."
      :active-fn structural-supported?
      :description
      (str "Inspect supported source structurally before reading bodies. Returns imports plus a "
@@ -5226,6 +5228,13 @@
     #'cat-tool
     {:symbol 'cat
      :native-tool? true
+     :result
+     (str
+       "File result: object with string keys `op`, `path`, `size`, `mtime`, `eof`, `truncated`, "
+       "`next_offset`, `ranges`, and `anchors`; `anchors` maps each `line:hash` to `{\"text\": line}` "
+       "and is the only content field (no `content`/`lines`). In Python iterate "
+       "`result[\"anchors\"].items()`; rendered source-like lines are presentation, not raw fields. "
+       "Directory result: object with `op`, `path`, `type`, `depth`, and `entries`.")
      ;; cat(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
      :description
@@ -5279,6 +5288,12 @@
     #'grep-tool
     {:symbol 'grep
      :native-tool? true
+     :result
+     (str
+       "Object with string keys `op`, `query`, `needles`, `searched_paths`, `missing_paths`, "
+       "`paths`, `matches`, `file_counts`, `first_hit`, `hint`, `hit_count`, `file_count`, "
+       "`total_file_count`, `total_file_count_is_exact`, `limit`, `truncated_by`, and "
+       "`hits_truncated_by`; `matches` contains anchored text/context rows, not a `content` field.")
      :description
      (str
        "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when you do not "
@@ -5324,6 +5339,7 @@
     #'patch-tool
     {:symbol 'patch
      :native-tool? true
+     :result "Array of result objects; each has exactly `path`, `op`, `changed`, and `diff`."
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
@@ -5363,6 +5379,7 @@
     #'write-tool
     {:symbol 'write
      :native-tool? true
+     :result "Array containing one result object with exactly `path`, `op`, `changed`, and `diff`."
      :description (str
                     "Create a new file or intentionally replace an entire clean file. Refuses "
                     "uncommitted targets unless explicitly allowed; use `patch` or `struct_patch` "
@@ -5631,6 +5648,7 @@
     #'struct-patch-tool
     {:symbol 'struct_patch
      :native-tool? true
+     :result "Array containing one result object with exactly `path`, `op`, `changed`, and `diff`."
      :active-fn structural-supported?
      :description
      (str "Preferred syntax-safe editor for supported code. Locate a named definition from "
@@ -5780,6 +5798,9 @@
     #'sexpr-tool
     {:symbol 'struct_node
      :native-tool? true
+     :result (str
+               "Object with string keys `op`, `path`, `kind`, `text`, `sexp`, `line`, `end_line`, "
+               "`named_child_count`, `children`, `can`, and `has_error`.")
      ;; struct_node(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
      :active-fn structural-supported?
@@ -5940,6 +5961,8 @@
   (vis/symbol #'occurrences-tool
               {:symbol 'struct_occurrences
                :native-tool? true
+               :result (str "Object with string keys `op`, `name`, `paths`, `files`, `count`, "
+                            "`definition_count`, `scanned`, and `failed`.")
                :active-fn structural-supported?
                :description
                (str "Trace a real identifier across supported project code before renaming or "
@@ -6032,6 +6055,8 @@
     #'symbol-rename-tool
     {:symbol 'struct_rename
      :native-tool? true
+     :result
+     "Object stamped with string `op`: `{\"files\": [{\"path\": string, \"changed\": true}], \"file_count\": integer, \"failed\": [{\"path\": string, \"error\": string}], \"op\": string}`."
      :name "struct_rename"
      :call {:pos ["name" "new_name"]}
      :active-fn structural-supported?
@@ -6168,14 +6193,35 @@
                :tag :observation
                :on-error-fn (tool-failure-on-error :file-exists :path nil)}))
 
+(defn- fs-targets
+  "Every target path of a single-path fs op (delete / create_dirs / exists), in
+   request order: the scalar `path` first, then the batch `paths`. ONE call may
+   carry N paths — that is the whole point of the batch form: deleting nine temp
+   files is one tool call and one card, not nine."
+  [m]
+  (into (if-some [p (get m "path")]
+          [p]
+          [])
+        (remove nil?)
+        (get m "paths")))
+
+(defn- fs-batch?
+  "True when the caller used the batch key `paths`. Presence — never the NUMBER
+   of entries — selects the batch result shape, so the answer follows the
+   request: a one-element `paths` still answers `{\"paths\" [entry]}` and a
+   scalar `path` still answers the flat historical shape."
+  [m]
+  (contains? m "paths"))
+
 (defn- fs-arg-paths
-  "Paths of ONE fs input map: `path` (delete/create_dirs/exists) or `src`+`dest`."
+  "Paths of ONE fs input map: `path` plus the batch `paths`
+   (delete/create_dirs/exists), or `src`+`dest`. Path protection must see the
+   WHOLE batch — one unchecked entry would be a hole in the gate."
   [args]
   (let [m (first args)]
     (when (map? m)
-      (if-some [p (get m "path")]
-        [p]
-        (vec (keep #(get m %) ["src" "dest"]))))))
+      (let [targets (fs-targets m)]
+        (if (seq targets) targets (vec (keep #(get m %) ["src" "dest"])))))))
 
 (defn- fs-before-fn
   "Route the fs op through path protection with the RIGHT intent: `exists`
@@ -6190,14 +6236,77 @@
 
     ((path-protected-before-fn :fs :path intent fs-arg-paths) env f args)))
 
+(defn- fs-plural [n one many] (if (= 1 n) one many))
+
+(defn- fs-entry-list
+  "Backticked entry paths joined for ONE summary line, capped with a `+N more`
+   tail. `label` decorates each entry (exists appends its verdict). A 40-path
+   batch must stay one readable line, not a wall."
+  [entries label]
+  (let
+    [shown
+     (take 6 entries)
+
+     extra
+     (- (count entries) (count shown))]
+
+    (str (str/join ", " (map label shown)) (when (pos? extra) (str " +" extra " more")))))
+
+(defn- render-fs-batch-summary
+  "Summary line for a BATCH fs result — `{\"action\" … \"paths\" [entry …]}`.
+   Leads with the verb, then how many of the batch actually changed (a delete
+   that found nothing must not read like a delete that removed everything), then
+   names the paths."
+  [action entries]
+  (let
+    [n
+     (count entries)
+
+     plain
+     (fn [e]
+       (str "`" (disp-path (get e "path")) "`"))
+
+     changed
+     (fn ^long [k]
+       (long (count (filter #(get % k) entries))))]
+
+    (case action
+      "delete"
+      (let [d (changed "is_deleted")]
+        (if (= d n)
+          (str "deleted " n " " (fs-plural n "path" "paths") ": " (fs-entry-list entries plain))
+          (str "deleted " d
+               " of " n
+               " paths (" (- (long n) (long d))
+               " already absent): " (fs-entry-list entries plain))))
+
+      "create_dirs"
+      (let [c (changed "is_created")]
+        (if (= c n)
+          (str "created " n " " (fs-plural n "dir" "dirs") ": " (fs-entry-list entries plain))
+          (str "created " c
+               " of " n
+               " dirs (" (- (long n) (long c))
+               " already existed): " (fs-entry-list entries plain))))
+
+      "exists"
+      (str (changed "is_existing")
+           " of " n
+           " exist: " (fs-entry-list entries
+                                     (fn [e]
+                                       (str (plain e) (if (get e "is_existing") " ✓" " ✗")))))
+
+      (str/join " " (remove nil? ["fs" (not-empty (str action)) (str n " paths")])))))
+
 (defn- render-fs-result
   "fs → `{:summary}` only: ONE verb-led line per action, read off the CANONICAL
-   fs result `{\"op\" \"fs\" \"action\" <verb> \"path\"|\"src\"+\"dest\"
+   fs result `{\"op\" \"fs\" \"action\" <verb> \"path\"|\"src\"+\"dest\"|\"paths\"
    \"is_created\"|\"is_deleted\"|\"is_existing\"}`.
 
    The badge is the generic `FS` for every action, so the summary must LEAD with
    the verb (`copied`/`moved`/`deleted`/…) — it is the only place the card says
-   WHICH filesystem op ran — and then name the path(s) it touched.
+   WHICH filesystem op ran — and then name the path(s) it touched. A batch
+   result carries `paths`, and then ONE line covers the whole batch.
 
    The action rides `\"action\"`, NOT `\"op\"`: the engine stamps `\"op\"` with the
    canonical TOOL op (`\"fs\"`) on every result, so a sub-op parked under `\"op\"`
@@ -6210,6 +6319,9 @@
     [p
      (disp-path (get r "path"))
 
+     entries
+     (get r "paths")
+
      action
      (if-some [a (get r "action")]
        a
@@ -6217,25 +6329,42 @@
          (when-not (= "fs" o) o)))]
 
     {:summary
-     (case action
-       "copy"
-       (str "copied `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
+     (if (seq entries)
+       (render-fs-batch-summary action entries)
+       (case action
+         "copy"
+         (str "copied `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
 
-       "move"
-       (str "moved `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
+         "move"
+         (str "moved `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
 
-       "delete"
-       (if (get r "is_deleted") (str "deleted `" p "`") (str "nothing to delete at `" p "`"))
+         "delete"
+         (if (get r "is_deleted") (str "deleted `" p "`") (str "nothing to delete at `" p "`"))
 
-       "create_dirs"
-       (if (get r "is_created") (str "created dir `" p "`") (str "dir `" p "` already exists"))
+         "create_dirs"
+         (if (get r "is_created") (str "created dir `" p "`") (str "dir `" p "` already exists"))
 
-       "exists"
-       (str "`" p "` " (if (get r "is_existing") "exists ✓" "missing ✗"))
+         "exists"
+         (str "`" p "` " (if (get r "is_existing") "exists ✓" "missing ✗"))
 
-       ;; Unknown/absent action: never echo the tool name twice — say what is
-       ;; actually known (the verb and/or the path), else just the tool.
-       (str/join " " (remove nil? ["fs" (not-empty (str action)) (when p (str "`" p "`"))])))}))
+         ;; Unknown/absent action: never echo the tool name twice — say what is
+         ;; actually known (the verb and/or the path), else just the tool.
+         (str/join " " (remove nil? ["fs" (not-empty (str action)) (when p (str "`" p "`"))]))))}))
+
+(defn- fs-paths-success
+  "ONE envelope for a single-path fs op run over N targets. `entries` are the
+   canonical per-path maps (`{\"path\" … \"is_<flag>\" …}`) in request order.
+   The batch form answers `{\"action\" … \"paths\" [entry …]}`; the scalar form
+   FLATTENS the lone entry, so a one-path call keeps exactly the shape it always
+   had and only the batch pays for the extra nesting."
+  [{:keys [batch? action flag kind entries]}]
+  (let [changed (count (filter #(get % flag) entries))]
+    (tool-success
+      {:op :fs
+       :path (get (first entries) "path")
+       :kind kind
+       :result (if batch? {"action" action "paths" entries} (assoc (first entries) "action" action))
+       :metadata {:path-count (count entries) :changed-count changed}})))
 
 (defn- fs-tool
   "ONE filesystem tool dispatching on `op` — folds the old copy/move/delete/
@@ -6247,21 +6376,36 @@
    and never a derivable duplicate. The discriminator is `action`, NOT `op`:
    the engine stamps `op` with the canonical TOOL op (`fs`) on every result,
    so a sub-op under `op` would be silently clobbered. The bare copy/move/
-   delete/… sandbox functions keep their own legacy shapes."
+   delete/… sandbox functions keep their own legacy shapes.
+
+   delete / create_dirs / exists also take a BATCH `paths` — N targets in ONE
+   call, answered as `{\"action\" … \"paths\" [{\"path\" … \"is_<foo>\" …} …]}` in
+   request order, so removing nine files is one tool call and one card instead
+   of nine. Targets are processed IN ORDER and a failure aborts the rest: with
+   no `is_missing_ok`, a missing entry throws and later entries are untouched."
   [m]
   (let
     [op
      (get m "op")
 
-     path
-     (get m "path")
-
      src
      (get m "src")
 
      dest
-     (get m "dest")]
+     (get m "dest")
 
+     batch?
+     (fs-batch? m)
+
+     targets
+     (fs-targets m)]
+
+    (when (and batch? (#{"copy" "move"} op))
+      (throw (ex-info "fs: `paths` is for delete | create_dirs | exists — copy/move take src+dest"
+                      {:type :ext.foundation.editing/bad-fs-paths :op op})))
+    (when (and (#{"delete" "create_dirs" "exists"} op) (empty? targets))
+      (throw (ex-info (str "fs: " op " needs `path` or a non-empty `paths`")
+                      {:type :ext.foundation.editing/missing-fs-path :op op})))
     (case op
       "copy"
       (let
@@ -6292,46 +6436,54 @@
                        :metadata {:src (path->target src :path) :dest (path->target dest :path)}}))
 
       "delete"
-      (let
-        [rel
-         (rel-path (safe-path path))
+      (fs-paths-success {:batch? batch?
+                         :action "delete"
+                         :flag "is_deleted"
+                         :kind :path
+                         :entries (mapv (fn [p]
+                                          (let
+                                            [rel
+                                             (rel-path (safe-path p))
 
-         deleted?
-         (if (get m "is_missing_ok") (delete-if-exists-safe path) (do (delete-safe path) true))]
+                                             deleted?
+                                             (if (get m "is_missing_ok")
+                                               (delete-if-exists-safe p)
+                                               (do (delete-safe p) true))]
 
-        (tool-success {:op :fs
-                       :path rel
-                       :kind :path
-                       :result {"action" "delete" "path" rel "is_deleted" deleted?}
-                       :metadata {:deleted? deleted?}}))
+                                            {"path" rel "is_deleted" deleted?}))
+                                        targets)})
 
       "create_dirs"
-      (let
-        [before
-         (fs/exists? (safe-path path))
+      (fs-paths-success {:batch? batch?
+                         :action "create_dirs"
+                         :flag "is_created"
+                         :kind :dir
+                         :entries (mapv (fn [p]
+                                          (let
+                                            [before
+                                             (fs/exists? (safe-path p))
 
-         out
-         (create-dirs-safe path)]
+                                             out
+                                             (create-dirs-safe p)]
 
-        (tool-success {:op :fs
-                       :path out
-                       :kind :dir
-                       :result {"action" "create_dirs" "path" out "is_created" (not before)}
-                       :metadata {:created? (not before) :already-existed? before}}))
+                                            {"path" out "is_created" (not before)}))
+                                        targets)})
 
       "exists"
-      (let
-        [rel
-         (rel-path (safe-path path))
+      (fs-paths-success {:batch? batch?
+                         :action "exists"
+                         :flag "is_existing"
+                         :kind :path
+                         :entries (mapv (fn [p]
+                                          (let
+                                            [rel
+                                             (rel-path (safe-path p))
 
-         exists?
-         (exists-safe? path)]
+                                             exists?
+                                             (exists-safe? p)]
 
-        (tool-success {:op :fs
-                       :path rel
-                       :kind :path
-                       :result {"action" "exists" "path" rel "is_existing" exists?}
-                       :metadata {:exists? exists?}}))
+                                            {"path" rel "is_existing" exists?}))
+                                        targets)})
 
       (throw (ex-info (str "fs: unknown op "
                            (pr-str op)
@@ -6343,8 +6495,14 @@
     #'fs-tool
     {:symbol 'fs
      :native-tool? true
+     :result (str
+               "Object discriminated by `action`: copy/move => `{action,src,dest}`; delete => "
+               "`{action,path,is_deleted}`; create_dirs => `{action,path,is_created}`; exists => "
+               "`{action,path,is_existing}`. The batch form (`paths`) answers `{action,paths}` "
+               "where `paths` is one such entry per target, minus `action`, in request order. "
+               "The top-level object also has string `op`; all keys are strings.")
      :description
-     "One confined filesystem tool: `op` picks the verb and which params it reads. copy/move take src+dest and refuse an existing dest unless is_overwrite. delete takes path, is destructive, and needs explicit user intent (is_missing_ok no-ops when absent). create_dirs takes path and makes missing parents. exists takes path and checks without reading."
+     "One confined filesystem tool: `op` picks the verb and which params it reads. copy/move take src+dest and refuse an existing dest unless is_overwrite. delete takes path, is destructive, and needs explicit user intent (is_missing_ok no-ops when absent). create_dirs takes path and makes missing parents. exists takes path and checks without reading. delete/create_dirs/exists also take `paths` — MANY targets in ONE call, one entry per path."
      :render render-fs-result
      :color-role :tool-color/move
      :schema
@@ -6354,12 +6512,17 @@
              :enum ["copy" "move" "delete" "create_dirs" "exists"]
              :description "Filesystem operation."}
        "path" {:type "string" :description "Target path (delete / create_dirs / exists)."}
+       "paths"
+       {:type "array"
+        :items {:type "string"}
+        :description
+        "delete / create_dirs / exists: MANY target paths in ONE call, processed in order; the result carries one entry per path."}
        "src" {:type "string" :description "Source path (copy / move)."}
        "dest" {:type "string" :description "Destination path (copy / move)."}
        "is_overwrite" {:type "boolean"
                        :description "copy/move: overwrite an existing dest (default false)."}
        "is_missing_ok" {:type "boolean"
-                        :description "delete: no-op when the path is absent (default false)."}}
+                        :description "delete: no-op when a path is absent (default false)."}}
       :required ["op"]
       :additionalProperties false}
      :before-fn fs-before-fn

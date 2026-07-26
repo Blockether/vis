@@ -1,0 +1,587 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { GatewayClient } from '../lib/gateway';
+import type { AuthFlow, ProviderLimitRow, RouterProvider } from '../lib/types';
+import { Button, Input } from './ui';
+
+/** How long to keep polling a device flow before giving up on our side. */
+const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
+
+export function isProviderAuthed(provider: RouterProvider): boolean {
+  return provider.status?.is_authenticated === true;
+}
+
+/**
+ * Open an OAuth URL in the system browser. `window.open` is the one call that
+ * works identically on web, iOS, and Android under Capacitor's WebView, so the
+ * app pulls in no extra native plugin to sign a provider in.
+ */
+export function openProviderUrl(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+export function providerStatusDot(provider: RouterProvider) {
+  if (provider.status?.error) {
+    return { glyph: '●', tone: 'text-err', label: 'Error' };
+  }
+  return isProviderAuthed(provider)
+    ? { glyph: '●', tone: 'text-ok', label: 'Signed in' }
+    : { glyph: '○', tone: 'text-dialog-hint', label: 'Signed out' };
+}
+
+/** `12m`, `3h`, `6d` — coarse on purpose: this is a hint, not a countdown. */
+function humanMs(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+/**
+ * The daemon reports WHERE a credential came from as a machine token
+ * (`auth-file`, `env-var`, …); say it in words instead.
+ */
+const SOURCE_LABELS: Record<string, string> = {
+  'auth-file': 'signed-in session',
+  keychain: 'system keychain',
+  'env-var': 'environment key',
+  config: 'config key',
+  'api-key': 'API key',
+};
+
+/**
+ * One line describing where the credential came from and how long it is good
+ * for. Token previews (`oauth_token_preview`, `api_key_preview`) are
+ * deliberately never rendered — the daemon owns the secret and this device has
+ * no reason to echo even a fragment of it.
+ */
+export function providerStatusLine(provider: RouterProvider): string {
+  const status = provider.status;
+  if (status?.error) return status.error;
+  if (!status?.is_authenticated) return status?.detail ?? 'Not signed in';
+  const source = status.source ? (SOURCE_LABELS[status.source] ?? status.source) : undefined;
+  const parts = [status.detail, source, status.account_type].filter(
+    (part): part is string => !!part && part.length > 0,
+  );
+  if (typeof status.expires_in_ms === 'number' && status.expires_in_ms > 0) {
+    parts.push(`expires in ${humanMs(status.expires_in_ms)}`);
+  }
+  return parts.length ? parts.join(' · ') : 'Signed in';
+}
+
+/**
+ * A `note` only reads as a QUOTA when it is short (`100.0% remaining`). Longer
+ * prose ("OpenAI Codex did not report this quota window.") is an explanation,
+ * not a value, and would bury the real numbers in a one-line summary.
+ */
+const QUOTA_NOTE_MAX = 24;
+
+function quotaNote(row: ProviderLimitRow): string | null {
+  const note = row.note?.trim();
+  return note && note.length <= QUOTA_NOTE_MAX ? note : null;
+}
+
+function hasQuotaValue(row: ProviderLimitRow): boolean {
+  if (row.is_unlimited) return true;
+  if (typeof row.used === 'number' && typeof row.limit === 'number' && row.limit > 0) return true;
+  return quotaNote(row) !== null;
+}
+
+/**
+ * One quota window in words. Providers are inconsistent on purpose here: some
+ * send `used`/`limit`, some only a short note, some neither (the window exists
+ * but went unreported), so each case gets its own honest rendering rather than
+ * a fabricated `0%`.
+ */
+function limitRowText(row: ProviderLimitRow): string | null {
+  const label = row.label?.trim();
+  if (!label) return null;
+  if (row.is_unlimited) return `${label} unlimited`;
+  if (typeof row.used === 'number' && typeof row.limit === 'number' && row.limit > 0) {
+    return `${label} ${Math.round((row.used / row.limit) * 100)}%`;
+  }
+  const note = quotaNote(row);
+  return note ? `${label} ${note}` : label;
+}
+
+/**
+ * The daemon's limits REPORT condensed to one line — `Claude 5h 16% · Claude
+ * 7d 66%`. The report is the raw provider payload (`dynamic.limits`), so a
+ * provider that reports nothing yields null rather than an empty shell.
+ *
+ * Windows that actually carry a number are shown FIRST: a provider that sends
+ * one unreported window ahead of two real ones must not spend the summary on
+ * the empty one.
+ */
+export function providerLimitsLine(provider: RouterProvider): string | null {
+  const report = provider.limits;
+  if (report?.error?.message) return report.error.message;
+  const rows = report?.dynamic?.limits;
+  if (!rows?.length) return null;
+  const ranked = [...rows].sort((a, b) => Number(hasQuotaValue(b)) - Number(hasQuotaValue(a)));
+  const text = ranked.slice(0, 2).map(limitRowText).filter(Boolean).join(' · ');
+  return text || null;
+}
+
+export interface ProviderAuth {
+  providers: RouterProvider[] | null;
+  err: string | null;
+  note: string | null;
+  /** Surface a caller-side failure (a model pick, say) in the same banner. */
+  setErr: (value: string | null) => void;
+  setNote: (value: string | null) => void;
+  /** `auth:<id>` · `logout:<id>` · `status:<id>` · `auth:complete` · `reload`. */
+  pending: string | null;
+  flow: AuthFlow | null;
+  redirectUrl: string;
+  setRedirectUrl: (value: string) => void;
+  apiKey: string;
+  setApiKey: (value: string) => void;
+  reload: (signal?: AbortSignal, opts?: { force?: boolean }) => Promise<void>;
+  refresh: () => Promise<void>;
+  signIn: (provider: RouterProvider) => Promise<void>;
+  signOut: (provider: RouterProvider) => Promise<void>;
+  recheck: (provider: RouterProvider) => Promise<void>;
+  finishPkce: () => Promise<void>;
+  finishApiKey: () => Promise<void>;
+  cancelFlow: () => Promise<void>;
+}
+
+/**
+ * Every provider's live auth state plus the whole headless OAuth exchange,
+ * shared by the router dialog and gateway settings so both screens sign in,
+ * sign out, and re-check the SAME way.
+ *
+ * The daemon runs the exchange end to end. `device` providers (GitHub Copilot)
+ * show a code and finish by polling — the best phone UX, since nothing has to
+ * be pasted back. `pkce` providers (Anthropic, Codex) open a browser and take
+ * the final redirect URL back. `api-key` providers take the key. No token,
+ * verifier, or device code ever lands on this device.
+ */
+export function useProviderAuth(client: GatewayClient): ProviderAuth {
+  // Paint whatever the shared router cache already holds (prefetched at
+  // connect time) so a screen opens instantly; `reload` revalidates under it.
+  const [providers, setProviders] = useState<RouterProvider[] | null>(() => client.cachedRouter());
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const [flow, setFlow] = useState<AuthFlow | null>(null);
+  const [redirectUrl, setRedirectUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const pollRef = useRef<number | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const reload = useCallback(
+    async (signal?: AbortSignal, opts?: { force?: boolean }) => {
+      try {
+        const rows = await client.router(signal, opts);
+        if (signal?.aborted) return;
+        setProviders(rows);
+        setErr(null);
+      } catch (e) {
+        if (signal?.aborted) return;
+        setErr((e as Error).message);
+        setProviders([]);
+      }
+    },
+    [client],
+  );
+
+  const refresh = useCallback(async () => {
+    setPending('reload');
+    setNote(null);
+    try {
+      await reload(undefined, { force: true });
+    } finally {
+      setPending(null);
+    }
+  }, [reload]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void reload(controller.signal);
+    return () => controller.abort();
+  }, [reload]);
+
+  useEffect(() => stopPolling, [stopPolling]);
+
+  /**
+   * Poll a device flow until the daemon reports a verdict.
+   *
+   * Self-scheduling: the next poll is armed only AFTER the previous one
+   * settles, so a slow gateway can never stack overlapping requests the way a
+   * fixed `setInterval` would. The cadence is the provider's own
+   * `interval_ms` (GitHub rejects faster polling), floored at 2s.
+   */
+  const watchDeviceFlow = useCallback(
+    (started: AuthFlow) => {
+      const deadline = Date.now() + DEVICE_POLL_CEILING_MS;
+      const every = Math.max(2000, started.interval_ms ?? 5000);
+      stopPolling();
+      const tick = () => {
+        pollRef.current = window.setTimeout(() => {
+          void (async () => {
+            if (Date.now() > deadline) {
+              stopPolling();
+              setFlow(null);
+              setErr('Authorization timed out. Start again when ready.');
+              return;
+            }
+            try {
+              const verdict = await client.pollProviderAuth(started.provider_id, started.flow_id);
+              if (pollRef.current === null) return;
+              if (verdict.status === 'pending') {
+                tick();
+                return;
+              }
+              stopPolling();
+              setFlow(null);
+              if (verdict.status === 'ok') {
+                setNote(`Signed in to ${started.provider_id}.`);
+                await reload(undefined, { force: true });
+              } else {
+                setErr(verdict.message ?? 'Authorization failed.');
+              }
+            } catch (e) {
+              stopPolling();
+              setFlow(null);
+              setErr((e as Error).message);
+            }
+          })();
+        }, every);
+      };
+      tick();
+    },
+    [client, reload, stopPolling],
+  );
+
+  const signIn = useCallback(
+    async (provider: RouterProvider) => {
+      setPending(`auth:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      setRedirectUrl('');
+      setApiKey('');
+      try {
+        const started = await client.startProviderAuth(provider.id);
+        setFlow(started);
+        if (started.url) openProviderUrl(started.url);
+        if (started.kind === 'device') watchDeviceFlow(started);
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, watchDeviceFlow],
+  );
+
+  /**
+   * Clear the provider's credentials ON THE DAEMON. Nothing is deleted here —
+   * the gateway owns the credential file — and the forced reload makes the
+   * next paint show the real post-logout verdict rather than a guess.
+   */
+  const signOut = useCallback(
+    async (provider: RouterProvider) => {
+      setPending(`logout:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        const verdict = await client.logoutProvider(provider.id);
+        if (verdict.status === 'error') {
+          setErr(verdict.message ?? 'Sign-out failed.');
+        } else {
+          setNote(`Signed out of ${provider.label}.`);
+        }
+        await reload(undefined, { force: true });
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, reload],
+  );
+
+  /** Re-probe ONE provider's auth + limits, live, without re-probing the fleet. */
+  const recheck = useCallback(
+    async (provider: RouterProvider) => {
+      setPending(`status:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        const [status, limits] = await Promise.all([
+          client.providerStatus(provider.id),
+          client.providerLimits(provider.id).catch(() => null),
+        ]);
+        setProviders(
+          (rows) =>
+            rows?.map((row) =>
+              row.id === provider.id ? { ...row, status, ...(limits ? { limits } : {}) } : row,
+            ) ?? rows,
+        );
+        setNote(`${provider.label}: ${status.is_authenticated ? 'signed in' : 'signed out'}.`);
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client],
+  );
+
+  const finishPkce = useCallback(async () => {
+    if (!flow || !redirectUrl.trim()) return;
+    setPending('auth:complete');
+    try {
+      const verdict = await client.completeProviderAuth(
+        flow.provider_id,
+        flow.flow_id,
+        redirectUrl.trim(),
+      );
+      if (verdict.status === 'ok') {
+        setNote(`Signed in to ${flow.provider_id}.`);
+        setFlow(null);
+        setRedirectUrl('');
+        await reload(undefined, { force: true });
+      } else {
+        setErr(verdict.message ?? 'Authorization failed.');
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }, [client, flow, redirectUrl, reload]);
+
+  /**
+   * Finish an `api-key` flow. The key goes straight to the daemon, which
+   * writes it into ITS config — this device never stores a credential.
+   */
+  const finishApiKey = useCallback(async () => {
+    if (!flow || !apiKey.trim()) return;
+    setPending('auth:complete');
+    try {
+      const verdict = await client.submitProviderKey(flow.provider_id, flow.flow_id, apiKey.trim());
+      if (verdict.status === 'ok') {
+        setNote(`Signed in to ${flow.provider_id}.`);
+        setFlow(null);
+        setApiKey('');
+        await reload(undefined, { force: true });
+      } else {
+        setErr(verdict.message ?? 'Authorization failed.');
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }, [apiKey, client, flow, reload]);
+
+  const cancelFlow = useCallback(async () => {
+    const current = flow;
+    stopPolling();
+    setFlow(null);
+    setRedirectUrl('');
+    setApiKey('');
+    if (current) {
+      try {
+        await client.cancelProviderAuth(current.provider_id, current.flow_id);
+      } catch {
+        // A flow the daemon already forgot is exactly the state we want.
+      }
+    }
+  }, [client, flow, stopPolling]);
+
+  return {
+    providers,
+    err,
+    note,
+    setErr,
+    setNote,
+    pending,
+    flow,
+    redirectUrl,
+    setRedirectUrl,
+    apiKey,
+    setApiKey,
+    reload,
+    refresh,
+    signIn,
+    signOut,
+    recheck,
+    finishPkce,
+    finishApiKey,
+    cancelFlow,
+  };
+}
+
+/**
+ * The live sign-in step: a device code to type into the browser, a redirect
+ * URL to paste back, or an API key to enter. Rendered identically wherever a
+ * flow is running so the phone and the router dialog never drift.
+ */
+export function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
+  const { flow } = auth;
+  if (!flow) return null;
+  const busy = auth.pending === 'auth:complete';
+
+  return (
+    <div className="space-y-3 border border-accent/50 bg-panel-2 p-3">
+      <p className="font-mono text-body font-bold text-white">
+        {flow.kind === 'device' ? 'Waiting for authorization…' : 'Finish sign-in'}
+      </p>
+
+      {flow.user_code && (
+        <p className="select-all break-all border border-dialog-edge bg-input px-3 py-2 text-center font-mono text-display font-bold tracking-[0.2em] text-accent">
+          {flow.user_code}
+        </p>
+      )}
+
+      {flow.instructions?.length ? (
+        <ol className="list-inside list-decimal space-y-1 font-mono text-ui text-dialog-hint">
+          {flow.instructions.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ol>
+      ) : null}
+
+      {flow.url && (
+        <Button
+          variant="ghost"
+          className="w-full"
+          onClick={() => openProviderUrl(flow.url as string)}
+        >
+          Open sign-in page again
+        </Button>
+      )}
+
+      {flow.kind === 'pkce' && (
+        <div className="space-y-2">
+          <label
+            className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
+            htmlFor="provider-redirect-url"
+          >
+            Paste the final redirect URL
+          </label>
+          <Input
+            id="provider-redirect-url"
+            value={auth.redirectUrl}
+            inputMode="url"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="https://…?code=…"
+            onChange={(event) => auth.setRedirectUrl(event.target.value)}
+          />
+        </div>
+      )}
+
+      {flow.kind === 'api-key' && (
+        <div className="space-y-2">
+          <label
+            className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
+            htmlFor="provider-api-key"
+          >
+            Paste the provider API key
+          </label>
+          <Input
+            id="provider-api-key"
+            type="password"
+            value={auth.apiKey}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="sk-…"
+            onChange={(event) => auth.setApiKey(event.target.value)}
+          />
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        {flow.kind === 'pkce' && (
+          <Button
+            className="flex-1"
+            disabled={!auth.redirectUrl.trim() || busy}
+            onClick={() => void auth.finishPkce()}
+          >
+            {busy ? 'Finishing…' : 'Finish sign-in'}
+          </Button>
+        )}
+        {flow.kind === 'api-key' && (
+          <Button
+            className="flex-1"
+            disabled={!auth.apiKey.trim() || busy}
+            onClick={() => void auth.finishApiKey()}
+          >
+            {busy ? 'Saving…' : 'Save key'}
+          </Button>
+        )}
+        <Button variant="ghost" className="flex-1" onClick={() => void auth.cancelFlow()}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Sign-out, two-step. It deletes a credential ON THE DAEMON that every client
+ * of that gateway shares, so a stray tap on a phone must not be able to drop
+ * it — the first press only arms the confirmation.
+ */
+export function ProviderSignOutButton({
+  auth,
+  provider,
+  className = '',
+}: {
+  auth: ProviderAuth;
+  provider: RouterProvider;
+  className?: string;
+}) {
+  const [isConfirming, setIsConfirming] = useState(false);
+  const busy = auth.pending === `logout:${provider.id}`;
+
+  if (!isConfirming) {
+    return (
+      <Button
+        variant="ghost"
+        className={className}
+        disabled={busy}
+        onClick={() => setIsConfirming(true)}
+      >
+        {busy ? 'Signing out…' : 'Sign out'}
+      </Button>
+    );
+  }
+
+  return (
+    <span className={`flex min-w-0 gap-2 ${className}`}>
+      <Button
+        variant="danger"
+        className="min-w-0 flex-1"
+        disabled={busy}
+        onClick={() => {
+          setIsConfirming(false);
+          void auth.signOut(provider);
+        }}
+      >
+        {busy ? 'Signing out…' : 'Yes, sign out'}
+      </Button>
+      <Button
+        variant="ghost"
+        className="min-w-0 flex-1"
+        disabled={busy}
+        onClick={() => setIsConfirming(false)}
+      >
+        Cancel
+      </Button>
+    </span>
+  );
+}

@@ -12,6 +12,8 @@ import type {
   ModelPref,
   QueuedAttachment,
   QueuedTurn,
+  ProviderLimits,
+  ProviderStatus,
   RouterProvider,
   GatewayAttachment,
   GatewayCapabilities,
@@ -85,6 +87,36 @@ const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
 /** In-flight router reads per base URL, so concurrent opens cost one request. */
 const routerInflight = new Map<string, Promise<RouterProvider[]>>();
 
+/**
+ * Last-known payload per gateway+resource, kept for the tab's lifetime so a
+ * screen that REMOUNTS — switching tabs, backing out of a session, reopening
+ * one — paints its previous frame immediately and revalidates underneath
+ * instead of flashing an empty skeleton. Nothing here is ever served as truth:
+ * every reader still fires the real request and reconciles the answer on top.
+ */
+const snapshots = new Map<string, unknown>();
+
+/** Bound the cache so hopping through many sessions cannot pin every transcript. */
+const SNAPSHOT_LIMIT = 32;
+
+function readSnapshot<T>(key: string): T | null {
+  if (!snapshots.has(key)) return null;
+  const value = snapshots.get(key) as T;
+  // Map iteration order IS the LRU order: re-insert to mark this entry as used.
+  snapshots.delete(key);
+  snapshots.set(key, value);
+  return value;
+}
+
+function writeSnapshot(key: string, value: unknown): void {
+  snapshots.delete(key);
+  snapshots.set(key, value);
+  for (const oldest of snapshots.keys()) {
+    if (snapshots.size <= SNAPSHOT_LIMIT) break;
+    snapshots.delete(oldest);
+  }
+}
+
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -126,6 +158,11 @@ export class GatewayClient {
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
     this.token = conn.token;
+  }
+
+  /** Cache key for one of this gateway's snapshot-able payloads. */
+  private snapshotKey(kind: string, sid?: string): string {
+    return sid ? `${this.base}\u0000${kind}\u0000${sid}` : `${this.base}\u0000${kind}`;
   }
 
   private headers(extra?: HeadersInit): Headers {
@@ -246,21 +283,41 @@ export class GatewayClient {
   }
 
   // ── Settings (shared feature-toggle registry, same as TUI) ──────
-  settings(signal?: AbortSignal): Promise<SettingsResponse> {
-    return this.request<SettingsResponse>(
+  /** Last settings payload seen for this gateway — paint it, then revalidate. */
+  cachedSettings(): SettingsResponse | null {
+    return readSnapshot<SettingsResponse>(this.snapshotKey('settings'));
+  }
+
+  async settings(signal?: AbortSignal): Promise<SettingsResponse> {
+    const response = await this.request<SettingsResponse>(
       'GET',
       '/v1/settings?channel=all',
       undefined,
       signal,
     );
+    writeSnapshot(this.snapshotKey('settings'), response);
+    return response;
   }
 
-  setSetting(
+  async setSetting(
     id: string,
     action: 'toggle' | 'cycle' | 'value',
     value?: string,
   ): Promise<Toggle> {
-    return this.request<Toggle>('POST', '/v1/settings', { id, action, value });
+    const updated = await this.request<Toggle>('POST', '/v1/settings', { id, action, value });
+    // Patch the one toggle that changed instead of dropping the snapshot, so
+    // reopening the dialog paints the NEW value rather than a blank sheet.
+    const cached = this.cachedSettings();
+    if (cached) {
+      writeSnapshot(this.snapshotKey('settings'), {
+        ...cached,
+        groups: (cached.groups ?? []).map((group) => ({
+          ...group,
+          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+        })),
+      });
+    }
+    return updated;
   }
 
   // ── Router: providers, models, auth ─────────────────────────────
@@ -421,6 +478,49 @@ export class GatewayClient {
     return verdict;
   }
 
+  /**
+   * Re-probe ONE provider's auth state live (`GET /v1/providers/:id/status`).
+   *
+   * The fleet answer is cached for minutes; a status check is the user asking
+   * "is this still signed in RIGHT NOW", so it bypasses that cache and folds
+   * the fresh verdict back into the cached row — no full re-probe of every
+   * provider, and no screen left painting the stale dot.
+   */
+  async providerStatus(providerId: string, signal?: AbortSignal): Promise<ProviderStatus> {
+    const response = await this.request<{ status?: ProviderStatus }>(
+      'GET',
+      `/v1/providers/${encodeURIComponent(providerId)}/status`,
+      undefined,
+      signal,
+    );
+    const status = response.status ?? {};
+    this.mergeCachedProvider(providerId, { status });
+    return status;
+  }
+
+  /** Live quota report for one provider (`GET /v1/providers/:id/limits`). */
+  async providerLimits(providerId: string, signal?: AbortSignal): Promise<ProviderLimits> {
+    const response = await this.request<{ report?: ProviderLimits }>(
+      'GET',
+      `/v1/providers/${encodeURIComponent(providerId)}/limits`,
+      undefined,
+      signal,
+    );
+    const limits = response.report ?? {};
+    this.mergeCachedProvider(providerId, { limits });
+    return limits;
+  }
+
+  /** Keep the shared router cache honest after a single-provider re-probe. */
+  private mergeCachedProvider(providerId: string, patch: Partial<RouterProvider>): void {
+    const entry = routerCache.get(this.base);
+    if (!entry) return;
+    routerCache.set(this.base, {
+      at: entry.at,
+      rows: entry.rows.map((row) => (row.id === providerId ? { ...row, ...patch } : row)),
+    });
+  }
+
   // ── Theme (same persisted selection and palette as the TUI) ─────
   theme(signal?: AbortSignal): Promise<GatewayTheme> {
     return this.request<GatewayTheme>('GET', '/v1/theme', undefined, signal);
@@ -458,6 +558,39 @@ export class GatewayClient {
   }
 
   // ── Sessions ────────────────────────────────────────────────────
+  //
+  // The list, one session's meta, its transcript and its queued backlog are each
+  // snapshotted per gateway. A screen reads its snapshot synchronously while
+  // mounting (instant frame, no white flash) and these same calls refresh it
+  // underneath — so navigation only ever changes what actually changed.
+
+  /** Last session list seen for this gateway. */
+  cachedSessions(): Session[] | null {
+    return readSnapshot<Session[]>(this.snapshotKey('sessions'));
+  }
+
+  /** Last meta row seen for ONE session. */
+  cachedSession(sid: string): Session | null {
+    return readSnapshot<Session>(this.snapshotKey('session', sid));
+  }
+
+  /** Last transcript seen for ONE session. */
+  cachedTranscript(sid: string): TranscriptTurn[] | null {
+    return readSnapshot<TranscriptTurn[]>(this.snapshotKey('transcript', sid));
+  }
+
+  /** Last queued backlog seen for ONE session. */
+  cachedQueuedTurns(sid: string): QueuedTurn[] | null {
+    return readSnapshot<QueuedTurn[]>(this.snapshotKey('queued', sid));
+  }
+
+  /** Drop every snapshot of one session — it is gone or is being replaced. */
+  forgetSession(sid: string): void {
+    snapshots.delete(this.snapshotKey('session', sid));
+    snapshots.delete(this.snapshotKey('transcript', sid));
+    snapshots.delete(this.snapshotKey('queued', sid));
+  }
+
   async listSessions(signal?: AbortSignal): Promise<Session[]> {
     const res = await this.request<{ sessions: Session[] }>(
       'GET',
@@ -465,7 +598,9 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    return res.sessions ?? [];
+    const rows = res.sessions ?? [];
+    writeSnapshot(this.snapshotKey('sessions'), rows);
+    return rows;
   }
 
   // GET /v1/sessions/actions/search?q= matches user requests + LLM responses in the
@@ -525,17 +660,25 @@ export class GatewayClient {
     });
   }
 
-  session(sid: string, signal?: AbortSignal): Promise<Session> {
-    return this.request<Session>(
+  async session(sid: string, signal?: AbortSignal): Promise<Session> {
+    const row = await this.request<Session>(
       'GET',
       `/v1/sessions/${encodeURIComponent(sid)}`,
       undefined,
       signal,
     );
+    writeSnapshot(this.snapshotKey('session', sid), row);
+    return row;
   }
 
-  deleteSession(sid: string): Promise<unknown> {
-    return this.request('DELETE', `/v1/sessions/${encodeURIComponent(sid)}`);
+  async deleteSession(sid: string): Promise<unknown> {
+    const result = await this.request('DELETE', `/v1/sessions/${encodeURIComponent(sid)}`);
+    this.forgetSession(sid);
+    // Drop just the deleted row from the list snapshot; the list keeps painting
+    // every other session instead of falling back to a skeleton.
+    const rows = this.cachedSessions();
+    if (rows) writeSnapshot(this.snapshotKey('sessions'), rows.filter((row) => row.id !== sid));
+    return result;
   }
 
   async transcript(sid: string, signal?: AbortSignal): Promise<TranscriptTurn[]> {
@@ -545,7 +688,9 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    return response.turns ?? [];
+    const turns = response.turns ?? [];
+    writeSnapshot(this.snapshotKey('transcript', sid), turns);
+    return turns;
   }
 
   async transcriptMd(sid: string, signal?: AbortSignal): Promise<string> {
@@ -622,11 +767,13 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    return (response.turns ?? [])
+    const rows = (response.turns ?? [])
       .filter((turn) => String(turn.status ?? '') === 'queued')
       .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
       .map((turn) => queuedTurnFromWire(turn as unknown as Record<string, unknown>))
       .filter((row) => row.turnId !== '');
+    writeSnapshot(this.snapshotKey('queued', sid), rows);
+    return rows;
   }
 
 

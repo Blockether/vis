@@ -198,6 +198,15 @@
 
 (defn- as-keywords [aliases] (mapv #(if (keyword? %) % (keyword (name %))) aliases))
 
+(defn- launch-aliases
+  "The final alias vector used for every managed REPL launch. Defaults are
+   mandatory; caller aliases add to them, never replace them."
+  [aliases]
+  (->> (concat default-aliases aliases)
+       as-keywords
+       distinct
+       vec))
+
 (defn- free-port!
   "Grab a free ephemeral TCP port from the OS, then release it so the launcher can
    bind it. A tiny race window (the port taken between close and bind) is
@@ -522,7 +531,7 @@
       [session-id dir]
 
       aliases
-      (as-keywords (if (seq aliases) aliases default-aliases))]
+      (launch-aliases aliases)]
 
      ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
      ;; racing second start! (e.g. the repl tool + an eval-autostart)

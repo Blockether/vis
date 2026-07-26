@@ -941,6 +941,11 @@
     #'format-code
     {:symbol 'format_code
      :native-tool? true
+     :result
+     (str
+       "String-keyed object with `op`; code/single-file results include `changed` and may include "
+       "`chars`, `path`, `formatter`, or `repaired`; batch results include `files`, `by-dir`, "
+       "and `formatters`. It never returns formatted source text.")
      :description
      "Format code or project files through the active language pack. In-place forms mutate files and return compact change summaries, not reconstructed source."
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
@@ -979,6 +984,11 @@
     #'lint-code
     {:symbol 'lint_code
      :native-tool? true
+     :result
+     (str
+       "String-keyed object with `op`, `language`, `error`, `warning`, `info`, `files`, `findings`, "
+       "`providers`, and `by-dir`; explicit path runs may add `targets`. Each finding uses `file`, "
+       "`row`, `col`, `level`, `type`, `message`, and `provider` when reported.")
      :description
      "Run the active language pack's linter on source or project files. Returns findings and severity counts without changing files."
      :render render-lint-result
@@ -1009,6 +1019,13 @@
     #'run-tests
     {:symbol 'run_tests
      :native-tool? true
+     :result
+     (str
+       "One string-keyed object stamped with `op`; null and mode-inapplicable fields may be "
+       "omitted. Possible fields are `mode`, `language`, `framework`, `runner`, `tool`, `command`, "
+       "`dir`, `ns`, `port`, `exit`, `ms`, `is_pass`, `total`, `pass`, `fail`, `selected`, "
+       "`skipped`, `failures`, `errors`, `by-dir`, `output`, `note`, `hint`, `error`, `timed_out`, "
+       "`repl_unusable`, `repl_wedged`, and `recovered`.")
      :description
      (str
        "Run project tests through the active language pack. Prefer the smallest target that proves the "
@@ -1061,6 +1078,12 @@
     #'repl-eval
     {:symbol 'repl_eval
      :native-tool? true
+     :result
+     (str
+       "Pack-defined string-keyed evaluation object stamped with `op`. Clojure reports `code`, "
+       "`repl`, and available `value`/`values`, `out`, `err`, `status`, `ns`, `ms`, `timed_out`, "
+       "`ex`, or `root_ex`; Python/Bun reports `code`, `ok`, `out`, `err`, `value`, `data`, `type`, "
+       "and `exc`. Empty fields may be absent. There is no UI-rendered `transcript` or `content` field.")
      :description (str
                     "Evaluate code in an `up` project REPL; prefer this for bug reproduction and "
                     "verification. Inspect `session[\"resources\"][\"repls\"]` first and use "
@@ -1100,14 +1123,21 @@
     #'start-repl
     {:symbol 'repl
      :native-tool? true
+     :result
+     (str
+       "Pack-defined string-keyed lifecycle object stamped with `op` for the requested directory, "
+       "never a `{resources: [...]}` list. Clojure status includes `result`, `id`, `dir`, and "
+       "`status`; Python/Bun status includes `dir` and `status`. Start/restart/connect may add "
+       "`running`, `port`, `pid`, `cmd`, `tool`, `aliases`, `external`, `host`, `log`, or `message`; "
+       "stop by resource id returns `{result,id,message}`.")
      :description
      (str
        "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][dir]` "
        "(`.` is root) FIRST, then pick `op`: already `up` → reuse it, no call needed (`starting` → "
        "recheck); \"start\" for absent/down/failed; \"restart\" for unresponsive; `op` \"stop\" stops a "
        "managed REPL you started (by `id`, else `dir`'s); \"connect\" attaches an EXTERNAL running REPL "
-       "by `port` — never owned or killed, stopping it only detaches; \"status\" lists this session's "
-       "REPLs. Keep the returned resource id and stop what you started when the work is done.")
+       "by `port` — never owned or killed, stopping it only detaches; \"status\" reports the requested "
+       "directory's pack lifecycle state. Keep the returned resource id and stop what you started.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell

@@ -1073,7 +1073,7 @@
 (defn- request-preview-text
   "The prose a QUEUE ROW should show for `request`.
 
-   Image paths collapse to `🖼 name.png` chips (see
+   Image paths collapse to `name.png` chips (see
    `attachments/text->chip-preview`); nil means the message was nothing but
    images and the channel should paint its attachment chips alone. The
    untouched `:request` still travels beside it, so pulling a queued message
@@ -2089,9 +2089,11 @@
 (defn- re-queue-turn!
   "Reset a just-FAILED turn back to QUEUED at the head of `sid`'s backlog so a
    transient failure RETRIES the same message rather than advancing past it (and
-   losing it). Clears the stale failure fields and re-stamps `:queued_at`. No-op
-   when the turn is gone. The tid keeps its original front slot in `:turn-order`,
-   so `next-drainable-turn` re-selects it ahead of the rest of the backlog."
+   losing it). Clears stale failure fields AND the spent cancellation token: the
+   stall watchdog cancels that token to unwind the worker, so carrying it into
+   `drain-next-queued!` would make every retry start already cancelled. The tid
+   keeps its original front slot in `:turn-order`, so `next-drainable-turn`
+   re-selects it ahead of the rest of the backlog. No-op when the turn is gone."
   [sid tid]
   (swap! registry update
     sid
@@ -2101,7 +2103,8 @@
                    [:turns tid]
                    (fn [turn]
                      (-> turn
-                         (dissoc :content :error :eval :completed_at :duration_ms)
+                         (dissoc :content :error :eval :completed_at :duration_ms
+                                 :cancel-token :cancelling_at)
                          (assoc :status "queued"
                                 :queued_at (System/currentTimeMillis)))))
         entry))))

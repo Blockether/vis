@@ -3335,37 +3335,62 @@
 
 (defdescribe
   native-introspection-tools-test
-  (it "advertises apropos and doc as native tools before the execution tools"
-      (let
-        [editing-ext
-         {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
+  (it
+    "advertises apropos and doc as native tools before the execution tools"
+    (let
+      [editing-ext
+       {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
 
-         tools
-         (@#'lp/native-tools [editing-ext] nil nil)
+       tools
+       (@#'lp/native-tools [editing-ext] nil nil)
 
-         by-name
-         (into {} (map (juxt :name identity)) tools)]
+       by-name
+       (into {} (map (juxt :name identity)) tools)]
 
-        (expect (= ["apropos" "doc" "retry_native" "session_fold" "python_execution"]
-                   (->> tools
-                        (mapv :name)
-                        (take-last 5)
-                        vec)))
-        (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
-        (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
-        ;; Discovery is for sandbox-only capabilities, not a mandatory two-call
-        ;; preflight before every native tool whose full schema is already visible.
-        (doseq [tool-name ["apropos" "doc"]]
-          (expect (str/includes? (get-in by-name [tool-name :description])
-                                 "not already advertised")))
-        (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
-        (let [python-description (get-in by-name ["python_execution" :description])]
-          (doseq
-            [fact ["project packages cannot be imported" "ntr[tool_id]" "bare snake_case"
-                   "errors surface"]]
-            (expect (str/includes? python-description fact))))
-        (expect (str/includes? (get-in by-name ["session_fold" :description])
-                               "already-completed iterations"))))
+      (expect (= ["apropos" "doc" "retry_native" "session_fold" "python_execution"]
+                 (->> tools
+                      (mapv :name)
+                      (take-last 5)
+                      vec)))
+      (doseq [tool tools]
+        (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
+        (expect (not (contains? tool :result))))
+      (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
+      (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
+      ;; Discovery is for sandbox-only capabilities, not a mandatory two-call
+      ;; preflight before every native tool whose full schema is already visible.
+      (doseq [tool-name ["apropos" "doc"]]
+        (expect (str/includes? (get-in by-name [tool-name :description]) "not already advertised")))
+      (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
+      (let [python-description (get-in by-name ["python_execution" :description])]
+        (doseq
+          [fact ["project packages cannot be imported" "ntr[tool_id]" "bare snake_case"
+                 "errors surface"]]
+          (expect (str/includes? python-description fact))))
+      (expect (str/includes? (get-in by-name ["session_fold" :description])
+                             "already-completed iterations"))))
+  (it "rejects engine-owned native tools without description or raw-result contracts"
+      (doseq
+        [[tool expected-type]
+         [[{:name "bad" :result "a result"} :loop/missing-engine-native-description]
+          [{:name "bad" :description "Missing result."} :loop/missing-engine-native-result]]]
+        (let
+          [err (try (@#'lp/finalize-engine-native-tool tool)
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= expected-type (:type (ex-data err)))))))
+  (it "reserves the Raw result label for engine-native projection"
+      (doseq
+        [[tool expected-type]
+         [[{:name "bad" :description "Raw result: duplicated" :result "a map"}
+           :loop/engine-native-result-in-description]
+          [{:name "bad" :description "Has semantics." :result "Raw result: duplicated"}
+           :loop/engine-native-result-has-label]]]
+        (let
+          [err (try (@#'lp/finalize-engine-native-tool tool)
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= expected-type (:type (ex-data err)))))))
   (it "does not advertise retry_native when no active tool owns a replay policy"
       (expect (= ["apropos" "doc" "session_fold" "python_execution"]
                  (mapv :name (@#'lp/native-tools [] nil nil)))))

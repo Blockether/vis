@@ -83,12 +83,24 @@
         [start
          (:ext.symbol/description language-surface/start-repl-symbol)
 
+         result
+         (:ext.symbol/result language-surface/start-repl-symbol)
+
          stop
          (:ext.symbol/description language-surface/repl-stop-symbol)]
 
         (expect (str/includes? start "[language][dir]"))
         (expect (str/includes? start "absent/down/failed"))
         (expect (str/includes? start "op` \"stop\" stops a managed REPL"))
+        (expect (str/includes? start "requested directory's pack lifecycle state"))
+        (expect (str/includes? result "never a `{resources: [...]}` list"))
+        (expect (str/includes? result "stamped with `op`"))
+        (expect (str/includes? (:ext.symbol/result language-surface/repl-eval-symbol)
+                               "stamped with `op`"))
+        (expect (str/includes? (:ext.symbol/result language-surface/test-symbol)
+                               "mode-inapplicable fields may be omitted"))
+        (expect (not (str/includes? (:ext.symbol/result language-surface/test-symbol)
+                                    "always present")))
         (expect (str/includes? stop "managed REPL you started"))
         (expect (str/includes? stop "never killed")))
       (expect (not (str/includes? (get-in language-surface/repl-eval-symbol

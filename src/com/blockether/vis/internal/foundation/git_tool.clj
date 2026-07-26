@@ -323,6 +323,8 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
     #'git
     {:symbol 'git
      :native-tool? true
+     :result
+     "Object with exactly `op`, `args`, `cmd`, `stdout`, `stderr`, `exit`, `timed_out`, `timeout_secs`, and `duration_ms`."
      :name "git"
      :description
      (str "Run the host Git binary only to act or when `session[\"workspace\"]` lacks a needed "

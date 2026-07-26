@@ -331,6 +331,7 @@ del __vis_install_httpx__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "httpx"
+       :shim/imports ["httpx"]
        :shim/description
        "httpx-compatible `httpx` (get/post/Client/AsyncClient/Response/raise_for_status) wrapping the requests shim. `AsyncClient` coroutines run the sync core under the hood. Not supported: HTTP/2 and true concurrent async I/O."
        :shim/preamble httpx-compat-shim-src}]}))

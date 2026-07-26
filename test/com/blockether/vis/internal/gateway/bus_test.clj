@@ -31,8 +31,9 @@
       [bus/events-dir (fn []
                         tmp)]
       ;; a fresh journal dir is a fresh world: drop this process's orphan-reap
-      ;; markers so re-running in one JVM doesn't suppress a reap
+      ;; markers and tail cursors so re-running in one JVM starts clean
       (reset! (var-get #'bus/reaped-turns) {})
+      (reset! (var-get #'bus/tails) {})
       (bus/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture
@@ -198,7 +199,7 @@
             (deliver gate true)
             @drain
             (Thread/sleep 200)
-            (expect (= (.length f) (long (get @(var-get #'bus/offsets) sid))))
+            (expect (= (.length f) (long (get-in @(var-get #'bus/tails) [sid :off]))))
             (reset! capture [])
             (#'bus/drain-file! f)
             (expect (empty? @capture))))))))
@@ -230,3 +231,161 @@
                                (remove str/blank?
                                  (str/split-lines (slurp (#'bus/session-file
                                                           "sid-writer")))))))))))))
+
+(defdescribe
+  journal-generation-test
+  "The producer TRUNCATES the journal at every `turn.started`. A rewrite that
+   regrows PAST the tail cursor inside one poll interval looks like an append by
+   LENGTH alone, so the new turn's head — `turn.started` included — would be
+   skipped forever and the tab would sit frozen-idle through a live sibling turn."
+  (it
+    "replays from byte 0 when the journal's first bytes change"
+    (with-temp-journal
+      (fn [capture write!]
+        (let
+          [prod
+           (str (java.util.UUID/randomUUID))
+
+           pid
+           (var-get #'bus/producer-pid)
+
+           sid
+           "sid-generation"
+
+           f
+           (#'bus/session-file sid)]
+
+          ;; Turn 1: drained normally, cursor lands at EOF.
+          (write! sid
+                  [(turn-started prod pid sid "T-old") (delta prod pid "T-old")
+                   (delta prod pid "T-old")])
+          (#'bus/drain-file! f)
+          (expect (= 3 (count @capture)))
+          (let [off1 (long (get-in @(var-get #'bus/tails) [sid :off]))]
+            (expect (= (.length f) off1))
+            (reset! capture [])
+            ;; Turn 2: the producer truncates and rewrites LONGER than turn 1,
+            ;; so `len > off` — indistinguishable from an append by length.
+            (write! sid
+                    (into [(assoc (turn-started prod pid sid "T-new") :seq 99)]
+                          (repeat 4 (delta prod pid "T-new"))))
+            (expect (> (.length f) off1))
+            (#'bus/drain-file! f)
+            ;; The whole new generation is delivered, head first.
+            (expect (= 5 (count @capture)))
+            (expect (= "turn.started" (get (first @capture) "type")))
+            (expect (= "T-new" (get (first @capture) "turn_id")))
+            (expect (= (.length f) (long (get-in @(var-get #'bus/tails) [sid :off]))))
+            ;; …and exactly once: a same-generation re-drain delivers nothing.
+            (reset! capture [])
+            (#'bus/drain-file! f)
+            (expect (empty? @capture))))))))
+
+
+(defdescribe
+  partial-line-test
+  "A sibling caught MID-WRITE leaves a half-written trailing line. `hydrate!` must
+   claim only COMPLETE lines: claiming to EOF made the tailer resume INSIDE that
+   line, so the event was lost outright the moment it finished landing."
+  (it "delivers the event that was half-written when the reader joined"
+      (with-temp-journal
+        (fn [capture _write!]
+          (let
+            [sid
+             "partial"
+
+             f
+             (#'bus/session-file sid)
+
+             prod
+             (str (random-uuid))
+
+             pid
+             (.pid (java.lang.ProcessHandle/current))
+
+             whole
+             (str (wire/json-str (assoc (delta prod pid "T") :text "IMPORTANT")) "\n")
+
+             cut
+             (quot (count whole) 2)]
+
+            (spit f (str (wire/json-str (turn-started prod pid sid "T")) "\n" (subs whole 0 cut)))
+            (bus/hydrate! sid)
+            (expect (= ["turn.started"] (mapv #(get % "type") @capture)))
+            (expect (< (long (get-in @(var-get #'bus/tails) [sid :off])) (.length f)))
+            ;; the sibling finishes the line
+            (spit f (subs whole cut) :append true)
+            (reset! capture [])
+            (#'bus/drain-file! f)
+            (expect (= ["IMPORTANT"] (mapv #(get % "text") @capture))))))))
+
+(defdescribe
+  closed-session-test
+  "`forget!` drops a session's tail. A drain that still had the closed sid in
+   flight must NOT re-create it: `sweep!` only forgets sids whose FILE it deletes,
+   so a resurrected entry would sit in the map for the daemon's whole life."
+  (it "leaves no tail entry behind after the journal is gone"
+      (with-temp-journal (fn [_capture write-journal!]
+                           (let
+                             [sid
+                              "closed"
+
+                              prod
+                              (str (random-uuid))
+
+                              pid
+                              (.pid (java.lang.ProcessHandle/current))]
+
+                             (write-journal! sid [(turn-started prod pid sid "T")])
+                             (#'bus/drain-file! (#'bus/session-file sid))
+                             (expect (contains? @(var-get #'bus/tails) sid))
+                             (bus/forget! sid)
+                             (#'bus/drain-file! (#'bus/session-file sid))
+                             (expect (not (contains? @(var-get #'bus/tails) sid))))))))
+
+(defdescribe
+  size-cap-test
+  "The journal is capped, and the cap can fire MID-turn. The first line is what
+   tells every reader WHICH turn is in flight, so the cap must keep it: without
+   it a >16MB turn had no `turn.started` to mirror (so `:current-turn` never got
+   set and every new subscriber re-mirrored the same deltas) and no `turn_id` to
+   reap (so a crashed producer wedged the queue forever)."
+  (it "keeps `turn.started` as the first line after the cap truncates"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let
+            [sid
+             "capped"
+
+             f
+             (#'bus/session-file sid)
+
+             blob
+             (apply str (repeat (* 6 1024 1024) "x"))]
+
+            (#'bus/write-event!
+             sid
+             {"schema" 1 "type" "turn.started" "turn_id" "T7" "session_id" sid "seq" 1}
+             {:store? true :truncate? true})
+            (dotimes [i 4]
+              (#'bus/write-event!
+               sid
+               {"schema" 1 "type" "content.delta" "turn_id" "T7" "seq" (+ 2 i) "text" blob}
+               {:store? true}))
+            (let [head (wire/parse-json (first (str/split-lines (slurp f))))]
+              (expect (= "turn.started" (get head "type")))
+              (expect (= "T7" (get head "turn_id"))))))))
+  (it "reaps an orphan whose `turn.started` the cap already dropped"
+      (with-temp-journal
+        (fn [capture write-journal!]
+          (let
+            [sid
+             "capped-orphan"
+
+             prod
+             (str (random-uuid))]
+
+            (write-journal! sid [(assoc (delta prod dead-pid "T9") :session_id sid)])
+            (bus/hydrate! sid)
+            (expect (= [["turn.failed" "T9"]]
+                       (mapv #(vector (get % "type") (get % "turn_id")) @capture))))))))

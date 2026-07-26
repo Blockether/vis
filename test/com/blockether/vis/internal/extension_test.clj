@@ -20,38 +20,41 @@
 
 (defdescribe
   flat-native-tool-spec-test
-  (it ":native-tool? + symbol-level :schema/:name/:handler/:render produce the whole native surface"
-      (let
-        [sym
-         (extension/symbol
-           #'flat-native-tool
-           {:tag :observation
-            :native-tool? true
-            :name "flat_tool"
-            :description "Compact routing and result semantics."
-            :schema {:type "object" :properties {"x" {:type "string"}}}
-            :replay {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
-            :handler (fn [_env _in]
-                       {:ok true})
-            :render a-render
-            :color-role :tool-color/meta})
+  (it
+    ":native-tool? + symbol-level :schema/:name/:handler/:render produce the whole native surface"
+    (let
+      [sym
+       (extension/symbol
+         #'flat-native-tool
+         {:tag :observation
+          :native-tool? true
+          :name "flat_tool"
+          :description "Compact routing and result semantics."
+          :result "A map with boolean `ok`."
+          :schema {:type "object" :properties {"x" {:type "string"}}}
+          :replay {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
+          :handler (fn [_env _in]
+                     {:ok true})
+          :render a-render
+          :color-role :tool-color/meta})
 
-         ext
-         (ext-with sym)
+       ext
+       (ext-with sym)
 
-         schema
-         (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
+       schema
+       (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
-        (expect (some? schema))
-        (expect (= 'flat-native-tool (:symbol (first (extension/native-tools-for [ext])))))
-        (expect (not (contains? schema :symbol)))
-        (expect (= "Compact routing and result semantics." (:description schema)))
-        (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
-        (expect (= {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
-                   (get (extension/native-tool-replay-policies [ext]) "flat_tool")))
-        (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
-        (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
-        (expect (= :tool-color/meta (get (extension/native-tool-color-roles [ext]) "flat_tool")))))
+      (expect (some? schema))
+      (expect (= 'flat-native-tool (:symbol (first (extension/native-tools-for [ext])))))
+      (expect (not (contains? schema :symbol)))
+      (expect (= "Compact routing and result semantics.\n\nRaw result: A map with boolean `ok`."
+                 (:description schema)))
+      (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
+      (expect (= {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
+                 (get (extension/native-tool-replay-policies [ext]) "flat_tool")))
+      (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
+      (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
+      (expect (= :tool-color/meta (get (extension/native-tool-color-roles [ext]) "flat_tool")))))
   (it "a symbol with neither :native-tool? nor a legacy :native-tool map is NOT a native tool"
       (let
         [sym
@@ -70,7 +73,8 @@
                             :native-tool? true
                             :name "flat_tool"
                             :schema {:type "object"}
-                            :description "explicit model-facing desc"})
+                            :description "explicit model-facing desc"
+                            :result "an explicit result map"})
 
          ext
          (ext-with sym)
@@ -78,15 +82,44 @@
          schema
          (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
-        (expect (= "explicit model-facing desc" (:description schema)))))
+        (expect (= "explicit model-facing desc\n\nRaw result: an explicit result map"
+                   (:description schema)))))
   (it ":native-tool? true WITHOUT a compact :description is rejected at build time"
       (expect (try (extension/symbol #'flat-native-tool
                                      {:tag :observation
                                       :native-tool? true
                                       :name "no_description_tool"
+                                      :result "a result map"
                                       :schema {:type "object"}})
                    false
                    (catch Throwable _ true))))
+  (it ":native-tool? true WITHOUT a raw :result contract is rejected at build time"
+      (let
+        [err (try (extension/symbol #'flat-native-tool
+                                    {:tag :observation
+                                     :native-tool? true
+                                     :name "no_result_tool"
+                                     :description "Has semantics."
+                                     :schema {:type "object"}})
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+        (expect (= :extension/native-tool-missing-result (:type (ex-data err))))))
+  (it "reserves the Raw result label for centralized projection"
+      (doseq
+        [[opts expected-type] [[{:description "Raw result: duplicated" :result "a map"}
+                                :extension/native-tool-result-in-description]
+                               [{:description "Has semantics." :result "Raw result: duplicated"}
+                                :extension/native-tool-result-has-label]]]
+        (let
+          [err (try (extension/symbol #'flat-native-tool
+                                      (merge {:tag :observation
+                                              :native-tool? true
+                                              :name "bad_result_label_tool"
+                                              :schema {:type "object"}}
+                                             opts))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= expected-type (:type (ex-data err)))))))
   (it "doc text combines compact semantics with schema parameters exactly once"
       (let
         [sym
@@ -95,6 +128,7 @@
                             :native-tool? true
                             :name "flat_tool"
                             :description "Compact routing and result semantics."
+                            :result "A map with boolean `ok`."
                             :schema {:type "object"
                                      :properties {"query" {:oneOf [{:type "string"}
                                                                    {:type "array"
@@ -106,6 +140,8 @@
          (extension/symbol-doc-text sym)]
 
         (expect (= 1 (count (re-seq #"Compact routing" doc))))
+        (expect (= 1 (count (re-seq #"Raw result:" doc))))
+        (expect (= 1 (count (re-seq #"A map with boolean `ok`" doc))))
         (expect (not (re-find #"A native tool declared the STRONG way" doc)))
         (expect (= 1 (count (re-seq #"`query`" doc))))
         (expect (re-find #"string\|array<string>, required" doc))))
@@ -116,6 +152,7 @@
                            {:tag :observation
                             :native-tool? true
                             :description "Native routing only."
+                            :result "A native result."
                             :schema {:type "object" :properties {}}})
 
          python-only
@@ -129,7 +166,11 @@
         (expect (not (re-find #"Native routing only" prompt)))))
   (it ":native-tool? true WITHOUT a :schema is rejected at build time"
       (expect (try (extension/symbol #'flat-native-tool
-                                     {:tag :observation :native-tool? true :name "no_schema_tool"})
+                                     {:tag :observation
+                                      :native-tool? true
+                                      :name "no_schema_tool"
+                                      :description "No schema."
+                                      :result "A result map."})
                    false
                    (catch Throwable _ true))))
   (it "rejects provider-incompatible top-level schema unions at build time"
@@ -138,6 +179,7 @@
                                     {:tag :observation
                                      :native-tool? true
                                      :description "Bad root union."
+                                     :result "A result map."
                                      :schema {:type "object" :anyOf [{:required ["x"]}]}})
                   nil
                   (catch clojure.lang.ExceptionInfo e e))]

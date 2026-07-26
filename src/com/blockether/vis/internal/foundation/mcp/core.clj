@@ -418,6 +418,8 @@
      {:symbol 'servers
       :name "mcp__servers"
       :native-tool? true
+      :result
+      "Object `{\"op\": string, \"servers\": [{\"name\": string, \"transport\": string, \"connected\": boolean, \"enabled\": boolean, optional \"tools\", \"command\", \"url\"}]}`."
       :description
       "List configured MCP servers and connection state before choosing one. In `python_execution`, call `await mcp_servers()`."
       :render render-mcp-servers-result
@@ -431,6 +433,8 @@
      {:symbol 'tools
       :name "mcp__tools"
       :native-tool? true
+      :result
+      "Object `{\"op\": string, \"server\": string, \"tools\": [{\"name\": string, \"description\": string|null, \"input_schema\": object}]}`."
       :description
       "Discover one MCP server's live tools and input schemas before calling them; auto-connects when needed. In `python_execution`, call `await mcp_tools(...)`."
       :render render-mcp-tools-result
@@ -448,6 +452,8 @@
      {:symbol 'call
       :name "mcp__call"
       :native-tool? true
+      :result
+      "Object `{\"op\": string, \"server\": string, \"tool\": string, \"content\": [MCP content blocks], \"is_error\": boolean}`; text blocks expose `block[\"text\"]`."
       :description
       "Invoke a discovered MCP tool with arguments matching its returned input schema; auto-connects when needed. In `python_execution`, call `await mcp_call(...)`."
       :render render-mcp-call-result
@@ -468,6 +474,8 @@
      {:symbol 'connect
       :name "mcp__connect"
       :native-tool? true
+      :result
+      "Object `{\"op\": string, \"server\": string, \"connected\": true, \"tools\": integer}`."
       :description
       "Explicitly connect a configured MCP server into the daemon-wide pool; normally unnecessary because discovery and calls auto-connect, and /reload reconciles the pool. In `python_execution`, call `await mcp_connect(...)`."
       :render render-mcp-connect-result
@@ -487,6 +495,8 @@
      {:symbol 'disconnect
       :name "mcp__disconnect"
       :native-tool? true
+      :result
+      "Object `{\"op\": string, \"server\": string, \"result\": \"disconnected\"|\"not_connected\"}`."
       :description
       "Disconnect an MCP server from the daemon-wide pool (closes the connection; terminates the child process for stdio). The next /reload will reconcile the pool from config. In `python_execution`, call `await mcp_disconnect(...)`."
       :render render-mcp-disconnect-result

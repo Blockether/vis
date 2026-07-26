@@ -14,6 +14,7 @@ import { ProviderRouterDialog } from './RouterScreen';
 import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
 import { queuedTurnFromWire } from '../lib/gateway';
+import { exactCost, formatCost, formatTokens, sessionUsage } from '../lib/usage';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -556,8 +557,11 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   fresh?: boolean;
 }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [turns, setTurns] = useState<TranscriptTurn[]>([]);
+  // Every screen-level snapshot is seeded from the client's cache: reopening a
+  // session paints its last known transcript on the FIRST frame and revalidates
+  // underneath, instead of holding the loading sheet over an empty view.
+  const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
+  const [turns, setTurns] = useState<TranscriptTurn[]>(() => client.cachedTranscript(sid) ?? []);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   // The session's provider/model pick. Read once from the gateway so the header
@@ -568,7 +572,7 @@ export function SessionScreen({
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
-  const [queued, setQueued] = useState<QueuedTurn[]>([]);
+  const [queued, setQueued] = useState<QueuedTurn[]>(() => client.cachedQueuedTurns(sid) ?? []);
   // Turn ids with a queue mutation in flight. The gateway is the ONE writer of the
   // queue tray (rows appear on `turn.queued` and leave on `.updated`/`.deleted`/
   // `.drained`), so an edit or removal is NOT applied optimistically — it is
@@ -629,13 +633,13 @@ export function SessionScreen({
   useEffect(() => {
     void recordingRef.current?.cancel();
     recordingRef.current = null;
-    setTurns([]);
+    setTurns(client.cachedTranscript(sid) ?? []);
     setLiveTurn(null);
-    setQueued([]);
+    setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueueBusy(new Set());
     setQueuePaused(null);
     liveTurnRef.current = null;
-    setSession(null);
+    setSession(client.cachedSession(sid));
     setAttachments([]);
     setPastes(new Map());
     pasteCounterRef.current = 0;
@@ -1473,6 +1477,21 @@ export function SessionScreen({
 
   const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
   const title = session?.title?.trim() || 'Chat';
+  // Cumulative session usage — the SAME fold the TUI footer runs over its message
+  // vector (`footer/session-usage`), so both surfaces read one number. Memoized on
+  // the transcript identity: it only moves when a turn lands, never per keystroke.
+  const usage = useMemo(() => sessionUsage(turns), [turns]);
+  const usageTokens = formatTokens(usage);
+  const usageCost = formatCost(usage.cost);
+  const usageTitle = [
+    `${usage.input.toLocaleString()} input`,
+    `${usage.output.toLocaleString()} output`,
+    usage.cached > 0 ? `${usage.cached.toLocaleString()} cached` : null,
+    usage.cost > 0 ? exactCost(usage.cost) : null,
+    `${usage.turns} turn${usage.turns === 1 ? '' : 's'}`,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(' · ');
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
   const liveTurnId = liveTurn?.id;
   // While a live turn streams, drop the transcript's own copy of that same turn
@@ -1588,7 +1607,7 @@ export function SessionScreen({
       <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
         onClickCapture={handleDisclosureClick}
         onScroll={handleScroll}
         role="log"
@@ -1637,7 +1656,7 @@ export function SessionScreen({
         )}
       </div>
 
-      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.875rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
+      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
         {/* Anchored to the footer's top edge, so it always clears the queue
             tray and composer no matter how tall they grow. Hidden while a
             completion list occupies the same strip. */}
@@ -1806,7 +1825,6 @@ export function SessionScreen({
                         className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-chip text-dialog-hint"
                         title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ''}`}
                       >
-                        <span aria-hidden="true">🖼</span>
                         <span className="max-w-[7rem] truncate">{attachment.filename}</span>
                       </span>
                     ))}
@@ -1842,7 +1860,7 @@ export function SessionScreen({
 
         <div className="relative border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
           {activePastes.length > 0 && (
-            <div className="flex gap-1 overflow-x-auto border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
+            <div className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
               {activePastes.map((paste) => (
                 <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip text-accent-ink">
                   <span className="max-w-56 truncate px-2">{paste.token}</span>
@@ -1859,7 +1877,7 @@ export function SessionScreen({
             </div>
           )}
           {attachments.length > 0 && (
-            <div className="flex gap-1.5 overflow-x-auto border-b border-dialog-edge px-1.5 py-1.5 [scrollbar-width:thin]">
+            <div className="flex gap-1.5 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1.5 [scrollbar-width:thin]">
               {attachments.map((attachment) => (
                 <div
                   key={attachment.id}
@@ -2040,10 +2058,14 @@ export function SessionScreen({
           </div>
         </div>
 
-        <div className="flex w-full justify-center pt-1">
+        {/* Composer strip, in the TUI footer's own reading order: the router chip
+            sits LEFT directly under the input, cumulative session usage (tokens,
+            then cost) rides the RIGHT edge. The chip truncates first so the
+            numbers survive a narrow phone. */}
+        <div className="flex w-full items-center gap-2 pt-1">
           <button
             type="button"
-            className="group inline-flex min-w-0 max-w-full items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none motion-reduce:transition-none"
+            className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
@@ -2052,6 +2074,19 @@ export function SessionScreen({
             <span className="truncate">{modelPref?.model ?? 'model'}</span>
             <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
+
+          {(usageTokens || usageCost) && (
+            <span
+              className="ml-auto flex shrink-0 items-center gap-1.5 px-1 py-1 font-mono text-chip tabular-nums text-dialog-hint"
+              title={`Session usage — ${usageTitle}`}
+            >
+              {usageTokens && <span className="whitespace-nowrap">{usageTokens}</span>}
+              {usageTokens && usageCost && (
+                <span aria-hidden="true" className="opacity-40">·</span>
+              )}
+              {usageCost && <span className="whitespace-nowrap text-accent/80">{usageCost}</span>}
+            </span>
+          )}
         </div>
       </footer>
     </section>

@@ -100,11 +100,41 @@ export interface ProviderStatus {
   is_authenticated?: boolean;
   detail?: string;
   label?: string;
+  /** Where the credential came from: `auth-file`, `config`, `env-var`, … */
+  source?: string;
+  account_type?: string;
+  /** Milliseconds until the daemon's credential expires, when it knows. */
+  expires_in_ms?: number;
+  /** Probe failure (unreachable local provider, refused token, …). */
+  error?: string;
 }
 
+/**
+ * One quota window out of the daemon's limits REPORT — the provider's own
+ * payload, passed through verbatim (`used`/`limit` are absolute, not percent).
+ */
+export interface ProviderLimitRow {
+  id?: string;
+  label?: string;
+  used?: number;
+  limit?: number;
+  remaining?: number;
+  is_unlimited?: boolean;
+  window?: { kind?: string; unit?: string; size?: number; resets_at_ms?: number };
+  note?: string;
+}
+
+/**
+ * The gateway's limits report for one provider, exactly as `/v1/router` and
+ * `/v1/providers/:id/limits` emit it. Rows live under `dynamic.limits`.
+ */
 export interface ProviderLimits {
-  rows?: { label?: string; value?: string; percent?: number }[];
-  error?: string;
+  provider_id?: string;
+  status?: 'ok' | 'loading' | 'error' | string;
+  fetched_at_ms?: number;
+  static?: Record<string, unknown>;
+  dynamic?: { limits?: ProviderLimitRow[] };
+  error?: { message?: string };
 }
 
 export interface RouterProvider {

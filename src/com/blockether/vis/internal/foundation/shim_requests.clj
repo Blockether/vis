@@ -951,6 +951,7 @@ del __vis_install_requests_compat__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "requests"
+       :shim/imports ["requests"]
        :shim/description
        "requests-compatible `requests` backed by stdlib urllib (pure Python). Not supported: HTTP/2 or real connection pooling; `HTTPDigestAuth` is an accepted no-op (sends no auth header)."
        :shim/preamble requests-compat-shim-src}]}))

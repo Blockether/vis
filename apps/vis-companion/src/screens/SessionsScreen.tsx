@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Banner, Button } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -24,9 +24,13 @@ interface Props {
 }
 
 export function SessionsScreen({ active, client, subscriptions, subscribedIds, gatewayCount, onOpen }: Props) {
-  const [sessions, setSessions] = useState<Session[] | null>(null);
+  // Seed from the gateway's last known list so returning to this tab repaints the
+  // previous frame instantly; the effect below revalidates and reconciles on top.
+  const [sessions, setSessions] = useState<Session[] | null>(() => client?.cachedSessions() ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Keep keystrokes immediate even when a large session fleet is regrouped.
+  const deferredQuery = useDeferredValue(query);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -77,7 +81,12 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
       if (document.visibilityState === 'visible') void load(controller.signal, true);
     };
 
-    if (sessions === null || !active) void load(controller.signal);
+    // A gateway switch paints THAT gateway's snapshot rather than the previous
+    // one's rows. Same array identity as the seed above, so a plain remount is a
+    // no-op re-render, not a repaint.
+    const cached = clientRef.current?.cachedSessions() ?? null;
+    if (cached) setSessions(cached);
+    if ((sessions === null && !cached) || !active) void load(controller.signal);
     else void load(controller.signal, true);
     const timer = window.setInterval(refreshLiveStates, 5_500);
     document.addEventListener('visibilitychange', refreshLiveStates);
@@ -117,7 +126,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   // Transcript search runs server-side (matches user requests + LLM responses)
   // and unions its matching ids into the local title/project filter.
   useEffect(() => {
-    const needle = query.trim();
+    const needle = deferredQuery.trim();
     // An empty query has no server matches; `matches` below derives that without
     // writing state from this effect.
     if (!needle) return;
@@ -140,13 +149,13 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, activeKey]);
+  }, [deferredQuery, activeKey]);
 
-  const matches = query.trim() ? transcriptMatches : null;
+  const matches = deferredQuery.trim() ? transcriptMatches : null;
 
   const visible = useMemo(() => {
     if (!sessions) return null;
-    const needle = query.trim().toLowerCase();
+    const needle = deferredQuery.trim().toLowerCase();
     return sessions.filter((session) => {
       if (emptyUntitled(session)) return false;
       return (
@@ -155,7 +164,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
         matches?.has(session.id) === true
       );
     });
-  }, [query, sessions, matches]);
+  }, [deferredQuery, sessions, matches]);
 
   const totals = useMemo(() => {
     const all = sessions?.length ?? 0;
@@ -265,17 +274,17 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
         </div>
 
         <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
-          <span className="shrink-0 font-mono text-body text-accent-ink">›</span>
+          <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent px-2 py-2 font-mono text-title text-white outline-none placeholder:text-dialog-hint sm:text-body"
+            className="min-w-0 flex-1 bg-transparent px-2 py-2 font-mono text-ui text-white outline-none placeholder:text-dialog-hint"
             placeholder="Filter title, project, session"
             aria-label="Filter sessions"
           />
         </div>
 
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
+        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
           <NavigatorSkeleton />
         ) : visible?.length === 0 ? (
@@ -289,12 +298,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
           </div>
         ) : (
           <div className="border-t border-dialog-edge">
-            <div className="hidden grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] bg-ink/45 font-mono text-chip font-bold uppercase tracking-[0.1em] text-dialog-hint md:grid">
-              <div className="border-r border-dialog-edge px-3 py-2">Title</div>
-              <div className="border-r border-dialog-edge px-3 py-2">Session</div>
-              <div className="border-r border-dialog-edge px-3 py-2">Status</div>
-              <div className="px-3 py-2 text-right">Modified</div>
-            </div>
             {groups.map(([project, projectSessions]) => (
               <ProjectGroup
                 key={project}
@@ -303,7 +306,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
                 conn={active!}
                 subscribedIds={subscribedIds}
                 matches={matches}
-                needle={query.trim()}
+                needle={deferredQuery.trim()}
                 onOpen={onOpen}
               />
             ))}
@@ -318,7 +321,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
     </section>
   );
 }
-
 
 function ProjectGroup({
   project,
@@ -341,29 +343,24 @@ function ProjectGroup({
   const liveCount = sessions.filter(sessionIsLive).length;
 
   return (
-    <section className="border-t border-dialog-edge first:border-t-0">
-      <header className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-stretch bg-panel-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
-        <div className="hidden min-w-20 place-items-center bg-dialog-title px-3 font-mono text-chip font-black tracking-[0.14em] text-dialog-title-foreground sm:grid">
-          PROJECT
-        </div>
-        <div className="min-w-0 border-l-2 border-accent px-3 py-1.5 sm:border-l-0 sm:border-r sm:border-dialog-edge">
+    <section className="border-t border-dialog-edge first:border-t-0" aria-label={`${project} sessions`}>
+      <header className="flex min-h-11 items-center justify-between gap-3 bg-panel-2 px-3 py-2 sm:px-4">
+        <div className="min-w-0">
           <h2 className="truncate font-mono text-ui font-bold text-white">{project}</h2>
           <p className="mt-0.5 truncate font-mono text-chip text-dialog-hint" title={root}>
             {root || 'No workspace path'}
           </p>
         </div>
-        <div className="flex min-w-[4.5rem] flex-col items-center justify-center gap-0.5 border-l border-dialog-edge px-2 text-center font-mono sm:min-w-20 sm:border-l-0 sm:px-3">
-          <span className="">
-            <strong className="text-ui text-white">{sessions.length}</strong>
-            <span className="ml-1 text-chip text-dialog-hint sm:ml-0 sm:block">
-              {sessions.length === 1 ? 'session' : 'sessions'}
-            </span>
-          </span>
+        <div className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+          <span>{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
           {liveCount > 0 && (
-            <span className="flex items-center gap-1 text-chip font-bold uppercase tracking-wide text-ok">
-              <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
-              {liveCount} live
-            </span>
+            <>
+              <span className="opacity-40" aria-hidden="true">·</span>
+              <span className="inline-flex items-center gap-1 font-bold text-ok">
+                <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
+                {liveCount} live
+              </span>
+            </>
           )}
         </div>
       </header>
@@ -403,59 +400,47 @@ function SessionRow({
   const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
   const title = session.title?.trim() || 'Untitled session';
   const live = sessionIsLive(session);
+  const turns = Number(session.turn_count ?? 0);
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
-    <button
-      type="button"
-      className="group grid min-h-12 w-full text-left transition-[background-color,transform] duration-150 active:translate-x-0.5 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none md:min-h-9 md:grid-cols-[minmax(14rem,1fr)_7rem_8rem_8rem] md:active:translate-x-0"
-      data-session-id={session.id}
-      onClick={() => void onOpen(conn, session.id)}
-    >
-      <span className="relative flex min-w-0 flex-col justify-center px-3 py-2 sm:px-4 md:border-r md:border-dialog-edge md:py-2">
-        <span className="absolute inset-y-2 left-0 w-0.5 bg-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-        <span
-          className={`block truncate font-mono text-ui font-semibold ${
-            session.title?.trim() ? 'text-white' : 'text-white/45'
-          }`}
-        >
-          {title}
-        </span>
-        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint md:hidden">
-          <span className={`inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] ${statusTone(session)}`}>
-            <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
-            {status}
-          </span>
-          <span className="shrink-0 opacity-40" aria-hidden="true">·</span>
-          <span className="shrink-0">{shortId(session.id)}</span>
-          {subscribed && (
-            <span className="inline-flex shrink-0 items-center gap-1 font-bold tracking-[0.08em] text-accent-ink">
-              <span className="size-1 bg-accent" /> SUB
+      <button
+        type="button"
+        className="group flex min-h-14 w-full items-start gap-2 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:px-4 sm:py-2"
+        data-session-id={session.id}
+        onClick={() => void onOpen(conn, session.id)}
+      >
+        <span className="mt-0.5 shrink-0 font-mono text-body text-accent-ink opacity-40 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true">›</span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-start justify-between gap-3">
+            <span
+              className={`block min-w-0 truncate font-mono text-ui font-semibold ${
+                session.title?.trim() ? 'text-white' : 'text-white/45'
+              }`}
+            >
+              {title}
             </span>
-          )}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
-            <span>{relativeTime(timestamp)}</span>
-            <span className="text-accent-ink opacity-60" aria-hidden="true">›</span>
+            <span className={`inline-flex shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${statusTone(session)}`}>
+              <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
+              {status}
+            </span>
+          </span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint">
+            <span className="text-white/55">{shortId(session.id)}</span>
+            <span className="opacity-40" aria-hidden="true">·</span>
+            <span>{turns} {turns === 1 ? 'turn' : 'turns'}</span>
+            {subscribed && (
+              <>
+                <span className="opacity-40" aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-1 font-bold text-accent-ink">
+                  <span className="size-1 bg-accent" /> OPEN
+                </span>
+              </>
+            )}
+            <span className="ml-auto shrink-0 pl-2" title={formatExact(timestamp)}>{relativeTime(timestamp)}</span>
           </span>
         </span>
-      </span>
-      <span className="hidden items-center border-r border-dialog-edge px-3 font-mono text-meta text-white/55 md:flex">
-        {shortId(session.id)}
-      </span>
-      <span
-        className={`hidden items-center gap-2 border-r border-dialog-edge px-3 font-mono text-meta font-bold tracking-[0.08em] md:flex ${statusTone(session)}`}
-        title={`${Number(session.turn_count ?? 0)} turns`}
-      >
-        <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
-        {status}
-      </span>
-      <span
-        className="hidden items-center justify-end px-3 font-mono text-meta text-dialog-hint md:flex"
-        title={formatExact(timestamp)}
-      >
-        {relativeTime(timestamp)}
-      </span>
-    </button>
+      </button>
       {match && <MatchPreview match={match} needle={needle} />}
     </div>
   );
@@ -467,8 +452,8 @@ function NavigatorSkeleton() {
       {[0, 1].map((index) => (
         <div key={index} className="border-t border-dialog-edge first:border-t-0">
           <div className="h-11 bg-panel-2" />
-          <div className="h-9 border-t border-dialog-edge" />
-          <div className="h-9 border-t border-dialog-edge" />
+          <div className="h-12 border-t border-dialog-edge" />
+          <div className="h-12 border-t border-dialog-edge" />
         </div>
       ))}
     </div>
@@ -618,12 +603,7 @@ function formatExact(value?: string): string {
   return millis ? new Date(millis).toLocaleString() : '';
 }
 
-// Renders a transcript-search hit in the SAME left-aligned style as the
-// conversation view: user requests under a "You" rail (left accent border),
-// assistant replies under a "Vis" rail, plain text only — no tools, no bubbles.
-// EVERY hit the server sent is shown (newest first), so a session that matched
-// twenty times no longer collapses to one arbitrary line. Falls back to the
-// single request/reply pair when the gateway sent no per-hit list.
+// Search hits stay subordinate to their session: compact transcript rows, not cards.
 function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }) {
   const rows =
     match.hits.length > 0
@@ -634,27 +614,26 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
         ].filter((h) => h.snippet.length > 0);
   if (rows.length === 0) return null;
   return (
-    <div className="flex flex-col gap-3 border-t border-dialog-edge bg-ink/40 px-3 py-3 sm:px-4">
-      {rows.map((hit, index) => (
-        <div key={`${hit.side}-${hit.at ?? index}`}>
+    <div className="border-t border-dialog-edge bg-ink/30 px-3 py-1.5 sm:px-10">
+      <div className="divide-y divide-dialog-edge/70">
+        {rows.map((hit, index) => (
           <div
-            className={`mb-1 font-mono text-meta font-bold ${
-              hit.side === 'request' ? 'text-you-role' : 'text-vis-role'
-            }`}
+            key={`${hit.side}-${hit.at ?? index}`}
+            className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-2 py-1.5"
           >
-            {hit.side === 'request' ? 'You' : 'Vis'}
+            <span
+              className={`font-mono text-meta font-bold ${
+                hit.side === 'request' ? 'text-you-role' : 'text-vis-role'
+              }`}
+            >
+              {hit.side === 'request' ? 'You' : 'Vis'}
+            </span>
+            <p className="line-clamp-2 whitespace-pre-wrap break-words font-mono text-ui text-dialog-foreground">
+              {highlightNeedle(hit.snippet, needle)}
+            </p>
           </div>
-          <p
-            className={`whitespace-pre-wrap break-words px-3 py-2 font-mono text-ui ${
-              hit.side === 'request'
-                ? 'border-l-2 border-you-role bg-code text-you-message-foreground'
-                : 'bg-answer text-answer-foreground'
-            }`}
-          >
-            {highlightNeedle(hit.snippet, needle)}
-          </p>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

@@ -3107,45 +3107,50 @@ def network_probe(method='GET', url=None, headers=None, body=None):
     ;; Eval'd BEFORE the snapshot so each shim's `__vis_*`/published-module
     ;; names are baseline (filtered out of the model-visible live-vars view).
     (install-sandbox-shims! ctx g)
-    ;; Advertise the installed shims to the sandbox's OWN discovery surface:
-    ;; `__vis_shims__` (a name list `apropos` folds in) + `__vis_docs__`
-    ;; (name -> description, so `doc("yaml")` works even for an import-only
-    ;; module that isn't a top-level global). Same JSON-hop marshalling as the
-    ;; tool docs above. Best-effort: a registry hiccup must never break context
-    ;; creation.
-    (try (let
-           [shims
-            (registered-sandbox-shims)
+    ;; Advertise exact import names and direct globals to the sandbox's discovery
+    ;; surface. `:shim/name` is registry identity only and must never imply importability.
+    ;; Same JSON-hop marshalling as the tool docs above. Best-effort: a registry
+    ;; hiccup must never break context creation.
+    (try
+      (let
+        [shims
+         (registered-sandbox-shims)
 
-            names
-            (into [] (comp (keep :shim/name) (distinct)) shims)
+         names
+         (->> shims
+              (mapcat #(concat (:shim/imports %) (:shim/globals %)))
+              (filter #(and (string? %) (not (str/blank? %))))
+              distinct
+              vec)
 
-            docs
-            (reduce (fn [m s]
-                      (if-let [nm (:shim/name s)]
-                        (let
-                          [d (:shim/description s)
-                           base (if (and (string? d) (not (str/blank? d)))
-                                  (str "sandbox shim \u2014 " d)
-                                  (str "sandbox shim: a pre-installed `" nm "` module"))]
+         docs
+         (reduce (fn [m s]
+                   (let
+                     [d
+                      (:shim/description s)
 
-                          (assoc m nm base))
-                        m))
-                    {}
-                    shims)]
+                      base
+                      (if (and (string? d) (not (str/blank? d)))
+                        (str "sandbox shim \u2014 " d)
+                        "sandbox shim capability")]
 
-           (when (seq names)
-             (.putMember g "__vis_shims_json__" (json/write-json-str names))
-             (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
-             (.putMember g "__vis_shims_json__" nil))
-           (when (seq docs)
-             (.putMember g "__vis_docs_json__" (json/write-json-str docs))
-             (.eval
-               ctx
-               "python"
-               "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
-             (.putMember g "__vis_docs_json__" nil)))
-         (catch Throwable _ nil))
+                     (reduce #(assoc %1 %2 base) m (concat (:shim/imports s) (:shim/globals s)))))
+                 {}
+                 shims)]
+
+        (when (seq names)
+          (.putMember g "__vis_shims_json__" (json/write-json-str names))
+          (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
+          (.putMember g "__vis_shims_json__" nil))
+        (when (seq docs)
+          (.putMember g "__vis_docs_json__" (json/write-json-str docs))
+          (.eval ctx
+                 "python"
+                 (str "_vis_docs = globals().setdefault('__vis_docs__', {})\n"
+                      "for _k, _v in json.loads(__vis_docs_json__).items():\n"
+                      "    _vis_docs.setdefault(_k, _v)\n" "del _vis_docs, _k, _v"))
+          (.putMember g "__vis_docs_json__" nil)))
+      (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).
     ;; `__vis_par__` (the host virtual-thread pool) is wired as a binding above;

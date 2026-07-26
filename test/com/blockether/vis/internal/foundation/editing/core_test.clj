@@ -68,12 +68,10 @@
 
 (defdescribe
   native-tools-flat-spec-guard
-  ;; Cross-check the STRONG flat spec across EVERY editing native tool: schema is
-  ;; required + tightly attached, render present, description non-blank, and the
-  ;; legacy :native-tool map is gone. Build-time enforcement already throws on a
-  ;; schema-less native tool; this locks render/description/no-legacy too.
+  ;; Cross-check the STRONG flat spec across EVERY editing native tool: schema,
+  ;; result contract, renderer, and description are required; legacy maps are gone.
   (it
-    "every editing native tool is flat: :native-tool? + required :schema + :render + non-blank description, no legacy map"
+    "every editing native tool has flat schema/result/render/description fields and no legacy map"
     (let
       [ext
        {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
@@ -97,14 +95,15 @@
       (expect (contains? names "cat"))
       (expect (not (contains? names "rg"))) ;; rg folded into grep
       (expect (contains? names "fs")) ;; fs merges copy/move/delete/create_dirs/file_exists
-      (expect (not (contains? names "file_exists")))        ;; file-exists demoted to a sandbox verb
-      (expect (every? (comp map? :ext.symbol/schema) ents)) ;; schema tight on the symbol
-      (expect (every? :schema tools))                       ;; and surfaced
+      (expect (not (contains? names "file_exists"))) ;; file-exists demoted to a sandbox verb
+      (expect (every? (comp map? :ext.symbol/schema) ents))
+      (expect (every? :schema tools))
       (expect (some #(= {:type "string"} %) (:oneOf include-schema)))
       (expect (some #(= {:type "array" :items {:type "string"}} %) (:oneOf include-schema)))
-      (expect (every? :render tools))                       ;; renderer present
-      (expect (every? (comp seq str :description) tools))   ;; non-blank model-facing description
-      (expect (not-any? :ext.symbol/native-tool ents))))    ;; legacy map removed
+      (expect (every? (comp seq str :result) tools))
+      (expect (every? :render tools))
+      (expect (every? (comp seq str :description) tools))
+      (expect (not-any? :ext.symbol/native-tool ents))))
   (it
     "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", file-exists→\"file_exists\")"
     (let
@@ -2828,29 +2827,37 @@
           (expect (string/includes? message (str "\"" prefix "…\"")))
           (expect (not (string/includes? message "SHOULD-NOT-APPEAR")))))))
 
-(defdescribe editing-native-contract-test
-             (let
-               [patch-description
-                (:ext.symbol/description editing/patch-symbol)
+(defdescribe
+  editing-native-contract-test
+  (let
+    [patch-description
+     (:ext.symbol/description editing/patch-symbol)
 
-                patch-schema
-                (:ext.symbol/schema editing/patch-symbol)
+     patch-schema
+     (:ext.symbol/schema editing/patch-symbol)
 
-                cat-description
-                (:ext.symbol/description editing/cat-symbol)]
+     cat-description
+     (:ext.symbol/description editing/cat-symbol)
 
-               (it "keeps anchor lifecycle policy in the native descriptions"
-                   (expect (string/includes? patch-description "fresh anchors"))
-                   (expect (string/includes? patch-description "stales all anchors"))
-                   (expect (string/includes? cat-description "invalidates returned anchors")))
-               (it "keeps exact patch fields only in the JSON Schema"
-                   (expect (not (string/includes? patch-description "from_anchor")))
-                   (expect (contains? (get-in patch-schema [:properties "edits" :items :properties])
-                                      "from_anchor")))
-               (it "advertises exactly the canonical patch fields"
-                   (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
-                     (expect (= #{"path" "from_anchor" "to_anchor" "replace"}
-                                (set (keys fields))))))))
+     cat-result
+     (:ext.symbol/result editing/cat-symbol)]
+
+    (it "keeps anchor lifecycle policy in the native descriptions"
+        (expect (string/includes? patch-description "fresh anchors"))
+        (expect (string/includes? patch-description "stales all anchors"))
+        (expect (string/includes? cat-description "invalidates returned anchors")))
+    (it "documents cat's Python result shape instead of relying on rendered output"
+        (expect (string/includes? cat-result "only content field"))
+        (expect (string/includes? cat-result "no `content`/`lines`"))
+        (expect (string/includes? cat-result "`result[\"anchors\"].items()`"))
+        (expect (string/includes? cat-result "rendered source-like lines are presentation")))
+    (it "keeps exact patch fields only in the JSON Schema"
+        (expect (not (string/includes? patch-description "from_anchor")))
+        (expect (contains? (get-in patch-schema [:properties "edits" :items :properties])
+                           "from_anchor")))
+    (it "advertises exactly the canonical patch fields"
+        (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
+          (expect (= #{"path" "from_anchor" "to_anchor" "replace"} (set (keys fields))))))))
 
 (defdescribe
   editing-native-schema-shape-test
@@ -4388,12 +4395,17 @@
       ;; with `:respect-ignore-files? false`, so it already contains the
       ;; ignored file. There is no Clojure walk left to fall back to — the
       ;; former `find-walk-files` escape hatch is deleted.
-      (let [path (fixture! "gitignore-override-walkonce")
-            r    (find-search [{"query" "secret token" "paths" [path]
-                                "is_respect_gitignore" false}])]
+      (let
+        [path
+         (fixture! "gitignore-override-walkonce")
+
+         r
+         (find-search [{"query" "secret token" "paths" [path] "is_respect_gitignore" false}])]
+
         (expect (nil? (core-var "find-walk-files")))
         ;; the fallback still surfaces the file via the "secret" token
-        (expect (some (fn [p] (string/includes? p "vendor/corp/secret.txt"))
+        (expect (some (fn [p]
+                        (string/includes? p "vendor/corp/secret.txt"))
                       (get r "paths")))))
     (it "the default (respect-gitignore) path never triggers a direct filesystem walk"
         ;; With the flag left on, find_files stays on the fff index. No walk
@@ -4796,6 +4808,77 @@
           (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" false} r))
           (expect (= (str "nothing to delete at `" base "/z.txt`") (:summary (render r)))))
         (expect (throws? clojure.lang.ExceptionInfo #(fs-tool {"op" "touch" "path" base})))
+        (fs/delete-tree base))))
+  (describe
+    "the batch `paths` form"
+    (it
+      "turns N targets into ONE call, ONE result and ONE summary line"
+      (let
+        [fs-tool
+         (private-fn "fs-tool")
+
+         render
+         (private-fn "render-fs-result")
+
+         base
+         (str (temp-root) "/fs-batch")
+
+         res
+         (fn [m]
+           (:result (fs-tool m)))]
+
+        (fs/delete-tree base)
+        (let
+          [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/b") (str base "/c")]})]
+          (expect (= {"action" "create_dirs"
+                      "paths" [{"path" (str base "/a") "is_created" true}
+                               {"path" (str base "/b") "is_created" true}
+                               {"path" (str base "/c") "is_created" true}]}
+                     r))
+          (expect (= (str "created 3 dirs: `" base "/a`, `" base "/b`, `" base "/c`")
+                     (:summary (render r)))))
+        ;; A partial batch says so instead of claiming the whole batch changed.
+        (let [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/d")]})]
+          (expect (= [false true] (mapv #(get % "is_created") (get r "paths"))))
+          (expect (= (str "created 1 of 2 dirs (1 already existed): `" base "/a`, `" base "/d`")
+                     (:summary (render r)))))
+        (spit (str base "/a/x.txt") "hi")
+        (let [r (res {"op" "exists" "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]})]
+          (expect (= {"action" "exists"
+                      "paths" [{"path" (str base "/a/x.txt") "is_existing" true}
+                               {"path" (str base "/a/nope.txt") "is_existing" false}]}
+                     r))
+          (expect (= (str "1 of 2 exist: `" base "/a/x.txt` ✓, `" base "/a/nope.txt` ✗")
+                     (:summary (render r)))))
+        (let
+          [r (res {"op" "delete"
+                   "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]
+                   "is_missing_ok" true})]
+          (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
+          (expect (= (str "deleted 1 of 2 paths (1 already absent): `"
+                          base
+                          "/a/x.txt`, `"
+                          base
+                          "/a/nope.txt`")
+                     (:summary (render r))))
+          (expect (not (fs/exists? (str base "/a/x.txt")))))
+        ;; A ONE-element batch still answers the batch shape: the shape follows
+        ;; the REQUEST, never the accident of how many paths it carried.
+        (let [r (res {"op" "exists" "paths" [(str base "/a")]})]
+          (expect (= {"action" "exists" "paths" [{"path" (str base "/a") "is_existing" true}]} r))
+          (expect (= (str "1 of 1 exist: `" base "/a` ✓") (:summary (render r)))))
+        ;; A long batch stays ONE line.
+        (expect (string/includes? (:summary (render {"op" "fs"
+                                                     "action" "delete"
+                                                     "paths" (mapv (fn [i]
+                                                                     {"path" (str "p" i)
+                                                                      "is_deleted" true})
+                                                                   (range 9))}))
+                                  "+3 more"))
+        ;; copy/move refuse the batch key, and an empty batch is not a silent no-op.
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(fs-tool {"op" "copy" "paths" ["a"] "src" "a" "dest" "b"})))
+        (expect (throws? clojure.lang.ExceptionInfo #(fs-tool {"op" "delete" "paths" []})))
         (fs/delete-tree base))))
   (describe
     "the engine's canonical `op` stamp"

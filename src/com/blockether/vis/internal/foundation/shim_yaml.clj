@@ -214,6 +214,7 @@ del __vis_install_yaml_compat__
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "yaml"
+       :shim/imports ["yaml"]
        :shim/description
        "PyYAML-compatible `yaml` module backed by YAMLStar (pure-Clojure YAML 1.2). Not supported: map keys always come back as strings; custom `!!python`/tagged objects and arbitrary-object (de)serialization."
        :shim/bindings yaml-bridge-bindings

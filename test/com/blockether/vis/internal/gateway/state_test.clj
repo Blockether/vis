@@ -1262,6 +1262,60 @@
                       (alter-var-root v (constantly orig)))
                     (swap! reg dissoc sid))))))
 
+(defdescribe
+  queue-retry-renews-cancel-token-test
+  "A stall retry must not inherit the token the watchdog cancelled to unwind the
+   failed worker. The real queue drain must mint and install a live token."
+  (it
+    "requeues with no spent token and drains with a fresh cancellable lifetime"
+    (let
+      [sid
+       "queue-retry-token-test"
+
+       tid
+       "retry-1"
+
+       reg
+       @#'state/registry
+
+       old-token
+       (cancellation/cancellation-token)
+
+       queued-after-reset
+       (atom nil)
+
+       launched
+       (atom nil)]
+
+      (cancellation/cancel! old-token)
+      (reset! reg {sid {:next-seq 0
+                        :current-turn nil
+                        :turn-order [tid]
+                        :turns {tid {:turn_id tid
+                                     :status "failed"
+                                     :request "retry me"
+                                     :messages []
+                                     :content [{:type "error"}]
+                                     :error "provider stream stalled"
+                                     :cancel-token old-token
+                                     :cancelling_at 1}}}})
+      (try (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                    nil)
+                            #'state/launch-turn-worker! (fn [_ _ _ opts]
+                                                          (reset! launched opts))}
+             #(do (#'state/re-queue-turn! sid tid)
+                  (reset! queued-after-reset (get-in @reg [sid :turns tid]))
+                  (#'state/drain-next-queued! sid)))
+           (let [retry-token (:cancel-token @launched)]
+             (expect (nil? (:cancel-token @queued-after-reset)))
+             (expect (nil? (:cancelling_at @queued-after-reset)))
+             (expect (some? retry-token))
+             (expect (not (identical? old-token retry-token)))
+             (expect (false? (cancellation/cancelled? retry-token)))
+             (expect (identical? retry-token (get-in @reg [sid :turns tid :cancel-token])))
+             (expect (= "running" (get-in @reg [sid :turns tid :status]))))
+           (finally (swap! reg dissoc sid))))))
+
 (defdescribe gateway-resource-bounds-test
              (it "retains only the configured replay tail"
                  (with-redefs-fn {#'state/EVENT_RING_MAX 3}
@@ -1429,13 +1483,13 @@
                  (expect (string? (get (first chips) "size_label")))
                  (expect (not (contains? (first chips) "base64")))
                  ;; Prose the channel paints: chipped, path-free.
-                 (expect (= "🖼 clipboard-shot.png LOOK AT THIS"
+                 (expect (= "clipboard-shot.png LOOK AT THIS"
                             (get-in res [:turn "request_preview"])))
                  ;; The submitter's own pre-expansion text is no longer dropped.
                  (expect (= "LOOK AT THIS" (get-in res [:turn "display_request"])))
                  ;; …and the broadcast carries the same row, so a SIBLING channel
                  ;; that never saw the submission paints it identically.
-                 (expect (= "🖼 clipboard-shot.png LOOK AT THIS" (:request_preview queued)))
+                 (expect (= "clipboard-shot.png LOOK AT THIS" (:request_preview queued)))
                  (expect (= 1 (count (:attachment_previews queued)))))))
            (finally (swap! registry dissoc sid) (.delete png) (.delete dir))))))
 
