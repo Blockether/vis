@@ -1,6 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.footer-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
@@ -9,13 +8,9 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fixture-seg?
-  "Always-on footer fixtures that ride the :right region alongside git —
-   the managed-resource button (` ⚙ N (⌥J) `) and the context-dir
-   button (` ⌂ N (⌥D) `). The git-rendering tests filter these out so
-   they stay focused on git. Keys on the stable `:kind` tag, not the
-   icon glyph or the platform-conditional chord label."
-  [{:keys [kind]}]
-  (boolean (#{:footer-resources} kind)))
+  "No always-on right-side fixture segments remain; retained to keep git assertions focused."
+  [_]
+  false)
 
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
@@ -117,20 +112,17 @@
 
 (defdescribe
   build-segments-test
-  (it "labels resources with its C-x prefix sequence, not the M-x palette chord"
+  (it "does not expose managed background resources in the footer"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-5" :provider :openai})
-                         #'vis/list-resources (fn [_]
-                                                [{:id :nrepl}])}
+                                                      {:name "gpt-5" :provider :openai})}
           (fn []
             (let
-              [resource-text (->> (build-segments {:messages [] :settings {} :session {:id "s1"}} 0)
-                                  (filter #(= :footer-resources (:kind %)))
-                                  first
-                                  :text)]
-              (expect (str/includes? resource-text "(C-x b)"))
-              (expect (not (str/includes? resource-text keymap/palette-chord))))))))
+              [segments (build-segments {:messages [] :settings {} :session {:id "s1"}} 0)
+               text (str/lower-case (str/join " " (map :text segments)))]
+
+              (expect (not-any? #(= :footer-resources (:kind %)) segments))
+              (expect (not (str/includes? text "background"))))))))
   (it "leaves voice recording status out of the footer because header owns channel statuses"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
@@ -606,48 +598,3 @@
                                                                         :dynamic {:limits []}}}}
                                                              :openai-codex
                                                              0))))))
-
-(defdescribe
-  footer-is-backgroundless-test
-  (it
-    "paints every footer cell on terminal-bg — no chip fills, no bands"
-    (let
-      [cols
-       100
-
-       rows
-       6
-
-       term
-       (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
-         (com.googlecode.lanterna.TerminalSize. cols rows))
-
-       scr
-       (doto (com.googlecode.lanterna.screen.TerminalScreen. term) (.startScreen))
-
-       g
-       (.newTextGraphics scr)
-
-       db
-       {:session (java.util.UUID/randomUUID)
-        :messages []
-        :settings {}
-        :input {:lines [""] :crow 0 :ccol 0}}]
-
-      (try (p/set-bg! g t/terminal-bg)
-           (p/fill-rect! g 0 0 cols rows)
-           (footer/draw-footer! g db 3 cols (System/currentTimeMillis))
-           (.refresh scr)
-           (expect (zero? (count (for
-                                   [y
-                                    (range rows)
-
-                                    x
-                                    (range cols)
-
-                                    :let [c
-                                          (.getBackCharacter scr (int x) (int y))]
-                                    :when (not= t/terminal-bg (.getBackgroundColor c))]
-
-                                   [x y]))))
-           (finally (.stopScreen scr))))))

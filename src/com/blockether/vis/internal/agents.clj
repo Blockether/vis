@@ -33,6 +33,7 @@
    core functionality (drives the system prompt + slim ctx digest); the
    extension layer no longer owns it."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -156,14 +157,18 @@
 
 (defn- read-guidance-entry
   "Read one candidate into a stacked-file entry, or a warning on I/O
-   failure. `scope` is :global | :ancestor | :project | :extra-root."
+   failure. `scope` is :global | :ancestor | :project | :extra-root. Paths
+   are HOME-abbreviated at this model/user-facing boundary."
   [scope {:keys [source ^java.io.File file]}]
   (let [{:keys [bytes total-bytes] err :error} (read-bytes-safely file)]
     (if err
-      {:warning {:source source :scope scope :reason err :path (.getAbsolutePath file)}}
+      {:warning {:source source
+                 :scope scope
+                 :reason err
+                 :path (paths/abbreviate-home (.getAbsolutePath file))}}
       {:entry {:scope scope
                :source source
-               :path (.getAbsolutePath file)
+               :path (paths/abbreviate-home (.getAbsolutePath file))
                :bytes total-bytes
                :content (->utf8-string bytes total-bytes)}})))
 
@@ -229,11 +234,11 @@
    `extra-root`'s OWN directory (no ancestor walk — only what the user
    granted). Pure I/O; exposed for testing against fixture roots.
 
-   Precedence is render order: user-global → ancestors → workspace root →
-   added roots. Nearer files land LATER and positionally override outer
-   rules, so the primary workspace stays authoritative over any added
-   folder. An extra-root whose guidance file coincides with an already-seen
-   path (the workspace root, an ancestor, or a duplicate) is dropped.
+   Primary-chain precedence is render order: user-global → ancestors →
+   workspace root. Nearer files land later and override broader files in that
+   same filesystem scope. Added-root entries are separately path-scoped; their
+   rules apply only beneath that root and do not join the primary precedence
+   chain. A duplicate guidance-file path is dropped.
 
    Returns `{:result r :warnings [...]}` where `r` is:
 

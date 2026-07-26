@@ -16,7 +16,8 @@
    surfaces to the model (providers downscale server-side; vis does no
    client-side resizing — AWT/ImageIO is unavailable under GraalVM
    native-image on macOS)."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File RandomAccessFile]
            [java.nio.file Files]
            [java.util Base64]))
@@ -220,12 +221,6 @@
                       (if (= tok trimmed) [tok] [tok trimmed])))
                   (re-seq escaped-token-pattern text))))
 
-(defn- expand-home
-  [s]
-  (cond (= s "~") (System/getProperty "user.home")
-        (str/starts-with? s "~/") (str (System/getProperty "user.home") (subs s 1))
-        :else s))
-
 (defn- resolve-candidate
   "Candidate string → existing readable regular `File` with an image
    extension, or nil. Relative candidates resolve against
@@ -235,7 +230,7 @@
     [^String s (-> candidate
                    str/trim
                    strip-file-url
-                   expand-home)]
+                   paths/expand-home)]
     (when (and (seq s) (re-find image-extension-pattern s))
       (let
         [f (File. s)

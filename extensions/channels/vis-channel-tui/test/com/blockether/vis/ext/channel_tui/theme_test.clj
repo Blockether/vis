@@ -108,34 +108,19 @@
 
 (defdescribe
   adapter-coverage-test
-  (describe "TUI adapter consumes every shared theme token"
-            (it "keeps dialog surfaces on the terminal background while retaining the title accent"
-                (try (t/apply-theme! :vis-light)
-                     (let
-                       [palette
-                        (:palette shared-theme/vis-light)
-
-                        flat-backgrounds
-                        #{:dialog-bg :dialog-title-bg :dialog-shadow}]
-
-                       (doseq [[token expected] palette]
-                         (let
-                           [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme
-                                          (symbol (name token)))]
-                           (expect (some? v))
-                           (expect (= (if (flat-backgrounds token) (:terminal-bg palette) expected)
-                                      (rgb-vec @v)))))
-                       (expect (= (:dialog-title-bg palette) (rgb-vec t/dialog-accent))))
-                     (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
-            (it "preserves the flat dialog contract after a live theme switch"
-                (try (t/apply-theme! :vis-dark)
-                     (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
-                     (expect (= (rgb-vec t/terminal-bg) (rgb-vec t/dialog-bg)))
-                     (expect (= (rgb-vec t/terminal-bg) (rgb-vec t/dialog-title-bg)))
-                     (expect (= (rgb-vec t/terminal-bg) (rgb-vec t/dialog-shadow)))
-                     (expect (= (:dialog-title-bg (:palette shared-theme/vis-dark))
-                                (rgb-vec t/dialog-accent)))
-                     (expect (= (:widths shared-theme/vis-dark) t/default-widths))
-                     (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
-                     (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
-                     (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))
+  (describe
+    "TUI adapter consumes every shared theme token"
+    (it "has a public Lanterna var for every palette token and matches light theme values"
+        (try (t/apply-theme! :vis-light)
+             (doseq [[token expected] (:palette shared-theme/vis-light)]
+               (let [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme (symbol (name token)))]
+                 (expect (some? v))
+                 (expect (= expected (rgb-vec @v)))))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
+    (it "applies dark theme through the atom-backed shared theme registry"
+        (try (t/apply-theme! :vis-dark)
+             (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
+             (expect (= (:widths shared-theme/vis-dark) t/default-widths))
+             (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
+             (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))

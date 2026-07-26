@@ -63,7 +63,7 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 2700))
+      (expect (< (count text) 3800))
       (let
         [steps (mapv #(str/index-of text %)
                      ["use `grep` to locate unknown code" "known supported file" "`struct_index`"
@@ -95,8 +95,22 @@
                    "Create no unrequested" "without asking permission or offering optional"
                    "Never expose or log secrets" "commit, push, publish" "retry any blocked fold"
                    "`session_fold` owns the mechanics" "preserve only decisions,\n  findings, edits"
+                   ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
+                   ;; it started, or every session leaks a JVM/interpreter child.
+                   "Before `repl_eval` or any REPL lifecycle change"
+                   "`session[\"resources\"][\"repls\"][language][dir]`"
+                   "Reuse managed REPLs across turns" "stop the ones you"
+                   "External REPLs are user-owned" "detach, never kill"
+                   ;; Anchor staleness: without this the agent chains small writes on
+                   ;; anchors invalidated by its own previous edit.
+                   "Anchors are positional and EVERY write stales them"
+                   "ONE atomic\n  `patch`/`struct_patch` call" "After any write, re-read"
+                   "never\n  reuse a pre-write anchor"
                    "Lead with the answer. Be terse; depth only when earned."
-                   "Confirm destructive actions."]]
+                   ;; End-of-turn teardown: without this the session leaks every REPL and
+                   ;; background shell the agent spawned.
+                   "Finish clean: stop every session resource you started" "`shell` op \"stop\""
+                   "nothing of yours running" "Confirm destructive actions."]]
         (expect (str/includes? text required)))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.
@@ -106,9 +120,9 @@
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
                   "canonical decision table"
                   ;; schema-owned or removed contracts stay out of the core prompt
-                  "`repl`" "External REPLs" "stales anchors" "benchmark/profile"
-                  "Route vis issues upstream" "Before every `session_fold`" "`await session_state"
-                  "≤120 words" "never offer a menu"]]
+                  "stales anchors" "benchmark/profile" "Route vis issues upstream"
+                  "Before every `session_fold`" "`await session_state" "≤120 words"
+                  "never offer a menu"]]
         (expect (not (str/includes? text surplus))))))
   (it "advertises concise Python guidance and every auto-imported name"
       (let [text (#'prompt/sandbox-shims-prompt-block)]
@@ -130,7 +144,7 @@
         [agents/instructions
          (constantly {:found? true
                       :source :repo
-                      :path "/tmp/repo/AGENTS.md"
+                      :path (str (System/getProperty "user.home") "/repo/AGENTS.md")
                       :content
                       "PROJECT-RULE-FROM-AGENTS-MD\nreproduce -> inspect -> minimal change"})]
         (let
@@ -140,12 +154,38 @@
 
           (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
           (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
-          (expect (str/includes? text "/tmp/repo/AGENTS.md"))
+          (expect (str/includes? text "~/repo/AGENTS.md"))
+          (expect (not (str/includes? text
+                                      (str (System/getProperty "user.home") "/repo/AGENTS.md"))))
           (expect (str/includes? text "CORE wins"))
           (expect (not (str/includes? text "contract (CTX shape, DONE pipeline, SANDBOX)")))
           ;; Send order: SYSTEM-PROMPT first, then PROJECT-INSTRUCTIONS.
           (expect (< (str/index-of text "SYSTEM-PROMPT")
                      (str/index-of text "PROJECT-INSTRUCTIONS"))))))
+  (it "keeps added-folder rules path-scoped and renders every provenance path"
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? true
+                      :files [{:scope :project
+                               :source :agents-md
+                               :path (str (System/getProperty "user.home") "/vis/AGENTS.md")
+                               :content "VIS-RULE"}
+                              {:scope :extra-root
+                               :source :agents-md
+                               :path (str (System/getProperty "user.home") "/spel/AGENTS.md")
+                               :content "SPEL-RULE"}]})]
+        (let
+          [env {:extensions (atom [])}
+           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+           text (prompt/stable-prompt-text messages)]
+
+          (expect (str/includes? text "AGENTS.md (workspace root) — ~/vis/AGENTS.md"))
+          (expect (str/includes? text "AGENTS.md (added folder) — ~/spel/AGENTS.md"))
+          (expect
+            (str/includes?
+              text
+              "Added-folder guidance applies only to files/actions beneath its listed folder"))
+          (expect (str/includes? text "cannot override primary-workspace guidance elsewhere")))))
   (it "falls back to CLAUDE.md when AGENTS.md is absent and labels the source"
       (with-redefs
         [agents/instructions (constantly {:found? true

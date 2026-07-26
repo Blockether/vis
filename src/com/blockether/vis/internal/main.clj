@@ -374,7 +374,7 @@
             (if required "required  " "optional  ")
             (or doc "")))]
 
-    (str "  vis ext "
+    (str "  vis extension "
          cmd
          (when (seq usage) (str " " usage))
          "\n\n  "
@@ -388,11 +388,11 @@
   []
   (let [cmds (all-extension-cmds)]
     (if (empty? cmds)
-      "No extension commands available. Run 'vis ext' to see registered extensions."
+      "No extension commands available. Run 'vis extension' to see registered extensions."
       (str "Extension commands:\n\n"
            (str/join "\n\n"
                      (map (fn [{:keys [cmd doc ext-ns]}]
-                            (str "  vis ext " (pad cmd 20) (or doc "") "  (" ext-ns ")"))
+                            (str "  vis extension " (pad cmd 20) (or doc "") "  (" ext-ns ")"))
                           cmds))))))
 
 ;;; ── Dispatch ───────────────────────────────────────────────────────────
@@ -1493,7 +1493,7 @@
 
 (defn- print-section-heading!
   "Render a section heading line for a grouped table - used when
-   `vis ext list` breaks the rows into per-`:ext/kind`
+   `vis extension list` breaks the rows into per-`:ext/kind`
    sub-tables. `width` is the total visible width of the surrounding
    table so the rule under the label spans the same column run."
   [label width]
@@ -2092,7 +2092,7 @@
    relative `File` paths against the OS cwd, so a bare `out.html` would silently
    land in the repo root while the printed path (from `user.dir`) said
    otherwise. Anchor relatives to `user.dir` (same convention as
-   `vis ext scaffold`); absolute paths pass through untouched."
+   `vis extension scaffold`); absolute paths pass through untouched."
   [path]
   (let [f (io/file path)]
     (.getPath (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") path)))))
@@ -2674,7 +2674,7 @@
     (stdout! (doctor/format-output msgs))
     (System/exit (int (doctor/exit-code msgs)))))
 
-;;; ── `vis ext` ───────────────────────────────────────────────────────────
+;;; ── `vis extension` ───────────────────────────────────────────────────────────
 
 (def ^:private extensions-table-cols
   [{:key :namespace :label "Namespace" :width 28 :align :left}
@@ -2827,7 +2827,7 @@
   (config/init-cli!)
   (let [{:keys [name dir force?] :as opts} (parse-scaffold-opts parsed residual)]
     (when-not name
-      (throw (ex-info "Usage: vis ext scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+      (throw (ex-info "Usage: vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
                       {:type :cli/usage})))
     (let
       [target-path (or dir (str ".vis/vis-extensions/" name))
@@ -3181,10 +3181,10 @@
 ;;
 ;; `providers`, `sessions`, `doctor`, `update`, and `ext` are the
 ;; binary's own parent commands. They live at the top of the command
-;; tree -- `vis providers ...`, NOT `vis ext providers ...` -- so they
-;; bypass `:ext/cli` (the `vis ext` subcommand slot). Direct
+;; tree -- `vis providers ...`, NOT `vis extension providers ...` -- so they
+;; bypass `:ext/cli` (the `vis extension` subcommand slot). Direct
 ;; `register-cmd!` is the right plumbing here; vis-runtime is the host,
-;; not an extension contributing to `vis ext`.
+;; not an extension contributing to `vis extension`.
 
 (doseq
   [spec [{:cmd/name "providers"
@@ -3436,11 +3436,11 @@
      :cmd/run-fn cli-sessions-search!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis ext` subcommands (host-owned canonical) ────────────────────────
+;;; ── `vis extension` subcommands (host-owned canonical) ────────────────────────
 ;;
 ;; `list` and `scaffold` are NOT extension contributions -- they are
 ;; the CANONICAL host commands the vis binary ships with. Extensions add
-;; to the `vis ext` parent through `:ext/cli`; the host marks its own
+;; to the `vis extension` parent through `:ext/cli`; the host marks its own
 ;; entries with `:cmd/internal? true` so help and listing layers can
 ;; tell host-owned canonical commands apart from extension-contributed
 ;; ones at a glance.
@@ -3578,7 +3578,7 @@
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
 ;; comes from the global commandline registry. Built-ins (providers,
 ;; sessions, doctor, ...) are registered by vis-runtime; the `vis channel` and
-;; `vis ext` parents are registered by the channel and extension
+;; `vis extension` parents are registered by the channel and extension
 ;; facades. Add a third-party jar with its own `register-cmd!`
 ;; calls and its commands appear here without any code change.
 ;; =============================================================================
@@ -3703,11 +3703,11 @@
     (and (= "channels" parent) help? (empty? before-help))))
 
 (defn- ext-help-request?
-  "True for any `vis ext ...` help invocation. The `vis ext` subtree is
+  "True for any `vis extension ...` help invocation. The `vis extension` subtree is
    populated by `:ext/cli` mounts that only land after
    `extension/discover-extensions!` has run, so help rendering for this
    subtree MUST trigger full extension discovery before the renderer
-   reads `(registered-under [\"ext\"])`."
+   reads `(registered-under [\"extension\"])`."
   [args]
   (contains? #{"ext" "extension"} (first (vec args))))
 

@@ -9,7 +9,7 @@
 
    Split out of `python-extensions` (which owns loading/registration) so the
    runner is a single, testable responsibility. It depends on that namespace's
-   trusted-context builder; the reverse wiring (`/test` slash + `vis ext test`
+   trusted-context builder; the reverse wiring (`/test` slash + `vis extension test`
    CLI) is resolved lazily there to avoid a require cycle.
 
    The source of truth for the outcome is the shim's PER-TEST record list
@@ -251,7 +251,7 @@
    one-line summary (`✓/✗ N file(s): P passed, F failed, …`), then per FILE a
    `✓/✗ <file>` line, then per TEST a `✓/✗/s <nodeid>` line (failures carry the
    first line of the assertion detail). Pure — the shared renderer for the
-   `/test` slash command and `vis ext test`."
+   `/test` slash command and `vis extension test`."
   [{:keys [files passed failed errored skipped ok? results] :as res}]
   (cond (:error res) (str "✗ Python extension tests could not run: " (:error res))
         (zero? (long (or files 0))) "No Python extension tests found (test_*.py / *_test.py)."
@@ -304,7 +304,7 @@
 
 (defn ^:no-doc run-and-report
   "Run every Python extension test and return `{:result <map> :report <string>}`.
-   The one shared code path behind the `/test` slash command and `vis ext test`."
+   The one shared code path behind the `/test` slash command and `vis extension test`."
   [opts]
   (let [result (test-python-extensions! opts)]
     {:result result :report (render-test-report result)}))
@@ -332,7 +332,7 @@
              {:type :vis.ext-test/failures :vis/user-error true})))
 
 (defn ^:no-doc test-cli!
-  "`vis ext test` — run every Python extension test, print a report, and signal
+  "`vis extension test` — run every Python extension test, print a report, and signal
    a non-zero exit on failure by throwing a `:vis/user-error` ex-info. NEVER
    calls `System/exit`: pure and testable, and safe to call from anywhere
    without killing the host."

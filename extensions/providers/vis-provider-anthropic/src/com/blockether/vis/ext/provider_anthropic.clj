@@ -442,54 +442,73 @@
     {:status status}))
 
 (defn- fetch-limits-report
-  []
-  (try
-    (let
-      [{:keys [token]}
-       (get-anthropic-token!)
+  "Fetch the live Anthropic usage report.
 
-       {:keys [status body json]}
-       (fetch-usage! token)]
+   A 401/403 from the usage endpoint on a LOCALLY-VALID token is the
+   refresh-token rotation failure mode (another client/process rotated the
+   token server-side), exactly like a mid-turn 401. So force ONE refresh with
+   the rejected token — single-flight, so it cannot hand the dead token back —
+   and retry once before declaring the provider unauthenticated. Without this
+   the TUI/gateway/phone status panels stay stuck on `re-authenticate` for a
+   token a refresh would have fixed. `forced-token` is the already-refreshed
+   provider token on that retry; its presence means the retry is spent."
+  ([] (fetch-limits-report nil))
+  ([forced-token]
+   (try
+     (let
+       [{:keys [token]}
+        (or forced-token (get-anthropic-token!))
 
-      (cond
-        (= 200 status)
-        (let [rows (usage-limit-rows json)]
-          (if (seq rows)
-            {:provider-id :anthropic-coding-plan
-             :status :ok
-             :dynamic {:limits rows
-                       :note "Live Claude subscription usage from Anthropic OAuth usage API."}}
-            {:provider-id :anthropic-coding-plan
-             :status :unsupported
-             :dynamic {:limits []
-                       :note
-                       "Anthropic usage endpoint returned no Claude subscription limit fields."}}))
-        (contains? #{401 403} status)
-        {:provider-id :anthropic-coding-plan
-         :status :unauthenticated
-         :dynamic
-         {:limits []
-          :note
-          "Anthropic OAuth token was rejected. Run `vis providers auth anthropic-coding-plan --force` to re-authenticate."}}
-        (transient-usage-status? status) (usage-throttle-report status)
-        :else (limits-error-report :vis/anthropic-usage-failed
-                                   (str "Anthropic usage endpoint failed: HTTP " status)
-                                   {:status status :body body})))
-    (catch clojure.lang.ExceptionInfo e
-      (if (= :vis/anthropic-not-authenticated (:type (ex-data e)))
-        {:provider-id :anthropic-coding-plan
-         :status :unauthenticated
-         :dynamic
-         {:limits []
-          :note
-          "Run `vis providers auth anthropic-coding-plan` to authenticate with Claude subscription."}}
-        (limits-error-report :vis/anthropic-limits-error
-                             (or (ex-message e) "Anthropic limits check failed")
-                             (dissoc (ex-data e) :access-token :refresh-token :token))))
-    (catch Throwable t
-      (limits-error-report :vis/anthropic-limits-error
-                           (or (ex-message t) (.getName (class t)))
-                           {:class (.getName (class t))}))))
+        {:keys [status body json]}
+        (fetch-usage! token)
+
+        unauthenticated
+        (fn []
+          {:provider-id :anthropic-coding-plan
+           :status :unauthenticated
+           :dynamic
+           {:limits []
+            :note
+            "Anthropic OAuth token was rejected. Run `vis providers auth anthropic-coding-plan --force` to re-authenticate."}})]
+
+       (cond (= 200 status)
+             (let [rows (usage-limit-rows json)]
+               (if (seq rows)
+                 {:provider-id :anthropic-coding-plan
+                  :status :ok
+                  :dynamic {:limits rows
+                            :note "Live Claude subscription usage from Anthropic OAuth usage API."}}
+                 {:provider-id :anthropic-coding-plan
+                  :status :unsupported
+                  :dynamic
+                  {:limits []
+                   :note
+                   "Anthropic usage endpoint returned no Claude subscription limit fields."}}))
+             (contains? #{401 403} status)
+             (if forced-token
+               (unauthenticated)
+               (if-let [refreshed (try (force-refresh-token! token) (catch Throwable _ nil))]
+                 (fetch-limits-report refreshed)
+                 (unauthenticated)))
+             (transient-usage-status? status) (usage-throttle-report status)
+             :else (limits-error-report :vis/anthropic-usage-failed
+                                        (str "Anthropic usage endpoint failed: HTTP " status)
+                                        {:status status :body body})))
+     (catch clojure.lang.ExceptionInfo e
+       (if (= :vis/anthropic-not-authenticated (:type (ex-data e)))
+         {:provider-id :anthropic-coding-plan
+          :status :unauthenticated
+          :dynamic
+          {:limits []
+           :note
+           "Run `vis providers auth anthropic-coding-plan` to authenticate with Claude subscription."}}
+         (limits-error-report :vis/anthropic-limits-error
+                              (or (ex-message e) "Anthropic limits check failed")
+                              (dissoc (ex-data e) :access-token :refresh-token :token))))
+     (catch Throwable t
+       (limits-error-report :vis/anthropic-limits-error
+                            (or (ex-message t) (.getName (class t)))
+                            {:class (.getName (class t))})))))
 
 (defn- limits
   []
@@ -585,6 +604,41 @@
                                {:type :vis/anthropic-missing-access-token})))
              :ok)))))))
 
+(defn auth-start
+  "Headless leg 1 of Anthropic Claude subscription OAuth — the wire-drivable
+   twin of `login!`. Mints a fresh PKCE flow and returns the authorization URL
+   plus the OPAQUE `:flow` the daemon must hand back to `auth-complete`.
+
+   The `:flow` map carries the PKCE verifier and CSRF state: it is a
+   daemon-side secret and must NEVER be emitted onto the wire."
+  []
+  (let [{:keys [url] :as flow} (create-authorization-flow)]
+    {:kind :pkce
+     :url url
+     :instructions ["Sign in to Anthropic in the browser."
+                    "Copy the FULL redirect URL from the address bar."
+                    "Paste it back here to finish."]
+     :flow flow}))
+
+(defn auth-complete
+  "Headless leg 2: exchange the pasted redirect URL (or bare `code#state`)
+   for credentials and PERSIST them in the daemon's auth file. `flow` is the
+   opaque map from `auth-start`. Throws with a `:type` on bad input."
+  [flow input]
+  (when (str/blank? (or input ""))
+    (throw (ex-info "Missing authorization input" {:type :vis/anthropic-missing-input})))
+  (let
+    [parsed
+     (parse-authorization-input input)
+
+     credentials
+     (save-auth-file! (exchange-authorization-code! (:code parsed) flow (:state parsed)))]
+
+    (when (str/blank? (:access-token credentials))
+      (throw (ex-info "Anthropic credentials missing access token"
+                      {:type :vis/anthropic-missing-access-token})))
+    {:status :ok}))
+
 (vis/register-extension!
   (vis/extension
     {:ext/name "provider-anthropic"
@@ -606,6 +660,8 @@
                       :provider/logout-fn #'logout!
                       :provider/detect-fn #'detect-credentials
                       :provider/auth-fn #'login!
+                      :provider/auth-start-fn #'auth-start
+                      :provider/auth-complete-fn #'auth-complete
                       :provider/auth-prompt-fn #'auth-instruction-lines
                       :provider/get-token-fn #'get-anthropic-token!
                       :provider/refresh-token-fn #'force-refresh-token!

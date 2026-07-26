@@ -50,7 +50,7 @@
 (defdescribe python-binding-aliases-test
              ;; A native tool is reachable in the sandbox under its canonical Python name
              ;; PLUS the intentional compatibility aliases. `fs` also answers to `fs_tool`
-             ;; so it reads as a verb next to `shell_run`/`grep`; a missing alias is a bare
+             ;; so it reads as a verb next to `shell`/`grep`; a missing alias is a bare
              ;; NameError to the model, which reads as "the tool is gone" and invites a spin.
              (it "exposes fs as both fs and fs_tool, grep as grep/find_files/find"
                  (expect (= ["fs" "fs_tool"] (ep/python-binding-names 'fs)))
@@ -155,6 +155,27 @@
         (expect (empty? (:printed-results plain)))
         (expect (= 2 (count (:printed-results two))))
         (expect (re-find #"'op'" (str (:stdout real)))))) ;; stdout (context) still shows it
+    (it "a missing key on a tool result names the tool, the near miss and EVERY key it did return"
+        ;; Result shapes are per-tool by design (shell -> stdout/stderr/exit,
+        ;; run_tests -> output). A bare `KeyError: 'output'` reads as "the tool broke",
+        ;; so the model guesses a second name and spins. Every host-rebuilt map -- the
+        ;; result AND each nested map -- answers a miss with its own shape instead;
+        ;; `.get` stays silent, and the value is still a plain dict.
+        (ep/bind-and-bump! env 'tp {"op" "shell" "stdout" "hi" "exit" 0 "nested" {"a" 1}})
+        (let
+          [out (:stdout
+                 (ep/run-python-block
+                   ctx
+                   (str "r = tp\n"
+                        "try:\n    r['output']\nexcept KeyError as e:\n    print('MISS', e)\n"
+                        "try:\n    r['stdou']\nexcept KeyError as e:\n    print('NEAR', e)\n"
+                        "try:\n    r['nested']['b']\nexcept KeyError as e:\n    print('NEST', e)\n"
+                        "print('GET', r.get('output'), isinstance(r, dict))")))]
+          (expect (str/includes? out "'output' is not a key of 'shell' result"))
+          (expect (str/includes? out "Keys: 'op', 'stdout', 'exit', 'nested'"))
+          (expect (str/includes? out "Did you mean 'stdout'?"))
+          (expect (str/includes? out "Keys: 'a'"))       ;; nested map knows its own shape
+          (expect (str/includes? out "GET None True")))) ;; .get silent, still a real dict
     (it
       "ntr store makes EVERY value dict-probeable: a list/str result answers .get without a type guard"
       ;; A stored native result can be a LIST (patch/struct_patch/write rows) or a
@@ -208,6 +229,34 @@
           (expect (not (str/includes? (str (:stdout result)) "diff")))
           (expect (str/includes? (str (:stdout result)) "a.clj"))
           (expect (str/includes? (str (:stdout result)) "'changed': True"))))
+    (it
+      "a LIST-shaped tool result is dict-probeable AND captured (patch/write/struct_patch rows)"
+      ;; `patch`/`write`/`struct_patch` return a LIST of per-file rows. At the
+      ;; TOP-LEVEL settle of a tool call that list must be re-typed to
+      ;; `__VisResultList__`, exactly like a stored `ntr[...]` read: otherwise the
+      ;; documented uniform `res.get('op')` probe dies with `'list' object has no
+      ;; attribute 'get'`, the print-capture cannot recognise the result, and the
+      ;; block stops counting as results-only — dropping every OTHER printed card.
+      (let
+        [typed
+         (ep/run-python-block
+           ctx
+           (str
+             "def __rows():\n"
+             "    return [{'path': 'a.clj', 'op': 'update', 'changed': True}]\n"
+             "patchy = __vis_deferred__(__rows, 'patch')\n"
+             "res = await patchy()\n"
+             "print(['type', type(res).__name__, 'get', res.get('op'), 'row', res[0]['op'], 'len', len(res)])\n"))
+
+         printed
+         (ep/run-python-block ctx "print(res)")]
+
+        (expect (re-find #"'type', '__VisResultList__'" (str (:stdout typed))))
+        (expect (re-find #"'get', None" (str (:stdout typed)))) ;; probe answers, never throws
+        (expect (re-find #"'row', 'update'" (str (:stdout typed)))) ;; rows keep their own op
+        (expect (re-find #"'len', 1" (str (:stdout typed))))
+        (expect (= 1 (count (:printed-results printed))))
+        (expect (true? (:only-printed-results? printed)))))
     (it
       "session is a REAL dict after bind-ctx! — json.dumps(session) works (was a ForeignDict)"
       (ep/bind-ctx! ctx {"workspace" "/x" "roots" ["a" "b"] "facts" {"k" "v"}})

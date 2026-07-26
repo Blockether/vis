@@ -608,28 +608,25 @@
                           (expect (str/includes? (str (:stdout form-res)) "42"))))
                       (finally (lp/dispose-environment! env))))))
 
-(defdescribe
-  stream-watchdog-no-retry-test
-  ;; Svar intentionally treats its watchdog aborts as terminal for the current
-  ;; provider call. Retrying here would stack another multi-minute retry ladder.
-  (doseq [error-type [:svar.core/stream-semantic-timeout
-                      :svar.core/stream-idle-timeout]]
-    (it (str error-type " is surfaced after exactly one provider call")
-        (let [calls (atom 0)]
-          (expect
-            (throws? clojure.lang.ExceptionInfo
-                     #(call-provider-with-stream-rewind-retry!
-                        {:cancel-atom (atom false)}
-                        {:iteration-position 1
-                         :provider "openai"
-                         :model "gpt-x"
-                         :on-chunk (fn [_])
-                         :reset-stream-state! (fn [])}
-                        (fn []
-                          (swap! calls inc)
-                          (throw (ex-info "Stream watchdog timeout"
-                                          {:type error-type :stream? true}))))))
-          (expect (= 1 @calls))))))
+(defdescribe stream-watchdog-no-retry-test
+             ;; Svar intentionally treats its watchdog aborts as terminal for the current
+             ;; provider call. Retrying here would stack another multi-minute retry ladder.
+             (doseq [error-type [:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout]]
+               (it (str error-type " is surfaced after exactly one provider call")
+                   (let [calls (atom 0)]
+                     (expect (throws? clojure.lang.ExceptionInfo
+                                      #(call-provider-with-stream-rewind-retry!
+                                         {:cancel-atom (atom false)}
+                                         {:iteration-position 1
+                                          :provider "openai"
+                                          :model "gpt-x"
+                                          :on-chunk (fn [_])
+                                          :reset-stream-state! (fn [])}
+                                         (fn []
+                                           (swap! calls inc)
+                                           (throw (ex-info "Stream watchdog timeout"
+                                                           {:type error-type :stream? true}))))))
+                     (expect (= 1 @calls))))))
 
 (defdescribe provider-interrupt-retry-test
              (it "retries a provider interrupt once when user did not cancel"
@@ -1966,12 +1963,12 @@
        (perr/provider-error-next-step err)]
 
       ;; explanation = diagnosis only
-      (expect (str/includes? text "provider rejected credentials"))
-      (expect (str/includes? text "Provider message: Invalid authentication credentials"))
-      ;; the actionable step lives in provider-error-next-step now
-      (expect (str/includes? step "NEXT STEP: re-authenticate this provider or update its API key"))
-      (expect (str/includes? step "Ctrl+K -> Model / Providers"))
-      (expect (str/includes? step "vis providers auth")))))
+      (expect (str/includes? text "rejected your credentials"))
+      (expect (str/includes? text "Invalid authentication credentials"))
+      ;; the actionable step lives in provider-error-next-step now, and stays
+      ;; surface-agnostic — no CLI command, no TUI keybinding (Vis also ships native)
+      (expect (str/includes? step "NEXT STEP: re-authenticate"))
+      (expect (nil? (re-find #"(?i)ctrl\\+k|`vis " step))))))
 
 (defdescribe
   ask-code-idle-timeout-test
@@ -2023,7 +2020,7 @@
                  (expect (= 190000
                             (eval-timeout-ms-for-code
                               120000
-                              "await shell_run(\"clojure -M:test\", {\"timeout_secs\": 180})")))
+                              "await shell(\"clojure -M:test\", {\"timeout_secs\": 180})")))
                  (expect (= 310000
                             (eval-timeout-ms-for-code
                               120000
@@ -2489,29 +2486,28 @@
                     (expect (false? (:stuck? r3)))
                     (expect (true? (:stuck? r4)))
                     (expect (= 3 (count (:recent-sigs r4))))))
-              (it
-                "stays calm when only the OUTPUT repeats and the code differs"
-                (let
-                  [probe
-                   (fn [previous code out]
-                     (detect [{:code code :stdout out}] (when previous (carry previous))))
+              (it "stays calm when only the OUTPUT repeats and the code differs"
+                  (let
+                    [probe
+                     (fn [previous code out]
+                       (detect [{:code code :stdout out}] (when previous (carry previous))))
 
-                   r1
-                   (probe nil "shell_run('curl localhost:5273/healthz')" "{\"status\":\"ok\"}")
+                     r1
+                     (probe nil "shell('curl localhost:5273/healthz')" "{\"status\":\"ok\"}")
 
-                   r2
-                   (probe r1 "shell_run('curl 127.0.0.1:5273/healthz')" "{\"status\":\"ok\"}")
+                     r2
+                     (probe r1 "shell('curl 127.0.0.1:5273/healthz')" "{\"status\":\"ok\"}")
 
-                   r3
-                   (probe r2 "shell_run('curl -m 5 localhost:5273/healthz')" "{\"status\":\"ok\"}")]
+                     r3
+                     (probe r2 "shell('curl -m 5 localhost:5273/healthz')" "{\"status\":\"ok\"}")]
 
-                  ;; DELIBERATE: no output/evidence hashing. Re-reading the same
-                  ;; content while reasoning forward is legitimate work, so only a
-                  ;; verbatim action repeat counts as a loop.
-                  (expect (false? (:stuck? r1)))
-                  (expect (false? (:stuck? r2)))
-                  (expect (false? (:stuck? r3)))
-                  (expect (nil? (:no-evidence-streak r3))))))
+                    ;; DELIBERATE: no output/evidence hashing. Re-reading the same
+                    ;; content while reasoning forward is legitimate work, so only a
+                    ;; verbatim action repeat counts as a loop.
+                    (expect (false? (:stuck? r1)))
+                    (expect (false? (:stuck? r2)))
+                    (expect (false? (:stuck? r3)))
+                    (expect (nil? (:no-evidence-streak r3))))))
     (describe "loop-checkpoint-message"
               (it "shows the sticky best-answer and forces a decision"
                   (let [m (msg "The atom and token serve distinct roles.")]
@@ -2642,6 +2638,49 @@
           (expect (= #{:anthropic-coding-plan :anthropic}
                      (set (map :id
                                (:providers (lp/router-for-model router "claude-haiku-4-5"))))))))))
+
+(defdescribe
+  router-for-pinned-provider-test
+  (describe
+    "a session pin must ATTRIBUTE to the provider it calls (duplicate model names)"
+    (let
+      [;; both providers expose "gpt-5.4" — the tie `router-for-model` cannot break
+       router
+       {:providers [{:id :openai-codex :models [{:name "gpt-5.4"} {:name "gpt-5.5"}]}
+                    {:id :github-copilot-individual
+                     :models [{:name "gpt-5.4"} {:name "claude-opus-5"}]}]}
+
+       hoist
+       #'lp/router-for-pinned-provider
+
+       forced
+       #'lp/forced-routing-for-pref]
+
+      (it "model-only hoisting picks the CONFIG-order provider — the old, wrong attribution"
+          (expect (= :openai-codex
+                     (:provider (lp/resolve-effective-model (lp/router-for-model router
+                                                                                 "gpt-5.4"))))))
+      (it "hoisting the PINNED provider makes root provider+model match the forced routing"
+          (let
+            [pinned
+             (hoist (lp/router-for-model router "gpt-5.4") :github-copilot-individual)
+
+             root
+             (lp/resolve-effective-model pinned)]
+
+            (expect (= :github-copilot-individual (:provider root)))
+            (expect (= "gpt-5.4" (:name root)))
+            (expect (= {:provider :github-copilot-individual :model "gpt-5.4"}
+                       (forced router "github-copilot-individual" "gpt-5.4")))))
+      (it "the pinned provider leads the FALLBACK order and no provider is dropped"
+          (let [pinned (hoist router :github-copilot-individual)]
+            (expect (= [:github-copilot-individual :openai-codex] (mapv :id (:providers pinned))))))
+      (it "a string id works (that is how the DB pref stores it)"
+          (expect (= :github-copilot-individual
+                     (:id (first (:providers (hoist router "github-copilot-individual")))))))
+      (it "an unknown / nil provider leaves the router untouched"
+          (expect (= router (hoist router :not-configured)))
+          (expect (= router (hoist router nil)))))))
 
 (defdescribe
   sub-loop!-test
@@ -3249,6 +3288,27 @@
         (let [r [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"} {"text" "hi"}]]
           (expect (= r (strip r)))))))
 
+(defdescribe printed-result-op-test
+             ;; Which renderer a PRINTED tool result resolves to. A map answers with its
+             ;; stamped `"op"`; a patch/write/struct_patch return is a LIST of per-file rows
+             ;; with no top-level op — it must still resolve (they share ONE renderer), or
+             ;; a printed edit silently loses its card.
+             (let [op @#'lp/printed-result-op]
+               (it "reads the stamped op off a map result"
+                   (expect (= "fs" (op {"op" "fs" "action" "delete" "path" "a.txt"})))
+                   (expect (= "cat" (op {"op" "cat"}))))
+               (it "resolves a list of per-file edit rows to the shared patch renderer"
+                   (expect (= "patch" (op [{"path" "a.clj" "op" "update" "changed" true}])))
+                   (expect (= "patch"
+                              (op [{"path" "a.clj" "op" "add" "changed" true}
+                                   {"path" "b.clj" "op" "update" "changed" false}]))))
+               (it "never guesses: an unstamped map, an empty or mixed list, a scalar"
+                   (expect (nil? (op {"hit_count" 3})))
+                   (expect (nil? (op [])))
+                   (expect (nil? (op [{"path" "a.clj" "op" "update" "changed" true}
+                                      {"text" "hi"}])))
+                   (expect (nil? (op "plain text"))))))
+
 ;; Build the wire-name → `:call` shape map from the REAL tool symbols, exactly as
 ;; `extension/native-tool-call-shapes` does at runtime. Driving the synthesizer with
 ;; the ACTUAL declarations (not a hand-copied table) makes this an EQUIVALENCE ORACLE:
@@ -3301,7 +3361,7 @@
         (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
         (let [python-description (get-in by-name ["python_execution" :description])]
           (doseq
-            [fact ["cannot import project packages" "ntr[tool_id]" "bare snake_case"
+            [fact ["project packages cannot be imported" "ntr[tool_id]" "bare snake_case"
                    "errors surface"]]
             (expect (str/includes? python-description fact))))
         (expect (str/includes? (get-in by-name ["session_fold" :description])
@@ -3389,7 +3449,7 @@
                  {"path" "a.clj" "op" "replace" "target" "f" "code" "(defn f []\n  \"d\"\n  1)"}})]
         (expect (not (.contains ^String prog "\n")))
         (expect (.startsWith ^String prog "struct_patch("))))
-    (it "positional + optional-rest-dict shapes (cat/sexpr/copy/shell_run)"
+    (it "positional + optional-rest-dict shapes (cat/sexpr/copy/shell)"
         (expect (= "cat(\"a.clj\")" (synth {:name "cat" :input {"path" "a.clj"}})))
         (expect (= "cat(\"a.clj\", {\"range\": [1, 2]})"
                    (synth {:name "cat" :input {"path" "a.clj" "range" [1 2]}})))
@@ -3398,20 +3458,24 @@
         (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
         (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
                    (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
-        (expect (= "shell_run(\"ls\", {\"timeout_secs\": 30})"
-                   (synth {:name "shell_run" :input {"cmd" "ls" "timeout_secs" 30}}))))
+        (expect (= "shell(\"ls\", {\"timeout_secs\": 30})"
+                   (synth {:name "shell" :input {"cmd" "ls" "timeout_secs" 30}}))))
     (it "all-positional + optional-trailing-positional shapes"
         (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
         (expect (= "delete(\"p\")" (synth {:name "delete" :input {"path" "p"}})))
         (expect (= "create_dirs(\"d\")" (synth {:name "create_dirs" :input {"path" "d"}})))
         (expect (= "delete_if_exists(\"d\")"
                    (synth {:name "delete_if_exists" :input {"path" "d"}})))
-        (expect (= "shell_bg(\"x\", \"sleep 1\")"
-                   (synth {:name "shell_bg" :input {"id" "x" "cmd" "sleep 1"}})))
-        (expect (= "shell_logs(\"x\", 50)" (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
+        ;; ONE `shell` tool: every op synthesizes through the same lone-positional
+        ;; `cmd` shape, with the rest riding the trailing opts dict.
+        (expect (= "shell(\"sleep 1\", {\"id\": \"x\", \"op\": \"bg\"})"
+                   (synth {:name "shell" :input {"id" "x" "cmd" "sleep 1" "op" "bg"}})))
+        (expect (= "shell({\"id\": \"x\", \"n\": 50, \"op\": \"logs\"})"
+                   (synth {:name "shell" :input {"id" "x" "n" 50 "op" "logs"}})))
         (expect (= "struct_rename(\"a\", \"b\")"
                    (synth {:name "struct_rename" :input {"name" "a" "new_name" "b"}})))
-        (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
+        (expect (= "shell({\"id\": \"x\", \"op\": \"logs\"})"
+                   (synth {:name "shell" :input {"id" "x" "op" "logs"}}))))
     (it "file_exists synthesizes its wire name file_exists (bound name matches)"
         (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
     (it "patch projects its one native shape to the edits vector"

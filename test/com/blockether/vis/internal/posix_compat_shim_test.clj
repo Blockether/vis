@@ -1,20 +1,20 @@
 (ns com.blockether.vis.internal.posix-compat-shim-test
   "The POSIX-compat shim installed into every sandbox context: subprocess /
-   os.system / os.popen are replaced with wrappers that DELEGATE to the
-   `shell_run` / `shell_bg` tools. Tool callables are looked up in globals at
-   CALL time, so the shim self-adapts — it routes when shell_run is bound and
-   raises a clear 'enable the shell tool' message when it isn't."
+   os.system / os.popen are replaced with wrappers that DELEGATE to the ONE
+   `shell` tool. Tool callables are looked up in globals at CALL time, so the
+   shim self-adapts — it routes when `shell` is bound and raises a clear
+   'enable the shell tool' message when it isn't."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
-(defn- fake-shell-run
+(defn- fake-shell
   "Records calls into `calls`; emulates exit 0 normally, exit 7 + stderr for a
    command containing 'boom'. `wrap-ifn` marshals the Python args to Clojure
    before we see them, so `opts` is already a Clojure map (string keys)."
   [calls]
-  (fn shell-run ([cmd] (shell-run cmd nil))
+  (fn shell ([cmd] (shell cmd nil))
     ([cmd opts] (swap! calls conj {:cmd cmd :opts opts})
      (if (str/includes? (str cmd) "boom")
        {"cmd" cmd "exit" 7 "stdout" "partial\n" "stderr" "boom!\n" "duration_ms" 3}
@@ -25,13 +25,13 @@
 (defdescribe
   subprocess-bridge-test
   (it
-    "routes subprocess.run through shell_run and returns a CompletedProcess"
+    "routes subprocess.run through the shell tool and returns a CompletedProcess"
     (let
       [calls
        (atom [])
 
        {:keys [^Context python-context]}
-       (ep/create-python-context {'shell-run (fake-shell-run calls)})]
+       (ep/create-python-context {'shell (fake-shell calls)})]
 
       (.eval python-context "python" "import subprocess")
       (expect
@@ -40,28 +40,35 @@
           (ev
             python-context
             "r = subprocess.run(['echo','hi'], capture_output=True, text=True)\n[r.returncode, r.stdout]")))
-      ;; argv list was shell-quoted + joined into the command shell_run received
+      ;; argv list was shell-quoted + joined into the command `shell` received
       (expect (= "echo hi" (:cmd (last @calls))))))
-  (it "passes timeout/cwd through as shell_run opts"
-      (let
-        [calls
-         (atom [])
+  (it
+    "passes timeout/cwd through as shell opts"
+    (let
+      [calls
+       (atom [])
 
-         {:keys [^Context python-context]}
-         (ep/create-python-context {'shell-run (fake-shell-run calls)})]
+       {:keys [^Context python-context]}
+       (ep/create-python-context {'shell (fake-shell calls)})]
 
-        (.eval python-context "python" "import subprocess")
-        (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30)")
-        ;; strings-only boundary: the crossed opts dict keeps VERBATIM string
-        ;; keys, so the recorded key is "timeout_secs"
-        (expect (= 30 (get (:opts (last @calls)) "timeout_secs")))))
+      (.eval python-context "python" "import subprocess")
+      (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30, cwd='src')")
+      ;; strings-only boundary: the crossed opts dict keeps VERBATIM string
+      ;; keys, so the recorded key is "timeout_secs"
+      (expect (= 30 (get (:opts (last @calls)) "timeout_secs")))
+      (expect (= "src" (get (:opts (last @calls)) "cwd")))
+      ;; Popen is the bg op — its cwd must reach the tool too, or the child
+      ;; silently runs in the workspace root.
+      (.eval python-context "python" "subprocess.Popen('sleep 1', shell=True, cwd='src')")
+      (expect (= "bg" (get (:opts (last @calls)) "op")))
+      (expect (= "src" (get (:opts (last @calls)) "cwd")))))
   (it "check_output returns stdout and raises on a non-zero exit"
       (let
         [calls
          (atom [])
 
          {:keys [^Context python-context]}
-         (ep/create-python-context {'shell-run (fake-shell-run calls)})]
+         (ep/create-python-context {'shell (fake-shell calls)})]
 
         (.eval python-context "python" "import subprocess")
         (expect (= "hello\n" (ev python-context "subprocess.check_output('echo hi', shell=True)")))
@@ -77,12 +84,12 @@
          (atom [])
 
          {:keys [^Context python-context]}
-         (ep/create-python-context {'shell-run (fake-shell-run calls)})]
+         (ep/create-python-context {'shell (fake-shell calls)})]
 
         (expect (= 7 (ev python-context "import os\nos.system('boom')"))))))
 
 (defdescribe subprocess-gate-test
-             (it "raises a helpful 'enable the shell tool' message when shell_run is absent"
+             (it "raises a helpful 'enable the shell tool' message when `shell` is absent"
                  (let [{:keys [^Context python-context]} (ep/create-python-context {})]
                    (.eval python-context "python" "import subprocess")
                    (let

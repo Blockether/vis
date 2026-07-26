@@ -91,11 +91,7 @@
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 
-(declare ensure-gateway!
-         ensure-client!
-         ensure-gateway-serving!
-         port-free?
-         shutdown-subscriptions!)
+(declare ensure-gateway! ensure-client! ensure-gateway-serving! port-free? shutdown-subscriptions!)
 
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil))
@@ -168,15 +164,11 @@
                    not-empty))
 
          candidate
-         (when secret
-           {:host host :port port :secret secret})
+         (when secret {:host host :port port :secret secret})
 
          response
          (when candidate
-           (gw-send! candidate
-                     "GET"
-                     "/healthz"
-                     {:timeout-ms health-probe-timeout-ms}))
+           (gw-send! candidate "GET" "/healthz" {:timeout-ms health-probe-timeout-ms}))
 
          body
          (when (= 200 (:status response)) (parse-json-body (:body response)))
@@ -290,29 +282,28 @@
   (if-let [recovered (recover-loopback-entry! db target-host target-port)]
     {:mode :recovered :entry recovered}
     (if (port-free? target-host target-port)
-      (discovery/discover-or-start!
-        {:db db :port target-port :host target-host}
-        :probe probe-entry?
-        :on-event (progress-reporter)
-        :timeout-ms (if (discovery/native-image?) 15000 60000))
-      (if-let [entry
-               (discovery/await-registry!
-                 db
-                 probe-entry?
-                 {:timeout-ms occupied-port-registry-wait-ms
-                  :poll-ms 100})]
+      (discovery/discover-or-start! {:db db :port target-port :host target-host}
+                                    :probe probe-entry?
+                                    :on-event (progress-reporter)
+                                    :timeout-ms (if (discovery/native-image?) 15000 60000))
+      (if-let
+        [entry (discovery/await-registry! db
+                                          probe-entry?
+                                          {:timeout-ms occupied-port-registry-wait-ms
+                                           :poll-ms 100})]
         {:mode :awaited :entry entry}
-        (throw
-          (ex-info
-            (str "gateway port " target-host ":" target-port
-                 " is occupied, but no healthy gateway registry appeared. "
-                 "A stale Vis gateway or another process owns the port; "
-                 "stop that process and retry.")
-            {:type :gateway/orphaned-port
-             :host target-host
-             :port target-port
-             :db (str (discovery/db-target db))
-             :vis/user-error true}))))))
+        (throw (ex-info (str "gateway port "
+                             target-host
+                             ":"
+                             target-port
+                             " is occupied, but no healthy gateway registry appeared. "
+                             "A stale Vis gateway or another process owns the port; "
+                             "stop that process and retry.")
+                        {:type :gateway/orphaned-port
+                         :host target-host
+                         :port target-port
+                         :db (str (discovery/db-target db))
+                         :vis/user-error true}))))))
 
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
@@ -353,8 +344,7 @@
            ;; First recover the exact failure mode where a live standard daemon
            ;; owns 7890 but its registry was removed. Never enter discovery's
            ;; spawn path while the requested port already has a listener.
-           [{:keys [entry] :as result}
-            (discover-or-recover! db target-host target-port)]
+           [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
            (if entry
              (do (reset! cached-entry entry)
                  (reset! entry-fresh-until-ns (+ (System/nanoTime)
@@ -374,17 +364,16 @@
 (defn- ensure-release-hook!
   []
   (when (compare-and-set! release-hook-installed? false true)
-    (.addShutdownHook
-      (Runtime/getRuntime)
-      (Thread. ^Runnable
-               (fn []
-                 ;; Shutdown hooks run concurrently. Flip the barrier FIRST so
-                 ;; no per-stream reconnect path can create a fresh future while
-                 ;; another hook is tearing the JVM down.
-                 (reset! client-finalizing? true)
-                 (shutdown-subscriptions!)
-                 (release-client!))
-               "vis-gateway-client-shutdown"))))
+    (.addShutdownHook (Runtime/getRuntime)
+                      (Thread. ^Runnable
+                               (fn []
+                                 ;; Shutdown hooks run concurrently. Flip the barrier FIRST so
+                                 ;; no per-stream reconnect path can create a fresh future while
+                                 ;; another hook is tearing the JVM down.
+                                 (reset! client-finalizing? true)
+                                 (shutdown-subscriptions!)
+                                 (release-client!))
+                               "vis-gateway-client-shutdown"))))
 
 (defn- ensure-client!
   "Register this JVM as a daemon client exactly once. This is the refcount lease
@@ -441,7 +430,9 @@
 
 (defn search-session-matches
   "GET /v1/sessions/actions/search?q= — like `search-session-ids` but each hit is
-   TAGGED with WHERE it matched: `[{:id str :in-request? bool :in-reply? bool}]`.
+   TAGGED with WHERE it matched and carries up to a handful of snippets:
+   `[{:id str :in-request? bool :in-reply? bool :request-snippet str
+      :reply-snippet str :hits [{:side :request|:reply :snippet str :at ms}]}]`.
    `:in-request?` = the user's own request matched; `:in-reply?` = assistant reply
    text matched. Blank query → []. Heavy assistant text never crosses the wire."
   [query]
@@ -457,7 +448,12 @@
                     :in-request? (boolean (get m "is_in_request"))
                     :in-reply? (boolean (get m "is_in_reply"))
                     :request-snippet (get m "request_snippet")
-                    :reply-snippet (get m "reply_snippet")}))))))
+                    :reply-snippet (get m "reply_snippet")
+                    :hits (mapv (fn [h]
+                                  {:side (keyword (or (get h "side") "reply"))
+                                   :snippet (get h "snippet")
+                                   :at (get h "at")})
+                                (or (get m "hits") []))}))))))
 
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
@@ -518,7 +514,7 @@
 
 (defn release-session-runtime!
   "Release a session's live RUNTIME on the daemon WITHOUT touching the process
-   client lease: stop its background resources (shell_bg children, managed REPLs)
+   client lease: stop its background resources (background `shell` children, managed REPLs)
    and drop its loop/env, keeping the transcript resumable. Used when ONE view of
    a session closes (e.g. a single TUI tab) while the owning process stays
    connected — so the whole-process refcount lease is left intact and the daemon
@@ -534,7 +530,7 @@
 
 (defn release-session!
   "Release a session VIEW when the owning channel exits: tell the daemon to
-   stop the session's background resources (shell_bg children, REPLs) and drop
+   stop the session's background resources (background `shell` children, REPLs) and drop
    its live runtime, then release the process-level client lease. This is NOT
    a per-session delete (the transcript stays resumable) and never sends daemon
    shutdown; the daemon stops itself only when refcount AND running-turn-count
@@ -757,6 +753,57 @@
                            "model"))]
     (swap! session-model-cache assoc (str sid) {:at (System/currentTimeMillis) :val pref})
     pref))
+
+;; ── Headless provider OAuth ────────────────────────────────────────────────
+;; These mirror `POST /v1/providers/:id/auth/{start,complete,poll,cancel}` and
+;; `/logout`. Every one of them is a THIN pass-through: the daemon owns the
+;; PKCE verifier, the device code, the token exchange, and the credential file.
+;; A client only ever sees what it must SHOW the user (URL, user code) and the
+;; verdict. This is what lets a remote client — the companion app, the web UI,
+;; or a TUI attached to a gateway on another machine — sign a provider in
+;; WITHOUT the provider extension on its own classpath.
+
+(defn provider-auth-start!
+  "Begin OAuth for `provider-id`. Returns the string-keyed wire flow
+   (`flow_id`, `kind`, `url`, `user_code`, `verification_uri`, `interval_ms`,
+   `instructions`) or nil when the daemon refused."
+  [provider-id]
+  (send-json! "POST" (str "/v1/providers/" (enc (name provider-id)) "/auth/start")))
+
+(defn provider-auth-complete!
+  "Finish a `pkce` flow with the redirect URL the user pasted back."
+  [provider-id flow-id redirect-url]
+  (send-json! "POST"
+              (str "/v1/providers/" (enc (name provider-id)) "/auth/complete")
+              {:flow_id flow-id :redirect_url redirect-url}))
+
+(defn provider-auth-submit-key!
+  "Finish an `api-key` flow: hand the key the user typed to the DAEMON, which
+   persists it in ITS OWN config. The calling process never writes the
+   credential — same boundary as OAuth."
+  [provider-id flow-id api-key]
+  (send-json! "POST"
+              (str "/v1/providers/" (enc (name provider-id)) "/auth/complete")
+              {:flow_id flow-id :api_key api-key}))
+
+(defn provider-auth-poll!
+  "Read a `device` flow's verdict: `pending`, `ok`, or `error`. Never blocks."
+  [provider-id flow-id]
+  (send-json! "POST"
+              (str "/v1/providers/" (enc (name provider-id)) "/auth/poll")
+              {:flow_id flow-id}))
+
+(defn provider-auth-cancel!
+  "Forget an abandoned flow. Idempotent."
+  [provider-id flow-id]
+  (send-json! "POST"
+              (str "/v1/providers/" (enc (name provider-id)) "/auth/cancel")
+              {:flow_id flow-id}))
+
+(defn provider-logout!
+  "Clear `provider-id`'s persisted credentials IN THE DAEMON."
+  [provider-id]
+  (send-json! "POST" (str "/v1/providers/" (enc (name provider-id)) "/logout")))
 
 (defn- decode-workspace
   "The gateway serves the workspace in THE canonical string-keyed wire shape
@@ -1371,15 +1418,11 @@
                                                        (catch Throwable _ nil))))
                               true
                               (catch Throwable _ true))]
-               (when (and dropped?
-                          (not @client-finalizing?)
-                          (contains? @subscriptions sub-id))
+               (when (and dropped? (not @client-finalizing?) (contains? @subscriptions sub-id))
                  (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
                  (let
-                   [delay-ms
-                    (long (min 5000
-                               (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-
+                   [delay-ms (long (min 5000
+                                        (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
                     interrupted?
                     (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
 
@@ -1521,20 +1564,14 @@
         (let
           [dropped? (try (not= [:epoch-changed] (open-mux-events! my-epoch))
                          (catch Throwable _ true))]
-          (when (and dropped?
-                     (not @client-finalizing?)
-                     (= my-epoch (:epoch @mux))
-                     (seq (:subs @mux)))
+          (when
+            (and dropped? (not @client-finalizing?) (= my-epoch (:epoch @mux)) (seq (:subs @mux)))
             (mux-broadcast! "gateway.disconnected")
             (let
-              [delay-ms (long (min 5000
-                                   (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-               interrupted? (try (Thread/sleep delay-ms)
-                                 false
-                                 (catch InterruptedException _ true))]
+              [delay-ms (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+               interrupted? (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
 
-              (when (and (not interrupted?) (not @client-finalizing?))
-                (recur (inc attempt))))))))))
+              (when (and (not interrupted?) (not @client-finalizing?)) (recur (inc attempt))))))))))
 
 (defn- restart-mux!
   "Bump the epoch, close the live stream (unblocking the parked reader), cancel
@@ -1558,30 +1595,29 @@
   [sid sink cursor]
   (if @client-finalizing?
     (fn [])
-    (do
-      (ensure-release-hook!)
-      (let
-        [sid
-         (str sid)
+    (do (ensure-release-hook!)
+        (let
+          [sid
+           (str sid)
 
-         sub-id
-         (str (java.util.UUID/randomUUID))
+           sub-id
+           (str (java.util.UUID/randomUUID))
 
-         changed-session-set?
-         (volatile! false)]
+           changed-session-set?
+           (volatile! false)]
 
-        (swap! mux (fn [m]
-                     (let [existing (get-in m [:subs sid])]
-                       (when-not existing (vreset! changed-session-set? true))
-                       (assoc-in m
-                         [:subs sid]
-                         (-> (or existing {:cursor-atom (atom (long (or cursor 0))) :sinks {}})
-                             (update :sinks assoc sub-id sink))))))
-        (if @changed-session-set?
-          (restart-mux!)
-          (try (sink {:type "gateway.connected"}) (catch Throwable _ nil)))
-        (fn []
-          (mux-unsubscribe! sid sub-id))))))
+          (swap! mux (fn [m]
+                       (let [existing (get-in m [:subs sid])]
+                         (when-not existing (vreset! changed-session-set? true))
+                         (assoc-in m
+                           [:subs sid]
+                           (-> (or existing {:cursor-atom (atom (long (or cursor 0))) :sinks {}})
+                               (update :sinks assoc sub-id sink))))))
+          (if @changed-session-set?
+            (restart-mux!)
+            (try (sink {:type "gateway.connected"}) (catch Throwable _ nil)))
+          (fn []
+            (mux-unsubscribe! sid sub-id))))))
 
 (defn mux-unsubscribe!
   "Drop one local listener from the multiplexed stream and reconnect only when
@@ -1632,7 +1668,9 @@
                  (fn [m]
                    (-> m
                        (update :epoch inc)
-                       (assoc :subs {} :future nil :stream nil))))]
+                       (assoc :subs {}
+                              :future nil
+                              :stream nil))))]
 
     (doseq [[_ {:keys [future stream]}] legacy]
       (try (some-> ^java.io.Closeable @stream

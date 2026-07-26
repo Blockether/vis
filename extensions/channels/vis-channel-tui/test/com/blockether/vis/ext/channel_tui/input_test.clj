@@ -151,7 +151,6 @@
         (expect (= :toggle-voice-recording
                    (:action (input/handle-key (char-key (Character. \v)) armed))))
         (expect (= :open-drafts (:action (input/handle-key (char-key (Character. \d)) armed))))
-        (expect (= :open-resources (:action (input/handle-key (char-key (Character. \b)) armed))))
         (expect (= :toggle-help (:action (input/handle-key (char-key (Character. \h)) armed))))
         ;; WITHOUT the prefix the same Ctrl letters are Emacs keys / abort — NOT verbs:
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \h)) state))))      ; C-h inert (help is C-x C-h)
@@ -605,30 +604,31 @@
         (expect (str/includes? out "````vis-image\n[Image #1: shot.png 1200×800, 245KB]\n"))
         (expect (str/includes? out "/tmp/shot.png\nimage/png\n1200x800\n245KB\n"))
         (expect (str/ends-with? out "````\n"))))
-  (it "an image token expands to the file PATH isolated on its own line so adjacent text can't corrupt it"
-      (let
-        [pastes
-         {1 {:id 1 :content "/tmp/shot.png" :image {:path "/tmp/shot.png" :filename "shot.png"}}}]
-        ;; Path padded with newlines: the engine's extension-anchored scanner still
-        ;; sees a clean `/tmp/shot.png` even when the user typed flush against the token.
-        (expect (= "see \n/tmp/shot.png\n"
-                   (input/expand-paste-placeholders "see [Image #1: shot.png 1200×800, 245KB]"
-                                                    pastes)))
-        (expect (= "\n/tmp/shot.png\nin tui"
-                   (input/expand-paste-placeholders "[Image #1: shot.png 1200×800, 245KB]in tui"
-                                                    pastes)))))
-  (it "a plain :content paste that is itself a lone image path is isolated so a probe-miss still attaches"
-      (let [pastes {1 {:id 1 :content "/tmp/shot.png"}}]
-        ;; No :image key (paste-time probe missed it), but the content IS a lone
-        ;; image path, so expand still pads it onto its own line — the engine's
-        ;; extension-anchored scanner sees a clean `/tmp/shot.png` at send time.
-        (expect (= "look \n/tmp/shot.png\nin tui"
-                   (input/expand-paste-placeholders "look [Pasted #1: 1 line, 13B]in tui"
-                                                    pastes)))
-        ;; A non-path payload is left untouched (no spurious newlines).
-        (expect (= "x echo hi y"
-                   (input/expand-paste-placeholders "x [Pasted #1: 1 line, 7B] y"
-                                                    {1 {:id 1 :content "echo hi"}}))))))
+  (it
+    "an image token expands to the file PATH isolated on its own line so adjacent text can't corrupt it"
+    (let
+      [pastes
+       {1 {:id 1 :content "/tmp/shot.png" :image {:path "/tmp/shot.png" :filename "shot.png"}}}]
+      ;; Path padded with newlines: the engine's extension-anchored scanner still
+      ;; sees a clean `/tmp/shot.png` even when the user typed flush against the token.
+      (expect (= "see \n/tmp/shot.png\n"
+                 (input/expand-paste-placeholders "see [Image #1: shot.png 1200×800, 245KB]"
+                                                  pastes)))
+      (expect (= "\n/tmp/shot.png\nin tui"
+                 (input/expand-paste-placeholders "[Image #1: shot.png 1200×800, 245KB]in tui"
+                                                  pastes)))))
+  (it
+    "a plain :content paste that is itself a lone image path is isolated so a probe-miss still attaches"
+    (let [pastes {1 {:id 1 :content "/tmp/shot.png"}}]
+      ;; No :image key (paste-time probe missed it), but the content IS a lone
+      ;; image path, so expand still pads it onto its own line — the engine's
+      ;; extension-anchored scanner sees a clean `/tmp/shot.png` at send time.
+      (expect (= "look \n/tmp/shot.png\nin tui"
+                 (input/expand-paste-placeholders "look [Pasted #1: 1 line, 13B]in tui" pastes)))
+      ;; A non-path payload is left untouched (no spurious newlines).
+      (expect (= "x echo hi y"
+                 (input/expand-paste-placeholders "x [Pasted #1: 1 line, 7B] y"
+                                                  {1 {:id 1 :content "echo hi"}}))))))
 
 (defdescribe placeholder-smart-delete-test
              (it "placeholder-id-before-cursor returns the id when cursor sits right after `]`"

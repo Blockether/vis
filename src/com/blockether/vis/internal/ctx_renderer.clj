@@ -217,7 +217,7 @@
 
 (defn fold-op-index
   "Fold an op-keyword index map (`{:shell/run v, …}` — e.g. the tag
-   registry) to the sandbox call names the model writes (`{\"shell_run\"
+   registry) to the sandbox call names the model writes (`{\"shell\"
    v, …}`), with the SAME fold the globals bind under
    (`env/sym->py-name`). Memoized on snapshot identity — the ONE fold
    site for head-keyed lookups (`classify-form-tag`'s tag resolver in

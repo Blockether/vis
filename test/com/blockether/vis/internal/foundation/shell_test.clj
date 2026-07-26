@@ -12,11 +12,16 @@
 ;; so tests drive the real gate/render contract without the Python wrapper.
 (def ^:private shell-run* @#'shell/shell-run-impl)
 
-(def ^:private shell-bg* @#'shell/shell-bg-impl)
+(defn- shell-bg*
+  "bg impl with the options map optional — most cases need no cwd/opts."
+  ([env id cmd] (shell-bg* env id cmd nil))
+  ([env id cmd opts] (@#'shell/shell-bg-impl env id cmd opts)))
 
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
 
 (def ^:private shell-send* @#'shell/shell-send-impl)
+
+(def ^:private shell* shell/shell)
 
 (def ^:private render-shell-run-result @#'shell/render-shell-run-result)
 
@@ -77,35 +82,45 @@
 
 (defdescribe
   shell-run-sync-test
-  (it "returns stdout / stderr / exit / duration_ms with NO dead keys"
+  (it "returns a TOTAL result: every key present, flags real booleans"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let [r (:result (shell-run* {} "echo out; echo err 1>&2; exit 3"))]
+              (expect (= "out\n" (get r "stdout")))
+              (expect (= "err\n" (get r "stderr")))
+              (expect (= 3 (get r "exit")))
+              (expect (number? (get r "duration_ms")))
+              ;; TOTAL contract: nothing is dropped for carrying no
+              ;; signal, so model Python indexes any field directly.
+              ;; ONE tool: `stage` names the op that produced the result, and the
+              ;; background-only keys ride along nil rather than vanishing. (`op` is
+              ;; the boundary-stamped tool origin, always "shell" — never the stage.)
+              (expect (= "run" (get r "stage")))
+              (expect (nil? (get r "id")))
+              (expect (contains? r "pid"))
+              (expect (= [] (get r "lines")))
+              (expect (false? (get r "stopped")))
+              (expect (false? (get r "timed_out")))
+              (expect (= 120 (get r "timeout_secs")))
+              (expect (false? (get r "stdout_truncated")))
+              (expect (false? (get r "stderr_truncated")))
+              (expect (= 0 (get r "stdout_omitted_chars")))
+              (expect (= 0 (get r "stderr_omitted_chars")))
+              (expect (string? (get r "cwd"))))))))
+  (it "always carries a TOTAL stderr/exit (empty stderr is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let [r (:result (shell-run* {} "echo out; echo err 1>&2; exit 3"))]
-                           (expect (= "out\n" (get r "stdout")))
-                           (expect (= "err\n" (get r "stderr")))
-                           (expect (= 3 (get r "exit")))
-                           (expect (number? (get r "duration_ms")))
-                           ;; lean contract: echoes / always-false flags never ship
-                           (expect (nil? (get r "op")))
-                           (expect (not (contains? r "timed_out")))
-                           (expect (not (contains? r "timeout_secs")))
-                           (expect (not (contains? r "stdout_truncated")))
-                           (expect (not (contains? r "stderr_truncated")))
-                           (expect (not (contains? r "cwd"))))))))
-  (it
-    "always carries a TOTAL stderr/exit (empty stderr is \"\", not a missing key) and :cwd only when narrowed"
-    (with-shell-on (fn []
-                     (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                       (let [r (:result (shell-run* {} "echo only-out"))]
-                         (expect (= "only-out\n" (get r "stdout")))
-                         ;; TOTAL shape: model Python indexes r["stderr"]/r["exit"]
-                         ;; directly — a missing key used to KeyError and spin.
-                         (expect (= "" (get r "stderr")))
-                         (expect (contains? r "stderr"))
-                         (expect (= 0 (get r "exit"))))
-                       (let [r (:result (shell-run* {} "pwd" {"cwd" "src"}))]
-                         (expect (string? (get r "cwd")))
-                         (expect (str/ends-with? (get r "cwd") "/src")))))))
+                         (let [r (:result (shell-run* {} "echo only-out"))]
+                           (expect (= "only-out\n" (get r "stdout")))
+                           ;; TOTAL shape: model Python indexes r["stderr"]/r["exit"]
+                           ;; directly — a missing key used to KeyError and spin.
+                           (expect (= "" (get r "stderr")))
+                           (expect (contains? r "stderr"))
+                           (expect (= 0 (get r "exit"))))
+                         (let [r (:result (shell-run* {} "pwd" {"cwd" "src"}))]
+                           (expect (string? (get r "cwd")))
+                           (expect (str/ends-with? (get r "cwd") "/src")))))))
   (it "treats a non-zero exit as a SUCCESS envelope (data, not a tool error)"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -292,16 +307,21 @@
 
                      ;; No second process, no thrown failure: the
                      ;; model gets the running shell back with the
-                     ;; flag + the shell_logs hint, so "start it"
+                     ;; flag + the logs-op hint, so "start it"
                      ;; cannot dead-end into a retry loop.
                      ;; Both branches return the SAME total shape.
                      (expect (false? (get first-run "already_running")))
                      (expect (= (get first-run "pid") (get again "pid")))
                      (expect (true? (get again "already_running")))
                      (expect (= "running" (get again "status")))
-                     (expect (str/includes? (get again "note") "shell_logs")))
+                     (expect (str/includes? (get again "note") "{\"op\": \"logs\"}"))
+                     ;; the shared identity core rides EVERY stage
+                     (expect (= "bg" (get again "stage")))
+                     (expect (contains? again "attach"))
+                     (expect (contains? again "socket"))
+                     (expect (nil? (get first-run "note"))))
                    (finally (resources/stop-all! sid))))))))
-  (it "carries uptime_ms and ships NO dead keys in the logs payload"
+  (it "carries uptime_ms and the shared TOTAL identity core in the logs payload"
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -312,11 +332,13 @@
               (try (shell-bg* env "m" "sleep 60")
                    (let [r (:result (shell-logs* env "m"))]
                      (expect (>= (get r "uptime_ms") 0))
-                     ;; lean contract: echoes / derivables / zero-counters are out
-                     (expect (not (contains? r "op")))
-                     (expect (not (contains? r "cmd")))
-                     (expect (not (contains? r "cwd")))
-                     (expect (not (contains? r "pid")))
+                     ;; TOTAL contract: every op of the ONE shell tool returns the
+                     ;; identity keys, with `stage` naming the op that ran.
+                     (expect (= "logs" (get r "stage")))
+                     (expect (= "sleep 60" (get r "cmd")))
+                     (expect (contains? r "pid"))
+                     (expect (contains? r "attach"))
+                     (expect (contains? r "socket"))
                      (expect (not (contains? r "shown_count")))
                      ;; …but CORE keys stay TOTAL: 0 dropped / nil exit, never absent
                      (expect (contains? r "dropped"))
@@ -324,6 +346,24 @@
                      (expect (contains? r "exit"))
                      (expect (nil? (get r "exit"))))
                    (finally (resources/stop-all! sid))))))))
+  (it "honors the bg op's cwd and reports it on every stage of that shell"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid "shell-ext-bg-cwd"
+                            env {:session-id sid}]
+
+                           (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
+                                  ;; The schema advertises `cwd` for run AND bg; a bg that silently
+                                  ;; ran in the workspace root is a wrong-directory bug, not a nit.
+                                  (expect (str/ends-with? (get b "cwd") "/src"))
+                                  (Thread/sleep 400)
+                                  (let [r (:result (shell-logs* env "c"))]
+                                    (expect (= (get b "cwd") (get r "cwd")))
+                                    (expect (str/includes? (str/join "\n"
+                                                                     (map second (get r "lines")))
+                                                           "/src"))))
+                                (finally (resources/stop-all! sid))))))))
   (it "stops promptly even when the command double-forks a detached daemon"
       (with-shell-on
         (fn []
@@ -380,8 +420,73 @@
                                            (finally (resources/stop-all! sid)))))))))
 
 (defdescribe
+  shell-bg-lifecycle-op-test
+  (it
+    "drives start -> logs -> send -> stop through ONE tool keyed by one id"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid "shell-ext-ops"
+             env {:session-id sid}]
+
+            (try (let
+                   [start (:result
+                            (shell* env "read x; echo GOT:$x; sleep 30" {"op" "bg" "id" "ops"}))]
+                   (expect (= "running" (get start "status")))
+                   (expect (false? (get start "already_running"))))
+                 (let
+                   [logs (:result (poll #(shell* env "ops" {"op" "logs" "n" 5})
+                                        (fn [_]
+                                          true)))]
+                   (expect (= "running" (get logs "status"))))
+                 (let [sent (:result (shell* env "ops" {"op" "send" "text" "hello"}))]
+                   (expect (= 6 (get sent "sent"))))
+                 (let
+                   [logs (poll #(:result (shell* env "ops" {"op" "logs"}))
+                               #(some (fn [[_ line]]
+                                        (str/includes? line "GOT:hello"))
+                                      (get % "lines")))]
+                   (expect (some (fn [[_ line]]
+                                   (str/includes? line "GOT:hello"))
+                                 (get logs "lines"))))
+                 ;; The whole point of the merge: stop is an OP on the tool, not an
+                 ;; undiscoverable sandbox builtin — and it lands on the same registry
+                 ;; path resource_stop uses, so the resource really disappears.
+                 (let [stop (:result (shell* env "ops" {"op" "stop"}))]
+                   (expect (= "stopped" (get stop "status")))
+                   (expect (true? (get stop "stopped")))
+                   (expect (empty? (resources/list-resources sid)))
+                   (expect (threw? #(shell* env "ops" {"op" "logs"}))))
+                 (finally (resources/stop-all! sid))))))))
+  (it "makes an id mean background, takes cmd positionally or in opts, and rejects a bogus op"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-ops-args"
+               env {:session-id sid}]
+
+              (try
+                (expect (= "running" (get (:result (shell* env "sleep 30" {"id" "a"})) "status")))
+                ;; An explicit op is allowed but never required: the ID is what
+                ;; makes a shell background.
+                (expect (= "running"
+                           (get (:result (shell* env "sleep 30" {"op" "bg" "id" "b"})) "status")))
+                ;; cmd may ride the opts map instead of the positional slot
+                (expect (= "running"
+                           (get (:result (shell* env {"cmd" "sleep 30" "id" "c"})) "status")))
+                (let
+                  [msg (try (shell* env "a" {"op" "nope"}) nil (catch Throwable t (ex-message t)))]
+                  (expect (str/includes? msg "Unknown shell op"))
+                  (expect (str/includes? msg "\"stop\"")))
+                (finally (resources/stop-all! sid))))))))
+  (it "stopping an id that was never started is a typed error, not a silent no-op"
+      (expect (threw? #(shell* {:session-id "shell-ext-ops-none"} "ghost" {"op" "stop"})))))
+
+(defdescribe
   shell-render-test
-  (it "renders shell_run like a REPL-style collapsible card"
+  (it "renders the run op like a REPL-style collapsible card"
       (let
         [card (render-shell-run-result {"cmd" "echo hi" "exit" 0 "duration_ms" 12 "stdout" "hi"})]
         (expect (= "$ echo hi (success) · 12ms" (:summary card)))
@@ -420,7 +525,7 @@
                                   "cmd" "npm run dev"
                                   "pid" 123
                                   "status" "running"
-                                  "attach" "vis ext shell attach srv"})
+                                  "attach" "vis extension shell attach srv"})
 
          logs
          (render-shell-logs-result
@@ -432,34 +537,47 @@
         (expect (str/includes? (:body logs) "**LOGS**")))))
 
 (defdescribe shell-native-contract-test
-             (it "routes lifecycle through compact native descriptions"
-                 (let
-                   [run
-                    (:ext.symbol/description shell/shell-run-symbol)
-
-                    bg
-                    (:ext.symbol/description shell/shell-bg-symbol)
-
-                    logs
-                    (:ext.symbol/description shell/shell-logs-symbol)]
-
-                   (expect (str/includes? run "command that should exit"))
-                   (expect (str/includes? bg "resource_stop"))
-                   (expect (str/includes? logs "succeeded, failed, or still runs"))
-                   (expect (every? #(< (count %) 350) [run bg logs]))))
+             (it "advertises exactly ONE native shell tool covering the whole lifecycle"
+                 ;; Four names (shell_run / shell_bg / shell_logs / shell_send) for ONE
+                 ;; subsystem meant four call shapes, four result shapes and four
+                 ;; description budgets for what is a single process lifecycle. The op
+                 ;; grammar tells that story once, under one name.
+                 (expect (= ["shell"]
+                            (->> shell/shell-symbols
+                                 (filter :ext.symbol/native-tool?)
+                                 (mapv :ext.symbol/name))))
+                 (expect (= 1 (count shell/shell-symbols))))
+             (it "tells the whole lifecycle in ONE compact native description"
+                 (let [d (:ext.symbol/description shell/shell-symbol)]
+                   (expect (str/includes? d "THE one shell tool"))
+                   (expect (str/includes? d "stop what you started"))
+                   (expect (str/includes? d "session[\"resources\"]"))
+                   ;; the truncation warning is the exact gap that let a truncated
+                   ;; stdout reach json.loads and read as a tool bug
+                   (expect (str/includes? d "stdout_truncated"))
+                   ;; one description for five ops still costs less than the four it
+                   ;; replaces — but it must not sprawl
+                   (expect (< (count d) 1100))))
+             (it "puts every op in the schema, where the model cannot miss it"
+                 (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
+                   (expect (= ["run" "bg" "logs" "send" "stop"] (get-in props ["op" :enum])))
+                   (expect (every? #(contains? props %)
+                                   ["cmd" "op" "id" "timeout_secs" "cwd" "n" "text" "enter"]))
+                   ;; the common bounded run keeps its bare one-positional shape
+                   (expect (= {:opt-pos ["cmd"] :rest :opt}
+                              (:ext.symbol/call shell/shell-symbol)))))
              (it "closes every native shell input schema"
                  (doseq [s shell/shell-symbols]
                    (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
 
 (defdescribe shell-extension-shape-test
-             (it "is a registered aliased extension exposing run / bg / logs symbols"
+             (it "is a registered builtin extension exposing the ONE bare `shell` symbol"
                  (expect (= "foundation-shell" (:ext/name shell/vis-extension)))
-                 (expect (= 'shell (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
-                 (let [syms (set (map :ext.symbol/symbol shell/shell-symbols))]
-                   (expect (contains? syms 'run))
-                   (expect (contains? syms 'bg))
-                   (expect (contains? syms 'logs))
-                   (expect (contains? syms 'send)))))
+                 ;; No engine alias any more: `shell` is bound BARE in the flat sandbox
+                 ;; next to git / cat / grep, so there is no `shell.run(…)` namespace.
+                 (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
+                 (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
+                 (expect (= ['shell] (mapv :ext.symbol/symbol shell/shell-symbols)))))
 
 (defdescribe
   macos-jailed-pty-e2e-test

@@ -21,6 +21,7 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
@@ -539,8 +540,42 @@ def __vis_exec_call__(c):
         c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a); c.ran = True
     return c.res
 
-class __VisResult__(dict):
-    # A real dict subclass = a TOOL RESULT. `isinstance(x, __VisResult__)` is the
+def __vis_key_hint__(__vis_d__, __vis_k__):
+    # A missing key on a TOOL RESULT is a LOOKUP mistake, not a broken tool: shapes
+    # differ per tool (shell -> stdout/stderr/exit/duration_ms, run_tests -> output,
+    # grep -> matches/hit_count). A bare `KeyError: 'output'` reads as a broken tool, so
+    # the model guesses another name and spins. Name the tool, the near miss, and every
+    # key it DID return — one wrong guess then ends the guessing.
+    __vis_keys__ = list(__vis_d__.keys())
+    __vis_op__ = __vis_d__.get('op')
+    __vis_who__ = (repr(__vis_op__) + ' result') if __vis_op__ else 'this result map'
+    __vis_have__ = ', '.join([repr(__vis_x__) for __vis_x__ in __vis_keys__]) or '(no keys)'
+    if not isinstance(__vis_k__, str):
+        return ('cannot index ' + __vis_who__ + ' with ' + repr(__vis_k__) +
+                ': a dict is not sliceable or positional — use list(d), d.items(), or a '
+                'string key. Keys: ' + __vis_have__)
+    __vis_low__ = __vis_k__.lower()
+    __vis_near__ = [__vis_x__ for __vis_x__ in __vis_keys__
+                    if isinstance(__vis_x__, str)
+                    and (__vis_low__ in __vis_x__.lower() or __vis_x__.lower() in __vis_low__)]
+    __vis_tip__ = ((' Did you mean ' +
+                    ' / '.join([repr(__vis_x__) for __vis_x__ in __vis_near__]) + '?')
+                   if __vis_near__ else '')
+    return (repr(__vis_k__) + ' is not a key of ' + __vis_who__ + '. Keys: ' + __vis_have__ +
+            '.' + __vis_tip__ + ' Read the keys it returned instead of guessing another '
+            'name; use .get(k, default) when the field is optional.')
+
+class __VisDict__(dict):
+    # EVERY map rebuilt from the host boundary: a tool result, each nested map inside
+    # it, and `session`. Still a real dict (json / mutation / isinstance / {**d} all
+    # work), but a missing key raises the self-describing KeyError above instead of a
+    # bare one. Result shapes are per-tool by design; this makes the shape readable at
+    # the moment of the miss instead of costing a re-run.
+    def __missing__(self, __vis_k__):
+        raise KeyError(__vis_key_hint__(self, __vis_k__))
+
+class __VisResult__(__VisDict__):
+    # A __VisDict__ that is a TOOL RESULT. `isinstance(x, __VisResult__)` is the
     # robust, UNFORGEABLE origin marker: a model can only build PLAIN dicts (even
     # one with an 'op' key is a plain dict, never a __VisResult__), so capture never
     # relies on the 'op' key alone. 'op' stays a normal key (the origin, for render).
@@ -609,7 +644,7 @@ except Exception:
         # old allowlist — treat anything outside real-python primitives as a
         # proxy so tool results still rebuild.
         return not (type(x) in (dict, list, str, bytes, int, float, bool)
-                    or isinstance(x, __VisResult__))
+                    or isinstance(x, __VisDict__))
 
 def __vis_pyify__(x):
     # Tool results cross the host boundary as ProxyHashMap/ProxyArray. GraalPy lets
@@ -639,7 +674,7 @@ def __vis_pyify__(x):
     if hasattr(x, 'keys'):
         try:
             d = {__k__: __vis_pyify__(__v__) for __k__, __v__ in x.items()}
-            return __VisResult__(d) if 'op' in d else d
+            return __VisResult__(d) if 'op' in d else __VisDict__(d)
         except Exception:
             return x
     try:
@@ -649,7 +684,12 @@ def __vis_pyify__(x):
 
 def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
-        return __vis_pyify__(__vis_exec_call__(v))
+        # TOP-LEVEL tool result: re-type a list/str payload to the probeable
+        # subclass, exactly as a stored ntr[...] read does. Without this a
+        # `patch`/`write`/`struct_patch` return was a PLAIN list, so the documented
+        # uniform `res.get('op')` probe blew up with `'list' object has no attribute
+        # 'get'` and the print-capture below could not recognise it as a result.
+        return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
     if isinstance(v, __vis_Gather__):
         return __vis_pyify__(__vis_par__([(lambda a=a: __vis_settle__(a)) for a in v.aws]))
     if hasattr(v, '__await__') or hasattr(v, 'send'):
@@ -676,7 +716,7 @@ def __vis_drive__(coro):
             # (Null receiver values are not supported by libraries) instead of a
             # normal python error.
             if isinstance(y, __vis_Call__):
-                send = __vis_pyify__(__vis_exec_call__(y))
+                send = __vis_as_result__(__vis_pyify__(__vis_exec_call__(y)))
             elif isinstance(y, __vis_Gather__):
                 send = __vis_pyify__(
                     __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws]))
@@ -961,7 +1001,12 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
         for __a__ in __vis_a__)
     if __vis_kw__.get('file') is None:
         for __vis_x__ in __vis_a__:
-            if isinstance(__vis_x__, __VisResult__):
+            # A LIST-shaped result (patch / write / struct_patch: one row per file)
+            # is a tool result too — `__VisResultList__` is its unforgeable marker.
+            # Missing it made a printed edit BOTH card-less and a card-killer: the
+            # block no longer counted as results-ONLY, so every OTHER printed card in it
+            # was dropped back to raw stdout.
+            if isinstance(__vis_x__, (__VisResult__, __VisResultList__)):
                 __vis_printed_results__.append(__vis_x__)
             else:
                 globals()['__vis_only_results__'] = False
@@ -1158,10 +1203,7 @@ def __vis_native_result_scan__(__vis_tree__):
     (some? (System/getProperty "polyglot.engine.userResourceCache"))
     (let
       [expand-home
-       (fn [^String p]
-         (if (or (= p "~") (str/starts-with? p "~/"))
-           (str (System/getProperty "user.home") (subs p 1))
-           p))
+       paths/expand-home
 
        usable?
        (fn [^java.io.File d]
@@ -1819,8 +1861,8 @@ def __vis_native_result_scan__(__vis_tree__):
 
 (def ^:private posix-compat-shim-src
   "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`
-   with thin wrappers that DELEGATE to the vis shell tools (`shell_run` /
-   `shell_bg` / `shell_logs` / `resource_stop`). INLINED here (eval'd into every
+   with thin wrappers that DELEGATE to the ONE vis shell tool (`shell`, whose
+   `op` covers run / bg / logs / send / stop) plus `resource_stop`. INLINED here (eval'd into every
    sandbox context) so the shim ships in-jar with NO separate `.py` resource.
    Tool callables are looked up in `globals()` at CALL time, so it self-adapts:
    when the shell tool is absent or its toggle is off it raises a clear 'enable
@@ -1830,7 +1872,7 @@ def __vis_native_result_scan__(__vis_tree__):
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOLS (`shell_run` / `shell_bg` / `shell_logs` / `resource_stop`), so the
+# TOOL (`shell`, one name whose `op` covers run / bg / logs / send / stop), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
@@ -1850,23 +1892,18 @@ def __vis_install_posix_compat__():
     import time
 
     _SHELL_DISABLED = (
-        \"Shell tools are not available in this vis sandbox (the shell extension \"
-        \"is not installed), so subprocess / os.system / os.popen cannot run.\"
+        \"The `shell` tool is not enabled in this vis sandbox, so subprocess / \"
+        \"os.system / os.popen cannot run. Turn on 'Shell commands' in the \"
+        \"settings dialog.\"
     )
 
-    def _shell_run():
-        fn = globals().get(\"shell_run\")
+    def _shell():
+        # ONE tool for every stage (run / bg / logs / send / stop); op is an argument.
+        fn = globals().get(\"shell\")
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
         # Tools are async-DEFERRED (return a thunk); this internal bridge calls
         # them synchronously, so SETTLE the thunk into its real value here.
-        settle = globals().get(\"__vis_settle__\")
-        return (lambda *a, **k: settle(fn(*a, **k))) if settle else fn
-
-    def _shell_bg():
-        fn = globals().get(\"shell_bg\")
-        if fn is None:
-            raise RuntimeError(_SHELL_DISABLED)
         settle = globals().get(\"__vis_settle__\")
         return (lambda *a, **k: settle(fn(*a, **k))) if settle else fn
 
@@ -1929,7 +1966,7 @@ def __vis_install_posix_compat__():
         # `text`/`universal_newlines` decide bytes-vs-str on the returned
         # streams; capture_output/stdout/stderr are accepted but the shell tool
         # always captures, so they only affect whether we surface the text.
-        sr = _shell_run()
+        sr = _shell()
         cmd = _to_cmd(args, shell)
         opts = {}
         if timeout is not None:
@@ -1979,26 +2016,27 @@ def __vis_install_posix_compat__():
         return getstatusoutput(cmd)[1]
 
     class Popen(object):
-        # Background process backed by the shell_bg session-resource tool. Auto
-        # picks a resource id; stop it via .terminate()/.kill() (resource_stop),
-        # poll/wait via shell_logs status, communicate() drains the log buffer.
+        # Background process backed by the `shell` tool's bg op (a session
+        # resource). Auto picks a resource id; stop it via .terminate()/.kill()
+        # (resource_stop), poll/wait via the logs op's status, communicate()
+        # drains the log buffer.
         _counter = [0]
 
         def __init__(self, args, shell=False, cwd=None, **kwargs):
-            sb = _shell_bg()
+            sb = _shell()
             Popen._counter[0] += 1
             self._id = \"popen_\" + str(Popen._counter[0])
             self.args = args
-            reg = sb(self._id, _to_cmd(args, shell))
+            opts = {\"op\": \"bg\", \"id\": self._id}
+            if cwd is not None:
+                opts[\"cwd\"] = str(cwd)
+            reg = sb(_to_cmd(args, shell), opts)
             self.pid = reg.get(\"pid\")
             self.returncode = None
 
         def _logs(self):
-            sl = globals().get(\"shell_logs\")
-            if sl is None:
-                raise RuntimeError(_SHELL_DISABLED)
-            settle = globals().get(\"__vis_settle__\")
-            return settle(sl(self._id)) if settle else sl(self._id)
+            sl = _shell()
+            return sl(self._id, {\"op\": \"logs\"})
 
         def poll(self):
             r = self._logs()
@@ -3509,8 +3547,8 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      ;; Runtime `NameError: name 'X' is not defined`. The #1 cause of an
      ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
      ;; its symbols when inactive, so the call raises a plain NameError with
-     ;; no hint that the tool merely needs enabling (e.g. a call to shell_run
-     ;; while the "shell" toggle is off only yields "shell_run is not defined").
+     ;; no hint that the tool merely needs enabling (e.g. a call to `shell`
+     ;; while the "shell" toggle is off only yields "shell is not defined").
      ;; Point it at apropos + the user instead
      ;; of letting it retry a name that will never resolve on its own.
      undefined-name
@@ -3560,7 +3598,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      ;; between a genuine native value (a `python_execution` result in `ntr` is
      ;; its printed stdout STRING) and a FOREIGN tool-result row reported by its
      ;; element type (e.g. `await lst()` → a list). Capture [type attr] so the
-     ;; steer NAMES the type and covers BOTH readings instead of asserting one.
+     ;; steer NAMES the type instead of guessing which reading applies.
      native-nondict
      (when (and (not host?) base)
        (next
@@ -3593,23 +3631,14 @@ def network_probe(method='GET', url=None, headers=None, body=None):
                 "\")`; if it isn't listed, ask the USER to enable "
                 "it and do NOT retry the name. If it's a variable, define it first. "
                 "Original error: ")
-           foreign-attr (str
-                          "`." foreign-attr
-                          "` failed because that value is a FOREIGN/polyglot object (a tool "
-                          "result whose interop wrapper lacks that method). Read it with bracket "
-                          "access (result[\"key\"]) or index it (result[0]); the result's shape is "
-                          "in the tool's docstring. Original error: ")
-           native-nondict
-           (str "`." (second native-nondict)
-                "` failed because that value is a `" (first native-nondict)
-                "`, not a dict — it has no ." (second native-nondict)
-                ". It is EITHER a FOREIGN tool result (a `" (first native-nondict)
-                "` row / string whose interop wrapper has no dict method — index it "
-                "(result[0]), or bracket-access a dict row: result[\"key\"]) OR a plain "
-                "native value (a `python_execution` result in `ntr` is its printed stdout "
-                "STRING). This is NOT a general polyglot restriction — the value simply "
-                "isn't a dict. Guard the type first (e.g. `if isinstance(res, dict):`) "
-                "before calling dict methods, or index/slice it directly. Original error: ")
+           foreign-attr (str "`." foreign-attr
+                             "` failed: foreign/polyglot value, no such method. Read it with "
+                             "result[\"key\"] or result[0]. Original error: ")
+           native-nondict (str
+                            "`." (second native-nondict)
+                            "` failed: value is a `" (first native-nondict)
+                            "`, not a dict. Index it (result[0] / result[\"key\"]) or guard with "
+                            "`isinstance(x, dict)`. Original error: ")
            indent? (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
                         "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
                         "statement must start at column 0. Re-indent that region. Original error: ")

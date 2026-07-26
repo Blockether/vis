@@ -13,6 +13,7 @@
             [com.blockether.vis.ext.persistance-sqlite.registrar]
             [com.blockether.vis.ext.workspace-rift]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]
@@ -438,11 +439,20 @@
 ;; =============================================================================
 (defdescribe expand-home-test
              (it "expands a bare ~ to the user's home directory"
-                 (expect (= (System/getProperty "user.home") (#'ws-slashes/expand-home "~"))))
+                 (expect (= (System/getProperty "user.home") (paths/expand-home "~"))))
              (it "expands a leading ~/ prefix and keeps the rest of the path"
-                 (expect (= (str (System/getProperty "user.home") "/code/proj")
-                            (#'ws-slashes/expand-home "~/code/proj"))))
+                 (expect (= (str (System/getProperty "user.home")
+                                 java.io.File/separator
+                                 "code"
+                                 java.io.File/separator
+                                 "proj")
+                            (paths/expand-home "~/code/proj"))))
              (it "passes an absolute path through untouched"
-                 (expect (= "/tmp/somewhere" (#'ws-slashes/expand-home "/tmp/somewhere"))))
+                 (expect (= "/tmp/somewhere" (paths/expand-home "/tmp/somewhere"))))
              (it "does not expand a ~ that is not the leading segment"
-                 (expect (= "/a/~b" (#'ws-slashes/expand-home "/a/~b")))))
+                 (expect (= "/a/~b" (paths/expand-home "/a/~b"))))
+             (it "is nil-safe and leaves paths unchanged without a home"
+                 (expect (nil? (paths/expand-home nil "/home/test")))
+                 (expect (= "~/x" (paths/expand-home "~/x" nil))))
+             (it "does not treat ~user as the current user's home"
+                 (expect (= "~other/x" (paths/expand-home "~other/x" "/home/test")))))

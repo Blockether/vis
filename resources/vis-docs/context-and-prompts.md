@@ -109,15 +109,16 @@ shell analogue of `/slash`, and works the same way in the **TUI** and **web**
 channels:
 
 ```
-!git status            # run synchronously, foreground (shell_run)
-!&npm run dev          # run in the background (shell_bg), returns immediately
+!git status            # run synchronously, foreground (shell)
+!&npm run dev          # run in the background (shell op "bg"), returns immediately
 ```
 
-- `!<cmd>` desugars to `shell_run(cmd)` and blocks until the command exits.
-- `!&<cmd>` desugars to `shell_bg(id, cmd)` under an auto-generated resource
-  id (`bg-<hex>`) and returns right away — use it for servers, watchers, and
-  other long-lived processes. Read its output later with the `shell_logs`
-  tool and stop it with `resource_stop`.
+- `!<cmd>` desugars to `shell(cmd)` and blocks until the command exits.
+- `!&<cmd>` desugars to `shell(cmd, {"op": "bg", "id": …})` under an
+  auto-generated resource id (`bg-<hex>`) and returns right away — use it for
+  servers, watchers, and other long-lived processes. Read its output later with
+  `shell({"id": id, "op": "logs"})` and stop it with
+  `shell({"id": id, "op": "stop"})`.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.
 
@@ -130,10 +131,10 @@ corner. The cue only lights up once a real command follows the marker (a bare
 
 The command output renders as the turn's answer bubble and is persisted in the
 transcript. Crucially, the result **lands in context exactly like a
-model-issued `shell_run` / `shell_bg` call** — so a later turn can reason over
+model-issued `shell` call** — so a later turn can reason over
 what the command printed, just as if the model had run it itself.
 
 Both shortcuts require the **shell layer** to be enabled — the user-owned
-`:shell/enabled` toggle (settings dialog → *Shell commands (compatibility
-layer)*). When it's off, the shortcut refuses cleanly with a note on how to
+`shell` toggle (settings dialog → *Shell commands*). When it's off, the
+shortcut refuses cleanly with a note on how to
 turn it on, and nothing runs.

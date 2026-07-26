@@ -148,7 +148,7 @@
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
    the available height, content is vertically centered within the frame.
-   Layout: border -> title row -> top separator -> CONTENT -> bottom separator -> hint -> border."
+   Layout: border -> title bar -> top separator -> CONTENT -> bottom separator -> hint -> border."
   ([bounds] (dialog-layout bounds nil))
   ([{:keys [top bottom]} content-count]
    (let
@@ -323,6 +323,23 @@
                         (do (reset! pending-key next-key) {:scroll-delta acc}))
                       {:scroll-delta acc}))
                   {:key key}))))
+
+(defn modal-input-pending?
+  "True when another keystroke is ALREADY queued for this modal loop. The peeked
+   event is stashed in the same thread-local slot `read-modal-input!` drains, so
+   nothing is lost.
+
+   This is the TUI's DEBOUNCE primitive: an expensive per-keystroke effect (the
+   gateway transcript search) can skip itself while the user is still typing and
+   run once on the keystroke that lands in a pause — no threads, no timers, and
+   no repaint problem from an async result arriving while the loop blocks in
+   `readInput`."
+  [^TerminalScreen screen]
+  (let [pending (.get ^ThreadLocal modal-pending-key)]
+    (boolean (or (some? @pending)
+                 (when-let [k (.pollInput screen)]
+                   (reset! pending k)
+                   true)))))
 
 (defn read-modal-key!
   "Like `Screen/readInput`, but drains wheel floods into one synthetic wheel
@@ -612,7 +629,10 @@
   "Paint a clickable X close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a
    click into Escape. Every dialog inherits it via `draw-dialog-chrome!`.
-   The control stays backgroundless: accent at rest, red + bold on hover."
+   Lights up to the red pill (`close-button-hover-fg` + bold) when the
+   thread-local close-hover flag is set - the same affordance the header and
+   help/tasks overlay close buttons use - so modal X buttons are no longer
+   static."
   [g box-right title-row]
   (let
     [label
@@ -628,14 +648,16 @@
      @(.get ^ThreadLocal modal-close-hover)]
 
     (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/close-button-hover-fg t/dialog-accent) t/terminal-bg)
+    (p/set-colors! g
+                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)
     (reset! (.get ^ThreadLocal modal-close-bounds) {:x0 x0 :x1 x1 :y title-row})))
 
 (defn draw-dialog-chrome!
-  "Draw flat dialog chrome on the terminal background: border, title, and separators.
+  "Draw dialog background, shadow, border, and title.
 
    Three arities:
    - `(g cols rows title content-h)` - shared default width; the box HEIGHT is
@@ -676,10 +698,10 @@
       (long box-h)
 
       box-left
-      (quot (- cols box-w) 2)
+      (max 3 (- (quot (- cols box-w) 2) 3))
 
       box-top
-      (quot (- rows box-h) 2)
+      (max 2 (- (quot (- rows box-h) 2) 2))
 
       box-right
       (+ box-left box-w -1)
@@ -690,11 +712,30 @@
       inner-w
       (- box-w 2)]
 
-     ;; Clear only the dialog itself. No shadow, panel tint, or title stripe.
-     (p/set-bg! g t/terminal-bg)
+     ;; Shadow - clipped to terminal bounds
+     (let
+       [shd-left
+        (+ box-left 2)
+
+        shd-top
+        (inc box-top)
+
+        shd-w
+        (min box-w (- cols shd-left))
+
+        shd-h
+        (min box-h (- rows shd-top))]
+
+       (when (and (pos? shd-w) (pos? shd-h))
+         (p/set-bg! g t/dialog-shadow)
+         (p/fill-rect! g shd-left shd-top shd-w shd-h)))
+     ;; Background
+     (p/set-bg! g t/dialog-bg)
      (p/fill-rect! g box-left box-top box-w box-h)
-     (p/set-colors! g t/dialog-border t/terminal-bg)
+     ;; Border
+     (p/set-colors! g t/dialog-border t/dialog-bg)
      (p/draw-box! g box-left box-top box-w box-h)
+     ;; Title bar - full-width accent stripe with centered title
      (let
        [title-row
         (inc box-top)
@@ -705,11 +746,17 @@
         tx
         (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
 
-       (p/set-colors! g t/dialog-accent t/terminal-bg)
+       ;; Accent bar background
+       (p/set-bg! g t/dialog-title-bg)
+       (p/fill-rect! g (inc box-left) title-row inner-w 1)
+       ;; Title text - BOLD, matching the spel/blockether 700-weight header
+       (p/set-fg! g t/dialog-title-fg)
        (p/styled g [p/BOLD] (p/put-str! g tx title-row title-text))
        (draw-dialog-close-button! g box-right title-row)
-       (p/set-colors! g t/dialog-border t/terminal-bg)
+       ;; Top separator - below title bar
+       (p/set-colors! g t/dialog-border t/dialog-bg)
        (p/draw-separator! g box-left box-right (inc title-row))
+       ;; Bottom separator - above hint bar
        (let [bot-sep (- box-bottom 2)]
          (when (> bot-sep (+ box-top 3)) (p/draw-separator! g box-left box-right bot-sep))))
      {:left box-left
@@ -730,9 +777,10 @@
    "             -===." "" "v i s"])
 
 (defn draw-flat-dialog-chrome!
-  "Minimal variant of `draw-dialog-chrome!`: no shadow, title stripe, or
-   separators—just a thin border on the terminal background with the title
-   inline. It returns the same bounds shape, so `dialog-layout` still applies."
+  "Flat variant of `draw-dialog-chrome!`: no drop shadow, no accent title
+   stripe, no separators - one thin-bordered rect on the dialog background
+   with the title inline on the top border. Same default footprint and the
+   same bounds map as the boxed chrome, so `dialog-layout` works unchanged."
   [g ^long cols ^long rows title]
   (let
     [content-w
@@ -765,14 +813,14 @@
      inner-w
      (- box-w 2)]
 
-    (p/set-bg! g t/terminal-bg)
+    (p/set-bg! g t/dialog-bg)
     (p/fill-rect! g box-left box-top box-w box-h)
-    (p/set-colors! g t/dialog-border t/terminal-bg)
+    (p/set-colors! g t/dialog-border t/dialog-bg)
     (p/draw-box! g box-left box-top box-w box-h)
     ;; Title sits flat ON the top border - no stripe row.
     (when (seq (str title))
       (let [txt (str " " (ellipsize title (max 0 (- inner-w 6))) " ")]
-        (p/set-colors! g t/dialog-accent t/terminal-bg)
+        (p/set-colors! g t/dialog-title-bg t/dialog-bg)
         (p/enable! g p/BOLD)
         (p/put-str! g (+ box-left 2) box-top txt)
         (p/clear-styles! g)))
@@ -802,10 +850,10 @@
      (long box-h)
 
      box-left
-     (quot (- cols box-w) 2)
+     (max 3 (- (quot (- cols box-w) 2) 3))
 
      box-top
-     (quot (- rows box-h) 2)]
+     (max 2 (- (quot (- rows box-h) 2) 2))]
 
     {:left box-left
      :top box-top
@@ -1144,175 +1192,12 @@
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
 
-(defn- resource-status-mark
-  "Leading status glyph + color for a managed-resource row — same ● language as
-   the footer and the settings rows: ● status-ok = live/healthy, ● status-bad =
-   errored, ○ dim = otherwise. Returns `[glyph color]`."
-  [status]
-  (case
-    (some-> status
-            name
-            keyword)
-    (:up :running :ok :active :ready :live :started)
-    [p/STATUS_ON t/status-ok]
-
-    (:error :failed :dead :crashed)
-    [p/STATUS_ON t/status-bad]
-
-    [p/STATUS_OFF t/dialog-hint]))
 
 
 (declare text-view-dialog!)
 
 (declare log-view-dialog!)
 
-(defn resources-dialog!
-  "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
-   ↑/↓ move · s = stop · r = restart · Esc = close. Stop/restart go through
-   `vis/stop-resource!` / `vis/restart-resource!` — the SAME canonical path the
-   agent's `resource_stop`/`resource_restart` tools use, so footer, agent and
-   this dialog all drive one definition. The list re-reads every loop, so an
-   item vanishes the instant it's stopped."
-  [^TerminalScreen screen session-id & {:keys [repaint-bg]}]
-  (let [selected (atom 0)]
-    (loop []
-
-      ;; Cached read (750ms TTL): the dialog re-reads every loop iteration, so an
-      ;; UNcached fetch would round-trip the daemon — with per-resource health
-      ;; probes — on EVERY keystroke, making the list feel like it hangs. The
-      ;; footer uses the same cached path.
-      (let
-        [items (vec (try (vis/gateway-list-resources-cached session-id)
-                         (catch Throwable t
-                           (tel/log! :warn
-                                     ["dialogs: list-resources failed" session-id (ex-message t)])
-                           nil)))
-         total (count items)
-         size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-         cols (.getColumns size)
-         rows (.getRows size)
-         g (.newTextGraphics screen)
-         ;; Fixed-size box (the 5-arg chrome ignores item count) drawn over the
-         ;; live screen. Its terminal-background fill clears stale rows while
-         ;; leaving the surrounding chat visible.
-         footer [["↑/↓" "move"] ["a" "add"] ["l" "logs"] ["s" "stop"] ["r" "restart"]
-                 ["Esc" "close"]]
-         bounds (draw-dialog-chrome! g
-                                     cols
-                                     rows
-                                     "Backgrounds"
-                                     (footer-content-width cols footer)
-                                     (max 1 total))
-         {:keys [left inner-w]} bounds
-         {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
-
-        (swap! selected #(p/clamp % 0 (max 0 (dec total))))
-        (if (zero? total)
-          (draw-list-item! g left content-top inner-w false "  (no managed resources)")
-          (dotimes [i (min (long total) (long content-h))]
-            (let
-              [r (nth items i)
-               row-y (+ (long content-top) (long i))
-               selected? (= i @selected)
-               ;; `list-resources` returns STRING-keyed data maps (strings-only
-               ;; boundary); `detail` is a string-keyed sub-map too.
-               port (get-in r ["detail" "port"])
-               [glyph gcolor] (resource-status-mark (get r "status"))
-               ;; kind reads as a TYPE prefix, then the readable name, then
-               ;; the dim port + status — the ● glyph already says live/errored.
-               label (str (get r "kind")
-                          "  "
-                          (get r "label")
-                          (when port (str "  :" port))
-                          "  "
-                          (get r "status"))
-               actions (str (when (get r "can_logs") "[l] logs  ")
-                            (if (get r "can_restart") "[r] restart  [s] stop" "[s] stop"))
-               action-w (count actions)]
-
-              (p/set-colors! g t/dialog-fg t/dialog-bg)
-              (p/fill-rect! g (inc (long left)) row-y inner-w 1)
-              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-              (p/draw-selection-marker! g (inc (long left)) row-y selected?)
-              (let
-                [label-x (p/status-mark! g (+ (long left) 3) row-y glyph gcolor t/dialog-bg)
-                 action-x (max (long label-x) (- (+ (long left) (long inner-w)) (long action-w) 1))
-                 label-w (max 1 (- (long action-x) (long label-x) 2))
-                 lbl (ellipsize label label-w)]
-
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (if selected?
-                  (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                  (p/put-str! g label-x row-y lbl))
-                (p/set-colors! g t/dialog-hint t/dialog-bg)
-                (p/put-str! g action-x row-y actions)))))
-        (draw-hint-bar! g left hint-row inner-w footer)
-        ;; Read-only list — no text field, so hide the terminal cursor (nil)
-        ;; instead of parking it at 0,0, where it blinks in the top-left corner.
-        (.setCursorPosition screen nil)
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (if (nil? key)
-            (recur)
-            (condp = (key-type key)
-              KeyType/Escape nil
-              KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
-                                  (recur))
-              KeyType/ArrowDown (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total))))
-                                    (recur))
-              KeyType/Character
-              (let [c (lower-key-character key)]
-                (when (pos? total)
-                  (let [r (nth items (p/clamp @selected 0 (dec total)))]
-                    (cond
-                      (= c \s)
-                      (do (vis/gateway-stop-resource! session-id (get r "id"))
-                          (vis/notify! (str "Stopped " (get r "label")) :level :info :ttl-ms 3000))
-                      (= c \l)
-                      (when (get r "can_logs")
-                        (let
-                          [rid (get r "id")
-                           ;; logs-fn runs OFF the UI thread under a hard
-                           ;; deadline — a wedged resource can never hang F4.
-                           ;; A THROWN logs-fn (daemon error / non-2xx) is
-                           ;; caught here too: deref of a failed future
-                           ;; re-raises on the UI thread, which would wedge
-                           ;; the dialog — surface it as an inline line.
-                           fetch
-                           #(let
-                              [f (future (try (vis/gateway-resource-logs session-id rid)
-                                              (catch Throwable t {::log-fetch-error t})))
-                               v (deref f 3000 ::log-fetch-timeout)]
-
-                              (cond
-                                (= ::log-fetch-timeout v)
-                                ["… log fetch timed out (3s) — the resource's logs-fn is stuck …"]
-                                (and (map? v) (contains? v ::log-fetch-error))
-                                [(str "… log fetch failed — "
-                                      (ex-message (::log-fetch-error v))
-                                      " …")]
-                                :else (seq v)))
-                           lines (fetch)]
-
-                          (if lines
-                            (do (log-view-dialog! screen
-                                                  (str "Logs — " (get r "label"))
-                                                  lines
-                                                  :refresh-fn fetch
-                                                  :tail? true
-                                                  :grammar "bash")
-                                ;; The log viewer paints FULLSCREEN, wiping the
-                                ;; frozen chat behind this box; repaint it so the
-                                ;; list doesn't return over stale log text.
-                                (when repaint-bg (repaint-bg)))
-                            (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
-                      (= c \r) (when (get r "can_restart")
-                                 (vis/gateway-restart-resource! session-id (get r "id"))
-                                 (vis/notify! (str "Restarted " (get r "label"))
-                                              :level :info
-                                              :ttl-ms 3000)))))
-                (recur))
-              (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!
   "Show read-only lines in a scrollable modal. Returns nil after close.
@@ -1534,7 +1419,7 @@
         (p/set-colors! g t/code-block-fg t/code-block-bg)
         (p/fill-rect! g 0 body-top cols body-h)
         ;; Top strip: title left, tail/position indicator right.
-        (p/set-colors! g t/dialog-accent t/terminal-bg)
+        (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
         (p/fill-rect! g 0 title-row cols 1)
         (let
           [tag
@@ -4981,33 +4866,41 @@
   [rows query transcript-ids]
   (let [q (str/trim (or query ""))]
     (vec
-      (keep (fn [row]
-              (let
-                [title-hit? (table/row-matches? row query)
-                 match (get transcript-ids (str (:id (:target row))))
-                 body-hit? (some? match)]
+      (keep
+        (fn [row]
+          (let
+            [title-hit? (table/row-matches? row query)
+             match (get transcript-ids (str (:id (:target row))))
+             body-hit? (some? match)
+             ;; Snippets ride along with EVERY row that has conversation
+             ;; hits — including the focused row and rows whose title also
+             ;; matched — so the list previews each match the way the
+             ;; companion app does, not just body-only ones.
+             hits (when (and body-hit? (map? match) (seq q)) (assoc match :title (:title row)))]
 
-                (cond
-                  ;; Body-only match (query typed, title/project missed it):
-                  ;; keep, mark it, and label the Status column by WHERE the
-                  ;; hit landed — `in request` (user text), `in reply` (LLM
-                  ;; text), or `in chat` (both). `match` is a map for the
-                  ;; snippet-carrying caller, a bare id for legacy set callers.
-                  (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
-                  (assoc row
-                    :transcript-match? true
-                    :transcript-match (when (map? match) (assoc match :title (:title row)))
-                    :status (case (:kind match)
-                              :request
-                              "in request"
+            (cond
+              ;; Body-only match (query typed, title/project missed it):
+              ;; keep, mark it, and label the Status column by WHERE the
+              ;; hit landed — `in request` (user text), `in reply` (LLM
+              ;; text), or `in chat` (both). `match` is a map for the
+              ;; snippet-carrying caller, a bare id for legacy set callers.
+              (and body-hit? (not title-hit?) (seq q) (not (:focused? row)))
+              (assoc row
+                :transcript-match? true
+                :transcript-match hits
+                :status (case (:kind match)
+                          :request
+                          "in request"
 
-                              :reply
-                              "in reply"
+                          :reply
+                          "in reply"
 
-                              "in chat"))
-                  (or title-hit? body-hit?) row
-                  :else nil)))
-            rows))))
+                          "in chat"))
+              (or title-hit? body-hit?) (cond-> row
+                                          hits
+                                          (assoc :transcript-match hits))
+              :else nil)))
+        rows))))
 
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
@@ -5084,67 +4977,165 @@
                        :always
                        (conj [(subs s i (+ (long i) n)) true]))))))))))
 
+(def ^:private navigator-inline-hits
+  "Snippet lines painted INLINE under one matching session row. The companion
+   app renders every hit under every match, so the TUI does the same; the
+   server already caps its payload at six hits per session."
+  6)
+
 (defn- navigator-preview-entries
-  "Transcript-style preview rows for a selected body match: a `You` side for the
-   user-request snippet and a `Vis` side for the LLM-reply snippet. Only sides
-   that actually matched (non-blank snippet) appear."
+  "Transcript-style preview rows for a selected body match: ONE row per MATCH
+   HIT, newest first — `You` for a hit in the user's own request, `Vis` for one
+   in the LLM reply. The server sends several hits per session, so a session
+   that matched twenty times no longer shows a single arbitrary line.
+
+   Falls back to the legacy single request/reply snippet pair when the caller
+   supplied no `:hits`."
   [match]
   (when (map? match)
-    (cond-> []
-      (not (str/blank? (:request-snippet match)))
-      (conj {:label "You" :role :user :text (:request-snippet match)})
+    (let
+      [hits (into []
+                  (comp (filter #(not (str/blank? (:snippet %))))
+                        (map (fn [h]
+                               (if (= :request (:side h))
+                                 {:label "You" :role :user :text (:snippet h)}
+                                 {:label "Vis" :role :ai :text (:snippet h)}))))
+                  (:hits match))]
+      (if (seq hits)
+        hits
+        (cond-> []
+          (not (str/blank? (:request-snippet match)))
+          (conj {:label "You" :role :user :text (:request-snippet match)})
 
-      (not (str/blank? (:reply-snippet match)))
-      (conj {:label "Vis" :role :ai :text (:reply-snippet match)}))))
+          (not (str/blank? (:reply-snippet match)))
+          (conj {:label "Vis" :role :ai :text (:reply-snippet match)}))))))
 
-(defn- draw-navigator-preview!
-  "Paint the selected match's TITLE first, then its conversation snippet under
-   the table in the same left-aligned You/Vis transcript style as the message
-   view, matched term bolded. Title leads (dialog accent, bold); only sides that
-   actually matched follow. Drawing stops before `max-rows` would be exceeded."
-  [g x top width query match max-rows]
+(defn- navigator-hit-entries
+  "Inline snippet rows for one visible list row — empty when the row matched by
+   title/project only and carries no transcript hits."
+  [entry]
+  (vec (take navigator-inline-hits (navigator-preview-entries (:transcript-match entry)))))
+
+(defn- navigator-block-heights
+  "Painted line count per visible row: its own table row plus its inline
+   snippet lines. The list is variable-height, so scrolling is measured in
+   painted LINES, not row indexes."
+  [visible-rows]
+  (mapv #(inc (count (navigator-hit-entries %))) visible-rows))
+
+(defn- navigator-scroll-start
+  "First visible row index: the smallest scroll that still fits the selected
+   row's own line inside `budget` painted lines, then pulled back so the window
+   is never scrolled past the end (otherwise a tall block's window keeps its
+   inherited scroll and paints one lonely row with dead space under it)."
+  [heights selected scroll budget]
   (let
-    [limit
-     (+ (long top) (long max-rows))
+    [n
+     (count heights)
 
-     title
-     (some-> (:title match)
-             str
-             str/trim
-             not-empty)
+     selected
+     (long (max 0 (long selected)))
 
-     start
-     (if (or (nil? title) (>= (long top) limit))
-       (long top)
-       (let [t (if (> (count title) (long width)) (subs title 0 (long width)) title)]
-         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-         (p/styled g [p/BOLD] (p/put-str! g x top t))
-         (inc (long top))))]
+     budget
+     (max 1 (long budget))
 
-    (reduce (fn [r {:keys [label role text]}]
-              (if (> (+ (long r) 2) limit)
-                (reduced r)
-                (let [role-fg (if (= role :user) t/user-role-fg t/ai-role-fg)]
-                  (p/set-colors! g role-fg t/dialog-bg)
-                  (p/put-str! g x r label)
-                  (loop
-                    [segs (navigator-highlight-segments text query)
-                     cx (long x)
-                     remaining (long width)]
+     ;; Smallest index whose remaining blocks all fit — scrolling past it only
+     ;; wastes lines, so it is the hard upper bound for the window start.
+     tail-start
+     (loop
+       [i
+        (dec n)
 
-                    (when (and (seq segs) (pos? remaining))
-                      (let
-                        [[seg bold?] (first segs)
-                         seg (if (> (count seg) remaining) (subs seg 0 (long remaining)) seg)]
+        used
+        0
 
-                        (p/set-colors! g t/dialog-fg t/dialog-bg)
-                        (if bold?
-                          (p/styled g [p/BOLD] (p/put-str! g cx (inc (long r)) seg))
-                          (p/put-str! g cx (inc (long r)) seg))
-                        (recur (rest segs) (+ cx (count seg)) (- remaining (count seg))))))
-                  (+ (long r) 2))))
-            start
-            (navigator-preview-entries match))))
+        k
+        (max 0 (dec n))]
+
+       (if (neg? i)
+         k
+         (let [u (+ (long used) (long (nth heights i)))]
+           (if (> u budget) k (recur (dec i) u i)))))]
+
+    (min (long tail-start)
+         (loop [s (min (long (max 0 (long scroll))) selected)]
+           (if (and (< s selected) (> (long (reduce + 1 (subvec heights s selected))) budget))
+             (recur (inc s))
+             s)))))
+
+(defn- navigator-visible-blocks
+  "Paint plan from `start`: `[{:idx :entry :hits […]} …]`, one block per session
+   row plus one line per inline snippet, cut to `budget` painted lines. A block
+   that only partly fits keeps its session row and drops the snippets that
+   would overflow — a match never disappears just because it is chatty."
+  [visible-rows start budget]
+  (let
+    [n
+     (count visible-rows)
+
+     budget
+     (long budget)]
+
+    (loop
+      [i
+       (long (max 0 (long start)))
+
+       used
+       0
+
+       acc
+       []]
+
+      (if (or (>= i n) (>= (long used) budget))
+        acc
+        (let
+          [entry
+           (nth visible-rows i)
+
+           hits
+           (vec (take (max 0 (- budget (long used) 1)) (navigator-hit-entries entry)))]
+
+          (recur (inc i)
+                 (+ (long used) 1 (count hits))
+                 (conj acc {:idx i :entry entry :hits hits})))))))
+
+(defn- draw-navigator-hit-line!
+  "Paint ONE inline snippet line inside the table box, directly under its own
+   session row: role label (`You` / `Vis`) in the transcript role color, then
+   the snippet with the searched term bolded, clipped to the box interior."
+  [g x row widths aligns query {:keys [label role text]}]
+  (let
+    [line-w
+     (count (table/boxed-row-line widths (vec (repeat (count widths) "")) aligns))
+
+     label
+     (str label)]
+
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/put-str! g x row (str "│" (apply str (repeat (max 1 (- line-w 2)) \space)) "│"))
+    (p/set-colors! g (if (= role :user) t/user-role-fg t/ai-role-fg) t/dialog-bg)
+    (p/put-str! g (+ (long x) 4) row label)
+    (loop
+      [segs
+       (navigator-highlight-segments text query)
+
+       cx
+       (+ (long x) 5 (count label))
+
+       remaining
+       (max 0 (- line-w 6 (count label)))]
+
+      (when (and (seq segs) (pos? (long remaining)))
+        (let
+          [[seg bold?]
+           (first segs)
+
+           seg
+           (if (> (count seg) (long remaining)) (subs seg 0 (long remaining)) seg)]
+
+          (p/set-colors! g t/dialog-fg t/dialog-bg)
+          (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row seg)) (p/put-str! g cx row seg))
+          (recur (rest segs) (+ (long cx) (count seg)) (- (long remaining) (count seg))))))))
 
 (defn navigator-dialog!
   "Global C-g picker. Returns a target action map or nil on Esc."
@@ -5192,19 +5183,6 @@
          total
          (count visible-rows)
 
-         ;; A body-only match's snippet preview is drawn beneath the table;
-         ;; reserve its rows up front so the frame grows to fit it and the table
-         ;; shrinks instead of overrunning the border.
-         preview-match
-         (when (pos? total)
-           (:transcript-match (nth visible-rows (p/clamp @selected 0 (dec total)))))
-
-         preview-entries
-         (navigator-preview-entries preview-match)
-
-         preview-h
-         (if (seq preview-entries) (min 6 (+ 2 (* 2 (count preview-entries)))) 0)
-
          size
          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
@@ -5235,7 +5213,10 @@
                               (- (long rows-n) 6)
                               "Sessions"
                               (- cols 4)
-                              (+ (long (count rows)) 6 preview-h))
+                              ;; Plus a constant snippet reserve, so a small
+                              ;; store still has room for the inline hits and
+                              ;; the frame height never jitters as you type.
+                              (+ (long (count rows)) 6 navigator-inline-hits))
 
          {:keys [left right inner-w]}
          bounds
@@ -5298,19 +5279,34 @@
          body-top
          (inc sep-row)
 
-         ;; Height = actual row count (capped) so the bottom border is
-         ;; glued to the last row instead of floating below blanks.
-         body-h
-         (p/clamp total 1 (max 1 (- (long content-h) 6 preview-h)))
-
-         bottom-row
-         (+ body-top body-h)
+         ;; Variable-height list: every matching row is followed by its OWN
+         ;; inline snippet lines (app parity), so the window is budgeted in
+         ;; painted lines and the page in session rows.
+         list-budget
+         (max 1 (- (long content-h) 6))
 
          _
          (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
+         block-heights
+         (navigator-block-heights visible-rows)
+
          _
-         (swap! scroll #(visible-window-start @selected % body-h total))]
+         (swap! scroll #(navigator-scroll-start block-heights @selected % list-budget))
+
+         blocks
+         (navigator-visible-blocks visible-rows @scroll list-budget)
+
+         ;; Painted line count (scrollbar track) vs session rows on screen
+         ;; (scrollbar viewport) — they differ as soon as snippets show.
+         body-h
+         (max 1 (long (reduce + 0 (map #(inc (count (:hits %))) blocks))))
+
+         page-rows
+         (max 1 (count blocks))
+
+         bottom-row
+         (+ body-top body-h)]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
@@ -5347,52 +5343,54 @@
                                      true)
                 (p/set-colors! g t/dialog-border t/dialog-bg)
                 (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
-                (dotimes [i body-h]
-                  (let
-                    [idx (+ (long @scroll) i)
-                     row (+ body-top i)
-                     selected? (= idx @selected)
-                     entry (nth visible-rows idx)
-                     ;; The currently-focused session paints in the dialog
-                     ;; accent + bold (always), so it pops as "you are
-                     ;; here" against the plain switch-to rows.
-                     focused? (:focused? entry)
-                     row-fg (if focused? t/dialog-hint-key t/dialog-fg)
-                     cells (navigator-with-selection-gutter (mapv (fn [{:keys [id]}]
-                                                                    (str (get entry id "")))
-                                                                  navigator-columns))]
+                (loop
+                  [bs blocks
+                   r body-top]
 
-                    (draw-navigator-row! g
-                                         table-x
-                                         row
-                                         table-widths
-                                         cells
-                                         aligns
-                                         row-fg
-                                         (or selected? focused?))
-                    ;; Shared cursor marker, painted by the project-wide primitive into
-                    ;; the reserved `p/selection-prefix` first-cell gutter.
-                    (p/draw-selection-marker! g (+ table-x 2) row selected? t/dialog-hint-key)))
+                  (when-let [{:keys [idx entry hits]} (first bs)]
+                    (let
+                      [selected? (= idx @selected)
+                       ;; The currently-focused session paints in the dialog
+                       ;; accent + bold (always), so it pops as "you are
+                       ;; here" against the plain switch-to rows.
+                       focused? (:focused? entry)
+                       row-fg (if focused? t/dialog-hint-key t/dialog-fg)
+                       cells (navigator-with-selection-gutter (mapv (fn [{:keys [id]}]
+                                                                      (str (get entry id "")))
+                                                                    navigator-columns))]
+
+                      (draw-navigator-row! g
+                                           table-x
+                                           r
+                                           table-widths
+                                           cells
+                                           aligns
+                                           row-fg
+                                           (or selected? focused?))
+                      ;; Shared cursor marker, painted by the project-wide primitive into
+                      ;; the reserved `p/selection-prefix` first-cell gutter.
+                      (p/draw-selection-marker! g (+ table-x 2) r selected? t/dialog-hint-key)
+                      ;; Conversation snippets for THIS match, inline underneath it —
+                      ;; the same You/Vis transcript style the app uses per result.
+                      (doseq [[i hit] (map-indexed vector hits)]
+                        (draw-navigator-hit-line! g
+                                                  table-x
+                                                  (+ (long r) 1 (long i))
+                                                  table-widths
+                                                  aligns
+                                                  @query
+                                                  hit))
+                      (recur (rest bs) (+ (long r) 1 (count hits))))))
                 (p/set-colors! g t/dialog-border t/dialog-bg)
                 (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
-                (when (> total body-h)
+                (when (> total page-rows)
                   (scrollbar/draw! g
                                    {:col scrollbar-col
                                     :top body-top
                                     :track-h body-h
                                     :total-h total
-                                    :inner-h body-h
+                                    :inner-h page-rows
                                     :scroll @scroll}))))
-          ;; Conversation snippet for the highlighted body-only match, in the
-          ;; same left-aligned You/Vis transcript style as the message view.
-          (when (and table? (seq preview-entries))
-            (draw-navigator-preview! g
-                                     (+ table-x 2)
-                                     (+ bottom-row 2)
-                                     (max 1 (- table-body-w 2))
-                                     @query
-                                     preview-match
-                                     (max 1 (dec preview-h))))
           (draw-hint-bar! g
                           left
                           hint-row
@@ -5411,19 +5409,21 @@
            (fn []
              (reset! selected 0)
              (reset! scroll 0)
-             ;; Refresh the transcript-match id set when the query text changes
+             ;; Refresh the transcript matches when the query text changes
              ;; (skip re-search on unrelated resets like the empty-untitled
-             ;; toggle). The gateway call is synchronous but only fires on the
-             ;; keystroke that mutated the query.
+             ;; toggle). DEBOUNCED against the keyboard: while another keystroke
+             ;; is already queued we leave the query dirty and let the keystroke
+             ;; that lands in a typing PAUSE run the one search — typing
+             ;; "dialogs" costs ONE gateway round-trip, not seven.
              (let [q (str/trim @query)]
                (cond (empty? q) (do (reset! transcript-ids {}) (reset! transcript-query nil))
-                     (not= q @transcript-query) (do (reset! transcript-query q)
-                                                    (reset! transcript-ids
-                                                      (if search-transcript-ids
-                                                        (or (try (search-transcript-ids q)
-                                                                 (catch Throwable _ nil))
-                                                            {})
-                                                        {}))))))]
+                     (and (not= q @transcript-query) (not (modal-input-pending? screen)))
+                     (do (reset! transcript-query q)
+                         (reset! transcript-ids (if search-transcript-ids
+                                                  (or (try (search-transcript-ids q)
+                                                           (catch Throwable _ nil))
+                                                      {})
+                                                  {}))))))]
 
           (when key
             (cond
@@ -5439,7 +5439,7 @@
               ;; render's `visible-window-start` doesn't yank scroll back to
               ;; the (now off-screen) selected row.
               (and (instance? MouseAction key)
-                   (> total body-h)
+                   (> total page-rows)
                    (let [action (.getActionType ^MouseAction key)]
                      (or (= action MouseActionType/DRAG)
                          (= action MouseActionType/CLICK_RELEASE)
@@ -5466,17 +5466,17 @@
                  (.getRow pos)
 
                  geom
-                 (scrollbar/geometry total body-h body-h @scroll)
+                 (scrollbar/geometry total page-rows body-h @scroll)
 
                  apply-scroll!
                  (fn [grip]
                    (let
-                     [ns (or (scrollbar/scroll-from-mouse-y my body-top body-h total body-h grip)
+                     [ns (or (scrollbar/scroll-from-mouse-y my body-top body-h total page-rows grip)
                              0)]
                      (reset! scroll ns)
                      (swap! selected #(p/clamp %
                                                ns
-                                               (min (dec total) (+ (long ns) (dec body-h)))))))]
+                                               (min (dec total) (+ (long ns) (dec page-rows)))))))]
 
                 (cond (= action MouseActionType/CLICK_RELEASE)
                       (do (vreset! scrollbar-drag-offset nil) (recur))
@@ -5765,7 +5765,7 @@
                          "Switch where this session works. Draft files stay isolated until apply."
                          description-w)))
            (when trunk-visible?
-             (p/set-colors! g t/dialog-accent t/terminal-bg)
+             (p/set-colors! g t/dialog-title-fg t/dialog-bg)
              (p/styled g [p/BOLD] (p/put-str! g text-x sections-top "TRUNK"))
              (draw-list-item! g
                               left
@@ -5785,7 +5785,7 @@
              (p/draw-separator! g left right (+ (long sections-top) 3)))
            (cond
              (seq visible-drafts)
-             (do (p/set-colors! g t/dialog-accent t/terminal-bg)
+             (do (p/set-colors! g t/dialog-title-fg t/dialog-bg)
                  (p/styled
                    g
                    [p/BOLD]
@@ -5815,7 +5815,7 @@
                                                (inc row)
                                                (ellipsize (:description item) description-w))))))))
              query-blank?
-             (do (p/set-colors! g t/dialog-accent t/terminal-bg)
+             (do (p/set-colors! g t/dialog-title-fg t/dialog-bg)
                  (p/styled g [p/BOLD] (p/put-str! g text-x drafts-header-row "DRAFTS  0"))
                  (p/set-colors! g t/dialog-hint t/dialog-bg)
                  (p/styled
@@ -5895,13 +5895,12 @@
   [{:id :cycle-model :label "Cycle Model"} {:id :pick-model :label "Choose Model…"}
    {:id :cycle-reasoning :label "Cycle Reasoning Effort"}
    {:id :cycle-verbosity :label "Cycle Answer Length"} {:id :search-open :label "Search in Session"}
-   {:id :open-resources :label "Backgrounds"} {:id :show-sessions :label "Switch Session"}
-   {:id :open-drafts :label "Switch Draft…"} {:id :open-magit :label "Git Status (Magit)"}
-   {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
-   {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
-   {:id :fork-at-turn :label "Fork Session at Turn…"} {:id :close-tab :label "Close Tab"}
-   {:id :providers :label "Providers"} {:id :settings :label "Settings"}
-   {:id :toggle-all-details :label "Fold / Unfold All"}
+   {:id :show-sessions :label "Switch Session"} {:id :open-drafts :label "Switch Draft…"}
+   {:id :open-magit :label "Git Status (Magit)"} {:id :pick-file :label "Attach File"}
+   {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
+   {:id :fork-session :label "Fork Session"} {:id :fork-at-turn :label "Fork Session at Turn…"}
+   {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
+   {:id :settings :label "Settings"} {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
 

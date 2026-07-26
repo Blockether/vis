@@ -84,10 +84,32 @@
               res))))))
 
 
+(defn- repairable-validation-error?
+  "True when Flyway rejected the applied migration metadata during validation.
+   The canonical V1 is intentionally edited in place, and historical V2+ rows
+   can remain after those migrations are folded back into V1. `repair` is the
+   safe Flyway operation for both cases: it realigns checksums and marks removed
+   migrations as deleted without touching application tables or their rows."
+  [^Throwable e]
+  (boolean (some (fn [^Throwable t]
+                   (let [^String message (or (ex-message t) "")]
+                     (or (str/includes? message "Migration checksum mismatch")
+                         (str/includes? message "Migrations have failed validation")
+                         (str/includes? message
+                                        "Detected applied migration not resolved locally"))))
+                 (take 16
+                       (take-while some?
+                                   (iterate (fn [^Throwable t]
+                                              (.getCause t))
+                                            e))))))
+
 (defn migrate!
-  "Install the single canonical V1 schema. Existing databases whose applied V1
-   checksum differs are rejected: this flag-day schema has no compatibility or
-   repair path."
+  "Install the single canonical V1 schema.
+
+   Applied checksum drift and history left by migrations later consolidated
+   into V1 self-heal through Flyway `repair`, then migration is retried. Repair
+   changes only `flyway_schema_history`; persisted Vis rows and schema objects
+   are preserved."
   [^DataSource ds locations]
   (let
     [locs
@@ -111,5 +133,9 @@
        rp
        (.resourceProvider rp))]
 
-    (.migrate (.load cfg))
+    (let [^org.flywaydb.core.Flyway flyway (.load cfg)]
+      (try
+        (.migrate flyway)
+        (catch Throwable e
+          (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
     ds))

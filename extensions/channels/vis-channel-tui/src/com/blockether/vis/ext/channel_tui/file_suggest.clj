@@ -18,24 +18,19 @@
    - `@@` escapes to a literal `@` and suppresses the popup;
    - selection is advisory — nothing is rewritten unless the user picks.
 
-   fff owns a FRESH in-memory index instance that is opened OFF the render
-   thread and cached for the session; per-keystroke `search` on the open
-   instance is sub-millisecond, so filtering stays instant. The instance is
-   NEVER closed while a search may run (fff's native search SIGSEGVs on a
-   closed handle); a periodic rebuild swaps a new instance in and closes the
-   superseded one only after a grace period."
+   Ranking rides the POOLED fff index leased from `internal.fff-index` (via
+   `file-picker/fuzzy-file-rows`), the very same instance the `grep` /
+   `find_files` tools and the gateway suggest service search — one index per
+   workspace, not a private one per popup. This ns owns and closes NOTHING;
+   the first build is kicked OFF the render thread and the popup shows nothing
+   until it lands, so a keystroke never waits on a tree scan."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.internal.file-picker :as picker]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(def ^:private index-ttl-ms 30000)
-
 (def ^:private max-rows 20)
-
-;; {:idx <Closeable fff> :built-at <ms> :building? <bool>}
-(defonce ^:private index-cache (atom {:idx nil :built-at 0 :building? false}))
 
 (defn- status-glyph
   "Collapse a git status word (\"modified\", \"untracked\", …) to the single
@@ -74,45 +69,19 @@
             (subs 0 1)
             str/upper-case)))
 
-(defn- fresh?
-  [{:keys [idx built-at]}]
-  (and idx (< (- (System/currentTimeMillis) (long built-at)) (long index-ttl-ms))))
+(defonce ^:private prewarming (atom false))
 
-(defn- close-later!
-  "Close a superseded fff instance, but only after a grace period so no
-   in-flight synchronous search (sub-ms) touches a freed native handle."
-  [^java.io.Closeable idx]
-  (when idx (future (Thread/sleep 2000) (try (.close idx) (catch Throwable _ nil)))))
-
-(defn- kick-refresh!
-  "Rebuild the fff index in the background unless a build is already in
-   flight. Non-blocking: the render thread never waits on the scan."
+(defn- warm-or-kick!
+  "True when the pooled fff index can be searched without blocking. Otherwise
+   kick ONE background build (never one per keystroke) and return false."
   []
-  (let
-    [[old _] (swap-vals! index-cache
-                         (fn [c]
-                           (if (:building? c) c (assoc c :building? true))))]
-    (when-not (:building? old)
-      (future (let
-                [new-idx (try (picker/open-fuzzy-index) (catch Throwable _ nil))
-                 [prev _] (swap-vals! index-cache
-                                      (fn [c]
-                                        (assoc c
-                                          :idx (or new-idx (:idx c))
-                                          :built-at (System/currentTimeMillis)
-                                          :building? false)))]
+  (or (picker/index-warm?)
+      (do (when (compare-and-set! prewarming false true)
+            (future (try (picker/prewarm-index!)
+                         (catch Throwable _ nil)
+                         (finally (reset! prewarming false)))))
+          false)))
 
-                (when (and new-idx (:idx prev) (not (identical? new-idx (:idx prev))))
-                  (close-later! (:idx prev))))))))
-
-(defn- ensure-index!
-  "Return the cached OPEN fff instance, kicking a background refresh when the
-   cache is missing or stale. Returns nil until the first scan lands (callers
-   simply show nothing until then)."
-  []
-  (let [c @index-cache]
-    (when-not (fresh? c) (kick-refresh!))
-    (:idx c)))
 
 (def ^:private trigger-regex #"(?:^|\s)@(?!@)(\S*)$")
 
@@ -145,9 +114,9 @@
    at the caret (so the slash path stays in charge)."
   [input-state selected-index]
   (when-let [{:keys [query]} (mention-at (head-text input-state))]
-    (when-let [idx (ensure-index!)]
+    (when (warm-or-kick!)
       (let
-        [rows (try (picker/fuzzy-file-rows idx query {:limit max-rows}) (catch Throwable _ nil))
+        [rows (try (picker/fuzzy-file-rows query {:limit max-rows}) (catch Throwable _ nil))
          n (count rows)
          sel (max 0 (min (dec n) (long (or selected-index 0))))]
 

@@ -332,9 +332,9 @@
       :slash/label (:slash chunk))
 
     :tool-start
-    ;; A native tool (shell_run/shell_bg/cat/rg/…) began executing INSIDE a
+    ;; A native tool (shell/cat/rg/…) began executing INSIDE a
     ;; python_execution block. `:form-start` cleared `:activity` to nil, so a
-    ;; long-running nested tool (e.g. a multi-minute shell_run) would otherwise
+    ;; long-running nested tool (e.g. a multi-minute `shell` run) would otherwise
     ;; leave the bubble frozen with no sign anything is happening. Surface it as
     ;; coarse `:tool-call` activity naming the op, so the spinner reads
     ;; "Vis is running: <op>" with a live wall-clock. Reset by the next

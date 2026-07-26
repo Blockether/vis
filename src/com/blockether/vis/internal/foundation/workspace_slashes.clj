@@ -24,6 +24,7 @@
    Vis owns no git lifecycle — `apply` copies the changed files into the
    user's real cwd, uncommitted. Handlers are PURE w.r.t. the channel."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]))
 ;; =============================================================================
 ;; Helpers
@@ -348,23 +349,13 @@
              "Back in your draft. /draft apply to land it · /draft stash to park it again · /draft abandon to discard."
              :slash/data {:workspace-id (:id d) :label (workspace/display-label d)}}))))))
 
-(defn- expand-home
-  "Expand a leading `~` in a typed path to the user's home dir, so
-   `/cd ~/code/proj` works the way a shell user expects. Everything else
-   passes through untouched."
-  [path]
-  (let [p (str path)]
-    (cond (= p "~") (System/getProperty "user.home")
-          (str/starts-with? p "~/") (str (System/getProperty "user.home") (subs p 1))
-          :else p)))
-
 (defn- argv-path
   "The handler's whole argv as one `~`-expanded path string, or nil."
   [ctx]
   (some-> (str/join " " (:command/argv ctx))
           str/trim
           not-empty
-          expand-home))
+          paths/expand-home))
 
 (defn- handle-fs-root
   "`/cd <path>` — change the session's

@@ -82,3 +82,35 @@
       (expect (= (:tokens m) (get c "tokens")))
       (expect (= (:cost m) (get c "cost")))
       (expect (= (:utilization m) (get c "utilization"))))))
+
+(defdescribe
+  search-match-wire-test
+  "Transcript-search matches carry a NESTED `hits` vector. Nesting is exactly
+   where a hand-rolled encoder drifts back into keywords, so pin it."
+  (it "encodes a match and its nested hits as snake_case STRING keys"
+      (let
+        [match
+         {:session_id "abc"
+          :is_in_request true
+          :is_in_reply false
+          :request_snippet "…needle…"
+          :reply_snippet nil
+          :hits [{:side "request" :snippet "…needle…" :at 1700000000000}]}
+
+         w
+         (wire/canonical [match])
+
+         hit
+         (-> w
+             first
+             (get "hits")
+             first)]
+
+        (expect (= #{"session_id" "is_in_request" "is_in_reply" "request_snippet" "reply_snippet"
+                     "hits"}
+                   (set (keys (first w)))))
+        (expect (= #{"side" "snippet" "at"} (set (keys hit))))
+        ;; The SIDE tag is a plain string on the wire — a keyword here would
+        ;; serialize as ":request" and every client would have to strip the colon.
+        (expect (= "request" (get hit "side")))
+        (expect (every? string? (all-map-keys w))))))

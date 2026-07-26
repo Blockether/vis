@@ -36,12 +36,13 @@ export function App() {
   const [ready, setReady] = useState(false);
 
   const sessionConn = openTarget?.conn ?? active;
-  const connectionKey = sessionConn ? `${sessionConn.url}\u0000${sessionConn.token ?? ''}` : '';
+  // Transport identity is the URL/token pair — the only fields `GatewayClient`
+  // reads — so renaming a connection's label never tears down the live stream.
+  const connUrl = sessionConn?.url ?? '';
+  const connToken = sessionConn?.token;
   const client = useMemo(
-    () => sessionConn ? new GatewayClient(sessionConn) : null,
-    // A URL/token pair is the transport identity; labels do not require a new stream.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [connectionKey],
+    () => (connUrl ? new GatewayClient({ url: connUrl, token: connToken }) : null),
+    [connUrl, connToken],
   );
   const subscriptions = useMemo(
     () => client ? new SessionSubscriptionHub(client) : null,
@@ -122,7 +123,6 @@ export function App() {
     if (!routeApplied) {
       // Adopting the address bar IS synchronising from an external system, and it
       // happens exactly once per load — not a cascading render.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       applyRoute(window.location.hash);
       setRouteApplied(true);
     }
@@ -149,7 +149,6 @@ export function App() {
 
   useEffect(() => {
     // Mount-time gateway load: the flag flips only when the request settles.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh().finally(() => setReady(true));
   }, [refresh]);
 

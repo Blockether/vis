@@ -47,32 +47,18 @@
         before templating (`/tmp` -> `/private/tmp`, else the rule never matches).
      2. a default-deny profile MUST `(import \"system.sb\")` or dyld/sysctl startup
         reads are denied and every binary aborts before `main`."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths])
   (:import (java.io File)
            (java.nio.file LinkOption Paths)))
 
 (def ^:private link-opts (make-array LinkOption 0))
 
-(defn- expand-home
-  "Expand a leading `~` / `~/` to the user's home. Config paths (mirroring
-   sandbox-runtime's `~/.ssh`) are written home-relative; sandbox-exec is not."
-  [s]
-  (let
-    [s
-     (str s)
-
-     home
-     (System/getProperty "user.home")]
-
-    (cond (= s "~") home
-          (str/starts-with? s "~/") (str home (subs s 1))
-          :else s)))
-
 (defn- real-path
   "Canonical real-path string of `s`, or nil when it can't be resolved. sandbox-exec
    matches on RESOLVED paths, so roots MUST pass through here before templating."
   [s]
-  (let [s (expand-home s)]
+  (let [s (paths/expand-home s)]
     (when-not (str/blank? (str s))
       (try (.toString (.toRealPath (Paths/get (str s) (make-array String 0)) link-opts))
            (catch Throwable _ nil)))))
@@ -82,7 +68,7 @@
    string. Deny lists must fail safe — a not-yet-existing secret still denies."
   [s]
   (or (real-path s)
-      (let [e (expand-home s)]
+      (let [e (paths/expand-home s)]
         (when-not (str/blank? (str e)) (str e)))))
 
 (defn- os-kind

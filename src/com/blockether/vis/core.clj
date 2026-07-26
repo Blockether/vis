@@ -152,6 +152,18 @@
              [gateway-provider-status gateway-client/provider-status]
              [gateway-provider-limits gateway-client/provider-limits]
              [gateway-provider-model-options gateway-client/provider-models])
+
+;; Provider OAuth, driven ENTIRELY through the daemon. Every channel — TUI, web,
+;; phone — starts a flow, hands back a redirect URL or polls a device code, and
+;; never touches a token, verifier, or auth file itself. That keeps the gateway
+;; the ONE place credentials live, and lets a client sign a provider in without
+;; that provider's extension on its own classpath.
+(import-vars [gateway-provider-auth-start! gateway-client/provider-auth-start!]
+             [gateway-provider-auth-complete! gateway-client/provider-auth-complete!]
+             [gateway-provider-auth-submit-key! gateway-client/provider-auth-submit-key!]
+             [gateway-provider-auth-poll! gateway-client/provider-auth-poll!]
+             [gateway-provider-auth-cancel! gateway-client/provider-auth-cancel!]
+             [gateway-provider-logout! gateway-client/provider-logout!])
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.

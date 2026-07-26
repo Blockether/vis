@@ -149,10 +149,9 @@
           :else (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
 
 (def ^:private migration-checksum-mismatch-user-message
-  (str
-    "Database schema mismatch: an applied migration was edited in place and could not be "
-    "auto-repaired. A checksum-only drift self-heals via Flyway repair (rows preserved); "
-    "if you changed a migration's STRUCTURE, add a NEW V*__ migration instead of editing an applied one."))
+  (str "Database schema mismatch: the canonical V1 history could not be auto-repaired. "
+       "Flyway repair normally realigns checksum and consolidated-migration metadata while "
+       "preserving every application row; no database content was deleted."))
 
 (defn- migration-checksum-mismatch?
   "True when any throwable in the causal chain looks like Flyway's
@@ -224,8 +223,8 @@
 ;; package under
 ;; `resources/db/sqlite/migration/`. We only point Flyway at that
 ;; classpath location. No schema DDL or repair DDL lives in Clojure.
-;; If an existing local database no longer matches the packaged V1 SQL,
-;; Flyway fails and the user removes/recreates the local DB intentionally.
+;; The runner repairs drifted checksums and history left by V2+ files that were
+;; consolidated back into the single canonical V1; it never recreates the DB.
 ;; =============================================================================
 
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
@@ -1099,39 +1098,246 @@
                               (when-not all? [[:= :cs.channel ch]]))
                  :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]})))))
 
-(defn- transcript-snippet
-  "HoneySQL expr: a short WINDOW of `col` around the (case-insensitive) first
-   match of `q` — ~30 chars before, the match, ~90 after — with leading/trailing
-   `…` when the window clips the column. `nil` when `col` doesn't contain `q`.
-   Keeps the wire tiny: only this window travels, never the whole 105MB body."
-  [col q]
+
+(def ^:private transcript-hits-per-session
+  "Snippets kept per matching session. The old shape collapsed a session to ONE
+   `MAX()`-picked snippet per side, so a session with 40 hits still showed one
+   arbitrary (lexicographically largest!) line. Now the newest few real hits
+   travel."
+  6)
+
+(def ^:private transcript-hit-scan-limit
+  "Newest matching transcript ROWS RANKED per side before the per-session cap.
+   Ranking is id-only (no `snippet()`), so even a stop-word query that matches
+   tens of thousands of rows costs a few tens of milliseconds."
+  20000)
+
+(def ^:private transcript-hit-sessions-limit
+  "Sessions (newest hit first) that get snippets rendered. Bounds the second,
+   snippet-producing pass to `transcript-hits-per-session` × this many rows."
+  200)
+
+(defn- raw-query!
+  "Run a raw `[sql & params]` vector — for the SQL HoneySQL cannot express
+   (FTS5 `MATCH`, `snippet()`). Rows come back with unqualified lower-case keys."
+  [db-info sql-vec]
+  (jdbc/execute! (ds db-info) sql-vec {:builder-fn rs/as-unqualified-lower-maps}))
+
+(defn- fts-match-expr
+  "FTS5 MATCH expression for a human `query`: every alphanumeric token QUOTED
+   (so punctuation can never be read as FTS syntax) and AND-ed, with the LAST
+   token turned into a PREFIX term so search stays useful mid-typing — `dia`
+   finds `dialogs`. A ONE-character token is left exact: `d*` would expand to a
+   doclist of nearly every document and cost more than the scan it replaced.
+   nil when the query tokenizes to nothing (`???`)."
+  [query]
   (let
-    [pos
-     [:instr [:lower col] [:lower q]]
+    [tokens
+     (->> (str/split (str query) #"[^\p{Alnum}_]+")
+          (remove str/blank?)
+          vec)
 
-     start
-     [:max 1 [:- pos 30]]
+     last-i
+     (dec (count tokens))]
 
-     window
-     160]
+    (when (seq tokens)
+      (str/join " "
+                (map-indexed (fn [i t]
+                               (str "\"" t "\"" (when (and (= i last-i) (< 1 (count t))) "*")))
+                             tokens)))))
 
-    [:case [:= pos 0] nil :else
-     [:|| [:case [:> pos 31] "…" :else ""] [:substr col start window]
-      [:case [:> [:length col] [:+ start (dec window)]] "…" :else ""]]]))
+(def ^:private snippet-hit-marker
+  "Sentinel FTS5 wraps around a matched term inside `snippet()`. Its PRESENCE is
+   how we tell a column that really matched from one whose snippet is just its
+   leading text — `snippet()` happily returns the head of an unmatched column."
+  "\u0001")
+
+(defn- pick-snippet
+  "The snippet to SHOW for a hit row. The reply side asks SQLite for one snippet
+   per indexed column and keeps the first that actually matched, in human order:
+   assistant prose, then thinking. Without this a term present in both columns
+   could render the reasoning aside instead of the answer the user remembers.
+   Marker stripped, blank → nil."
+  [row]
+  (let [candidates (if (contains? row :snip) [(:snip row)] [(:s0 row) (:s1 row)])]
+    (some-> (or (some #(when (and % (str/includes? % snippet-hit-marker)) %) candidates)
+                (first (filter some? candidates)))
+            (str/replace snippet-hit-marker "")
+            str/trim
+            not-empty)))
+
+(defn- transcript-hit-rank-sql
+  "Id-only FTS ranking query for ONE side (`:request` from the user's own text,
+   `:reply` from assistant prose/thinking): session soul id, FTS rowid and the
+   row's `created_at`, newest first.
+
+   Ordered by `rowid DESC` — insertion order, i.e. newest first — deliberately
+   NOT by `created_at`: ordering on a non-indexed column would force a sort of
+   every match (0.4s on a big store) instead of a cheap index walk."
+  [side chan-sql]
+  (case side
+    :request
+    (str "SELECT cs.id AS sid, ts.rowid AS rid, ts.created_at AS at " "FROM transcript_request_fts "
+         "JOIN session_turn_soul ts ON ts.rowid = transcript_request_fts.rowid "
+         "JOIN session_state s ON s.id = ts.session_state_id "
+         "JOIN session_soul cs ON cs.id = s.session_soul_id "
+         "WHERE transcript_request_fts MATCH ? "
+         "AND cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL" chan-sql
+         " ORDER BY ts.rowid DESC LIMIT " transcript-hit-scan-limit)
+
+    :reply
+    (str "SELECT cs.id AS sid, it.rowid AS rid, it.created_at AS at " "FROM transcript_reply_fts "
+         "JOIN session_turn_iteration it ON it.rowid = transcript_reply_fts.rowid "
+         "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
+         "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
+         "JOIN session_state s ON s.id = ts.session_state_id "
+         "JOIN session_soul cs ON cs.id = s.session_soul_id " "WHERE transcript_reply_fts MATCH ? "
+         "AND cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL" chan-sql
+         " ORDER BY it.rowid DESC LIMIT " transcript-hit-scan-limit)))
+
+(defn- transcript-snippet-sql
+  "`snippet()` windows for an EXPLICIT set of FTS rowids on one side. `snippet()`
+   only works inside a direct `MATCH` query (not over a join or CTE), hence the
+   MATCH is repeated here and intersected with the ranked rowids."
+  [side n]
+  (let [ids (str/join "," (repeat n "?"))]
+    (case side
+      :request
+      (str "SELECT transcript_request_fts.rowid AS rid, "
+           "snippet(transcript_request_fts, 0, '', '', '…', 20) AS snip "
+           "FROM transcript_request_fts "
+           "WHERE transcript_request_fts MATCH ? AND rowid IN ("
+           ids
+           ")")
+
+      :reply
+      (str "SELECT transcript_reply_fts.rowid AS rid, "
+           "snippet(transcript_reply_fts, 0, char(1), '', '…', 20) AS s0, "
+           "snippet(transcript_reply_fts, 1, char(1), '', '…', 20) AS s1 "
+           "FROM transcript_reply_fts "
+           "WHERE transcript_reply_fts MATCH ? AND rowid IN ("
+           ids
+           ")"))))
+
+(def ^:private transcript-snippet-batch
+  "Rowids per `IN (…)` batch — well under SQLite's bound-parameter ceiling."
+  400)
+
+(defn- transcript-hit-rows
+  "FTS hits on ONE side, FAIRLY capped: up to `transcript-hits-per-session`
+   snippets for EACH of the newest `transcript-hit-sessions-limit` matching
+   sessions — not the newest N rows overall, which is what starved older
+   sessions down to a single snippet.
+
+   Two passes: an id-only ranking query (cheap even for a stop word), then one
+   `snippet()` query over just the rowids that survived the per-session cap."
+  [db-info side ch match]
+  (let
+    [chan-sql
+     (if ch " AND cs.channel = ?" "")
+
+     params
+     (cond-> [match]
+       ch
+       (conj ch))
+
+     ranked
+     (raw-query! db-info (into [(transcript-hit-rank-sql side chan-sql)] params))
+
+     ;; `ranked` is newest-first, so first appearance order = sessions ordered
+     ;; by their newest hit.
+     sids
+     (into #{} (take transcript-hit-sessions-limit) (distinct (map :sid ranked)))
+
+     kept
+     (into []
+           (comp (filter #(contains? sids (:sid %)))
+                 (map (fn [r]
+                        (update r :sid str))))
+           ranked)
+
+     kept
+     (->> kept
+          (reduce (fn [acc r]
+                    (let [n (long (get-in acc [:counts (:sid r)] 0))]
+                      (if (>= n (long transcript-hits-per-session))
+                        acc
+                        (-> acc
+                            (assoc-in [:counts (:sid r)] (inc n))
+                            (update :rows conj r)))))
+                  {:counts {} :rows []})
+          :rows)
+
+     snippets
+     (into {}
+           (mapcat (fn [batch]
+                     (map (juxt :rid pick-snippet)
+                          (raw-query! db-info
+                                      (into [(transcript-snippet-sql side (count batch)) match]
+                                            (map :rid)
+                                            batch)))))
+           (partition-all transcript-snippet-batch kept))]
+
+    (mapv (fn [row]
+            {:sid (:sid row) :side side :at (:at row) :snippet (get snippets (:rid row))})
+          kept)))
+
+(defn- transcript-rows->sessions
+  "Fold per-row hits into one entry per session soul: newest hits first, capped
+   at `transcript-hits-per-session`, sessions ordered by their newest hit.
+   `:request-snippet`/`:reply-snippet` stay as the FIRST hit of each side so
+   older single-snippet callers keep working."
+  [rows]
+  (->> rows
+       (filter :snippet)
+       (group-by :sid)
+       (mapv
+         (fn [[sid hits]]
+           (let
+             [ordered
+              (vec (sort-by (comp - long #(or (:at %) 0)) hits))
+
+              kept
+              (vec (take transcript-hits-per-session ordered))
+
+              side-snip
+              (fn [side]
+                (some #(when (= side (:side %)) (:snippet %)) ordered))]
+
+             {:id (->uuid sid)
+              :newest (long (or (:at (first ordered)) 0))
+              :in-request? (boolean (some #(= :request (:side %)) ordered))
+              :in-reply? (boolean (some #(= :reply (:side %)) ordered))
+              :request-snippet (side-snip :request)
+              :reply-snippet (side-snip :reply)
+              :hits (mapv (fn [h]
+                            {:side (:side h) :snippet (:snippet h) :at (->date (:at h))})
+                          kept)})))
+       (sort-by :newest >)
+       (mapv #(dissoc % :newest))))
 
 (defn db-search-session-matches
-  "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring),
-   each tagged with WHERE it hit and a short MATCH SNIPPET per side:
+  "Sessions whose TRANSCRIPT text matches `query`, each carrying WHERE it hit and
+   up to `transcript-hits-per-session` MATCH SNIPPETS:
+
    `{:id uuid :in-request? bool :in-reply? bool
-     :request-snippet str-or-nil :reply-snippet str-or-nil}`.
+     :request-snippet str-or-nil :reply-snippet str-or-nil
+     :hits [{:side :request|:reply :snippet str :at Date}]}`
 
    `:in-request?` = the user's request (`session_turn_soul.user_request`) matched;
-   `:in-reply?` = any assistant iteration text matched
-   (`llm_assistant_prose` / `llm_thinking` / `llm_assistant_message`). Both can be
-   true. This is the SERVER-side half of transcript search: the 105MB of assistant
-   text never crosses the wire — clients match title/project locally and union
-   these tagged ids for the deep matches. `channel` filters like `db-list-sessions`
-   (`:all`/nil = cross-channel). Blank query returns `[]`."
+   `:in-reply?` = assistant iteration text matched (`llm_assistant_prose` /
+   `llm_thinking`). The raw provider envelope (`llm_assistant_message`) is
+   deliberately NOT searched — it is wire JSON, not what was said. Both can be true.
+
+   Served by the V1 FTS5 indexes (`transcript_request_fts` / `transcript_reply_fts`)
+   — single-digit milliseconds instead of the ~400ms full `LIKE '%q%'` scan of the
+   whole corpus, which is what made TUI/app session search feel frozen. Matching is
+   token PREFIX (`dia` finds `dialogs`); a query with NO alphanumeric token at all
+   (`???`) matches nothing. Newest hits first, sessions ordered by their newest hit.
+
+   This is the SERVER-side half of transcript search: the assistant text never
+   crosses the wire, only these snippet windows. `channel` filters like
+   `db-list-sessions` (`:all`/nil = cross-channel). Blank query returns `[]`."
   [db-info channel query]
   (let
     [q (some-> query
@@ -1143,50 +1349,19 @@
         [ch (some-> channel
                     ->kw
                     name)
-         all? (or (nil? ch) (= "all" ch))
-         pat (str "%" q "%")]
+         ch (when-not (or (nil? ch) (= "all" ch)) ch)
+         match (fts-match-expr q)]
 
-        (mapv
-          (fn [{:keys [id in_request in_reply request_snippet reply_snippet]}]
-            {:id (->uuid id)
-             :in-request? (pos? (long (or in_request 0)))
-             :in-reply? (pos? (long (or in_reply 0)))
-             :request-snippet request_snippet
-             :reply-snippet reply_snippet})
-          (query! db-info
-                  {:select
-                   [:cs.id [[:max [:case [:like :ts.user_request pat] 1 :else 0]] :in_request]
-                    [[:max
-                      [:case
-                       [:or [:like :it.llm_assistant_prose pat] [:like :it.llm_thinking pat]
-                        [:like :it.llm_assistant_message pat]] 1 :else 0]] :in_reply]
-                    [[:max
-                      [:case [:like :ts.user_request pat] (transcript-snippet :ts.user_request q)
-                       :else nil]] :request_snippet]
-                    [[:max
-                      [:case [:like :it.llm_assistant_prose pat]
-                       (transcript-snippet :it.llm_assistant_prose q) [:like :it.llm_thinking pat]
-                       (transcript-snippet :it.llm_thinking q) [:like :it.llm_assistant_message pat]
-                       (transcript-snippet :it.llm_assistant_message q) :else nil]] :reply_snippet]]
-                   :from [[:session_soul :cs]]
-                   :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                   :left-join [[:session_turn_soul :ts] [:= :ts.session_state_id :s.id]
-                               [:session_turn_state :tst] [:= :tst.session_turn_soul_id :ts.id]
-                               [:session_turn_iteration :it] [:= :it.session_turn_state_id :tst.id]]
-                   :where (into [:and [:= :cs.parent_state_id nil] [:not= :cs.claimed_at nil]
-                                 [:or [:like :ts.user_request pat]
-                                  [:like :it.llm_assistant_prose pat] [:like :it.llm_thinking pat]
-                                  [:like :it.llm_assistant_message pat]]]
-                                (when-not all? [[:= :cs.channel ch]]))
-                   :group-by [:cs.id]}))))))
+        (if match
+          (transcript-rows->sessions (into (transcript-hit-rows db-info :request ch match)
+                                           (transcript-hit-rows db-info :reply ch match)))
+          [])))))
 
 (defn db-search-session-ids
-  "Soul ids whose TRANSCRIPT text matches `query` (case-insensitive substring):
-   the user's request (`session_turn_soul.user_request`) OR any assistant
-   iteration text (`llm_assistant_prose` / `llm_thinking` / `llm_assistant_message`).
+  "Soul ids whose TRANSCRIPT text matches `query`.
 
    Thin id-only projection of `db-search-session-matches` (see it for the
-   where-it-hit tags). `channel` filters like `db-list-sessions`
+   where-it-hit tags and snippets). `channel` filters like `db-list-sessions`
    (`:all`/nil = cross-channel). Blank query returns `[]`."
   [db-info channel query]
   (mapv :id (db-search-session-matches db-info channel query)))

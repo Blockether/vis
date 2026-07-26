@@ -985,8 +985,11 @@
 (def ^:private slash-title-label "Slash commands")
 
 (def ^:private slash-title-hints
-  ;; Flex items rendered space-between on a backgroundless title row. Keys are
-  ;; BOLD to match the dialog `draw-hint-bar!` idiom.
+  ;; Flex items rendered space-between in the title bar. Keys are
+  ;; rendered BOLD to match the dialog `draw-hint-bar!` idiom; the
+  ;; whole row sits on the `dialog-title-bg` accent stripe to match
+  ;; the `draw-dialog-chrome!` title bar style.
+  ;;
   ;; Enter and Tab both complete the selected suggestion into
   ;; the input so the user can edit args before running. Keep this
   ;; in sync with screen.clj slash-suggestion key handling.
@@ -1000,15 +1003,25 @@
   [["↑↓/wheel" "select"] ["Enter/Tab" "attach"]])
 
 (defn- draw-slash-title-bar!
-  "Render the backgroundless suggestion-overlay title row for slash commands
-   or the inline `@` file picker. A bold accent label sits left; key/action hints
-   spread across the remaining width. `left` and `inner-w` use the input box's
-   horizontal padding, visually anchoring both surfaces."
+  "Render the suggestion overlay title row — for slash commands OR the inline
+   `@` file picker (same overlay, different `title-label`/`title-hints`).
+
+   Layout: an accent stripe (`dialog-title-bg`) spanning
+   [`left`, `left + inner-w`) carrying a BOLD label on the left and
+   `[key action]` hint pairs distributed space-between across the rest
+   of the row, mirroring the `draw-hint-bar!` flex idiom but on the
+   title-bar accent so the header reads as something IMPORTANT, not as
+   another hint line.
+
+   `left` and `inner-w` come from the same horizontal-padding rule the
+   input box uses (`INPUT_BORDER_HORIZONTAL_PAD`), so the overlay
+   visually anchors to the same column span as the typing zone."
   ([^TextGraphics g title-row left inner-w]
    (draw-slash-title-bar! g title-row left inner-w slash-title-label slash-title-hints))
   ([^TextGraphics g title-row left inner-w title-label title-hints]
-   ;; Clear stale content without introducing a title stripe.
-   (p/set-colors! g t/dialog-accent t/terminal-bg)
+   ;; Accent stripe over the inner span only — the margin columns on
+   ;; each side stay terminal-bg to read as breathing room.
+   (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
    (p/fill-rect! g left title-row inner-w 1)
    (let
      [title-row
@@ -1020,7 +1033,8 @@
       inner-w
       (long inner-w)
 
-      ;; Keep the bold label one column inside the overlay edge.
+      ;; Inner content sits one col inside the accent stripe so the
+      ;; BOLD label doesn't kiss the stripe edge.
       content-pad
       1
 
@@ -1112,11 +1126,17 @@
 
    Visual stack from top to bottom:
      (top margin row — terminal-bg gap)
-     Slash commands  …  Enter/Tab complete   ; backgroundless accent text
-     ─────────────────────────────────────   ; separator
+     [Slash commands  …  Enter/Tab complete]   ; title bar (dialog-title-bg accent)
+     ─────────────────────────────────────────   ; border under title (dialog-border)
      suggestion rows…
 
-   The inset and separator align exactly with the input box below."
+   The accent title + under-rule signal `this is a menu`, matching the
+   `draw-dialog-chrome!` chrome idiom but in overlay form (no side
+   rails, since the input box below has no side rails either).
+
+   The whole overlay is inset by `INPUT_BORDER_HORIZONTAL_PAD` cols on
+   each side so the accent stripe and rule line up exactly with the
+   input box's top/bottom rules below."
   ([g suggestions input-top cols] (draw-slash-command-suggestions! g suggestions input-top cols 0))
   ([g suggestions input-top cols selected-index]
    (when (seq suggestions)
@@ -1132,7 +1152,7 @@
 
         ;; Layout above the input box (rows decrease as we go up):
         ;;   margin-row    -> terminal-bg gap (optional, drops first)
-        ;;   title-row     -> backgroundless accent text (required)
+        ;;   title-row     -> accent stripe (non-negotiable)
         ;;   border-row    -> ─ rule under title (drops second)
         ;;   suggestion rows...
         ;;
@@ -1201,13 +1221,18 @@
        (when (pos? n)
          ;; Top margin — paint the gap row in terminal-bg so any chat
          ;; content peeking through gets cleared. This is the breathing
-         ;; room above the title row.
+         ;; room above the title bar.
          (when (and margin-row (>= (long margin-row) 0))
            (p/set-colors! g t/text-fg t/terminal-bg)
            (p/fill-rect! g 0 margin-row cols 1))
-         ;; The inline `@` picker uses the same backgroundless title layout as
-         ;; slash commands, with different text. Clear the full row first so
-         ;; live streaming content cannot flicker through its side gutters.
+         ;; Title bar (accent + flex hints) — the inline `@` file picker rides
+         ;; the SAME overlay as slash commands, just relabelled.
+         ;; Clear the whole row to terminal-bg FIRST, exactly like the border
+         ;; and suggestion rows below: the accent stripe only spans the inner
+         ;; column range, so on a live-bubble tick the streaming assistant text
+         ;; repainted underneath would otherwise show through the title row's
+         ;; side gutters and churn every 80ms — the "palette flickers the bottom
+         ;; of the live scroll" bug.
          (p/set-colors! g t/text-fg t/terminal-bg)
          (p/fill-rect! g 0 title-row cols 1)
          ;; the SAME overlay as slash commands, just relabelled.
@@ -1263,7 +1288,7 @@
                              :total-h total
                              :inner-h n
                              :scroll first-idx
-                             :thumb-fg t/dialog-accent})))))))
+                             :thumb-fg t/dialog-title-bg})))))))
 ;;; ── Background fill ────────────────────────────────────────────────────────
 (defn fill-background!
   "Fill entire screen with the terminal background color."
@@ -1319,12 +1344,18 @@
       h-bar
       (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
 
-     ;; Dialogs use the terminal surface directly—no panel tint or shadow.
-     (.setBackgroundColor g t/terminal-bg)
+     ;; Shadow
+     (.setBackgroundColor g t/dialog-shadow)
+     (.fillRectangle g
+                     (TerminalPosition. (+ (long box-left) 2) (inc (long box-top)))
+                     (TerminalSize. box-w box-h)
+                     \space)
+     ;; Background
+     (.setBackgroundColor g t/dialog-bg)
      (.fillRectangle g (TerminalPosition. box-left box-top) (TerminalSize. box-w box-h) \space)
      ;; Border
      (.setForegroundColor g t/dialog-border)
-     (.setBackgroundColor g t/terminal-bg)
+     (.setBackgroundColor g t/dialog-bg)
      (.setCharacter g (int box-left) (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
      (.setCharacter g (int box-right) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
      (.setCharacter g (int box-left) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
@@ -1335,7 +1366,7 @@
        (.setCharacter g (int box-left) (int r) Symbols/SINGLE_LINE_VERTICAL)
        (.setCharacter g (int box-right) (int r) Symbols/SINGLE_LINE_VERTICAL))
      ;; Title
-     (.setForegroundColor g t/dialog-accent)
+     (.setForegroundColor g t/dialog-title-bg)
      (let [title-x (+ (long box-left) (quot (- (long box-w) (count title)) 2))]
        (.putString g (int title-x) (int (inc (long box-top))) ^String title))
      ;; Body (wrapped)

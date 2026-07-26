@@ -1,6 +1,7 @@
 -- =============================================================================
 -- V1__schema.sql — THE single unified vis SQLite schema (snake_string epoch).
--- One consolidated baseline: clean CREATEs only, no historical ALTER chain.
+-- One consolidated baseline: clean CREATEs only, no historical ALTER chain or
+-- V2+ files. Flyway history from an older split baseline is repaired in place.
 -- All persisted payloads are canonical snake_case STRING-keyed JSON/Nippy;
 -- pre-epoch (keyword-era) databases are not migrated — start a fresh DB.
 -- SQLite resolves the circular session_soul <-> session_state refs at row
@@ -660,3 +661,97 @@ CREATE INDEX idx_attachment_soul
 -- Per-iteration roll-up (tool artifacts), ordered by (call, position).
 CREATE INDEX idx_attachment_iteration
   ON session_attachment(session_turn_iteration_id, tool_call_id, position);
+
+-- =============================================================================
+-- transcript full-text search (FTS5)
+--
+-- Session search used to be four `LIKE '%q%'` predicates over the whole
+-- transcript corpus. A leading-wildcard LIKE can use no index, so every
+-- keystroke scanned the complete assistant transcript.
+--
+-- These are FTS5 EXTERNAL-CONTENT indexes: the text is NOT copied, only the
+-- inverted index is stored, and `snippet()` reads the match window straight
+-- out of the base table. Triggers keep them in sync; the rebuild statements
+-- seed the indexes when V1 is installed.
+--
+-- Search stays substring-ish via FTS5 PREFIX queries ("dia" -> "dia"*), and
+-- a query containing punctuation only matches nothing.
+-- =============================================================================
+
+-- User requests.
+CREATE VIRTUAL TABLE transcript_request_fts USING fts5(
+  user_request,
+  content='session_turn_soul',
+  content_rowid='rowid',
+  tokenize='unicode61',
+  -- 2- and 3-char PREFIX indexes: mid-typing queries (`di`, `dia`) resolve from
+  -- a real index instead of expanding a huge doclist scan.
+  prefix='2 3'
+);
+
+CREATE TRIGGER trg_transcript_request_fts_ai
+AFTER INSERT ON session_turn_soul
+BEGIN
+  INSERT INTO transcript_request_fts(rowid, user_request)
+  VALUES (new.rowid, new.user_request);
+END;
+
+CREATE TRIGGER trg_transcript_request_fts_ad
+AFTER DELETE ON session_turn_soul
+BEGIN
+  INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
+  VALUES ('delete', old.rowid, old.user_request);
+END;
+
+CREATE TRIGGER trg_transcript_request_fts_au
+AFTER UPDATE ON session_turn_soul
+BEGIN
+  INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
+  VALUES ('delete', old.rowid, old.user_request);
+  INSERT INTO transcript_request_fts(rowid, user_request)
+  VALUES (new.rowid, new.user_request);
+END;
+
+-- Assistant iterations. Only HUMAN-READABLE reply text is indexed:
+-- `llm_assistant_prose` and `llm_thinking`. The raw
+-- `llm_assistant_message` provider envelope is wire JSON (tool args, results,
+-- base64 payloads), not what was said, so it deliberately stays out.
+CREATE VIRTUAL TABLE transcript_reply_fts USING fts5(
+  llm_assistant_prose,
+  llm_thinking,
+  content='session_turn_iteration',
+  content_rowid='rowid',
+  tokenize='unicode61',
+  prefix='2 3'
+);
+
+CREATE TRIGGER trg_transcript_reply_fts_ai
+AFTER INSERT ON session_turn_iteration
+BEGIN
+  INSERT INTO transcript_reply_fts(rowid, llm_assistant_prose, llm_thinking)
+  VALUES (new.rowid, new.llm_assistant_prose, new.llm_thinking);
+END;
+
+CREATE TRIGGER trg_transcript_reply_fts_ad
+AFTER DELETE ON session_turn_iteration
+BEGIN
+  INSERT INTO transcript_reply_fts(transcript_reply_fts, rowid,
+                                   llm_assistant_prose, llm_thinking)
+  VALUES ('delete', old.rowid, old.llm_assistant_prose, old.llm_thinking);
+END;
+
+CREATE TRIGGER trg_transcript_reply_fts_au
+AFTER UPDATE ON session_turn_iteration
+BEGIN
+  INSERT INTO transcript_reply_fts(transcript_reply_fts, rowid,
+                                   llm_assistant_prose, llm_thinking)
+  VALUES ('delete', old.rowid, old.llm_assistant_prose, old.llm_thinking);
+  INSERT INTO transcript_reply_fts(rowid, llm_assistant_prose, llm_thinking)
+  VALUES (new.rowid, new.llm_assistant_prose, new.llm_thinking);
+END;
+
+-- Fresh V1 databases have no transcript rows yet, but keeping the canonical
+-- rebuilds here makes the baseline correct when installed over a pre-populated
+-- SQLite schema that Flyway has just baselined at version 0.
+INSERT INTO transcript_request_fts(transcript_request_fts) VALUES ('rebuild');
+INSERT INTO transcript_reply_fts(transcript_reply_fts) VALUES ('rebuild');

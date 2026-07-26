@@ -208,22 +208,15 @@
 (defn auth-provider-next-step
   [data]
   (let [provider-id (provider-id-of data)]
-    (str
-      "NEXT STEP: re-authenticate this provider or update its API key, then retry. "
-      "TUI: Ctrl+K -> Model / Providers -> re-authenticate provider. "
-      "CLI: run `vis providers auth"
-      (when provider-id (str " " provider-id))
-      "` for OAuth providers; for API-key providers, fix the configured key/env var and restart Vis.")))
+    (str "NEXT STEP: re-authenticate"
+         (when provider-id (str " " provider-id))
+         " or fix its API key, then retry.")))
 
-(defn- rate-limit-next-step
-  []
-  "NEXT STEP: rate limit — wait and retry, re-authenticate, or switch provider/model.")
+(defn- rate-limit-next-step [] "NEXT STEP: wait and retry, or switch provider/model.")
 
 (defn- transport-next-step
   []
-  (str "NEXT STEP: this is a network/connection blip, not a rejection — just retry "
-       "(Vis resends the same request). If it keeps failing, check your internet "
-       "connection, any VPN/proxy/firewall, and the provider's status page."))
+  "NEXT STEP: retry. If it keeps failing, check your connection and the provider's status.")
 
 (declare provider-error-attempts)
 
@@ -271,67 +264,46 @@
          (= :svar.core/stream-semantic-timeout
             (or (:type (:data err)) (:type err) (:type (ex-data err))))]
 
-        (str "WHAT HAPPENED: the provider accepted the request and the stream was still "
-             "open, but "
-             (if semantic? "no model/progress event arrived" "no bytes arrived")
+        (str "WHAT HAPPENED: the stream stalled — "
+             (if semantic? "no model progress" "no bytes")
              (when budget-ms (str " for " (long (/ (long budget-ms) 1000)) "s"))
-             ", so VIS closed the connection — the model was likely still reasoning. "
-             "Nothing was rejected: this is not an auth, quota, or outage problem, and "
-             "your transcript and tool results are intact."))
+             ". The model was likely still reasoning. Nothing was rejected; your "
+             "transcript and tool results are intact."))
       (empty-content-error? err)
       (let [resends (long (or (:empty-reply-resends data) 0))]
-        (str "WHAT HAPPENED: the provider accepted the request and answered with a "
-             "normal HTTP-200 stream, but the model produced no text and no tool "
-             "call (an empty reply)."
+        (str "WHAT HAPPENED: the model replied with no text and no tool call."
              (when (pos? resends)
-               (str " Vis already re-sent the SAME request to the SAME model "
-                    resends
-                    (if (= 1 resends) " more time" " more times")
-                    " with widening backoff; every attempt came back empty."))
-             " This is a model-side stall on this exact request — not a rejection "
-             "and not an auth, quota, or network problem. Your transcript and tool "
-             "results are intact — nothing was lost."))
+               (str " Re-sent " resends (if (= 1 resends) " time" " times") "; still empty."))
+             " A model-side stall — your transcript and tool results are intact."))
       (invalid-thinking-signature-message? provider-message)
-      (str
-        "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
-        "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key.")
-      schema-rejection?
-      (str
-        "WHAT HAPPENED: the provider rejected the request before the model ran because native tool `"
-        (or tool-name "unknown")
-        "` has a top-level `oneOf`, `allOf`, or `anyOf` in `"
-        (or schema-field "input_schema")
-        "`. "
-        "This is a deterministic Vis/extension schema defect, not an outage, auth failure, or quota problem."
-        (when (seq provider-message) (str " Provider message: " provider-message)))
+      (str "WHAT HAPPENED: Anthropic rejected a `thinking` block signature — usually "
+           "preserved thinking replayed across a provider/model switch.")
+      schema-rejection? (str "WHAT HAPPENED: tool `" (or tool-name "unknown")
+                             "` has a top-level `oneOf`/`allOf`/`anyOf` in `" (or schema-field
+                                                                                  "input_schema")
+                             "` — a schema defect, not an outage." (when (seq provider-message)
+                                                                     (str " " provider-message)))
       (auth-provider-error? status provider-message message)
-      (str "WHAT HAPPENED: the provider rejected credentials before the model ran."
-           (when (seq provider-message) (str " Provider message: " provider-message)))
+      (str "WHAT HAPPENED: the provider rejected your credentials."
+           (when (seq provider-message) (str " " provider-message)))
       (anthropic-extra-usage-error? status provider-message message)
-      (str
-        "WHAT HAPPENED: Anthropic rejected the request — your Claude subscription's extra-usage allowance is exhausted. "
-        "Third-party apps (including Vis) now draw from extra usage rather than your plan. "
-        "Provider message: " (or provider-message
-                                 "Third-party apps now draw from your extra usage"))
+      (str "WHAT HAPPENED: your Claude extra-usage allowance is exhausted — third-party "
+           "apps draw from extra usage, not your plan. "
+           (or provider-message "Third-party apps now draw from your extra usage"))
       (transport-error? status provider-message message)
-      "WHAT HAPPENED: Vis could not complete the HTTP request to the provider — the connection dropped before any response came back (a network/transport failure; here the socket closed with no bytes). The model never saw the request, so nothing was rejected and nothing was lost."
+      "WHAT HAPPENED: the connection dropped before any response came back. The model never saw the request."
       (rate-limit-error? status provider-message message)
-      (str "WHAT HAPPENED: the provider rate-limited the request before the model ran."
-           (when (seq provider-message) (str " Provider message: " provider-message)))
+      (str "WHAT HAPPENED: the provider rate-limited this request."
+           (when (seq provider-message) (str " " provider-message)))
       (or (= "All providers exhausted" message) (= "Provider unavailable" message))
       (if (or (= "Provider unavailable" message) (<= (count (provider-error-attempts err)) 1))
-        (str "WHAT HAPPENED: the request to the selected provider failed before a usable "
-             "response came back. Vis did NOT fall back across your other providers — the "
-             "choice of where to go next is yours. Your transcript and tool results are "
-             "intact — nothing was lost.")
-        (str "WHAT HAPPENED: every provider in this turn's fallback list was tried and each "
-             "attempt failed before a usable response came back. Your transcript and tool "
-             "results are intact — nothing was lost."))
-      (seq provider-message)
-      (str
-        "WHAT HAPPENED: the provider rejected the request before the model ran. Provider message: "
-        provider-message)
-      :else "WHAT HAPPENED: the provider rejected the request before the model ran.")))
+        (str "WHAT HAPPENED: the selected provider failed before a usable response. No "
+             "fallback was tried. Transcript and tool results are intact.")
+        (str "WHAT HAPPENED: every provider in this turn's fallback list failed before a "
+             "usable response. Transcript and tool results are intact."))
+      (seq provider-message) (str "WHAT HAPPENED: the provider rejected the request. "
+                                  provider-message)
+      :else "WHAT HAPPENED: the provider rejected the request.")))
 
 (declare provider-error-kind)
 
@@ -389,29 +361,24 @@
 
     (case (provider-error-kind err)
       :stream-timeout
-      (str "NEXT STEP: retry the turn once — this watchdog timeout is not automatically "
-           "re-sent to the same provider. Long reasoning turns can legitimately exceed "
-           "the budget; raise `semantic-timeout-ms` (or set it to nil to disable the "
-           "watchdog) if this model routinely thinks longer. Auth, quota, and provider "
-           "status are NOT implicated.")
+      (str "NEXT STEP: retry — a stall is auto-retried on a backoff. If long reasoning "
+           "turns keep tripping it, raise `idle-timeout-ms`.")
 
       :empty-content
-      (str "NEXT STEP: retry the turn — Vis re-sends the same request to the same "
-           "model, and these stalls usually clear with a little time. If it keeps "
-           "happening, rephrase or trim the last message; switching model "
-           "(TUI: Ctrl+K · CLI: `vis providers`) is a last resort, not a requirement.")
+      (str "NEXT STEP: retry — Vis re-sends and these stalls usually clear. If it "
+           "persists, rephrase or trim the last message.")
 
       :invalid-thinking-signature
-      "NEXT STEP: retry — Vis will resend with only normal transcript/trailer context. If it persists, don't replay preserved-thinking across a provider/model switch."
+      "NEXT STEP: retry — Vis resends with plain context. If it persists, don't replay preserved thinking across a provider/model switch."
 
       :tool-schema
-      "NEXT STEP: update Vis or disable the offending extension, then retry. Retrying the unchanged tool schema cannot work."
+      "NEXT STEP: update Vis or disable the offending extension, then retry."
 
       :auth
       (auth-provider-next-step data)
 
       :anthropic-extra-usage
-      "NEXT STEP: add extra usage credits at https://claude.ai/settings/usage then retry. If you haven't set a spend limit yet, set one there to unblock requests."
+      "NEXT STEP: add extra-usage credits at https://claude.ai/settings/usage, then retry."
 
       :rate-limit
       (rate-limit-next-step)
@@ -420,8 +387,8 @@
       (transport-next-step)
 
       (if (and (= "All providers exhausted" message) (> (count (provider-error-attempts err)) 1))
-        "NEXT STEP: retry once (transient outages recover), then check provider status, auth, and quota — or switch provider/model (TUI: Ctrl+K · CLI: `vis providers`)."
-        "NEXT STEP: retry once (transient outages recover); if it persists, switch provider/model (TUI: Ctrl+K · CLI: `vis providers`) or check that provider's status, auth, and quota."))))
+        "NEXT STEP: retry, or switch provider/model."
+        "NEXT STEP: retry; if it persists, switch provider/model."))))
 
 (defn provider-error-attempts
   "The per-provider failure records svar accumulates on an `all-providers-exhausted`

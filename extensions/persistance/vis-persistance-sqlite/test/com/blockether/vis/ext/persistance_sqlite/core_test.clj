@@ -472,12 +472,39 @@
   (it "leaves unrelated bootstrap failures untouched"
       (let [e (ex-info "x" {})]
         (expect (identical? e (maybe-wrap-db-open-error e)))))
-  (it "guides toward a new migration, not deleting the store"
+  (it "describes canonical V1 repair without deleting the store"
       (expect (str/includes? migration-checksum-mismatch-user-message "schema mismatch"))
       (expect (str/includes? migration-checksum-mismatch-user-message "Flyway repair"))
-      (expect (str/includes? migration-checksum-mismatch-user-message "V*__"))
+      (expect (str/includes? migration-checksum-mismatch-user-message "canonical V1"))
       (expect (not (str/includes? migration-checksum-mismatch-user-message
                                   "remove ~/.vis/vis.mdb")))))
+
+(defdescribe
+  migration-repair-self-heal-test
+  (it "a drifted V1 checksum self-heals through Flyway repair and preserves rows"
+      (let
+        [root
+         (fs/create-temp-dir {:prefix "vis-repair-"})
+
+         dir
+         (str (fs/path root "store"))
+
+         s1
+         (vis/db-create-connection! dir)]
+
+        (try
+          (jdbc/execute! (:datasource s1) ["CREATE TABLE repair_probe (id INTEGER)"])
+          (jdbc/execute! (:datasource s1) ["INSERT INTO repair_probe (id) VALUES (42)"])
+          ;; Force the exact validation failure that used to wedge gateway
+          ;; startup. Repair must touch only Flyway metadata, never this row.
+          (jdbc/execute! (:datasource s1)
+                         ["UPDATE flyway_schema_history SET checksum = -999 WHERE version = '1'"])
+          (vis/db-dispose-connection! s1)
+          (let [s2 (vis/db-create-connection! dir)]
+            (try (expect (= 1 (raw-count s2 :repair_probe)))
+                 (expect (= 42 (:id (first (raw-query s2 {:select [:id] :from [:repair_probe]})))))
+                 (finally (vis/db-dispose-connection! s2))))
+          (finally (fs/delete-tree root))))))
 
 
 (def ^:private multiprocess-child-code
@@ -980,6 +1007,86 @@
         ;; both: a snippet from each side
         (expect (str/includes? (:request-snippet (get by-id both)) "NEEDLE"))
         (expect (str/includes? (:reply-snippet (get by-id both)) "NEEDLE")))))
+  (it "returns SEVERAL hits per session, newest first — not one collapsed line"
+      (let
+        [s
+         (h/store)
+
+         cid
+         (h/store-session! s {:channel :tui :title "Many"})]
+
+        ;; Five turns, each mentioning the needle: the old GROUP BY + MAX shape
+        ;; could physically carry only ONE request + ONE reply snippet per
+        ;; session, so the picker showed a single arbitrary line.
+        (dotimes [i 5]
+          (let
+            [tid (vis/db-store-session-turn! s
+                                             {:parent-session-id cid
+                                              :user-request (str "needle ask number " i)
+                                              :status :done})]
+            (h/store-iteration! s
+                                {:session-turn-id tid
+                                 :assistant-prose (str "needle answer number " i)
+                                 :code "x"
+                                 :result 1})))
+        (let [m (first (vis/db-search-session-matches s :all "needle"))]
+          (expect (<= 4 (count (:hits m))))
+          (expect (every? #(str/includes? (:snippet %) "needle") (:hits m)))
+          (expect (= #{:request :reply} (set (map :side (:hits m)))))
+          ;; Newest first.
+          (expect (= (sort-by (comp - inst-ms :at) (:hits m)) (:hits m))))))
+  (it
+    "caps hits PER SESSION, so an older session is not starved by a newer one"
+    (let
+      [s
+       (h/store)
+
+       older
+       (h/store-session! s {:channel :tui :title "Older"})
+
+       newer
+       (h/store-session! s {:channel :tui :title "Newer"})]
+
+      ;; The newer session is written LAST, so under a global "newest N rows"
+      ;; budget its rows would crowd the older session down to a single hit.
+      (doseq
+        [cid
+         [older newer]
+
+         i
+         (range 5)]
+
+        (let
+          [tid (vis/db-store-session-turn!
+                 s
+                 {:parent-session-id cid :user-request (str "needle ask number " i) :status :done})]
+          (h/store-iteration! s
+                              {:session-turn-id tid
+                               :assistant-prose (str "needle answer number " i)
+                               :code "x"
+                               :result 1})))
+      (let
+        [by-id (into {}
+                     (map (juxt :id (comp count :hits)))
+                     (vis/db-search-session-matches s :all "needle"))]
+        (expect (= 2 (count by-id)))
+        (expect (<= 4 (long (get by-id older))))
+        (expect (= (get by-id older) (get by-id newer))))))
+  (it "matches a PREFIX so search is useful mid-typing (`dia` finds `dialogs`)"
+      (let
+        [s
+         (h/store)
+
+         cid
+         (h/store-session! s {:channel :tui :title "Prefix"})]
+
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "flatten the dialogs" :status :done})
+        (expect (= [cid] (vis/db-search-session-ids s :all "dia")))
+        (expect (= [cid] (vis/db-search-session-ids s :all "dialog")))
+        (expect (= [cid] (vis/db-search-session-ids s :all "flatten dia")))
+        (expect (= [] (vis/db-search-session-ids s :all "zzz")))))
   (it
     "returns [] for a blank query and honours channel scope"
     (let

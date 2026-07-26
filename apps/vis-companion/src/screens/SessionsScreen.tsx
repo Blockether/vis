@@ -87,7 +87,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
       document.removeEventListener('visibilitychange', refreshLiveStates);
     };
     // A connection identity change should preserve the existing frame until its data arrives.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeKey, load]);
 
   useEffect(() => {
@@ -619,31 +618,42 @@ function formatExact(value?: string): string {
 }
 
 // Renders a transcript-search hit in the SAME left-aligned style as the
-// conversation view: the user request under a "You" rail (left accent border),
-// the assistant reply under a "Vis" rail, plain text only — no tools, no
-// bubbles. Only the short server snippet is shown, with the query highlighted.
+// conversation view: user requests under a "You" rail (left accent border),
+// assistant replies under a "Vis" rail, plain text only — no tools, no bubbles.
+// EVERY hit the server sent is shown (newest first), so a session that matched
+// twenty times no longer collapses to one arbitrary line. Falls back to the
+// single request/reply pair when the gateway sent no per-hit list.
 function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }) {
-  const request = match.requestSnippet?.trim();
-  const reply = match.replySnippet?.trim();
-  if (!request && !reply) return null;
+  const rows =
+    match.hits.length > 0
+      ? match.hits
+      : [
+          { side: 'request' as const, snippet: match.requestSnippet?.trim() ?? '', at: null },
+          { side: 'reply' as const, snippet: match.replySnippet?.trim() ?? '', at: null },
+        ].filter((h) => h.snippet.length > 0);
+  if (rows.length === 0) return null;
   return (
     <div className="flex flex-col gap-3 border-t border-dialog-edge bg-ink/40 px-3 py-3 sm:px-4">
-      {request && (
-        <div>
-          <div className="mb-1 font-mono text-[10px] font-bold text-you-role">You</div>
-          <p className="whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 font-mono text-[11px] leading-5 text-you-message-foreground">
-            {highlightNeedle(request, needle)}
+      {rows.map((hit, index) => (
+        <div key={`${hit.side}-${hit.at ?? index}`}>
+          <div
+            className={`mb-1 font-mono text-[10px] font-bold ${
+              hit.side === 'request' ? 'text-you-role' : 'text-vis-role'
+            }`}
+          >
+            {hit.side === 'request' ? 'You' : 'Vis'}
+          </div>
+          <p
+            className={`whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-5 ${
+              hit.side === 'request'
+                ? 'border-l-2 border-you-role bg-code text-you-message-foreground'
+                : 'bg-answer text-answer-foreground'
+            }`}
+          >
+            {highlightNeedle(hit.snippet, needle)}
           </p>
         </div>
-      )}
-      {reply && (
-        <div>
-          <div className="mb-1 font-mono text-[10px] font-bold text-vis-role">Vis</div>
-          <p className="whitespace-pre-wrap break-words bg-answer px-3 py-2 font-mono text-[11px] leading-5 text-answer-foreground">
-            {highlightNeedle(reply, needle)}
-          </p>
-        </div>
-      )}
+      ))}
     </div>
   );
 }

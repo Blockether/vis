@@ -142,6 +142,50 @@
                 "Provider limits fn returned an invalid report"
                 {:report raw :explain (s/explain-data ::report raw)}))
 
+(def ^:private limits-cache-ttl-ms
+  "How long one provider's live limits report is reused.
+
+   `:provider/limits-fn` is an UPSTREAM HTTP call (the provider's usage
+   endpoint). Every channel polls limits independently — the TUI footer thread,
+   the companion's router dialog, `/v1/router` (which fans out to EVERY
+   registered provider in one request) — so without a cache N clients times M
+   providers hit the provider's API on every glance. 15s is short enough that a
+   quota that just moved shows up promptly and long enough that a burst of
+   clients costs ONE upstream call."
+  15000)
+
+(defonce ^:private limits-cache (atom {}))
+
+(defn flush-limits-cache!
+  "Drop cached limits reports so the next read hits the provider again.
+
+   Called after auth changes (sign-in / sign-out): the cached report for a
+   provider that just re-authenticated would otherwise keep saying
+   `:unauthenticated` for up to the TTL."
+  ([] (reset! limits-cache {}))
+  ([provider-id] (swap! limits-cache dissoc provider-id)))
+
+(defn- cached-report
+  "Run `fetch` at most once per `limits-cache-ttl-ms` per provider.
+
+   The cache holds a `delay`, so concurrent callers that miss together share ONE
+   in-flight upstream call instead of stampeding it (single flight)."
+  [provider-id fetch]
+  (let
+    [now
+     (System/currentTimeMillis)
+
+     entry
+     (-> (swap! limits-cache
+           (fn [m]
+             (let [e (get m provider-id)]
+               (if (and e (< (- now (long (:at e))) (long limits-cache-ttl-ms)))
+                 m
+                 (assoc m provider-id {:at now :value (delay (fetch))})))))
+         (get provider-id))]
+
+    @(:value entry)))
+
 (defn provider-limits
   "Return a normalized, spec-validated limits report for one provider id.
 
@@ -165,13 +209,17 @@
      (seq (:static static-report))]
 
     (cond (and provider (:provider/limits-fn provider))
-          (try (let [report (merge-report static-report (or ((:provider/limits-fn provider)) {}))]
-                 (if (s/valid? ::report report) report (invalid-report provider-id report)))
-               (catch Throwable t
-                 (error-report provider-id
-                               :provider/limits-error
-                               (or (ex-message t) (.getName (class t)))
-                               {:class (.getName (class t))})))
+          (cached-report
+            provider-id
+            (fn []
+              (try (let
+                     [report (merge-report static-report (or ((:provider/limits-fn provider)) {}))]
+                     (if (s/valid? ::report report) report (invalid-report provider-id report)))
+                   (catch Throwable t
+                     (error-report provider-id
+                                   :provider/limits-error
+                                   (or (ex-message t) (.getName (class t)))
+                                   {:class (.getName (class t))})))))
           has-static? (base-report
                         provider-id
                         :ok

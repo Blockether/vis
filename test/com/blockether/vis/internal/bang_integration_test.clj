@@ -105,7 +105,7 @@
           ;; back in prior-turn context, tagged so channels suppress the trace.
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
-          (expect (= "shell_run" (:vis/tool-name form)))
+          (expect (= "shell" (:vis/tool-name form)))
           (expect (= "hi-from-bang\n" (get (:result form) "stdout")))
           (expect (= 0 (get (:result form) "exit"))))))))
 

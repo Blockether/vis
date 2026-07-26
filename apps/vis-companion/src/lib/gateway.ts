@@ -7,6 +7,11 @@
 // prompt a re-pair.
 
 import type {
+  AuthFlow,
+  AuthVerdict,
+  ModelPref,
+  QueuedTurn,
+  RouterProvider,
   GatewayAttachment,
   GatewayCapabilities,
   GatewayConn,
@@ -35,15 +40,26 @@ export class GatewayError extends Error {
   }
 }
 
-// One transcript-search hit, tagged with WHERE the query matched (the user's
-// own request vs. the assistant's reply) plus a short preview snippet of each
-// matching side. Only the small window travels — never the whole conversation.
+// One transcript-search hit inside a session: which SIDE it landed on (the
+// user's own request vs. the assistant's reply), a short preview snippet, and
+// when it happened. Several travel per session, newest first.
+export interface SessionMatchHit {
+  side: 'request' | 'reply';
+  snippet: string;
+  at: number | null;
+}
+
+// One matching session, tagged with WHERE the query hit plus up to a handful of
+// preview snippets. Only those small windows travel — never the conversation.
+// `requestSnippet`/`replySnippet` are the first hit of each side, kept for
+// callers that want a single line.
 export interface SessionMatch {
   sessionId: string;
   inRequest: boolean;
   inReply: boolean;
   requestSnippet: string | null;
   replySnippet: string | null;
+  hits: SessionMatchHit[];
 }
 
 interface RawSessionMatch {
@@ -52,6 +68,7 @@ interface RawSessionMatch {
   is_in_reply?: boolean;
   request_snippet?: string | null;
   reply_snippet?: string | null;
+  hits?: { side?: string; snippet?: string | null; at?: number | null }[];
 }
 
 function normalizeBase(url: string): string {
@@ -202,6 +219,100 @@ export class GatewayClient {
     return this.request<Toggle>('POST', '/v1/settings', { id, action, value });
   }
 
+  // ── Router: providers, models, auth ─────────────────────────────
+  // `/v1/router` is the WHOLE picker payload in one call — the same one the
+  // TUI's router dialog renders. Auth is driven step-by-step over HTTP: the
+  // daemon owns the PKCE verifier, the device code, and the credential file,
+  // so no token ever reaches this device.
+  async router(signal?: AbortSignal): Promise<RouterProvider[]> {
+    const response = await this.request<{ providers?: RouterProvider[] }>(
+      'GET',
+      '/v1/router',
+      undefined,
+      signal,
+    );
+    return response.providers ?? [];
+  }
+
+  async sessionModel(sid: string, signal?: AbortSignal): Promise<ModelPref | null> {
+    const response = await this.request<{ model?: ModelPref }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/model`,
+      undefined,
+      signal,
+    );
+    return response.model ?? null;
+  }
+
+  async setSessionModel(
+    sid: string,
+    provider: string,
+    model: string,
+  ): Promise<ModelPref | null> {
+    const response = await this.request<{ model?: ModelPref }>(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(sid)}/model`,
+      { provider, model },
+    );
+    return response.model ?? null;
+  }
+
+  /** Begin OAuth. `kind: 'device'` finishes by polling; `'pkce'` needs a paste-back. */
+  startProviderAuth(providerId: string): Promise<AuthFlow> {
+    return this.request<AuthFlow>(
+      'POST',
+      `/v1/providers/${encodeURIComponent(providerId)}/auth/start`,
+    );
+  }
+
+  completeProviderAuth(
+    providerId: string,
+    flowId: string,
+    redirectUrl: string,
+  ): Promise<AuthVerdict> {
+    return this.request<AuthVerdict>(
+      'POST',
+      `/v1/providers/${encodeURIComponent(providerId)}/auth/complete`,
+      { flow_id: flowId, redirect_url: redirectUrl },
+    );
+  }
+
+  /** Finish an `api-key` flow: the DAEMON persists the key in its own config. */
+  submitProviderKey(
+    providerId: string,
+    flowId: string,
+    apiKey: string,
+  ): Promise<AuthVerdict> {
+    return this.request<AuthVerdict>(
+      'POST',
+      `/v1/providers/${encodeURIComponent(providerId)}/auth/complete`,
+      { flow_id: flowId, api_key: apiKey },
+    );
+  }
+
+  pollProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
+    return this.request<AuthVerdict>(
+      'POST',
+      `/v1/providers/${encodeURIComponent(providerId)}/auth/poll`,
+      { flow_id: flowId },
+    );
+  }
+
+  cancelProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
+    return this.request<AuthVerdict>(
+      'POST',
+      `/v1/providers/${encodeURIComponent(providerId)}/auth/cancel`,
+      { flow_id: flowId },
+    );
+  }
+
+  logoutProvider(providerId: string): Promise<AuthVerdict> {
+    return this.request<AuthVerdict>(
+      'POST',
+      `/v1/providers/${encodeURIComponent(providerId)}/logout`,
+    );
+  }
+
   // ── Theme (same persisted selection and palette as the TUI) ─────
   theme(signal?: AbortSignal): Promise<GatewayTheme> {
     return this.request<GatewayTheme>('GET', '/v1/theme', undefined, signal);
@@ -284,6 +395,13 @@ export class GatewayClient {
       inReply: Boolean(m.is_in_reply),
       requestSnippet: m.request_snippet ?? null,
       replySnippet: m.reply_snippet ?? null,
+      hits: (m.hits ?? [])
+        .filter((h) => Boolean(h.snippet?.trim()))
+        .map((h) => ({
+          side: h.side === 'request' ? ('request' as const) : ('reply' as const),
+          snippet: h.snippet as string,
+          at: h.at ?? null,
+        })),
     }));
   }
 
@@ -381,6 +499,31 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
     );
   }
+
+  /**
+   * The session's queued backlog AS THE GATEWAY KNOWS IT. The tray never
+   * invents rows, and SSE only carries the deltas that happen while we are
+   * subscribed — so a session opened (or reloaded, or backgrounded by iOS)
+   * while messages sit queued must read the backlog back from here. Same
+   * source and same filter the TUI resumes from (`chat/resume-session`).
+   */
+  async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
+    const response = await this.request<{ turns?: SubmittedTurn[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns`,
+      undefined,
+      signal,
+    );
+    return (response.turns ?? [])
+      .filter((turn) => String(turn.status ?? '') === 'queued')
+      .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
+      .map((turn) => ({
+        turnId: String(turn.turn_id ?? turn.id ?? ''),
+        request: typeof turn.request === 'string' ? turn.request : '',
+      }))
+      .filter((row) => row.turnId !== '');
+  }
+
 
   /**
    * Resume a queue the gateway paused after a provider failure — retries the

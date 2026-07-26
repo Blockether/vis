@@ -59,7 +59,7 @@
    repeats the same message up to four times (top level, `:data :error`,
    `:data :tool-result :error`, the channel slice) and drags the failing
    extension's identity (license, author, description, source paths,
-   sha256) along — pure prompt-token waste: one blocked shell_run
+   sha256) along — pure prompt-token waste: one blocked `shell` call
    pinned ~700 tokens of duplicates into every subsequent prompt."
   [error]
   (if-not (map? error)

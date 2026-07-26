@@ -598,15 +598,7 @@
                          in-draft?
                          (assoc "is_draft"
                            true "draft_root"
-                           (str ws-root))))
-
-     ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
-     ;; bracketed "resources N (C-x s)" button — no glyph (a width-1 icon read
-     ;; as noise; the word carries the meaning). Shown only when this
-     ;; session owns ≥1.
-     res-count
-     (count (try (lp/gateway-list-resources-cached (get-in db [:session :id]))
-                 (catch Throwable _ nil)))]
+                           (str ws-root))))]
 
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
@@ -640,28 +632,16 @@
              :fg t/footer-fg-muted
              :bold? false
              :region :left
-             :priority 5})
-
-      ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
-      ;; TUI button (the web twin has a clickable "Manage" button; this is its
-      ;; terminal mirror). C-x s opens resources directly; C-x p remains the
-      ;; global command palette.
-      true
-      (conj {:text (str " backgrounds " res-count " (" (keymap/label-for :open-resources) ") ")
-             :fg t/footer-fg-strong
-             :bold? true
-             :region :right
-             :priority 2
-             :kind :footer-resources}))
-    ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
-    ;; The bubble's `progress->text` already carries live activity, and
-    ;; user-facing cancellation feedback is emitted as a host notification.
-    ;; Channel statuses (voice recording, transcription, etc.) also stay out
-    ;; of the footer. The header's left banner is their single owner.
-    ;; ── RIGHT ─────────────────────────────────────────────────────────────
-    ;; Git lives here. Provider usage moved to the second row so it sits
-    ;; directly under the repository state instead of competing with it.
-  ))
+             :priority 5})))
+  ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
+  ;; The bubble's `progress->text` already carries live activity, and
+  ;; user-facing cancellation feedback is emitted as a host notification.
+  ;; Channel statuses (voice recording, transcription, etc.) also stay out
+  ;; of the footer. The header's left banner is their single owner.
+  ;; ── RIGHT ─────────────────────────────────────────────────────────────
+  ;; Git lives here. Provider usage moved to the second row so it sits
+  ;; directly under the repository state instead of competing with it.
+)
 
 (defn- build-usage-segments
   "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared."
@@ -1051,8 +1031,8 @@
                          (+ (long c) (p/display-width separator)))))]
               (if (:kind s)
                 ;; Real button chip via the shared `components/button!` — the SAME
-                ;; component the header right-side buttons use (flat ink on the
-                ;; terminal bg, accent on hover, click region registered under `:kind`).
+                ;; component the header right-side buttons use (filled inverted cap,
+                ;; accent on hover, click region registered under `:kind`).
                 (do
                   (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
                   (+ (long c) (p/display-width (:text s))))

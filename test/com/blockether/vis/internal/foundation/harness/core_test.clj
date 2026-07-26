@@ -110,6 +110,14 @@
           (expect (str/includes? (:description schema) "already-active receipt"))
           (expect (not (str/includes? (:description schema) "SKILLS block")))
           (expect (false? (get-in schema [:schema :additionalProperties])))))
+    (it "renders the loaded SKILL.md as markdown instead of a fenced code block"
+        (let
+          [render (get (extension/native-tool-renderers exts) "skill")
+           body "## Setup\n\n1. Run `context.mjs`."
+           rendered (render {"name" "demo" "body" body})]
+
+          (expect (= "loaded skill `demo`" (:summary rendered)))
+          (expect (= body (:body rendered)))))
     (it "the handler activates once and returns a compact receipt on repeat"
         (with-redefs
           [d/skill-by-name (fn [_]

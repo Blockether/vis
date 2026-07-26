@@ -868,10 +868,16 @@
       ;; gateway sync/attach subscriptions forward these so every attached TUI
       ;; mirrors the queued backlog live (see state/:sync-queued-turn).
       "turn.queued"
-      {:phase :queue-sync
-       :op :add
-       :turn-id (event-get event :turn-id)
-       :text (event-get event :request)}
+      ;; The submitter's own correlation id (the `idempotency_key` it sent) rides
+      ;; along when present: it tells the channel that queued this turn that the
+      ;; row is its OWN submission - by id, never by request text.
+      (cond->
+        {:phase :queue-sync
+         :op :add
+         :turn-id (event-get event :turn-id)
+         :text (event-get event :request)}
+        (event-get event :idempotency-key)
+        (assoc :client-id (event-get event :idempotency-key)))
 
       "turn.queued.updated"
       {:phase :queue-sync
@@ -1023,8 +1029,11 @@
    show the SAME elapsed time), so the caller can ATTACH and stream it live (see
    state/:attach-running-turn) instead of showing frozen history. Any queued
    backlog rides along as `:queued-turns`
-   `[{:turn-id .. :text .. :queued-at-ms ..}]` (oldest first) so the tab
-   mirrors the gateway's server-side queue on open."
+   `[{:turn-id .. :client-id .. :text .. :queued-at-ms ..}]` (oldest first) so the
+   tab mirrors the gateway's server-side queue on open; `:client-id` is the
+   submitter's own correlation id, so a channel recognises which rows it submitted
+   by id instead of by request text. `:running-client-id` is the
+   same correlation id for the RUNNING turn."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
     (when-let [soul (vis/gateway-soul resolved-id)]
@@ -1054,11 +1063,15 @@
                            (mapv (fn [t]
                                    {:turn-id (get t "turn_id")
                                     :text (get t "request")
+                                    :client-id (get t "idempotency_key")
                                     :queued-at-ms (get t "queued_at")})))]
 
         (cond-> {:id resolved-id :history (rebuild-history resolved-id) :status (get soul "status")}
           tid
           (assoc :current-turn-id tid)
+
+          (some? (get running-turn "idempotency_key"))
+          (assoc :running-client-id (get running-turn "idempotency_key"))
 
           (some? running-request)
           (assoc :running-request running-request)
@@ -1073,13 +1086,20 @@
   "Submit a user request through the canonical in-process gateway. Blocking."
   ([session text] (turn! session text {}))
   ([{:keys [id]} text
-    {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace]}]
+    {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace
+            idempotency-key]}]
    (try (vis/gateway-submit-turn-sync! id
                                        (cond->
                                          {:request text
                                           :on-event (fn [event]
                                                       (when-let [chunk (gateway-event->chunk event)]
                                                         (when on-chunk (on-chunk chunk))))}
+                                         ;; Client-minted correlation id: makes the submit
+                                         ;; idempotent AND lets this tab recognise its own
+                                         ;; turn in queue events by id, not by text.
+                                         idempotency-key
+                                         (assoc :idempotency-key idempotency-key)
+
                                          cancel-token
                                          (assoc :cancel-token cancel-token)
 

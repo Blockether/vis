@@ -5,20 +5,13 @@
    child environments, and replaced only by an explicit environment rebuild.
    Enforcement and context both derive from this value."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.config-spec :as config-spec])
-  (:import [java.io File]
-           [java.nio.charset StandardCharsets]
+            [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.paths :as paths])
+  (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path Paths]
            [java.security MessageDigest]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
-
-(defn- expand-home
-  [path home]
-  (let [s (str path)]
-    (cond (= s "~") home
-          (str/starts-with? s "~/") (str home File/separator (subs s 2))
-          :else s)))
 
 (defn- nearest-real-path
   "Resolve a configured path against `base-dir`, resolving every existing
@@ -28,7 +21,7 @@
   (when-not (str/blank? (str path))
     (let
       [expanded
-       (expand-home path home)
+       (paths/expand-home path home)
 
        ^Path raw
        (Paths/get expanded (make-array String 0))
@@ -62,30 +55,11 @@
   ([path] (home-relative path (System/getProperty "user.home")))
   ([path home]
    (let
-     [path
-      (some-> path
-              str
-              not-empty)
-
-      home
-      (some-> home
-              str
-              not-empty)]
-
-     (if-not (and path home)
-       path
-       (try (let
-              [^Path p
-               (.normalize (.toAbsolutePath (Paths/get path (make-array String 0))))
-
-               ^Path h
-               (.normalize (.toAbsolutePath (Paths/get home (make-array String 0))))]
-
-              (cond (= p h) "~"
-                    (.startsWith p h)
-                    (str "~/" (str/replace (.toString (.relativize h p)) File/separator "/"))
-                    :else path))
-            (catch Throwable _ path))))))
+     [abbreviated (paths/abbreviate-home (some-> path
+                                                 str
+                                                 not-empty)
+                                         home)]
+     (if (= "~/" abbreviated) "~" abbreviated))))
 
 (defn- resolve-paths
   [paths base-dir home]

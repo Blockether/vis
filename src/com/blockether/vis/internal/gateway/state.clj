@@ -786,7 +786,7 @@
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned
    into the durable trace: a provider wait, response parsing, and shell/tool
-   calls (incl. a nested `shell_run` inside python_execution) that would
+   calls (incl. a nested `shell` call inside python_execution) that would
    otherwise leave the bubble frozen for the whole call."
   #{:provider-call :response-parse :shell-run :shell-bg :tool-start})
 
@@ -1378,8 +1378,8 @@
 ;; =============================================================================
 
 (declare drain-next-queued!
-         queued-after-cancel?
-         first-queued-turn
+         drop-cancelled-backlog!
+         next-drainable-turn
          pause-queue!
          resume-queue!
          schedule-auto-resume!
@@ -1662,13 +1662,12 @@
                          "turn.completed")
                        {:turn_id tid :status status})
         (emit-context-updated! sid)
-        ;; A user cancel means "stop", not "advance": do NOT auto-start a turn
-        ;; that was already queued BEFORE the cancel. Leaving that backlog
-        ;; queued lets the channel pull it back into the editor (TUI) or keep
-        ;; it visible/editable (web) instead of firing an uninterruptible
-        ;; follow-up the instant the cancel lands. A message submitted AFTER
-        ;; the cancel fired is the OPPOSITE intent — "stop that, run THIS" —
-        ;; so it drains the moment this worker unwinds (queued-after-cancel?).
+        ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
+        ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
+        ;; can resurrect it later; the channel keeps its own copy and pulls it
+        ;; back into the editor. A message submitted AFTER the cancel fired is
+        ;; the OPPOSITE intent — "stop that, run THIS" — so it survives the drop
+        ;; and drains the moment this worker unwinds.
         ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
         ;; is cancelled either way, so distinguish on the stall flag and drain.
         (after-turn-terminal! sid
@@ -1787,33 +1786,48 @@
                                                                        worker))))
 
 
-(defn- first-queued-turn
-  [entry]
+(defn- left-queued-by-cancel?
+  "True when queued turn `head` was submitted BEFORE the session's cancel floor
+   — the wall-clock of the last USER cancel, stamped on the entry as
+   `:cancel-floor` by [[drop-cancelled-backlog!]]. Such a turn was deliberately
+   stopped (the user pressed Esc while it sat in the backlog) so it must NEVER
+   auto-start again, no matter which path reaches the queue: a later terminal
+   drain, an attach/resume kick, or a breaker auto-resume. This is the ONE
+   provenance gate; [[drain-next-queued!]] enforces it for every caller.
+
+   The floor is read from ONE entry-level key rather than scanning per-turn
+   `:cancelling_at` stamps, because a STALL force-cancel stamps `:cancelling_at`
+   too — that is a failure, not a user stop, and its backlog must still run.
+
+   A head queued AFTER the floor (\"stop that, run THIS\") — or a session with no
+   user cancel at all — drains normally."
+  [entry head]
+  (let
+    [floor
+     (long (or (:cancel-floor entry) 0))
+
+     queued-at
+     (long (or (:queued_at head) 0))]
+
+    (and (pos? floor) (< queued-at floor))))
+
+(defn- next-drainable-turn
+  "The oldest queued turn for `entry` that may auto-start: the first `queued`
+   entry in `:turn-order` that is not [[left-queued-by-cancel?]] (every turn when
+   `force?`, the explicit user resume). Returns `[tid turn]` or nil.
+
+   Gating at SELECTION, not after picking the head, is what keeps the queue from
+   wedging: a pre-cancel straggler that survived [[drop-cancelled-backlog!]]
+   (a submit that raced the cancel sweep, a re-queue) is skipped over rather than
+   parked at the head blocking the message queued AFTER the cancel — the \"stop
+   that, run THIS\" intent."
+  [entry force?]
   (some (fn [tid]
           (let [turn (get-in entry [:turns tid])]
-            (when (= "queued" (:status turn)) [tid turn])))
+            (when (and (= "queued" (:status turn))
+                       (or force? (not (left-queued-by-cancel? entry turn))))
+              [tid turn])))
         (:turn-order entry)))
-
-(defn- queued-after-cancel?
-  "True when the oldest queued turn for `sid` was submitted AFTER turn `tid`'s
-   cancel fired (its `:cancelling_at` stamp, set by `cancel-turn!`). A user
-   cancel normally leaves the backlog queued — stop means stop — but a message
-   typed AFTER Esc is the opposite intent (\"stop that, run THIS\"): while the
-   cancelled provider call unwinds, the dying turn still holds `:current-turn`,
-   so that fresh submit lands in the queue; without this check it would sit
-   there forever because the user-cancel path skips `drain-next-queued!`."
-  [sid tid]
-  (let
-    [entry
-     (get @registry sid)
-
-     cancelling-at
-     (get-in entry [:turns tid :cancelling_at])
-
-     [_ head]
-     (first-queued-turn entry)]
-
-    (boolean (and cancelling-at head (>= (long (or (:queued_at head) 0)) (long cancelling-at))))))
 
 (defn- replace-last-user-message-content
   "Return `messages` with the last user message content replaced by `text`.
@@ -1833,98 +1847,93 @@
     messages))
 
 (defn- drain-next-queued!
-  "Start the oldest queued turn for `sid`, if one exists. Returns the started turn."
-  [sid]
-  (let [decision (volatile! nil)]
-    (swap! registry update
-      sid
-      (fn [entry]
-        (if (or (nil? entry) (:current-turn entry))
-          entry
-          (if-let
-            [[tid
-              {:keys [request messages model reasoning-default cancel-token extra-body turn-features
-                      workspace engine-opts attachments display_request]}]
-             (first-queued-turn entry)]
-            (let
-              [token (or cancel-token (cancellation/cancellation-token))
-               started-at (System/currentTimeMillis)]
+  "Start the oldest DRAINABLE queued turn for `sid`, if one exists. Returns the
+   started turn.
 
-              (vreset! decision
-                       {:tid tid
-                        :request request
-                        :display-request display_request
-                        :messages messages
-                        :model model
-                        :reasoning-default reasoning-default
-                        :cancel-token token
-                        :extra-body extra-body
-                        :turn-features turn-features
-                        :workspace workspace
-                        :engine-opts engine-opts
-                        :attachments attachments})
-              (-> entry
-                  (assoc :current-turn tid
-                         :last-active started-at)
-                  (update-in [:turns tid]
-                             merge
-                             {:status "running" :cancel-token token :started_at started-at})))
-            entry))))
-    (when-let
-      [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
-               turn-features workspace engine-opts attachments]}
-       @decision]
-      ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
-      ;; attached channel drops its mirrored entry on this, and a replayed
-      ;; event log nets to zero (turn.queued … turn.queued.drained). The
-      ;; turn.started that follows carries :queued? true for attach flows.
-      (append-event! sid "turn.queued.drained" {:turn_id tid} {:store? false})
-      (launch-turn-worker! sid
-                           tid
-                           request
-                           {:messages messages
-                            :model model
-                            :reasoning-default reasoning-default
-                            :cancel-token cancel-token
-                            :queued? true
-                            :extra-body extra-body
-                            :turn-features turn-features
-                            :workspace workspace
-                            :engine-opts engine-opts
-                            :attachments attachments
-                            :display-request display-request})
-      (get-turn sid tid))))
+   THE single place a queued turn becomes running — so it is also the single
+   place the cancel provenance gate lives ([[next-drainable-turn]] /
+   [[left-queued-by-cancel?]]): a turn queued BEFORE the session's last user
+   cancel NEVER auto-starts. Without that gate any later terminal (a fresh turn
+   completing minutes afterwards, an attach kick, a breaker resume) resurrected
+   the stopped backlog and fired it as an uninterruptible follow-up — the
+   queue-storm bug. `:force?` is the explicit user resume that deliberately
+   overrides the gate."
+  ([sid] (drain-next-queued! sid nil))
+  ([sid {:keys [force?]}]
+   (let [decision (volatile! nil)]
+     (swap! registry update
+       sid
+       (fn [entry]
+         (if (or (nil? entry) (:current-turn entry))
+           entry
+           (if-let
+             [[tid
+               {:keys [request messages model reasoning-default cancel-token extra-body
+                       turn-features workspace engine-opts attachments display_request]}]
+              (next-drainable-turn entry force?)]
+             (let
+               [token (or cancel-token (cancellation/cancellation-token))
+                started-at (System/currentTimeMillis)]
+
+               (vreset! decision
+                        {:tid tid
+                         :request request
+                         :display-request display_request
+                         :messages messages
+                         :model model
+                         :reasoning-default reasoning-default
+                         :cancel-token token
+                         :extra-body extra-body
+                         :turn-features turn-features
+                         :workspace workspace
+                         :engine-opts engine-opts
+                         :attachments attachments})
+               (-> entry
+                   (assoc :current-turn tid
+                          :last-active started-at)
+                   (update-in [:turns tid]
+                              merge
+                              {:status "running" :cancel-token token :started_at started-at})))
+             entry))))
+     (when-let
+       [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
+                turn-features workspace engine-opts attachments]}
+        @decision]
+       ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
+       ;; attached channel drops its mirrored entry on this, and a replayed
+       ;; event log nets to zero (turn.queued … turn.queued.drained). The
+       ;; turn.started that follows carries :queued? true for attach flows.
+       (append-event! sid "turn.queued.drained" {:turn_id tid} {:store? false})
+       (launch-turn-worker! sid
+                            tid
+                            request
+                            {:messages messages
+                             :model model
+                             :reasoning-default reasoning-default
+                             :cancel-token cancel-token
+                             :queued? true
+                             :extra-body extra-body
+                             :turn-features turn-features
+                             :workspace workspace
+                             :engine-opts engine-opts
+                             :attachments attachments
+                             :display-request display-request})
+       (get-turn sid tid)))))
 
 (defn drain-idle!
   "Start the oldest queued turn for `sid` IF the session is idle (no turn in
-   flight) AND the backlog was not deliberately left queued by a user cancel.
-   No-op returning nil otherwise. Lets an attaching channel kick an orphaned
-   backlog — submitted from another channel while this one was away — into
-   motion the moment a client opens/resumes, instead of letting it sit forever.
+   flight). No-op returning nil otherwise. Lets an attaching channel kick an
+   orphaned backlog — submitted from another channel while this one was away —
+   into motion the moment a client opens/resumes, instead of letting it sit
+   forever.
 
-   PROVENANCE GATE: a head turn queued BEFORE the session's most recent cancel
-   fired was left queued by Esc on purpose — stop means stop (the same policy
-   `queued-after-cancel?` encodes for the turn-terminal path). Auto-draining it
-   from a background attach (tab open, project switch) would resurrect work the
-   user explicitly stopped. A head queued AFTER the last cancel — or with no
-   cancel in the session at all — drains normally.
+   The cancel provenance gate is NOT re-implemented here: `drain-next-queued!`
+   owns it for every caller, so a backlog the user stopped with Esc can never be
+   resurrected by a background attach (tab open, project switch) either.
 
    Safe to call redundantly: `drain-next-queued!` guards on `:current-turn`."
   [sid]
-  (let
-    [entry
-     (get @registry sid)
-
-     [_ head]
-     (first-queued-turn entry)
-
-     last-cancel
-     (reduce max 0 (map long (keep :cancelling_at (vals (:turns entry)))))]
-
-    (when (and head
-               (or (zero? (long last-cancel))
-                   (>= (long (or (:queued_at head) 0)) (long last-cancel))))
-      (drain-next-queued! sid))))
+  (drain-next-queued! sid))
 
 (defn- failure-transient?
   "Classify a terminal FAILURE as transient (rate-limit / transport / stream
@@ -1981,7 +1990,7 @@
    transient failure RETRIES the same message rather than advancing past it (and
    losing it). Clears the stale failure fields and re-stamps `:queued_at`. No-op
    when the turn is gone. The tid keeps its original front slot in `:turn-order`,
-   so `first-queued-turn` re-selects it ahead of the rest of the backlog."
+   so `next-drainable-turn` re-selects it ahead of the rest of the backlog."
   [sid tid]
   (swap! registry update
     sid
@@ -2070,11 +2079,17 @@
         (when entry
           (when (:queue-paused entry) (vreset! was true))
           (cond-> (dissoc entry :queue-paused)
+            ;; explicit = the user says "go": re-arm the breaker AND lift the
+            ;; cancel floor, so the whole remaining backlog may drain, not just
+            ;; the forced head.
             (not auto?)
-            (dissoc :queue-fails)))))
+            (dissoc :queue-fails :cancel-floor)))))
     (when @was
       (append-event! sid "queue.resumed" {:is_auto (boolean auto?)})
-      (drain-next-queued! sid))))
+      ;; An EXPLICIT (user) resume is deliberate intent, so it overrides the
+      ;; cancel provenance gate; a breaker/backoff auto-resume does not — it
+      ;; retries the head the failure re-queued (freshly stamped `:queued_at`).
+      (drain-next-queued! sid {:force? (not auto?)}))))
 
 (defn queue-paused-info
   "The live `:queue-paused` marker for `sid` (`{:reason :held :fails :gen …}`),
@@ -2082,18 +2097,95 @@
   [sid]
   (get-in @registry [sid :queue-paused]))
 
+(defn- drop-cancelled-backlog!
+  "Terminally drop every turn still QUEUED for `sid` that was submitted BEFORE
+   turn `tid`'s user cancel fired (its `:cancelling_at` stamp). Stop means stop:
+   the pre-cancel backlog dies WITH the cancel, in ONE atomic registry swap,
+   instead of lingering as a record no path may auto-start.
+
+   This is what makes the queue race-free rather than merely race-guarded. The
+   old policy left those rows queued and relied on each CLIENT to delete them by
+   turn id — a delete that raced the late-bound id, skipped rows mirrored from a
+   sibling, and silently lost on a transport error. Every survivor then either
+   resurrected on a later turn's terminal (the same prompt re-running minutes
+   later) or sat forever as a ghost \"Queued\" row that also BLOCKED a genuinely
+   post-cancel message behind it. Deleting server-side makes client cleanup
+   optional, settles any client blocked on such a turn (`turn.queued.deleted` is
+   terminal for a waiter), and leaves a message queued AFTER the cancel — the
+   \"stop that, run THIS\" intent — untouched at the head.
+
+   The events are appended AFTER the `turn.cancelled` terminal, so a channel
+   restores its own queued text into the composer first and only then drops the
+   mirrors. Returns the dropped turn records."
+  [sid tid]
+  (let [dropped (volatile! [])]
+    (swap! registry update
+      sid
+      (fn [entry]
+        (if-let [cancelling-at (get-in entry [:turns tid :cancelling_at])]
+          (let
+            [stale (filterv (fn [[_ turn]]
+                              (and (= "queued" (:status turn))
+                                   (< (long (or (:queued_at turn) 0)) (long cancelling-at))))
+                     (:turns entry))]
+            (vreset! dropped (mapv second stale))
+            (reduce (fn [e [stale-tid _]]
+                      (-> e
+                          (update :turns dissoc stale-tid)
+                          (update :turn-order
+                                  (fn [order]
+                                    (vec (remove #{stale-tid} order))))
+                          (update :idempotency
+                                  (fn [m]
+                                    (into {} (remove (comp #{stale-tid} val) m))))))
+                    ;; The cancel FLOOR: one entry-level stamp marking "everything
+                    ;; submitted before this instant was stopped". Set only here,
+                    ;; on a real user cancel, so [[left-queued-by-cancel?]] can
+                    ;; refuse a straggler (a re-queue, a racing submit that landed
+                    ;; mid-cancel) long after this sweep.
+                    (assoc entry :cancel-floor (long cancelling-at))
+                    stale))
+          entry)))
+    (doseq [turn @dropped]
+      (append-event! sid
+                     "turn.queued.deleted"
+                     {:turn_id (:turn_id turn) :request (:request turn) :reason "cancelled"}
+                     {:store? false}))
+    @dropped))
+
 (defn- after-turn-terminal!
   "Post-terminal queue decision, replacing the old blind drain-on-both-paths.
    Clean success/suspend advances the backlog and re-arms the breaker. A TRANSIENT
    failure RE-QUEUES the failed message at the head and PAUSES — the backoff/breaker
    auto-resume then retries THAT same message, so a sick provider never burns the
    backlog and no message is skipped. A TERMINAL failure (auth/bad-request) is dead:
-   it holds the REST for an explicit resume. A user cancel leaves the backlog queued,
-   except the explicit \"stop that, run THIS\" case (`queued-after-cancel?`)."
+   it holds the REST for an explicit resume.
+
+   A USER CANCEL kills the pre-cancel backlog outright ([[drop-cancelled-backlog!]])
+   — stop means stop, with no ghost rows left to resurrect — and then drains only
+   what was queued AFTER the cancel (\"stop that, run THIS\"). A cancelled token is
+   NOT enough to identify one: a STALL force-cancel is a failure, and shutdown's
+   `cancel-all-running!` fires every token at once. A user stop is exactly a
+   cancelled token that is not a stall AND carries the `:cancelling_at` stamp
+   `cancel-turn!` writes; anything else cancelled drains nothing (a dying JVM must
+   not launch one more turn on its way out)."
   [sid tid {:keys [failed? transient? cancel-token stalled? retry-after-ms]}]
   (let
-    [drain?
-     (or stalled? (not (cancellation/cancelled? cancel-token)) (queued-after-cancel? sid tid))]
+    [cancelled?
+     (cancellation/cancelled? cancel-token)
+
+     user-cancel?
+     (and cancelled? (not stalled?) (some? (get-in @registry [sid :turns tid :cancelling_at])))
+
+     _
+     (when user-cancel? (drop-cancelled-backlog! sid tid))
+
+     drain?
+     (cond (not cancelled?) true
+           stalled? true
+           user-cancel? (boolean (next-drainable-turn (get @registry sid) false))
+           :else false)]
+
     (cond (not drain?) nil
           (not failed?) (let [was-paused (volatile! false)]
                           (swap! registry update
@@ -2109,7 +2201,7 @@
                                        {:reason "provider_unhealthy"
                                         :transient? true
                                         :retry-after-ms retry-after-ms}))
-          (first-queued-turn (get @registry sid))
+          (next-drainable-turn (get @registry sid) false)
           (pause-queue! sid {:reason "provider_error" :transient? false})
           :else nil)))
 
@@ -2150,40 +2242,49 @@
                                           (let [queued-at (System/currentTimeMillis)]
                                             (-> entry
                                                 (assoc :last-active queued-at)
-                                                (assoc-in [:turns tid]
-                                                          (cond->
-                                                            {:turn_id tid
-                                                             :session_id (str sid)
-                                                             :status "queued"
-                                                             :request request
-                                                             :queued_at queued-at}
-                                                            messages
-                                                            (assoc :messages messages)
+                                                (assoc-in
+                                                  [:turns tid]
+                                                  (cond->
+                                                    {:turn_id tid
+                                                     :session_id (str sid)
+                                                     :status "queued"
+                                                     :request request
+                                                     :queued_at queued-at}
+                                                    ;; The submitter's OWN correlation id, echoed back on
+                                                    ;; every wire view of this turn and on turn.queued. A
+                                                    ;; channel paints no queue row of its own, so this is
+                                                    ;; how it recognises which gateway rows are ITS
+                                                    ;; submissions - by ID, never by request TEXT (two
+                                                    ;; identical prompts are indistinguishable by text).
+                                                    idempotency-key
+                                                    (assoc :idempotency_key idempotency-key)
 
-                                                            cancel-token
-                                                            (assoc :cancel-token cancel-token)
+                                                    messages
+                                                    (assoc :messages messages)
 
-                                                            extra-body
-                                                            (assoc :extra-body extra-body)
+                                                    cancel-token
+                                                    (assoc :cancel-token cancel-token)
 
-                                                            turn-features
-                                                            (assoc :turn-features turn-features)
+                                                    extra-body
+                                                    (assoc :extra-body extra-body)
 
-                                                            (seq workspace)
-                                                            (assoc :workspace workspace)
+                                                    turn-features
+                                                    (assoc :turn-features turn-features)
 
-                                                            engine-opts
-                                                            (assoc :engine-opts engine-opts)
+                                                    (seq workspace)
+                                                    (assoc :workspace workspace)
 
-                                                            model
-                                                            (assoc :model model)
+                                                    engine-opts
+                                                    (assoc :engine-opts engine-opts)
 
-                                                            reasoning-default
-                                                            (assoc :reasoning-default
-                                                              reasoning-default)
+                                                    model
+                                                    (assoc :model model)
 
-                                                            (seq attachments)
-                                                            (assoc :attachments attachments)))
+                                                    reasoning-default
+                                                    (assoc :reasoning-default reasoning-default)
+
+                                                    (seq attachments)
+                                                    (assoc :attachments attachments)))
                                                 (update :turn-order (fnil conj []) tid)
                                                 (cond->
                                                   idempotency-key
@@ -2204,6 +2305,9 @@
                                                :request request
                                                :cancel-token token
                                                :started_at started-at}
+                                              idempotency-key
+                                              (assoc :idempotency_key idempotency-key)
+
                                               model
                                               (assoc :model model)
 
@@ -2222,7 +2326,12 @@
           {:turn (get-turn sid v) :idempotent? true}
 
           :queued
-          (do (append-event! sid "turn.queued" {:turn_id tid :request request} {:store? false})
+          (do (append-event! sid
+                             "turn.queued"
+                             (cond-> {:turn_id tid :request request}
+                               idempotency-key
+                               (assoc :idempotency_key idempotency-key))
+                             {:store? false})
               {:turn (get-turn sid tid)})
 
           :accepted
@@ -2553,7 +2662,7 @@
           (do ;; Stamp the cancel wall-clock BEFORE firing the token so the
             ;; unwinding worker can tell post-cancel submissions (drain
             ;; them: "stop that, run THIS") from the pre-cancel backlog
-            ;; (leave queued) — see `queued-after-cancel?`.
+            ;; (dropped) — see `drop-cancelled-backlog!`.
             (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
             ;; Durable twin of the stamp above: a JVM death mid-unwind must
             ;; not leave the engine row `:running` after the process exits).
@@ -2932,22 +3041,31 @@
      (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
 
 (defn search-session-matches
-  "Soul-id STRINGS whose TRANSCRIPT matches `query`, each TAGGED with WHERE it hit:
-   `[{:session_id str :is_in_request bool :is_in_reply bool}]` (wire-shaped:
-   snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side deep search as
-   `search-session-ids` — the assistant text never crosses the wire, only the
-   match location does. `:is_in_request` = the user's own request matched;
+  "Soul-id STRINGS whose TRANSCRIPT matches `query`, each TAGGED with WHERE it hit
+   and carrying up to a handful of MATCH SNIPPETS:
+   `[{:session_id str :is_in_request bool :is_in_reply bool
+      :request_snippet str :reply_snippet str
+      :hits [{:side \"request\"|\"reply\" :snippet str :at ms}]}]`
+   (wire-shaped: snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side
+   deep search as `search-session-ids` — the assistant text never crosses the wire,
+   only these snippet windows. `:is_in_request` = the user's own request matched;
    `:is_in_reply` = assistant reply text matched. Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (mapv (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet]}]
+       (mapv (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet hits]}]
                {:session_id (str id)
                 :is_in_request (boolean in-request?)
                 :is_in_reply (boolean in-reply?)
                 :request_snippet request-snippet
-                :reply_snippet reply-snippet})
+                :reply_snippet reply-snippet
+                :hits (mapv (fn [h]
+                              {:side (name (:side h))
+                               :snippet (:snippet h)
+                               :at (some-> (:at h)
+                                           inst-ms)})
+                            (or hits []))})
              (persistance/db-search-session-matches db channel query))
        []))))
 
@@ -3015,7 +3133,7 @@
    This is the gateway facade for local clients that are merely closing a view
    (for example a TUI tab or process exit). Use `close-session!` for DELETE.
 
-   Background resources (shell_bg processes, managed REPLs) are STOPPED here:
+   Background resources (background `shell` processes, managed REPLs) are STOPPED here:
    closing the view is the user walking away, and a bg child must not outlive
    that — the transcript stays resumable, the processes do not."
   [sid]

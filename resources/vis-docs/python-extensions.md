@@ -62,7 +62,7 @@ Exactly one call per file. Keyword arguments:
 | Argument | Type | What it does |
 | --- | --- | --- |
 | `name` | str, required | Unique extension name. Project file with the same name overrides a global one. |
-| `description` | str, required | One-liner for `vis extensions list` and the model's extensions snapshot. |
+| `description` | str, required | One-liner for `vis extension list` and the model's extensions snapshot. |
 | `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
 | `version` | str | Plain metadata. |
 | `alias` | str | Python-name prefix for tools. Required when `symbols=` is declared. |
@@ -288,13 +288,13 @@ Run them:
 
 ```
 /test            # in a session — inline pass/fail report
-vis ext test     # from the shell — prints a report, exits non-zero on failure
+vis extension test     # from the shell — prints a report, exits non-zero on failure
 ```
 
 The report is **per test**: each `test_*` shows ✓/✗ with the failing
 assertion's detail, grouped by file, under a one-line summary
 (`✓ N file(s): P passed, F failed, …`). Counts are derived from the actual
-per-test outcomes — never a separate tally, never scraped from output. `vis ext
+per-test outcomes — never a separate tally, never scraped from output. `vis extension
 test` exits non-zero when anything fails (it signals failure to the CLI, it
 does not kill the process), so it drops straight into CI.
 

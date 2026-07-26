@@ -114,8 +114,7 @@
 
 (defn button!
   "Generic clickable button: paint `label` (already space-padded, e.g. \" < \") as
-   FLAT ink on `terminal-bg` at (col,row) — no filled cap, no background block —
-   recoloured (and bolded) on hover, AND register its click
+   a filled accent cap at (col,row) — brighter on hover — AND register its click
    region under `:kind`, plus any identity keys in `extra` (merged into both the
    region and the hover match). One widget owns its look, its hover, and its
    click, so they can't drift apart. Returns the consumed width.
@@ -139,22 +138,24 @@
                    extra))]
 
      (p/clear-styles! g)
-     ;; ONE button language across the whole TUI, and it is FLAT — no filled cap,
-     ;; no chip block behind the label. Every state paints INK on `terminal-bg`,
-     ;; exactly like the dialogs: at rest the chip's former fill colour
-     ;; (`button-bg`) becomes its ink (each theme designs that pair to contrast
-     ;; `terminal-bg`), hover lifts to the accent, `:danger?` hover to the
-     ;; destructive red, `:accent?` (the `+` new-workspace CTA) to the green
-     ;; create colour, and a `:tint` chip paints its tint colour. Weight — bold —
-     ;; plus colour carries the state change that a background block used to.
-     (p/set-colors! g
-                    (cond (and hovered? danger?) t/close-button-hover-fg
-                          (and hovered? accent?) t/header-hover-fg
-                          accent? t/code-success-fg
-                          hovered? t/header-active-tab-accent
-                          tint (second (t/chip-tint tint))
-                          :else t/button-bg)
-                    t/terminal-bg)
+     ;; ONE button language across the whole TUI — the SAME chip every modal's
+     ;; ✕ uses (`dialog-close-button!`): an inverted title-strip cap at rest, and
+     ;; on hover it lifts to the accent (or the destructive red for `:danger?`
+     ;; actions like close), always bold. So find-bar and dialog buttons read as
+     ;; the same control instead of two palettes. `:accent?` is the exception: a
+     ;; PRIMARY/CTA chip (the `+` new-workspace button). `header-active-tab-accent`
+     ;; is the SAME blue as the active tab bg, so a white-on-accent chip vanished
+     ;; against the tabs and its inverted hover became a blank WHITE block. Instead
+     ;; the `+` rests as a GREEN create pill (white glyph on `code-success-fg`) that
+     ;; contrasts every tab, and on hover DARKENS to a solid deep-blue fill
+     ;; (`header-hover-fg`) — a clear, always-visible state change, never white.
+     (cond (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
+           (and hovered? accent?) (p/set-colors! g t/header-active-tab-fg t/header-hover-fg)
+           accent? (p/set-colors! g t/header-active-tab-fg t/code-success-fg)
+           hovered? (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+           tint (let [[fg bg] (t/chip-tint tint)]
+                  (p/set-colors! g fg bg))
+           :else (p/set-colors! g t/button-fg t/button-bg))
      (when (or hovered? accent? tint) (p/enable! g p/BOLD))
      (p/put-str! g col row label)
      (p/clear-styles! g)
@@ -616,7 +617,6 @@
            [(keymap/label-for :pick-file) "Attach file"]
            [(keymap/label-for :toggle-voice-recording) "Voice recording"]
            [(keymap/label-for :open-drafts) "Switch draft / stash to trunk"]
-           [(keymap/label-for :open-resources) "Backgrounds"]
            [(keymap/label-for :toggle-help) "Toggle this help"]]}
    {:title "Messaging & navigation"
     :rows
@@ -756,7 +756,9 @@
      (- (long right) w)]
 
     (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/close-button-hover-fg t/dialog-accent) t/terminal-bg)
+    (p/set-colors! g
+                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g col title-row label)
     (p/clear-styles! g)
@@ -891,9 +893,12 @@
     {:scroll eff :max-scroll max-scroll :sb? sb? :shown-n shown-n}))
 
 (defn help-overlay!
-  "Draw keyboard shortcuts with the shared backgroundless dialog frame used by
-   the F2 context panel. The body is a sectioned two-column grid: each group
-   sits under a bold full-width banner rather than bare rows with blank gaps.
+  "Draw the keyboard-shortcut help as a dialog, using the shared
+   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2
+   context panel (shadow, border, accent title bar, centered hint row).
+   The body (built by `box-grid-lines`) is a sectioned 2-column grid: each
+   group rides under a bold full-width banner, so the card reads as labelled
+   SECTIONS instead of bare rows with blank gaps.
 
    The chrome is drawn FIRST (the shared 5-arg arity picks a fixed modal
    footprint and IGNORES the passed line count), so we learn the real inner
@@ -1583,8 +1588,10 @@
          vec)))
 
 (defn context-overlay!
-  "Dialog showing the session's working memory—`:session/tasks` and
-   `:session/facts`. Uses the shared backgroundless frame. Its title carries a
+  "Dialog showing the session's working memory - `:session/tasks` AND
+   `:session/facts` - the W3 user-visible panel (F2). Uses the shared
+   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other
+   modal (shadow, border, accent title bar, hint row). Title carries a
    tasks-done + facts count summary; a TASKS section (status-sorted, colored
    glyphs, acceptance sub-lines, verify badges) then a FACTS section (active
    first, `> N` for file-bearing facts). `expanded` is the set of fact keys (as

@@ -852,6 +852,49 @@
   (fn [printer-fn]
     (interactive-auth! printer-fn {:account-type account-type})))
 
+(defn- auth-start
+  "Headless leg 1 of GitHub Copilot device-flow OAuth — the wire-drivable twin
+   of `interactive-auth!`. Starts the device flow and returns the fields a
+   remote client SHOWS the user (`:user-code`, `:verification-uri`) plus the
+   OPAQUE `:flow` the daemon hands back to `auth-await`.
+
+   Device flow is the best remote UX of the three OAuth providers: nothing has
+   to be pasted back, so a phone can complete it unaided."
+  [account-type]
+  (let
+    [opts
+     {:account-type account-type}
+
+     {:keys [user-code verification-uri device-code interval expires-in]}
+     (start-device-flow! opts)]
+
+    {:kind :device
+     :url verification-uri
+     :user-code user-code
+     :verification-uri verification-uri
+     :interval-ms (* 1000 (long (or interval 5)))
+     :expires-in-ms (* 1000 (long (or expires-in 900)))
+     :instructions ["Open the verification URL." "Enter the code shown above."
+                    "This finishes on its own — nothing to paste back."]
+     :flow {:device-code device-code :interval interval :expires-in expires-in :opts opts}}))
+
+(defn- auth-await
+  "Headless leg 2: BLOCK until GitHub confirms the device authorization, then
+   persist credentials and enable the known Copilot model policies — exactly
+   what `interactive-auth!` does, minus the printing. Callers that must not
+   block (the gateway) run this on their own thread."
+  [{:keys [device-code interval expires-in opts]}]
+  (poll-for-token! device-code interval expires-in opts)
+  (let
+    [{:keys [token api-url]}
+     (get-copilot-token! opts)
+
+     policy-root
+     (str/replace (or api-url "") #"/v1/?$" "")]
+
+    (enable-known-copilot-models! token policy-root))
+  {:status :ok})
+
 ;; ONE transparent provider per Copilot account, one OAuth login. Copilot
 ;; serves two cacheable wires behind that single token, BOTH under `/v1`:
 ;;   - Claude      -> native Anthropic `/v1/messages` (signed thinking + cache_control)
@@ -891,6 +934,9 @@
       :provider/logout-fn #'logout!
       :provider/detect-fn (make-detect-fn account-type)
       :provider/auth-fn (make-auth-fn account-type)
+      :provider/auth-start-fn (fn copilot-auth-start []
+                                (auth-start account-type))
+      :provider/auth-await-fn #'auth-await
       :provider/get-token-fn (make-get-token-fn account-type)
       :provider/refresh-token-fn (make-force-refresh-fn account-type)
       :provider/limits-fn (make-limits-fn account-type)}]

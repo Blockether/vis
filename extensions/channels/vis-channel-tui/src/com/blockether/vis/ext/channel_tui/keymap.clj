@@ -92,9 +92,8 @@
    {:action :search-open :key \f :label "search" :show-when :never}
    {:action :pick-file :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
-   {:action :open-drafts :key \d :label "drafts"}
-   {:action :open-resources :key \b :label "backgrounds"}
-   {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
+   {:action :open-drafts :key \d :label "drafts"} {:action :toggle-help :key \h :label "help"}
+   {:action :new-session :key \n :label "new session"}
    {:action :show-sessions :key \s :label "switch session"}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
    {:action :fork-session :key \y :label "fork session" :show-when :never}

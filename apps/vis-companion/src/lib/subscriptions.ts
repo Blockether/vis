@@ -7,6 +7,11 @@ type ConnectionListener = (connected: boolean) => void;
 
 const MAX_BUFFERED_EVENTS = 2_048;
 
+// iOS/Android fire visibilitychange, online and pageshow together on wake, and
+// each handler calls resync(). Without a floor that is 3 stream teardowns and 3
+// reconnects against the gateway in one tick; one is enough.
+const RESYNC_MIN_INTERVAL_MS = 1_000;
+
 /**
  * One long-lived, multiplexed gateway subscription for every visited session.
  * Session views may mount/unmount without stopping their stream; a bounded
@@ -23,6 +28,7 @@ export class SessionSubscriptionHub {
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
+  private lastResyncAt = 0;
 
   constructor(client: GatewayClient) {
     this.client = client;
@@ -94,6 +100,9 @@ export class SessionSubscriptionHub {
    */
   resync(): void {
     if (this.disposed || this.cursors.size === 0) return;
+    const now = Date.now();
+    if (now - this.lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
+    this.lastResyncAt = now;
     this.restart();
   }
 

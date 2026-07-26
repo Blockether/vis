@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.paths
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
-  (:require [clojure.string :as str]))
+  (:import [java.nio.file Path Paths]))
 
 (defn unixify
   "Normalize a path string to `/` separators on every OS. Java's `File`/`Path`
@@ -14,24 +14,65 @@
   ^String [s]
   (when s (.replace (str s) "\\" "/")))
 
+(defn expand-home
+  "Expand a leading `~` path segment to the user's home directory for filesystem
+   I/O. Bare `~` becomes home; `~/…` and `~\\…` use native separators; `~user`,
+   mid-path tildes, and ordinary paths pass through unchanged. Nil-safe and a
+   no-op when home is unavailable."
+  (^String [path] (expand-home path (System/getProperty "user.home")))
+  (^String [path home]
+   (let
+     [^String path
+      (some-> path
+              str)
+
+      ^String home
+      (some-> home
+              str
+              not-empty)]
+
+     (cond (nil? path) nil
+           (nil? home) path
+           (= path "~") home
+           (or (.startsWith path "~/") (.startsWith path "~\\"))
+           (.getPath (java.io.File. home (subs path 2)))
+           :else path))))
+
 (defn abbreviate-home
   "Shorten an absolute path for DISPLAY by replacing the user's home dir with
    `~`, matching the footer/navigator/dialogs. Only rewrites when `path` is at
-   or under home (so `/etc/x` is left alone); returns `path` unchanged
-   otherwise. Nil-safe."
-  ^String [path]
-  (let
-    [path
-     (some-> path
-             str)
+   or under home (so `/etc/x` and relative paths stay unchanged). Rendered
+   descendants always use `/` separators; nil-safe."
+  (^String [path] (abbreviate-home path (System/getProperty "user.home")))
+  (^String [path home]
+   (let
+     [path
+      (some-> path
+              str)
 
-     home
-     (System/getProperty "user.home")]
+      home
+      (some-> home
+              str
+              not-empty)]
 
-    (cond (nil? path) path
-          (and (seq home) (= path home)) "~/"
-          (and (seq home) (str/starts-with? path (str home "/"))) (str "~" (subs path (count home)))
-          :else path)))
+     (if-not (and path home)
+       path
+       (try (let
+              [^Path raw-path
+               (Paths/get path (make-array String 0))
+
+               ^Path normalized-path
+               (.normalize (.toAbsolutePath raw-path))
+
+               ^Path normalized-home
+               (.normalize (.toAbsolutePath (Paths/get home (make-array String 0))))]
+
+              (cond (not (.isAbsolute raw-path)) path
+                    (= normalized-path normalized-home) "~/"
+                    (.startsWith normalized-path normalized-home)
+                    (str "~/" (unixify (.toString (.relativize normalized-home normalized-path))))
+                    :else path))
+            (catch Throwable _ path))))))
 
 (defn logs-dir
   "Directory for vis diagnostic logs — `~/.vis/logs`. A DEDICATED subdir (not

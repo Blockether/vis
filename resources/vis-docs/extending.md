@@ -59,7 +59,7 @@ my-extension/
 | Key | What it is |
 | --- | --- |
 | `:ext/name` | Unique name string, e.g. `"weather"`. |
-| `:ext/description` | One-liner shown in `vis extensions list` and to the model in its extensions snapshot. |
+| `:ext/description` | One-liner shown in `vis extension list` and to the model in its extensions snapshot. |
 | `:ext/version` `:ext/author` `:ext/owner` `:ext/license` | Plain metadata strings. |
 | `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"git"`, `"language"`, `"channel"`, `"provider"`, … |
 | `:ext/activation-fn` | `(fn [env] -> boolean)`, called **once per turn**. Falsy hides every symbol and the prompt fragment for that turn. Defaults to always-on. |

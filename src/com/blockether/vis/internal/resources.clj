@@ -445,7 +445,7 @@
 
 (defn shutdown!
   "Process-wide teardown spout (daemon/engine shutdown): stop EVERY registered
-   resource across ALL sessions, so no background child (a shell_bg server, a
+   resource across ALL sessions, so no background child (a background `shell` server, a
    REPL) outlives the process that owns its stop-fn. Best-effort; returns
    `{session-id [stop! results]}`."
   []

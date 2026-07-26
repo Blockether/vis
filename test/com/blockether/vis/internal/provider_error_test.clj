@@ -70,7 +70,10 @@
                    (expect (str/includes? ex "selected provider"))
                    (expect (not (str/includes? ex "every provider"))))
                  (expect (str/includes? (perr/provider-error-next-step single-attempt-err)
-                                        "switch provider/model")))
+                                        "switch provider/model"))
+                 ;; Surface-agnostic: the card must not assume a TUI or a shell.
+                 (expect (nil? (re-find #"(?i)ctrl\\+k|`vis "
+                                        (perr/provider-error-next-step single-attempt-err)))))
              (it "two+ attempts still read as the fleet-wide exhaustion"
                  (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err)))
                  (expect (str/includes? (perr/provider-error-explanation exhausted-err)
@@ -178,8 +181,8 @@
         (expect (re-find #"`patch`" (perr/provider-error-explanation err)))
         (expect (re-find #"`input_schema`" (perr/provider-error-explanation err)))
         (expect (re-find #"top-level" (perr/provider-error-explanation err)))
-        (expect (re-find #"deterministic" (perr/provider-error-explanation err)))
-        (expect (re-find #"cannot work" (perr/provider-error-next-step err)))
+        (expect (re-find #"schema defect" (perr/provider-error-explanation err)))
+        (expect (re-find #"update Vis or disable" (perr/provider-error-next-step err)))
         (expect (not (re-find #"transient" (perr/provider-error-next-step err)))))
     (it "renders exact structured facts instead of making the user count array entries"
         (expect (some #{["Tool" "patch"]} (perr/provider-error-facts err)))
@@ -187,33 +190,37 @@
         (expect (some #{["Provider path" "tools.11.custom.input_schema"]}
                       (perr/provider-error-facts err))))))
 
-(defdescribe
-  empty-content-kind-test
-  (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
-      (let
-        [err {:message "The model produced neither text nor a tool call"
-              :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
-        (expect (= :empty-content (perr/provider-error-kind err)))
-        (expect (= "Model returned an empty response" (perr/provider-error-title err)))
-        (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))
-        (expect (re-find #"2 more times" (perr/provider-error-explanation err)))
-        (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err))))
-        (expect (re-find #"same request to the same" (perr/provider-error-next-step err)))))
-  (it "empty-content without svar resend bookkeeping still classifies and reads honestly"
-      (let [err {:message "blank" :data {:type :svar.llm/empty-content}}]
-        (expect (= :empty-content (perr/provider-error-kind err)))
-        (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err)))))))
+(defdescribe empty-content-kind-test
+             (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
+                 (let
+                   [err {:message "The model produced neither text nor a tool call"
+                         :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
+                   (expect (= :empty-content (perr/provider-error-kind err)))
+                   (expect (= "Model returned an empty response" (perr/provider-error-title err)))
+                   (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))
+                   (expect (re-find #"Re-sent 2 times" (perr/provider-error-explanation err)))
+                   (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err))))
+                   (expect (re-find #"Vis re-sends" (perr/provider-error-next-step err)))))
+             (it "empty-content without svar resend bookkeeping still classifies and reads honestly"
+                 (let [err {:message "blank" :data {:type :svar.llm/empty-content}}]
+                   (expect (= :empty-content (perr/provider-error-kind err)))
+                   (expect (nil? (re-find #"(?i)rejected"
+                                          (perr/provider-error-explanation err)))))))
 
 (defdescribe
   stream-timeout-kind-test
   (it "typed :svar.core/stream-semantic-timeout → honest stall card, never 'Provider unavailable'"
       (let
-        [err {:message "Stream semantic timeout (300000ms without model/progress event): closed"
-              :data {:type :svar.core/stream-semantic-timeout
-                     :stream? true
-                     :semantic-timeout-ms 300000
-                     :cause-class "java.io.IOException"}}
-         next-step (perr/provider-error-next-step err)]
+        [err
+         {:message "Stream semantic timeout (300000ms without model/progress event): closed"
+          :data {:type :svar.core/stream-semantic-timeout
+                 :stream? true
+                 :semantic-timeout-ms 300000
+                 :cause-class "java.io.IOException"}}
+
+         next-step
+         (perr/provider-error-next-step err)]
+
         (expect (perr/stream-timeout-error? err))
         (expect (= :stream-timeout (perr/provider-error-kind err)))
         (expect (= "Stream went quiet — Vis timed out" (perr/provider-error-title err)))
@@ -224,7 +231,12 @@
         (expect (re-find #"300s" (perr/provider-error-explanation err)))
         (expect (re-find #"still reasoning" (perr/provider-error-explanation err)))
         (expect (nil? (re-find #"(?i)auth, and quota" next-step)))
-        (expect (re-find #"not automatically re-sent" next-step))
+        ;; Cross-validated vs Codex: svar never same-provider-retries a watchdog abort
+        ;; (deliberate-stream-abort-types), but the gateway queue DOES auto-retry a
+        ;; :stream-timeout as transient. The copy stays surface-agnostic: no CLI
+        ;; commands, no keybindings, no internal var names.
+        (expect (re-find #"auto-retried" next-step))
+        (expect (re-find #"idle-timeout-ms" next-step))
         (expect (nil? (re-find #"already re-sent" next-step)))))
   (it "the idle-timeout sibling classifies the same way"
       (let

@@ -517,7 +517,7 @@
 (s/def :ext/source-nses (s/coll-of symbol? :kind vector?))
 ;; Top-level kind - the *category* of surface this extension
 ;; contributes. Used for prompt-rendering section labels AND as the
-;; section heading in `vis extensions list`. Examples: "foundation",
+;; section heading in `vis extension list`. Examples: "foundation",
 ;; "languages", "providers", "channels", "persistance". Authors may
 ;; set it explicitly; for the common categorical cases (extensions
 ;; that only contribute providers / channels / persistence backends)
@@ -1026,18 +1026,17 @@
    The engine keeps validating against the full `:ext.symbol/schema`; on the
    wire these are pure token cost the model cannot act on. `additionalProperties`
    is deliberately KEPT — strict-tools provider modes rely on it."
-  [:minLength :maxLength :minItems :maxItems :minimum :maximum
-   :minProperties :maxProperties])
+  [:minLength :maxLength :minItems :maxItems :minimum :maximum :minProperties :maxProperties])
 
 (defn- strip-schema-constraints
   "Recursively drop `wire-schema-constraint-keys` from a JSON-schema tree."
   [x]
-  (cond
-    (map? x) (into {}
-                   (map (fn [[k v]] [k (strip-schema-constraints v)]))
-                   (apply dissoc x wire-schema-constraint-keys))
-    (sequential? x) (mapv strip-schema-constraints x)
-    :else x))
+  (cond (map? x) (into {}
+                       (map (fn [[k v]]
+                              [k (strip-schema-constraints v)]))
+                       (apply dissoc x wire-schema-constraint-keys))
+        (sequential? x) (mapv strip-schema-constraints x)
+        :else x))
 
 (defn native-tool-schemas
   "The model-facing `:tools` surface: `{:name :description :schema}` for every
@@ -1988,7 +1987,7 @@
    owner/registry-id) and the source forensics (paths/mtime/sha256)
    were stamped PER CALL and persisted with every form envelope — pure
    DB bloat with zero readers; `extension-info` still serves the ctx
-   `:extensions` digest and `vis extensions list` from the registry."
+   `:extensions` digest and `vis extension list` from the registry."
   [ext sym-entry result]
   (if (tool-result? result)
     (merge-into-metadata (stamp-public-result-op (ensure-tool-result-op ext sym-entry result))
@@ -2273,7 +2272,7 @@
 (defn- folded-kwargs->positional
   "Inverse of the engine's `synth-call` for the DIRECT-python surface. When the
    agent writes a native tool call in a `python_execution` block with ALL-KEYWORD
-   args (`shell_logs(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
+   args (`shell(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
    dict positional (see `__vis_exec_call__` in `env-python`). A fixed-arity impl
    like `shell-logs-impl [env id n]` would then receive the whole `{id n}` map in
    its `id` slot (`No background shell '{id …, n …}'`). Re-expand that lone map
@@ -2539,7 +2538,7 @@
    didn't set one. Extensions that contribute providers, channels,
    channel contributions, or persistence backends (and nothing forcing a different
    label) get bucketed under `\"providers\"` / `\"channels\"` /
-   `\"persistance\"` so `vis extensions list` reads as a clean grouped
+   `\"persistance\"` so `vis extension list` reads as a clean grouped
    table instead of a column of blanks.
 
    Explicit `:ext/kind` always wins. Extensions that fit no
@@ -3467,8 +3466,8 @@
        workspace block waits for its `:ext/ctx-fn`), so it lives in core, not as a
        droppable extension.
 
-     shell — the `shell/` compatibility layer (shell_run/shell_bg/shell_logs and
-       the `shell` toggle). INTERNAL core, not a droppable plug-in, so the
+     shell — the `shell/` compatibility layer (the ONE `shell` tool and its
+       `shell` toggle). INTERNAL core, not a droppable plug-in, so the
        toggle always registers and the feature is one settings flip away (the tools
        stay gated OFF behind the `shell` toggle until the user enables it).
 
@@ -3666,7 +3665,7 @@
   (load-builtin-extensions!)
   (into [] (mapcat ext-sandbox-shims) (registered-extensions)))
 ;; =============================================================================
-;; CLI bridge -- the `vis ext` parent lives in `internal.main` next to the
+;; CLI bridge -- the `vis extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
 ;; `update`). Extensions populate it via `:ext/cli` on `extension`;
 ;; `register-extension!` above forwards each entry through `mount-under-ext`

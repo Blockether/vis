@@ -85,7 +85,6 @@ export function GatewaySettingsDialog({
     const controller = new AbortController();
     // Mount-time settings fetch: `load` writes state only after it settles, and
     // never once the signal aborts.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);

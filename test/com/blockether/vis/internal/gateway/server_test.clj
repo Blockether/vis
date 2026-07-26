@@ -656,6 +656,53 @@
 
           (is (= 0 (get body "hidden_count"))))))))
 
+(deftest set-session-model-handler-validates-against-the-gateway-fleet
+  (testing
+    "PATCH /model pins only providers THIS gateway serves; the model name stays free (live catalog)"
+    (let
+      [sid
+       (str (java.util.UUID/randomUUID))
+
+       wrote
+       (atom nil)
+
+       body
+       (fn [m]
+         {:path-params {:sid sid}
+          :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})]
+
+      (with-redefs-fn {#'providers/configured-providers-cached
+                       (constantly [{:id :zai-coding-plan} {:id :anthropic-coding-plan}])
+                       #'state/set-session-model! (fn [_sid p m]
+                                                    (reset! wrote [p m]))
+                       #'state/session-model (fn [_sid]
+                                               @wrote)}
+        (fn []
+          (testing "a configured provider is accepted"
+            (let
+              [resp ((rv 'set-session-model-handler)
+                      (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
+              (is (= 200 (:status resp)))
+              (is (= ["zai-coding-plan" "glm-5.2"] @wrote))))
+          (testing "a model outside vis.yml is fine — the live catalog offers more"
+            (is (= 200
+                   (:status ((rv 'set-session-model-handler)
+                              (body {:provider "zai-coding-plan" :model "glm-live-preview"})))))
+            (is (= ["zai-coding-plan" "glm-live-preview"] @wrote)))
+          (testing "an unknown provider is a 400 and writes NOTHING"
+            (reset! wrote :untouched)
+            (let
+              [resp ((rv 'set-session-model-handler)
+                      (body {:provider "not-on-this-gateway" :model "x"}))]
+              (is (= 400 (:status resp)))
+              (is (= "unknown-provider" (get-in (wire/parse-json (:body resp)) ["error" "type"])))
+              (is (= :untouched @wrote))))
+          (testing "blank/omitted provider still clears or pins by model alone"
+            (reset! wrote nil)
+            (is (= 200
+                   (:status ((rv 'set-session-model-handler)
+                              (body {:provider "  " :model "glm-5.2"})))))
+            (is (= [nil "glm-5.2"] @wrote))))))))
 
 (deftest router-handler-assembles-string-keyed-fleet-with-status
   (testing

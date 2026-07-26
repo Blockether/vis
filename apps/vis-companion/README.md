@@ -52,7 +52,8 @@ token — that is the only thing guarding your sessions.)
 cd apps/vis-companion
 npm install
 npm run dev        # web at http://localhost:5273
-npm run build      # type-check + production bundle into dist/
+npm run build      # type-check + production bundle into dist/ (React Compiler on)
+npm run lint       # React Compiler static analysis over every src file (no eslint)
 ```
 
 ## Native builds

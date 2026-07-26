@@ -1,16 +1,16 @@
 (ns com.blockether.vis.internal.foundation.pty-bridge
   "Passthrough bridge on top of the FFM pseudo-terminal (internal.foundation.pty).
 
-   The problem it solves: a `shell_bg` child runs INSIDE the vis process (the FFM
+   The problem it solves: a background `shell` child runs INSIDE the vis process (the FFM
    PTY master fd + reader thread live in vis's heap). That's great for the agent
-   (`shell_send` / `shell_logs`) but a HUMAN can't jump into the live terminal to
+   (the shell send / logs ops) but a HUMAN can't jump into the live terminal to
    finish a step the agent can't — click through a browser OAuth, answer a prompt
    only a person can. tmux gets that for free because its server is a separate
    daemon you can `tmux attach` to; the FFM child is not.
 
    This namespace restores that capability WITHOUT tmux: each background PTY
    optionally exposes a per-shell UNIX-DOMAIN SOCKET. vis is the server (it holds
-   the master fd); `vis ext shell attach <id>` is a thin client the human runs in
+   the master fd); `vis extension shell attach <id>` is a thin client the human runs in
    their OWN Terminal.app. On connect the server (a) tees live master output to the
    socket and (b) forwards the socket's bytes to the master (stdin) — a genuine
    bidirectional passthrough. Multiple humans can attach at once; detaching just
@@ -231,7 +231,7 @@
              (try (Files/deleteIfExists p) (catch Throwable _ nil)))}))
 
 ;; =============================================================================
-;; Client — the human's raw-terminal attach (`vis ext shell attach <id>`)
+;; Client — the human's raw-terminal attach (`vis extension shell attach <id>`)
 ;; =============================================================================
 
 (def ^:private detach-byte
@@ -269,7 +269,7 @@
       (do (binding [*out* *err*]
             (println (str "vis: no live background shell socket for "
                           (or (:socket opts) (:id opts) "?")
-                          " — is it running? (see `resources` / shell_bg output)")))
+                          " — is it running? (see `resources` / background shell output)")))
           2)
       (let
         [ch (SocketChannel/open (UnixDomainSocketAddress/of p))

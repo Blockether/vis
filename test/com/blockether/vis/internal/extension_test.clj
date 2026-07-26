@@ -424,16 +424,21 @@
 (defdescribe
   folded-kwargs->positional-test
   (it "all-kwargs on a shaped tool bind IDENTICALLY to positional"
-      ;; shell_logs :call {:pos ["id"] :opt-pos ["n"]} — the reported defect:
-      ;; `shell_logs(id=…, n=…)` folded to one dict must expand to [id n].
+      ;; a :call {:pos ["id"] :opt-pos ["n"]} tool — the reported defect:
+      ;; `tool(id=…, n=…)` folded to one dict must expand to [id n].
       (expect (= ["lint" 100] (folded->pos {:pos ["id"] :opt-pos ["n"]} [{"id" "lint" "n" 100}])))
       (expect (= ["lint"] (folded->pos {:pos ["id"] :opt-pos ["n"]} [{"id" "lint"}])))
-      ;; shell_run/{:pos [cmd] :rest :opt}: leftover keys ride a trailing opts dict.
+      ;; shell/{:opt-pos [cmd] :rest :opt}: leftover keys ride a trailing opts dict.
       (expect (= ["ls"] (folded->pos {:pos ["cmd"] :rest :opt} [{"cmd" "ls"}])))
       (expect (= ["ls" {"cwd" "/tmp"}]
                  (folded->pos {:pos ["cmd"] :rest :opt} [{"cmd" "ls" "cwd" "/tmp"}])))
-      ;; shell_bg/{:pos [id cmd]} and shell_send/{:pos [id text] :rest :opt}.
-      (expect (= ["x" "sleep 1"] (folded->pos {:pos ["id" "cmd"]} [{"id" "x" "cmd" "sleep 1"}])))
+      ;; an id+cmd shape folds to [id cmd], an op-only call folds to [id {op …}],
+      ;; and a {:pos [id text] :rest :opt} shape folds to [id text].
+      (expect (= ["x" "sleep 1"]
+                 (folded->pos {:pos ["id"] :opt-pos ["cmd"] :rest :opt}
+                              [{"id" "x" "cmd" "sleep 1"}])))
+      (expect (= ["x" {"op" "stop"}]
+                 (folded->pos {:pos ["id"] :opt-pos ["cmd"] :rest :opt} [{"id" "x" "op" "stop"}])))
       (expect (= ["x" "hi"]
                  (folded->pos {:pos ["id" "text"] :rest :opt} [{"id" "x" "text" "hi"}]))))
   (it "leaves everything ambiguous or already-correct untouched"

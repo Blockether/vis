@@ -413,10 +413,10 @@
       (try (with-redefs
              [vis/load-config-raw (fn []
                                     {})]
-             (state/init!)                              ;; projects default :balanced
-             (vis/toggles-hydrate-from-config!          ;; toggle -> persisted :quick
+             (state/init!)                     ;; projects default :balanced
+             (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
                {:toggles {"reasoning_level" :quick}})
-             (expect (= "balanced"                     ;; stale projection, pre-resync
+             (expect (= "balanced" ;; stale projection, pre-resync
                         (get-in @state/app-db [:settings :reasoning-level])))
              (state/dispatch [:resync-toggle-settings]) ;; the fix
              (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
@@ -533,7 +533,8 @@
            vis/notify! (fn [text & kvs]
                          (reset! notified [text kvs]))]
 
-          (reset! state/app-db {:settings {:reasoning-level "balanced" :openai-codex-verbosity "high"}
+          (reset! state/app-db {:settings {:reasoning-level "balanced"
+                                           :openai-codex-verbosity "high"}
                                 :render-version 0})
           (state/dispatch [:cycle-codex-verbosity])
           (expect (= "high" (get-in @state/app-db [:settings :openai-codex-verbosity])))
@@ -564,7 +565,8 @@
       ;; to its :low default so a value another test left in the shared
       ;; registry can't shift where the first step lands (order-dependent flake).
       (vis/toggle-reset-to-default! "openai_codex_verbosity")
-      (try (reset! state/app-db {:settings {:reasoning-level "balanced" :openai-codex-verbosity "low"}
+      (try (reset! state/app-db {:settings {:reasoning-level "balanced"
+                                            :openai-codex-verbosity "low"}
                                  :render-version 0})
            (state/dispatch [:cycle-codex-verbosity])
            (expect (= "medium" (get-in @state/app-db [:settings :openai-codex-verbosity])))
@@ -1023,7 +1025,7 @@
                             :cancel-token :token
                             :cancelling? true
                             :cancelling-at-ms 0
-                            :pending-sends [{:text "my correction" :client-id "c1"}]}
+                            :pending-sends [{:text "my correction" :client-id "c1" :mine? true}]}
                         {fx :fx} (heal-fn db [:cancel-self-heal-tick 20000])]
 
                        ;; The correction the user typed during the cancel comes back
@@ -1141,9 +1143,10 @@
 
         (reset! state/app-db {:session {:id "s1"}
                               :active-tab-id "s1"
-                              ;; The gateway queue snapshot can arrive before its :add event binds
-                              ;; this local echo. It is the running turn, not a second queued one.
-                              :pending-sends [{:text "hello" :client-id "local-echo"}]
+                              ;; Mirrored while it was still queued (gateway truth,
+                              ;; so it carries the gateway turn id) - it is the
+                              ;; running turn now, not a second queued one.
+                              :pending-sends [{:text "hello" :turn-id "turn-1"}]
                               :render-version 0})
         (state/dispatch [:attach-running-turn "s1"
                          {:id "s1"
@@ -1157,7 +1160,27 @@
           ;; Both the stale gateway snapshot and its unbound local echo are gone;
           ;; only the genuinely queued sibling remains.
           (expect (= ["turn-2"] (mapv :turn-id (:pending-sends db))))
-          (expect (not (some #(= "hello" (:text %)) (:pending-sends db))))))))
+          (expect (not (some #(= "hello" (:text %)) (:pending-sends db)))))))
+  (it "never seeds the tab's own LIVE turn from a stale queued-turns snapshot"
+      ;; Cross-validation: the backlog seed and :sync-queued-turn must share ONE
+      ;; rule. A tab already attached to turn-1 re-attaches (tab reopen / project
+      ;; switch) with a snapshot taken while turn-1 was still queued; the seed runs
+      ;; even though this branch does not re-attach, so without the shared
+      ;; `live-turn-mirror?` gate it painted the running turn as Queued.
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :loading? true
+                            :gateway-turn-id "turn-1"
+                            :pending-sends []
+                            :render-version 0})
+      (state/dispatch [:attach-running-turn "s1"
+                       {:id "s1"
+                        :status "running"
+                        :current-turn-id "turn-1"
+                        :running-request "hello"
+                        :queued-turns [{:turn-id "turn-1" :text "hello" :queued-at-ms 1}
+                                       {:turn-id "turn-2" :text "world" :queued-at-ms 2}]}])
+      (expect (= ["turn-2"] (mapv :turn-id (:pending-sends @state/app-db))))))
 
 (defdescribe
   attach-running-turn-drains-idle-queue-test
@@ -1639,7 +1662,10 @@
 
 (defdescribe
   pending-send-queue-test
-  (it "keeps queued submissions on their workspace snapshot"
+  (it "registers a busy-tab submission with the gateway instead of inventing a row"
+      ;; NO OPTIMISTIC ROW: the gateway is the queue of record, so the submission
+      ;; goes out as a real queued turn and the "Queued" row is painted only from
+      ;; gateway truth (ack / broadcast, both through `:sync-queued-turn`).
       (let
         [enqueue-fn
          (-> #'state/event-registry
@@ -1666,9 +1692,20 @@
          queued
          (get-in result [:db :tab-locals :a :pending-sends])]
 
-        (expect (= ["queued"] (mapv :text queued)))
-        (expect (= {1 {:id 1 :content "payload"}} (:pastes (first queued))))
-        (expect (empty? (:pending-sends (:db result))))))
+        (expect (empty? queued))
+        (expect (empty? (:pending-sends (:db result))))
+        (let
+          [gw
+           (first (filter #(= :gateway-enqueue (first %)) (:fx result)))
+
+           entry
+           (nth gw 3)]
+
+          ;; The submission (with its paste snapshot) travels to the gateway, not
+          ;; into a local queue.
+          (expect (= :a (nth gw 1)))
+          (expect (= "queued" (:text entry)))
+          (expect (= {1 {:id 1 :content "payload"}} (:pastes entry))))))
   (it "never queues a submission while a cancel is in flight (:cancelling?)"
       ;; REGRESSION: pressing Esc to cancel, then typing a new message, parked that
       ;; message in the queue (`:pending-sends`) behind the turn being torn down —
@@ -1845,7 +1882,7 @@
                      {:role :assistant :pending? true :client-turn-id pending-id}]
           :progress {:iterations []}
           :submitted-input {:text "first" :pastes {} :paste-counter 0}
-          :pending-sends [{:text "second" :pastes {} :paste-counter 0 :client-id "c1"}]}
+          :pending-sends [{:text "second" :pastes {} :paste-counter 0 :client-id "c1" :mine? true}]}
 
          {:keys [db fx]}
          (message-received-fn db
@@ -1872,17 +1909,16 @@
           :input (input/empty-input)
           :pastes {}
           :paste-counter 0
-          :pending-sends
-          [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2" :client-id "c1"}
-           {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3" :client-id "c1"}]}
+          :pending-sends [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2" :mine? true}
+                          {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3" :mine? true}]}
 
          {:keys [db fx]}
          (restore-fn db [:restore-pending-to-input :main])]
 
         (expect (= "second\n\nthird" (input/input->text (:input db))))
         (expect (empty? (:pending-sends db)))
-        (expect (some #{[:gateway-delete-queued "c1" "t-2"]} fx))
-        (expect (some #{[:gateway-delete-queued "c1" "t-3"]} fx))))
+        (expect (some #(and (= :gateway-delete-queued (first %)) (= "t-2" (nth % 2))) fx))
+        (expect (some #(and (= :gateway-delete-queued (first %)) (= "t-3" (nth % 2))) fx))))
   (it "a send while a cancel is in flight stays in the editor — never queued, never server-side"
       ;; Regression: cancel (`:cancelling?`) then immediately send. The send used
       ;; to still fire `:gateway-enqueue`, registering a SERVER-SIDE queued turn.
@@ -1926,46 +1962,77 @@
         (expect (some #(= :notify (first %)) fx))
         ;; normal in-flight queue (not cancelling) still registers server-side.
         (expect (some #(= :gateway-enqueue (first %)) normal-fx))))
-  (it "set-queued-turn-id deletes the orphaned gateway turn when the entry is gone"
-      ;; The OTHER half of the "sent AND queued" race: the enqueue registered a
-      ;; SERVER-SIDE queued turn, then a cancel restored the backlog to the editor
-      ;; (dropping the local entry) BEFORE the turn-id round-trip landed. When the
-      ;; late `:set-queued-turn-id` finds no matching client-id, the record is
-      ;; orphaned and would auto-drain (= silently SEND); it must be deleted.
+  (it "a gateway enqueue that never lands is staged locally so no text is lost"
+      ;; The ONLY case this channel writes a queue row of its own: the gateway
+      ;; never accepted the submission, so there is no server record to mirror and
+      ;; nothing else would ever show the text again. Such a row has NO turn id -
+      ;; that is what marks it locally owned.
       (let
-        [bind-fn
+        [stage-fn
          (-> #'state/event-registry
              deref
              deref
-             (get :set-queued-turn-id)
+             (get :stage-queued-locally)
              :fn)
 
          db
          {:active-tab-id :main :session {:id "c1"} :pending-sends []}
 
-         {:keys [db fx]}
-         (bind-fn db [:set-queued-turn-id :main "gone-client" "t-9"])]
+         db'
+         (stage-fn db [:stage-queued-locally :main {:text "second" :client-id "c1c"}])
 
-        (expect (= [[:gateway-delete-queued "c1" "t-9"]] fx))
-        (expect (empty? (:pending-sends db)))))
-  (it
-    "set-queued-turn-id binds the turn id when the entry still exists"
-    (let
-      [bind-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :set-queued-turn-id)
-           :fn)
+         row
+         (first (:pending-sends db'))]
 
-       db
-       {:active-tab-id :main :session {:id "c1"} :pending-sends [{:text "second" :client-id "c1c"}]}
+        (expect (= "second" (:text row)))
+        (expect (nil? (:turn-id row)))
+        (expect (true? (:mine? row)))))
+  (it "paints the queued row from the gateway ACK, and the broadcast is a no-op"
+      ;; The enqueue fx feeds the SAME `:sync-queued-turn` writer the `turn.queued`
+      ;; broadcast feeds, keyed by the same gateway turn id: whichever lands first
+      ;; wins and the other changes nothing. An accepted-but-already-RUNNING turn
+      ;; is not a queue row at all.
+      (with-redefs
+        [vis/gateway-submit-turn! (fn [_ opts]
+                                    {:turn {"turn_id" "t-7"
+                                            "status" "queued"
+                                            "request" (:request opts)
+                                            "idempotency_key" (:idempotency-key opts)}})]
+        (reset! state/app-db
+          {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
+        (let
+          [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
+           client-id (#'state/mint-client-id :main)]
 
-       {:keys [db fx]}
-       (bind-fn db [:set-queued-turn-id :main "c1c" "t-2"])]
-
-      (expect (nil? fx))
-      (expect (= "t-2" (:turn-id (first (:pending-sends db))))))))
+          (enqueue-fx :main
+                      {:id "c1"}
+                      {:text "second" :agent-text "second" :client-id client-id :mine? true}
+                      nil
+                      nil
+                      {}
+                      nil)
+          (expect (= ["t-7"] (mapv :turn-id (:pending-sends @state/app-db))))
+          ;; ours, because the id came back from the gateway unchanged
+          (expect (true? (:mine? (first (:pending-sends @state/app-db)))))
+          ;; the broadcast for the same turn adds nothing
+          (state/dispatch [:sync-queued-turn :main
+                           {:op :add :turn-id "t-7" :client-id client-id :text "second"}])
+          (expect (= 1 (count (:pending-sends @state/app-db)))))))
+  (it "an accepted turn the gateway STARTED is never mirrored as queued"
+      (with-redefs
+        [vis/gateway-submit-turn! (fn [_ _]
+                                    {:turn {"turn_id" "t-8" "status" "running"}})]
+        (reset! state/app-db
+          {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
+        (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)]
+          (enqueue-fx :main
+                      {:id "c1"}
+                      {:text "second" :agent-text "second" :client-id "x" :mine? true}
+                      nil
+                      nil
+                      {}
+                      nil)
+          (expect (= [] (:pending-sends @state/app-db)))))))
 
 (defdescribe set-title-background-tab-test
              (it "relabels a background tab live without touching the active tab"
@@ -2125,105 +2192,99 @@
                    (expect (not (some #(and (= :assistant (:role %)) (true? (:pending? %)))
                                       (:messages db)))))))
 
-(defdescribe sync-queued-turn-test
-             ;; The gateway is the queue of record; :sync-queued-turn mirrors ONE queue
-             ;; event (queued/updated/deleted/drained) into this tab's :pending-sends.
-             (it "mirrors a sibling's queue add / update / delete into pending-sends"
-                 (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
-                 (let [q (:pending-sends @state/app-db)]
-                   (expect (= 1 (count q)))
-                   (expect (= "q1" (:turn-id (first q))))
-                   (expect (= "hello" (:text (first q)))))
-                 ;; :add is idempotent on the same gateway turn id
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
-                 (expect (= 1 (count (:pending-sends @state/app-db))))
-                 ;; a queued-prompt edit elsewhere rewrites the text
-                 (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "q1" :text "edited"}])
-                 (expect (= "edited" (:text (first (:pending-sends @state/app-db)))))
-                 ;; the gateway drained (auto-started) or a sibling deleted it: entry drops
-                 (state/dispatch [:sync-queued-turn nil {:op :delete :turn-id "q1"}])
-                 (expect (= [] (:pending-sends @state/app-db))))
-             (it "binds an unbound local echo by text instead of duplicating"
-                 (reset! state/app-db {:session {:id "s1"}
-                                       :active-tab-id "s1"
-                                       :render-version 0
-                                       :pending-sends [{:text "hello" :client-id "c1"}]})
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
-                 (let [q (:pending-sends @state/app-db)]
-                   (expect (= 1 (count q)))
-                   (expect (= "q1" (:turn-id (first q))))))
-             ;; The gateway drained (auto-started) this queued turn and it is now the
-             ;; tab's LIVE turn (:gateway-turn-id). A late / out-of-order queue-sync
-             ;; add|update for that SAME id — a replayed backlog or an event racing the
-             ;; drain+attach — must NOT resurrect it as a "Queued" row while it runs
-             ;; (the "sent AND queued at the same time" ghost seen in the TUI).
-             (it "never mirrors the tab's currently-running turn as a queued row"
-                 (reset! state/app-db {:session {:id "s1"}
-                                       :active-tab-id "s1"
-                                       :render-version 0
-                                       :loading? true
-                                       :gateway-turn-id "turn-1"
-                                       :pending-sends []})
-                 ;; A stray :add for the running turn is ignored.
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-1" :text "hello"}])
-                 (expect (= [] (:pending-sends @state/app-db)))
-                 ;; A genuinely queued sibling (different id) still mirrors.
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-2" :text "world"}])
-                 (expect (= ["turn-2"] (mapv :turn-id (:pending-sends @state/app-db))))
-                 ;; An already-mirrored entry that becomes the running turn is stripped
-                 ;; on the next queue-sync op for it (e.g. a replayed :update).
-                 (reset! state/app-db {:session {:id "s1"}
-                                       :active-tab-id "s1"
-                                       :render-version 0
-                                       :loading? true
-                                       :gateway-turn-id "turn-1"
-                                       :pending-sends [{:text "hello" :turn-id "turn-1"}]})
-                 (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
-                 (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
-                 (expect (= [] (:pending-sends @state/app-db))))
-             ;; Cancel a turn, then submit again before the daemon finishes tearing the
-             ;; old turn down: the tab is idle LOCALLY so it sends DIRECTLY (no pending
-             ;; echo), but the gateway is still busy, queues it, and echoes a turn.queued
-             ;; whose id is not yet bound to :gateway-turn-id. Match it to :live-turn-request
-             ;; so the message never shows as sent AND queued at the same time.
-             (it "never mirrors the tab's own directly-sent in-flight turn as a queued row"
-                 (reset! state/app-db {:session {:id "s1"}
-                                       :active-tab-id "s1"
-                                       :render-version 0
-                                       :loading? true
-                                       :gateway-turn-id nil
-                                       :live-turn-request "continue"
-                                       :pending-sends []})
-                 ;; The gateway echoes our own in-flight turn back as queued (id unbound).
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-9" :text "continue"}])
-                 (expect (= [] (:pending-sends @state/app-db)))
-                 ;; A genuinely different queued sibling still mirrors.
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-8" :text "other"}])
-                 (expect (= ["turn-8"] (mapv :turn-id (:pending-sends @state/app-db)))))
-
-             ;; Once turn.started LATE-BINDS :gateway-turn-id, the exact-id match owns the
-             ;; "my own live turn" case, so :sync-turn-clock must CLEAR :live-turn-request.
-             ;; Leaving it armed would suppress a genuinely-queued sibling that happens to
-             ;; share the live turn's agent-text (e.g. a second "continue").
-             (it "clears :live-turn-request on id bind so a same-text queue still mirrors"
-                 (reset! state/app-db {:session {:id "s1"}
-                                       :active-tab-id "s1"
-                                       :render-version 0
-                                       :loading? true
-                                       :gateway-turn-id nil
-                                       :live-turn-request "continue"
-                                       :pending-sends []})
-                 ;; turn.started binds the id and drops the text heuristic.
-                 (state/dispatch [:sync-turn-clock nil {:turn-id "turn-9"}])
-                 (expect (= "turn-9" (:gateway-turn-id @state/app-db)))
-                 (expect (nil? (:live-turn-request @state/app-db)))
-                 ;; A genuinely-queued sibling with the SAME text now mirrors (its id differs).
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-10" :text "continue"}])
-                 (expect (= ["turn-10"] (mapv :turn-id (:pending-sends @state/app-db))))
-                 ;; The live turn's own late echo is still dropped by the exact-id match.
-                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-9" :text "continue"}])
-                 (expect (= ["turn-10"] (mapv :turn-id (:pending-sends @state/app-db))))))
+(defdescribe
+  sync-queued-turn-test
+  ;; The gateway is the queue of record; :sync-queued-turn mirrors ONE queue
+  ;; event (queued/updated/deleted/drained) into this tab's :pending-sends.
+  (it "mirrors a sibling's queue add / update / delete into pending-sends"
+      (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
+      (let [q (:pending-sends @state/app-db)]
+        (expect (= 1 (count q)))
+        (expect (= "q1" (:turn-id (first q))))
+        (expect (= "hello" (:text (first q)))))
+      ;; :add is idempotent on the same gateway turn id
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
+      (expect (= 1 (count (:pending-sends @state/app-db))))
+      ;; a queued-prompt edit elsewhere rewrites the text
+      (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "q1" :text "edited"}])
+      (expect (= "edited" (:text (first (:pending-sends @state/app-db)))))
+      ;; the gateway drained (auto-started) or a sibling deleted it: entry drops
+      (state/dispatch [:sync-queued-turn nil {:op :delete :turn-id "q1"}])
+      (expect (= [] (:pending-sends @state/app-db))))
+  (it "appends the gateway row instead of absorbing a locally staged one"
+      ;; A staged row (the gateway enqueue never landed) has no turn id and
+      ;; is NOT a candidate for a gateway row to bind to: same text is not
+      ;; identity. The gateway row lands as its own row.
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :pending-sends [{:text "hello" :mine? true}]})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
+      (let [q (:pending-sends @state/app-db)]
+        (expect (= 2 (count q)))
+        (expect (= [nil "q1"] (mapv :turn-id q)))))
+  ;; The gateway drained (auto-started) this queued turn and it is now the
+  ;; tab's LIVE turn (:gateway-turn-id). A late / out-of-order queue-sync
+  ;; add|update for that SAME id — a replayed backlog or an event racing the
+  ;; drain+attach — must NOT resurrect it as a "Queued" row while it runs
+  ;; (the "sent AND queued at the same time" ghost seen in the TUI).
+  (it "never mirrors the tab's currently-running turn as a queued row"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :loading? true
+                            :gateway-turn-id "turn-1"
+                            :pending-sends []})
+      ;; A stray :add for the running turn is ignored.
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-1" :text "hello"}])
+      (expect (= [] (:pending-sends @state/app-db)))
+      ;; A genuinely queued sibling (different id) still mirrors.
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-2" :text "world"}])
+      (expect (= ["turn-2"] (mapv :turn-id (:pending-sends @state/app-db))))
+      ;; An already-mirrored entry that becomes the running turn is stripped
+      ;; on the next queue-sync op for it (e.g. a replayed :update).
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :loading? true
+                            :gateway-turn-id "turn-1"
+                            :pending-sends [{:text "hello" :turn-id "turn-1"}]})
+      (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
+      (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "turn-1" :text "hi"}])
+      (expect (= [] (:pending-sends @state/app-db))))
+  ;; Cancel a turn, then submit again before the daemon finishes tearing the
+  (it "never mirrors the tab's own directly-sent in-flight turn as a queued row"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :loading? true
+                            :gateway-turn-id nil
+                            :live-turn-client-id "c9"
+                            :pending-sends []})
+      ;; The gateway echoes our own in-flight turn back as queued (turn id
+      ;; not bound yet) - recognised by the correlation id we submitted.
+      (state/dispatch [:sync-queued-turn nil
+                       {:op :add :turn-id "turn-9" :client-id "c9" :text "continue"}])
+      (expect (= [] (:pending-sends @state/app-db)))
+      ;; A genuinely different queued sibling still mirrors.
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-8" :text "other"}])
+      (expect (= ["turn-8"] (mapv :turn-id (:pending-sends @state/app-db)))))
+  (it "binds the turn id on turn.started so its own late echo stays unmirrored"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :loading? true
+                            :gateway-turn-id nil
+                            :pending-sends []})
+      (state/dispatch [:sync-turn-clock nil {:turn-id "turn-9"}])
+      (expect (= "turn-9" (:gateway-turn-id @state/app-db)))
+      ;; A genuinely-queued sibling with the SAME text mirrors (its id differs).
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-10" :text "continue"}])
+      (expect (= ["turn-10"] (mapv :turn-id (:pending-sends @state/app-db))))
+      ;; The live turn's own late echo is dropped by the exact-id match.
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "turn-9" :text "continue"}])
+      (expect (= ["turn-10"] (mapv :turn-id (:pending-sends @state/app-db))))))
 
 (defdescribe sync-turn-clock-test
              ;; `turn.started` carries the gateway's CANONICAL started_at (epoch ms).
@@ -2319,8 +2380,8 @@
                    (expect (= 42 (:turn-start-ms db))))))
 
 (defdescribe restore-pending-ownership-test
-             ;; A cancel pulls back ONLY the entries this tab authored (:client-id from
-             ;; enqueue). Mirrored sibling entries (no :client-id) must survive: deleting
+             ;; A cancel pulls back ONLY the rows this tab submitted (`:mine?`, from the
+             ;; correlation id the gateway echoed back). Sibling rows must survive:
              ;; them fired turn.queued.deleted at the sibling still blocked on its own
              ;; queued turn, which synthesized a spurious CANCELLED terminal there.
              (it "restores authored entries, keeps sibling mirrors queued"
@@ -2330,7 +2391,7 @@
                    (reset! state/app-db {:session {:id "s1"}
                                          :render-version 0
                                          :pending-sends
-                                         [{:text "mine" :client-id "c1" :turn-id "q1"}
+                                         [{:text "mine" :client-id "c1" :mine? true :turn-id "q1"}
                                           {:text "theirs" :turn-id "q2"}]})
                    (state/dispatch [:restore-pending-to-input nil])
                    (let [db @state/app-db]
@@ -2548,3 +2609,112 @@
            (replace-pending-assistant msgs settled)]
 
           (expect (nil? (:slash? (first out))))))))
+
+(defdescribe
+  queue-mirror-gateway-owned-test
+  "Queue rows are GATEWAY-owned: a busy-time submission is registered server-side
+   and the row is painted only from gateway truth (the enqueue ack or the
+   `turn.queued` broadcast), always keyed by the gateway turn id. Identity is
+   ID-ONLY - turn id, then the correlation id this tab minted as the
+   `idempotency_key`. Request TEXT is never identity; text-first matching is what
+   let one queued row shadow (or duplicate) another."
+  (it "the same turn id from ack and broadcast yields exactly one row"
+      (reset! state/app-db
+        {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :client-id "c1" :text "go"}])
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :client-id "c1" :text "go"}])
+      (expect (= [{:turn-id "q1" :client-id "c1"}]
+                 (mapv #(select-keys % [:turn-id :client-id]) (:pending-sends @state/app-db)))))
+  (it "two submissions sharing the same text stay two independent rows"
+      (reset! state/app-db
+        {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :client-id "c1" :text "go"}])
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q2" :client-id "c2" :text "go"}])
+      (expect (= ["q1" "q2"] (mapv :turn-id (:pending-sends @state/app-db)))))
+  (it "ownership comes from the echoed id: only ids this tab minted are ours"
+      ;; A cancel may pull only OUR queued text into THIS composer. The correlation
+      ;; id encodes process+tab, so ownership survives a re-attach and never
+      ;; mistakes a sibling channel's queued message for ours.
+      (reset! state/app-db
+        {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+      (state/dispatch
+        [:sync-queued-turn "s1"
+         {:op :add :turn-id "q1" :client-id (#'state/mint-client-id "s1") :text "mine"}])
+      (state/dispatch [:sync-queued-turn "s1"
+                       {:op :add :turn-id "q2" :client-id "other-channel:abc" :text "theirs"}])
+      (expect (= [true nil] (mapv :mine? (:pending-sends @state/app-db)))))
+  (it "recognises the tab's OWN live turn by correlation id before the id binds"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :loading? true
+                            :gateway-turn-id nil
+                            :live-turn-client-id "c9"
+                            :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil
+                       {:op :add :turn-id "t9" :client-id "c9" :text "anything"}])
+      (expect (= [] (:pending-sends @state/app-db))))
+  (it "seeds the attach backlog once, marking OUR rows by the echoed id"
+      (with-redefs
+        [vis/gateway-drain-idle! (fn [_]
+                                   nil)]
+        (let [mine (#'state/mint-client-id "s1")]
+          (reset! state/app-db {:session {:id "s1"}
+                                :active-tab-id "s1"
+                                :render-version 0
+                                :loading? false
+                                :pending-sends []})
+          (state/dispatch [:attach-running-turn "s1"
+                           {:id "s1"
+                            :status "idle"
+                            :queued-turns
+                            [{:turn-id "q5" :client-id mine :text "go" :queued-at-ms 1}
+                             {:turn-id "q6" :client-id "other:x" :text "go" :queued-at-ms 2}]}])
+          (state/dispatch [:sync-queued-turn "s1"
+                           {:op :add :turn-id "q5" :client-id mine :text "go"}])
+          (expect (= ["q5" "q6"] (mapv :turn-id (:pending-sends @state/app-db))))
+          (expect (= [true nil] (mapv :mine? (:pending-sends @state/app-db))))))))
+
+(defdescribe
+  queue-delete-reconcile-test
+  "A queued row is removed locally as a fast echo, but the gateway has the last
+   word: when the delete does not land, the row is written back through the one
+   `:sync-queued-turn` writer instead of hiding a turn that still auto-drains."
+  (it "writes the row back when the delete never reached the gateway"
+      (with-redefs
+        [vis/gateway-delete-queued-turn! (fn [_ _]
+                                           (throw (ex-info "connection refused" {})))]
+        (reset! state/app-db
+          {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+        ((get @@#'state/fx-registry :gateway-delete-queued)
+          "s1"
+          "q1"
+          "s1"
+          {:text "still queued" :client-id "c1" :mine? true})
+        (let [row (first (:pending-sends @state/app-db))]
+          (expect (= "q1" (:turn-id row)))
+          (expect (= "still queued" (:text row)))
+          ;; provenance survives the round-trip, so a cancel can still reclaim it
+          (expect (true? (:mine? row))))))
+  (it "keeps the row removed when the gateway says it is gone or already started"
+      (doseq [status [404 409]]
+        (with-redefs
+          [vis/gateway-delete-queued-turn! (fn [_ _]
+                                             (throw (ex-info "nope" {:http-status status})))]
+          (reset! state/app-db
+            {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+          ((get @@#'state/fx-registry :gateway-delete-queued)
+            "s1"
+            "q1"
+            "s1"
+            {:text "gone" :mine? true})
+          (expect (= [] (:pending-sends @state/app-db))))))
+  (it
+    "does nothing more when the delete succeeds"
+    (with-redefs
+      [vis/gateway-delete-queued-turn! (fn [_ _]
+                                         {"status" "deleted"})]
+      (reset! state/app-db
+        {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
+      ((get @@#'state/fx-registry :gateway-delete-queued) "s1" "q1" "s1" {:text "gone" :mine? true})
+      (expect (= [] (:pending-sends @state/app-db))))))

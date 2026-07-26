@@ -117,10 +117,10 @@
   (it "a nested tool-start ships an ephemeral activity event naming the op"
       (let
         [[type store? payload] (#'state/chunk->event
-                                {:phase :tool-start :iteration 2 :tool-event {:op :shell_run}})]
+                                {:phase :tool-start :iteration 2 :tool-event {:op :shell}})]
         (expect (= "activity" type))
         (expect (false? store?))
-        (expect (= {:activity "tool" :iteration 2 :op "shell_run"} payload))))
+        (expect (= {:activity "tool" :iteration 2 :op "shell"} payload))))
   (it "provider-call and shell-run project to ephemeral activity events"
       (expect (= ["activity" false {:activity "provider-call" :iteration 1}]
                  (#'state/chunk->event {:phase :provider-call :iteration 1})))
@@ -640,6 +640,187 @@
              (finally (swap! registry dissoc sid))))))
 
 (defdescribe
+  cancelled-backlog-test
+  ;; The queue-storm regression: a user cancel must not merely SKIP the backlog
+  ;; it stopped, it must DELETE it. Anything left `queued` is a live wire — any
+  ;; later terminal, attach kick or resume can start it minutes and turns later.
+  (it
+    "a user cancel drops the pre-cancel backlog and keeps post-cancel intent"
+    (let
+      [sid
+       (str "cancel-backlog-" (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       launched
+       (atom [])
+
+       seen
+       (atom [])]
+
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :subscribers {"test" #(swap! seen conj %)}
+           :turns
+           {"r0" {:turn_id "r0" :session_id sid :status "running" :cancelling_at 100}
+            "old" {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 50}
+            "new" {:turn_id "new" :session_id sid :status "queued" :request "after" :queued_at 150}}
+           :turn-order ["r0" "old" "new"]
+           :idempotency {"k-old" "old" "k-new" "new"}})
+        (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                       (swap! launched conj (vec (take 2 args))))
+                         #'cancellation/cancelled? (constantly true)}
+          #(#'state/after-turn-terminal!
+             sid
+             "r0"
+             {:failed? false :transient? false :cancel-token :tok :stalled? false}))
+        ;; the stopped backlog is GONE (not merely skipped) — registry row,
+        ;; order entry and idempotency key all released
+        (expect (nil? (state/get-turn sid "old")))
+        (expect (= ["r0" "new"] (get-in @registry [sid :turn-order])))
+        (expect (= {"k-new" "new"} (get-in @registry [sid :idempotency])))
+        ;; clients are told, so a mirrored "Queued" row and any waiter settle
+        (expect (contains? (set (mapv #(get % "type") @seen)) "turn.queued.deleted"))
+        ;; "stop that, run THIS" still runs
+        (expect (= [[sid "new"]] @launched))
+        (finally (swap! registry dissoc sid)))))
+  (it "a stalled force-cancel is a failure, not a user stop: backlog survives"
+      (let
+        [sid
+         (str "cancel-stall-" (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         launched
+         (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :turns
+                {"r0" {:turn_id "r0" :session_id sid :status "running" :cancelling_at 100}
+                 "old"
+                 {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 50}}
+                :turn-order ["r0" "old"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (swap! launched conj
+                                                              (vec (take 2 args))))
+                              #'cancellation/cancelled? (constantly true)}
+               #(#'state/after-turn-terminal!
+                  sid
+                  "r0"
+                  {:failed? false :transient? false :cancel-token :tok :stalled? true}))
+             (expect (= [[sid "old"]] @launched))
+             (finally (swap! registry dissoc sid)))))
+  (it
+    "no path resurrects a cancel-stopped head; an explicit resume still can"
+    (let
+      [sid
+       (str "cancel-gate-" (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       launched
+       (atom [])
+
+       seed!
+       #(swap! registry assoc
+          sid
+          {:next-seq 0
+           ;; the floor a completed user cancel left behind
+           :cancel-floor 100
+           ;; …and a paused queue, the state an explicit resume acts on
+           :queue-paused {:reason "provider_error" :held 1 :fails 1 :gen 1}
+           :turns
+           {"r0" {:turn_id "r0" :session_id sid :status "completed" :cancelling_at 100}
+            "old" {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 50}}
+           :turn-order ["r0" "old"]})]
+
+      (try (seed!)
+           (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                          (swap! launched conj
+                                                            (vec (take 2 args))))}
+             (fn []
+               ;; a later terminal drain and an attach kick both refuse it
+               (#'state/drain-next-queued! sid)
+               (state/drain-idle! sid)
+               (expect (= [] @launched))
+               (expect (= "queued" (get (state/get-turn sid "old") "status")))
+               ;; the user asking for it explicitly is the one override: it
+               ;; lifts the floor and drains the head it deliberately resumed
+               (state/resume-queue! sid {:auto? false})
+               (expect (nil? (get-in @registry [sid :cancel-floor])))
+               (expect (= [[sid "old"]] @launched))))
+           (finally (swap! registry dissoc sid)))))
+  (it "a stopped straggler is skipped, not parked at the head blocking the queue"
+      ;; Cross-validation: the gate lives at SELECTION. A pre-cancel turn that
+      ;; survived the sweep (a submit that raced it) must not wedge the
+      ;; post-cancel "stop that, run THIS" message behind it.
+      (let
+        [sid
+         (str "cancel-skip-" (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         launched
+         (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :cancel-floor 1000
+                :turns
+                {"old"
+                 {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 500}
+                 "new"
+                 {:turn_id "new" :session_id sid :status "queued" :request "after" :queued_at 2000}}
+                :turn-order ["old" "new"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (swap! launched conj
+                                                              (vec (take 2 args))))}
+               (fn []
+                 (state/drain-idle! sid)
+                 (expect (= [[sid "new"]] @launched))
+                 (expect (= "queued" (get (state/get-turn sid "old") "status")))))
+             (finally (swap! registry dissoc sid)))))
+  (it "a token cancelled with no user-cancel stamp (shutdown) drains nothing"
+      (let
+        [sid
+         (str "cancel-shutdown-" (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         launched
+         (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :turns
+                {"r0" {:turn_id "r0" :session_id sid :status "running"}
+                 "old"
+                 {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 50}}
+                :turn-order ["r0" "old"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (swap! launched conj
+                                                              (vec (take 2 args))))
+                              #'cancellation/cancelled? (constantly true)}
+               #(#'state/after-turn-terminal!
+                  sid
+                  "r0"
+                  {:failed? false :transient? false :cancel-token :tok :stalled? false}))
+             (expect (= [] @launched))
+             (expect (= "queued" (get (state/get-turn sid "old") "status")))
+             (finally (swap! registry dissoc sid))))))
+
+(defdescribe
   delta-coalesce-test
   ;; Model text phases stream LIVE but coalesced to SENTENCE granularity: a frame
   ;; is skipped only while still mid-sentence AND within the time cap. A closed
@@ -985,7 +1166,7 @@
        (into {}
              (for
                [v [#'state/append-event! #'state/drain-next-queued! #'state/schedule-auto-resume!
-                   #'state/queued-after-cancel? #'cancellation/cancelled?]]
+                   #'state/left-queued-by-cancel? #'cancellation/cancelled?]]
                [v @v]))
 
        seed!
@@ -1004,12 +1185,12 @@
                            (constantly (fn [_ t p & _]
                                          (swap! evs conj [t p]))))
            (alter-var-root #'state/drain-next-queued!
-                           (constantly (fn [_]
+                           (constantly (fn [_ & _]
                                          (swap! evs conj [:drained]))))
            (alter-var-root #'state/schedule-auto-resume!
                            (constantly (fn [& _]
                                          nil)))
-           (alter-var-root #'state/queued-after-cancel?
+           (alter-var-root #'state/left-queued-by-cancel?
                            (constantly (fn [_ _]
                                          false)))
            (alter-var-root #'cancellation/cancelled?
@@ -1030,9 +1211,11 @@
            (expect (nil? (state/queue-paused-info sid)))
            ;; clean completion clears a stale provider hold before advancing
            (seed!)
-           (swap! reg update sid assoc
-                  :queue-fails 2
-                  :queue-paused {:reason "provider_error" :held 2 :fails 2 :gen 1})
+           (swap! reg update
+             sid
+             assoc
+             :queue-fails 2
+             :queue-paused {:reason "provider_error" :held 2 :fails 2 :gen 1})
            (#'state/after-turn-terminal!
             sid
             "t"
@@ -1113,3 +1296,46 @@
                          :replay-events-retained :jvm-heap-used-bytes :process-rss-bytes
                          :jvm-gc-count-total :jvm-thread-count :env-cache-size]]
                      (expect (contains? snapshot k))))))
+
+(defdescribe
+  queued-turn-correlation-id-test
+  "ONE identity for a queued turn. The submitter's `idempotency_key` rides on the
+   turn record AND on `turn.queued`, so a channel binds its optimistic \"Queued\"
+   row to the gateway record by ID instead of guessing by request text (two
+   identical prompts are indistinguishable by text)."
+  (it
+    "echoes the submitter's correlation id on the queued record and its event"
+    (let
+      [registry
+       @#'state/registry
+
+       sid
+       (str "idem-" (java.util.UUID/randomUUID))
+
+       events
+       (atom [])]
+
+      (try (swap! registry assoc sid {:next-seq 0 :current-turn "running-1"})
+           (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                    (swap! events conj [type payload])
+                                                    nil)
+                            #'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'state/session-model (fn [_]
+                                                    nil)}
+             (fn []
+               (let
+                 [res
+                  (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})
+
+                  queued
+                  (->> @events
+                       (filter (comp #{"turn.queued"} first))
+                       first
+                       second)]
+
+                 (expect (= "queued" (get-in res [:turn "status"])))
+                 (expect (= "cid-1" (get-in res [:turn "idempotency_key"])))
+                 (expect (= "cid-1" (:idempotency_key queued)))
+                 (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
+           (finally (swap! registry dissoc sid))))))

@@ -159,6 +159,24 @@
 
 (s/def :provider/auth-fn ifn?)  ;; (printer-fn) -> nil (interactive)
 
+;; ── Headless OAuth (the wire-drivable twin of :provider/auth-fn) ─────────────
+;; `auth-fn` is INTERACTIVE: it prints and blocks on a terminal/dialog, so it
+;; can never cross an HTTP boundary. These three slots split the SAME flow into
+;; steps a remote client (companion app, web UI, any gateway caller) can drive:
+;;
+;;   start    -> {:kind :pkce|:device …public fields… :flow <opaque, PRIVATE>}
+;;   complete -> PKCE only: exchange the pasted redirect URL / code
+;;   await    -> device only: BLOCK until GitHub-style device auth resolves
+;;
+;; The `:flow` value (PKCE verifier, device code) is a daemon-side secret and
+;; MUST NOT be emitted onto the wire. Credentials are persisted by the daemon
+;; exactly as the interactive path does — they never reach the client.
+(s/def :provider/auth-start-fn ifn?)  ;; () -> {:kind :url :user-code :verification-uri :interval-ms :expires-in-ms :flow}
+
+(s/def :provider/auth-complete-fn ifn?)  ;; (flow input-string) -> {:status :ok}  (PKCE)
+
+(s/def :provider/auth-await-fn ifn?)  ;; (flow) -> {:status :ok}  (device; BLOCKS)
+
 (s/def :provider/get-token-fn ifn?)  ;; () -> token-string/map  (resolve usable token)
 
 (s/def :provider/refresh-token-fn ifn?)  ;; () -> token-string/map  (FORCE refresh ignoring local expiry; runtime 401 recovery)
@@ -175,6 +193,7 @@
   (s/and #(not (contains? % :provider/prompt-fn))
          (s/keys :req [:provider/id :provider/label]
                  :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
+                       :provider/auth-start-fn :provider/auth-complete-fn :provider/auth-await-fn
                        :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn
                        :provider/enrich-models-fn :provider/preset :provider/on-selected-fn])))
 

@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
 // https://vite.dev/config/
@@ -35,6 +36,15 @@ export default defineConfig(({ mode }) => {
         },
       },
       react(),
+      // React Compiler is this app's React checker AND its optimizer: it runs the
+      // full Rules-of-React static analysis (purity, immutability, hook rules,
+      // preserved manual memoization) on every build. `panicThreshold:
+      // 'critical_errors'` makes a real Rules-of-React violation FAIL the build
+      // instead of silently bailing out of memoization, while still tolerating
+      // syntax the compiler simply cannot lower yet (e.g. try/finally).
+      babel({
+        presets: [reactCompilerPreset({ target: '19', panicThreshold: 'critical_errors' })],
+      }),
       tailwindcss(),
     ],
     optimizeDeps: {

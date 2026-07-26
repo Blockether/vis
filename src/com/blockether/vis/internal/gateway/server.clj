@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.provider-auth :as provider-auth]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
@@ -234,20 +235,19 @@
   []
   (when-let [{:keys [^Server server db port host token]} @server-state]
     (when (and server db (.isStarted server))
-      (try
-        (let [entry (discovery/read-registry db)
+      (try (let
+             [entry (discovery/read-registry db)
               owner-pid (:pid entry)
               self-pid (discovery/current-pid)
               ours? (= owner-pid self-pid)
-              complete? (and ours?
-                             (= port (:port entry))
-                             (= host (:host entry))
-                             (= token (:secret entry)))]
-          (when (and (not complete?)
-                     (or (nil? owner-pid) ours? (not (discovery/pid-alive? owner-pid))))
-            (discovery/register-self! db {:port port :host host :secret token})))
-        (catch Throwable t
-          (tel/log! :warn ["gateway: registry self-repair failed" (ex-message t)]))))))
+              complete?
+              (and ours? (= port (:port entry)) (= host (:host entry)) (= token (:secret entry)))]
+
+             (when (and (not complete?)
+                        (or (nil? owner-pid) ours? (not (discovery/pid-alive? owner-pid))))
+               (discovery/register-self! db {:port port :host host :secret token})))
+           (catch Throwable t
+             (tel/log! :warn ["gateway: registry self-repair failed" (ex-message t)]))))))
 
 (defn- idle-shutdown-eligible?
   "True when this daemon is allowed to stop itself. Foreground `vis gateway start`
@@ -286,26 +286,24 @@
    count and never perform OS liveness probes or rebuild a set."
   []
   (when (compare-and-set! idle-reaper nil ::starting)
-    (reset! idle-reaper
-      (future (try (loop []
+    (reset! idle-reaper (future (try (loop []
 
-                     (Thread/sleep (long IDLE_REAP_MS))
-                     (when @server-state
-                       (ensure-self-registered!)
-                       (reap-client-leases!)
-                       (maybe-stop-when-idle!)
-                       (recur)))
-                   (catch Throwable t
-                     (tel/log! :warn ["gateway: idle reaper failed" (ex-message t)]))
-                   (finally (reset! idle-reaper nil)))))))
+                                       (Thread/sleep (long IDLE_REAP_MS))
+                                       (when @server-state
+                                         (ensure-self-registered!)
+                                         (reap-client-leases!)
+                                         (maybe-stop-when-idle!)
+                                         (recur)))
+                                     (catch Throwable t
+                                       (tel/log! :warn
+                                                 ["gateway: idle reaper failed" (ex-message t)]))
+                                     (finally (reset! idle-reaper nil)))))))
 
 ;; =============================================================================
 ;; Bearer token (§3)
 ;; =============================================================================
 
-(defn- default-token-path
-  ^Path []
-  (.toPath (discovery/default-token-file)))
+(defn- default-token-path ^Path [] (.toPath (discovery/default-token-file)))
 
 (defn- ensure-token!
   "Read the bearer token at `path`, minting one on first run. The token file
@@ -889,6 +887,114 @@
 
     (json-response {:models (vec models) :hidden-count (long (or hidden-count 0))})))
 
+(defn- auth-error-response
+  "Map a `provider-auth` failure map onto an HTTP status. Unknown provider/flow
+   is 404, an unsupported or malformed request is 400, and a genuine upstream
+   OAuth failure is 502 — the caller can tell 'you asked wrong' from 'GitHub
+   said no'."
+  [{:keys [error message]}]
+  (error-response (case error
+                    (:unknown-provider :unknown-flow)
+                    404
+
+                    (:auth-unsupported :missing-input :invalid-input)
+                    400
+
+                    502)
+                  (or error :auth-failed)
+                  (or message "authorization failed")))
+
+(defn- provider-auth-start-handler
+  "POST /v1/providers/:provider-id/auth/start — mint a headless OAuth flow.
+
+   Answers `{flow_id, kind, url, user_code?, verification_uri?, interval_ms?,
+   instructions?}`. `kind` is `pkce` (finish with `auth/complete`) or `device`
+   (finish by polling `auth/poll`). The PKCE verifier and device code stay in
+   the daemon and never appear in this response."
+  [request]
+  (let
+    [provider-id
+     (some-> (get-in request [:path-params :provider-id])
+             keyword)
+
+     result
+     (provider-auth/start-auth! provider-id)]
+
+    (if (:ok? result) (json-response (:flow result)) (auth-error-response result))))
+
+(defn- provider-auth-complete-handler
+  "POST /v1/providers/:provider-id/auth/complete {flow_id, redirect_url|api_key} —
+   finish the flow the client cannot finish alone: a PKCE flow with the URL the
+   user pasted back from the browser, or an `api-key` flow with the key the user
+   typed. Credentials are exchanged and persisted DAEMON-side; the response
+   carries only `{status}`."
+  [request]
+  (let
+    [body
+     (try (body-json request) (catch Throwable _ nil))
+
+     flow-id
+     (or (get body "flow_id") (get-in request [:query-params "flow_id"]))
+
+     input
+     (or (get body "redirect_url")
+         (get body "api_key")
+         (get body "code")
+         (get-in request [:query-params "redirect_url"]))
+
+     result
+     (provider-auth/complete-auth! flow-id input)]
+
+    (if (:ok? result) (json-response {:status (:status result)}) (auth-error-response result))))
+
+(defn- provider-auth-poll-handler
+  "POST /v1/providers/:provider-id/auth/poll {flow_id} — read a device flow's
+   verdict WITHOUT blocking: `pending`, `ok`, or `error`. The blocking wait
+   runs on a daemon thread from the moment `auth/start` returned, so a phone
+   can poll this on any cadence it likes."
+  [request]
+  (let
+    [body
+     (try (body-json request) (catch Throwable _ nil))
+
+     flow-id
+     (or (get body "flow_id") (get-in request [:query-params "flow_id"]))
+
+     result
+     (provider-auth/poll-auth! flow-id)]
+
+    (if (:ok? result)
+      (json-response (select-keys result [:status :message]))
+      (auth-error-response result))))
+
+(defn- provider-auth-cancel-handler
+  "POST /v1/providers/:provider-id/auth/cancel {flow_id} — forget an abandoned
+   flow. Idempotent, so a client that lost track of its flow can always call it."
+  [request]
+  (let
+    [body
+     (try (body-json request) (catch Throwable _ nil))
+
+     flow-id
+     (or (get body "flow_id") (get-in request [:query-params "flow_id"]))]
+
+    (json-response (select-keys (provider-auth/cancel-auth! flow-id) [:status]))))
+
+(defn- provider-logout-handler
+  "POST /v1/providers/:provider-id/logout — clear the provider's persisted
+   credentials through its registered logout and invalidate the cached fleet,
+   so the very next `/v1/router` read shows `is_authenticated` false."
+  [request]
+  (let
+    [provider-id
+     (some-> (get-in request [:path-params :provider-id])
+             keyword)
+
+     result
+     (provider-auth/logout! provider-id)]
+
+    (if (:ok? result) (json-response {:status (:status result)}) (auth-error-response result))))
+
 (defn- router-provider-entry
   "One row of the unified router payload for `provider` (a configured or
    authenticated-preset fleet entry): display label, base URL, model names, live
@@ -1099,10 +1205,14 @@
      channel
      (or (some-> (get-in request [:query-params "channel"])
                  keyword)
-         :all)]
+         :all)
 
-    (json-response {:session_ids (state/search-session-ids channel q)
-                    :matches (state/search-session-matches channel q)})))
+     ;; ONE search per request: `session_ids` is derived from the matches
+     ;; instead of re-running the identical (previously full-table) scan.
+     matches
+     (state/search-session-matches channel q)]
+
+    (json-response {:session_ids (mapv :session_id matches) :matches matches})))
 
 (defn- soul-handler
   [request]
@@ -1507,7 +1617,7 @@
 
 (defn- resources-handler
   "GET /v1/sessions/:sid/resources — the session's live vis-managed resources
-   (shell_bg children, managed REPLs, MCP connections, …) FROM THE DAEMON's
+   (background `shell` children, managed REPLs, MCP connections, …) FROM THE DAEMON's
    registry. An in-process client reads its own registry directly because
    it runs INSIDE the daemon, but the TUI and remote clients run in a DIFFERENT
    process from the one the agent's tools execute in; without this endpoint they
@@ -1598,11 +1708,32 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- set-session-model-handler
+  "PATCH /v1/sessions/:sid/model {provider, model} — pin the session to a
+   provider+model from THIS gateway's fleet (blank/omitted clears the pin).
+
+   The provider is validated against `configured-providers` because the gateway
+   OWNS the fleet: a client that pins an id this gateway does not serve would
+   silently degrade to the default route on every turn while every picker/footer
+   kept rendering the phantom pick. Unknown id -> 400 `unknown-provider`. The
+   MODEL name is deliberately NOT restricted to the configured names — the live
+   catalog (`/v1/providers/:id/models`, the TUI's \"Show all models\") legitimately
+   offers models that are not pinned in vis.yml."
   [request]
   (if-let [sid (path-sid request)]
-    (let [{:strs [provider model]} (body-json request)]
-      (state/set-session-model! sid provider model)
-      (json-response {:model (state/session-model sid)}))
+    (let
+      [{:strs [provider model]} (body-json request)
+       pid (some-> provider
+                   str
+                   str/trim
+                   not-empty)
+       known (into #{} (map (comp name :id)) (providers/configured-providers-cached))]
+
+      (if (and pid (not (contains? known pid)))
+        (error-response 400
+                        :unknown-provider (str "provider " pid " is not configured on this gateway")
+                        :provider_id pid)
+        (do (state/set-session-model! sid pid model)
+            (json-response {:model (state/session-model sid)}))))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- workspace-handler
@@ -1886,7 +2017,7 @@
 ;; `extension/channel-contributions-for` whenever it (re)builds the
 ;; handler. A fingerprint check on each request notices contributions
 ;; that arrived AFTER the server started (extension loaded late, jar
-;; dropped + `vis ext reload`) and rebuilds — both orders just work.
+;; dropped + `vis extension reload`) and rebuilds — both orders just work.
 ;;
 ;; Secondary source — imperative escape hatch for embedded/REPL callers:
 ;; `register-routes!` below.
@@ -2091,6 +2222,11 @@
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
         ["/providers/:provider-id/models" {:get provider-models-handler}]
+        ["/providers/:provider-id/auth/start" {:post provider-auth-start-handler}]
+        ["/providers/:provider-id/auth/complete" {:post provider-auth-complete-handler}]
+        ["/providers/:provider-id/auth/poll" {:post provider-auth-poll-handler}]
+        ["/providers/:provider-id/auth/cancel" {:post provider-auth-cancel-handler}]
+        ["/providers/:provider-id/logout" {:post provider-logout-handler}]
         ["/router" {:get router-handler}] ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
@@ -2446,7 +2582,7 @@
   (when-let [{:keys [^Server server db]} @server-state]
     ;; Release the listening socket FIRST so a successor daemon racing this
     ;; close-then-reopen handoff can bind the port immediately. The slow reap
-    ;; below (killing every session's shell_bg children + REPLs) can eat
+    ;; below (killing every session's background `shell` children + REPLs) can eat
     ;; seconds; when `.stop` ran AFTER it, the old process kept the port in
     ;; LISTEN through the whole reap, the successor's bind-retry AND the
     ;; client's `await-registry!` both timed out, and the first reopen died
@@ -2472,7 +2608,7 @@
                       ["gateway: drain timed out; forcing stop" residual
                        "turn(s) still running"])))))
     (try (.stop server) (catch Throwable _ nil))
-    ;; Kill every session's background resources (shell_bg children, REPLs)
+    ;; Kill every session's background resources (background `shell` children, REPLs)
     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
     ;; process; once it exits the children reparent to init and leak.
     (try (state/discard-prewarmed!) (catch Throwable _ nil))

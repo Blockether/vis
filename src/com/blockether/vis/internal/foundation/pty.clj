@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.pty
-  "Pure-Java pseudo-terminal for `shell_bg` — NO JNA, NO extracted native helper,
+  "Pure-Java pseudo-terminal for background `shell` children — NO JNA, NO extracted native helper,
    NO external `tmux`. Everything is a `java.lang.foreign` (Panama FFM) downcall
    into the platform libc, so it survives GraalVM native-image the same way the
    rest of vis's FFM surface (fff / rift / ruff / tree-sitter) does.

@@ -443,6 +443,42 @@
                           ")."))
              :ok)))))))
 
+(defn auth-start
+  "Headless leg 1 of OpenAI Codex OAuth — the wire-drivable twin of `login!`.
+   Mints a fresh PKCE flow and returns the authorization URL plus the OPAQUE
+   `:flow` the daemon hands back to `auth-complete`.
+
+   `:flow` carries the PKCE verifier and CSRF state: daemon-side secrets that
+   must NEVER be emitted onto the wire."
+  ([] (auth-start "vis"))
+  ([originator]
+   (let [{:keys [url] :as flow} (create-authorization-flow originator)]
+     {:kind :pkce
+      :url url
+      :instructions ["Sign in to OpenAI in the browser."
+                     "Copy the FULL redirect URL from the address bar."
+                     "Paste it back here to finish."]
+      :flow flow})))
+
+(defn auth-complete
+  "Headless leg 2: verify CSRF state, exchange the pasted redirect URL (or bare
+   `code#state`) for credentials, and PERSIST them in the daemon's auth file."
+  [{:keys [verifier state]} input]
+  (when (str/blank? (or input ""))
+    (throw (ex-info "Missing authorization input" {:type :vis/openai-codex-missing-input})))
+  (let
+    [parsed
+     (parse-authorization-input input)
+
+     code
+     (:code parsed)]
+
+    (when (and (:state parsed) (not= state (:state parsed)))
+      (throw (ex-info "State mismatch" {:expected state :actual (:state parsed)})))
+    (when (str/blank? code) (throw (ex-info "Missing authorization code" {})))
+    (save-auth-file! (exchange-authorization-code! code verifier))
+    {:status :ok}))
+
 ;; =============================================================================
 ;; Public CLI helpers
 ;; =============================================================================
@@ -578,6 +614,8 @@
                       :provider/logout-fn #'logout!
                       :provider/detect-fn #'detect-credentials
                       :provider/auth-fn #'login!
+                      :provider/auth-start-fn #'auth-start
+                      :provider/auth-complete-fn #'auth-complete
                       :provider/get-token-fn #'get-openai-codex-token!
                       :provider/refresh-token-fn #'force-refresh-token!
                       :provider/limits-fn #'limits}]}))

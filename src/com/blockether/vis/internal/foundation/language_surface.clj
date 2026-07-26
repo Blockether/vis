@@ -299,9 +299,12 @@
   ;; :id ...}); project it to a strings-only model payload (enum value stringified
   ;; at the source) so nothing keyword crosses the boundary.
   (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) id)]
-    (extension/success {:result (cond-> {"result" (name result) "id" (str id)}
-                                  message
-                                  (assoc "message" message))})))
+    (extension/success {:result {"result" (name result)
+                                 "id" (str id)
+                                 ;; TOTAL: `message` is nil rather than absent, so
+                                 ;; r["message"] reads on EVERY stop instead of
+                                 ;; KeyErroring on the clean path.
+                                 "message" message}})))
 
 (defn- dispatch-start-repl!
   [env args]
@@ -984,7 +987,11 @@
     {:symbol 'run_tests
      :native-tool? true
      :description
-     "Run project tests through the active language pack. Prefer the smallest target that proves the change; use the full suite only when its broader coverage is relevant."
+     (str
+       "Run project tests through the active language pack. Prefer the smallest target that proves the "
+       "change; use the full suite only when its broader coverage is relevant. Selection: `dir` picks the "
+       "project, `namespaces` (or `paths`, used only when `namespaces` is absent) picks what loads, and "
+       "`only`/`filter`/`include`/`exclude` narrow inside that.")
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -1071,13 +1078,13 @@
     {:symbol 'repl
      :native-tool? true
      :description
-     (str "THE one REPL lifecycle tool — inspect "
-          "`session[\"resources\"][\"repls\"][language][dir]` (`.` is root) first: reuse "
-          "`up`, start absent/down/failed, recheck `starting`, and restart `unresponsive`. "
-          "Keep the returned resource id. `op` \"stop\" stops a managed REPL (by `id`, or "
-          "`dir`'s REPL when id is omitted); \"connect\" attaches an EXTERNAL already-running "
-          "REPL by `port` — never owned or killed; stopping it only detaches. "
-          "\"status\" lists this session's REPLs.")
+     (str
+       "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][dir]` "
+       "(`.` is root) FIRST, then pick `op`: already `up` → reuse it, no call needed (`starting` → "
+       "recheck); \"start\" for absent/down/failed; \"restart\" for unresponsive; `op` \"stop\" stops a "
+       "managed REPL you started (by `id`, else `dir`'s); \"connect\" attaches an EXTERNAL running REPL "
+       "by `port` — never owned or killed, stopping it only detaches; \"status\" lists this session's "
+       "REPLs. Keep the returned resource id and stop what you started when the work is done.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell

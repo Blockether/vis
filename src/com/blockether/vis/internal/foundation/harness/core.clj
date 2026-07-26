@@ -107,8 +107,7 @@
   (cond (get r "error") {:summary (str "skill not found — " (get r "error"))}
         (= "already-active" (get r "status")) {:summary (str "`" (get r "name") "` already active")}
         :else {:summary (str "loaded skill `" (get r "name") "`")
-               :body (when-let [b (not-empty (str (get r "body")))]
-                       (str "```\n" b "\n```"))}))
+               :body (not-empty (str (get r "body")))}))
 
 (def skill-symbol
   ;; STRONG flat native-tool form: everything on the SYMBOL. `:native-tool? true`

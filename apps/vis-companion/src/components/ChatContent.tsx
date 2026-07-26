@@ -51,8 +51,7 @@ const toolRoleClasses: Record<string, { border: string; text: string }> = {
 const toolLabelOverrides: Record<string, string> = {
   python_execution: 'RESULT',
   repl_eval: 'REPL',
-  shell_run: 'SHELL RUN',
-  shell_bg: 'SHELL BACKGROUND',
+  // `shell` needs no override: ONE tool, whose card names the op that ran.
 };
 
 function CopyButton({ value }: { value: string }) {

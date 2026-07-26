@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
@@ -24,30 +24,40 @@ export function ConnectScreen({
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<Record<string, GwHealth>>({});
+  const probeInFlight = useRef(false);
 
+  // One sweep at a time: a probe fans out to EVERY saved gateway, and an
+  // unreachable one only settles when its request times out — well past the 6s
+  // tick. Without this guard those sweeps overlap and multiply.
   const probe = useCallback(async (list: GatewayConn[]) => {
-    await Promise.all(
-      list.map(async (conn) => {
-        setHealth((h) => ({
-          ...h,
-          [conn.url]: { state: h[conn.url]?.state ?? 'checking', ms: h[conn.url]?.ms },
-        }));
-        const started = Date.now();
-        try {
-          const reachable = await new GatewayClient(conn).ping();
+    if (probeInFlight.current) return;
+    probeInFlight.current = true;
+    try {
+      await Promise.all(
+        list.map(async (conn) => {
           setHealth((h) => ({
             ...h,
-            [conn.url]: { state: reachable ? 'online' : 'offline', ms: Date.now() - started },
+            [conn.url]: { state: h[conn.url]?.state ?? 'checking', ms: h[conn.url]?.ms },
           }));
-        } catch (e) {
-          const unauthorized = e instanceof GatewayError && e.status === 401;
-          setHealth((h) => ({
-            ...h,
-            [conn.url]: { state: unauthorized ? 'auth' : 'offline', ms: Date.now() - started },
-          }));
-        }
-      }),
-    );
+          const started = Date.now();
+          try {
+            const reachable = await new GatewayClient(conn).ping();
+            setHealth((h) => ({
+              ...h,
+              [conn.url]: { state: reachable ? 'online' : 'offline', ms: Date.now() - started },
+            }));
+          } catch (e) {
+            const unauthorized = e instanceof GatewayError && e.status === 401;
+            setHealth((h) => ({
+              ...h,
+              [conn.url]: { state: unauthorized ? 'auth' : 'offline', ms: Date.now() - started },
+            }));
+          }
+        }),
+      );
+    } finally {
+      probeInFlight.current = false;
+    }
   }, []);
 
   // Live reachability: probe every saved gateway on mount, then every 6s, so the
@@ -56,7 +66,10 @@ export function ConnectScreen({
   useEffect(() => {
     if (conns.length === 0) return;
     void probe(conns);
-    const id = window.setInterval(() => void probe(conns), 6000);
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      void probe(conns);
+    }, 6000);
     return () => window.clearInterval(id);
   }, [conns, probe]);
 

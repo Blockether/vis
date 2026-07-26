@@ -533,8 +533,7 @@
                            ;; `:svar.llm/empty-content` and stream watchdog timeouts are
                            ;; deliberately NOT here: svar owns their bounded same-provider
                            ;; policy, so retrying again here would stack retry ladders.
-                           (or (stream-transport-error? t)
-                               (perr/transport-throwable? t)))]
+                           (or (stream-transport-error? t) (perr/transport-throwable? t)))]
 
           (if can-retry?
             (let
@@ -787,7 +786,11 @@
                          [a (when (some #(= (str id) (str (:id %)))
                                         (persistance/db-list-session-attachments d sid))
                               (attachment-storage/hydrate (persistance/db-read-attachment d id)))]
-                         (when (str/starts-with? (str (:media-type a)) "image/")
+                         (when (and (str/starts-with? (str (:media-type a)) "image/")
+                                    ;; An externally stored image whose backend is unavailable
+                                    ;; has metadata but no bytes. Do not acknowledge it then emit
+                                    ;; an invalid `data:image/...;base64,` block next request.
+                                    (not (str/blank? (str (:base64 a)))))
                            (mpl-capture/queue-reinspection! a)
                            a)))}))
 
@@ -3351,6 +3354,19 @@
         (patch-file-summary? result) (strip-echo-diff result)
         :else result))
 
+(defn- printed-result-op
+  "The op-STRING that resolves a PRINTED tool result's renderer.
+
+   A map result carries its origin under `\"op\"` (the engine stamps it). A
+   LIST-shaped result cannot — `patch` / `write` / `struct_patch` return one
+   per-file summary row, and the `\"op\"` on a ROW is the per-file edit verb
+   (`\"add\"`/`\"update\"`), never the tool. Those three share ONE renderer
+   (`render-patch-result`), so a list of per-file summaries resolves to
+   `\"patch\"` — the card paints the edit rows instead of silently vanishing."
+  [pr]
+  (cond (map? pr) (some-> (get pr "op")
+                          str)
+        (and (sequential? pr) (seq pr) (every? patch-file-summary? pr)) "patch"))
 
 (defn- nested-reason?
   "True when a nested tool error carries one of `reasons`."
@@ -4108,12 +4124,12 @@
   [caps]
   {:name "python_execution"
    :description
-   (str "Python for batch/filter/transform chains. State persists but cannot import project "
-        "packages; use project REPLs. Print results; expressions are ignored; errors surface. "
-        "Direct native results: `ntr[tool_id]`; Python stays in variables. Engine-bound natives "
-        "are bare snake_case; native-only ones are absent. Await actions, gather independent "
-        "calls. Use apropos/doc only to discover capabilities not already advertised; do not "
-        "preflight a visible native tool. Use direct natives for simple work."
+   (str "Run Python in the session sandbox to batch, filter, and chain tool calls: `await "
+        "gather(...)` independent natives, then print only what should enter context. State "
+        "persists across blocks; project packages cannot be imported — use a project REPL. Only "
+        "`print` output comes back; bare expressions are dropped and errors surface. Native "
+        "results return inline and stay reachable as `ntr[tool_id]`; engine-bound natives are "
+        "callable as bare snake_case, native-only ones are absent."
         (when-let [cap (python-execution-capability-line caps)]
           (str " " cap)))
    :schema {:type "object"
@@ -4143,36 +4159,31 @@
   []
   {:name "session_fold"
    :description
-   (str
-     "Read `session[\"turn\"]`, then fold any SETTLED wire step: every PRIOR turn, "
-     "AND the CURRENT turn's already-completed iterations. The one thing off-limits "
-     "is the live iteration you are emitting right now (and any future step) — it "
-     "isn't settled, so a fold naming it is blocked. To trim the current turn, fold "
-     "up to the last finished iteration (e.g. {\"through\": \"tN/iK\"}); a blocked "
-     "attempt names only the live scope, so drop it and keep the settled ones. " "Preserve a "
-     "durable takeaway when useful. Folding changes rendering, not storage: the cheap "
-     "recovery is `ntr[tool_id]` (one native result, no re-run, survives a restart) — the "
-     "fold breadcrumb lists its accessors; only if that id isn't in "
-     "view, walk `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
-     "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep "
-     "the newer gist, while partial overlaps remain.")
+   (str "Collapse SETTLED wire steps into a breadcrumb — folding changes rendering, not "
+        "storage, so fold a step once its takeaway is captured. Settled = every PRIOR turn "
+        "plus the current turn's already-completed iterations (read `session[\"turn\"]`); the "
+        "live iteration you are emitting right now, and any future step, is not settled and "
+        "blocks the call — fold through the last finished iteration instead "
+        "({\"through\": \"tN/iK\"}). Recover a folded result via `ntr[tool_id]` (one native "
+        "result, no re-run, survives a restart; the breadcrumb lists its accessors), else walk "
+        "`await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
+        "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
+        "gist; partial overlaps remain.")
    :schema
    {:type "object"
     :properties
     {"target" {:description
-               (str "What to fold. Either a LIST of step ids like [\"t2/i3\", \"t2/i4\"] "
-                    "(a bare \"t2\" in the list folds that WHOLE turn), OR a selector "
-                    "object: {\"through\": \"tN/iN\"} folds every step up to and INCLUDING "
-                    "that one; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an inclusive window "
-                    "(either bound optional); {\"since\": \"tN/iN\"} that step through the "
-                    "newest.")}
-     "gist"
-     {:type "string"
-      :description
-      (str
-        "Optional one-line durable takeaway: finding, rationale/consequence, and "
-        "useful path:line, symbol/test, or anchor. Refresh any preserved anchor before "
-        "editing. OMIT gist to drop spent reads, catalogs, errors, or other steps with no durable value.")}}
+               (str "What to fold: a LIST of ids [\"t2/i3\", \"t2/i4\"] (a bare \"t2\" folds "
+                    "that WHOLE turn), or ONE selector — {\"through\": \"tN/iN\"} every step "
+                    "up to and INCLUDING it; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an "
+                    "inclusive window (either bound optional); {\"since\": \"tN/iN\"} that "
+                    "step through the newest.")}
+     "gist" {:type "string"
+             :description
+             (str
+               "Optional one-line durable takeaway: the finding, its consequence, and a useful "
+               "path:line, symbol/test, or anchor (refresh a preserved anchor before editing). "
+               "OMIT to drop spent reads, catalogs, errors, or any step with no durable value.")}}
     :required ["target"]
     :additionalProperties false}})
 
@@ -5080,24 +5091,23 @@
               ;;    :tool-color-role :tool-color/read}
               printed-cards (vec
                               (keep (fn [pr]
-                                      ;; `pr` crossed the boundary — STRING keys ("op").
-                                      (when-let
-                                        [t (get printed-renderers
-                                                (some-> (get pr "op")
-                                                        str))]
-                                        (let
-                                          [c ((:render t) pr)
-                                           c (if (map? c) c {:body (str c)})]
+                                      ;; `pr` crossed the boundary — STRING keys ("op"),
+                                      ;; or a LIST of per-file edit rows (see
+                                      ;; `printed-result-op`).
+                                      (when-let [op (printed-result-op pr)]
+                                        (when-let [t (get printed-renderers op)]
+                                          (let
+                                            [c ((:render t) pr)
+                                             c (if (map? c) c {:body (str c)})]
 
-                                          {:vis/tool-name (some-> (get pr "op")
-                                                                  str)
-                                           :result-summary (some-> (:summary c)
-                                                                   str
-                                                                   not-empty)
-                                           :result-render (some-> (:body c)
-                                                                  str
-                                                                  not-empty)
-                                           :tool-color-role (:color-role t)})))
+                                            {:vis/tool-name op
+                                             :result-summary (some-> (:summary c)
+                                                                     str
+                                                                     not-empty)
+                                             :result-render (some-> (:body c)
+                                                                    str
+                                                                    not-empty)
+                                             :tool-color-role (:color-role t)}))))
                                     (:printed-results result*)))
               ;; Printed cards replace raw stdout only when at least one carries a body.
               ;; Summary-only cards otherwise suppress the sole non-empty result surface,
@@ -8092,8 +8102,8 @@
 
 (defn- parse-bang
   "Parse a `!`/`!&` shell-sugar user message into `{:kind :run|:bg :cmd :id?}`,
-   or nil when `text` is NOT a bang. `!<cmd>` desugars to `shell_run(cmd)`
-   (synchronous); `!&<cmd>` desugars to `shell_bg(id, cmd)` in the background
+   or nil when `text` is NOT a bang. `!<cmd>` desugars to `shell(cmd)`
+   (synchronous); `!&<cmd>` desugars to the same tool's background op in
    under an auto-generated resource id. A blank command (a bare `!`) is ordinary
    prose, so it returns nil and the message runs as a normal turn."
   [text]
@@ -8135,7 +8145,7 @@
    map, native-tool identity, and `:tag :user-shell`. The op-card renders as the
    answer bubble (channels suppress the redundant trace by that tag), and the
    persisted `:result` rides later prompts' prior-turn context exactly as a
-   model-issued `shell_run` / `shell_bg` does across turns. Returns the same
+   model-issued `shell` call does across turns. Returns the same
    shape `iteration-loop` would (so callers don't special-case bang turns)."
   [env user-request {:keys [kind cmd id]} loop-opts]
   (let
@@ -8162,8 +8172,10 @@
      enabled?
      (toggles/enabled? "shell")
 
+     ;; ONE shell tool for both kinds: the background one differs by its `op`
+     ;; argument, not by a second tool name.
      tool-name
-     (if (= kind :bg) "shell_bg" "shell_run")
+     "shell"
 
      t0
      (System/currentTimeMillis)
@@ -8190,13 +8202,11 @@
 
      envelope
      (when enabled?
-       (try
-         (if (= kind :bg)
-           ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell-bg) env id cmd)
-           ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell-run) env cmd))
-         (catch Throwable t
-           (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
-           {:result nil :error {:message (or (ex-message t) (str t))}})))
+       (try (let [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell)]
+              (if (= kind :bg) (shell-fn env cmd {"op" "bg" "id" id}) (shell-fn env cmd)))
+            (catch Throwable t
+              (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
+              {:result nil :error {:message (or (ex-message t) (str t))}})))
 
      t1
      (System/currentTimeMillis)
@@ -8225,7 +8235,7 @@
 
      answer-md
      (cond (not enabled?) (str "**Shell layer is OFF.** Only you can enable it: settings dialog"
-                               " → 'Shell commands (compatibility layer)'. Then `"
+                               " → 'Shell commands'. Then `"
                                cmd
                                "` will run.")
            (some? err) (str "**shell error**\n\n```\n" (or (:message err) (pr-str err)) "\n```")
@@ -8234,7 +8244,9 @@
 
      block
      (cond->
-       {:code (str tool-name "(" (pr-str cmd) ")")
+       {:code (if (= kind :bg)
+                (str "shell(" (pr-str cmd) ", {\"op\": \"bg\", \"id\": " (pr-str id) "})")
+                (str "shell(" (pr-str cmd) ")"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
         :tool-color-role (get color-roles tool-name)
@@ -8468,6 +8480,31 @@
           (and model (some owns? (:providers router))) {:model model}
           :else {})))
 
+(defn- router-for-pinned-provider
+  "Hoist `provider-id`'s entry to the router HEAD.
+
+   `router-for-model` alone cannot do this: when two providers expose the SAME
+   model name they tie on rank and the stable sort keeps config order. A session
+   pinned to `github-copilot-individual/gpt-5.4` therefore CALLED copilot (the
+   forced `:routing` binds that) while `resolve-effective-model` read the head —
+   openai-codex — so the turn card, the cost row and every provider-error card
+   named (and PRICED) the wrong provider. Hoisting the pinned provider makes
+   display/cost attribution agree with the call, and puts the pinned provider
+   first in the fallback order."
+  [router provider-id]
+  (let
+    [pid
+     (some-> provider-id
+             name
+             keyword)
+
+     ps
+     (:providers router)]
+
+    (if-let [p (and pid (first (filter #(= (:id %) pid) ps)))]
+      (assoc router :providers (into [p] (remove #(= (:id %) pid)) ps))
+      router)))
+
 (defn- prepare-turn-context
   "Validates inputs, resolves sandbox bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
@@ -8502,6 +8539,11 @@
                       (session-model/model-of (:db-info env) (:session-id env)))
        model (or model (:model session-pref))
        pref-provider (:provider session-pref)
+       ;; The pin the session actually BINDS (provider+model, validated against
+       ;; the router). Computed once: it drives BOTH the display/cost root
+       ;; (env-router below) and svar's forced `:routing`, so the two can never
+       ;; name different providers again.
+       pref-forced (forced-routing-for-pref (:router env) pref-provider model)
        ;; Cancellation TOKEN carries the cooperative flag AND the
        ;; on-cancel! callback registry that hard-cancels Python /
        ;; provider futures. Callers create one via
@@ -8549,7 +8591,12 @@
        ;; pick. Blank/unknown names degrade to the config order.
        env-router (cond-> (:router env)
                     (and model (not (str/blank? (str model))))
-                    (router-for-model model))
+                    (router-for-model model)
+
+                    ;; …and a pinned PROVIDER hoists that provider, so a model
+                    ;; name two providers share attributes to the one being called.
+                    (:provider pref-forced)
+                    (router-for-pinned-provider (:provider pref-forced)))
        root-resolved-model (when env-router (resolve-effective-model env-router))
        root-model (or (:name root-resolved-model) model)
        root-provider (:provider root-resolved-model)
@@ -8580,9 +8627,7 @@
        ;; by provider :priority). FORCE the pick into `:routing` so the call
        ;; truly lands on the chosen provider+model. A caller-supplied
        ;; `:routing` (e.g. sub_loop's own pin) wins on merge.
-       routing (let
-                 [merged (merge (forced-routing-for-pref (:router env) pref-provider model)
-                                (or routing {}))]
+       routing (let [merged (merge pref-forced (or routing {}))]
                  ;; MAIN turn (depth 0): pin the ACTIVE provider+model so a provider
                  ;; failure surfaces as an error the USER acts on (retry / switch
                  ;; provider — TUI Ctrl+K) instead of svar silently hopping across the
@@ -10041,7 +10086,7 @@
 
      ;; Register one live policy function for the standard language-process launch
      ;; contract. Managed REPLs and project test runners share the same Seatbelt +
-     ;; gateway-proxy boundary as shell_run / subprocess, keyed per session.
+     ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
      _register-repl-jail
      (when session-id (process-jail/register-session-jail! session-id jail-policy-fn))
 

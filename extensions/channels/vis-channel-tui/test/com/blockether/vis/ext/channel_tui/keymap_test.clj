@@ -33,7 +33,7 @@
                  (expect (= :pick-model (keymap/prefix-action-for \c)))
                  (expect (= :show-sessions (keymap/prefix-action-for \s)))
                  (expect (= :fork-session (keymap/prefix-action-for \y)))
-                 (expect (= :open-resources (keymap/prefix-action-for \b)))
+                 (expect (nil? (keymap/prefix-action-for \b)))
                  ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
                  ;; second key resolves the same with or without its own Ctrl.
                  (expect (= :search-open (keymap/prefix-action-for \f)))
@@ -67,12 +67,11 @@
                  (expect (= "C-x a" (keymap/label-for :pick-file)))
                  (expect (= "C-x v" (keymap/label-for :toggle-voice-recording)))
                  (expect (= "C-x d" (keymap/label-for :open-drafts)))
-                 (expect (= "C-x b" (keymap/label-for :open-resources)))
+                 (expect (nil? (keymap/label-for :open-resources)))
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
                  (expect (= "C-x c" (keymap/label-for :pick-model)))
                  (expect (nil? (keymap/label-for :no-such-action))))
              (it "label-or-palette returns the registered C-x chord"
-                 (expect (= "C-x b" (keymap/label-or-palette :open-resources)))
                  (expect (= "C-x f" (keymap/label-or-palette :search-open)))
                  (expect (= "C-x v" (keymap/label-or-palette :toggle-voice-recording)))
                  (expect (= "C-x c" (keymap/label-or-palette :pick-model))))

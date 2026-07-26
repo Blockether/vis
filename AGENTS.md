@@ -25,7 +25,11 @@ treat mobile as a reduced or deferred version of the web interface.
   and transcript semantics while adapting interaction and density appropriately
   for touch and pointer input. Visual parity does not justify a broken mobile
   layout.
-- For frontend changes, verify at least `npm run build` in
+- The companion has NO eslint. React Compiler is the linter: `npm run lint`
+  runs `scripts/react-compiler-lint.mjs` (compiler analysis over every `src`
+  file, fails on any non-Todo diagnostic) and `vite build` runs the compiler
+  with `panicThreshold: 'critical_errors'`. Never reintroduce eslint.
+- For frontend changes, verify at least `npm run lint` and `npm run build` in
   `apps/vis-companion`; when browser tooling is available, inspect one phone-size
   and one desktop-size viewport.
 

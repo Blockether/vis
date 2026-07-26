@@ -1463,7 +1463,7 @@
   ;; IDLE session (no running turn, no queued/pending sends, and the sid
   ;; is not still open in another tab) we emit `:release-session-listener`
   ;; (drop the SSE title-listener) + `:release-session-runtime` (tell the
-  ;; daemon to stop that session's shell_bg children / REPLs and drop its
+  ;; daemon to stop that session's background `shell` children / REPLs and drop its
   ;; live runtime). A session with a running or queued turn is LEFT alone —
   ;; it stays resumable and keeps streaming; only process exit force-stops.
   (fn [db [_ tab-id keep-project?]]
@@ -1627,8 +1627,8 @@
                                   :workspace/root (get ws "root")))))))
 
 (def ^:private active-turn-state-keys
-  [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
-   :gateway-turn-id :live-turn-request])
+  [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
+   :live-turn-client-id])
 
 (defn- session-running?
   [session]
@@ -1646,7 +1646,7 @@
     :turn-start-ms nil
     :cancel-token nil
     :gateway-turn-id nil
-    :live-turn-request nil
+    :live-turn-client-id nil
     :cancelling-at-ms nil))
 
 (defn- reconcile-in-flight-state
@@ -2350,7 +2350,7 @@
                  :slash-command-hidden? false)
            :fx (cond-> []
                  (and sid tid)
-                 (conj [:gateway-delete-queued sid tid]))})
+                 (conj [:gateway-delete-queued sid tid (current-tab-id db) entry]))})
         (empty? history) {:db db}
         :else (let
                 [new-idx
@@ -2769,6 +2769,32 @@
   (when (= :openai-codex (current-provider-id db))
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) "low"))}}))
 
+(defonce ^:private process-submission-id (str (java.util.UUID/randomUUID)))
+
+(defn- submission-prefix
+  "Prefix every correlation id this PROCESS+TAB mints carries. Ownership of a
+   mirrored queue row is therefore derivable from the id the gateway echoes back,
+   with no local bookkeeping to drift out of sync."
+  [workspace-id]
+  (str "tui:" process-submission-id "/" (when workspace-id (name workspace-id)) ":"))
+
+(defn- mint-client-id
+  "Correlation id sent to the gateway as the `idempotency_key` for one submission.
+   It encodes THIS process + tab, so `our-submission?` can decide ownership of a
+   mirrored row from gateway truth alone - no local bookkeeping that could drift,
+   and it still works for a backlog snapshot seeded on re-attach."
+  [workspace-id]
+  (str (submission-prefix workspace-id) (java.util.UUID/randomUUID)))
+
+(defn- our-submission?
+  "True when the gateway's echoed correlation id was minted by THIS tab. The ONE
+   ownership rule: a cancel may pull only OUR queued text into THIS composer,
+   never a sibling channel's (or another tab's) queued message."
+  [workspace-id client-id]
+  (boolean (and client-id
+                (string? client-id)
+                (str/starts-with? client-id (submission-prefix workspace-id)))))
+
 (defn- db-for-tab
   [db workspace-id]
   (if (= workspace-id (current-tab-id db))
@@ -2816,56 +2842,56 @@
            [nil nil])
 
          client-id
-         (str (java.util.UUID/randomUUID))
+         (mint-client-id workspace-id)
 
          entry
          {:text text
           :preview-text preview-text
           :agent-text agent-text
           :client-id client-id
+          :mine? true
           :pastes pastes
           :paste-counter (:paste-counter source-db)
           :queued-at-ms (System/currentTimeMillis)}
 
-         ;; RACE GUARD: never register a SERVER-SIDE queued turn while a
-         ;; cancel is in flight (`:cancelling?`). A cancel restores the whole
-         ;; backlog to the editor (:restore-pending-to-input) instead of
-         ;; draining it — but that restore deletes gateway records by
-         ;; :turn-id, and the enqueue's turn-id is bound LATE by an async
-         ;; round-trip (:set-queued-turn-id). If the restore wins that race
-         ;; the orphaned gateway turn survives and auto-drains after the
-         ;; cancel = the message gets SENT while ALSO landing back in the
-         ;; queue/editor. Keeping it purely LOCAL here means restore pulls it
-         ;; cleanly to the editor with nothing to leak server-side.
+         ;; NO OPTIMISTIC QUEUE ROW. The gateway is the ONE queue of record, so a
+         ;; busy-time submission is registered THERE and the row is painted only
+         ;; from gateway truth - the ack of this enqueue or the `turn.queued`
+         ;; broadcast, both flowing through the single `:sync-queued-turn` writer
+         ;; and keyed by the gateway turn id. An HTTP round-trip is milliseconds;
+         ;; a locally invented row (no id yet) had to be reconciled against the
+         ;; gateway by request TEXT, and that reconciliation is what produced the
+         ;; duplicate / ghost "Queued" lines.
+         gateway?
+         (boolean (and session agent-text))
+
          gw-fx
-         (when (and session agent-text (not (:cancelling? source-db)))
-           (let
-             [extra-body
-              (turn-extra-body source-db)
-
-              turn-features
-              {}
-
-              reasoning-level
-              (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))]
-
-             [:gateway-enqueue workspace-id session client-id agent-text reasoning-level extra-body
-              turn-features workspace]))]
+         (when gateway?
+           [[:gateway-enqueue workspace-id session entry
+             (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
+             (turn-extra-body source-db) {} workspace]])]
 
         {:db (update-tab db
                          workspace-id
                          (fn [w]
-                           (-> w
-                               (update :pending-sends
-                                       (fn [q]
-                                         (conj (vec (or q [])) entry)))
-                               (update :input-history
-                                       (fn [xs]
-                                         (let [xs (vec (or xs []))]
-                                           (if (= text (last xs)) xs (conj xs text))))))))
+                           (cond-> w
+                             ;; The correlation id we are about to send as the gateway
+                             ;; A submission with NOWHERE to go (session still being
+                             ;; created, so there is no gateway queue yet) is the ONLY
+                             ;; locally staged row; it drains as soon as the session binds.
+                             (not gateway?)
+                             (update :pending-sends
+                                     (fn [q]
+                                       (conj (vec (or q [])) entry)))
+
+                             :always
+                             (update :input-history
+                                     (fn [xs]
+                                       (let [xs (vec (or xs []))]
+                                         (if (= text (last xs)) xs (conj xs text))))))))
          :fx (cond-> [[:notify "Queued — will send after current turn" :info 1500]]
                gw-fx
-               (conj gw-fx))}))))
+               (into gw-fx))}))))
 
 (reg-event-fx
   :send-message
@@ -2948,12 +2974,13 @@
                                   :cancel-awaiting-turn-id? false
                                   :progress {:iterations []}
                                   :turn-start-ms (System/currentTimeMillis)
-                                  ;; Agent-text of the turn this tab launched DIRECTLY. If the
-                                  ;; gateway is still tearing down a just-cancelled turn it parks
-                                  ;; this fresh submit in its queue and echoes a turn.queued back;
-                                  ;; :sync-queued-turn matches that echo to this field to refuse a
-                                  ;; duplicate "Queued" row (the sent bubble already paints it).
-                                  :live-turn-request agent-text
+                                  ;; Identity of the turn this tab launched DIRECTLY: the
+                                  ;; correlation id we sent as the gateway idempotency key. A
+                                  ;; queue event echoing OUR OWN submit back (the gateway was
+                                  ;; still tearing down a just-cancelled turn and parked it) is
+                                  ;; recognised by that id — never by request text — instead of
+                                  ;; being painted as a second "Queued" row.
+                                  :live-turn-client-id client-turn-id
                                   :submitted-input {:text text
                                                     :pastes (:pastes source-db)
                                                     :paste-counter (:paste-counter source-db)}
@@ -2980,48 +3007,21 @@
               (fn [db [_ text workspace-id]]
                 (enqueue-message-result db workspace-id text)))
 
-(reg-event-fx :set-queued-turn-id
-              ;; Late-bind the gateway's queued turn id onto the local preview entry
-              ;; (matched by the client-id stamped at enqueue). ArrowUp-edit and clear
-              ;; use it to update/delete the real gateway record.
-              ;;
-              ;; RACE (the "sent AND queued at the same time" wedge): the id lands via
-              ;; an async round-trip AFTER `:gateway-enqueue`. If a cancel fires in that
-              ;; window it restores the backlog to the editor (:restore-pending-to-input)
-              ;; and drops the local entry — but it can only delete gateway records whose
-              ;; :turn-id already bound. When this bind then finds NO matching client-id
-              ;; entry, the entry was already reclaimed by the cancel (or drained onto a
-              ;; fresh local send): the server-side queued turn is now ORPHANED and would
-              ;; auto-drain after the cancel = the message gets SENT while ALSO sitting
-              ;; back in the editor, and the tab wedges on a ghost turn. Delete the
-              ;; orphaned record here so nothing leaks server-side.
-              (fn [db [_ workspace-id client-id tid]]
-                (let
-                  [wid
-                   (or workspace-id (current-tab-id db))
-
-                   source-db
-                   (db-for-tab db wid)
-
-                   matched?
-                   (boolean (some #(= client-id (:client-id %)) (:pending-sends source-db)))
-
-                   sid
-                   (get-in source-db [:session :id])]
-
-                  (if matched?
-                    {:db (update-tab db
-                                     wid
-                                     (fn [w]
-                                       (update w
-                                               :pending-sends
-                                               (fn [q]
-                                                 (mapv (fn [e]
-                                                         (if (= client-id (:client-id e))
-                                                           (assoc e :turn-id tid)
-                                                           e))
-                                                       (vec (or q [])))))))}
-                    {:db db :fx (when (and sid tid) [[:gateway-delete-queued sid tid]])}))))
+(reg-event-db :stage-queued-locally
+              ;; FAILURE PATH ONLY: the gateway enqueue never landed, so there is no
+              ;; server record to mirror and nothing would show the text again. Keep it
+              ;; as a LOCAL staged row (no `:turn-id`) so the submission is never lost.
+              ;; Rows without a turn id are the only ones this channel owns outright -
+              ;; every row that HAS one is written and removed by the gateway.
+              (fn [db [_ workspace-id entry]]
+                (let [wid (or workspace-id (current-tab-id db))]
+                  (update-tab db
+                              wid
+                              (fn [w]
+                                (update w
+                                        :pending-sends
+                                        (fn [q]
+                                          (conj (vec (or q [])) (assoc entry :mine? true)))))))))
 
 (reg-event-fx :sync-turn-clock
               ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
@@ -3078,13 +3078,7 @@
                                            (assoc :turn-start-ms local-started-at-ms)
 
                                            (and turn-id (nil? (:gateway-turn-id w)))
-                                           ;; Id now known: the exact-id match in
-                                           ;; :sync-queued-turn fully covers our own live
-                                           ;; turn, so drop the text heuristic — leaving it
-                                           ;; armed would suppress a genuinely-queued turn
-                                           ;; that shares this turn's agent-text.
-                                           (assoc :gateway-turn-id turn-id
-                                                  :live-turn-request nil))
+                                           (assoc :gateway-turn-id turn-id))
                                          w)
                                        (:cancel-awaiting-turn-id? w)
                                        (dissoc :cancel-awaiting-turn-id?))))]
@@ -3106,19 +3100,52 @@
                                 (fn [w]
                                   (assoc w :queue-paused (:queue-paused chunk))))))))
 
+(defn- same-submission?
+  "True when local queue-mirror entry `e` and a gateway queued turn are the SAME
+   submission. THE one identity rule for the mirror, and it is ID-ONLY:
+
+     1. gateway `turn-id` - every mirrored row carries one, because rows are
+        painted from gateway truth (enqueue ack or `turn.queued` broadcast) and
+        never invented locally;
+     2. `client-id` - the correlation id this tab minted and sent as the gateway
+        `idempotency_key`, for the window where only one side knows the turn id.
+
+   Request TEXT is deliberately NOT a fallback: two identical prompts are
+   indistinguishable by text, so matching on it is exactly how a queued turn got
+   suppressed (or duplicated) behind an unrelated one."
+  [e turn-id client-id]
+  (boolean (or (and turn-id (:turn-id e) (= turn-id (:turn-id e)))
+               (and client-id (:client-id e) (= client-id (:client-id e))))))
+
+(defn- live-turn-mirror?
+  "True when gateway turn `turn-id` (correlation `client-id`) is THIS tab's LIVE
+   turn, so it must never be mirrored as a \"Queued\" row.
+
+   THE one rule, shared by every queue mirror writer - the live `:queue-sync`
+   event (`:sync-queued-turn`) and the `:queued-turns` snapshot seeded on attach.
+   Two writers with two rules is exactly how a running turn reappeared as queued
+   (\"sent AND queued at the same time\"): whichever path saw a stale snapshot won.
+
+   Same ID-ONLY order as `same-submission?`: gateway turn id, then the correlation
+   id we sent as the idempotency key. No text heuristic."
+  [w turn-id client-id]
+  (boolean (or (and turn-id (= turn-id (:gateway-turn-id w)))
+               (and client-id (= client-id (:live-turn-client-id w))))))
+
 (reg-event-db :sync-queued-turn
-              ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
-              ;; forwarded through the gateway sync/attach subscriptions as a :queue-sync
-              ;; chunk) into this tab's local :pending-sends. The gateway is the queue of
-              ;; record, so a message queued in a sibling TUI (or the web) shows up here,
-              ;; stays editable, and drains through the same attach machinery. The gateway
-              ;; turn id is the sync key:
-              ;;   :add    — no-op when already mirrored; otherwise bind the id onto our
-              ;;             own un-bound local echo (the enqueue's :set-queued-turn-id
-              ;;             may still be in flight) matched by text, else append.
-              ;;   :update — rewrite the entry's text (queued-prompt edit elsewhere).
-              ;;   :delete — drop the entry (cleared / pulled back to input elsewhere).
-              (fn [db [_ workspace-id {:keys [op turn-id text]}]]
+              ;; THE ONE WRITER of gateway-owned queue rows. Every add carries gateway truth -
+              ;; either the `turn.queued` / `.updated` / `.deleted` / `.drained` broadcast
+              ;; (forwarded as a :queue-sync chunk by the sync/attach subscriptions) or the ack
+              ;; of this tab's own `:gateway-enqueue`, which has the same shape and the same
+              ;; key. So a row ALWAYS has the gateway turn id, nothing is matched by request
+              ;; text, and whichever of ack/broadcast arrives first wins (the other no-ops):
+              ;;   :add    - no-op when the turn id is already mirrored, otherwise append.
+              ;;   :update - rewrite the entry's text (queued-prompt edit anywhere).
+              ;;   :delete - drop the entry (cleared / pulled back / drained anywhere).
+              ;; A turn that is (or just became) this tab's LIVE turn collapses EVERY op to
+              ;; "ensure it is not mirrored": a late, replayed or out-of-order queue event must
+              ;; not resurrect a running turn as a "Queued" row.
+              (fn [db [_ workspace-id {:keys [op turn-id client-id text] mine-hint? :mine?}]]
                 (let [workspace-id (or workspace-id (current-tab-id db))]
                   (if-not (and workspace-id turn-id)
                     db
@@ -3126,75 +3153,52 @@
                       db
                       workspace-id
                       (fn [w]
-                        (update
-                          w
-                          :pending-sends
-                          (fn [q]
-                            (let
-                              [q (vec (or q []))
-                               mirrored? (boolean (some #(= turn-id (:turn-id %)) q))
-                               local-echo? (fn [e]
-                                             (and (nil? (:turn-id e))
-                                                  (or (= text (:agent-text e)) (= text (:text e)))))
-                               ;; The gateway already DRAINED this turn and it is now this
-                               ;; tab's LIVE turn (:gateway-turn-id). A late / out-of-order
-                               ;; queue-sync add|update — a replayed backlog, or an event
-                               ;; that races the local drain+attach — must NOT resurrect it
-                               ;; as a "Queued" row while it is running (the "sent AND queued
-                               ;; at the same time" ghost). Collapse every op to "ensure it
-                               ;; is not mirrored"; the live turn paints once, on its own.
-                               running? (or (= turn-id (:gateway-turn-id w))
-                                            ;; The gateway echoed our OWN in-flight turn back as
-                                            ;; "queued" because it had not finished cancelling the
-                                            ;; prior turn when this tab submitted DIRECTLY (idle
-                                            ;; locally, still busy on the gateway). Its
-                                            ;; :gateway-turn-id is not bound yet, so match by the
-                                            ;; live request text and drop the duplicate row —
-                                            ;; otherwise the message read as sent AND queued until
-                                            ;; turn.started bound the id seconds later.
-                                            (and (:loading? w)
-                                                 text
-                                                 (= text (:live-turn-request w))))]
+                        (let
+                          [;; OURS when the correlation id the gateway echoed back was
+                           ;; minted by THIS tab, or when a caller that already knows the
+                           ;; provenance says so (the delete reconcile re-writing a row it
+                           ;; just removed).
+                           mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
+                           row (cond->
+                                 {:text text
+                                  :preview-text text
+                                  :turn-id turn-id
+                                  :queued-at-ms (System/currentTimeMillis)}
+                                 client-id
+                                 (assoc :client-id client-id)
 
-                              (if running?
-                                (vec (remove #(= turn-id (:turn-id %)) q))
-                                (case op
-                                  :add
-                                  (cond mirrored? q
-                                        (some local-echo? q)
-                                        (let [bound? (volatile! false)]
-                                          (mapv (fn [e]
-                                                  (if (and (not @bound?) (local-echo? e))
-                                                    (do (vreset! bound? true)
-                                                        (assoc e :turn-id turn-id))
-                                                    e))
-                                                q))
-                                        :else (conj q
-                                                    {:text text
-                                                     :preview-text text
-                                                     :turn-id turn-id
-                                                     :queued-at-ms (System/currentTimeMillis)}))
+                                 mine?
+                                 (assoc :mine? true))]
 
-                                  :update
-                                  (if mirrored?
-                                    (mapv (fn [e]
-                                            (if (= turn-id (:turn-id e))
-                                              (assoc e
-                                                :text text
-                                                :preview-text text
-                                                :agent-text text)
-                                              e))
-                                          q)
-                                    (conj q
-                                          {:text text
-                                           :preview-text text
-                                           :turn-id turn-id
-                                           :queued-at-ms (System/currentTimeMillis)}))
+                          (-> w
+                              (update :pending-sends
+                                      (fn [q]
+                                        (let
+                                          [q (vec (or q []))
+                                           mirrored? (boolean (some #(= turn-id (:turn-id %)) q))]
 
-                                  :delete
-                                  (vec (remove #(= turn-id (:turn-id %)) q))
+                                          (if (live-turn-mirror? w turn-id client-id)
+                                            (vec (remove #(= turn-id (:turn-id %)) q))
+                                            (case op
+                                              :add
+                                              (if mirrored? q (conj q row))
 
-                                  q)))))))))))
+                                              :update
+                                              (if mirrored?
+                                                (mapv (fn [e]
+                                                        (if (= turn-id (:turn-id e))
+                                                          (assoc e
+                                                            :text text
+                                                            :preview-text text
+                                                            :agent-text text)
+                                                          e))
+                                                      q)
+                                                (conj q row))
+
+                                              :delete
+                                              (vec (remove #(= turn-id (:turn-id %)) q))
+
+                                              q)))))))))))))
 
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
@@ -3209,16 +3213,18 @@
                    sid
                    (get-in db [:session :id])
 
-                   tids
-                   (keep :turn-id (:pending-sends (db-for-tab db tab-id)))]
+                   pending
+                   (vec (:pending-sends (db-for-tab db tab-id)))]
 
                   {:db (update-tab db
                                    tab-id
                                    (fn [w]
                                      (assoc w :pending-sends [])))
-                   :fx (mapv (fn [tid]
-                               [:gateway-delete-queued sid tid])
-                             tids)})))
+                   :fx (into []
+                             (keep (fn [e]
+                                     (when-let [tid (:turn-id e)]
+                                       [:gateway-delete-queued sid tid tab-id e])))
+                             pending)})))
 
 (reg-event-fx :drain-pending
               ;; Pop one queued submission for `workspace-id`. When it carries a
@@ -3326,25 +3332,34 @@
        ;; instead of silently dropping it.
        db
        (if-let [qs (and workspace-id (seq (:queued-turns session)))]
-         (update-tab db
-                     workspace-id
-                     (fn [w]
-                       (update w
-                               :pending-sends
-                               (fn [q]
-                                 (let
-                                   [q (vec (or q []))
-                                    known (set (keep :turn-id q))]
+         (update-tab
+           db
+           workspace-id
+           (fn [w]
+             (update w
+                     :pending-sends
+                     (fn [q]
+                       (let [q (vec (or q []))]
+                         (into q
+                               (keep
+                                 (fn [{:keys [turn-id client-id text queued-at-ms]}]
+                                   (when-not (or (some #(same-submission? % turn-id client-id) q)
+                                                 (live-turn-mirror? w turn-id client-id))
+                                     (cond->
+                                       {:text text
+                                        :preview-text text
+                                        :turn-id turn-id
+                                        :queued-at-ms (or queued-at-ms (System/currentTimeMillis))}
+                                       client-id
+                                       (assoc :client-id client-id)
 
-                                   (into q
-                                         (keep (fn [{:keys [turn-id text queued-at-ms]}]
-                                                 (when-not (contains? known turn-id)
-                                                   {:text text
-                                                    :preview-text text
-                                                    :turn-id turn-id
-                                                    :queued-at-ms
-                                                    (or queued-at-ms (System/currentTimeMillis))})))
-                                         qs))))))
+                                       ;; Re-attach (tab reopen / project switch) seeds the
+                                       ;; backlog from the gateway snapshot: ownership comes
+                                       ;; from the SAME echoed id, so a cancel still knows
+                                       ;; which rows may return to this composer.
+                                       (our-submission? workspace-id client-id)
+                                       (assoc :mine? true)))))
+                               qs))))))
          db)
 
        target
@@ -3381,41 +3396,39 @@
            request-text
            (or (:running-request session) "")]
 
-          {:db
-           (update-tab
-             db
-             workspace-id
-             (fn [w]
-               (->
-                 w
-                 (update :messages
-                         conj
-                         (assoc (chat/user-message request-text) :client-turn-id client-turn-id))
-                 (update :messages
-                         conj
-                         (assoc (pending-assistant-for request-text)
-                           :client-turn-id client-turn-id))
-                 ;; The turn we are ATTACHING as running must not
-                 ;; ALSO linger as a "Queued" row: the backlog mirror
-                 ;; above (and any in-flight :sync-queued-turn :add)
-                 ;; may have seeded `tid` from a snapshot taken while it
-                 ;; was still queued. Strip it so it paints once — as
-                 ;; the live turn — not a second time under Queued.
-                 (update :pending-sends
-                         (fn [q]
-                           (vec (remove #(or (= tid (:turn-id %))
-                                             (and (nil? (:turn-id %))
-                                                  (= request-text (or (:agent-text %) (:text %)))))
-                                  (or q [])))))
-                 (assoc :scroll scroll/follow
-                        :loading? true
-                        :cancel-token token
-                        :gateway-turn-id tid
-                        :cancelling? false
-                        :progress {:iterations []}
-                        :turn-start-ms (or (:running-started-at session) (System/currentTimeMillis))
-                        :input-history-index nil
-                        :input-history-draft nil))))
+          {:db (update-tab
+                 db
+                 workspace-id
+                 (fn [w]
+                   (-> w
+                       (update :messages
+                               conj
+                               (assoc (chat/user-message request-text)
+                                 :client-turn-id client-turn-id))
+                       (update :messages
+                               conj
+                               (assoc (pending-assistant-for request-text)
+                                 :client-turn-id client-turn-id))
+                       ;; The turn we are ATTACHING as running must not
+                       ;; ALSO linger as a "Queued" row: the backlog mirror
+                       ;; above (and any in-flight :sync-queued-turn :add)
+                       ;; may have seeded `tid` from a snapshot taken while it
+                       ;; was still queued. Strip it so it paints once — as
+                       ;; the live turn — not a second time under Queued.
+                       (update :pending-sends
+                               (fn [q]
+                                 (vec (remove #(same-submission? % tid (:running-client-id session))
+                                        (or q [])))))
+                       (assoc :scroll scroll/follow
+                              :loading? true
+                              :cancel-token token
+                              :gateway-turn-id tid
+                              :cancelling? false
+                              :progress {:iterations []}
+                              :turn-start-ms (or (:running-started-at session)
+                                                 (System/currentTimeMillis))
+                              :input-history-index nil
+                              :input-history-draft nil))))
            :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 
 (reg-event-fx
@@ -3466,25 +3479,27 @@
                    pending
                    (vec (or (:pending-sends source-db) []))
 
-                   ;; OWNERSHIP: only entries THIS tab authored (stamped :client-id at
-                   ;; enqueue time) come back to the editor and get their gateway
-                   ;; records deleted. MIRRORED entries (no :client-id — queued by a
-                   ;; sibling TUI/web and mirrored here by :sync-queued-turn) are the
-                   ;; sibling's property: deleting them fired `turn.queued.deleted` at
-                   ;; a client still blocked on its own queued turn, which synthesized
-                   ;; a spurious CANCELLED terminal there (the "session cancelled
-                   ;; itself" bug). They stay queued server-side and mirrored locally.
+                   ;; OWNERSHIP: only rows THIS tab submitted (`:mine?` - stamped when the
+                   ;; gateway echoed back a correlation id this tab minted, or when the
+                   ;; submission never reached the gateway at all) come back to the
+                   ;; editor. Rows queued by a sibling TUI / the web are the sibling's
+                   ;; text, so they are never pulled into OUR composer.
+                   ;;
+                   ;; We no longer have to police the server records: a user cancel
+                   ;; drops the whole pre-cancel backlog server-side in one swap and
+                   ;; broadcasts `turn.queued.deleted` (gateway `drop-cancelled-backlog!`),
+                   ;; which removes every mirror — ours and the sibling's — and settles
+                   ;; any client blocked on such a turn. The per-tid deletes below are
+                   ;; now only a fast local echo, reconciled from gateway truth when the
+                   ;; delete does not land (see the `:gateway-delete-queued` fx).
                    mine
-                   (vec (filter :client-id pending))
+                   (vec (filter :mine? pending))
 
                    mirrors
-                   (vec (remove :client-id pending))
+                   (vec (remove :mine? pending))
 
                    sid
-                   (get-in source-db [:session :id])
-
-                   tids
-                   (keep :turn-id mine)]
+                   (get-in source-db [:session :id])]
 
                   (if (empty? mine)
                     {:db db}
@@ -3515,9 +3530,10 @@
                                            :input-history-index nil
                                            :input-history-draft nil)))
                        :fx (into [[:notify "Queue restored to input — not sent" :info 2000]]
-                                 (mapv (fn [tid]
-                                         [:gateway-delete-queued sid tid])
-                                       tids))})))))
+                                 (keep (fn [e]
+                                         (when-let [tid (:turn-id e)]
+                                           [:gateway-delete-queued sid tid workspace-id e])))
+                                 mine)})))))
 
 (defn- gateway-cancel-turn-or-current!
   "Best-effort gateway cancel for Esc. With a known `tid` fire the id-addressed
@@ -3687,7 +3703,7 @@
                        :fx (cond->
                              [[:notify "Cancel timed out — cleared locally. You can send again."
                                :warn cancel-notification-ttl-ms]]
-                             (some :client-id (:pending-sends (db-for-tab db workspace-id)))
+                             (some :mine? (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
 
 (defn background-loading-tokens
@@ -3771,7 +3787,7 @@
                (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
                  ;; A cancel must NOT auto-send the backlog — pull it back into
                  ;; the editor instead (see :restore-pending-to-input).
-                 (when (some :client-id (:pending-sends ws)) (vreset! restore-pending? true))
+                 (when (some :mine? (:pending-sends ws)) (vreset! restore-pending? true))
                  ws)
                (let
                  [start
@@ -3877,8 +3893,7 @@
                    ;; firing it. Mirrored sibling entries are never restored
                    ;; (or deleted) here — see :restore-pending-to-input.
                    (if cancelled?
-                     (when (some :client-id (:pending-sends ws-final))
-                       (vreset! restore-pending? true))
+                     (when (some :mine? (:pending-sends ws-final)) (vreset! restore-pending? true))
                      (vreset! drain? true)))
                  ws-final)))))]
 
@@ -3914,7 +3929,12 @@
 ;; rail shows the same value — one source of truth across channels.
 (reg-fx :set-session-model
         (fn [sid provider model]
-          (vis/gateway-set-session-model! sid provider model)
+          ;; A pick the GATEWAY refuses (a provider this gateway does not serve,
+          ;; e.g. after a `/reload` dropped it) answers 400 — surface it instead
+          ;; of letting the throw escape into the event loop.
+          (try (vis/gateway-set-session-model! sid provider model)
+               (catch Throwable t
+                 (vis/notify! (str "Model switch failed: " (ex-message t)) :level :error)))
           ;; The background limits poller no longer resolves the active provider on
           ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a
           ;; per-session model switch reflects in the footer's usage row promptly.
@@ -4014,6 +4034,10 @@
                                     ;; at once instead of waiting on each
                                     ;; one's eval-timeout.
                                     :cancel-token token
+                                    ;; Correlation id: makes a resubmit idempotent AND
+                                    ;; comes back on any queue event for this turn, so
+                                    ;; the tab recognises its own submit by id.
+                                    :idempotency-key client-turn-id
                                     :reasoning-default reasoning-level
                                     :extra-body extra-body
                                     :turn-features turn-features
@@ -4192,40 +4216,93 @@
                               (assoc :status :cancelled))]))))))]
       (vis/cancellation-set-future! token fut))))
 
-(reg-fx
-  :gateway-enqueue
-  ;; Register a busy-time submission as a REAL gateway queued turn (server-side
-  ;; queue of record). The returned turn id is late-bound onto the local preview
-  ;; entry so ArrowUp-edit / clear can update or delete the same record.
-  (fn [workspace-id session client-id agent-text reasoning-level extra-body turn-features workspace]
-    (try (when-let [sid (:id session)]
-           (let
-             [res (vis/gateway-submit-turn! sid
-                                            (cond-> {:request agent-text}
-                                              reasoning-level
-                                              (assoc :reasoning-default reasoning-level)
+(reg-fx :gateway-enqueue
+        ;; Register a busy-time submission as a REAL gateway queued turn (the ONE queue
+        ;; of record) and paint the row from the ACK, through the same
+        ;; `:sync-queued-turn` writer the `turn.queued` broadcast feeds and keyed by the
+        ;; same gateway turn id — so whichever lands first wins and the other is a
+        ;; no-op. Nothing is invented locally: if the gateway STARTED the turn instead
+        ;; of queueing it (the session went idle in the round-trip) there is no queued
+        ;; row at all and the attach machinery renders it as the live turn. Only a
+        ;; submission that never reached the queue is staged locally, so no text is lost.
+        (fn [workspace-id session entry reasoning-level extra-body turn-features workspace]
+          (let
+            [sid
+             (:id session)
 
-                                              extra-body
-                                              (assoc :extra-body extra-body)
+             client-id
+             (:client-id entry)
 
-                                              (seq turn-features)
-                                              (assoc :turn-features turn-features)
+             agent-text
+             (:agent-text entry)]
 
-                                              (seq workspace)
-                                              (assoc :workspace workspace)))
-              tid (get-in res [:turn "turn_id"])]
+            (when sid
+              (try
+                (let
+                  [res
+                   (vis/gateway-submit-turn! sid
+                                             (cond->
+                                               {:request agent-text
+                                                ;; The gateway echoes this back on
+                                                ;; turn.queued and every wire view of the
+                                                ;; turn: the ONE key that tells us the row
+                                                ;; it broadcasts is our own submission.
+                                                :idempotency-key client-id}
+                                               reasoning-level
+                                               (assoc :reasoning-default reasoning-level)
 
-             (when tid (dispatch [:set-queued-turn-id workspace-id client-id tid]))))
-         (catch Throwable t
-           (try (vis/notify! (str "Queue via gateway failed: " (or (ex-message t) (str t)))
-                             :level :warn
-                             :ttl-ms 3000)
-                (catch Throwable _ nil))))))
+                                               extra-body
+                                               (assoc :extra-body extra-body)
+
+                                               (seq turn-features)
+                                               (assoc :turn-features turn-features)
+
+                                               (seq workspace)
+                                               (assoc :workspace workspace)))
+
+                   turn
+                   (:turn res)
+
+                   tid
+                   (get turn "turn_id")]
+
+                  (cond (and tid (= "queued" (get turn "status")))
+                        (dispatch [:sync-queued-turn workspace-id
+                                   {:op :add
+                                    :turn-id tid
+                                    :client-id client-id
+                                    :text (or (get turn "request") agent-text)}])
+                        ;; Accepted but already RUNNING: not a queue row.
+                        tid nil
+                        :else (dispatch [:stage-queued-locally workspace-id entry])))
+                (catch Throwable t
+                  (dispatch [:stage-queued-locally workspace-id entry])
+                  (try (vis/notify! (str "Queue via gateway failed: " (or (ex-message t) (str t)))
+                                    :level :warn
+                                    :ttl-ms 3000)
+                       (catch Throwable _ nil))))))))
 
 (reg-fx :gateway-delete-queued
-        (fn [sid tid]
+        ;; Drop a gateway queued record. The local row is removed by the caller as a
+        ;; fast echo, so this RECONCILES against gateway truth: when the delete never
+        ;; landed (transport failure, or the daemon rejecting it while the record
+        ;; still sits in the queue) the row is written back through the one
+        ;; `:sync-queued-turn` writer — otherwise the turn would still auto-drain
+        ;; server-side with nothing on screen to say so. A 404 (already gone) and a
+        ;; 409 (already started — the attach machinery paints it) stay removed.
+        (fn [sid tid workspace-id entry]
           (when (and sid tid)
-            (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))
+            (let
+              [failed?
+               (try (not= "deleted" (get (vis/gateway-delete-queued-turn! sid tid) "status"))
+                    (catch Throwable t (not (contains? #{404 409} (:http-status (ex-data t))))))]
+              (when (and failed? workspace-id)
+                (dispatch [:sync-queued-turn workspace-id
+                           {:op :add
+                            :turn-id tid
+                            :text (:text entry)
+                            :client-id (:client-id entry)
+                            :mine? (:mine? entry)}]))))))
 
 (reg-fx :submit-orphan-sends
         ;; A closing tab still held AUTHORED submissions that never reached the
@@ -4267,7 +4344,7 @@
           (when sid (try (vis/gateway-close-session! sid) (catch Throwable _ nil)))))
 
 (reg-fx :release-session-runtime
-        ;; Stop a session's live daemon runtime + background children (shell_bg,
+        ;; Stop a session's live daemon runtime + background children (`shell` op "bg",
         ;; managed REPLs) WITHOUT dropping the process client lease — fired by
         ;; `:close-tab` when the LAST view of an idle session closes. Keeps the
         ;; transcript resumable; best-effort, never daemon-spawning.

@@ -14,7 +14,8 @@
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
-            [com.blockether.fff :as fff])
+            [com.blockether.fff :as fff]
+            [com.blockether.vis.internal.fff-index :as fff-index])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
@@ -288,47 +289,54 @@
 ;; the `grep` tool uses — real typo-tolerant subsequence matching ranked
 ;; by frecency — instead of the substring-only `file-picker-score` heuristic.
 
-(defn open-fuzzy-index
-  "Open a FRESH fff instance scoped to the current workspace cwd, blocking
-   until its initial scan completes. The caller OWNS the instance and MUST
-   close it — but NEVER while a search may still be running on it: fff's
-   native `search` crashes the JVM (SIGSEGV) on a closed handle."
-  ^java.io.Closeable []
-  (let
-    [root
-     (.toFile (cwd-path))
+(defn cwd-lease
+  "The canonical pooled-fff lease for the current workspace cwd: gitignore
+   respected, exactly like the `@` picker and the `find_files` tool. Every
+   picker search goes through this so the UI shares ONE index with the search
+   tools instead of scanning the tree again per popup."
+  []
+  (fff-index/lease (.toFile (cwd-path)) true))
 
-     idx
-     (fff/create {:base-path (.getCanonicalPath root)
-                  :watch? false
-                  :ai-mode? true
-                  :enable-mmap-cache? false})]
+(defn index-warm?
+  "True when the picker's pooled index is already built, so `fuzzy-file-rows`
+   costs only a search."
+  []
+  (fff-index/warm? (cwd-lease)))
 
-    (fff/wait-for-scan idx 30000)
-    idx))
+(defn prewarm-index!
+  "Kick the picker's pooled index build off the caller's thread (no-op when it
+   is already warm)."
+  []
+  (fff-index/prewarm! (cwd-lease)))
 
 (defn fuzzy-file-rows
-  "Frecency-ranked, typo-tolerant fuzzy file search via fff against an already
-   OPEN index `idx` (see `open-fuzzy-index`) — the SAME engine behind the
-   `grep` tool. Returns rows shaped like `file-picker-items`
-   (`:path :label :status-label :size-label :age-label`), capped at `limit`.
+  "Frecency-ranked, typo-tolerant fuzzy file search via fff — the SAME pooled
+   index (and therefore the same ranking) the `grep`/`find_files` tools use.
+   Returns rows shaped like `file-picker-items` (`:path :label :status-label
+   :size-label :age-label`), capped at `limit`.
+
+   The index is leased from `internal.fff-index` for the call only: callers own
+   nothing and must not close anything. The FIRST call on a cold pool blocks for
+   the tree scan — a render thread should gate on `index-warm?` / `prewarm-index!`.
 
    A blank `query` yields fff's default frecency/recency ordering."
-  ([idx query] (fuzzy-file-rows idx query {}))
-  ([idx query {:keys [now-ms limit] :or {now-ms (System/currentTimeMillis) limit max-results}}]
-   (->> (:items (fff/search idx {:query (or query "") :page-size limit}))
-        (mapv (fn [{:keys [relative-path git-status size modified]}]
-                (let
-                  [status (when (and (string? git-status)
-                                     (not (str/blank? git-status))
-                                     (not= "clean" git-status))
-                            git-status)]
-                  {:path relative-path
-                   :label relative-path
-                   :status-label (or status "clean")
-                   :size-label (format-bytes (or size 0))
-                   ;; fff `:modified` is epoch SECONDS; the age helper wants ms.
-                   :age-label (format-relative-age now-ms (* 1000 (long (or modified 0))))}))))))
+  ([query] (fuzzy-file-rows query {}))
+  ([query {:keys [now-ms limit] :or {now-ms (System/currentTimeMillis) limit max-results}}]
+   (fff-index/with-index
+     [idx (cwd-lease)]
+     (->> (:items (fff/search idx {:query (or query "") :page-size limit}))
+          (mapv (fn [{:keys [relative-path git-status size modified]}]
+                  (let
+                    [status (when (and (string? git-status)
+                                       (not (str/blank? git-status))
+                                       (not= "clean" git-status))
+                              git-status)]
+                    {:path relative-path
+                     :label relative-path
+                     :status-label (or status "clean")
+                     :size-label (format-bytes (or size 0))
+                     ;; fff `:modified` is epoch SECONDS; the age helper wants ms.
+                     :age-label (format-relative-age now-ms (* 1000 (long (or modified 0))))})))))))
 
 (defn ->wire
   "Project ONE rich fuzzy/picker row (`:path :size-label :age-label
@@ -348,21 +356,15 @@
    :status (or status-label "")})
 
 (defn suggest-file-rows
-  "Self-contained fuzzy file suggestion for the shared `@`/suggest surface.
-
-   Opens a FRESH fff index, searches `query`, and closes it SAFELY — the whole
-   dance the gateway `/v1/sessions/:sid/suggest` service and any other caller
-   would otherwise hand-roll. Reuses the SAME `fuzzy-file-rows` engine the TUI
-   picker uses, then projects each rich row through `->wire`, so the web and TUI
-   never diverge on ranking or field derivation — only on the final shape.
+  "Self-contained fuzzy file suggestion for the shared `@`/suggest surface: the
+   gateway `/v1/sessions/:sid/suggest` service and any other caller project the
+   SAME `fuzzy-file-rows` engine the TUI picker uses through `->wire`, so web and
+   TUI never diverge on ranking or field derivation — only on the final shape.
 
    Returns the channel-agnostic WIRE rows `{:name :size :age :status}` (bare
-   relative path in `:name`), realized eagerly so nothing lazy escapes the closed
-   native handle. Never throws; on any error yields `[]`.
+   relative path in `:name`). Never throws; on any error yields `[]`.
 
    A blank `query` yields fff's default frecency/recency ordering."
   ([query] (suggest-file-rows query {}))
   ([query {:keys [limit] :or {limit max-results}}]
-   (try (with-open [idx (open-fuzzy-index)]
-          (into [] (map ->wire) (fuzzy-file-rows idx query {:limit limit})))
-        (catch Throwable _ []))))
+   (try (into [] (map ->wire) (fuzzy-file-rows query {:limit limit})) (catch Throwable _ []))))

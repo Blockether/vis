@@ -18,7 +18,7 @@
 
         (expect (= :anthropic (:provider/id api-provider)))
         (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
-        (expect (= "claude-opus-4-8"
+        (expect (= "claude-opus-5"
                    (first (get-in api-provider [:provider/preset :default-models]))))
         (expect (contains? (set (get-in api-provider [:provider/preset :default-models]))
                            "claude-fable-5"))
@@ -194,6 +194,59 @@
                 (expect (= :ok (:status stale)))
                 (expect (= :ok (:status still-stale)))
                 (expect (str/includes? (get-in stale [:dynamic :note]) "HTTP 409"))))))))
+  (it
+    "force-refreshes the rotated OAuth token when the usage endpoint answers 401, then retries once"
+    (let
+      [provider
+       (vis/provider-by-id :anthropic-coding-plan)
+
+       refreshes
+       (atom [])
+
+       tokens
+       (atom [])]
+
+      (anthropic/clear-limits-cache!)
+      (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
+                                                          {:token "stale-token"})
+                       #'anthropic/force-refresh-token! (fn [rejected]
+                                                          (swap! refreshes conj rejected)
+                                                          {:token "rotated-token"})
+                       #'http/get (fn [_url opts]
+                                    (let [tok (get-in opts [:headers "Authorization"])]
+                                      (swap! tokens conj tok)
+                                      (if (= tok "Bearer stale-token")
+                                        {:status 401 :body "{}"}
+                                        {:status 200
+                                         :body (json/write-json-str {:fiveHour {:utilization
+                                                                                5}})})))}
+        (fn []
+          (let [report ((:provider/limits-fn provider))]
+            (expect (= :ok (:status report)))
+            ;; ONE forced refresh, carrying the rejected token so single-flight
+            ;; reuse cannot hand the dead one straight back.
+            (expect (= ["stale-token"] @refreshes))
+            (expect (= ["Bearer stale-token" "Bearer rotated-token"] @tokens)))))))
+  (it "stops at unauthenticated when the forced refresh itself fails (no retry storm)"
+      (let
+        [provider
+         (vis/provider-by-id :anthropic-coding-plan)
+
+         calls
+         (atom 0)]
+
+        (anthropic/clear-limits-cache!)
+        (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
+                                                            {:token "stale-token"})
+                         #'anthropic/force-refresh-token! (fn [_rejected]
+                                                            (throw (ex-info "refresh failed" {})))
+                         #'http/get (fn [_url _opts]
+                                      (swap! calls inc)
+                                      {:status 401 :body "{}"})}
+          (fn []
+            (let [report ((:provider/limits-fn provider))]
+              (expect (= :unauthenticated (:status report)))
+              (expect (= 1 @calls)))))))
   (it "returns unauthenticated limits report when Claude subscription OAuth is missing"
       (let [provider (vis/provider-by-id :anthropic-coding-plan)]
         (with-redefs-fn {#'anthropic/get-anthropic-token!

@@ -56,19 +56,17 @@
 (def border-fg (rgb :border-fg))
 
 ;; Dialog
-(def dialog-bg terminal-bg)
+(def dialog-bg (rgb :dialog-bg))
 
 (def dialog-fg (rgb :dialog-fg))
 
 (def dialog-title-fg (rgb :dialog-title-fg))
 
-(def dialog-title-bg terminal-bg)
-
-(def dialog-accent (rgb :dialog-title-bg))
+(def dialog-title-bg (rgb :dialog-title-bg))
 
 (def dialog-border (rgb :dialog-border))
 
-(def dialog-shadow terminal-bg)
+(def dialog-shadow (rgb :dialog-shadow))
 
 (def dialog-hint (rgb :dialog-hint))
 
@@ -230,11 +228,12 @@
 (def footer-error-fg (rgb :footer-error-fg))
 
 (defn chip-tint
-  "Ink/fill pair for a semantically COLOURED button chip
-   (`components/button!`'s `:tint`). Chips are FLAT — `button!` paints the SECOND
-   (accent) colour as the label's foreground on `terminal-bg` and never fills a
-   cap — so the pair reads [inverse-fg accent]. Unknown tints fall back to the
-   neutral button palette."
+  "Foreground/background pair for a semantically COLOURED button chip
+   (`components/button!`'s `:tint`). The cap is FILLED with the accent colour and
+   the label painted in the inverse-tab foreground for contrast — the same
+   filled-cap treatment hovered header buttons use, so a tinted chip reads as a
+   real button, not decoration. Unknown tints fall back to the neutral button
+   palette."
   [tint]
   (case tint
     :git
@@ -287,10 +286,12 @@
    :box-bg #'box-bg
    :box-fg #'box-fg
    :border-fg #'border-fg
+   :dialog-bg #'dialog-bg
    :dialog-fg #'dialog-fg
    :dialog-title-fg #'dialog-title-fg
-   :dialog-title-bg #'dialog-accent
+   :dialog-title-bg #'dialog-title-bg
    :dialog-border #'dialog-border
+   :dialog-shadow #'dialog-shadow
    :dialog-hint #'dialog-hint
    :dialog-hint-key #'dialog-hint-key
    :input-field-bg #'input-field-bg
@@ -408,10 +409,6 @@
     (alter-var-root #'default-spacing (constantly spacing))
     (doseq [[token v] color-vars]
       (alter-var-root v (constantly (rgb* theme-map token))))
-    ;; Dialog chrome is deliberately flat: the terminal itself is the only
-    ;; neutral surface. Keep the original title token as `dialog-accent`.
-    (doseq [v [#'dialog-bg #'dialog-title-bg #'dialog-shadow]]
-      (alter-var-root v (constantly terminal-bg)))
     (doseq [[token v] width-vars]
       (alter-var-root v (constantly (get widths token))))
     (doseq [[token v] spacing-vars]

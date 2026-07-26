@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.security-policy-test
-  (:require [com.blockether.vis.internal.security-policy :as policy]
+  (:require [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.security-policy :as policy]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]))
 
@@ -40,6 +41,13 @@
       (expect (= [(.getCanonicalPath sibling) (.getCanonicalPath cache)]
                  (policy/read-write-roots snapshot)))
       (expect (= "~/vis" (policy/home-relative (.getPath project) (.getPath home))))
+      (expect (= "~/vis/AGENTS.md"
+                 (paths/abbreviate-home (.getPath (java.io.File. project "AGENTS.md"))
+                                        (.getPath home))))
+      (expect (= "~/" (paths/abbreviate-home (.getPath home) (.getPath home))))
+      (expect (= "relative/AGENTS.md" (paths/abbreviate-home "relative/AGENTS.md" (.getPath home))))
+      (expect (= (str (.getPath home) "-other/AGENTS.md")
+                 (paths/abbreviate-home (str (.getPath home) "-other/AGENTS.md") (.getPath home))))
       (expect (= ["~/vis" "~/spel" "~/.m2"] (get-in view ["filesystem" "read_write"])))
       (expect (= ["~/read-only"] (get-in view ["filesystem" "process_read_only"])))
       (expect (= ["~/.m2"] (get-in view ["filesystem" "no_search"])))

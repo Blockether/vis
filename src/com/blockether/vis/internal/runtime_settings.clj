@@ -126,7 +126,7 @@
     (min (long MAX_EVAL_TIMEOUT_MS) (max (long MIN_EVAL_TIMEOUT_MS) candidate))))
 
 (def ^:private shell-timeout-eval-grace-ms
-  "Extra room around shell_run's own timeout so the shell tool can kill, drain,
+  "Extra room around the shell tool's own timeout so the shell tool can kill, drain,
    and return its timeout envelope before the outer Python eval watchdog fires."
   10000)
 

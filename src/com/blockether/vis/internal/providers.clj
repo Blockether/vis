@@ -713,6 +713,29 @@
    (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
      (save-providers! (mapv #(if (= provider-id (:id %)) (f %) %) current) source))))
 
+(defn save-provider-api-key!
+  "Persist `api-key` for `provider-id` in THIS process' config — the headless
+   twin of a channel's API-key dialog, so a phone (or a TUI attached to a remote
+   gateway) never writes provider credentials on the wrong machine. Adds the
+   provider from its preset when the fleet does not carry it yet."
+  ([provider-id api-key] (save-provider-api-key! provider-id api-key nil))
+  ([provider-id api-key source]
+   (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
+     (if (some #(= provider-id (:id %)) current)
+       (update-config-provider! provider-id #(assoc % :api-key api-key) source)
+       (let
+         [tmpl (config/provider-template provider-id)
+          models (default-model-configs tmpl)]
+
+         (save-providers! (conj current
+                                (cond-> {:id provider-id :api-key api-key}
+                                  (seq models)
+                                  (assoc :models models)
+
+                                  (:base-url tmpl)
+                                  (assoc :base-url (:base-url tmpl))))
+                          source))))))
+
 (defn remove-provider!
   "Remove a provider from the persisted fleet AND run the registered
    extension's logout when present. Invalidates the fleet snapshot.

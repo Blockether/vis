@@ -504,8 +504,8 @@
   ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
   (let [g->c @#'chat/gateway-event->chunk]
     (it "a nested tool activity projects to :tool-start naming the op"
-        (expect (= {:phase :tool-start :iteration 2 :tool-event {:op "shell_run"}}
-                   (g->c {"type" "activity" "activity" "tool" "op" "shell_run" "iteration" 2}))))
+        (expect (= {:phase :tool-start :iteration 2 :tool-event {:op "shell"}}
+                   (g->c {"type" "activity" "activity" "tool" "op" "shell" "iteration" 2}))))
     (it "a shell-run activity projects to :shell-run with its command"
         (expect
           (= {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}
@@ -632,6 +632,13 @@
     (it "turn.queued projects to :add with the prompt text"
         (expect (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi"}
                    (g->c {"type" "turn.queued" "turn_id" "q1" "request" "hi"}))))
+    ;; The submitter's correlation id (the idempotency key it sent) rides along so
+    ;; the channel that queued the turn binds its optimistic row by ID, not text.
+    (it "turn.queued carries the submitter's correlation id when the gateway has one"
+        (expect
+          (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi" :client-id "cid-1"}
+             (g->c
+               {"type" "turn.queued" "turn_id" "q1" "request" "hi" "idempotency_key" "cid-1"}))))
     (it "turn.queued.updated projects to :update"
         (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
                    (g->c {"type" "turn.queued.updated" "turn_id" "q1" "request" "hi2"}))))
@@ -642,9 +649,9 @@
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
                    (g->c {"type" "turn.queued.drained" "turn_id" "q1"}))))
     (it "turn.started projects to :turn-start with the canonical run-start clock"
-        (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234 :server-at-ms nil}
-                   (g->c
-                     {"type" "turn.started" "turn_id" "t1" "request" "hi" "started_at" 1234}))))))
+        (expect
+          (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234 :server-at-ms nil}
+             (g->c {"type" "turn.started" "turn_id" "t1" "request" "hi" "started_at" 1234}))))))
 
 (defdescribe
   title-sync-event-chunk-test

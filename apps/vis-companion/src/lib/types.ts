@@ -91,6 +91,60 @@ export interface SettingsResponse {
   groups: ToggleGroup[];
 }
 
+// ── Router: providers, models, OAuth ────────────────────────────────
+// Wire keys are snake_case strings and boolean flags are `is_<foo>` — these
+// mirror the gateway EDN (`:is-authenticated`) mechanically. Never rename a
+// field on the way in.
+
+export interface ProviderStatus {
+  is_authenticated?: boolean;
+  detail?: string;
+  label?: string;
+}
+
+export interface ProviderLimits {
+  rows?: { label?: string; value?: string; percent?: number }[];
+  error?: string;
+}
+
+export interface RouterProvider {
+  id: string;
+  label: string;
+  base_url?: string;
+  models: string[];
+  status?: ProviderStatus;
+  limits?: ProviderLimits;
+}
+
+export interface ModelPref {
+  provider?: string;
+  model?: string;
+}
+
+/**
+ * A live auth flow the daemon is holding open. `kind` decides the UX:
+ * `device` shows `user_code` + `verification_uri` and finishes by polling;
+ * `pkce` opens `url` and needs the final redirect URL pasted back;
+ * `api-key` shows `instructions` and needs the key typed in.
+ * The PKCE verifier, device code, and API key never live on this device.
+ */
+export interface AuthFlow {
+  flow_id: string;
+  provider_id: string;
+  kind: 'pkce' | 'device' | 'api-key';
+  url?: string;
+  user_code?: string;
+  verification_uri?: string;
+  interval_ms?: number;
+  expires_at?: number;
+  instructions?: string[];
+}
+
+export interface AuthVerdict {
+  status: 'ok' | 'pending' | 'error' | 'cancelled' | 'logged-out';
+  message?: string;
+}
+
 export interface ThemeSummary {
   id: string;
   display_name: string;

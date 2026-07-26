@@ -692,10 +692,7 @@
         ;; The recap rail is retired; the provider error itself still
         ;; surfaces its actionable guidance via the error panel.
         (expect (not (str/includes? body "RECAP")))
-        (expect
-          (str/includes?
-            body
-            "NEXT STEP: rate limit — wait and retry, re-authenticate, or switch provider/model"))
+        (expect (str/includes? body "NEXT STEP: wait and retry, or switch provider/model."))
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429"))))))
 
 (defdescribe
@@ -725,8 +722,10 @@
       ;; The recap rail is retired; auth errors still render as action.
       (expect (not (str/includes? body "RECAP")))
       (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 401")))
-      (expect (str/includes? body "Provider message: Invalid authentication credentials"))
-      (expect (str/includes? body "NEXT STEP: re-authenticate this provider or update its API key"))
+      (expect (str/includes?
+                body
+                "the provider rejected your credentials. Invalid authentication credentials"))
+      (expect (str/includes? body "NEXT STEP: re-authenticate or fix its API key, then retry."))
       (expect (not (str/includes? body "provider response:")))
       (expect (not (str/includes? body "{\"type\":"))))))
 
@@ -752,9 +751,10 @@
         ;; It must get the shared provider-error treatment: the split
         ;; explanation / NEXT STEP / facts rows — NOT the raw wrapper dumped as a
         ;; single generic "error" line.
-        (expect (str/includes? body "WHAT HAPPENED: Vis could not complete the HTTP request"))
-        (expect (str/includes? body
-                               "NEXT STEP: this is a network/connection blip, not a rejection"))
+        (expect (str/includes?
+                  body
+                  "WHAT HAPPENED: the connection dropped before any response came back"))
+        (expect (str/includes? body "NEXT STEP: retry. If it keeps failing, check your connection"))
         ;; the wrapper is a compact fact row, not the whole message
         (expect (str/includes? body "Wrapper: HTTP/1.1 header parser received no bytes")))))
 
@@ -1146,17 +1146,17 @@
         (expect (str/includes? body "/fs list"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
   (it "labels a nested tool call in the spinner while the block runs"
-      ;; A shell_run (or any native tool) INSIDE a python_execution block streams
+      ;; A `shell` run (or any native tool) INSIDE a python_execution block streams
       ;; a :tool-call activity naming the op, so the bubble reads
       ;; "Vis is running: <op>" instead of freezing for the whole call.
       (let
         [body (strip-ansi (render/progress->text
-                            {:iterations [{:iteration 1 :activity :tool-call :tool/op "shell_run"}]}
+                            {:iterations [{:iteration 1 :activity :tool-call :tool/op "shell"}]}
                             80
                             {:show-thinking true :show-iterations true}
                             {:now-ms 1000 :turn-start-ms 0}))]
         (expect (str/includes? body "Vis is running:"))
-        (expect (str/includes? body "shell_run"))))
+        (expect (str/includes? body "shell"))))
   (it "live progress previews huge thinking with the viewport-driven truncation"
       ;; The single-iteration truncation summary only fires when a
       ;; viewport budget is supplied (the renderer can't decide to
@@ -3070,7 +3070,7 @@
 (defdescribe
   slash-command-suggestions-overlay-test
   (it
-    "draws a bordered, backgroundless accent title with flex hint pairs"
+    "draws a bordered, BOLD, accent-stripe title with flex hint pairs"
     (let
       [puts
        (atom [])
@@ -3155,10 +3155,12 @@
       (render/draw-slash-command-suggestions! g suggestions input-top cols)
       ;; Title row sits ABOVE the border row (border under title).
       (expect (< title-row border-row))
-      ;; Title row is cleared to the terminal background within the input inset.
-      (expect (some #(and (= title-row (:row %)) (= t/terminal-bg (:bg %)) (= pad (:col %)))
+      ;; Title row: accent stripe (fillRectangle) on title-bg, inset
+      ;; by `pad` cols on each side so it lines up with the input box.
+      (expect (some #(and (= title-row (:row %)) (= t/dialog-title-bg (:bg %)) (= pad (:col %)))
                     @fills))
-      ;; Border row under the title uses the same inset.
+      ;; Border row UNDER the title: horizontal rule, inset by `pad`,
+      ;; same column span as the title accent stripe.
       (expect (some #(and (= border-row (:row %))
                           (str/starts-with? (:text %) "─")
                           (= pad (:col %))
@@ -3167,12 +3169,12 @@
                     @puts))
       ;; Top margin row: a full-width terminal-bg gap above the title.
       (expect (some #(and (= margin-row (:row %)) (= 0 (:col %)) (= t/terminal-bg (:bg %))) @fills))
-      ;; Title row: BOLD accent label directly on the terminal background.
+      ;; Title row: BOLD label "Slash commands" on the accent stripe.
       (expect (some #(and (= title-row (:row %))
                           (str/includes? (:text %) "Slash commands")
                           (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)
-                          (= t/dialog-accent (:fg %))
-                          (= t/terminal-bg (:bg %)))
+                          (= t/dialog-title-fg (:fg %))
+                          (= t/dialog-title-bg (:bg %)))
                     @puts))
       ;; Title row: BOLD keys for each [key action] hint pair.
       ;; Enter and Tab both complete selected slash suggestion.

@@ -4,9 +4,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.input :as input]
-            [com.blockether.vis.ext.provider-anthropic :as anthropic]
-            [com.blockether.vis.ext.provider-github-copilot :as copilot]
-            [com.blockether.vis.ext.provider-openai-codex :as codex]
+            [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [lazytest.core :refer [defdescribe expect it]])
@@ -131,6 +129,9 @@
                      [vis/load-config-raw
                       (constantly {"theme" "dark"})
 
+                      vis/configured-providers
+                      (constantly [])
+
                       vis/save-config!
                       #(reset! saved %)
 
@@ -141,6 +142,39 @@
                      (expect (= "dark" (get @saved "theme")))
                      (expect (= [(vis/provider-persisted-config item)]
                                 (get @saved "providers")))))))
+
+(defdescribe provider-dialog-reorder-keeps-daemon-owned-credentials-test
+             (it "merges each row onto the persisted entry so the gateway-written key survives"
+                 (let
+                   [saved
+                    (atom nil)
+
+                    ;; The dialog's in-memory row NEVER carries the credential: the daemon
+                    ;; wrote it during `auth/complete`.
+                    item
+                    {:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+
+                    save-provider-config!
+                    @#'provider/save-provider-config!]
+
+                   (with-redefs
+                     [vis/load-config-raw
+                      (constantly {})
+
+                      vis/configured-providers
+                      (constantly [{:id :zai-coding-plan :api-key "sk-daemon-owned"}])
+
+                      vis/save-config!
+                      #(reset! saved %)
+
+                      vis/load-config
+                      (constantly {:providers [item]})]
+
+                     (save-provider-config! [item])
+                     (let [row (first (get @saved "providers"))]
+                       (expect (= :zai-coding-plan (:id row)))
+                       (expect (= "sk-daemon-owned" (:api-key row)))
+                       (expect (= [{:name "glm-5.2"}] (:models row))))))))
 
 (defdescribe
   configured-provider-status-test
@@ -155,7 +189,7 @@
                     "source" "gateway"
                     "provider_id" "openai"
                     "config_path" vis/state-path}
-                   (select-keys (@#'provider/configured-provider-status
+                   (select-keys (@#'provider/gateway-provider-status-safe
                                  {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
                                 ["is_authenticated" "source" "provider_id" "config_path"])))))
   (it "routes local no-auth provider status through the gateway instead of probing locally"
@@ -170,7 +204,7 @@
              {"is_authenticated" true "source" "gateway" "provider_id" (name provider-id)})]
 
           (expect (= {"is_authenticated" true "source" "gateway" "provider_id" "ollama"}
-                     (select-keys (@#'provider/configured-provider-status {:id :ollama})
+                     (select-keys (@#'provider/gateway-provider-status-safe {:id :ollama})
                                   ["is_authenticated" "source" "provider_id"])))
           (expect (= false @local-probed?))))))
 
@@ -283,10 +317,10 @@
        (atom nil)]
 
       (with-redefs
-        [vis/provider-by-id
+        [;; Logout is a GATEWAY call: the daemon owns the credential file.
+         vis/gateway-provider-logout!
          (fn [provider-id]
-           (when (= :anthropic-coding-plan provider-id)
-             {:provider/logout-fn #(reset! logout-called? true)}))
+           (reset! logout-called? (= :anthropic-coding-plan provider-id)))
 
          vis/remove-config-provider!
          (fn [provider-id source]
@@ -308,55 +342,105 @@
 
 (defdescribe
   api-key-auth-prompt-test
-  (it "feeds static provider auth guidance into the API-key input dialog"
+  ;; API-key providers now take the SAME gateway road as the OAuth ones:
+  ;; `auth/start` mints the flow and returns the provider's own guidance,
+  ;; `auth/complete` persists the key DAEMON-side. The TUI never runs a
+  ;; provider `:provider/auth-fn` and never writes a credential itself.
+  (it
+    "feeds gateway-issued auth guidance into the API-key input dialog"
+    (let
+      [input-args
+       (atom nil)
+
+       submitted
+       (atom nil)]
+
       (with-redefs
-        [vis/provider-by-id
-         (constantly {:provider/auth-fn (fn [print!]
-                                          (print! "")
-                                          (print! "  Z.ai (Coding Plan) requires a static API key.")
-                                          (print! "")
-                                          (print! "  Endpoint: https://api.z.ai/api/coding/paas/v4")
-                                          :no-credentials)})]
-        (expect (= ["  Z.ai (Coding Plan) requires a static API key." ""
-                    "  Endpoint: https://api.z.ai/api/coding/paas/v4"]
-                   (@#'provider/provider-auth-prompt-body {:id :zai-coding-plan})))))
-  (it "prefers pure prompt guidance over running the auth flow"
+        [vis/gateway-provider-auth-start!
+         (constantly {"flow_id" "flow-1"
+                      "kind" "api-key"
+                      "instructions" ["  Z.ai (Coding Plan) requires a static API key."
+                                      "  Endpoint: https://api.z.ai/api/coding/paas/v4"]})
+
+         vis/gateway-provider-auth-submit-key!
+         (fn [pid flow-id api-key]
+           (reset! submitted [pid flow-id api-key])
+           {"status" "ok"})
+
+         dlg/text-input-dialog!
+         (fn [& args]
+           (reset! input-args args)
+           "  sk-secret  ")]
+
+        ;; The row that comes back carries NO credential — the daemon owns it.
+        (expect (= {:id :zai-coding-plan}
+                   (provider/authenticate-provider! nil {:id :zai-coding-plan})))
+        (expect (= [:zai-coding-plan "flow-1" "sk-secret"] @submitted))
+        (let [opts (apply hash-map (drop 3 @input-args))]
+          (expect (= ["  Z.ai (Coding Plan) requires a static API key."
+                      "  Endpoint: https://api.z.ai/api/coding/paas/v4"]
+                     (:body opts)))
+          (expect (= \* (:mask opts)))))))
+  (it "never runs the provider's in-process auth-fn"
       (let [auth-called? (atom false)]
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/auth-prompt-fn (constantly ["static guidance"])
-                                           :provider/auth-fn (fn [_]
-                                                               (reset! auth-called? true))})]
-          (expect (= ["static guidance"]
-                     (@#'provider/provider-auth-prompt-body {:id :zai-coding-plan})))
+          [vis/provider-by-id (constantly {:provider/auth-fn (fn [& _]
+                                                               (reset! auth-called? true)
+                                                               :ok)})
+           vis/gateway-provider-auth-start!
+           (constantly {"flow_id" "flow-2" "kind" "api-key" "instructions" ["static guidance"]})
+           vis/gateway-provider-auth-submit-key! (constantly {"status" "ok"})
+           dlg/text-input-dialog! (constantly "sk-key")]
+
+          (expect (= {:id :zai-coding-plan}
+                     (provider/authenticate-provider! nil {:id :zai-coding-plan})))
           (expect (= false @auth-called?)))))
-  (it "treats Esc from the API-key prompt as cancel instead of showing guidance afterward"
-      (let
-        [input-args
-         (atom nil)
+  (it
+    "treats Esc from the API-key prompt as a gateway cancel, not a local write"
+    (let
+      [cancelled
+       (atom nil)
 
-         viewer-called?
-         (atom false)]
+       submitted?
+       (atom false)
 
+       viewer-called?
+       (atom false)]
+
+      (with-redefs
+        [vis/gateway-provider-auth-start!
+         (constantly {"flow_id" "flow-3" "kind" "api-key" "instructions" ["guidance"]})
+
+         vis/gateway-provider-auth-cancel!
+         (fn [pid flow-id]
+           (reset! cancelled [pid flow-id])
+           {"status" "cancelled"})
+
+         vis/gateway-provider-auth-submit-key!
+         (fn [& _]
+           (reset! submitted? true))
+
+         dlg/text-input-dialog!
+         (constantly nil)
+
+         dlg/text-viewer-dialog!
+         (fn [& _]
+           (reset! viewer-called? true))]
+
+        (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding-plan})))
+        (expect (= [:zai-coding-plan "flow-3"] @cancelled))
+        (expect (= false @submitted?))
+        (expect (= false @viewer-called?)))))
+  (it "surfaces a gateway failure as a dialog instead of a credential write"
+      (let [message (atom nil)]
         (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/auth-fn (fn [print!]
-                                            (print!
-                                              "  Z.ai (Coding Plan) requires a static API key.")
-                                            :no-credentials)})
-
-           dlg/text-input-dialog!
-           (fn [& args]
-             (reset! input-args args)
-             nil)
-
-           dlg/text-viewer-dialog!
-           (fn [& _]
-             (reset! viewer-called? true))]
+          [vis/gateway-provider-auth-start! (fn [& _]
+                                              (throw (ex-info "gateway down" {})))
+           dlg/text-view-dialog! (fn [& args]
+                                   (reset! message args))]
 
           (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding-plan})))
-          (let [opts (apply hash-map (drop 3 @input-args))]
-            (expect (= ["  Z.ai (Coding Plan) requires a static API key."] (:body opts))))
-          (expect (= false @viewer-called?))))))
+          (expect (str/includes? (str @message) "Authentication failed"))))))
 
 (defdescribe
   provider-status-text-test
@@ -405,41 +489,95 @@
             (expect (str/includes? text "Status: loading"))
             (expect (= false @limits-probed?)))))))
 
+(def ^:private copilot-device-flow
+  {"flow_id" "flow-1"
+   "kind" "device"
+   "user_code" "ABCD-EFGH"
+   "verification_uri" "https://github.com/login/device"
+   "interval_ms" 1000})
+
 (defdescribe
-  copilot-oauth-ready-test
-  (it "does not start the device flow when Copilot credentials already exist"
+  copilot-device-login-test
+  (it "does not start a device flow when the GATEWAY reports Copilot credentials"
       (let [start-called? (atom false)]
         (with-redefs
-          [copilot/detect-oauth-token (constantly {:oauth-token "oauth"})
-           copilot/get-copilot-token! (constantly {:token "api-token"})
-           copilot/start-device-flow! (fn [& _]
-                                        (reset! start-called? true))]
+          [vis/gateway-provider-status (constantly {"is_authenticated" true})
+           vis/gateway-provider-auth-start! (fn [& _]
+                                              (reset! start-called? true)
+                                              nil)]
 
-          (expect (= "api-token" (@#'provider/copilot-oauth-flow! nil :individual)))
+          (expect
+            (true?
+              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
           (expect (= false @start-called?)))))
-  (it "starts the device flow when Copilot re-authentication is requested"
-      (let [start-called? (atom false)]
-        (with-redefs
-          [copilot/detect-oauth-token (constantly {:oauth-token "oauth"})
-           copilot/start-device-flow! (fn [& _]
-                                        (reset! start-called? true)
-                                        {:user-code "ABCD-EFGH"
-                                         :verification-uri "https://github.com/login/device"
-                                         :device-code "device"
-                                         :interval 5
-                                         :expires-in 900})
-           provider/copilot-auth-instructions! (fn [& _]
-                                                 nil)]
+  (it "drives the device flow THROUGH THE GATEWAY, never the provider in-process"
+      (let
+        [started
+         (atom nil)
 
-          (expect (nil? (@#'provider/copilot-oauth-flow! nil :individual true)))
-          (expect (= true @start-called?)))))
+         polled
+         (atom 0)]
+
+        (with-redefs
+          [vis/gateway-provider-status
+           (constantly {"is_authenticated" false})
+
+           vis/gateway-provider-auth-start!
+           (fn [pid]
+             (reset! started pid)
+             copilot-device-flow)
+
+           vis/gateway-provider-auth-poll!
+           (fn [& _]
+             (swap! polled inc)
+             {"status" "ok"})
+
+           provider/device-auth-instructions!
+           (fn [& _]
+             true)]
+
+          (expect
+            (true?
+              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
+          (expect (= :github-copilot-individual @started))
+          (expect (= 1 @polled)))))
+  (it "cancels the gateway flow when the user escapes the code dialog"
+      (let [cancelled (atom nil)]
+        (with-redefs
+          [vis/gateway-provider-status (constantly {"is_authenticated" true})
+           vis/gateway-provider-auth-start! (constantly copilot-device-flow)
+           vis/gateway-provider-auth-cancel! (fn [_ flow-id]
+                                               (reset! cancelled flow-id))
+           provider/device-auth-instructions! (fn [& _]
+                                                nil)]
+
+          (expect (nil? (@#'provider/gateway-device-login!
+                         nil
+                         :github-copilot-individual
+                         "GitHub Copilot"
+                         true)))
+          (expect (= "flow-1" @cancelled)))))
+  (it "surfaces the gateway's error verdict instead of claiming success"
+      (let [shown (atom nil)]
+        (with-redefs
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start! (constantly copilot-device-flow)
+           vis/gateway-provider-auth-poll! (constantly {"status" "error"
+                                                        "message" "device authorization failed"})
+           provider/device-auth-instructions! (fn [& _]
+                                                true)
+           dlg/text-view-dialog! (fn [_ _ lines]
+                                   (reset! shown lines)
+                                   nil)]
+
+          (expect
+            (nil?
+              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
+          (expect (str/includes? (str @shown) "device authorization failed")))))
   (it
     "times out pending device authorization instead of hanging the TUI"
     (let
       [cancelled?
-       (atom false)
-
-       exchange-called?
        (atom false)
 
        pending-result
@@ -456,117 +594,140 @@
            (isRealized [_] false))]
 
       (with-redefs
-        [copilot/detect-oauth-token
-         (constantly nil)
+        [vis/gateway-provider-status
+         (constantly {"is_authenticated" false})
 
-         copilot/start-device-flow!
+         vis/gateway-provider-auth-start!
+         (constantly copilot-device-flow)
+
+         vis/gateway-provider-auth-cancel!
          (fn [& _]
-           {:user-code "ABCD-EFGH"
-            :verification-uri "https://github.com/login/device"
-            :device-code "device"
-            :interval 5
-            :expires-in 900})
+           nil)
 
-         copilot/get-copilot-token!
-         (fn [& _]
-           (reset! exchange-called? true)
-           {:token "api-token"})
-
-         provider/copilot-auth-instructions!
+         provider/device-auth-instructions!
          (fn [& _]
            true)
 
-         provider/copilot-oauth-wait-poll-ms
+         provider/device-wait-poll-ms
          1
 
-         provider/copilot-oauth-wait-timeout-ms
+         provider/device-wait-timeout-ms
          1
 
          vis/worker-future
          (fn [& _]
            pending-result)]
 
-        (expect (nil? (@#'provider/copilot-oauth-flow! nil :individual)))
-        (expect (= true @cancelled?))
-        (expect (= false @exchange-called?))))))
+        (expect
+          (nil?
+            (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
+        (expect (= true @cancelled?))))))
+
+(def ^:private codex-redirect "http://localhost:1455/auth/callback?code=abc&state=s")
 
 (defdescribe
   codex-oauth-ready-test
-  (it "returns true immediately when Codex credentials already exist"
-      (let [login-called? (atom false)]
+  (it "returns true immediately when the GATEWAY reports Codex credentials"
+      (let [start-called? (atom false)]
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id
-                                                                            "acct_123"})})
-           codex/login! (fn [& _]
-                          (reset! login-called? true)
-                          :ok)
+          [vis/gateway-provider-status (constantly {"is_authenticated" true})
+           vis/gateway-provider-auth-start! (fn [& _]
+                                              (reset! start-called? true)
+                                              nil)
            dlg/confirm-dialog! (fn [& _]
                                  nil)]
 
           (expect (= true (@#'provider/codex-oauth-ready! nil)))
-          (expect (= false @login-called?)))))
-  (it "runs the shared Codex login flow from the TUI"
-      (let [seen (atom nil)]
+          (expect (= false @start-called?)))))
+  (it "drives Codex login THROUGH THE GATEWAY, never in-process"
+      (let [seen (atom {})]
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/detect-fn (constantly nil)})
-           codex/login! (fn [printer-fn opts]
-                          (reset! seen {:printer-fn printer-fn :opts opts})
-                          :ok)
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start!
+           (fn [provider-id]
+             (swap! seen assoc :started provider-id)
+             {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth.openai.com/authorize?x=1"})
+           vis/gateway-provider-auth-complete!
+           (fn [provider-id flow-id input]
+             (swap! seen assoc :completed [provider-id flow-id input])
+             {"status" "ok"})
+           opener/open! (fn [url]
+                          (swap! seen assoc :opened url)
+                          true)
            dlg/confirm-dialog! (fn [& _]
                                  true)
            dlg/text-view-dialog! (fn [& _]
                                    nil)
            dlg/text-input-dialog! (fn [& _]
-                                    "http://localhost:1455/auth/callback?code=abc&state=s")]
+                                    codex-redirect)]
 
           (expect (= true (@#'provider/codex-oauth-ready! nil)))
-          (expect (= "vis-tui" (get-in @seen [:opts :originator])))
-          (expect (ifn? (get-in @seen [:opts :manual-code-fn])))
-          (expect (= "http://localhost:1455/auth/callback?code=abc&state=s"
-                     ((get-in @seen [:opts :manual-code-fn]) nil))))))
-  (it "forces the shared Codex login flow when re-authenticating existing credentials"
-      (let [seen (atom nil)]
+          (expect (= :openai-codex (:started @seen)))
+          (expect (= "https://auth.openai.com/authorize?x=1" (:opened @seen)))
+          (expect (= [:openai-codex "flow-1" codex-redirect] (:completed @seen))))))
+  (it "cancels the gateway flow when the user pastes nothing"
+      (let [cancelled (atom nil)]
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id
-                                                                            "acct_123"})})
-           codex/login! (fn [printer-fn opts]
-                          (reset! seen {:printer-fn printer-fn :opts opts})
-                          :ok)
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start!
+           (constantly {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
+           vis/gateway-provider-auth-cancel! (fn [provider-id flow-id]
+                                               (reset! cancelled [provider-id flow-id]))
+           opener/open! (constantly true)
            dlg/confirm-dialog! (fn [& _]
                                  true)
            dlg/text-view-dialog! (fn [& _]
                                    nil)
            dlg/text-input-dialog! (fn [& _]
-                                    "http://localhost:1455/auth/callback?code=abc&state=s")]
+                                    nil)]
+
+          (expect (= false (@#'provider/codex-oauth-ready! nil)))
+          (expect (= [:openai-codex "flow-1"] @cancelled)))))
+  (it "forces a fresh gateway flow when re-authenticating existing credentials"
+      (let [start-called? (atom false)]
+        (with-redefs
+          [vis/gateway-provider-status (constantly {"is_authenticated" true})
+           vis/gateway-provider-auth-start!
+           (fn [& _]
+             (reset! start-called? true)
+             {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
+           vis/gateway-provider-auth-complete! (constantly {"status" "ok"})
+           opener/open! (constantly true)
+           dlg/confirm-dialog! (fn [& _]
+                                 true)
+           dlg/text-view-dialog! (fn [& _]
+                                   nil)
+           dlg/text-input-dialog! (fn [& _]
+                                    codex-redirect)]
 
           (expect (= true (@#'provider/codex-oauth-ready! nil true)))
-          (expect (= true (get-in @seen [:opts :force?]))))))
+          (expect (= true @start-called?)))))
   (it "does not force Codex login from a plain authenticate call when credentials exist"
       (let
-        [login-called?
+        [start-called?
          (atom false)
 
          provider-config
          {:id :openai-codex :models [{:name "gpt-5.1"}]}]
 
         (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
+          [vis/gateway-provider-status
+           (constantly {"is_authenticated" true})
 
-           codex/login!
+           vis/gateway-provider-auth-start!
            (fn [& _]
-             (reset! login-called? true)
-             :ok)
+             (reset! start-called? true)
+             nil)
 
            dlg/confirm-dialog!
            (fn [& _]
              nil)]
 
           (expect (= provider-config (provider/authenticate-provider! nil provider-config)))
-          (expect (= false @login-called?)))))
+          (expect (= false @start-called?)))))
   (it "does not force Codex login from the auth picker when credentials exist"
       (let
-        [login-called?
+        [start-called?
          (atom false)
 
          provider-item
@@ -578,57 +739,26 @@
            (fn [& _]
              provider-item)
 
-           vis/provider-by-id
-           (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
+           vis/gateway-provider-status
+           (constantly {"is_authenticated" true})
 
-           codex/login!
+           vis/gateway-provider-auth-start!
            (fn [& _]
-             (reset! login-called? true)
-             :ok)
+             (reset! start-called? true)
+             nil)
 
            dlg/confirm-dialog!
            (fn [& _]
              nil)]
 
           (expect (= true (provider/show-provider-auth-dialog! nil)))
-          (expect (= false @login-called?)))))
-  (it "forces Codex login only when re-authentication is requested"
-      (let
-        [seen
-         (atom nil)
-
-         provider-config
-         {:id :openai-codex :models [{:name "gpt-5.1"}]}]
-
-        (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
-
-           codex/login!
-           (fn [printer-fn opts]
-             (reset! seen {:printer-fn printer-fn :opts opts})
-             :ok)
-
-           dlg/confirm-dialog!
-           (fn [& _]
-             true)
-
-           dlg/text-view-dialog!
-           (fn [& _]
-             nil)
-
-           dlg/text-input-dialog!
-           (fn [& _]
-             "http://localhost:1455/auth/callback?code=abc&state=s")]
-
-          (expect (= provider-config (provider/authenticate-provider! nil provider-config true)))
-          (expect (= true (get-in @seen [:opts :force?]))))))
-  (it "returns false when the shared Codex login flow fails"
+          (expect (= false @start-called?)))))
+  (it "returns false when the gateway auth flow fails"
       (with-redefs
-        [vis/provider-by-id
-         (constantly {:provider/detect-fn (constantly nil)})
+        [vis/gateway-provider-status
+         (constantly {"is_authenticated" false})
 
-         codex/login!
+         vis/gateway-provider-auth-start!
          (fn [& _]
            (throw (ex-info "boom" {})))
 
@@ -642,26 +772,75 @@
 
         (expect (= false (@#'provider/codex-oauth-ready! nil))))))
 
-(defdescribe add-provider-test
-             (it "connects OpenAI Codex OAuth without forcing a single model selection"
-                 (let [model-picker-called? (atom false)]
-                   (with-redefs
-                     [vis/provider-presets (constantly [{:id :openai-codex
-                                                         :label "OpenAI Codex"
-                                                         :default-models ["gpt-5.1" "gpt-5.2"]}])
-                      provider/codex-oauth-ready! (constantly true)
-                      dlg/select-dialog! (fn [_ title items]
-                                           (case title
-                                             "Add Provider"
-                                             (first items)
+(defdescribe
+  add-provider-test
+  (it "connects OpenAI Codex OAuth without forcing a single model selection"
+      (let [model-picker-called? (atom false)]
+        (with-redefs
+          [vis/provider-presets (constantly [{:id :openai-codex
+                                              :label "OpenAI Codex"
+                                              :default-models ["gpt-5.1" "gpt-5.2"]}])
+           provider/codex-oauth-ready! (constantly true)
+           dlg/select-dialog! (fn [_ title items]
+                                (case title
+                                  "Add Provider"
+                                  (first items)
 
-                                             "Select Model"
-                                             (do (reset! model-picker-called? true)
-                                                 (first items))))]
+                                  "Select Model"
+                                  (do (reset! model-picker-called? true) (first items))))]
 
-                     (expect (= {:id :openai-codex :models [{:name "gpt-5.1"} {:name "gpt-5.2"}]}
-                                (@#'provider/add-provider! nil #{})))
-                     (expect (= false @model-picker-called?))))))
+          (expect (= {:id :openai-codex :models [{:name "gpt-5.1"} {:name "gpt-5.2"}]}
+                     (@#'provider/add-provider! nil #{})))
+          (expect (= false @model-picker-called?)))))
+  (it
+    "adds a plain API-key provider THROUGH THE GATEWAY, never writing the key"
+    (let
+      [submitted
+       (atom [])
+
+       started
+       (atom [])]
+
+      (with-redefs
+        [vis/provider-presets
+         (constantly [{:id :zai-coding-plan
+                       :label "Z.AI Coding Plan"
+                       :base-url "https://api.z.ai"
+                       :default-models ["glm-5.2"]}])
+
+         vis/gateway-provider-auth-start!
+         (fn [pid]
+           (swap! started conj pid)
+           {"flow_id" "f-1" "kind" "api-key" "instructions" ["Paste your key"]})
+
+         vis/gateway-provider-auth-submit-key!
+         (fn [pid flow-id key]
+           (swap! submitted conj [pid flow-id key])
+           {"status" "ok"})
+
+         vis/gateway-provider-auth-cancel!
+         (fn [_ _]
+           (throw (ex-info "cancelled" {})))
+
+         vis/gateway-provider-model-options
+         (constantly {:models ["glm-5.2"] :hidden-count 0})
+
+         dlg/text-input-dialog!
+         (fn [& _]
+           "sk-typed-by-user")
+
+         dlg/select-dialog!
+         (fn [_ _ items]
+           (first items))]
+
+        (let [cfg (@#'provider/add-provider! nil #{})]
+          ;; The gateway owns the credential: the daemon persisted it,
+          ;; so the config the TUI hands back carries NO key.
+          (expect (= [:zai-coding-plan] @started))
+          (expect (= [[:zai-coding-plan "f-1" "sk-typed-by-user"]] @submitted))
+          (expect (= :zai-coding-plan (:id cfg)))
+          (expect (= [{:name "glm-5.2"}] (:models cfg)))
+          (expect (nil? (:api-key cfg))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Regression: success popups MUST stay silent.
@@ -687,46 +866,39 @@
 
 (defdescribe
   silent-auth-success-test
-  (it
-    "copilot OAuth success closes silently (no ✓ Authenticated! popup)"
-    (let [popups (atom [])]
-      (with-redefs
-        [copilot/detect-oauth-token (constantly nil)
-         copilot/start-device-flow! (fn [& _]
-                                      {:user-code "AAAA-BBBB"
-                                       :verification-uri "https://github.com/login/device"
-                                       :device-code "dev"
-                                       :interval 0
-                                       :expires-in 1})
-         copilot/poll-for-token! (fn [& _]
-                                   {:status :ok})
-         copilot/get-copilot-token! (fn [& _]
-                                      {:token "api-token"})
-         copilot/logout! (fn []
-                           nil)
-         vis/worker-future (fn [_label thunk]
-                             (let [v (thunk)]
-                               (reify
-                                 clojure.lang.IDeref
-                                   (deref [_] v)
-                                 clojure.lang.IPending
-                                   (isRealized [_] true))))
-         provider/copilot-auth-instructions! (fn [& _]
-                                               true)
-         dlg/text-view-dialog! (text-view-recorder popups)
-         dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+  (it "copilot OAuth success closes silently (no ✓ Authenticated! popup)"
+      (let [popups (atom [])]
+        (with-redefs
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start! (constantly copilot-device-flow)
+           vis/gateway-provider-auth-poll! (constantly {"status" "ok"})
+           vis/worker-future (fn [_label thunk]
+                               (let [v (thunk)]
+                                 (reify
+                                   clojure.lang.IDeref
+                                     (deref [_] v)
+                                   clojure.lang.IPending
+                                     (isRealized [_] true))))
+           provider/device-auth-instructions! (fn [& _]
+                                                true)
+           dlg/text-view-dialog! (text-view-recorder popups)
+           dlg/text-viewer-dialog! (text-viewer-recorder popups)]
 
-        (expect (= "api-token" (@#'provider/copilot-oauth-flow! nil :individual)))
-        (expect (empty? (filter #(some (fn [l]
-                                         (str/includes? (str l) "Authenticated"))
-                                       (or (:lines %) [(:text %)]))
-                                @popups))))))
+          (expect
+            (true?
+              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
+          (expect (empty? (filter #(some (fn [l]
+                                           (str/includes? (str l) "Authenticated"))
+                                         (or (:lines %) [(:text %)]))
+                                  @popups))))))
   (it "codex OAuth success closes silently (no ✓ Authenticated! popup)"
       (let [popups (atom [])]
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/detect-fn (constantly nil)})
-           codex/login! (fn [& _]
-                          :ok)
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start!
+           (constantly {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
+           vis/gateway-provider-auth-complete! (constantly {"status" "ok"})
+           opener/open! (constantly true)
            dlg/confirm-dialog! (fn [& _]
                                  true)
            dlg/text-input-dialog! (fn [& _]
@@ -742,7 +914,8 @@
   (it "anthropic OAuth success closes silently (parity with copilot/codex)"
       (let [popups (atom [])]
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/detect-fn (constantly nil)})
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           opener/open! (constantly true)
            dlg/confirm-dialog! (fn [& _]
                                  true)
            dlg/text-input-dialog! (fn [& _]
@@ -751,14 +924,16 @@
            dlg/text-viewer-dialog! (text-viewer-recorder popups)]
 
           (with-redefs
-            [anthropic/login! (fn [& _]
-                                :ok)]
+            [vis/gateway-provider-auth-start!
+             (constantly {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
+             vis/gateway-provider-auth-complete! (constantly {"status" "ok"})]
+
             (expect (= true (@#'provider/anthropic-oauth-ready! nil)))
             (expect (empty? (filter #(some (fn [l]
                                              (str/includes? (str l) "Authenticated"))
                                            (or (:lines %) [(:text %)]))
                                     @popups)))))))
-  (it "generic api-key provider (zai-coding-style) shows no success toast when auth-fn is silent"
+  (it "generic api-key provider (zai-coding-style) succeeds silently through the gateway"
       (let
         [popups
          (atom [])
@@ -767,13 +942,18 @@
          {:id :zai-coding-plan :api-key nil}]
 
         (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/auth-fn (fn [_print!]
-                                            :ok)})
+          [vis/gateway-provider-auth-start!
+           (constantly {"flow_id" "f" "kind" "api-key"})
+
+           vis/gateway-provider-auth-submit-key!
+           (constantly {"status" "ok"})
 
            vis/display-label
            (fn [_]
              "Z.AI Coding")
+
+           dlg/text-input-dialog!
+           (constantly "sk-key")
 
            dlg/text-view-dialog!
            (text-view-recorder popups)
@@ -781,96 +961,9 @@
            dlg/text-viewer-dialog!
            (text-viewer-recorder popups)]
 
-          (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
+          ;; No credential rides back into the TUI's own rows.
+          (expect (= {:id :zai-coding-plan} (@#'provider/gateway-api-key-login! nil provider)))
           (expect (empty? @popups)))))
-  (it "zai-coding-style :already-authenticated success stays silent even when auth-fn prints lines"
-      ;; Real regression: zai's make-auth-fn prints \"Already authenticated with X.\"
-      ;; on the success path. The previous \"silent unless lines collected\" rule
-      ;; let those lines through as a popup - the exact \"success dialog\" the user
-      ;; vetoed for typical/standard providers. Now success keywords suppress
-      ;; printed output regardless.
-      (let
-        [popups
-         (atom [])
-
-         provider
-         {:id :zai-coding-plan :api-key nil}]
-
-        (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/auth-fn (fn [print!]
-                                            (print! "  Already authenticated with Z.AI Coding.")
-                                            (print! "  Source: config.")
-                                            :already-authenticated)})
-
-           vis/display-label
-           (fn [_]
-             "Z.AI Coding")
-
-           dlg/text-view-dialog!
-           (text-view-recorder popups)
-
-           dlg/text-viewer-dialog!
-           (text-viewer-recorder popups)]
-
-          (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
-          (expect (empty? @popups)))))
-  (it "zai-coding-style :ok success (env-var persisted) stays silent even with printed lines"
-      (let
-        [popups
-         (atom [])
-
-         provider
-         {:id :zai-coding-plan :api-key nil}]
-
-        (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/auth-fn (fn [print!]
-                                            (print! "  Persisted Z.ai key from env var.")
-                                            (print! "  Z.AI Coding is ready.")
-                                            :ok)})
-
-           vis/display-label
-           (fn [_]
-             "Z.AI Coding")
-
-           dlg/text-view-dialog!
-           (text-view-recorder popups)
-
-           dlg/text-viewer-dialog!
-           (text-viewer-recorder popups)]
-
-          (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
-          (expect (empty? @popups)))))
-  (it "action-required result (:no-credentials) DOES surface auth-fn instructions"
-      ;; The mirror case: when auth-fn cannot complete on its own, the user must
-      ;; read what to do next. Keep that path live.
-      (let
-        [popups
-         (atom [])
-
-         provider
-         {:id :zai-coding-plan :api-key nil}]
-
-        (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/auth-fn (fn [print!]
-                                            (print! "Set ZAI_CODING_API_KEY=... and re-run.")
-                                            :no-credentials)})
-
-           vis/display-label
-           (fn [_]
-             "Z.AI Coding")
-
-           dlg/text-view-dialog!
-           (text-view-recorder popups)
-
-           dlg/text-viewer-dialog!
-           (text-viewer-recorder popups)]
-
-          (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
-          (expect (= 1 (count @popups)))
-          (expect (str/includes? (:text (first @popups)) "ZAI_CODING_API_KEY")))))
   (it "generic api-key provider failure still surfaces a dialog"
       (let
         [popups
@@ -880,13 +973,19 @@
          {:id :zai-coding-plan :api-key nil}]
 
         (with-redefs
-          [vis/provider-by-id
-           (constantly {:provider/auth-fn (fn [_print!]
-                                            (throw (ex-info "boom" {})))})
+          [vis/gateway-provider-auth-start!
+           (constantly {"flow_id" "f" "kind" "api-key"})
+
+           vis/gateway-provider-auth-submit-key!
+           (fn [& _]
+             (throw (ex-info "boom" {})))
 
            vis/display-label
            (fn [_]
              "Z.AI Coding")
+
+           dlg/text-input-dialog!
+           (constantly "sk-key")
 
            dlg/text-view-dialog!
            (text-view-recorder popups)
@@ -894,6 +993,6 @@
            dlg/text-viewer-dialog!
            (text-viewer-recorder popups)]
 
-          (expect (nil? (@#'provider/run-generic-provider-auth! nil provider)))
+          (expect (nil? (@#'provider/gateway-api-key-login! nil provider)))
           (expect (= 1 (count @popups)))
-          (expect (str/includes? (:text (first @popups)) "Authentication failed: boom"))))))
+          (expect (str/includes? (str (:lines (first @popups))) "Authentication failed: boom"))))))

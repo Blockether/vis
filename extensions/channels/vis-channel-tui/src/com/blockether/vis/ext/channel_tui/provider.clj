@@ -8,10 +8,12 @@
    and can be SHARED across channels. This namespace owns only the
    lanterna interaction layer.
 
-   GitHub Copilot OAuth: a hard dep. The TUI ships with the
-   `vis-provider-github-copilot` jar on its classpath; the device-flow
-   fns are required directly. (The previous `dynaload` indirection has
-   been removed: explicit beats clever.)"
+   ALL provider OAuth is driven ENTIRELY through the gateway —
+   Anthropic + Codex over browser/PKCE, GitHub Copilot over device code —
+   via `/v1/providers/:id/auth/{start,complete,poll,cancel}` and `/logout`.
+   The TUI therefore needs NO provider extension on its own classpath, holds
+   no credential secret at any moment, and behaves identically when attached
+   to a gateway on another machine."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -21,9 +23,6 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.ext.provider-anthropic :as anthropic]
-            [com.blockether.vis.ext.provider-github-copilot :as copilot]
-            [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]))
@@ -71,7 +70,7 @@
 
 (def ^:private provider-config-with-models vis/provider-config-with-models)
 
-;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
+;;; ── Provider OAuth — every flow runs through the gateway ─────────────
 
 (def ^:private github-copilot-account-types
   {:github-copilot-individual :individual
@@ -80,23 +79,28 @@
 
 (defn- github-copilot-provider? [provider-id] (contains? github-copilot-account-types provider-id))
 
-(defn- github-copilot-account-type
+(defn- gateway-authenticated?
+  "Ask the DAEMON whether `provider-id` already holds usable credentials.
+
+   The TUI must not read the auth file itself: the gateway may be on another
+   machine, and it is the one process that owns credential resolution."
   [provider-id]
-  (get github-copilot-account-types provider-id :individual))
+  (try (boolean (get (vis/gateway-provider-status provider-id) "is_authenticated"))
+       (catch Exception _ false)))
 
-(def ^:private copilot-oauth-wait-poll-ms 200)
+(def ^:private device-wait-poll-ms 200)
 
-(def ^:private copilot-oauth-wait-timeout-ms (* 6 60 1000))
+(def ^:private device-wait-timeout-ms (* 6 60 1000))
 
-(def ^:private copilot-oauth-cancelled ::copilot-oauth-cancelled)
+(def ^:private device-auth-cancelled ::device-auth-cancelled)
 
-(defn- cancel-copilot-oauth-poll!
+(defn- cancel-device-poll!
   [result]
   (when (instance? java.util.concurrent.Future result)
     (.cancel ^java.util.concurrent.Future result true)))
 
-(defn- draw-copilot-waiting!
-  [^TerminalScreen screen ^long started-at-ms]
+(defn- draw-device-waiting!
+  [^TerminalScreen screen label ^long started-at-ms]
   (let
     [size
      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -111,7 +115,7 @@
      (.newTextGraphics screen)
 
      bounds
-     (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Waiting" 8)
+     (dlg/draw-dialog-chrome! g cols rows (str label " - Waiting") 8)
 
      {:keys [left inner-w]}
      bounds
@@ -144,8 +148,9 @@
      (quot (max 0 (- (System/currentTimeMillis) started-at-ms)) 1000)
 
      lines
-     ["Waiting for GitHub authorization..." "" "Finish login in the browser."
-      "This dialog closes when GitHub confirms authorization." "" (str "Elapsed: " elapsed-s "s")]]
+     ["Waiting for authorization..." "" "Finish login in the browser."
+      "This dialog closes when the gateway confirms authorization." ""
+      (str "Elapsed: " elapsed-s "s")]]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) content-top inner-w content-h)
@@ -158,42 +163,42 @@
     (.setCursorPosition screen (p/cursor-pos 0 0))
     (.refresh screen Screen$RefreshType/DELTA)))
 
-(defn- wait-for-copilot-oauth!
-  [^TerminalScreen screen result]
+(defn- wait-for-device-auth!
+  [^TerminalScreen screen label result]
   (let
     [started-at-ms
      (System/currentTimeMillis)
 
      deadline-ms
-     (+ started-at-ms (long copilot-oauth-wait-timeout-ms))]
+     (+ started-at-ms (long device-wait-timeout-ms))]
 
     (loop []
 
       (cond (realized? result) @result
             (>= (System/currentTimeMillis) deadline-ms)
-            (do (cancel-copilot-oauth-poll! result)
+            (do (cancel-device-poll! result)
                 (when screen
                   (dlg/text-view-dialog! screen
-                                         "GitHub Copilot"
-                                         ["Timed out waiting for GitHub authorization." ""
+                                         label
+                                         ["Timed out waiting for authorization." ""
                                           "Restart auth when ready."]))
-                copilot-oauth-cancelled)
-            :else (do (when screen (draw-copilot-waiting! screen started-at-ms))
+                device-auth-cancelled)
+            :else (do (when screen (draw-device-waiting! screen label started-at-ms))
                       (if (and screen
                                (when-let [key (.pollInput screen)]
                                  (dlg/modal-escape-key? key)))
-                        (do (cancel-copilot-oauth-poll! result) copilot-oauth-cancelled)
-                        (do (Thread/sleep (long copilot-oauth-wait-poll-ms)) (recur))))))))
+                        (do (cancel-device-poll! result) device-auth-cancelled)
+                        (do (Thread/sleep (long device-wait-poll-ms)) (recur))))))))
 
-(defn- copilot-auth-instructions!
-  [^TerminalScreen screen verification-uri user-code]
+(defn- device-auth-instructions!
+  [^TerminalScreen screen label verification-uri user-code]
   (loop [status nil]
     (let
       [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
        cols (.getColumns size)
        rows (.getRows size)
        g (.newTextGraphics screen)
-       bounds (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Authenticate" 10)
+       bounds (dlg/draw-dialog-chrome! g cols rows (str label " - Authenticate") 10)
        {:keys [left inner-w]} bounds
        {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)
        left (long left)
@@ -281,151 +286,163 @@
                               (recur status))
                             :else (recur status))))))))
 
-(defn- copilot-oauth-flow!
-  "Run the GitHub Copilot OAuth device flow inside the TUI.
-   Shows the user code + URL, waits for authorization, returns the API key or nil.
+(defn- gateway-device-login!
+  "Run one DEVICE-code OAuth flow for `provider-id` THROUGH THE GATEWAY.
 
-   Returns nil immediately when the optional vis-providers-github-copilot
-   jar isn't on the classpath."
-  ([^TerminalScreen screen] (copilot-oauth-flow! screen :individual false))
-  ([^TerminalScreen screen account-type] (copilot-oauth-flow! screen account-type false))
-  ([^TerminalScreen screen account-type force?]
-   (let
-     [start-fn
-      copilot/start-device-flow!
+   `POST auth/start` mints the flow daemon-side and returns only what the user
+   must SEE (verification URI + user code); the device code, the token exchange
+   and the credential file all stay in the daemon. This leg shows the code and
+   asks `auth/poll` for the verdict — exactly what the phone app does, so a TUI
+   attached to a REMOTE gateway signs in on the right machine.
 
-      poll-fn
-      copilot/poll-for-token!
+   Returns true on success, nil on cancel or failure (dialog already shown)."
+  ([^TerminalScreen screen provider-id label]
+   (gateway-device-login! screen provider-id label false))
+  ([^TerminalScreen screen provider-id label force?]
+   (if (and (not force?) (gateway-authenticated? provider-id))
+     true
+     (try
+       (let
+         [flow
+          (vis/gateway-provider-auth-start! provider-id)
 
-      exchange-fn
-      copilot/get-copilot-token!
+          flow-id
+          (get flow "flow_id")
 
-      detect-fn
-      copilot/detect-oauth-token
+          uri
+          (or (get flow "verification_uri") (get flow "url"))
 
-      opts
-      {:account-type account-type}]
+          user-code
+          (get flow "user_code")
 
-     ;; Already authenticated?
-     (if (and (not force?) (detect-fn))
-       (try
-         (let [{:keys [token]} (exchange-fn opts)]
-           token)
-         (catch Exception _
-           (dlg/text-view-dialog! screen "Copilot" ["Existing token is invalid. Re-authenticate."])
-           nil))
-       ;; Device flow
-       (try (let
-              [start-result
-               (vis/worker-future "vis-tui-copilot-oauth-start" #(start-fn opts))
+          interval-ms
+          (max 1000 (long (or (get flow "interval_ms") 5000)))]
 
-               flow
-               (wait-for-copilot-oauth! screen start-result)]
+         (cond (not (and flow-id uri user-code))
+               (do
+                 (dlg/text-view-dialog! screen label ["The gateway did not return a device code."])
+                 nil)
+               (not (device-auth-instructions! screen label uri user-code))
+               (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
+               :else (let
+                       [poll
+                        (vis/worker-future
+                          "vis-tui-device-auth-poll"
+                          #(loop []
 
-              (when-not (= copilot-oauth-cancelled flow)
-                (let [{:keys [user-code verification-uri device-code interval expires-in]} flow]
-                  (when (copilot-auth-instructions! screen verification-uri user-code)
-                    (when force? (copilot/logout!))
-                    ;; Poll in background, show waiting message
-                    (let
-                      [result (vis/worker-future "vis-tui-copilot-oauth-poll"
-                                                 #(poll-fn device-code interval expires-in opts))
-                       poll-result (wait-for-copilot-oauth! screen result)]
+                             (let [verdict (vis/gateway-provider-auth-poll! provider-id flow-id)]
+                               (if (= "pending" (get verdict "status"))
+                                 (do (Thread/sleep interval-ms) (recur))
+                                 verdict))))
 
-                      (when-not (= copilot-oauth-cancelled poll-result)
-                        (let [{:keys [token]} (exchange-fn opts)]
-                          ;; Success is silent: surfacing a redundant "Authenticated!" toast
-                          ;; on top of the just-closed device-flow dialog confused users
-                          ;; (cf. anthropic dialog feedback). Failure dialogs remain.
-                          token)))))))
-            (catch Exception e
-              (dlg/text-view-dialog! screen "GitHub Copilot" [(str "Auth failed: " (ex-message e))])
-              nil))))))
+                        verdict
+                        (wait-for-device-auth! screen label poll)]
+
+                       (cond (= device-auth-cancelled verdict)
+                             (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
+                             ;; Success is silent: an "Authenticated!" toast on top of the
+                             ;; just-closed device dialog is the noise the user vetoed.
+                             (= "ok" (get verdict "status")) true
+                             :else (do (dlg/text-view-dialog! screen
+                                                              label
+                                                              [(str "Auth failed: "
+                                                                    (or (get verdict "message")
+                                                                        "authorization failed"))])
+                                       nil)))))
+       (catch Exception e
+         (dlg/text-view-dialog! screen
+                                label
+                                [(str "Auth failed: " (ex-message e)) "" "Fallback if needed:"
+                                 (str "  vis providers auth " (name provider-id))])
+         nil)))))
+
+(defn- gateway-pkce-login!
+  "Run one browser (PKCE) OAuth flow for `provider-id` THROUGH THE GATEWAY.
+
+   `POST auth/start` mints the flow daemon-side and returns only the
+   authorization URL plus an opaque flow id — the PKCE verifier never reaches
+   this process. The user finishes in a browser, pastes the final redirect URL
+   back, and `POST auth/complete` exchanges and persists the credentials in the
+   daemon. So a TUI attached to a REMOTE gateway signs in exactly like the phone
+   app does, and no channel needs the provider extension on its own classpath.
+
+   Returns true on success, nil on cancel or failure (dialog already shown)."
+  [^TerminalScreen screen provider-id label]
+  (try
+    (let
+      [flow
+       (vis/gateway-provider-auth-start! provider-id)
+
+       flow-id
+       (get flow "flow_id")
+
+       url
+       (get flow "url")]
+
+      (if-not (and flow-id url)
+        (do
+          (dlg/text-view-dialog! screen label ["The gateway did not return an authorization URL."])
+          nil)
+        (do (opener/open! url)
+            (let
+              [pasted
+               (dlg/text-input-dialog! screen
+                                       label
+                                       "Paste the final browser URL or authorization code:")
+
+               input
+               (some-> pasted
+                       str/trim)]
+
+              (if (str/blank? input)
+                (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
+                (do (vis/gateway-provider-auth-complete! provider-id flow-id input)
+                    ;; Success is silent: parity with the copilot flow.
+                    true))))))
+    (catch Exception e
+      (dlg/text-view-dialog! screen
+                             label
+                             [(str "Auth failed: " (ex-message e)) ""
+                              "If browser auth still fails here, run:"
+                              (str "  vis providers auth " (name provider-id))])
+      nil)))
 
 (defn- codex-oauth-ready!
   "Run OpenAI Codex browser OAuth from the TUI when needed.
 
-   The shared provider flow owns browser launch and token exchange.
-   The TUI supplies a dialog-backed manual collector for the final
-   redirect URL, so the user can finish auth without dropping back to
-   a shell prompt. With `force?`, start a fresh OAuth flow even when
-   credentials already exist."
+   The GATEWAY owns the flow end to end (see `gateway-pkce-login!`); the TUI
+   only opens the browser and collects the pasted redirect URL. With `force?`,
+   start a fresh OAuth flow even when credentials already exist."
   ([^TerminalScreen screen] (codex-oauth-ready! screen false))
   ([^TerminalScreen screen force?]
-   (let
-     [provider
-      (vis/provider-by-id :openai-codex)
-
-      detect-fn
-      (:provider/detect-fn provider)]
-
-     (if (and (not force?) detect-fn (detect-fn))
-       true
-       (when (dlg/confirm-dialog! screen
-                                  "OpenAI Codex"
-                                  ["Vis will start the ChatGPT/Codex browser OAuth flow." ""
-                                   "After browser login, copy the final redirect URL from the"
-                                   "address bar and paste it into the next dialog." ""
-                                   "Fallback if needed:" "  vis providers auth openai-codex"])
-         (try (let
-                [_result (codex/login!
-                           (constantly nil)
-                           {:originator "vis-tui"
-                            :force? force?
-                            :manual-code-fn
-                            (fn [_]
-                              (dlg/text-input-dialog!
-                                screen
+   (if (and (not force?) (gateway-authenticated? :openai-codex))
+     true
+     (when (dlg/confirm-dialog! screen
                                 "OpenAI Codex"
-                                "Paste the final browser URL or authorization code:"))})]
-                ;; Success is silent: parity with anthropic + copilot flows.
-                true)
-              (catch Exception e
-                (dlg/text-view-dialog! screen
-                                       "OpenAI Codex"
-                                       [(str "Auth failed: " (ex-message e)) ""
-                                        "If browser auth still fails here, run:"
-                                        "  vis providers auth openai-codex"])
-                false)))))))
+                                ["Vis will start the ChatGPT/Codex browser OAuth flow." ""
+                                 "After browser login, copy the final redirect URL from the"
+                                 "address bar and paste it into the next dialog." ""
+                                 "Fallback if needed:" "  vis providers auth openai-codex"])
+       (boolean (gateway-pkce-login! screen :openai-codex "OpenAI Codex"))))))
 
 (defn- anthropic-oauth-ready!
-  "Run Anthropic Claude subscription browser OAuth from the TUI when needed."
+  "Run Anthropic Claude subscription browser OAuth from the TUI when needed.
+
+   Gateway-driven, exactly like Codex — see `gateway-pkce-login!`."
   ([^TerminalScreen screen] (anthropic-oauth-ready! screen false))
   ([^TerminalScreen screen force?]
-   (let
-     [provider
-      (vis/provider-by-id :anthropic-coding-plan)
-
-      detect-fn
-      (:provider/detect-fn provider)]
-
-     (if (and (not force?) detect-fn (detect-fn))
-       true
-       (when (dlg/confirm-dialog! screen
-                                  "Anthropic"
-                                  ["Vis will start the Anthropic Claude subscription OAuth flow." ""
-                                   "After browser login, copy the final redirect URL from the"
-                                   "address bar and paste it into the next dialog." ""
-                                   "Fallback if needed:"
-                                   "  vis providers auth anthropic-coding-plan"])
-         (try (let
-                [_result (anthropic/login!
-                           (constantly nil)
-                           {:force? force?
-                            :manual-code-fn
-                            (fn [_]
-                              (dlg/text-input-dialog!
-                                screen
+   (if (and (not force?) (gateway-authenticated? :anthropic-coding-plan))
+     true
+     (when (dlg/confirm-dialog! screen
                                 "Anthropic"
-                                "Paste the final browser URL or authorization code:"))})]
-                true)
-              (catch Exception e
-                (dlg/text-view-dialog! screen
-                                       "Anthropic"
-                                       [(str "Auth failed: " (ex-message e)) ""
-                                        "If browser auth still fails here, run:"
-                                        "  vis providers auth anthropic-coding-plan"])
-                false)))))))
+                                ["Vis will start the Anthropic Claude subscription OAuth flow." ""
+                                 "After browser login, copy the final redirect URL from the"
+                                 "address bar and paste it into the next dialog." ""
+                                 "Fallback if needed:"
+                                 "  vis providers auth anthropic-coding-plan"])
+       (boolean (gateway-pkce-login! screen :anthropic-coding-plan "Anthropic"))))))
+
+(declare gateway-api-key-login!)
 
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
@@ -458,20 +475,17 @@
            (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
            ;; Local providers need no key
            needs-key? (not (or has-key? oauth? local?))
-           api-key (cond has-key? (:api-key preset)
-                         (github-copilot-provider? pid)
-                         (copilot-oauth-flow! screen (github-copilot-account-type pid))
-                         (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
-                         (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen)
-                                                          :oauth-ready)
-                         needs-key? (let
-                                      [raw (dlg/text-input-dialog! screen
-                                                                   (str (:label preset) " Setup")
-                                                                   "API Key:"
-                                                                   :mask
-                                                                   \*)]
-                                      (when-not (str/blank? raw) raw))
-                         :else nil)
+           api-key
+           (cond has-key? (:api-key preset)
+                 (github-copilot-provider? pid)
+                 (when (gateway-device-login! screen pid (vis/display-label pid)) :oauth-ready)
+                 (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
+                 (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen) :oauth-ready)
+                 ;; Plain API-key providers go through the GATEWAY too: the
+                 ;; daemon mints the flow, persists the key in ITS config and
+                 ;; creates the fleet entry. The TUI never writes a credential.
+                 needs-key? (when (gateway-api-key-login! screen {:id pid}) :key-saved)
+                 :else nil)
            auth-ok? (cond has-key? true
                           oauth? (some? api-key)
                           needs-key? (some? api-key)
@@ -486,10 +500,10 @@
                                                  {:id (:id preset)
                                                   :base-url base-url
                                                   :default-models (:default-models preset)}
-                                                 api-key
+                                                 (string? api-key)
                                                  (assoc :api-key api-key)))]
                 (cond-> (provider-config-with-models preset [{:name model}])
-                  (and api-key (not oauth?))
+                  (and (string? api-key) (not oauth?))
                   (assoc :api-key api-key))))))))))
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
@@ -770,10 +784,21 @@
 (def ^:private persisted-provider-config vis/provider-persisted-config)
 
 (defn- save-provider-config!
-  "Persist provider order in the raw config, then return the reloaded domain config."
+  "Persist provider ORDER in the raw config, then return the reloaded domain
+   config. Credentials are the DAEMON's (`auth/complete` writes them), so every
+   row is merged ONTO its persisted entry: a field the TUI does not carry —
+   notably `:api-key` — survives the reorder write."
   [items]
   (let
-    [cfg (assoc (or (vis/load-config-raw) {}) "providers" (mapv persisted-provider-config items))]
+    [persisted
+     (into {} (map (juxt :id identity)) (vis/configured-providers))
+
+     rows
+     (mapv #(persisted-provider-config (merge (get persisted (:id %)) %)) items)
+
+     cfg
+     (assoc (or (vis/load-config-raw) {}) "providers" rows)]
+
     (vis/save-config! cfg)
     (vis/load-config)))
 
@@ -798,21 +823,15 @@
           :dynamic {:limits []}
           :error {:message (or (ex-message e) (str e))}})))
 
-(def ^:private safe-provider-status gateway-provider-status-safe)
-
-(def ^:private configured-provider-status gateway-provider-status-safe)
-
-(def ^:private safe-provider-limits gateway-provider-limits-safe)
-
 (defn- refresh-provider-diagnostics!
   [provider statuses limits]
   (let [pid (:id provider)]
     (swap! statuses assoc pid (initial-provider-status provider))
     (swap! limits assoc pid (initial-provider-limits provider))
     (vis/worker-future "vis-tui-provider-status"
-                       #(swap! statuses assoc pid (configured-provider-status provider)))
+                       #(swap! statuses assoc pid (gateway-provider-status-safe provider)))
     (vis/worker-future "vis-tui-provider-limits"
-                       #(swap! limits assoc pid (safe-provider-limits provider))))
+                       #(swap! limits assoc pid (gateway-provider-limits-safe provider))))
   nil)
 
 (defn- refresh-providers-diagnostics!
@@ -827,7 +846,7 @@
                (some #(= :loading (:status %)) (vals limits)))))
 
 (defn- provider-authenticated?
-  ([provider] (boolean (get (configured-provider-status provider) "is_authenticated")))
+  ([provider] (boolean (get (gateway-provider-status-safe provider) "is_authenticated")))
   ([_provider status] (boolean (get status "is_authenticated"))))
 
 (defn show-provider-status!
@@ -837,8 +856,8 @@
   ([^TerminalScreen screen provider]
    (show-provider-status! screen
                           provider
-                          (configured-provider-status provider)
-                          (safe-provider-limits provider)))
+                          (gateway-provider-status-safe provider)
+                          (gateway-provider-limits-safe provider)))
   ([^TerminalScreen screen provider status limits]
    (dlg/markdown-viewer-dialog! screen
                                 (str (vis/display-label (:id provider)) " Status & Limits")
@@ -861,7 +880,7 @@
       (str/replace #"(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])" "$1")))
 
 (defn provider-action-items
-  ([provider] (provider-action-items provider (configured-provider-status provider)))
+  ([provider] (provider-action-items provider (gateway-provider-status-safe provider)))
   ([provider status]
    (let
      [registered
@@ -883,136 +902,109 @@
        (or (:provider/logout-fn registered) (:api-key provider))
        (conj {:id :logout :label "Log Out" :key \l})))))
 
-(def ^:private api-key-prompt-cancelled ::api-key-prompt-cancelled)
+(defn- gateway-api-key-login!
+  "Authenticate a plain API-key provider THROUGH THE GATEWAY.
 
-(defn- trim-blank-lines
-  [lines]
-  (->> lines
-       (drop-while str/blank?)
-       reverse
-       (drop-while str/blank?)
-       reverse
-       vec))
+   `POST auth/start` mints an `api-key` flow daemon-side and returns the
+   provider's OWN guidance lines (`:provider/auth-prompt-fn`), so the TUI needs
+   neither the provider extension nor its env-var knowledge on this classpath.
+   The user types the key here and `POST auth/complete` persists it in the
+   DAEMON's config — the TUI never runs a provider's `:provider/auth-fn` and
+   never writes a credential itself, exactly like the OAuth flows.
 
-(defn- provider-auth-prompt-body
-  [provider]
-  (let [registered (vis/provider-by-id (:id provider))]
-    (if-let [prompt-fn (:provider/auth-prompt-fn registered)]
-      (not-empty (trim-blank-lines (prompt-fn)))
-      (when-let [auth-fn (:provider/auth-fn registered)]
-        (let [lines (atom [])]
-          (try (auth-fn #(swap! lines conj %))
-               (not-empty (trim-blank-lines @lines))
-               (catch Throwable e
-                 (not-empty (trim-blank-lines (conj @lines
-                                                    ""
-                                                    (str "Authentication info failed: "
-                                                         (or (ex-message e) (str e)))))))))))))
-
-(defn- prompt-for-api-key!
+   Returns the provider row WITHOUT the key on success (the daemon holds the
+   credential), nil on cancel or failure (dialog already shown)."
   [^TerminalScreen screen provider]
   (let
-    [raw (dlg/text-input-dialog! screen
-                                 (str (vis/display-label (:id provider)) " Authentication")
-                                 "API Key:"
-                                 :mask \*
-                                 :flat? true
-                                 :logo dlg/vis-logo-lines
-                                 :body (provider-auth-prompt-body provider))]
-    (cond (nil? raw) api-key-prompt-cancelled
-          (str/blank? raw) nil
-          :else (assoc provider :api-key raw))))
+    [pid
+     (:id provider)
 
-(def ^:private auth-fn-success-results
-  "Return values that signal auth-fn completed successfully and the user does
-   not need to read printed instructions. Any other return value (or `nil`)
-   means \"user must act\" and printed lines (e.g. instructions, env-var hints)
-   should be surfaced. Throwing is always a failure, handled separately."
-  #{:ok :already-authenticated :authenticated true})
+     label
+     (str (vis/display-label pid) " Authentication")]
 
-(defn- run-generic-provider-auth!
-  [^TerminalScreen screen provider]
-  (let [registered (vis/provider-by-id (:id provider))]
-    (if-let [auth-fn (:provider/auth-fn registered)]
+    (try
       (let
-        [lines (atom [])
-         print! #(swap! lines conj %)]
+        [flow
+         (vis/gateway-provider-auth-start! pid)
 
-        (try
-          (let [result (auth-fn print!)]
-            ;; Success is silent: typical/standard providers (zai-coding, etc.)
-            ;; print "Already authenticated with X." or "Persisted X key from
-            ;; env var.\" on the success path - surfacing those as a popup is
-            ;; exactly the noise the user vetoed (cf. anthropic/copilot/codex).
-            ;; Lines are surfaced ONLY when auth-fn signals it could not
-            ;; complete on its own (`:no-credentials`, `nil`, `false`,
-            ;; or any non-success keyword) so the user knows what to do next.
-            (when-not (contains? auth-fn-success-results result)
-              (when-let [collected (seq @lines)]
-                (dlg/text-viewer-dialog! screen
-                                         (str (vis/display-label (:id provider)) " Authentication")
-                                         (str/join "\n" collected)))))
-          provider
-          (catch Throwable e
-            (dlg/text-viewer-dialog!
-              screen
-              (str (vis/display-label (:id provider)) " Authentication")
-              (str/join "\n"
-                        (concat @lines
-                                ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
-            nil)))
-      (do (dlg/text-view-dialog! screen
-                                 "Authenticate Provider"
-                                 [(str (vis/display-label (:id provider))
-                                       " does not expose an interactive auth flow.")])
-          nil))))
+         flow-id
+         (get flow "flow_id")
+
+         body
+         (not-empty (vec (get flow "instructions")))]
+
+        (if-not flow-id
+          (do (dlg/text-view-dialog! screen
+                                     label
+                                     [(str (vis/display-label pid)
+                                           " cannot be authenticated through the gateway.")])
+              nil)
+          (let
+            [raw
+             (dlg/text-input-dialog! screen
+                                     label
+                                     "API Key:"
+                                     :mask \*
+                                     :flat? true
+                                     :logo dlg/vis-logo-lines
+                                     :body body)
+
+             api-key
+             (some-> raw
+                     str/trim
+                     not-empty)]
+
+            (if (nil? api-key)
+              (do (vis/gateway-provider-auth-cancel! pid flow-id) nil)
+              (do (vis/gateway-provider-auth-submit-key! pid flow-id api-key)
+                  ;; The DAEMON persisted it. Hand the row back WITHOUT the key:
+                  ;; a TUI attached to a REMOTE gateway must never write provider
+                  ;; credentials into the config of the machine it happens to run
+                  ;; on, and every later fleet write merges onto the persisted
+                  ;; entry anyway.
+                  (dissoc provider :api-key))))))
+      (catch Exception e
+        (dlg/text-view-dialog! screen
+                               label
+                               [(str "Authentication failed: " (or (ex-message e) (str e)))])
+        nil))))
 
 (defn authenticate-provider!
+  "The ONE auth entry point for every channel action (auth dialog, provider
+   manager, add-provider). EVERY kind goes through the gateway: device for
+   GitHub Copilot, PKCE for Codex/Anthropic, `api-key` for everything else.
+   No provider credential is ever exchanged or written in the TUI process."
   ([^TerminalScreen screen provider] (authenticate-provider! screen provider false))
   ([^TerminalScreen screen provider force?]
    (cond (github-copilot-provider? (:id provider))
-         (when (copilot-oauth-flow! screen (github-copilot-account-type (:id provider)) force?)
+         (when
+           (gateway-device-login! screen (:id provider) (vis/display-label (:id provider)) force?)
            provider)
          (= :openai-codex (:id provider)) (when (codex-oauth-ready! screen force?) provider)
          (= :anthropic-coding-plan (:id provider)) (when (anthropic-oauth-ready! screen force?)
                                                      provider)
          (= :ollama (:id provider)) nil
          (= :lmstudio (:id provider)) nil
-         :else (let [prompted (prompt-for-api-key! screen provider)]
-                 (cond (= api-key-prompt-cancelled prompted) nil
-                       prompted prompted
-                       :else (run-generic-provider-auth! screen provider))))))
+         :else (gateway-api-key-login! screen provider))))
 
 (defn- perform-logout!
   "Network logout + config removal for `provider`. No dialogs — the caller owns
    confirmation and any success feedback. Returns true."
   [provider]
-  (let
-    [provider-id
-     (:id provider)
-
-     registered
-     (vis/provider-by-id provider-id)]
-
-    (when-let [logout-fn (:provider/logout-fn registered)]
-      (logout-fn))
+  (let [provider-id (:id provider)]
+    ;; Logout runs IN THE DAEMON: it owns the credential file, which may live
+    ;; on another machine entirely.
+    (vis/gateway-provider-logout! provider-id)
     (vis/remove-config-provider! provider-id :tui-provider-logout)
     true))
 
 (defn logout-provider!
   [^TerminalScreen screen provider]
-  (let
-    [provider-id
-     (:id provider)
-
-     registered
-     (vis/provider-by-id provider-id)]
-
+  (let [provider-id (:id provider)]
     (when (dlg/confirm-dialog! screen
                                (str (vis/display-label provider-id) " Authentication")
                                [(str "Log out of " (vis/display-label provider-id) "?")])
-      (when-let [logout-fn (:provider/logout-fn registered)]
-        (logout-fn))
+      (vis/gateway-provider-logout! provider-id)
       (vis/remove-config-provider! provider-id :tui-provider-logout)
       (dlg/text-view-dialog!
         screen
@@ -1021,17 +1013,26 @@
       true)))
 
 (defn auth-provider-items
+  "One row per auth-capable provider, labelled with its GATEWAY auth verdict.
+
+   The N status probes fan out onto worker futures and are joined once, so
+   opening the dialog costs one round trip of latency instead of N serialized
+   blocking gateway calls on the UI thread."
   []
   (->> (vis/registered-providers)
        (remove #(contains? local-no-auth-provider-ids (:provider/id %)))
-       (map (fn [provider]
-              (let [status (safe-provider-status provider)]
-                {:provider-id (:provider/id provider)
-                 :provider provider
-                 :label
-                 (str (:provider/label provider)
-                      " / "
-                      (if (get status "is_authenticated") "authenticated" "not authenticated"))})))
+       (mapv (fn [provider]
+               [provider
+                (vis/worker-future "vis-tui-provider-auth-status"
+                                   #(gateway-provider-status-safe provider))]))
+       (mapv (fn [[provider status-future]]
+               (let [status @status-future]
+                 {:provider-id (:provider/id provider)
+                  :provider provider
+                  :label
+                  (str (:provider/label provider)
+                       " / "
+                       (if (get status "is_authenticated") "authenticated" "not authenticated"))})))
        (sort-by :label)
        vec))
 
@@ -1039,38 +1040,9 @@
   [^TerminalScreen screen]
   (when-let [item (dlg/select-dialog! screen "Authenticate Provider" (auth-provider-items))]
     (let [provider (or (:provider item) (vis/provider-by-id (:provider-id item)))]
-      (cond (github-copilot-provider? (:provider/id provider))
-            (boolean (copilot-oauth-flow! screen
-                                          (github-copilot-account-type (:provider/id provider))))
-            (= :openai-codex (:provider/id provider)) (boolean (codex-oauth-ready! screen false))
-            (= :anthropic-coding-plan (:provider/id provider))
-            (boolean (anthropic-oauth-ready! screen false))
-            :else (if-let [auth-fn (:provider/auth-fn provider)]
-                    (let
-                      [lines (atom [])
-                       print! #(swap! lines conj %)]
-
-                      (try (let [result (auth-fn print!)]
-                             ;; Same silent-success rule as run-generic-provider-auth!.
-                             ;; Lines surface only when auth-fn signals the user must act.
-                             (when-not (contains? auth-fn-success-results result)
-                               (when-let [collected (seq @lines)]
-                                 (dlg/text-viewer-dialog! screen
-                                                          (str (:provider/label provider)
-                                                               " Authentication")
-                                                          (str/join "\n" collected))))
-                             result)
-                           (catch Throwable e
-                             (dlg/text-viewer-dialog!
-                               screen
-                               (str (:provider/label provider) " Authentication")
-                               (str/join "\n"
-                                         (concat @lines
-                                                 [""
-                                                  (str "Authentication failed: "
-                                                       (or (ex-message e) (str e)))])))
-                             nil)))
-                    nil)))))
+      ;; ONE auth path for every entry point: this dialog, the provider manager
+      ;; and add-provider all funnel into `authenticate-provider!`.
+      (boolean (authenticate-provider! screen {:id (:provider/id provider)})))))
 
 ;; ── First-run welcome ──────────────────────────────────────────────────────
 
@@ -1167,19 +1139,25 @@
         (if (nil? key)
           (recur)
           (condp = (.getKeyType key)
-            KeyType/Enter (if-let [cfg (add-provider! screen #{})]
-                            ;; PERSIST to ~/.vis/config.edn — same path the
-                            ;; provider manager uses (see Esc branch above).
-                            ;; Returning the config in-memory only made the
-                            ;; first-run connect vanish on exit, so the next
-                            ;; launch saw an empty config and re-showed the
-                            ;; welcome screen. Preserve any other global keys.
-                            (let
-                              [persisted (assoc (or (vis/load-config-raw) {})
-                                           "providers" [(persisted-provider-config cfg)])]
-                              (vis/save-config! persisted)
-                              persisted)
-                            (recur))
+            KeyType/Enter
+            (if-let [cfg (add-provider! screen #{})]
+              ;; PERSIST to ~/.vis/config.edn — same path the
+              ;; provider manager uses (see Esc branch above).
+              ;; Returning the config in-memory only made the
+              ;; first-run connect vanish on exit, so the next
+              ;; launch saw an empty config and re-showed the
+              ;; welcome screen. Preserve any other global keys.
+              ;; The DAEMON already persisted the credential (and
+              ;; the fleet row) during auth, so merge onto it —
+              ;; writing `cfg` alone would drop the key it owns.
+              (let
+                [saved (some #(when (= (:id cfg) (:id %)) %) (vis/configured-providers))
+                 persisted (assoc (or (vis/load-config-raw) {})
+                             "providers" [(persisted-provider-config (merge saved cfg))])]
+
+                (vis/save-config! persisted)
+                persisted)
+              (recur))
             KeyType/Escape nil
             KeyType/Character
             (do (when (= \? (.getCharacter key))
@@ -1638,9 +1616,17 @@
                             (reset! mode :models))
 
                         :authenticate
-                        (do (when-let
-                              [updated (authenticate-provider! screen provider (:force? action))]
-                              (swap! items assoc @selected updated))
+                        (do (when (authenticate-provider! screen provider (:force? action))
+                              ;; Auth wrote the credential DAEMON-side, so re-read
+                              ;; the row from the persisted fleet instead of
+                              ;; trusting what the dialog handed back — the TUI
+                              ;; never holds the key itself.
+                              (swap! items assoc
+                                @selected
+                                (or (first (filter (fn [p]
+                                                     (= (:id p) (:id provider)))
+                                                   (vis/configured-providers)))
+                                    provider)))
                             (reset! mode :list))
 
                         :status

@@ -217,8 +217,8 @@ allowlist of non-secret variables is passed through (`PATH`, `HOME`, `USER`,
 `SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, …) plus this session's
 proxy and CA variables; every `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`
 and other operator credential is dropped before the process starts. This covers
-`shell_run`, `shell_bg`, Python `subprocess`, and every managed language REPL /
-test runner.
+the `shell` tool (every op), Python `subprocess`, and every managed language
+REPL / test runner.
 
 To pass a specific extra variable through to confined children, list its exact
 name under `jail.env`:
@@ -406,7 +406,7 @@ jail:
 
 An absolute or `~`-rooted entry (e.g. `/opt/homebrew/bin/aws`) is denied
 verbatim; an unresolvable name is a no-op. Every process spawned through the jail
-— the managed shell (`shell_run` / `shell_bg`), agent tool commands, managed
+— the managed `shell` tool (foreground and background), agent tool commands, managed
 REPLs, and project test runners — inherits the profile, so `curl …` fails to
 exec (`Operation not permitted` on macOS, exit 126 on Linux).
 

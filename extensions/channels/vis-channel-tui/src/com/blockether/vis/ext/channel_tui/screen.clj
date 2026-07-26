@@ -2667,10 +2667,25 @@
                      {:progress progress :loading? loading? :progress-extra progress-extra}
                      {:session-id (get-in db [:session :id])
                       :detail-expansions (:detail-expansions db)
-                      ;; Anchor for paint parity with the full-frame path.
-                      ;; This partial path doesn't republish `:offsets`, so
-                      ;; the next full frame persists the corrected scroll.
+                      ;; Anchor for paint parity with the full-frame path:
+                      ;; estimate→real height fixes must keep the scrolled
+                      ;; content visually put instead of lurching.
                       :prev-offsets (get-in db [:layout :offsets])})
+
+     ;; Persist that anchor correction, exactly as `render-frame!` /
+     ;; `render-scroll-frame!` do. This path PAINTS and republishes the
+     ;; corrected `:offsets`/`:eff-scroll`, so leaving `:scroll` at the stale
+     ;; pre-correction value made the NEXT frame's anchor delta 0 and the
+     ;; viewport slid back down — the "scroll up jumps down" bug.
+     anchored-scroll
+     (:anchored-scroll layout)
+
+     _
+     (when (and (some? anchored-scroll)
+                (some? messages-scroll)
+                (not= anchored-scroll messages-scroll))
+       (state/dispatch [:reanchor-scroll anchored-scroll
+                        (- (long anchored-scroll) (long messages-scroll))]))
 
      layout-end-ns
      (System/nanoTime)
@@ -5135,22 +5150,6 @@
                                  repos (magit/workspace-roots (:workspace db) fallback)]
 
                                 (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
-              ;; button). One dialog at a time: drop the F2/help overlays and
-              ;; any active search before the modal so nothing bleeds around it.
-              open-resources!
-              (fn open-resources! []
-                (when-not (:dialog-open? @state/app-db)
-                  (state/dispatch [:close-overlays])
-                  (when (get-in @state/app-db [:search :active?]) (state/dispatch [:search-clear]))
-                  (with-dialog-lock #(dlg/resources-dialog! screen
-                                                            (get-in @state/app-db [:session :id])
-                                                            ;; The log viewer opens FULLSCREEN over
-                                                            ;; the frozen chat; on Esc back to this
-                                                            ;; list, repaint the chat behind so the
-                                                            ;; box doesn't return over stale log text.
-                                                            :repaint-bg
-                                                            (fn []
-                                                              (repaint-chat-frame! screen))))))
               ;; Canonical gateway draft picker (C-x e + palette "Switch Draft…").
               ;; It is intentionally mutation-safe: the current location is selected
               ;; first (Enter is a no-op), trunk stashes, and another draft performs
@@ -5249,13 +5248,17 @@
                                                                          (fn [q]
                                                                            (try
                                                                              (into {}
-                                                                                   (map (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet]}]
+                                                                                   (map (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet hits]}]
                                                                                           [id {:kind (cond (and in-request? in-reply?) :both
                                                                                                            in-request? :request
                                                                                                            in-reply? :reply
                                                                                                            :else :both)
                                                                                                :request-snippet request-snippet
-                                                                                               :reply-snippet reply-snippet}]))
+                                                                                               :reply-snippet reply-snippet
+                                                                                               ;; Every hit the server sent, newest
+                                                                                               ;; first — the picker previews several
+                                                                                               ;; per session, not one.
+                                                                                               :hits hits}]))
                                                                                    (vis/gateway-search-session-matches q))
                                                                              (catch Throwable _ nil)))}))]
                       (switch-session! choice)
@@ -5755,8 +5758,6 @@
                                      (do (state/dispatch [:reset-input])
                                          (switch-session! {:action :new}))
 
-                                     :footer-resources
-                                     (open-resources!)
 
                                      :footer-git
                                      (open-magit!)
@@ -6063,8 +6064,6 @@
                                  (do (state/dispatch [:reset-input])
                                      (switch-session! {:action :new}))
 
-                                 :footer-resources
-                                 (open-resources!)
 
                                  :footer-git
                                  (open-magit!)
@@ -6177,8 +6176,6 @@
                                :header-new-session
                                (do (state/dispatch [:reset-input]) (switch-session! {:action :new}))
 
-                               :footer-resources
-                               (open-resources!)
 
                                :footer-git
                                (open-magit!)
@@ -6560,8 +6557,6 @@
                                   :toggle-help
                                   (state/dispatch [:toggle-help])
 
-                                  :open-resources
-                                  (open-resources!)
 
                                   :open-magit
                                   (open-magit!)
@@ -6731,8 +6726,6 @@
                          :search-open
                          (do (state/dispatch [:search-open]) (recur))
 
-                         :open-resources
-                         (do (open-resources!) (recur))
 
                          :open-drafts
                          (do (show-drafts!) (recur))

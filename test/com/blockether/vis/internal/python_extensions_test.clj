@@ -678,11 +678,11 @@ vis.extension(
                (finally (ps/db-dispose-connection! store)))))))
 
 ;; =============================================================================
-;; /test slash + `vis ext test` CLI — the user-facing surface for the runner
+;; /test slash + `vis extension test` CLI — the user-facing surface for the runner
 ;; =============================================================================
 
 (defdescribe cli-and-slash-wiring-test
-             (it "the loader exposes a /test slash command and a `vis ext test` CLI command"
+             (it "the loader exposes a /test slash command and a `vis extension test` CLI command"
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ _]
                                 ;; Force a fresh registration so we read the
@@ -714,7 +714,7 @@ vis.extension(
   (it "renders a friendly message when no tests are found"
       (expect (str/includes? (#'runner/render-test-report {:files 0 :ok? true :results []})
                              "No Python extension tests")))
-  (it "the shared /test + `vis ext test` code path runs tests and renders a report"
+  (it "the shared /test + `vis extension test` code path runs tests and renders a report"
       (let
         [ext-dir
          (temp-dir)
@@ -770,7 +770,7 @@ vis.extension(
                (finally (ps/db-dispose-connection! store)))))))
 
 ;; =============================================================================
-;; `vis ext test` exit signal — a :vis/user-error ex-info, NEVER System/exit
+;; `vis extension test` exit signal — a :vis/user-error ex-info, NEVER System/exit
 ;; =============================================================================
 
 (defdescribe

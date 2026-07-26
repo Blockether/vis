@@ -76,7 +76,13 @@
    silent no-op outside a driven block; callers validate ownership and media type."
   [attachment]
   (when-let [sink *attachment-reinspection-sink*]
-    (try (swap! sink conj attachment) (catch Throwable _ nil)))
+    ;; Reinspection means "show this attachment", not "charge vision once per
+    ;; repeated tool call". Keep first-seen order while coalescing by durable id.
+    (try (swap! sink (fn [queued]
+                       (if (some #(= (:id attachment) (:id %)) queued)
+                         queued
+                         (conj queued attachment))))
+         (catch Throwable _ nil)))
   nil)
 
 (defn drain-reinspections

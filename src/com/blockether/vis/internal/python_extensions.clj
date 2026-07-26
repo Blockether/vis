@@ -33,7 +33,7 @@
    The file's top-level `vis.extension(...)` call registers through the
    ordinary `register-extension!` — from the registry's perspective a
    Python extension is indistinguishable from a Clojure one (activation,
-   prompt assembly, slash dispatch, `vis extensions list` all just work).
+   prompt assembly, slash dispatch, `vis extension list` all just work).
    A file that fails to load becomes a load-failure warning (surfaced via
    `vis doctor`), never a crash."
   (:require [charred.api :as json]
@@ -1563,7 +1563,7 @@ def __vis_registration__():
 (defn- register-loader-extension!
   []
   (when (compare-and-set! loader-registered? false true)
-    ;; `/test` + `vis ext test` live in the sibling `python-test-runner` ns.
+    ;; `/test` + `vis extension test` live in the sibling `python-test-runner` ns.
     ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
     ;; on the runner (which itself depends on this ns's trusted-context builder
     ;; — the one seam that would otherwise be a require cycle).
@@ -1598,7 +1598,7 @@ def __vis_registration__():
            :cmd/internal? true
            :cmd/doc
            "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
-           :cmd/usage "vis ext test"
-           :cmd/examples ["vis ext test"]
+           :cmd/usage "vis extension test"
+           :cmd/examples ["vis extension test"]
            :cmd/run-fn test-cli!}]
          :ext/doctor-fn doctor-fn}))))

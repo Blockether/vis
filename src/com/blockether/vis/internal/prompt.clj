@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -216,6 +217,11 @@
     "  only displays it—never probe merely to refresh it.\n"
     "- Call advertised native tools directly. Use `apropos`/`doc` only for unadvertised sandbox\n"
     "  capabilities; never preflight a visible native tool.\n"
+    "- Before `repl_eval` or any REPL lifecycle change, read live REPL state in\n"
+    "  `session[\"resources\"][\"repls\"][language][dir]` (`\".\"` is root); drive lifecycle with `repl`.\n"
+    "- Reuse managed REPLs across turns; once verification is done, stop the ones you\n"
+    "  started so the session leaves nothing running. External REPLs are user-owned:\n"
+    "  detach, never kill.\n"
     "- Runtime state is read-only `session`, always live; never use `ctx` or `context`.\n\n"
     "## 3. Inspect\n"
     "- Repository tasks: inspect first; answer pure knowledge directly without tools.\n"
@@ -225,19 +231,30 @@
     "  `struct_index`; then `cat` only the needed body; edit with `struct_patch`. Use anchored\n"
     "  `patch` only when structural editing is unavailable.\n"
     "- Bugs: reproduce before editing if feasible; rerun the same check after the fix.\n"
-    "  If impossible, state why.\n" "- Read one relevant region; batch independent reads.\n\n"
-    "## 4. Edit + verify\n"
+    "  If impossible, state why.\n"
+    "- Read one relevant region; batch independent reads.\n\n" "## 4. Edit + verify\n"
     "- Make surgical in-scope changes; preserve unrelated work. Create no unrequested\n"
-    "  scratch, debug, notes, or report files.\n\n" "## 5. Act autonomously\n"
+    "  scratch, debug, notes, or report files.\n"
+    "- Anchors are positional and EVERY write stales them, including anchors for other\n"
+    "  files in the same batch. Group all edits you already know about into ONE atomic\n"
+    "  `patch`/`struct_patch` call instead of a chain of small writes.\n"
+    "- After any write, re-read (`cat`/`struct_index`/`grep`) before the next edit; never\n"
+    "  reuse a pre-write anchor or hand-adjust line numbers. A stale-anchor failure means\n"
+    "  re-read and retry once, not guess again.\n\n"
+    "## 5. Act autonomously\n"
     "- Make non-destructive in-scope changes without asking permission or offering optional\n"
     "  follow-ups. Never expose or log secrets.\n"
     "- Do not commit, push, publish, message people, or mutate external systems unless requested.\n"
     "- Ask one question only if ambiguity changes the result. Read errors; change approach.\n"
-    "  Never decide from pending or unseen results.\n\n" "## 6. Manage context\n"
+    "  Never decide from pending or unseen results.\n\n"
+    "## 6. Manage context\n"
     "- New turn: understand intent first; retry any blocked fold before new work.\n"
     "- Fold settled steps (`session_fold` owns the mechanics); preserve only decisions,\n"
-    "  findings, edits, and verification.\n\n" "## 7. Style and finish\n"
-    "- Lead with the answer. Be terse; depth only when earned.\n"
+    "  findings, edits, and verification.\n\n"
+    "## 7. Style and finish\n" "- Lead with the answer. Be terse; depth only when earned.\n"
+    "- Finish clean: stop every session resource you started — REPLs (`repl` op \"stop\")\n"
+    "  and background shells (`shell` op \"stop\") — so `session[\"resources\"]` is left\n"
+    "  with nothing of yours running. External/user-owned ones: detach, never kill.\n"
     "- Confirm destructive actions.\n"))
 
 (defn- config-system-prompt
@@ -348,9 +365,9 @@
    stable system block. The model sees the actual rules, not a boolean hint.
 
    `internal.agents` already does the reads + stacking + caching; this fn
-   just labels the content for the prompt. Files render outermost first
-   (user-global → ancestor directories → workspace root) so nearer rules
-   positionally override outer ones. Returns nil when no file is present
+   labels the content and makes scope explicit. Primary-chain files render
+   broadest first so nearer rules override broader ones. Added-folder rules
+   apply only beneath their listed folder. Returns nil when no file is present
    or every file is empty."
   [environment]
   (try
@@ -385,20 +402,31 @@
           [multi?
            (> (count files) 1)
 
+           has-extra?
+           (some #(= :extra-root (:scope %)) files)
+
            header
-           (str "Project rules from "
-                (if multi?
-                  (str (count files)
-                       " stacked guidance files, broadest first; "
-                       "later/nearer files override earlier ones.")
-                  (str (agents/origin-label (first files)) " (" (:path (first files)) ")."))
-                " Honor them with CORE rules; on conflict, CORE wins.")
+           (str
+             "Project rules from "
+             (if multi?
+               (str
+                 (count files)
+                 " stacked guidance files. Within one filesystem scope, broader files appear first and nearer files override them."
+                 (when has-extra?
+                   " Added-folder guidance applies only to files/actions beneath its listed folder and cannot override primary-workspace guidance elsewhere."))
+               (str (agents/origin-label (first files))
+                    " ("
+                    (paths/abbreviate-home (:path (first files)))
+                    ")."))
+             " Honor them with CORE rules; on conflict, CORE wins.")
 
            body
            (str/join "\n\n"
                      (map (fn [f]
                             (if multi?
-                              (str "### " (agents/origin-label f) " — " (:path f) "\n" (:content f))
+                              (str "### " (agents/origin-label f)
+                                   " — " (paths/abbreviate-home (:path f))
+                                   "\n" (:content f))
                               (:content f)))
                           files))]
 
@@ -445,7 +473,7 @@
      :doc       - one-line LLM description from `:ext/description` (when set).
      :kind      - categorical bucket (providers, channels, foundation,
                   languages, persistance, ...) used as the section
-                  label both in this snapshot and in `vis extensions
+                  label both in this snapshot and in `vis extension
                   list` (when set).
      :registry-id - canonical manifest id, usually the alias symbol.
      :symbols   - vec of bare symbol names the extension intern'd into

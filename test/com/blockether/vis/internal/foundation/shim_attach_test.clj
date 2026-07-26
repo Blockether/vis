@@ -405,6 +405,18 @@
       (expect (nil? (:error out)))
       (expect (re-find #"a1 image/png" (str (:stdout out))))
       (expect (= ["a1"] (mapv :id @sink)))))
+  (it "coalesces repeated reinspection requests by durable attachment id"
+      (let
+        [sink
+         (atom [])
+
+         att
+         {:id "a1" :media-type "image/png"}]
+
+        (binding [mpl-capture/*attachment-reinspection-sink* sink]
+          (mpl-capture/queue-reinspection! att)
+          (mpl-capture/queue-reinspection! att))
+        (expect (= ["a1"] (mapv :id @sink)))))
   (it "raises on an unknown id"
       (let
         [pctx

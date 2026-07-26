@@ -4,7 +4,6 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
-            [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
             ;; Loaded for its side effect: registers the :shell/enabled toggle
             ;; (internal foundation, at ns load), which the settings-rows test asserts.
@@ -50,48 +49,6 @@
     (.startScreen screen)
     {:terminal terminal :screen screen}))
 
-(defdescribe
-  dialog-background-test
-  (it
-    "paints every dialog cell on the terminal background with no title fill or shadow"
-    (let
-      [{:keys [^TerminalScreen screen]}
-       (virtual-screen)
-
-       cols
-       80
-
-       rows
-       30
-
-       g
-       (.newTextGraphics screen)]
-
-      (try (p/set-bg! g t/terminal-bg)
-           (p/fill-rect! g 0 0 cols rows)
-           (let
-             [{:keys [left top inner-w]}
-              (dlg/draw-dialog-chrome! g cols rows "Flat dialog" 40 12)
-
-              title-x
-              (+ (long left) 1 (quot (- (long inner-w) (count "Flat dialog")) 2))]
-
-             (.refresh screen)
-             (expect (every? true?
-                             (for
-                               [y
-                                (range rows)
-
-                                x
-                                (range cols)]
-
-                               (= t/terminal-bg
-                                  (.getBackgroundColor
-                                    (.getBackCharacter screen (int x) (int y)))))))
-             (expect (= t/dialog-accent
-                        (.getForegroundColor
-                          (.getBackCharacter screen (int title-x) (int (inc (long top))))))))
-           (finally (.stopScreen screen))))))
 
 (defn- wheel-down [] (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))
 
@@ -111,6 +68,29 @@
                         (expect (= KeyType/Enter
                                    (.getKeyType ^com.googlecode.lanterna.input.KeyStroke
                                                 (:key (read-modal-input! screen)))))
+                        (finally (.stopScreen screen))))))
+
+(defdescribe modal-input-pending-test
+             (it "reports a queued keystroke so a per-key search can debounce itself"
+                 (let
+                   [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (virtual-screen)
+
+                    read-modal-input!
+                    (var-get #'dlg/read-modal-input!)]
+
+                   ;; Nothing queued → the keystroke landed in a typing PAUSE, so
+                   ;; the expensive gateway search is allowed to run.
+                   (try (expect (false? (dlg/modal-input-pending? screen)))
+                        (.addInput terminal (KeyStroke. KeyType/Enter))
+                        ;; Still typing → skip the search this round. Peeking twice
+                        ;; must not consume the stroke...
+                        (expect (true? (dlg/modal-input-pending? screen)))
+                        (expect (true? (dlg/modal-input-pending? screen)))
+                        ;; ...and the modal loop still reads it.
+                        (expect (= KeyType/Enter
+                                   (.getKeyType ^KeyStroke (:key (read-modal-input! screen)))))
+                        (expect (false? (dlg/modal-input-pending? screen)))
                         (finally (.stopScreen screen))))))
 
 (defdescribe select-dialog-wheel-test
@@ -469,6 +449,59 @@
           ;; the match carries the session title so the preview leads with it,
           ;; before the You/Vis snippet — title first, then transcript.
           (expect (= (:title (tag :both)) (:title (:transcript-match (tag :both)))))))
+    (it "a body match previews EVERY hit the server sent, in order"
+        (let
+          [preview-entries (var-get #'dlg/navigator-preview-entries)
+           m {:request-snippet "…legacy ask…"
+              :reply-snippet "…legacy reply…"
+              :hits [{:side :reply :snippet "newest reply"} {:side :request :snippet "older ask"}
+                     {:side :reply :snippet ""} {:side :reply :snippet "oldest reply"}]}]
+
+          ;; Every non-blank hit shows, newest first — a session that matched
+          ;; many times no longer collapses to one arbitrary line.
+          (expect (= ["Vis" "You" "Vis"] (mapv :label (preview-entries m))))
+          (expect (= ["newest reply" "older ask" "oldest reply"] (mapv :text (preview-entries m))))
+          ;; A hit-less match (older gateway) still renders the legacy pair.
+          (expect (= ["You" "Vis"] (mapv :label (preview-entries (dissoc m :hits)))))))
+    (it "every matching row carries its own snippets, inline, like the app"
+        (let
+          [all-rows (var-get #'dlg/navigator-all-rows)
+           visible-rows (var-get #'dlg/navigator-visible-rows)
+           hit-entries (var-get #'dlg/navigator-hit-entries)
+           rows (all-rows {:active-session-id "s1" :sessions sessions})
+           ids (mapv #(str (:id (:target %))) rows)
+           ;; Query DOES match every title, and the body search returns hits for
+           ;; both rows — including the focused one. The app previews all of
+           ;; them, so the TUI must attach a match to all of them too.
+           matches (into {}
+                         (map (fn [id]
+                                [id {:hits [{:side :reply :snippet "…hit…"}]}])
+                              ids))
+           vis (visible-rows rows "session" matches)]
+
+          (expect (= (count rows) (count vis)))
+          (expect (every? #(= 1 (count (hit-entries %))) vis))))
+    (it "the inline list budgets painted LINES and never scrolls past the end"
+        (let
+          [heights (var-get #'dlg/navigator-block-heights)
+           blocks (var-get #'dlg/navigator-visible-blocks)
+           scroll-start (var-get #'dlg/navigator-scroll-start)
+           hit (fn [n]
+                 {:transcript-match {:hits (vec (repeat n {:side :reply :snippet "x"}))}})
+           vis [(hit 3) (hit 0) (hit 2)]
+           hs (heights vis)]
+
+          ;; one line per row plus one per snippet
+          (expect (= [4 1 3] hs))
+          ;; a block that only partly fits keeps its ROW and drops the overflow
+          (expect (= [2] (mapv #(count (:hits %)) (blocks vis 0 3))))
+          (expect (= [3 0] (mapv #(count (:hits %)) (blocks vis 0 5))))
+          ;; scroll advances only as far as the selected row needs …
+          (expect (= 1 (scroll-start hs 2 0 4)))
+          ;; … and is pulled back so the window is never past the end (which is
+          ;; what left one lonely row painted over dead space).
+          (expect (= 1 (scroll-start hs 2 2 4)))
+          (expect (= 0 (scroll-start hs 0 0 99)))))
     (it "highlight segments bold only the case-insensitive needle occurrences"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
           (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))
@@ -1083,8 +1116,9 @@
         ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids
-                        [:cycle-model :cycle-reasoning :search-open :open-resources :show-sessions
-                         :open-drafts :pick-file :new-session :fork-session]))))
+                        [:cycle-model :cycle-reasoning :search-open :show-sessions :open-drafts
+                         :pick-file :new-session :fork-session]))
+        (expect (not (contains? ids :open-resources)))))
   (it "command palette filters by a typed query (searchable)"
       ;; The palette is searchable: the filter is a case-insensitive substring
       ;; match on :label, the spine `searchable-select!` applies.

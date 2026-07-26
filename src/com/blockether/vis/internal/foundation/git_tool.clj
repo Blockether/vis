@@ -2,11 +2,12 @@
   "The single `git` tool — a thin, honest proxy to the host `git` binary.
 
    ONE built-in Python function, `git`, runs `git <args…>` in the active
-   workspace root and returns a lean, string-keyed result the model reads
-   directly: `{\"cmd\", \"args\", \"stdout\", \"duration_ms\"}` plus `\"exit\"`
-   (when the process finished), `\"stderr\"` (when non-empty), and
-   `\"timed_out\"` (when it blew the timeout). A non-zero exit is DATA, not a
-   tool failure — the model reads it like it would in a terminal.
+   workspace root and returns a TOTAL, string-keyed result the model reads
+   directly: `{\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\",
+   \"timed_out\", \"timeout_secs\"}` — every key ALWAYS present (`stderr` \"\" when
+   empty, `exit` None only when the run timed out), so no field ever KeyErrors.
+   A non-zero exit is DATA, not a tool failure — the model reads it like it
+   would in a terminal.
 
    This REPLACES the old JGit-backed `git_*` surface (foundation-git): no
    embedded git implementation, no SSH/BouncyCastle stack — the only git is
@@ -103,21 +104,17 @@
         t1 (now-ms)]
 
        (extension/success
-         {:result (cond->
-                    {"cmd" (str "git " (str/join " " tokens))
-                     "args" (vec tokens)
-                     "stdout" (or out "")
-                     "duration_ms" (or duration-ms (- t1 t0))}
-                    (some? exit)
-                    (assoc "exit" exit)
-
-                    timed-out?
-                    (assoc "timed_out"
-                      true "timeout_secs"
-                      default-timeout-secs)
-
-                    (not (str/blank? err))
-                    (assoc "stderr" err))
+         ;; TOTAL result shape (same contract as `shell`): no key is dropped
+         ;; for carrying no signal, so `r["stderr"]` / `r["timed_out"]` can be
+         ;; indexed directly instead of dying on a bare KeyError.
+         {:result {"cmd" (str "git " (str/join " " tokens))
+                   "args" (vec tokens)
+                   "stdout" (or out "")
+                   "stderr" (or err "")
+                   "exit" exit
+                   "duration_ms" (or duration-ms (- t1 t0))
+                   "timed_out" (boolean timed-out?)
+                   "timeout_secs" default-timeout-secs}
           :op :git
           :metadata {:command (str "git " (str/join " " tokens))
                      :exit exit
@@ -133,7 +130,7 @@
 ;; A `commit -m <msg>` is special-cased: the message is lifted OUT of the
 ;; headline (which stays `commit -m`) and rendered as a markdown blockquote at
 ;; the top of the body, so the real message reads as a quoted block instead of
-;; a crammed argument. Like shell_run's renderer, git writes normal output to
+;; a crammed argument. Like the shell renderer, git writes normal output to
 ;; stderr on success (progress, hints), so the
 ;; `stderr:` label rides along only when the command actually FAILED.
 ;; =============================================================================
@@ -287,9 +284,9 @@
                 ["duration"
                  (some-> (get r "duration_ms")
                          vis/format-duration)]
-                ["timeout"
-                 (when-let [s (get r "timeout_secs")]
-                   (str s "s"))]])
+                ;; The timeout budget is TOTAL in the result but only worth a row
+                ;; when it was actually hit.
+                ["timeout" (when (get r "timed_out") (str (get r "timeout_secs") "s"))]])
 
      body
      (->> [(section "COMMAND" (str "git " (str/join " " args)) "bash") (section "STATUS" status)
@@ -315,7 +312,7 @@ Run the host `git` binary in the workspace root with the given args and return
 its result. `args` is a LIST of literal tokens (each element is one git argument
 — safe for commit messages / paths with spaces); a bare string is quote-aware
 split for convenience.
-Returns {\"cmd\", \"args\", \"stdout\", \"duration_ms\"} plus, only when meaningful (use .get): \"exit\", \"stderr\", \"timed_out\".
+Returns {\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\"} — EVERY key is ALWAYS present, so index them directly (\"stderr\" is \"\" when empty, \"exit\" is None only when the run timed out).
 Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool failure."
     :arglists '([args])}
   git

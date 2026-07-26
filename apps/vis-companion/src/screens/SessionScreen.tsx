@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { AssistantMessage, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
+import { ProviderRouterDialog } from './RouterScreen';
 import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -32,6 +33,7 @@ import type {
   TranscriptIteration,
   TranscriptTurn,
   VoiceModelState,
+  ModelPref,
 } from '../lib/types';
 import { startWavRecording, type WavRecording } from '../lib/voice';
 
@@ -373,7 +375,7 @@ const FALLBACK_SLASHES: SlashCommand[] = [
   { name: '/rename', doc: "Rename this session's title." },
   { name: '/export', doc: 'Export this session transcript to Markdown or HTML.' },
   { name: '/export-html', doc: 'Export this session transcript as styled HTML.' },
-  { name: '/root', doc: 'Show or change the session filesystem root.' },
+  { name: '/cd', doc: "Show or change the session's filesystem root (the directory Vis works in)." },
   { name: '/draft new', doc: 'Create an isolated draft workspace.' },
   { name: '/draft apply', doc: 'Apply the active draft workspace.' },
   { name: '/draft abandon', doc: 'Abandon the active draft workspace.' },
@@ -557,13 +559,26 @@ export function SessionScreen({
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // The session's provider/model pick. Read once from the gateway so the header
+  // chip is right on open, then written through by the router dialog.
+  const [modelPref, setModelPref] = useState<ModelPref | null>(null);
+  const [routerOpen, setRouterOpen] = useState(false);
   const [loading, setLoading] = useState(!fresh);
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
   const [queued, setQueued] = useState<QueuedTurn[]>([]);
+  // Turn ids with a queue mutation in flight. The gateway is the ONE writer of the
+  // queue tray (rows appear on `turn.queued` and leave on `.updated`/`.deleted`/
+  // `.drained`), so an edit or removal is NOT applied optimistically — it is
+  // marked busy until the daemon's own event lands. Mirroring the intent locally
+  // is exactly how a row could disappear while the gateway still ran it.
+  const [queueBusy, setQueueBusy] = useState<ReadonlySet<string>>(() => new Set());
   const [editingQueued, setEditingQueued] = useState<{ turnId: string; text: string } | null>(null);
   const [queuePaused, setQueuePaused] = useState<QueuePausedInfo | null>(null);
+  // The pause banner is gateway state too: it clears on `queue.resumed`, never
+  // because we asked. This only disables the button while the request is out.
+  const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
@@ -613,10 +628,10 @@ export function SessionScreen({
   useEffect(() => {
     void recordingRef.current?.cancel();
     recordingRef.current = null;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTurns([]);
     setLiveTurn(null);
     setQueued([]);
+    setQueueBusy(new Set());
     setQueuePaused(null);
     liveTurnRef.current = null;
     setSession(null);
@@ -631,7 +646,38 @@ export function SessionScreen({
     followingRef.current = true;
     initialScrollPendingRef.current = !fresh;
     showJumpRef.current = false;
+    setRouterOpen(false);
+    setModelPref(null);
   }, [sid, fresh]);
+
+  // The header chip shows whatever model this session actually runs on, so read
+  // the gateway's answer rather than assuming the global default.
+  useEffect(() => {
+    let live = true;
+    void client
+      .sessionModel(sid)
+      .then((pref) => {
+        if (live) setModelPref(pref);
+      })
+      .catch(() => {
+        /* A missing pick is not an error worth interrupting the transcript for. */
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, sid]);
+
+  const markQueueBusy = useCallback((turnId: string, busy: boolean) => {
+    setQueueBusy((current) => {
+      const next = new Set(current);
+      if (busy) {
+        next.add(turnId);
+      } else {
+        next.delete(turnId);
+      }
+      return next;
+    });
+  }, []);
 
   const scrollToEnd = useCallback((behavior: ScrollBehavior = 'auto') => {
     const viewport = scrollRef.current;
@@ -669,9 +715,16 @@ export function SessionScreen({
     const controller = new AbortController();
     void Promise.all([
       // Transcript fetch: every state write happens after the request settles.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadTranscript(),
       client.session(sid, controller.signal).then(setSession).catch(() => undefined),
+      // The queue tray paints ONLY gateway truth, and SSE carries just the
+      // deltas that happen while we are subscribed — so read the existing
+      // backlog on open. Without this, messages queued from the TUI (or
+      // before a browser reload) are invisible here until they drain.
+      client
+        .queuedTurns(sid, controller.signal)
+        .then(setQueued)
+        .catch(() => undefined),
     ]);
     return () => controller.abort();
   }, [client, sid, loadTranscript]);
@@ -685,7 +738,8 @@ export function SessionScreen({
   // still show a running turn, reload the transcript and drop the live bubble.
   useEffect(() => {
     let cancelled = false;
-    const reconcile = async () => {
+    let inflight = false;
+    const reconcileOnce = async () => {
       if (document.visibilityState === 'hidden') return;
       let next: Session;
       try {
@@ -712,6 +766,17 @@ export function SessionScreen({
       }
       if (cancelled) return;
       if (nextTurns) setTurns(nextTurns);
+      // Same reconcile for the queue: a `turn.queued`/`.deleted` frame dropped
+      // by a suspended stream would otherwise leave the tray lying until the
+      // row drained. Gateway truth wins outright — we never merge in a local
+      // guess.
+      try {
+        const backlog = await client.queuedTurns(sid);
+        if (cancelled) return;
+        setQueued(backlog);
+      } catch {
+        /* Keep the last known backlog; the next tick retries. */
+      }
       const persisted =
         !!liveId &&
         !!nextTurns?.some((turn) => (turn.id ?? turn.turn_id) === liveId);
@@ -720,6 +785,18 @@ export function SessionScreen({
         setRunning(false);
         setLiveTurn(null);
         liveTurnRef.current = null;
+      }
+    };
+    // Never stack: each reconcile is two sequential round-trips (session +
+    // transcript), so on a slow gateway a fixed 5s tick would overlap and pile
+    // requests up. One in flight at a time — a skipped tick self-heals 5s later.
+    const reconcile = async () => {
+      if (inflight) return;
+      inflight = true;
+      try {
+        await reconcileOnce();
+      } finally {
+        inflight = false;
       }
     };
     const timer = window.setInterval(() => void reconcile(), 5000);
@@ -782,8 +859,19 @@ export function SessionScreen({
 
   useEffect(() => {
     if (!voiceSupported || voiceModel?.status !== 'downloading') return;
+    let inflight = false;
     const timer = window.setInterval(() => {
-      void client.voiceModel(sid).then(setVoiceModel).catch(() => undefined);
+      // Same anti-stacking rule as the reconcile poll: one request in flight,
+      // and nothing at all while the app is backgrounded.
+      if (inflight || document.visibilityState === 'hidden') return;
+      inflight = true;
+      void client
+        .voiceModel(sid)
+        .then(setVoiceModel)
+        .catch(() => undefined)
+        .finally(() => {
+          inflight = false;
+        });
     }, 2000);
     return () => window.clearInterval(timer);
   }, [client, sid, voiceModel?.status, voiceSupported]);
@@ -1480,10 +1568,28 @@ export function SessionScreen({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5 self-center pr-2 pl-1 sm:pr-3">
+          <button
+            type="button"
+            className="grid min-h-9 max-w-[8rem] place-items-center border border-dialog-edge bg-panel px-2 font-mono text-[10px] font-bold text-dialog-hint-key transition-colors hover:border-accent hover:text-white focus-visible:outline-none focus-visible:border-accent sm:min-h-8 sm:max-w-[12rem]"
+            onClick={() => setRouterOpen(true)}
+            aria-label="Change provider and model"
+            title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
+          >
+            <span className="truncate">{modelPref?.model ?? 'model'}</span>
+          </button>
           <CopyableId id={sid} className="hidden max-w-[9rem] sm:inline-flex" />
           <ShareLink className="" />
         </div>
       </header>
+
+      {routerOpen && (
+        <ProviderRouterDialog
+          client={client}
+          sid={sid}
+          onClose={() => setRouterOpen(false)}
+          onPicked={setModelPref}
+        />
+      )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">
       <div
@@ -1630,10 +1736,17 @@ export function SessionScreen({
             </span>
             <button
               type="button"
-              className="shrink-0 border border-warn-strong px-2 py-0.5 font-bold text-warn-strong transition-colors hover:bg-warn-strong hover:text-ink"
-              onClick={() => { void client.resumeQueue(sid).catch(() => undefined); setQueuePaused(null); }}
+              disabled={resumingQueue}
+              className="shrink-0 border border-warn-strong px-2 py-0.5 font-bold text-warn-strong transition-colors hover:bg-warn-strong hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-warn-strong"
+              onClick={() => {
+                setResumingQueue(true);
+                void client
+                  .resumeQueue(sid)
+                  .catch((cause) => setError((cause as Error).message))
+                  .finally(() => setResumingQueue(false));
+              }}
             >
-              Retry now
+              {resumingQueue ? 'Retrying…' : 'Retry now'}
             </button>
           </div>
         )}
@@ -1646,10 +1759,11 @@ export function SessionScreen({
             </div>
             {queued.map((item, index) => {
               const editing = editingQueued?.turnId === item.turnId;
+              const busy = queueBusy.has(item.turnId);
               return (
               <div
                 key={item.turnId}
-                className="flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? ' opacity-50' : ''}`}
               >
                 <span className="shrink-0 font-mono text-[10px] font-bold text-accent-ink">#{index + 1}</span>
                 {editing ? (
@@ -1662,9 +1776,12 @@ export function SessionScreen({
                         event.preventDefault();
                         const text = editingQueued.text.trim();
                         if (text && text !== item.request) {
-                          setQueued((current) =>
-                            current.map((entry) => (entry.turnId === item.turnId ? { ...entry, request: text } : entry)));
-                          void client.updateQueuedTurn(sid, item.turnId, text).catch(() => undefined);
+                          // The gateway owns the row: it is rewritten here only when
+                          // the daemon confirms with `turn.queued.updated`.
+                          markQueueBusy(item.turnId, true);
+                          void client.updateQueuedTurn(sid, item.turnId, text)
+                            .catch((cause) => setError((cause as Error).message))
+                            .finally(() => markQueueBusy(item.turnId, false));
                         }
                         setEditingQueued(null);
                       } else if (event.key === 'Escape') {
@@ -1679,8 +1796,9 @@ export function SessionScreen({
                 ) : (
                   <button
                     type="button"
+                    disabled={busy}
                     onClick={() => setEditingQueued({ turnId: item.turnId, text: item.request })}
-                    className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-dialog-foreground transition-colors hover:text-accent-ink"
+                    className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
                     title="Tap to edit"
                   >
                     {item.request || '(empty)'}
@@ -1688,11 +1806,18 @@ export function SessionScreen({
                 )}
                 <button
                   type="button"
-                  className="grid size-6 shrink-0 place-items-center text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                  disabled={busy}
+                  className="grid size-6 shrink-0 place-items-center text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-dialog-hint"
                   onClick={() => {
                     setEditingQueued((current) => (current?.turnId === item.turnId ? null : current));
-                    setQueued((current) => current.filter((entry) => entry.turnId !== item.turnId));
-                    void client.deleteQueuedTurn(sid, item.turnId).catch(() => undefined);
+                    // Removal is the gateway's to make: the row leaves the tray on
+                    // `turn.queued.deleted`. A rejected delete (already started)
+                    // therefore keeps showing the truth instead of hiding a turn
+                    // that still runs.
+                    markQueueBusy(item.turnId, true);
+                    void client.deleteQueuedTurn(sid, item.turnId)
+                      .catch((cause) => setError((cause as Error).message))
+                      .finally(() => markQueueBusy(item.turnId, false));
                   }}
                   aria-label={`Remove queued message ${index + 1}`}
                 >

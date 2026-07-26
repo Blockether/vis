@@ -47,9 +47,9 @@
 
 (defn- mixed-children-cmd
   []
-  {:cmd/name "ext"
+  {:cmd/name "extension"
    :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-   :cmd/usage "vis ext <subcmd>"
+   :cmd/usage "vis extension <subcmd>"
    :cmd/subcommands
    [{:cmd/name "list" :cmd/doc "List every registered extension." :cmd/internal? true}
     {:cmd/name "scaffold" :cmd/doc "Create a user extension scaffold." :cmd/internal? true}
@@ -63,7 +63,7 @@
   render-command-grouping-test
   (it "splits internal vs contributed children into named sections, no `---- extensions ----`"
       (binding [commandline/*color-enabled?* false]
-        (let [out (commandline/render-command (mixed-children-cmd) ["vis" "ext"])]
+        (let [out (commandline/render-command (mixed-children-cmd) ["vis" "extension"])]
           (expect (str/includes? out "COMMANDS"))
           (expect (str/includes? out "EXTENSION COMMANDS"))
           (expect (str/includes? out "list"))
@@ -79,7 +79,7 @@
             (expect (and (pos? a) (pos? b) (< a b)))))))
   (it "renders :cmd/extra-sections after the subcommand block"
       (binding [commandline/*color-enabled?* false]
-        (let [out (commandline/render-command (mixed-children-cmd) ["vis" "ext"])]
+        (let [out (commandline/render-command (mixed-children-cmd) ["vis" "extension"])]
           (expect (str/includes? out "INSTALLED EXTENSIONS"))
           (expect (str/includes? out "Bridge verification."))
           (let

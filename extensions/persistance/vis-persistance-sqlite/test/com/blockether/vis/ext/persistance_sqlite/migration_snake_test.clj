@@ -21,9 +21,22 @@
 
 (defn- v1-sql [] (slurp (io/resource (str migration-dir "/V1__schema.sql"))))
 
-(defdescribe single-unified-migration-test
-             (it "exactly one migration ships — V1, no V2+ leftovers"
+(defdescribe shipped-migrations-test
+             (it "exactly one canonical migration ships — V1, with no V2+ leftovers"
                  (expect (= ["V1__schema.sql"] (migration-files)))))
+
+(defdescribe transcript-fts-schema-test
+             (it "V1 creates both external-content FTS5 indexes and keeps them trigger-synced"
+                 (let [sql (v1-sql)]
+                   (expect (str/includes? sql "CREATE VIRTUAL TABLE transcript_request_fts"))
+                   (expect (str/includes? sql "CREATE VIRTUAL TABLE transcript_reply_fts"))
+                   ;; External content = index only, no second copy of the text.
+                   (expect (str/includes? sql "content='session_turn_soul'"))
+                   (expect (str/includes? sql "content='session_turn_iteration'"))
+                   ;; Insert/update/delete triggers on BOTH source tables.
+                   (expect (= 6 (count (re-seq #"CREATE TRIGGER trg_transcript_" sql))))
+                   ;; And a one-time backfill of everything already stored.
+                   (expect (= 2 (count (re-seq #"VALUES \('rebuild'\)" sql)))))))
 
 (defdescribe snake-schema-test
              (it "every identifier is snake_case — no kebab-case, no `?` in the DDL"
