@@ -92,15 +92,20 @@
                            (expect (not (contains? r "stdout_truncated")))
                            (expect (not (contains? r "stderr_truncated")))
                            (expect (not (contains? r "cwd"))))))))
-  (it "omits :stderr when the stream is empty and :cwd unless narrowed"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let [r (:result (shell-run* {} "echo only-out"))]
-                           (expect (= "only-out\n" (get r "stdout")))
-                           (expect (not (contains? r "stderr"))))
-                         (let [r (:result (shell-run* {} "pwd" {"cwd" "src"}))]
-                           (expect (string? (get r "cwd")))
-                           (expect (str/ends-with? (get r "cwd") "/src")))))))
+  (it
+    "always carries a TOTAL stderr/exit (empty stderr is \"\", not a missing key) and :cwd only when narrowed"
+    (with-shell-on (fn []
+                     (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                       (let [r (:result (shell-run* {} "echo only-out"))]
+                         (expect (= "only-out\n" (get r "stdout")))
+                         ;; TOTAL shape: model Python indexes r["stderr"]/r["exit"]
+                         ;; directly — a missing key used to KeyError and spin.
+                         (expect (= "" (get r "stderr")))
+                         (expect (contains? r "stderr"))
+                         (expect (= 0 (get r "exit"))))
+                       (let [r (:result (shell-run* {} "pwd" {"cwd" "src"}))]
+                         (expect (string? (get r "cwd")))
+                         (expect (str/ends-with? (get r "cwd") "/src")))))))
   (it "treats a non-zero exit as a SUCCESS envelope (data, not a tool error)"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -151,7 +156,9 @@
                          (let [r (:result (shell-run* {} "sleep 30" {"timeout_secs" 1}))]
                            (expect (true? (get r "timed_out")))
                            (expect (= 1 (get r "timeout_secs")))
-                           (expect (not (contains? r "exit"))))))))
+                           ;; "exit" stays PRESENT and nil (Python None) on timeout.
+                           (expect (contains? r "exit"))
+                           (expect (nil? (get r "exit"))))))))
   (it "rejects a cwd outside every allowed filesystem root"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -271,16 +278,29 @@
                                   (expect (some? res))
                                   (expect (= "failed" (get res "status"))))
                                 (finally (resources/stop-all! sid))))))))
-  (it "refuses a duplicate id while the first is still running"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid "shell-ext-dup"
-                            env {:session-id sid}]
+  (it "returns the SAME live shell (already_running) instead of failing on a duplicate id"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-dup"
+               env {:session-id sid}]
 
-                           (try (shell-bg* env "dup" "sleep 60")
-                                (expect (threw? #(shell-bg* env "dup" "sleep 60")))
-                                (finally (resources/stop-all! sid))))))))
+              (try (let
+                     [first-run (:result (shell-bg* env "dup" "sleep 60"))
+                      again (:result (shell-bg* env "dup" "sleep 60"))]
+
+                     ;; No second process, no thrown failure: the
+                     ;; model gets the running shell back with the
+                     ;; flag + the shell_logs hint, so "start it"
+                     ;; cannot dead-end into a retry loop.
+                     ;; Both branches return the SAME total shape.
+                     (expect (false? (get first-run "already_running")))
+                     (expect (= (get first-run "pid") (get again "pid")))
+                     (expect (true? (get again "already_running")))
+                     (expect (= "running" (get again "status")))
+                     (expect (str/includes? (get again "note") "shell_logs")))
+                   (finally (resources/stop-all! sid))))))))
   (it "carries uptime_ms and ships NO dead keys in the logs payload"
       (with-shell-on
         (fn []
@@ -298,8 +318,11 @@
                      (expect (not (contains? r "cwd")))
                      (expect (not (contains? r "pid")))
                      (expect (not (contains? r "shown_count")))
-                     (expect (not (contains? r "dropped")))
-                     (expect (not (contains? r "exit"))))
+                     ;; …but CORE keys stay TOTAL: 0 dropped / nil exit, never absent
+                     (expect (contains? r "dropped"))
+                     (expect (= 0 (get r "dropped")))
+                     (expect (contains? r "exit"))
+                     (expect (nil? (get r "exit"))))
                    (finally (resources/stop-all! sid))))))))
   (it "stops promptly even when the command double-forks a detached daemon"
       (with-shell-on

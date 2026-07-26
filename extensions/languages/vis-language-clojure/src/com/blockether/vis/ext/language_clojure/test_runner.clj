@@ -687,7 +687,7 @@
                   "error" (str "nREPL at localhost:" port
                                " went down mid-run (" (.getMessage e)
                                ") — the server is no longer reachable. Restart it "
-                               "(repl_start \"clojure\") and retry.")
+                               "(repl \"clojure\") and retry.")
                   "repl_unusable" true}
                  (throw e))))))))
 

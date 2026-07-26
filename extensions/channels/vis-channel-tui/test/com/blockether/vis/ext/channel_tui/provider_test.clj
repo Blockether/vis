@@ -23,6 +23,10 @@
              (it "loads the provider dialog namespace"
                  (expect (some? (find-ns 'com.blockether.vis.ext.channel-tui.provider)))))
 
+(defdescribe provider-dialog-title-copy-test
+             (it "uses the concise Providers title"
+                 (expect (= "Providers" @#'provider/provider-dialog-title))))
+
 (defdescribe swap-items-test
              (it "swaps two positions without touching the others"
                  (let [swap-items @#'provider/swap-items]
@@ -107,6 +111,36 @@
                      :llm-headers {"chatgpt-account-id" "acct_123"}}]
 
                    (expect (= provider (persisted-provider-config provider))))))
+
+(defdescribe provider-dialog-save-domain-config-test
+             (it "returns the reloaded keyword-domain config after persisting raw YAML"
+                 (let
+                   [saved
+                    (atom nil)
+
+                    item
+                    {:id :openai-codex :models [{:name "gpt-5.5"}]}
+
+                    domain
+                    {:providers [item]}
+
+                    save-provider-config!
+                    @#'provider/save-provider-config!]
+
+                   (with-redefs
+                     [vis/load-config-raw
+                      (constantly {"theme" "dark"})
+
+                      vis/save-config!
+                      #(reset! saved %)
+
+                      vis/load-config
+                      (constantly domain)]
+
+                     (expect (= domain (save-provider-config! [item])))
+                     (expect (= "dark" (get @saved "theme")))
+                     (expect (= [(vis/provider-persisted-config item)]
+                                (get @saved "providers")))))))
 
 (defdescribe
   configured-provider-status-test

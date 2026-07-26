@@ -19,6 +19,10 @@
 
 (def ^:private DEFAULT_HOST "127.0.0.1")
 
+(def ^:private health-probe-timeout-ms 1500)
+
+(def ^:private occupied-port-registry-wait-ms 3000)
+
 (defonce ^:private http-client
   (delay
     ;; HTTP/1.1 + NO accept-encoding on purpose: the loopback daemon streams
@@ -49,6 +53,8 @@
 
 (defonce ^:private subscriptions (atom {}))
 
+(defonce ^:private client-finalizing? (atom false))
+
 (defn- db-target [] (config/resolve-db-spec))
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
@@ -65,12 +71,13 @@
    `:status`) exactly like the old `HttpResponse.statusCode`. A :stream request
    asks for `text/event-stream` with compression disabled so the SSE body stays
    byte-live for the line reader + idle watchdog."
-  [{:keys [secret] :as _entry} method path {:keys [body as] :or {as :string}}]
+  [{:keys [secret] :as _entry} method path
+   {:keys [body as timeout-ms] :or {as :string timeout-ms 30000}}]
   (http/request (cond->
                   {:client @http-client
                    :method (keyword (str/lower-case method))
                    :uri (str (base-url _entry) path)
-                   :timeout 30000
+                   :timeout timeout-ms
                    :throw false
                    :as as
                    :headers (cond->
@@ -84,7 +91,11 @@
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 
-(declare ensure-gateway! ensure-client! ensure-gateway-serving!)
+(declare ensure-gateway!
+         ensure-client!
+         ensure-gateway-serving!
+         port-free?
+         shutdown-subscriptions!)
 
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil))
@@ -126,7 +137,7 @@
   [entry]
   (try (let
          [response
-          (gw-send! entry "GET" "/healthz" {})
+          (gw-send! entry "GET" "/healthz" {:timeout-ms health-probe-timeout-ms})
 
           body
           (parse-json-body (:body response))]
@@ -135,6 +146,55 @@
               (= "ok" (get body "status"))
               (true? (get body "secret_match"))))
        (catch Throwable _ false)))
+
+(defn- recover-loopback-entry!
+  "Repair a missing registry for the standard managed loopback gateway.
+
+   The daemon token is stable in `~/.vis/gateway.token`, and `/healthz` is open
+   specifically so a local client can prove `secret_match`, PID, and DB identity.
+   This lets a new JVM recover a still-listening daemon whose registry vanished
+   instead of spawning a guaranteed bind loser onto the occupied port."
+  [db host port]
+  (when (= DEFAULT_HOST host)
+    (try
+      (let
+        [token-file
+         (discovery/default-token-file)
+
+         secret
+         (when (.exists token-file)
+           (some-> (slurp token-file)
+                   str/trim
+                   not-empty))
+
+         candidate
+         (when secret
+           {:host host :port port :secret secret})
+
+         response
+         (when candidate
+           (gw-send! candidate
+                     "GET"
+                     "/healthz"
+                     {:timeout-ms health-probe-timeout-ms}))
+
+         body
+         (when (= 200 (:status response)) (parse-json-body (:body response)))
+
+         pid
+         (get body "pid")
+
+         daemon-db
+         (get body "db")]
+
+        (when (and (= "ok" (get body "status"))
+                   (true? (get body "secret_match"))
+                   pid
+                   (discovery/pid-alive? pid)
+                   daemon-db
+                   (= (discovery/registry-key db) (discovery/registry-key daemon-db)))
+          (discovery/write-registry! db (assoc candidate :pid pid))))
+      (catch Throwable _ nil))))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
 
@@ -187,6 +247,10 @@
              (start "another vis is starting the gateway — waiting"
                     "another vis is starting the gateway — waiting…")
 
+             :recovering
+             (start "existing gateway missed a health check — waiting"
+                    "existing gateway missed a health check — waiting…")
+
              :tick
              (when (and tty (:active @state))
                (let
@@ -212,6 +276,44 @@
              nil)
            (catch Throwable _ nil)))))
 
+(defn- discover-or-recover!
+  "Attach, repair, or start the managed gateway without ever spawning onto a
+   port that is already occupied.
+
+   A listener can appear a few milliseconds before its registry move becomes
+   visible, so an occupied port gets one short registry wait. If neither the
+   authenticated loopback health check nor that wait identifies a daemon, the
+   listener is an unresponsive orphan (or an unrelated process). Starting
+   another JVM could only lose the bind race and waste the full startup timeout,
+   so surface the real problem immediately and leave the unknown process alone."
+  [db target-host target-port]
+  (if-let [recovered (recover-loopback-entry! db target-host target-port)]
+    {:mode :recovered :entry recovered}
+    (if (port-free? target-host target-port)
+      (discovery/discover-or-start!
+        {:db db :port target-port :host target-host}
+        :probe probe-entry?
+        :on-event (progress-reporter)
+        :timeout-ms (if (discovery/native-image?) 15000 60000))
+      (if-let [entry
+               (discovery/await-registry!
+                 db
+                 probe-entry?
+                 {:timeout-ms occupied-port-registry-wait-ms
+                  :poll-ms 100})]
+        {:mode :awaited :entry entry}
+        (throw
+          (ex-info
+            (str "gateway port " target-host ":" target-port
+                 " is occupied, but no healthy gateway registry appeared. "
+                 "A stale Vis gateway or another process owns the port; "
+                 "stop that process and retry.")
+            {:type :gateway/orphaned-port
+             :host target-host
+             :port target-port
+             :db (str (discovery/db-target db))
+             :vis/user-error true}))))))
+
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
    detached gateway if needed. `:memory` is a programmer error for this client;
@@ -232,7 +334,9 @@
      (when (discovery/memory-db? db)
        (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
      (let
-       [cached @cached-entry
+       [target-port (or port DEFAULT_PORT)
+        target-host (or host DEFAULT_HOST)
+        cached @cached-entry
         now (System/nanoTime)
         fresh-until (long @entry-fresh-until-ns)
         fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
@@ -245,17 +349,12 @@
 
        (if fresh?
          cached
-         ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
-         ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
-         ;; it self-registers, so give it a much longer runway.
          (let
-           [{:keys [entry] :as result} (discovery/discover-or-start!
-                                         {:db db
-                                          :port (or port DEFAULT_PORT)
-                                          :host (or host DEFAULT_HOST)}
-                                         :probe probe-entry?
-                                         :on-event (progress-reporter)
-                                         :timeout-ms (if (discovery/native-image?) 15000 60000))]
+           ;; First recover the exact failure mode where a live standard daemon
+           ;; owns 7890 but its registry was removed. Never enter discovery's
+           ;; spawn path while the requested port already has a listener.
+           [{:keys [entry] :as result}
+            (discover-or-recover! db target-host target-port)]
            (if entry
              (do (reset! cached-entry entry)
                  (reset! entry-fresh-until-ns (+ (System/nanoTime)
@@ -275,7 +374,17 @@
 (defn- ensure-release-hook!
   []
   (when (compare-and-set! release-hook-installed? false true)
-    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable release-client!))))
+    (.addShutdownHook
+      (Runtime/getRuntime)
+      (Thread. ^Runnable
+               (fn []
+                 ;; Shutdown hooks run concurrently. Flip the barrier FIRST so
+                 ;; no per-stream reconnect path can create a fresh future while
+                 ;; another hook is tearing the JVM down.
+                 (reset! client-finalizing? true)
+                 (shutdown-subscriptions!)
+                 (release-client!))
+               "vis-gateway-client-shutdown"))))
 
 (defn- ensure-client!
   "Register this JVM as a daemon client exactly once. This is the refcount lease
@@ -1215,61 +1324,71 @@
 (defn subscribe!
   "Remote equivalent of gateway.state/subscribe!: start a background SSE reader
    that replays `cursor` then calls `sink` for every live event. Returns an empty
-   replay vector because the gateway's SSE endpoint itself handles replay before
+  replay vector because the gateway's SSE endpoint itself handles replay before
    live delivery."
   [sid sub-id sink cursor]
-  (let
-    [entry
-     (ensure-gateway!)
+  (if @client-finalizing?
+    []
+    (do
+      (ensure-release-hook!)
+      (let
+        [entry
+         (ensure-gateway!)
 
-     _
-     (ensure-client! entry)
+         _
+         (ensure-client! entry)
 
-     stream*
-     (atom nil)
+         stream*
+         (atom nil)
 
-     cursor*
-     (atom (long (or cursor 0)))
+         cursor*
+         (atom (long (or cursor 0)))
 
-     fut
-     (future
-       ;; Reconnect (resuming from the last-seen cursor) whenever the daemon
-       ;; drops the stream, so a gateway restart / transient blip no longer
-       ;; kills the live mirror silently. Stops only when unsubscribe!
-       ;; removes the sub from the registry (or closes the stream).
-       (loop [attempt 0]
-         ;; A live mirror never terminates on its own: the handler always
-         ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
-         ;; or throws (non-200 / IO) — either way `dropped?` is true and we
-         ;; reconnect. `on-open` fires once the stream is live, and a drop
-         ;; before we (maybe) reconnect fires the inverse — both delivered
-         ;; through `sink` as synthetic `gateway.connected`/`.disconnected`
-         ;; events so the channel can paint a live connection indicator.
-         (let
-           [dropped? (try (open-sse-events! sid
-                                            @cursor*
-                                            cursor*
-                                            stream*
-                                            (fn [event]
-                                              (sink event)
-                                              nil)
-                                            (fn []
-                                              (try (sink {:type "gateway.connected"})
-                                                   (catch Throwable _ nil))))
-                          true
-                          (catch Throwable _ true))]
-           (when (and dropped? (contains? @subscriptions sub-id))
-             (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
+         fut
+         (future
+           ;; Reconnect (resuming from the last-seen cursor) whenever the daemon
+           ;; drops the stream, so a gateway restart / transient blip no longer
+           ;; kills the live mirror silently. Stops only when unsubscribe!
+           ;; removes the sub from the registry (or closes the stream).
+           (loop [attempt 0]
+             ;; A live mirror never terminates on its own: the handler always
+             ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
+             ;; or throws (non-200 / IO) — either way `dropped?` is true and we
+             ;; reconnect. `on-open` fires once the stream is live, and a drop
+             ;; before we (maybe) reconnect fires the inverse — both delivered
+             ;; through `sink` as synthetic `gateway.connected`/`.disconnected`
+             ;; events so the channel can paint a live connection indicator.
              (let
-               [delay-ms (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-                interrupted?
-                (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+               [dropped? (try (open-sse-events! sid
+                                                @cursor*
+                                                cursor*
+                                                stream*
+                                                (fn [event]
+                                                  (sink event)
+                                                  nil)
+                                                (fn []
+                                                  (try (sink {:type "gateway.connected"})
+                                                       (catch Throwable _ nil))))
+                              true
+                              (catch Throwable _ true))]
+               (when (and dropped?
+                          (not @client-finalizing?)
+                          (contains? @subscriptions sub-id))
+                 (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
+                 (let
+                   [delay-ms
+                    (long (min 5000
+                               (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
 
-               (when-not interrupted? (recur (inc attempt)))))))
-       (swap! subscriptions dissoc sub-id))]
+                    interrupted?
+                    (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
 
-    (swap! subscriptions assoc sub-id {:future fut :stream stream*})
-    []))
+                   (when (and (not interrupted?) (not @client-finalizing?))
+                     (recur (inc attempt)))))))
+           (swap! subscriptions dissoc sub-id))]
+
+        (swap! subscriptions assoc sub-id {:future fut :stream stream*})
+        []))))
 
 (defn unsubscribe!
   [_sid sub-id]
@@ -1397,17 +1516,25 @@
    set was edited (a fresh run already owns the new set)."
   [my-epoch]
   (future
-    (loop [attempt 0]
-      (let
-        [dropped? (try (not= [:epoch-changed] (open-mux-events! my-epoch))
-                       (catch Throwable _ true))]
-        (when (and dropped? (= my-epoch (:epoch @mux)) (seq (:subs @mux)))
-          (mux-broadcast! "gateway.disconnected")
-          (let
-            [delay-ms (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-             interrupted? (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+    (when-not @client-finalizing?
+      (loop [attempt 0]
+        (let
+          [dropped? (try (not= [:epoch-changed] (open-mux-events! my-epoch))
+                         (catch Throwable _ true))]
+          (when (and dropped?
+                     (not @client-finalizing?)
+                     (= my-epoch (:epoch @mux))
+                     (seq (:subs @mux)))
+            (mux-broadcast! "gateway.disconnected")
+            (let
+              [delay-ms (long (min 5000
+                                   (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+               interrupted? (try (Thread/sleep delay-ms)
+                                 false
+                                 (catch InterruptedException _ true))]
 
-            (when-not interrupted? (recur (inc attempt)))))))))
+              (when (and (not interrupted?) (not @client-finalizing?))
+                (recur (inc attempt))))))))))
 
 (defn- restart-mux!
   "Bump the epoch, close the live stream (unblocking the parked reader), cancel
@@ -1417,7 +1544,7 @@
   (let [{:keys [epoch stream future]} (swap! mux update :epoch inc)]
     (when stream (try (.close ^java.io.Closeable stream) (catch Throwable _ nil)))
     (when future (future-cancel future))
-    (if (seq (:subs @mux))
+    (if (and (not @client-finalizing?) (seq (:subs @mux)))
       (swap! mux assoc :future (mux-run! epoch) :stream nil)
       (swap! mux assoc :future nil :stream nil))))
 
@@ -1429,28 +1556,32 @@
    zero-arg cleanup fn. Every sink sees gateway.connected / gateway.disconnected
    on connection changes, exactly like the per-session [[subscribe!]]."
   [sid sink cursor]
-  (let
-    [sid
-     (str sid)
+  (if @client-finalizing?
+    (fn [])
+    (do
+      (ensure-release-hook!)
+      (let
+        [sid
+         (str sid)
 
-     sub-id
-     (str (java.util.UUID/randomUUID))
+         sub-id
+         (str (java.util.UUID/randomUUID))
 
-     changed-session-set?
-     (volatile! false)]
+         changed-session-set?
+         (volatile! false)]
 
-    (swap! mux (fn [m]
-                 (let [existing (get-in m [:subs sid])]
-                   (when-not existing (vreset! changed-session-set? true))
-                   (assoc-in m
-                     [:subs sid]
-                     (-> (or existing {:cursor-atom (atom (long (or cursor 0))) :sinks {}})
-                         (update :sinks assoc sub-id sink))))))
-    (if @changed-session-set?
-      (restart-mux!)
-      (try (sink {:type "gateway.connected"}) (catch Throwable _ nil)))
-    (fn []
-      (mux-unsubscribe! sid sub-id))))
+        (swap! mux (fn [m]
+                     (let [existing (get-in m [:subs sid])]
+                       (when-not existing (vreset! changed-session-set? true))
+                       (assoc-in m
+                         [:subs sid]
+                         (-> (or existing {:cursor-atom (atom (long (or cursor 0))) :sinks {}})
+                             (update :sinks assoc sub-id sink))))))
+        (if @changed-session-set?
+          (restart-mux!)
+          (try (sink {:type "gateway.connected"}) (catch Throwable _ nil)))
+        (fn []
+          (mux-unsubscribe! sid sub-id))))))
 
 (defn mux-unsubscribe!
   "Drop one local listener from the multiplexed stream and reconnect only when
@@ -1482,6 +1613,37 @@
                           (update m :subs dissoc sid))))))
      (when @changed-session-set? (restart-mux!))
      nil)))
+
+(defn- shutdown-subscriptions!
+  "Close every client-owned SSE stream exactly once without reconnecting.
+
+   Called by the single process shutdown hook after `client-finalizing?` flips.
+   Clearing both registries before closing their streams makes every reader's
+   EOF/reconnect guard observe terminal state, even though JVM hooks and socket
+   callbacks race concurrently."
+  []
+  (reset! client-finalizing? true)
+  (let
+    [[legacy _]
+     (swap-vals! subscriptions (constantly {}))
+
+     [mux-before _]
+     (swap-vals! mux
+                 (fn [m]
+                   (-> m
+                       (update :epoch inc)
+                       (assoc :subs {} :future nil :stream nil))))]
+
+    (doseq [[_ {:keys [future stream]}] legacy]
+      (try (some-> ^java.io.Closeable @stream
+                   .close)
+           (catch Throwable _ nil))
+      (when future (future-cancel future)))
+    (when-let [stream (:stream mux-before)]
+      (try (.close ^java.io.Closeable stream) (catch Throwable _ nil)))
+    (when-let [future (:future mux-before)]
+      (future-cancel future)))
+  nil)
 
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.

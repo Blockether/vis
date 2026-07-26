@@ -43,6 +43,8 @@
          (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
         (expect (some? schema))
+        (expect (= 'flat-native-tool (:symbol (first (extension/native-tools-for [ext])))))
+        (expect (not (contains? schema :symbol)))
         (expect (= "Compact routing and result semantics." (:description schema)))
         (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
         (expect (= {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}

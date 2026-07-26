@@ -643,7 +643,7 @@
 
           (expect (false? (:success? res)))
           (expect (not (contains? (:error res) :trace)))
-          (expect (str/includes? (get-in res [:error :message]) "repl_start"))
+          (expect (str/includes? (get-in res [:error :message]) "repl"))
           ;; message names the DIR the resolution ran against (from :dir ex-data)
           (expect (str/includes? (get-in res [:error :message]) (.getCanonicalPath (io/file root))))
           (expect (some? (get-in res [:error :hint]))))))

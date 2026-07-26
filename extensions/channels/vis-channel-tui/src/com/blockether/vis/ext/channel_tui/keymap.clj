@@ -86,9 +86,7 @@
    (`:multi-tab`, `:has-turns`) gates the verb's which-key STRIP entry to the
    context where it can act; `:never` keeps it palette-only. The chord, palette,
    and help still list every verb."
-  [{:action :cycle-model :key \m :label "model"}
-   ;; "choose model" is palette-only (C-x p → Choose Model…): its old C-x c
-   ;; second key collided with the quit reflex C-c, and `m` already fronts model.
+  [{:action :cycle-model :key \m :label "model"} {:action :pick-model :key \c :label "choose model"}
    {:action :cycle-reasoning :key \r :label "reasoning"}
    {:action :cycle-verbosity :key \l :label "length" :show-when :never}
    {:action :search-open :key \f :label "search" :show-when :never}
@@ -106,7 +104,8 @@
    {:action :recenter :key \j :label "jump to bottom"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds"}
-   {:action :open-magit :key \g :label "git status"} {:action :providers :key \o :label "models"}])
+   {:action :open-magit :key \g :label "git status"}
+   {:action :providers :key \o :label "providers"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x

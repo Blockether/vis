@@ -85,7 +85,7 @@
   [dir req timeout-ms]
   (let [info (get @processes dir)]
     (when-not (alive? info)
-      (throw (ex-info "Bun REPL is not running for this dir — repl_start(\"typescript\") first."
+      (throw (ex-info "Bun REPL is not running for this dir — repl(\"typescript\") first."
                       {:type :ts/no-repl :dir dir})))
     (locking info
       (let

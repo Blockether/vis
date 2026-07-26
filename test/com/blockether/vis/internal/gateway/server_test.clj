@@ -1,13 +1,11 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [clojure.test :refer [deftest is testing]]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.slash :as slash]
@@ -692,3 +690,24 @@
           (is (every? string? (keys (get p0 "status"))))
           ;; limits ride embedded, string-keyed too
           (is (= "ok" (get-in p0 ["limits" "status"]))))))))
+
+(deftest gateway-prometheus-runtime-metrics-test
+  (let
+    [text ((rv 'prometheus-text)
+            {:tokens-input 12
+             :tokens-output 7
+             :turns-executing 2
+             :turns-waiting 1
+             :env-cache-size 3
+             :env-heap-pressure true
+             :jvm-heap-used-bytes 1024
+             :jvm-gc-count-total 4
+             :jvm-thread-count 9})]
+    (testing "preserves the existing labelled token counter"
+      (is (re-find #"vis_turn_tokens_total\{kind=\"input\"\} 12" text))
+      (is (re-find #"vis_turn_tokens_total\{kind=\"output\"\} 7" text)))
+    (testing "exports resource-pressure and concurrency gauges"
+      (is (re-find #"vis_turns_executing 2" text))
+      (is (re-find #"vis_turns_waiting 1" text))
+      (is (re-find #"vis_env_heap_pressure 1" text))
+      (is (re-find #"vis_jvm_heap_used_bytes 1024" text)))))

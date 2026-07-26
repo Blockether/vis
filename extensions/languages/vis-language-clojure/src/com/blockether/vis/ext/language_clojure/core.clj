@@ -2,7 +2,7 @@
   "vis-language-clojure — Clojure language handlers for Vis.
 
    Format/test/REPL are exposed through the generic language facade
-   (`format`, `test`, `repl_eval`, `repl_start`, `repl_stop`) —
+   (`format`, `test`, `repl_eval`, `repl`, `repl_stop`) —
    `format` here does parinfer delimiter repair + cljfmt. The pack also registers
    a cross-cutting op-hook that auto repairs+formats `.clj` files after the
    foundation's struct_patch / patch / write, so no separate repair step is
@@ -283,9 +283,9 @@
 
          (when-not port
            (throw (ex-info (str
-                             "repl_start \"connect\" needs {\"port\": <the external nREPL's port>}"
+                             "repl \"connect\" needs {\"port\": <the external nREPL's port>}"
                              " (optional \"host\", \"dir\") — e.g."
-                             " repl_start(\"clojure\", \"connect\", {\"port\": 7888})")
+                             " repl(\"clojure\", \"connect\", {\"port\": 7888})")
                            {:type :clj/bad-args :got opts})))
          (let
            [r (repl-manager/connect!
@@ -305,7 +305,7 @@
 
        ("start" "restart")
        (do (when-not (.isDirectory (io/file dir))
-             (throw (ex-info (str "repl_start \"" op "\" target dir does not exist: " dir)
+             (throw (ex-info (str "repl \"" op "\" target dir does not exist: " dir)
                              {:type :clj/bad-args :dir dir})))
            (let
              [result (if (= op "restart")
@@ -319,14 +319,14 @@
 
        (throw
          (ex-info
-           (str "repl_start unknown op: " (pr-str op))
+           (str "repl unknown op: " (pr-str op))
            {:type :clj/bad-args
             :got op
             :examples
-            ["repl_start(\"clojure\")" "repl_start(\"clojure\", \"status\")"
-             "repl_start(\"clojure\", \"start\")"
-             "repl_start(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
-             "repl_start(\"clojure\", \"stop\")" "repl_start(\"clojure\", \"restart\")"]}))))))
+            ["repl(\"clojure\")" "repl(\"clojure\", \"status\")"
+             "repl(\"clojure\", \"start\")"
+             "repl(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
+             "repl(\"clojure\", \"stop\")" "repl(\"clojure\", \"restart\")"]}))))))
 
 
 (defn available-aliases
@@ -396,7 +396,7 @@
      - no id, >1 REPLs → the REPL owning `dir` (default: the workspace root) when
                          present, else the first (dir-sorted);
      - no id, 0 REPLs  → error (:clj/no-repl): no running nREPL to hit.
-   A connect failure surfaces as DATA so the model can repl_start / wait."
+   A connect failure surfaces as DATA so the model can repl / wait."
   ([env arg]
    (let
      [m
@@ -473,7 +473,7 @@
                 :clj/no-repl
                 (extension/failure {:error {:message (str "no REPL running in "
                                                           (:dir (ex-data e))
-                                                          " — start one: repl_start(\"clojure\")")
+                                                          " — start one: repl(\"clojure\")")
                                             :hint "then retry the eval"}})
 
                 :clj/unknown-repl-id

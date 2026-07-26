@@ -212,7 +212,7 @@
    this is how the agent reaches the tools — `git_status()` calls `git/status`.
 
    A tiny compatibility alias layer may additionally expose selected historical
-   short names (currently `find` for `find_files`), but the snake name remains
+   short names (currently `find_files`/`find` for `grep`), but the snake name remains
    canonical."
   ^String [sym]
   (let
@@ -236,11 +236,25 @@
    Keep tiny: aliases are prompt/API compatibility, not another naming scheme."
   [sym]
   (case sym
+    grep
+    ["find_files" "find"]
+
+    ;; `fs_tool` reads naturally next to the other verbs in Python.
+    fs
+    ["fs_tool"]
+
     find_files
     ["find"]
 
-    ;; `find_files` is the canonical name; `find` stays as a compat alias
+    ;; `grep` is canonical; `find_files`/`find` stay as compatibility aliases.
+    ;; Keep the older symbol branch while contexts/extensions may still expose it.
     []))
+
+(defn python-binding-names
+  "Canonical Python global plus intentional compatibility aliases for `sym`.
+   Used by provider/native discovery to deduplicate the same capability."
+  [sym]
+  (into [(sym->py-name sym)] (py-aliases-for-sym sym)))
 
 (defn- wrap-ifn
   "Wrap a Clojure fn as a Python-callable `ProxyExecutable`. Positional Python
@@ -612,7 +626,13 @@ def __vis_pyify__(x):
     # allowlist silently downgraded set/tuple/frozenset -> list and dict
     # subclasses -> dict, so `s = set(); s.add(1)` blew up with the
     # 'list' object has no attribute 'add' error.)
-    if x is None or type(x).__name__ == 'NoneType':
+    try:
+        if x is None or type(x).__name__ in ('NoneType', 'ForeignNone'):
+            return None
+    except BaseException:
+        # A RAW host null (not even wrapped as ForeignNone): every interop touch
+        # on it - including type(x) - raises Truffle's \"Null receiver values are
+        # not supported by libraries\". Treat it as python None.
         return None
     if not __vis_is_foreign__(x):
         return x
@@ -648,10 +668,18 @@ def __vis_drive__(coro):
         except StopIteration as e:
             return e.value
         try:
+            # PYIFY, exactly like the direct `__vis_settle__` path (see above): the
+            # value sent back into the coroutine is what `x = await tool()` binds,
+            # so it must be a REAL python value. Handing back a raw host proxy - or
+            # a host NULL for a tool that returned nil - made the next interop touch
+            # inside the coroutine die with Truffle's null-receiver NPE
+            # (Null receiver values are not supported by libraries) instead of a
+            # normal python error.
             if isinstance(y, __vis_Call__):
-                send = __vis_exec_call__(y)
+                send = __vis_pyify__(__vis_exec_call__(y))
             elif isinstance(y, __vis_Gather__):
-                send = __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws])
+                send = __vis_pyify__(
+                    __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws]))
             else:
                 send = y
         except BaseException as __vis_exc__:
@@ -1588,6 +1616,16 @@ def __vis_native_result_scan__(__vis_tree__):
   [env sym val]
   (set-python-binding! (:python-context env) sym val))
 
+(defn set-advertised-native-tools!
+  "Update names already visible in the provider's native tool schema. Native
+   `apropos` suppresses these names; in-Python `apropos()` remains a complete,
+   filterable sandbox index. Best-effort so discovery metadata cannot break eval."
+  [python-context names]
+  (try (let [g (python-globals python-context)]
+         (.putMember g "__vis_advertised_native_tools__" (->py (vec (sort (set (map str names))))))
+         true)
+       (catch Throwable _ false)))
+
 (defn bind-and-bump-with-doc!
   "Like `bind-and-bump!` but also records `doc` in the side `__vis_docs__` dict
    so a future live-vars view can surface name + doc (Python has no var
@@ -1736,20 +1774,24 @@ def __vis_native_result_scan__(__vis_tree__):
                                nm
                                (when (and m (not (.isNull m)) (.canExecute m)) "  ·  callable")
                                (when docs (str "\n\n" docs))))))))
-    ;; Native `apropos` dispatch renders a scannable markdown table (its
-    ;; :py-name call-shape points here); in-Python `apropos(query)` stays a real
-    ;; dict for filtering. This wrapper reuses that dict and formats one
-    ;; `| tool | gist |` table. Underscore-prefixed so `apropos` never lists it.
-    (try (.eval ^Context ctx
-                "python"
-                (str "def __vis_apropos_table__(query=''):\n" "    d = apropos(query)\n"
-                     "    if not d:\n"
-                     "        return 'apropos(' + repr(query) + '): no tools match.'\n"
-                     "    def __cell(s):\n"
-                     "        return str(s).replace('\\n', ' ').replace('|', '\\\\|')\n"
-                     "    rows = ['| tool | gist |', '| --- | --- |']\n" "    for k in d:\n"
-                     "        rows.append('| `' + __cell(k) + '` | ' + __cell(d[k]) + ' |')\n"
-                     "    return '\\n'.join(rows)\n"))
+    ;; Native `apropos` dispatch renders a scannable markdown table and omits
+    ;; capabilities already present in the provider-native schema. In-Python
+    ;; `apropos(query)` remains the complete real dict for composition/filtering.
+    ;; Underscore-prefixed helper stays absent from its own index.
+    (try (.eval
+           ^Context ctx
+           "python"
+           (str
+             "def __vis_apropos_table__(query=''):\n"
+             "    hidden = set(globals().get('__vis_advertised_native_tools__') or ())\n"
+             "    d = {k: v for k, v in apropos(query).items() if k not in hidden}\n"
+             "    if not d:\n"
+             "        return 'apropos(' + repr(query) + '): no unadvertised capabilities match.'\n"
+             "    def __cell(s):\n"
+             "        return str(s).replace('\\n', ' ').replace('|', '\\\\|')\n"
+             "    rows = ['| capability | gist |', '| --- | --- |']\n" "    for k in d:\n"
+             "        rows.append('| `' + __cell(k) + '` | ' + __cell(d[k]) + ' |')\n"
+             "    return '\\n'.join(rows)\n"))
          (catch Throwable _ nil))
     ;; These two helpers are installed by the engine rather than the extension
     ;; registry, so seed their own docs here. This keeps native `doc` and
@@ -3493,13 +3535,19 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      ;; the model's OWN bug and gets retried verbatim forever. Flag it so the hint
      ;; steers to a different approach instead of a doomed retry.
      host-npe?
-     (boolean (and host?
-                   (or (instance? NullPointerException cause)
-                       (and
-                         base
+     (boolean
+       (or (and host?
+                (or (instance? NullPointerException cause)
+                    (and base
                          (re-find
                            #"Cannot invoke .+ because .+ is null|\bis null\b|NullPointerException"
-                           (str base))))))
+                           (str base)))))
+           ;; Truffle's INTERNAL null-receiver NPE (an interop message sent to a raw
+           ;; host null) is NOT reported as a host exception, so it used to reach the
+           ;; model as a bare Java line with no guidance at all.
+           (and base
+                (re-find #"Null receiver values are not supported|\bNullPointerException\b"
+                         (str base)))))
 
      ;; A genuine FOREIGN/polyglot value — a tool result whose interop wrapper
      ;; really lacks that method (GraalPy: "foreign object has no attribute …").

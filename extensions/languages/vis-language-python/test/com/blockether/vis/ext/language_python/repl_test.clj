@@ -87,7 +87,7 @@
 ;; ── language-facade wiring ───────────────────────────────────────────────────
 (defdescribe
   facade-test
-  (it "repl_eval requires explicit repl_start and then returns the value"
+  (it "repl_eval requires explicit repl and then returns the value"
       (when (has-python?)
         (let
           [root
@@ -108,7 +108,7 @@
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
-  (it "repl_start status/stop lifecycle ops route through the manager"
+  (it "repl status/stop lifecycle ops route through the manager"
       (when (has-python?)
         (let
           [root

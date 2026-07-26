@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
+            [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
             ;; Loaded for its side effect: registers the :shell/enabled toggle
             ;; (internal foundation, at ns load), which the settings-rows test asserts.
@@ -48,6 +49,49 @@
 
     (.startScreen screen)
     {:terminal terminal :screen screen}))
+
+(defdescribe
+  dialog-background-test
+  (it
+    "paints every dialog cell on the terminal background with no title fill or shadow"
+    (let
+      [{:keys [^TerminalScreen screen]}
+       (virtual-screen)
+
+       cols
+       80
+
+       rows
+       30
+
+       g
+       (.newTextGraphics screen)]
+
+      (try (p/set-bg! g t/terminal-bg)
+           (p/fill-rect! g 0 0 cols rows)
+           (let
+             [{:keys [left top inner-w]}
+              (dlg/draw-dialog-chrome! g cols rows "Flat dialog" 40 12)
+
+              title-x
+              (+ (long left) 1 (quot (- (long inner-w) (count "Flat dialog")) 2))]
+
+             (.refresh screen)
+             (expect (every? true?
+                             (for
+                               [y
+                                (range rows)
+
+                                x
+                                (range cols)]
+
+                               (= t/terminal-bg
+                                  (.getBackgroundColor
+                                    (.getBackCharacter screen (int x) (int y)))))))
+             (expect (= t/dialog-accent
+                        (.getForegroundColor
+                          (.getBackCharacter screen (int title-x) (int (inc (long top))))))))
+           (finally (.stopScreen screen))))))
 
 (defn- wheel-down [] (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))
 
@@ -1019,7 +1063,7 @@
              (.addInput terminal (KeyStroke. KeyType/Enter))
              (expect (= "ws-b" (:workspace-id (dlg/draft-picker! screen drafts))))
              (finally (.stopScreen screen)))))
-  (it "command palette exposes the frequent app verbs; Models is the single provider/settings hub"
+  (it "command palette exposes the frequent app verbs; Providers is the provider/settings hub"
       (let
         [palette-commands
          (var-get #'dlg/palette-commands)
@@ -1030,9 +1074,8 @@
          ids
          (set (mapv :id palette-commands))]
 
-        ;; Providers live under the "Models" hub; Settings is its own palette
-        ;; verb (no longer a hidden `S` keybind inside Models).
-        (expect (some #{"Models"} labels))
+        ;; Providers and Settings remain separate, explicit palette verbs.
+        (expect (some #{"Providers"} labels))
         (expect (some #{"Settings"} labels))
         (expect (not (some #{"Configure Providers"} labels)))
         (expect (contains? ids :providers))

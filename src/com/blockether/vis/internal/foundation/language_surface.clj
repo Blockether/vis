@@ -4,7 +4,7 @@
   Language extensions register handlers under `:ext/language-tools`; this
   foundation surface exposes stable bare tool names and dispatches to the
   active handler for the requested/current language. REPL lifecycle is resource
-  backed: `repl_start` creates a language-owned session resource and `repl_stop`
+  backed: `repl` creates a language-owned session resource and `repl_stop`
   stops one by id. Live REPLs also surface in the ctx `resources` block."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -64,13 +64,13 @@
    :lint-fn "lint_code"
    :test-fn "run_tests"
    :repl-eval-fn "repl_eval"
-   :start-repl-fn "repl_start"})
+   :start-repl-fn "repl"})
 
-(def ^:private tool-order ["format_code" "lint_code" "run_tests" "repl_eval" "repl_start"])
+(def ^:private tool-order ["format_code" "lint_code" "run_tests" "repl_eval" "repl"])
 
 (defn capability-data
   "STRUCTURED capability map for the ACTIVE language packs:
-   `{\"clojure\" [\"format\" \"test\" \"repl_eval\" \"repl_start\"], \"python\" [...]}`
+   `{\"clojure\" [\"format\" \"test\" \"repl_eval\" \"repl\"], \"python\" [...]}`
    — nil when none active. Recomputed every turn from active-extensions, so it
    GAINS a language the moment its pack activates (e.g. a .py file appears). Goes
    in ctx (`session[\"language_tools\"]`) so the model can read it programmatically
@@ -93,8 +93,8 @@
   "AUTO capability matrix for the system prompt — the active packs' facade verbs
    + a CERTAIN statement of when each is the tool. nil when no pack is active.
      LANGUAGE TOOLS (active packs; call via the facade, language first):
-       clojure : format_code · run_tests · repl_eval · repl_start
-       python  : repl_eval · repl_start"
+       clojure : format_code · run_tests · repl_eval · repl
+       python  : repl_eval · repl"
   [env]
   (when-let [data (capability-data env)]
     (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
@@ -284,41 +284,49 @@
 
       (throw
         (ex-info
-          "repl_start expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
+          "repl expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
           {:type :language-surface/bad-args
            :got args
-           :examples ["repl_start('clojure')"
-                      "repl_start('clojure', {'op': 'restart', 'dir': 'extensions/foo'})"
-                      "repl_start('clojure', 'status')"
-                      "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
+           :examples ["repl('clojure')"
+                      "repl('clojure', {'op': 'restart', 'dir': 'extensions/foo'})"
+                      "repl('clojure', 'status')"
+                      "repl('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
+
+(defn repl-stop
+  "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
+  [env id]
+  ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
+  ;; :id ...}); project it to a strings-only model payload (enum value stringified
+  ;; at the source) so nothing keyword crosses the boundary.
+  (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) id)]
+    (extension/success {:result (cond-> {"result" (name result) "id" (str id)}
+                                  message
+                                  (assoc "message" message))})))
 
 (defn- dispatch-start-repl!
   [env args]
-  (let
-    [{:keys [language id op opts]}
-     (start-repl-payload args)
+  (let [{:keys [language id op opts]} (start-repl-payload args)]
+    (if (and (= "stop" op) id)
+      ;; By-id stop is a generic session-resource op — no pack dispatch needed,
+      ;; and it works even when the owning language pack is gone.
+      (repl-stop env id)
+      (let
+        [dispatch-opts (cond-> (coerce-opts opts)
+                         language
+                         (assoc "language" language)
 
-     dispatch-opts
-     (cond-> (coerce-opts opts)
-       language
-       (assoc "language" language)
+                         id
+                         (assoc "id" id))
+         handler (choose-handler env :start-repl-fn dispatch-opts)
+         opts (cond-> (or opts {})
+                id
+                (assoc "id" id))]
 
-       id
-       (assoc "id" id))
-
-     handler
-     (choose-handler env :start-repl-fn dispatch-opts)
-
-     opts
-     (cond-> (or opts {})
-       id
-       (assoc "id" id))]
-
-    ;; Refresh from the live env at the process boundary. This also repairs the
-    ;; registry after a process-jail namespace reload without weakening fail-closed
-    ;; handling for missing session identity or policy.
-    (when (#{"start" "restart"} op) (vis/prepare-session-jail! env))
-    ((:handler handler) env op opts)))
+        ;; Refresh from the live env at the process boundary. This also repairs the
+        ;; registry after a process-jail namespace reload without weakening fail-closed
+        ;; handling for missing session identity or policy.
+        (when (#{"start" "restart"} op) (vis/prepare-session-jail! env))
+        ((:handler handler) env op opts)))))
 
 (defn- repl-resources
   [env language]
@@ -352,17 +360,6 @@
 
                                                 true
                                                 vec)}}))))
-
-(defn repl-stop
-  "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
-  [env id]
-  ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
-  ;; :id ...}); project it to a strings-only model payload (enum value stringified
-  ;; at the source) so nothing keyword crosses the boundary.
-  (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) id)]
-    (extension/success {:result (cond-> {"result" (name result) "id" (str id)}
-                                  message
-                                  (assoc "message" message))})))
 
 (defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
 
@@ -793,48 +790,50 @@
             (str ": " (str/join ", " (map #(str (get % "id") " (" (get % "status") ")") res)))))}))
 
 (defn- render-repl-start-result
-  "repl_start → lifecycle headline plus startup failure/log details when present."
+  "repl → lifecycle headline plus startup failure/log details when present."
   [r]
-  (if (contains? r "resources")
-    (render-repl-status-result r)
-    (let
-      [status
-       (or (get r "status") "ready")
+  (cond (contains? r "resources") (render-repl-status-result r)
+        (#{"stopped" "detached"} (get r "result")) {:summary (str (get r "result")
+                                                                  (when-let [id (get r "id")]
+                                                                    (str " " id)))}
+        :else (let
+                [status
+                 (or (get r "status") "ready")
 
-       failed?
-       (or (= "failed" status) (= "failed" (get r "result")))
+                 failed?
+                 (or (= "failed" status) (= "failed" (get r "result")))
 
-       prefix
-       (if failed? "✗ " "")
+                 prefix
+                 (if failed? "✗ " "")
 
-       summary
-       (str prefix
-            (or (get r "id") (get r "language") "")
-            " "
-            status
-            (when-let [p (get r "port")]
-              (str " :" p)))
+                 summary
+                 (str prefix
+                      (or (get r "id") (get r "language") "")
+                      " "
+                      status
+                      (when-let [p (get r "port")]
+                        (str " :" p)))
 
-       log-tail
-       (get r "log_tail")
+                 log-tail
+                 (get r "log_tail")
 
-       sections
-       [(when-let [m (get r "message")]
-          (str "MESSAGE\n" m))
-        (when-let [exit (get r "exit")]
-          (str "EXIT\n" exit))
-        (when-let [log (get r "log")]
-          (str "LOG\n" log))
-        (when-let [cmd (seq (get r "cmd"))]
-          (str "CMD\n" (str/join " " (map str cmd))))
-        (when (seq log-tail) (str "LOG TAIL\n" (str/join "\n" log-tail)))]
+                 sections
+                 [(when-let [m (get r "message")]
+                    (str "MESSAGE\n" m))
+                  (when-let [exit (get r "exit")]
+                    (str "EXIT\n" exit))
+                  (when-let [log (get r "log")]
+                    (str "LOG\n" log))
+                  (when-let [cmd (seq (get r "cmd"))]
+                    (str "CMD\n" (str/join " " (map str cmd))))
+                  (when (seq log-tail) (str "LOG TAIL\n" (str/join "\n" log-tail)))]
 
-       body
-       (->> sections
-            (remove nil?)
-            (str/join "\n\n"))]
+                 body
+                 (->> sections
+                      (remove nil?)
+                      (str/join "\n\n"))]
 
-      {:summary summary :body (when (seq body) (str "\n" body))})))
+                {:summary summary :body (when (seq body) (str "\n" body))})))
 
 (defn- render-repl-stop-result
   "repl_stop → `stopped <id>`."
@@ -887,7 +886,7 @@
 
 (defn start-repl
   "Start or restart a language REPL resource. ALWAYS pass the language FIRST —
-   repl_start(language, {op, dir, id, ...}); `op` defaults to `start`."
+   repl(language, {op, dir, id, ...}); `op` defaults to `start`."
   [env & args]
   (dispatch-start-repl! env args))
 
@@ -926,11 +925,10 @@
      :schema
      {:type "object"
       :properties
-      {"language"
-       {:type "string"
-        :minLength 1
-        :description
-        "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
+      {"language" {:type "string"
+                   :minLength 1
+                   :description
+                   "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
                :description
                "Source to format (returns a lean changed? + char-delta ack, not the text)."}
@@ -962,11 +960,10 @@
      :schema
      {:type "object"
       :properties
-      {"language"
-       {:type "string"
-        :minLength 1
-        :description
-        "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
+      {"language" {:type "string"
+                   :minLength 1
+                   :description
+                   "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
                :description
                "Source to lint (returns findings). Mutually exclusive with path/paths."}
@@ -1000,8 +997,7 @@
       :properties
       {"language" {:type "string"
                    :minLength 1
-                   :description
-                   "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
+                   :description "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
        "namespaces"
        {:type "array"
         :items {:type "string" :minLength 1}
@@ -1038,7 +1034,7 @@
      :description (str
                     "Evaluate code in an `up` project REPL; prefer this for bug reproduction and "
                     "verification. Inspect `session[\"resources\"][\"repls\"]` first and use "
-                    "`repl_start` for any required lifecycle change.")
+                    "`repl` for any required lifecycle change.")
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -1053,8 +1049,7 @@
       :properties
       {"language" {:type "string"
                    :minLength 1
-                   :description
-                   "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
+                   :description "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
        "code" {:type "string" :minLength 1 :description "Source to evaluate in the language REPL."}
        "id" {:type "string"
              :minLength 1
@@ -1073,31 +1068,36 @@
 (def start-repl-symbol
   (vis/symbol
     #'start-repl
-    {:symbol 'repl_start
+    {:symbol 'repl
      :native-tool? true
      :description
-     (str "Start or restart a managed project REPL only after inspecting "
-          "`session[\"resources\"][\"repls\"][language][dir]` (`.` is root): reuse "
+     (str "THE one REPL lifecycle tool — inspect "
+          "`session[\"resources\"][\"repls\"][language][dir]` (`.` is root) first: reuse "
           "`up`, start absent/down/failed, recheck `starting`, and restart `unresponsive`. "
-          "Keep its returned resource id; after verified work, stop managed REPLs you "
-          "started with `repl_stop`. `op` \"connect\" instead attaches an EXTERNAL "
-          "already-running REPL by `port` — never owned or killed; stopping only detaches.")
+          "Keep the returned resource id. `op` \"stop\" stops a managed REPL (by `id`, or "
+          "`dir`'s REPL when id is omitted); \"connect\" attaches an EXTERNAL already-running "
+          "REPL by `port` — never owned or killed; stopping it only detaches. "
+          "\"status\" lists this session's REPLs.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
      :schema {:type "object"
               :properties
-              {"language"
-               {:type "string"
-                :minLength 1
-                :description
-                "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
+              {"language" {:type "string"
+                           :minLength 1
+                           :description "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
                "op" {:type "string"
-                     :enum ["start" "restart" "connect"]
-                     :description "Lifecycle operation (default \"start\"); \"connect\" attaches an external REPL."}
-               "id" {:type "string" :minLength 1 :description "Optional lifecycle resource id."}
-               "dir" {:type "string" :minLength 1 :description "Directory to start the REPL in (connect: the dir the attachment is keyed by)."}
-               "port" {:type "integer" :description "connect only: port of the already-running external REPL."}
+                     :enum ["start" "restart" "connect" "stop" "status"]
+                     :description "Lifecycle operation (default \"start\")."}
+               "id" {:type "string"
+                     :minLength 1
+                     :description "Lifecycle resource id (stop: the exact REPL to stop)."}
+               "dir" {:type "string"
+                      :minLength 1
+                      :description
+                      "Directory the REPL serves (connect: the dir the attachment is keyed by)."}
+               "port" {:type "integer"
+                       :description "connect only: port of the already-running external REPL."}
                "host" {:type "string" :description "connect only: its host (default localhost)."}
                "aliases" {:type "array"
                           :items {:type "string"}
@@ -1142,7 +1142,7 @@
   (vis/symbol
     #'repl-stop
     {:symbol 'repl_stop
-     :native-tool? true
+     :native-tool? false
      :description
      "After verification, stop a managed REPL you started by its exact resource id. An external REPL resource is detached; its process is never killed."
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO

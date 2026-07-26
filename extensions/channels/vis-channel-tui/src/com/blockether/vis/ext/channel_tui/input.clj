@@ -606,6 +606,20 @@
   []
   (stty! "iexten"))
 
+(defn disable-software-flow-control!
+  "Disable tty IXON while the TUI owns the terminal. Otherwise Ctrl+S is handled
+   as XOFF by the line discipline: rendering continues in memory, but terminal
+   output freezes until Ctrl+Q, making the live TUI look crashed. Best effort;
+   paired with `restore-software-flow-control!` on teardown."
+  []
+  (stty! "-ixon"))
+
+(defn restore-software-flow-control!
+  "Re-enable tty IXON on teardown so the user's shell regains Ctrl+S/Ctrl+Q
+   software flow control."
+  []
+  (stty! "ixon"))
+
 (defn register-custom-patterns!
   "Register Escape, Alt+Enter, Alt+Backspace, modified arrows,
    bracketed-paste, and SGR-mouse patterns on the terminal's input

@@ -24,10 +24,11 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import
-    (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
+    (com.sun.net.httpserver HttpHandler HttpServer)
     (java.awt Desktop Desktop$Action)
     (java.net InetSocketAddress URI URLDecoder URLEncoder)
     (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)
@@ -38,10 +39,9 @@
 (def ^:private protocol-version-header "MCP-Protocol-Version")
 (def ^:private protocol-version "2025-06-18")
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 15))
-             (.build))))
+;; HTTP client is shared with `client.clj` via `mcp-http/client` — see
+;; `mcp/http.clj` for the perf/threading rationale (one JDK HttpClient, one
+;; selector pool, virtual-thread executor).
 
 (defn- b64url
   ^String [^bytes bs]
@@ -75,10 +75,16 @@
              (str/split q #"&")
 
              :let [[k v]
-                   (str/split p #"=" 2)]
+                   (str/split p #"=" 2)
+
+                   ^String kk
+                   (str k)
+
+                   ^String vv
+                   (str (or v ""))]
              :when (seq k)]
 
-            [(URLDecoder/decode k "UTF-8") (URLDecoder/decode (or v "") "UTF-8")]))))
+            [(URLDecoder/decode kk "UTF-8") (URLDecoder/decode vv "UTF-8")]))))
 
 (defn- http-get-json
   [^String url]
@@ -92,7 +98,7 @@
          .build)
 
      resp
-     (.send ^HttpClient @http-client req (HttpResponse$BodyHandlers/ofString))]
+     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
 
     (when (< (.statusCode resp) 400) (try (json/read-json (.body resp)) (catch Throwable _ nil)))))
 
@@ -109,7 +115,7 @@
          .build)
 
      resp
-     (.send ^HttpClient @http-client req (HttpResponse$BodyHandlers/ofString))]
+     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
 
     {:status (.statusCode resp)
      :body (try (json/read-json (.body resp)) (catch Throwable _ (.body resp)))}))
@@ -127,7 +133,7 @@
          .build)
 
      resp
-     (.send ^HttpClient @http-client req (HttpResponse$BodyHandlers/ofString))]
+     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
 
     {:status (.statusCode resp)
      :body (try (json/read-json (.body resp)) (catch Throwable _ (.body resp)))}))
@@ -185,7 +191,7 @@
                                               "response_types" ["code"]
                                               "token_endpoint_auth_method" "none"
                                               "scope" "openid profile offline_access"})]
-      (when (and (< status 400) (map? body) (get body "client_id")) body))))
+      (when (and (< (long status) 400) (map? body) (get body "client_id")) body))))
 
 ;; ---------------------------------------------------------------------------
 ;; Loopback callback (PKCE authorization-code)
@@ -315,7 +321,7 @@
             :refresh-token (or (get body "refresh_token") (:refresh-token extra))
             :token-type (or (get body "token_type") "Bearer")
             :scope (get body "scope")
-            :expires-at-ms (when expires-in (+ now (* 1000 expires-in)))
+            :expires-at-ms (when expires-in (+ now (long (* 1000 (long expires-in)))))
             :saved-at-ms now})))
 
 ;; ---------------------------------------------------------------------------
@@ -425,7 +431,7 @@
                            resource
                            (assoc "resource" resource)))]
 
-        (when (>= status 400)
+        (when (>= (long status) 400)
           (throw (ex-info (str "MCP " server-name " token exchange failed: " status)
                           {:type :mcp/oauth-token :server server-name :status status :body body})))
         (write-tokens! server-name
@@ -446,7 +452,7 @@
                                               "client_id" (:client-id creds)}
                                              (:resource creds)
                                              (assoc "resource" (:resource creds))))]
-    (when (>= status 400)
+    (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server-name " token refresh failed: " status)
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
     (write-tokens! server-name (->tokens body creds))))

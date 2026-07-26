@@ -118,10 +118,11 @@ When handled context climbs above the ceiling, `session["utilization"]["hint"]` 
 
 The efficient path is:
 
-1. Discover with `apropos` / `doc`.
-2. Inspect with `struct_index`, then read one body only when needed.
-3. Edit with `struct_patch`; fall back to anchored `patch` only when structure is unavailable.
-4. Keep batch intermediates in `python_execution`.
-5. Fold completed prior-turn noise while preserving durable evidence.
+1. Discover capabilities with `apropos` / `doc` when they are not already advertised.
+2. Locate relevant files and symbols with `grep`.
+3. Map supported code with `struct_index`, then read only the needed body with `cat`.
+4. Edit with `struct_patch`; fall back to anchored `patch` only when structure is unavailable.
+5. Keep batch intermediates in `python_execution`.
+6. Fold completed prior-turn noise while preserving durable evidence.
 
 Vis spends context on decisions and proof, not repeated catalogs, whole files, intermediate results, or dead history.

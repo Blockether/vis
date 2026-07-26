@@ -3709,21 +3709,6 @@
                  {:seen #{} :out []})
          :out)))
 
-(defn- register-shutdown-hook!
-  "Thin wrapper over `Runtime/addShutdownHook` so call-sites read as
-   plain Clojure instead of a `(Thread. ^Runnable (fn [] ...))` casting
-   ritual. `f` is a zero-arg fn; thrown exceptions are swallowed (the
-   hook chain MUST NOT propagate - a single noisy listener can hang
-   the whole shutdown sequence). Returns the registered Thread so
-   tests can deregister it via `.removeShutdownHook` if needed."
-  [^Runnable f]
-  (let
-    [hook (Thread. ^Runnable
-                   (fn []
-                     (try (f) (catch Throwable _ nil))))]
-    (.addShutdownHook (Runtime/getRuntime) hook)
-    hook))
-
 (defn- terminal-interrupt-action
   "Action for terminal-level interrupts (SIGINT from Ctrl+C, SIGTSTP from
    Ctrl+Z) that never reach Lanterna as KeyStrokes on some terminals.
@@ -3767,8 +3752,8 @@
       (doseq [cleanup cleanups]
         (cleanup)))))
 
-(defn- subscribe-title-listener!
-  "Per-OPEN-session listener bundle. Returns a zero-arg cleanup fn.
+(defn- subscribe-session-live!
+  "Per-OPEN-session live subscription bundle. Returns a zero-arg cleanup fn.
 
    1. Host title writes (`titling/set-title-with-broadcast!` — async
       auto-title generation or a rename) dispatch `[:set-title]` so the next
@@ -3841,7 +3826,11 @@
           (vis/remove-title-pending-listener! session-id pending-listener)
           (events-cleanup))]
 
-    (register-shutdown-hook! cleanup)
+    ;; `run-chat!` owns these cleanups and drains them in its `finally`.
+    ;; Do NOT install one JVM shutdown hook per tab: Java runs those hooks
+    ;; concurrently, and removing N sessions one-by-one restarts the shared mux
+    ;; while the JVM is finalizing. The gateway client has one process-level
+    ;; finalization barrier that closes the mux without reconnecting.
     cleanup))
 
 (defn- date->millis
@@ -4165,7 +4154,7 @@
   ;; sibling process), ATTACH so it streams live into the tab instead of
   ;; showing frozen history until it lands in the DB.
   (state/dispatch [:attach-running-turn nil session-result])
-  (subscribe-title-listener! id))
+  (subscribe-session-live! id))
 
 (defn- terminal-ctrl-c-behaviour
   "Lanterna's 3-arg UnixTerminal constructor defaults to
@@ -4244,9 +4233,10 @@
   [_opts]
   (input/enable-bracketed-paste! @vis/tty-out)
   (input/enable-sgr-mouse! @vis/tty-out)
-  ;; Free Ctrl+V from the tty's "literal next" (VLNEXT) so Emacs `C-v` page-scroll
-  ;; actually reaches the app — the same IEXTEN-off raw-mode move Emacs makes.
+  ;; Free control bytes that the tty line discipline would otherwise consume:
+  ;; IEXTEN owns Ctrl+V/Ctrl+O; IXON owns Ctrl+S/Ctrl+Q and can freeze all output.
   (input/disable-literal-next!)
+  (input/disable-software-flow-control!)
   ;; Match the emulator's window padding to the theme background (OSC 11):
   ;; without this the 1-cell rim around the Lanterna grid stays the user's
   ;; default (often white) instead of the theme background.
@@ -4258,7 +4248,8 @@
   (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
   (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
   (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))
-  ;; Restore IEXTEN so the user's shell gets literal-next quoting back.
+  ;; Restore shell tty semantics even when another teardown action failed.
+  (try (input/restore-software-flow-control!) (catch Throwable _ nil))
   (try (input/restore-literal-next!) (catch Throwable _ nil)))
 ;; ---------------------------------------------------------------------------
 ;; Encrypted SSH key passphrase prompt — retired.
@@ -4404,6 +4395,16 @@
                          (finally (.unlock ^ReentrantLock draw-lock))))))))
 
 
+(defn- authenticated-provider-config
+  "Return a runtime provider config when OAuth presets are already authenticated.
+   Their credentials live outside config, so a missing config file is not a missing provider."
+  []
+  (try
+    (when-let [providers (seq (vis/authenticated-preset-providers))]
+      {:providers (vec providers)})
+    (catch Throwable _ nil)))
+
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -4480,7 +4481,7 @@
         ;; clause can join it. (Locals from the `try` body aren't in
         ;; scope inside `finally`.)
         render-thread (volatile! nil)
-        title-listeners (volatile! {})
+        session-live-listeners (volatile! {})
         ;; Background bubble pre-warm is owned by `virtual/rewarm!` -
         ;; one managed worker process-wide; see its ns comment for the
         ;; invalidation events that restart it.
@@ -4493,33 +4494,33 @@
        ;; nothing reads input yet — so inline-image boxes reserve the exact rows.
        (probe-terminal-cell-size!)
        ;; `:close-tab` fires this when the LAST view of an idle session closes:
-       ;; invoke + drop that session's SSE title-listener bundle (host title +
+       ;; invoke + drop that session's SSE live subscription bundle (host title +
        ;; queue-sync/attach stream) so a closed tab stops holding a live
        ;; subscription. Paired with `:release-session-runtime` (state.clj), which
        ;; stops the daemon-side runtime. Idempotent + best-effort.
        (state/reg-fx :release-session-listener
                      (fn [sid]
                        (let [sid (str sid)]
-                         (when-let [cleanup (get @title-listeners sid)]
-                           (vswap! title-listeners dissoc sid)
+                         (when-let [cleanup (get @session-live-listeners sid)]
+                           (vswap! session-live-listeners dissoc sid)
                            (try (cleanup) (catch Throwable _ nil))))))
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
            (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
            (vreset! ssh-passphrase-cleanup (install-ssh-passphrase-prompt! screen))
-           ;; No provider yet → onboard BEFORE any session is created. A genuine
-           ;; first run (no config file ever) gets the branded welcome; a
-           ;; returning user who simply has no provider right now goes straight
-           ;; to the provider manager. Either returns {:providers [...]} or nil.
+           ;; A missing config file does not imply a missing provider: OAuth preset
+           ;; credentials live outside config. Use those immediately; only onboard when
+           ;; neither persisted nor authenticated runtime providers are available.
            (when-not (:config @state/app-db)
-             (when (not (:dialog-open? @state/app-db))
-               (when-let
-                 [c (with-dialog-lock #(if (vis/first-run?)
-                                         (provider/show-welcome! screen)
-                                         (provider/show-provider-dialog! screen
-                                                                         (:config @state/app-db))))]
-                 (state/dispatch [:set-config c])
-                 (state/dispatch [:force-provider-limits-refresh]))))
+             (when-let [c (or (authenticated-provider-config)
+                              (when-not (:dialog-open? @state/app-db)
+                                (with-dialog-lock
+                                  #(if (vis/first-run?)
+                                     (provider/show-welcome! screen)
+                                     (provider/show-provider-dialog! screen
+                                                                     (:config @state/app-db))))))]
+               (state/dispatch [:set-config c])
+               (state/dispatch [:force-provider-limits-refresh])))
            ;; Init session: resume if --session-id given, else fresh. The --session-id case was
            ;; already validated above (before Lanterna started), so here we only need the
            ;; pre-resolved value.
@@ -4573,7 +4574,7 @@
                                  (make-startup (:config @state/app-db)))
                              (throw e))))))]
 
-               (vswap! title-listeners assoc (str id) (init-visible-session! startup-session))
+               (vswap! session-live-listeners assoc (str id) (init-visible-session! startup-session))
                ;; Record this place's tab set (just the single startup tab)
                ;; — otherwise a session never persists and a plain relaunch
                ;; wouldn't restore it. Also self-heals a stale multi-tab
@@ -4732,11 +4733,26 @@
               ;; turn streaming in another tab keeps running. Each open
               ;; session keeps its own title listener (so background
               ;; auto-titles land live); prewarm re-binds to the front tab.
-              ensure-title-listener!
+              ensure-session-live!
               (fn [id]
                 (let [sid (str id)]
-                  (when-not (get @title-listeners sid)
-                    (vswap! title-listeners assoc sid (subscribe-title-listener! id)))))
+                  (when-not (get @session-live-listeners sid)
+                    (vswap! session-live-listeners assoc sid (subscribe-session-live! id)))))
+              ;; Pre-allocate NAME-ONLY member tabs AND wire each one's PERSISTENT
+              ;; event subscription up front. A pending tab that is never focused
+              ;; this session otherwise has NO subscription until first focus
+              ;; (hydrate-pending-tab! -> open-session-tab! -> ensure-session-live!),
+              ;; so a turn started from a SIBLING (the app / another TUI) on that
+              ;; session never reaches its idle tab ("not subscribed, turn not live").
+              ;; ensure-session-live! is idempotent and the mux shares one socket,
+              ;; so subscribing every launch-project member here is cheap.
+              preallocate-project-tabs!
+              (fn [specs]
+                (when (seq specs)
+                  (state/dispatch [:preallocate-project-tabs specs])
+                  (doseq [{:keys [session-id]} specs]
+                    (when session-id (ensure-session-live! session-id)))))
+
               open-session-tab!
               (fn [{:keys [id history] :as session-result} notify?]
                 (when (and id session-result)
@@ -4750,7 +4766,7 @@
                   ;; persisted yet would otherwise blank the tab).
                   (when-let [title (session-db-title id)]
                     (state/dispatch [:set-title title]))
-                  (ensure-title-listener! id)
+                  (ensure-session-live! id)
                   ;; Attach + stream a turn already IN FLIGHT for this session so its
                   ;; tab shows live progress instead of frozen history.
                   (state/dispatch [:attach-running-turn (state/tab-id-for-session @state/app-db id)
@@ -4815,7 +4831,7 @@
                         "tui-new-session-bind"
                         (fn []
                           (try (let [{:keys [id history]} @fut]
-                                 (ensure-title-listener! id)
+                                 (ensure-session-live! id)
                                  (state/dispatch [:bind-built-session build-id {:id id} history
                                                   (session-workspace id)])
                                  (persist-tabs!)
@@ -4832,7 +4848,7 @@
                   (when-let [id (current-session-id)]
                     (when-let [title (session-db-title id)]
                       (state/dispatch [:set-title title]))
-                    (ensure-title-listener! id)
+                    (ensure-session-live! id)
                     (warm-session-render! {:id id :history (:messages db)})))
                 (persist-tabs!)
                 (when notify?
@@ -5287,7 +5303,7 @@
                                                     :label (when-not (str/blank? title) title)
                                                     :root root}))))]
 
-                             (when (seq specs) (state/dispatch [:preallocate-project-tabs specs])))
+                             (when (seq specs) (preallocate-project-tabs! specs)))
                            (catch Throwable _ nil))))))
               ;; C-x w — switch the ACTIVE project (its tab set). Pick a
               ;; project, re-point `active-project-id*`, and open that
@@ -5375,7 +5391,7 @@
                             ;; transcript fetch, no focus move; each hydrates
                             ;; lazily on first focus (hydrate-pending-tab!).
                             ;; Open member tabs are deduped, never duplicated.
-                            (when (seq specs) (state/dispatch [:preallocate-project-tabs specs]))
+                            (preallocate-project-tabs! specs)
                             ;; A project with NO members gets one fresh session
                             ;; so the strip never empties (and only then — a
                             ;; project WITH members must not gain a stray
@@ -5389,7 +5405,7 @@
                             ;; tabs still filled the strip get a second pass
                             ;; now that they are closed (idempotent — open
                             ;; sessions are deduped).
-                            (when (seq specs) (state/dispatch [:preallocate-project-tabs specs]))
+                            (preallocate-project-tabs! specs)
                             (persist-tabs!))))))))]
 
              ;; --resume opens the session picker at startup, like `pi -r`.
@@ -6876,8 +6892,8 @@
                          :switch-project
                          (do (switch-project!) (recur))
 
-                         ;; C-x o: opens Models (providers + settings hub; also
-                         ;; reachable via the C-x p palette → "Models").
+                         ;; C-x o: opens Providers; also reachable via the
+                         ;; C-x p palette → "Providers".
                          :providers
                          (do (when-not (:dialog-open? @state/app-db)
                                (when-let
@@ -7065,7 +7081,7 @@
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (when-let [t @workspace-refresh-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
-             (doseq [[_ cleanup] @title-listeners]
+             (doseq [[_ cleanup] @session-live-listeners]
                (try (cleanup) (catch Throwable _ nil)))
              (doseq [session (workspace-sessions)]
                (chat/dispose! session))

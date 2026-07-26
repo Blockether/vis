@@ -30,9 +30,7 @@
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
                  (expect (= :open-drafts (keymap/prefix-action-for \d)))
                  (expect (nil? (keymap/prefix-action-for \e)))
-                 ;; "choose model" is palette-only now; C-x c stays free so it
-                 ;; can't collide with the quit reflex C-c (see below).
-                 (expect (nil? (keymap/prefix-action-for \c)))
+                 (expect (= :pick-model (keymap/prefix-action-for \c)))
                  (expect (= :show-sessions (keymap/prefix-action-for \s)))
                  (expect (= :fork-session (keymap/prefix-action-for \y)))
                  (expect (= :open-resources (keymap/prefix-action-for \b)))
@@ -55,10 +53,10 @@
                  (doseq [c emacs-letters]
                    (expect (nil? (keymap/action-for c))))
                  (expect (nil? (keymap/action-for nil))))
-             (it "providers opens Models via C-x o; new-session is C-x n"
+             (it "providers opens Providers via C-x o; model picker is C-x c"
                  (expect (= "C-x o" (keymap/label-for :providers)))
-                 (expect (= :new-session (keymap/prefix-action-for \n)))
-                 (expect (= "C-x n" (keymap/label-for :new-session))))
+                 (expect (= :pick-model (keymap/prefix-action-for \c)))
+                 (expect (= "C-x c" (keymap/label-for :pick-model))))
              (it "label-for renders EVERY prefix verb in the uniform plain C-x <key> form"
                  ;; PLAIN second key (not C-x C-<key>): Ctrl+S is tty flow-control and
                  ;; Ctrl+M is Enter, so a Ctrl'd second key is unusable for some letters.
@@ -71,14 +69,13 @@
                  (expect (= "C-x d" (keymap/label-for :open-drafts)))
                  (expect (= "C-x b" (keymap/label-for :open-resources)))
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
+                 (expect (= "C-x c" (keymap/label-for :pick-model)))
                  (expect (nil? (keymap/label-for :no-such-action))))
-             (it "label-or-palette always returns a working chord (prefix or the palette)"
+             (it "label-or-palette returns the registered C-x chord"
                  (expect (= "C-x b" (keymap/label-or-palette :open-resources)))
-                 ;; search / voice now have their own chord, so they return that, not the palette.
                  (expect (= "C-x f" (keymap/label-or-palette :search-open)))
                  (expect (= "C-x v" (keymap/label-or-palette :toggle-voice-recording)))
-                 ;; A genuinely palette-only verb still falls back to the palette chord.
-                 (expect (= keymap/palette-chord (keymap/label-or-palette :pick-model))))
+                 (expect (= "C-x c" (keymap/label-or-palette :pick-model))))
              (it "bindings is empty, so nothing collides with an emacs editing key"
                  (expect (empty? keymap/bindings))
                  (let
@@ -94,14 +91,11 @@
              ;; keymap.clj is the ONE registry for vis-side chords (editing keys are the
              ;; sole exception — they live in lanterna's TextEditKeymap). Lock the
              ;; structural keys so nothing drifts into a clash.
-             (it "help moved into the C-x prefix (C-x h); C-c/C-g stay out of the prefix"
-                 ;; help is no longer a standalone const — it's the C-x h prefix command.
+             (it "help and model picking live in the C-x prefix; C-g remains the direct abort"
                  (expect (= :toggle-help (keymap/prefix-action-for \h)))
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
-                 ;; quit (C-c) and abort (C-g) are always-direct terminal reflexes, never a
-                 ;; second key behind C-x. (Recenter C-l intentionally shares its letter with
-                 ;; C-x C-l length — different keyspaces, like the picker-reorder reuse.)
-                 (expect (nil? (keymap/prefix-action-for keymap/quit-key)))
+                 ;; The plain `c` after C-x is distinct from the direct Ctrl+C quit chord.
+                 (expect (= :pick-model (keymap/prefix-action-for keymap/quit-key)))
                  (expect (= :open-magit (keymap/prefix-action-for keymap/abort-key))))
              (it "every C-x prefix key is distinct, including the palette's second key"
                  (let [keys (mapv :key keymap/prefix-commands)]

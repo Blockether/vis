@@ -150,7 +150,7 @@
 (defn no-search-roots
   "Canonical CLONE paths of bound filesystem roots flagged `search: false` in
    the workspace catalog. `resolve-search-roots` prunes these from the DEFAULT
-   rg/find_files sweep; explicit paths still reach them."
+   grep sweep; explicit paths still reach them."
   []
   (into #{}
         (keep (fn [e]
@@ -902,7 +902,7 @@
 (defn change-root!
   "Repoint `session-state-id`'s PRIMARY filesystem root to `path` — the
    session now works in a different project directory: shell cwd, relative
-   path resolution, file tools (cat/patch/write), and search (rg/find_files)
+   path resolution, file tools (cat/patch/write), and search (grep)
    all follow from the next turn, because they resolve through the session's
    pinned workspace. Additional filesystem roots CARRY OVER (they are
    session-scoped permissions, not root-relative); an entry equal to the new

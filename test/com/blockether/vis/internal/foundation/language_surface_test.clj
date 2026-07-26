@@ -62,7 +62,7 @@
 
         (expect (= 1 @parked))
         (expect (= {"ns" "x"} (get-in r [:result :arg])))))
-  (it "passes clj_repl-shaped repl_start op and opts to language handlers"
+  (it "passes clj_repl-shaped repl op and opts to language handlers"
       (let
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
@@ -76,7 +76,7 @@
                    (:result (language-surface/start-repl env {"op" "restart" "dir" "ext"}))))
         (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
   (it "advertises explicit lifecycle op and no repl_eval auto-start"
-      (expect (= ["start" "restart" "connect"]
+      (expect (= ["start" "restart" "connect" "stop" "status"]
                  (get-in language-surface/start-repl-symbol
                          [:ext.symbol/schema :properties "op" :enum])))
       (let
@@ -88,7 +88,7 @@
 
         (expect (str/includes? start "[language][dir]"))
         (expect (str/includes? start "absent/down/failed"))
-        (expect (str/includes? start "after verified work"))
+        (expect (str/includes? start "op` \"stop\" stops a managed REPL"))
         (expect (str/includes? stop "managed REPL you started"))
         (expect (str/includes? stop "never killed")))
       (expect (not (str/includes? (get-in language-surface/repl-eval-symbol
@@ -110,7 +110,7 @@
 
         (expect (= {:value "3"} (:result (language-surface/repl-eval env "clojure" "(+ 1 2)"))))
         (expect (= "(+ 1 2)" @seen))))
-  (it "passes language-first repl_start id and opts to language handlers"
+  (it "passes language-first repl id and opts to language handlers"
       (let
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
@@ -219,30 +219,30 @@
         (expect (= :language-surface/ambiguous-language
                    (error-type #(language-surface/repl-eval env {"code" "1"})))))))
 
-(defdescribe
-  capability-matrix-test
-  (it "renders the facade verbs per ACTIVE language pack"
-      (let
-        [env
-         {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
-                                                           :format-fn identity
-                                                           :test-fn identity
-                                                           :repl-eval-fn identity
-                                                           :start-repl-fn identity}
-                                                          {:language "python"
-                                                           :repl-eval-fn identity
-                                                           :start-repl-fn identity}]}])}
+(defdescribe capability-matrix-test
+             (it "renders the facade verbs per ACTIVE language pack"
+                 (let
+                   [env
+                    {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
+                                                                      :format-fn identity
+                                                                      :test-fn identity
+                                                                      :repl-eval-fn identity
+                                                                      :start-repl-fn identity}
+                                                                     {:language "python"
+                                                                      :repl-eval-fn identity
+                                                                      :start-repl-fn identity}]}])}
 
-         m
-         (language-surface/capability-matrix env)]
+                    m
+                    (language-surface/capability-matrix env)]
 
-        (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl_start"))
-        (expect (str/includes? m "python : repl_eval · repl_start"))
-        (expect (str/includes? m "clojure reload after disk edits"))
-        (expect (not (str/includes? m "session[\"resources\"]")))
-        (expect (not (str/includes? m "Keep managed REPLs alive")))))
-  (it "is nil when no language pack is active (nothing dead in the prompt)"
-      (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))
+                   (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl"))
+                   (expect (str/includes? m "python : repl_eval · repl"))
+                   (expect (str/includes? m "clojure reload after disk edits"))
+                   (expect (not (str/includes? m "session[\"resources\"]")))
+                   (expect (not (str/includes? m "Keep managed REPLs alive")))))
+             (it "is nil when no language pack is active (nothing dead in the prompt)"
+                 (expect (nil? (language-surface/capability-matrix {:active-extensions (atom
+                                                                                         [{}])})))))
 
 (defdescribe
   render-test-result-test

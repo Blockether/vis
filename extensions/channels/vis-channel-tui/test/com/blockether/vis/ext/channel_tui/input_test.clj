@@ -427,6 +427,20 @@
                      (expect (.isAltDown key))
                      (expect (not (.isCtrlDown key)))))))
 
+(defdescribe tty-control-mode-test
+             (it "disables XOFF while active and restores IXON on teardown"
+                 (let
+                   [calls
+                    (atom [])
+
+                    stty-var
+                    (ns-resolve 'com.blockether.vis.ext.channel-tui.input 'stty!)]
+
+                   (with-redefs-fn {stty-var #(swap! calls conj %)}
+                     #(do (input/disable-software-flow-control!)
+                          (input/restore-software-flow-control!)))
+                   (expect (= ["-ixon" "ixon"] @calls)))))
+
 (defdescribe bracketed-paste-helpers-test
              (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"
                  (expect (input/paste-start? (char-key (Character. input/PASTE_START_CHAR))))

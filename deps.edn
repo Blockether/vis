@@ -133,6 +133,12 @@
   com.cnuernber/charred {:mvn/version "1.041"}
   org.flatland/ordered {:mvn/version "1.15.12"}
   org.yamlstar/yamlstar {:mvn/version "0.1.15"}
+  ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
+  com.taoensso/nippy {:mvn/version "3.7.0-RC3"}
+  ;; Latest published Vectorz pair; compatibility registration is deferred until
+  ;; the first Nippy encode/decode call.
+  net.mikera/core.matrix {:mvn/version "0.63.0"}
+  net.mikera/vectorz-clj {:mvn/version "0.48.0"}
   ring/ring-core {:mvn/version "1.15.5"}
   ring/ring-jetty-adapter {:mvn/version "1.15.5"}
   metosin/reitit-ring {:mvn/version "0.10.1"}

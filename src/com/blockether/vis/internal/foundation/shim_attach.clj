@@ -135,6 +135,19 @@
                      {})))
           (throw (ex-info (str "vis_read_attachment: no active attachment reader — call it "
                                "inside a python_execution block")
+                          {})))))
+   "__vis_reinspect_attachment__"
+   (fn [id detail]
+     (attach-envelope
+       #(if-let [r mpl-capture/*attachment-reader*]
+          (if-let [a ((:reinspect r) (str id) (str (or detail "auto")))]
+            [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
+            (throw (ex-info (str "vis_reinspect_attachment: no image attachment with id "
+                                 id
+                                 " in this session")
+                            {})))
+          (throw (ex-info (str "vis_reinspect_attachment: no active attachment reader — call it "
+                               "inside a python_execution block")
                           {})))))})
 
 (def ^:private attach-shim-src
@@ -261,7 +274,20 @@ def __vis_install_attach__():
             raise RuntimeError('vis_attachments: ' + str(env[1]))
         import json as _json
         rows = _json.loads(env[1])
+
         return [{str(k).replace('-', '_'): v for k, v in r.items()} for r in rows]
+
+    def vis_reinspect_attachment(attachment_id, detail='auto'):
+        if detail not in ('auto', 'low', 'high'):
+            raise ValueError('detail must be auto, low, or high')
+        reinsp = globals().get('__vis_reinspect_attachment__')
+        if reinsp is None:
+            raise RuntimeError('vis_reinspect_attachment: reader bridge not bound in this sandbox')
+        env = reinsp(str(attachment_id), detail)
+        if not env[0]:
+            raise RuntimeError('vis_reinspect_attachment: ' + str(env[1]))
+        row = env[1]
+        return {'id': row[0], 'filename': row[1], 'media_type': row[2], 'size': row[3]}
 
     def vis_read_attachment(attachment_id):
         rd = globals().get('__vis_read_attachment__')
@@ -299,6 +325,7 @@ def __vis_install_attach__():
     g['vis_attach_bytes'] = vis_attach_bytes
     g['vis_attachments'] = vis_attachments
     g['vis_read_attachment'] = vis_read_attachment
+    g['vis_reinspect_attachment'] = vis_reinspect_attachment
     g['__vis_guess_media_type'] = __vis_guess_media_type
     g['__vis_kind_for'] = __vis_kind_for
 
@@ -311,6 +338,12 @@ def __vis_install_attach__():
     docs['vis_attach_bytes'] = (
         'vis_attach_bytes(data, filename, kind=None, media_type=None): persist '
         'in-memory bytes/str as a durable DB iteration attachment.'
+    )
+    docs['vis_reinspect_attachment'] = (
+        'vis_reinspect_attachment(id, detail=auto): queue a persisted image from this '
+        'session for exactly the NEXT provider request, then return it to stored-only state. '
+        'Use this when pixels from an earlier user upload or tool artifact need another look. '
+        'detail is auto, low, or high. Non-image and unknown ids raise RuntimeError.'
     )
     docs['vis_attachments'] = (
         'vis_attachments(): list artifacts already persisted in THIS session '

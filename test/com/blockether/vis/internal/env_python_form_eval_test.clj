@@ -331,8 +331,8 @@ await patch({'path': css})" "t1/i1")]
                    (expect (empty? (set/intersection facade banned)))))
              (it "pins the facade verb name set"
                  (let [facade (set (map (comp str :ext.symbol/symbol) language-surface/symbols))]
-                   (expect (= #{"format_code" "lint_code" "run_tests" "repl_eval" "repl_start"
-                                "repl_stop" "repl_connect"}
+                   (expect (= #{"format_code" "lint_code" "run_tests" "repl_eval" "repl" "repl_stop"
+                                "repl_connect"}
                               facade)))))
 
 (defdescribe
@@ -997,3 +997,67 @@ await patch({'path': css})" "t1/i1")]
         (expect (= :vis/host-null-tool-fault (get-in err [:data :type])))
         (expect (str/includes? (str (get-in err [:data :npe-message])) "is null"))
         (expect (str/includes? (:message err) "internal tool fault")))))
+
+(defdescribe
+  await-host-null-pyify-test
+  ;; REGRESSION: the async drive loop (`__vis_drive__`) used to send the RAW
+  ;; result of an awaited tool back into the coroutine, while the direct
+  ;; `__vis_settle__` path pyified it. So `x = await tool()` bound a foreign
+  ;; proxy - and for a tool returning nil, a host NULL - and the next interop
+  ;; touch died with Truffle's "Null receiver values are not supported by
+  ;; libraries" instead of a normal python error.
+  (it "binds an awaited nil result as real python None and a map result as a real dict"
+      (let
+        [pc
+         (ep/create-python-context {'nil_tool (fn nil-tool [& _]
+                                                nil)
+                                    'map_tool (fn map-tool [& _]
+                                                {"op" "probe" "stdout" "hi" "stderr" nil})})
+
+         res
+         (ep/run-python-block (:python-context pc)
+                              (str
+                                "async def f():\n"
+                                "    a = await map_tool()\n" "    n = await nil_tool()\n"
+                                "    return [isinstance(a, dict), a['stdout'], a['stderr'] is None,"
+                                " n is None, type(n).__name__]\n"
+                                "r = await f()\n" "r"))]
+
+        (expect (nil? (:error res)))
+        (expect (= [true "hi" true true "NoneType"] (:result res)))))
+  (it "a null field of an awaited result raises a NORMAL python TypeError, not a host NPE"
+      (let
+        [pc
+         (ep/create-python-context {'map_tool (fn map-tool [& _]
+                                                {"op" "probe" "stderr" nil})})
+
+         err
+         (:error (ep/run-python-block (:python-context pc)
+                                      "a = await map_tool()\na['stderr'][:5]"))]
+
+        (expect (str/includes? (:message err) "NoneType"))
+        (expect (not (str/includes? (:message err) "NullPointerException")))
+        (expect (not (str/includes? (:message err) "Null receiver"))))))
+
+(defdescribe truffle-null-receiver-hint-test
+             ;; Truffle's INTERNAL null-receiver NPE is NOT reported as a host exception, so
+             ;; the `host?`-gated hint never fired and the model got a bare Java line. The
+             ;; message alone must be enough to tag it. (A guest raise carrying that text
+             ;; stands in for the internal error, which cannot be provoked on demand.)
+             (it "tags a null-receiver NPE :host-null? even when it is not a host exception"
+                 (let
+                   [^org.graalvm.polyglot.Context c
+                    @py-ctx
+
+                    code
+                    (str "raise RuntimeError('java.lang.NullPointerException: "
+                         "Null receiver values are not supported by libraries.')")
+
+                    pe
+                    (try (.eval c "python" code) nil (catch PolyglotException e e))
+
+                    err
+                    (ep/map-polyglot-error c pe code)]
+
+                   (expect (true? (get-in err [:data :host-null?])))
+                   (expect (str/includes? (:message err) "INTERNAL engine/tool fault")))))

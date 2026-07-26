@@ -57,17 +57,28 @@
   DEFAULT_EVAL_TIMEOUT_MS)
 
 (def ASK_CODE_TTFT_TIMEOUT_MS
-  "Default time-to-first-token timeout for Vis `svar/ask-code!` calls.
-   60s avoids false positives from Codex queue/cold-start spikes while
-   still bounding truly stuck pre-header connections. A separate retry
-   handles the one-off watchdog interrupt case."
-  (* 60 1000))
+  "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
+
+   300s = CODEX PARITY. The Codex CLI has NO separate first-token budget:
+   its single `stream_idle_timeout_ms` (default
+   `DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000`) governs the wait for the
+   FIRST event exactly like every later gap. Vis splits the watchdog into
+   ttft/idle/semantic phases, so each phase gets that same budget — a
+   shorter one only means Vis hangs up first on a queued, cold-starting or
+   long-reasoning provider, and a stricter pre-header window buys nothing:
+   a genuinely dead connection still fails on its own transport error."
+  300000)
 
 (def ASK_CODE_IDLE_TIMEOUT_MS
-  "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls.
-   3min gives slow reasoning streams room while avoiding long hangs when
-   provider stops sending bytes entirely."
-  (* 3 60 1000))
+  "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls (ms).
+
+   Fires when the transport itself goes silent — not one byte, not even an
+   SSE keepalive comment. 300s = CODEX PARITY with
+   `DEFAULT_STREAM_IDLE_TIMEOUT_MS`; see `ASK_CODE_SEMANTIC_TIMEOUT_MS` for
+   why nothing shorter is safe against the OpenAI Responses wire. All three
+   stream watchdogs now share ONE budget, so no phase can hang up early on
+   a model that is still working."
+  300000)
 
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
   "Default model/progress timeout for Vis `svar/ask-code!` streams (ms).
@@ -79,15 +90,21 @@
    `message.*` events ever arrive. Without this watchdog the iteration
    loop blocks on `.readLine` until the model finally streams output.
 
-   185s (185000 ms) matches Anthropic's documented worst case for
-   legitimate extended thinking on Opus 4.5
-   (anthropics/claude-agent-sdk-typescript#44): a genuinely deep
-   pre-token reasoning phase stays under the budget, while a
-   stuck/keepalive-only provider still surfaces a real error in ~3min
-   instead of stalling the turn indefinitely.
+   300s (300000 ms) is CODEX PARITY: the OpenAI Codex CLI runs exactly
+   one stream watchdog, `stream_idle_timeout_ms`, whose built-in default
+   is `DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000` — nothing shorter is
+   safe against the OpenAI Responses wire, where a gpt-5.x turn with
+   encrypted reasoning and no summary deltas legitimately emits NOTHING
+   for minutes between `response.*` events. It also clears Anthropic's
+   documented worst case for extended thinking on Opus 4.5
+   (anthropics/claude-agent-sdk-typescript#44).
+
+   A shorter budget (this was 185s) does not surface a real provider
+   fault — it HANGS UP on a model that is still thinking, and the turn
+   dies mid-reasoning.
 
    Disable per call with `:semantic-timeout-ms nil`."
-  185000)
+  300000)
 
 
 (defn with-default-ask-code-idle-timeout

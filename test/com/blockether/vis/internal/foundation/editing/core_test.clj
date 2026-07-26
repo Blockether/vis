@@ -78,15 +78,15 @@
        (set (map :name tools))
 
        find-files-tool
-       (first (filter #(= "find_files" (:name %)) tools))
+       (first (filter #(= "grep" (:name %)) tools))
 
        include-schema
        (get-in find-files-tool [:schema :properties "include"])]
 
-      (expect (<= 8 (count ents)))                          ;; cat ls find_files patch move delete file_exists
+      (expect (<= 8 (count ents)))          ;; cat ls grep patch move delete file_exists
       (expect (contains? names "cat"))
-      (expect (not (contains? names "rg")))                 ;; rg folded into find_files
-      (expect (contains? names "fs"))                      ;; fs merges copy/move/delete/create_dirs/file_exists
+      (expect (not (contains? names "rg"))) ;; rg folded into grep
+      (expect (contains? names "fs")) ;; fs merges copy/move/delete/create_dirs/file_exists
       (expect (not (contains? names "file_exists")))        ;; file-exists demoted to a sandbox verb
       (expect (every? (comp map? :ext.symbol/schema) ents)) ;; schema tight on the symbol
       (expect (every? :schema tools))                       ;; and surfaced
@@ -105,9 +105,9 @@
        (extension/native-tool-renderers-by-op [ext])]
 
       (expect (fn? (:render (get by-op "cat"))))
-      (expect (fn? (:render (get by-op "rg"))))
+      (expect (fn? (:render (get by-op "grep"))))
       (expect (contains? by-op "file_exists")) ;; file-exists → "file_exists"
-      (expect (= :tool-color/search (:color-role (get by-op "rg")))))))
+      (expect (= :tool-color/search (:color-role (get by-op "grep")))))))
 
 (defdescribe
   rg-simplified-api-test
@@ -388,7 +388,7 @@
     ;; collapsed to observation/mutation values; ops not in the
     ;; registration table fail closed instead of defaulting to observation.
     (doseq
-      [[op tag] [[:cat :observation] [:z/locators :observation] [:find_files :observation]
+      [[op tag] [[:cat :observation] [:z/locators :observation] [:grep :observation]
                  [:patch :mutation] [:create-dirs :mutation] [:delete :mutation] [:move :mutation]]]
       (expect (= tag (extension/op-tag op)))
       (expect (= {:tag tag} (extension/op-presentation op))))
@@ -515,7 +515,7 @@
     ;; rg the same way it applies to ls.
     (let
       [before
-       (:ext.symbol/before-fn (private-fn "find-symbol"))
+       (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
        out
        (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
@@ -529,7 +529,7 @@
       ;; must apply so model can call `(rg {:any ["x"]})` without paths.
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "find-symbol"))
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
          out
          (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
@@ -555,7 +555,7 @@
       ;; honored — we don't want the bypass to be a back door.
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "find-symbol"))
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
          out
          (before (protected-env [{:glob "." :access :none :hint "cwd is sealed."}])
@@ -1591,14 +1591,13 @@
        (private-fn "rg-search")
 
        find-tool
-       (private-fn "find-tool")
+       (private-fn "grep-tool")
 
        rg
-       ;; find_files now folds the content grep in; flatten its :content block up
-       ;; so these content-shape assertions read the same top-level keys rg-tool did.
+       ;; grep returns ONE flat result — content hits already sit at the top
+       ;; level next to the ranked name matches, so no unwrapping is needed.
        (fn [& a]
-         (let [e (apply find-tool a)]
-           (update e :result #(merge % (get % "content")))))
+         (apply find-tool a))
 
        ;; rg-tool groups grep's flat :hits into :matches — an ordered
        ;; {path -> {anchor -> text}} map (LinkedHashMap) on the
@@ -1612,10 +1611,13 @@
        grep-hits
        (:hits (grep spec))]
 
-      (expect (= :find_files (:symbol rg-env)))
+      (expect (= :grep (:symbol rg-env)))
       (expect (instance? java.util.Map (get rg-result "matches")))
       (expect (= (count grep-hits) (get rg-result "hit_count")))
       (expect (= (count (distinct (map :path grep-hits))) (get rg-result "file_count")))
+      ;; Rich score/frecency rows stay inside name-search assembly instead of
+      ;; duplicating each ranked path in the public model payload.
+      (expect (not (contains? rg-result "items")))
       ;; NO `"spec"` echo in the model-facing payload: echoing the input map
       ;; back taught models a phantom "spec" INPUT key (`rg({..., "spec": {}})`).
       (expect (not (contains? rg-result "spec")))))
@@ -1626,12 +1628,11 @@
        (private-fn "rg-search")
 
        find-tool
-       (private-fn "find-tool")
+       (private-fn "grep-tool")
 
        rg
        (fn [& a]
-         (let [e (apply find-tool a)]
-           (update e :result #(merge % (get % "content")))))]
+         (apply find-tool a))]
 
       ;; The private ENGINE (`rg-search`) still takes ONE spec map — a bare
       ;; positional string is not a map, so it throws :invalid-rg-spec.
@@ -1645,7 +1646,7 @@
          env
          (rg "needle" {"paths" [(temp-dir-path "rgposopts")] "include" ["*.clj"]})]
 
-        (expect (= :find_files (:symbol env)))
+        (expect (= :grep (:symbol env)))
         (expect (= 1 (get (:result env) "hit_count"))))
       ;; UNKNOWN keys are now IGNORED, not fatal — a model that tosses in a stray
       ;; annotation (e.g. `all_note: "defs"`, or an invented `type`/`spec`) still
@@ -2820,33 +2821,77 @@
                      (expect (= #{"path" "from_anchor" "to_anchor" "replace"}
                                 (set (keys fields))))))))
 
-(defdescribe editing-native-schema-shape-test
-             (it "find_files' query is a scalar-or-list contract (name + content OR)"
-                 (let [query (get-in editing/find-symbol [:ext.symbol/schema :properties "query"])]
-                   (expect (= #{"string" "array"} (set (map :type (:oneOf query)))))))
-             (it "advertises directory-only paths and no context-lines argument"
-                 (let
-                   [properties
-                    (get-in editing/find-symbol [:ext.symbol/schema :properties])
+(defdescribe
+  editing-native-schema-shape-test
+  (it "grep advertises content-list OR, filename semantics, and empty-query listing"
+      (let
+        [description
+         (:ext.symbol/description editing/grep-symbol)
 
-                    paths
-                    (get properties "paths")]
+         query
+         (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
 
-                   (expect (contains? properties "paths"))
-                   (expect (string/includes? (:description paths) "Directory scopes only"))
-                   (expect (not (contains? properties "context")))))
-             (it "rejects ambiguous cat selectors at the native boundary"
-                 (let [schema (:ext.symbol/schema editing/cat-symbol)]
-                   (expect (= 2 (:maxProperties schema)))
-                   (expect (= 2 (get-in schema [:properties "range" :minItems])))
-                   (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
-             (it "uses one portable patch shape with a path on every edit"
-                 (let [schema (:ext.symbol/schema editing/patch-symbol)]
-                   (expect (= "object" (:type schema)))
-                   (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-                   (expect (= #{"edits"} (set (keys (:properties schema)))))
-                   (expect (= ["path" "from_anchor" "replace"]
-                              (get-in schema [:properties "edits" :items :required]))))))
+         alternatives
+         (into {} (map (juxt :type identity) (:oneOf query)))
+
+         string-schema
+         (get alternatives "string")
+
+         array-schema
+         (get alternatives "array")]
+
+        (expect (= #{"string" "array"} (set (keys alternatives))))
+        (expect (nil? (:minLength string-schema)))
+        (expect (= 1 (get-in array-schema [:items :minLength])))
+        (expect (string/includes? description "`query: \"\"`"))
+        (expect (string/includes? (:description query) "empty string"))
+        (expect (string/includes? (:description query) "frecency/recency"))
+        (expect (string/includes? (:description query) "OR for content search"))
+        (expect (string/includes? (:description query) "joined terms"))))
+  (it "advertises file-scope fallback and non-negative context lines"
+      (let
+        [properties
+         (get-in editing/grep-symbol [:ext.symbol/schema :properties])
+
+         paths
+         (get properties "paths")
+
+         context
+         (get properties "context")]
+
+        (expect (string/includes? (:description paths) "searched first"))
+        (expect (string/includes? (:description paths) "parent on zero content hits"))
+        (expect (string/includes? (:description paths) "nearest existing directory"))
+        (expect (string/includes? (:description paths) "missing_paths"))
+        (expect (string/includes? (:description paths) "exact physical paths"))
+        (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
+                                  "never rebuild from a language namespace"))
+        (expect (= "integer" (:type context)))
+        (expect (= 0 (:minimum context)))))
+  (it "bounds cat's selector-plus-directory-option shape and requires exact discovered paths"
+      (let
+        [schema
+         (:ext.symbol/schema editing/cat-symbol)
+
+         path-description
+         (get-in schema [:properties "path" :description])]
+
+        ;; path + one selector + the two directory flags/depth options.
+        ;; Runtime coercion rejects mutually exclusive selectors.
+        (expect (= 4 (:maxProperties schema)))
+        (expect (string/includes? path-description "Exact physical"))
+        (expect (string/includes? path-description "grep/struct_index unchanged"))
+        (expect (string/includes? (:ext.symbol/description editing/cat-symbol)
+                                  "never reconstruct a path from a language namespace"))
+        (expect (= 2 (get-in schema [:properties "range" :minItems])))
+        (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
+  (it "uses one portable patch shape with a path on every edit"
+      (let [schema (:ext.symbol/schema editing/patch-symbol)]
+        (expect (= "object" (:type schema)))
+        (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
+        (expect (= #{"edits"} (set (keys (:properties schema)))))
+        (expect (= ["path" "from_anchor" "replace"]
+                   (get-in schema [:properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test
@@ -3242,12 +3287,11 @@
   "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
   (let
     [find-tool
-     (private-fn "find-tool")
+     (private-fn "grep-tool")
 
      rg
      (fn [& a]
-       (let [e (apply find-tool a)]
-         (update e :result #(merge % (get % "content")))))]
+       (apply find-tool a))]
 
     (it "a comma query matches EITHER term (the session 71a69809 fix, real files)"
         (let
@@ -3373,14 +3417,26 @@
          other
          (str home "/lib")]
 
-        (with-redefs [workspace/allowed-roots (constantly [primary other vis-home])]
+        (with-redefs
+          [workspace/allowed-roots
+           (constantly [primary other vis-home])
+
+           workspace/no-search-roots
+           (constantly #{vis-home})]
+
           (let [roots (mapv str (:roots (rsr ["."])))]
             ;; ~/.vis pruned from the default sweep …
             (expect (not (some #(clojure.string/starts-with? % vis-home) roots)))
             ;; … while the primary and sibling roots survive, in order
             (expect (= [primary other] roots))))
-        ;; the primary is exempt: cwd == ~/.vis still scans
-        (with-redefs [workspace/allowed-roots (constantly [vis-home primary])]
+        ;; the primary is exempt even when catalogued `search: false`: cwd == ~/.vis still scans.
+        (with-redefs
+          [workspace/allowed-roots
+           (constantly [vis-home primary])
+
+           workspace/no-search-roots
+           (constantly #{vis-home})]
+
           (expect (= [vis-home primary] (mapv str (:roots (rsr ["."]))))))))
     (it
       "a real DRAFT clone under the drafts store (~/.vis/drafts) is KEPT in the default sweep even though it is under ~/.vis — so an in-draft session (its primary + /fs-add clones) stays searchable, while the raw ~/.vis grant is still pruned"
@@ -3401,11 +3457,14 @@
          (str vis-home "/drafts/proj/feature-x-lib")]
 
         (binding [workspace/*drafts-home* (java.io.File. (str vis-home "/drafts"))]
-          (with-redefs [workspace/allowed-roots (constantly [draft-primary draft-clone vis-home])]
+          (with-redefs
+            [workspace/allowed-roots (constantly [draft-primary draft-clone vis-home])
+             workspace/no-search-roots (constantly #{vis-home})]
+
             (let [roots (mapv str (:roots (rsr ["."])))]
-              ;; both draft clones kept (under the drafts store) …
+              ;; both draft clones kept because only the raw catalog root opts out …
               (expect (= [draft-primary draft-clone] roots))
-              ;; … and the raw ~/.vis grant is still gone
+              ;; … and the raw ~/.vis grant is gone.
               (expect (not (some #{vis-home} roots))))))))
     (it
       "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
@@ -3501,9 +3560,13 @@
            f (str (temp-root) "/spac2/m.clj")]
 
           (spit (fs/file f) "(ns t)\n(defn f [] (do 1 2))\n")
-          (let [r (sp {"path" f "op" "append_child" "at" [1] "code" "3"})]
+          (let
+            [r (sp {"path" f "op" "append_child" "at" [1] "code" "3"})
+             src (slurp (fs/file f))]
+
             (expect (:success? r))
-            (expect (clojure.string/includes? (slurp (fs/file f)) "(do 1 2)3")))))
+            ;; `at [1]` locates the defn, so the new child belongs inside it.
+            (expect (clojure.string/includes? src "(defn f [] (do 1 2) 3)")))))
     (it "replace_node with a target but no match = a name-based replace (not an error)"
         (let
           [_ (temp-dir-path "spr")
@@ -3568,6 +3631,7 @@
                      {"path" p
                       "from_anchor" (patch/line-anchor 2 "(defn sub [a b] (- a b))")
                       "replace" "(defn sub [a b] (- a b)"}])]
+
           ;; edit 1 — drops a paren
           (expect (false? (:success? r)))
           (expect (= :syntax-error (:reason (first (:failures r)))))
@@ -3630,58 +3694,61 @@
 
 (defdescribe
   find-files-op-name-test
-  "Regression: renaming find→find_files means the result `:op` must stay in lockstep
+  "Regression: renaming find_files→grep means the result `:op` must stay in lockstep
    with the symbol name — `op-tag` keys the observation/mutation registry by the wire
    name, so a mismatch throws `Unregistered extension op :find`."
-  (it "the find_files symbol IS named find_files"
-      (expect (= 'find_files (:ext.symbol/symbol editing/find-symbol))))
-  (it "find_files carries an observation tag (registry-resolvable)"
-      (expect (= :observation (:ext.symbol/tag editing/find-symbol)))))
+  (it "the grep symbol IS named grep" (expect (= 'grep (:ext.symbol/symbol editing/grep-symbol))))
+  (it "grep carries an observation tag (registry-resolvable)"
+      (expect (= :observation (:ext.symbol/tag editing/grep-symbol)))))
 
-(defdescribe
-  empty-search-paths-default-test
-  "find_files scopes are directories; empty scope still means the workspace root."
-  (let
-    [coerce-find
-     (private-fn "coerce-find-spec")
+(defdescribe empty-search-paths-default-test
+             "grep scopes are directories; empty scope still means the workspace root."
+             (let
+               [coerce-find
+                (private-fn "coerce-find-spec")
 
-     coerce-rg
-     (private-fn "coerce-rg-spec")
+                coerce-rg
+                (private-fn "coerce-rg-spec")
 
-     find-paths
-     (private-fn "find-arg-paths")]
+                find-paths
+                (private-fn "find-arg-paths")]
 
-    (it "find_files defaults empty paths to current directory in validation and path protection"
-        (let [spec {"query" "resource-config" "paths" []}]
-          (expect (= ["."] (:paths (coerce-find [spec]))))
-          (expect (= ["."] (find-paths [spec])))))
-    (it "normalizes an existing filename scope to its parent directory everywhere"
-        (let
-          [dir
-           (temp-dir-path "find-dir-scope")
+               (it
+                 "grep defaults empty paths to current directory in validation and path protection"
+                 (let [spec {"query" "resource-config" "paths" []}]
+                   (expect (= ["."] (:paths (coerce-find [spec]))))
+                   (expect (= ["."] (find-paths [spec])))))
+               (it "normalizes an existing filename scope to its parent directory everywhere"
+                   (let
+                     [dir
+                      (temp-dir-path "find-dir-scope")
 
-           file
-           (str dir "/one.clj")
+                      file
+                      (str dir "/one.clj")
 
-           expected
-           ((private-fn "rel-path") (fs/file dir))
+                      expected
+                      ((private-fn "rel-path") (fs/file dir))
 
-           spec
-           {"query" "needle" "paths" [file]}]
+                      spec
+                      {"query" "needle" "paths" [file]}]
 
-          (spit (fs/file file) "needle\n")
-          (expect (= [expected] (:paths (coerce-find [spec]))))
-          (expect (= [expected] (find-paths [spec])))))
-    (it "rejects the removed context-lines option"
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(coerce-find [{"query" "needle" "context" 2}]))))
-    (it "rg keeps its own empty-path and file-path semantics"
-        (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
-          (expect (= ["."] (:paths (coerce-rg spec))))))))
+                     (spit (fs/file file) "needle\n")
+                     (expect (= [expected] (:paths (coerce-find [spec]))))
+                     (expect (= [expected] (find-paths [spec])))))
+               (it "accepts context-lines and rejects a negative/non-integer one"
+                   (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
+                   (expect (= 0 (:context (coerce-find [{"query" "needle"}]))))
+                   (expect (throws? clojure.lang.ExceptionInfo
+                                    #(coerce-find [{"query" "needle" "context" -1}])))
+                   (expect (throws? clojure.lang.ExceptionInfo
+                                    #(coerce-find [{"query" "needle" "context" {"before" 1}}]))))
+               (it "rg keeps its own empty-path and file-path semantics"
+                   (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
+                     (expect (= ["."] (:paths (coerce-rg spec))))))))
 
 (defdescribe
   find-files-directory-scope-test
-  (let [find-files (private-fn "find-tool")]
+  (let [find-files (private-fn "grep-tool")]
     (it "widens a filename scope to its parent and returns matching lines without context"
         (let
           [dir (temp-dir-path "find-file-parent")
@@ -3692,12 +3759,145 @@
            result (:result (find-files {"query" "sibling-only-needle" "paths" [scoped-file]}))
            expected-dir ((private-fn "rel-path") (fs/file dir))
            expected-file ((private-fn "rel-path") (fs/file sibling-file))
-           hit (first (vals (get-in result ["content" "matches" expected-file])))]
+           hit (first (vals (get-in result ["matches" expected-file])))]
 
           (expect (= [expected-dir] (get result "searched_paths")))
+          ;; Content hits remain authoritative; fuzzy filename noise is omitted.
+          (expect (= [] (get result "paths")))
           (expect (= "sibling-only-needle" (get hit "text")))
           (expect (= #{"text"} (set (keys hit))))
-          (expect (not (contains? (get result "content") "context")))))))
+          (expect (not (contains? result "context")))))
+    (it "uses an empty query as grep's ls mode without attempting content search"
+        (let
+          [_ (write-temp! "grep-ls/one.clj" ";; a\n")
+           _ (write-temp! "grep-ls/two.md" "# b\n")
+           _ (write-temp! "grep-ls/sub/three.txt" "c\n")
+           dir (temp-dir-path "grep-ls")
+           result (:result (find-files {"query" "" "paths" [dir] "limit" 10}))
+           names (set (map #(last (string/split % #"/")) (get result "paths")))]
+
+          (expect (= "" (get result "query")))
+          (expect (= #{"one.clj" "two.md" "three.txt"} names))
+          (expect (= 0 (get result "hit_count")))
+          (expect (empty? (get result "matches")))
+          (expect (not (contains? result "items")))
+          (expect (not (contains? result "hint")))))))
+
+(defdescribe
+  grep-searched-paths-reporting-test
+  "`searched_paths` reports every physical root actually searched, not the
+   caller's shorthand `.` that expanded into those roots."
+  (it "expands the default scope into the primary and searchable workspace roots"
+      (let
+        [grep-tool
+         (private-fn "grep-tool")
+
+         rel-path
+         (private-fn "rel-path")
+
+         parent
+         (temp-dir-path "grep-reported-roots")
+
+         primary
+         (str parent "/primary")
+
+         sibling
+         (str parent "/sibling")]
+
+        (doseq [dir [primary sibling]]
+          (fs/create-dirs dir))
+        (spit (fs/file primary "one.txt") "primary\n")
+        (spit (fs/file sibling "two.txt") "sibling\n")
+        (binding [workspace/*workspace-root* (java.io.File. primary)]
+          (with-redefs
+            [workspace/allowed-roots (constantly [primary sibling])
+             workspace/no-search-roots (constantly #{})
+             workspace/filesystem-root-mappings (constantly [])]
+
+            (let
+              [result (:result (grep-tool {"query" ""}))
+               expected (mapv rel-path (map fs/file [primary sibling]))]
+
+              (expect (= expected (get result "searched_paths")))
+              (expect (not= ["."] (get result "searched_paths")))))))))
+
+(defdescribe
+  grep-truncation-and-literal-dialect-test
+  "Two silent dead ends the runaway-loop post-mortems traced back to `grep`:
+   a CAPPED content sweep looked complete (the top-level `truncated_by` is the
+   NAME list's, so it read `end_of_results` while files were dropped), and an
+   rg-style REGEX query returned zero content hits with no word about the
+   dialect — both invite the caller to re-run cosmetic variants forever."
+  (let
+    [content-result
+     (private-fn "content-result")
+
+     find-files
+     (private-fn "grep-tool")]
+
+    (it "a content sweep capped by the hit limit reports hits_truncated_by"
+        (let
+          [out (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
+                                :truncated-by :limit
+                                :total-file-count 42
+                                :total-file-count-exact? true}
+                               ["x"])]
+          (expect (= "limit" (get out "hits_truncated_by")))
+          (expect (= 42 (get out "total_file_count")))))
+    (it "a byte-budget cap is reported too"
+        (expect (= "bytes"
+                   (get (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
+                                         :truncated-by :bytes
+                                         :total-file-count 9
+                                         :total-file-count-exact? true}
+                                        ["x"])
+                        "hits_truncated_by"))))
+    (it "a COMPLETE content sweep carries no hits_truncated_by at all"
+        (expect (not (contains? (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
+                                                 :truncated-by :end-of-results
+                                                 :total-file-count 1
+                                                 :total-file-count-exact? true}
+                                                ["x"])
+                                "hits_truncated_by"))))
+    (it "a regex-looking query that matches no CONTENT says the search is literal"
+        (let
+          [_
+           (write-temp! "grep-regex/needle.clj" "(defn needle [] :ok)\n")
+
+           dir
+           (temp-dir-path "grep-regex")
+
+           result
+           (:result (find-files {"query" "defn-? +needle" "paths" [dir]}))]
+
+          (expect (= 0 (get result "hit_count")))
+          (expect (string/includes? (get result "hint") "LITERAL"))))
+    (it "a plain literal query that matches nothing keeps the ordinary hint"
+        (let
+          [_
+           (write-temp! "grep-plain/needle.clj" "(defn needle [] :ok)\n")
+
+           dir
+           (temp-dir-path "grep-plain")
+
+           result
+           (:result (find-files {"query" "zzz-absent-symbol" "paths" [dir]}))]
+
+          (expect (= 0 (get result "hit_count")))
+          (expect (not (string/includes? (get result "hint") "LITERAL")))))
+    (it "a literal query that DOES match content gets no hint"
+        (let
+          [_
+           (write-temp! "grep-ok/needle.clj" "(defn needle [] :ok)\n")
+
+           dir
+           (temp-dir-path "grep-ok")
+
+           result
+           (:result (find-files {"query" "defn needle" "paths" [dir]}))]
+
+          (expect (pos? (get result "hit_count")))
+          (expect (not (contains? result "hint")))))))
 
 (defdescribe
   rg-stringified-list-coercion-test
@@ -3855,51 +4055,78 @@
           (expect (zero? (get out "item_count")))))))
 
 (defdescribe
-  render-find-single-match-test
-  "A SINGLE find match can still carry a long path, so the summary stays compact
-   and the ranked path rides the body. That body makes `result-card` collapsible,
-   letting the TUI/Web hide long single-result FIND_FILES output by default.
-   2+ matches (and the 0-match steer) keep their body too."
-  (let [render-find-result (private-fn "render-find-result")]
-    (it "one match: summary stays compact and the path rides the collapsible body"
+  render-grep-card-test
+  "The grep card is HIT-first: content matches are the strength of the tool, so
+   the body carries per-file, line-numbered, needle-highlighted hits (the same
+   line numbers as the `lineno:hash` anchors the model patches with). File-NAME
+   matches ride the body as a path fence — the whole answer when no content
+   matched — and the 0-match steer stays visible. A body is what makes
+   `result-card` collapsible in the TUI/Web."
+  (let [render (private-fn "render-grep-result")]
+    (it "content hits: the headline counts them and the body shows anchored lines"
+        (let
+          [{:keys [summary body]} (render {"query" "needle"
+                                           "needles" ["needle"]
+                                           "paths" []
+                                           "hit_count" 2
+                                           "file_count" 1
+                                           "matches" {"src/a.clj"
+                                                      {"12:abc" {"text" "(def needle 1)"}
+                                                       "7:def" {"text" ";; needle here"}}}})]
+          (expect (string/includes? summary "2 hits in 1 file"))
+          (expect (string/includes? summary "`needle`"))
+          ;; hits are line-ordered, not map-ordered
+          (expect (< (string/index-of (str body) "7") (string/index-of (str body) "12")))
+          (expect (string/includes? (str body) "src/a.clj"))
+          (expect (string/includes? (str body) "(def "))))
+    (it "context lines ride the same gutter block"
+        (let
+          [{:keys [body]}
+           (render {"query" "needle"
+                    "needles" ["needle"]
+                    "hit_count" 1
+                    "file_count" 1
+                    "matches" {"src/a.clj" {"12:abc" {"text" "hit line"
+                                                      "before" [{"line" 11 "text" "ctx before"}]
+                                                      "after" [{"line" 13 "text" "ctx after"}]}}}})]
+          (expect (string/includes? (str body) "ctx before"))
+          (expect (string/includes? (str body) "ctx after"))
+          (expect (string/includes? (str body) "hit line"))))
+    (it "no content hits: ranked file NAMES are the answer and ride the body"
         (let
           [{:keys [summary body]}
-           (render-find-result
-             {"item_count" 1
-              "query" "resource config"
-              "paths"
-              ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
-          (expect (= "1 match for \"resource config\"" summary))
+           (render {"query" "resource config"
+                    "hit_count" 0
+                    "file_count" 0
+                    "matches" {}
+                    "paths"
+                    ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
+          (expect (string/includes? summary "1 file name"))
           (expect (string/includes?
                     (str body)
                     "resources/META-INF/native-image/com.blockether/spel/resource-config.json"))))
-    (it "two matches: summary stays plural and the ranked paths ride the body"
-        (let
-          [{:keys [summary body]} (render-find-result {"item_count" 2
-                                                       "query" "render"
-                                                       "paths" ["a/render.clj" "b/render.clj"]})]
-          (expect (string/includes? summary "2 matches"))
-          (expect (string/includes? (str body) "a/render.clj"))
-          (expect (string/includes? (str body) "b/render.clj"))))
     (it "zero matches: the filename-vs-content steer still rides the body"
         (let
           [{:keys [summary body]}
-           (render-find-result
-             {"item_count" 0 "query" "zzz" "paths" [] "hint" "No FILENAME matched"})]
-          (expect (string/includes? summary "0 matches"))
+           (render
+             {"query" "zzz" "hit_count" 0 "matches" {} "paths" [] "hint" "No FILENAME matched"})]
+          (expect (string/includes? summary "no matches"))
           (expect (string/includes? (str body) "No FILENAME matched"))))
     (it "an explicit `searched_paths` scope is named on the headline; default `.` is not"
         (let
-          [scoped
-           (render-find-result
-             {"item_count" 1 "query" "render" "paths" ["src/render.clj"] "searched_paths" ["src"]})
-           default
-           (render-find-result
-             {"item_count" 1 "query" "render" "paths" ["render.clj"] "searched_paths" ["."]})]
+          [scoped (render {"query" "render"
+                           "hit_count" 0
+                           "matches" {}
+                           "paths" ["src/render.clj"]
+                           "searched_paths" ["src"]})
+           default (render {"query" "render"
+                            "hit_count" 0
+                            "matches" {}
+                            "paths" ["render.clj"]
+                            "searched_paths" ["."]})]
 
-          (expect (= "1 match for \"render\" · in `src`" (:summary scoped)))
-          (expect (= "1 match for \"render\"" (:summary default)))))))
-
+          (expect (string/includes? (:summary scoped) "in `src`"))
+          (expect (not (string/includes? (:summary default) "in `")))))))
 (defdescribe
   structural-tool-gating-test
   "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
@@ -3924,7 +4151,7 @@
     (it "a docs-only (markdown/text) project HIDES them; cat/rg/find_files stay"
         (doseq [s struct-syms]
           (expect (false? (active? s ["markdown" "text"]))))
-        (doseq [s [editing/cat-symbol editing/find-symbol]]
+        (doseq [s [editing/cat-symbol editing/grep-symbol]]
           (expect (true? (active? s ["markdown" "text"]))))
         (with-redefs
           [environment/snapshot (fn []
@@ -4297,8 +4524,15 @@
      overlay!
      (fn [search-block f]
        (with-redefs
-         [config/load-config-raw (fn []
-                                   {:search search-block})]
+         ;; `config/search-overlay` reads the RAW, string-keyed config block.
+         [config/load-config-raw
+          (fn []
+            {"search" (cond-> {}
+                        (seq (:include-gitignored-paths search-block))
+                        (assoc "include_gitignored_paths" (:include-gitignored-paths search-block))
+
+                        (seq (:always-exclude search-block))
+                        (assoc "always_exclude" (:always-exclude search-block)))})]
          (f)))
 
      fixture!
@@ -4475,3 +4709,76 @@
               (expect (throws? clojure.lang.ExceptionInfo #(rg-fff-open (java.io.File. ".")))))
             (expect @closed?)
             (expect (= before (.availablePermits semaphore))))))))
+
+(defdescribe
+  fs-canonical-shape-test
+  "The merged `fs` tool answers ONE flat canonical shape per op — an `action`
+   discriminator (NOT `op`: the engine stamps that with the canonical tool op
+   `\"fs\"`), workspace-RELATIVE paths, and at most one `is_<foo>` verdict — and
+   its card renders that shape as a verb-led headline."
+  (describe
+    "every op"
+    (it
+      "returns the canonical result and a matching summary"
+      (let
+        [fs-tool
+         (private-fn "fs-tool")
+
+         render
+         (private-fn "render-fs-result")
+
+         base
+         (str (temp-root) "/fs-canon")
+
+         res
+         (fn [m]
+           (:result (fs-tool m)))]
+
+        (fs/delete-tree base)
+        (let [r (res {"op" "create_dirs" "path" (str base "/a")})]
+          (expect (= {"action" "create_dirs" "path" (str base "/a") "is_created" true} r))
+          (expect (= (str "created dir `" base "/a`") (:summary (render r)))))
+        (let [r (res {"op" "create_dirs" "path" (str base "/a")})]
+          (expect (= {"action" "create_dirs" "path" (str base "/a") "is_created" false} r))
+          (expect (= (str "dir `" base "/a` already exists") (:summary (render r)))))
+        (spit (str base "/a/x.txt") "hi")
+        (let [r (res {"op" "exists" "path" (str base "/a/x.txt")})]
+          (expect (= {"action" "exists" "path" (str base "/a/x.txt") "is_existing" true} r))
+          (expect (= (str "`" base "/a/x.txt` exists ✓") (:summary (render r)))))
+        (let [r (res {"op" "exists" "path" (str base "/a/nope.txt")})]
+          (expect (= {"action" "exists" "path" (str base "/a/nope.txt") "is_existing" false} r))
+          (expect (= (str "`" base "/a/nope.txt` missing ✗") (:summary (render r)))))
+        ;; Absolute input still answers a relative path — the canonical form.
+        (let [r (res {"op" "exists" "path" (str (fs/cwd) "/" base "/a/x.txt")})]
+          (expect (= (str base "/a/x.txt") (get r "path"))))
+        (let [r (res {"op" "copy" "src" (str base "/a/x.txt") "dest" (str base "/y.txt")})]
+          (expect (= {"action" "copy" "src" (str base "/a/x.txt") "dest" (str base "/y.txt")} r))
+          (expect (= (str "copied `" base "/a/x.txt` → `" base "/y.txt`") (:summary (render r)))))
+        (let [r (res {"op" "move" "src" (str base "/y.txt") "dest" (str base "/z.txt")})]
+          (expect (= {"action" "move" "src" (str base "/y.txt") "dest" (str base "/z.txt")} r))
+          (expect (= (str "moved `" base "/y.txt` → `" base "/z.txt`") (:summary (render r)))))
+        (let [r (res {"op" "delete" "path" (str base "/z.txt")})]
+          (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" true} r))
+          (expect (= (str "deleted `" base "/z.txt`") (:summary (render r)))))
+        (let [r (res {"op" "delete" "path" (str base "/z.txt") "is_missing_ok" true})]
+          (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" false} r))
+          (expect (= (str "nothing to delete at `" base "/z.txt`") (:summary (render r)))))
+        (expect (throws? clojure.lang.ExceptionInfo #(fs-tool {"op" "touch" "path" base})))
+        (fs/delete-tree base))))
+  (describe
+    "the engine's canonical `op` stamp"
+    (it "never degrades the card to `fs fs` — the action survives under `action`"
+        (let [render (private-fn "render-fs-result")]
+          ;; `stamp-public-result-op` overwrites "op" with the TOOL op on EVERY
+          ;; result, so the card must not read the sub-op from there.
+          (expect (= "deleted `a/b.txt`"
+                     (:summary
+                       (render {"op" "fs" "action" "delete" "path" "a/b.txt" "is_deleted" true}))))
+          (expect (= "copied `a` → `b`"
+                     (:summary (render {"op" "fs" "action" "copy" "src" "a" "dest" "b"}))))
+          ;; legacy results persisted before the split still render
+          (expect (= "deleted `a/b.txt`"
+                     (:summary (render {"op" "delete" "path" "a/b.txt" "is_deleted" true}))))
+          ;; and an action-less result says something useful, never the tool twice
+          (expect (= "fs `a/b.txt`" (:summary (render {"op" "fs" "path" "a/b.txt"}))))
+          (expect (= "fs" (:summary (render {"op" "fs"}))))))))

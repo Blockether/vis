@@ -264,9 +264,10 @@
             ;; A single session now renders as an active tab (its label carries
             ;; the active-tab fg), while the copy badge keeps its own hover fg.
             (expect (= t/header-active-tab-fg (:fg title-write)))
-            ;; Badge is a copy BUTTON (` #123e4567 `); hovering it lifts the
-            ;; chip to the shared button hover fg (the tab keeps its active-tab fg).
-            (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 ")))))))))
+            ;; Badge is a copy BUTTON (` #123e4567 `); chips are FLAT, so hovering
+            ;; recolours its INK to the accent on the terminal bg — no filled cap.
+            (expect (= t/header-active-tab-accent (:fg (write-by-text " #123e4567 "))))
+            (expect (= t/terminal-bg (:bg (write-by-text " #123e4567 ")))))))))
 
 (defdescribe
   draw-header-tab-entries-test

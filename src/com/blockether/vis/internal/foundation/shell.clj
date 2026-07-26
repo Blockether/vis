@@ -500,14 +500,19 @@
           t1 (now-ms)]
 
          (extension/success
-           ;; Lean result: this map rides every later prompt as a frozen
-           ;; <results> pin, so optional keys appear ONLY when they carry
-           ;; signal (model reads them with .get). :op / echoes of the call
-           ;; args (cwd default, timeout default) never ship.
-           {:result (cond-> {"cmd" cmd "stdout" (lf (:text out)) "duration_ms" (- t1 t0)}
-                      finished?
-                      (assoc "exit" exit)
-
+           ;; TOTAL result shape. The old "lean" map dropped `stderr`/`exit`
+           ;; whenever they carried no signal, so ordinary model Python
+           ;; (`r["stderr"]`, `r["exit"]`) died with a bare `KeyError` — read as
+           ;; "the tool broke", retried with cosmetic variations, and spun. Every
+           ;; CORE key is now ALWAYS present with a string key and a total value
+           ;; (`stderr` "" when empty, `exit` None while timed out); only genuine
+           ;; EXTRAS (truncation/timeout/cwd flags) stay conditional.
+           {:result (cond->
+                      {"cmd" cmd
+                       "stdout" (lf (:text out))
+                       "stderr" (lf (:text err))
+                       "exit" exit
+                       "duration_ms" (- t1 t0)}
                       (not finished?)
                       (assoc "timed_out"
                         true "timeout_secs"
@@ -515,9 +520,6 @@
 
                       (:truncated out)
                       (assoc "stdout_truncated" true)
-
-                      (not (str/blank? (:text err)))
-                      (assoc "stderr" (lf (:text err)))
 
                       (:truncated err)
                       (assoc "stderr_truncated" true)
@@ -632,7 +634,10 @@
     (.setDaemon true)
     (.start)))
 
-(defn- shell-bg-impl
+(defn- shell-bg-spawn!
+  "Spawn a NEW background PTY under `id`. Callers guarantee no LIVE entry holds
+   the id (`shell-bg-impl` owns that check); an exited-but-unread entry under
+   the same id is replaced, discarding its retained logs by intent."
   [env id cmd]
   (let
     [session
@@ -649,17 +654,7 @@
     (when (str/blank? cmd)
       (throw (ex-info "shell_bg needs a non-blank command string (second arg)."
                       {:type ::blank-command})))
-    (when-let [existing (bg-entry session id)]
-      (if ((:alive? (:proc existing)))
-        (throw (ex-info (str "Background shell '"
-                             id
-                             "' is already running (pid "
-                             (:pid (:proc existing))
-                             "); resource_stop it first or pick a new id.")
-                        {:type ::bg-id-in-use :id id}))
-        ;; Exited-but-unread entry under the same id: replacing it discards
-        ;; its retained logs by intent (the model chose to reuse the id).
-        (do (resources/unregister! session id) (drop-bg-entry! session id))))
+    (when (bg-entry session id) (resources/unregister! session id) (drop-bg-entry! session id))
     (let
       [dir
        (resolve-cwd {::environment env})
@@ -757,9 +752,12 @@
                                                (zero? (long @exit-atom)) :exited
                                                :else :failed))})
       (extension/success
-        ;; No :op / :cwd — shell_bg always runs at the workspace root and the
-        ;; result rides every later prompt as a frozen <results> pin.
-        {:result (cond-> {"id" id "pid" (:pid p) "cmd" cmd "status" "running"}
+        ;; No :op / :cwd — shell_bg always runs at the workspace root. CORE keys
+        ;; are TOTAL (`already_running` false on a fresh spawn) so the two
+        ;; branches of shell_bg return the SAME shape and `r["already_running"]`
+        ;; never KeyErrors.
+        {:result (cond->
+                   {"id" id "pid" (:pid p) "cmd" cmd "status" "running" "already_running" false}
                    bridge
                    (assoc "attach"
                      (str "vis ext shell attach " id) "socket"
@@ -767,6 +765,52 @@
          :op :shell/bg
          :metadata
          {:command cmd :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
+
+(defn- shell-bg-impl
+  "`shell_bg(id, cmd)` — IDEMPOTENT on a live id.
+
+   Re-using an id whose process is still running used to THROW. That reads as a
+   plain tool failure: a model that already started the shell (or that lost the
+   result) learns nothing actionable, invents a new id, and spins — the exact
+   runaway seen on `companion-dev`. Instead, return the RUNNING shell flagged
+   `already_running` with its pid/uptime and the `shell_logs` handle, so \"start
+   it\" is answered by \"it IS started, here is how to watch it\". No second
+   process is spawned; a genuinely fresh one still needs `resource_stop` first."
+  [env id cmd]
+  (let
+    [session
+     (:session-id env)
+
+     id
+     (str id)
+
+     live
+     (when-let [existing (bg-entry session id)]
+       (when ((:alive? (:proc existing))) existing))]
+
+    (if live
+      (extension/success
+        {:result {"id" id
+                  "pid" (:pid (:proc live))
+                  "cmd" (:cmd live)
+                  "status" "running"
+                  "already_running" true
+                  "uptime_ms" (- (now-ms) (long (or (:started-at live) (now-ms))))
+                  "note" (str "Background shell '"
+                              id
+                              "' was ALREADY running — nothing was restarted. Read its output "
+                              "with shell_logs(\""
+                              id
+                              "\"); resource_stop(\""
+                              id
+                              "\") first if you really need a fresh process.")}
+         :op :shell/bg
+         :metadata {:command (:cmd live)
+                    :pid (:pid (:proc live))
+                    :started-at-ms (:started-at live)
+                    :finished-at-ms (now-ms)
+                    :duration-ms 0}})
+      (shell-bg-spawn! env id cmd))))
 
 (defn- shell-logs-impl
   ([env id] (shell-logs-impl env id default-log-tail))
@@ -811,21 +855,18 @@
         (now-ms)]
 
        (extension/success
-         ;; Lean result: no :op / :cmd / :cwd / :pid (the shell_bg result
-         ;; already carries process identity) and no :shown_count (it's
-         ;; len(lines)). :exit only once exited, :dropped only when the ring
-         ;; buffer actually evicted — absent keys read as None via .get.
-         {:result (cond->
-                    {"id" id
-                     "status" (if (some? exit) "exited" "running")
-                     "lines" shown
-                     "line_count" total
-                     "uptime_ms" (- t (long (:started-at entry)))}
-                    (some? exit)
-                    (assoc "exit" exit)
-
-                    (pos? (long (or dropped 0)))
-                    (assoc "dropped" dropped))
+         ;; No :op / :cmd / :cwd / :pid (the shell_bg result already carries
+         ;; process identity) and no :shown_count (it's len(lines)). CORE keys
+         ;; are TOTAL and string-keyed: `exit` is None while running, `dropped`
+         ;; 0 when the ring buffer evicted nothing — model Python indexes them
+         ;; directly instead of dying on a KeyError.
+         {:result {"id" id
+                   "status" (if (some? exit) "exited" "running")
+                   "lines" shown
+                   "line_count" total
+                   "exit" exit
+                   "dropped" (long (or dropped 0))
+                   "uptime_ms" (- t (long (:started-at entry)))}
           :op :shell/logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
@@ -932,9 +973,9 @@
 await shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})
 
 Run a command via bash -lc in the workspace root.
-Returns {\"cmd\", \"stdout\", \"duration_ms\"} plus, only when meaningful (use .get): \"exit\", \"timed_out\"+\"timeout_secs\", \"stderr\", \"stdout_truncated\"/\"stderr_truncated\", \"cwd\".
+Returns {\"cmd\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\"} — those keys are ALWAYS present (\"stderr\" is \"\" when empty, \"exit\" is None only when the command timed out) — plus, only when they apply: \"timed_out\"+\"timeout_secs\", \"stdout_truncated\"/\"stderr_truncated\", \"cwd\".
 opts: {\"timeout_secs\": N (default 120, max 600), \"cwd\": dir-under-an-allowed-filesystem-root}.
-Gotcha: a non-zero \"exit\" is DATA to read, not a tool failure. On timeout there is NO \"exit\" key."
+Gotcha: a non-zero \"exit\" is DATA to read, not a tool failure."
     :arglists '([cmd] [cmd opts])}
   shell-run
   shell-run-impl)
@@ -944,9 +985,9 @@ Gotcha: a non-zero \"exit\" is DATA to read, not a tool failure. On timeout ther
     "await shell_bg(\"dev-server\", \"npm run dev\")
 
 Start a background command (bash -lc, workspace root) as a session resource `id`; no timeout — use for daemons / watchers / long builds.
-Returns {\"id\", \"pid\", \"cmd\", \"status\": \"running\"}.
+Returns {\"id\", \"pid\", \"cmd\", \"status\": \"running\", \"already_running\"} — all always present.
 Read output with shell_logs(id); stop and discard logs with resource_stop(id) — the ONLY stop path.
-Gotcha: `id` must be unique among RUNNING shells; reusing an exited id discards its retained logs."
+Re-calling shell_bg with a LIVE id does NOT start a second process and is not an error: you get that shell back with \"already_running\": true plus its pid/uptime and the shell_logs hint. Reusing an EXITED id discards its retained logs."
     :arglists '([id cmd])}
   shell-bg
   shell-bg-impl)
@@ -957,7 +998,7 @@ Gotcha: `id` must be unique among RUNNING shells; reusing an exited id discards 
 await shell_logs(\"dev-server\", 500)
 
 Tail a background shell's captured output. shell_logs(id) keeps the last 200 lines, shell_logs(id, n) the last n (max 2000).
-Returns {\"id\", \"status\": \"running\"|\"exited\", \"lines\": [[seq, text], ...], \"line_count\", \"uptime_ms\"} plus, only when meaningful (use .get): \"exit\", \"dropped\".
+Returns {\"id\", \"status\": \"running\"|\"exited\", \"lines\": [[seq, text], ...], \"line_count\", \"exit\", \"dropped\", \"uptime_ms\"} — all always present (\"exit\" is None while running, \"dropped\" 0 when the ring buffer evicted nothing).
 Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines), \"line_count\" is total-ever."
     :arglists '([id] [id n])}
   shell-logs
@@ -1305,9 +1346,11 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
     {:symbol 'bg
      :native-tool? true
      :name "shell_bg"
-     :description (str "Start a long-running or interactive command as a session resource. Never "
-                       "hide background work with shell operators; inspect it with `shell_logs`, "
-                       "interact with `shell_send`, and stop it through `resource_stop`.")
+     :description
+     (str "Start a long-running or interactive command as a session resource. Never "
+          "hide background work with shell operators; inspect it with `shell_logs`, "
+          "interact with `shell_send`, and stop it through `resource_stop`. Re-calling it "
+          "with a LIVE id returns that same shell (`already_running`), never a second process.")
      ;; shell_bg(id, cmd) — both positional.
      :call {:pos ["id" "cmd"]}
      :render render-shell-bg-result

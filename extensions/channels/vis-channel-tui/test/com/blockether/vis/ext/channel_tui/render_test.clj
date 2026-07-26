@@ -3070,7 +3070,7 @@
 (defdescribe
   slash-command-suggestions-overlay-test
   (it
-    "draws a bordered, BOLD, accent-stripe title with flex hint pairs"
+    "draws a bordered, backgroundless accent title with flex hint pairs"
     (let
       [puts
        (atom [])
@@ -3155,12 +3155,10 @@
       (render/draw-slash-command-suggestions! g suggestions input-top cols)
       ;; Title row sits ABOVE the border row (border under title).
       (expect (< title-row border-row))
-      ;; Title row: accent stripe (fillRectangle) on title-bg, inset
-      ;; by `pad` cols on each side so it lines up with the input box.
-      (expect (some #(and (= title-row (:row %)) (= t/dialog-title-bg (:bg %)) (= pad (:col %)))
+      ;; Title row is cleared to the terminal background within the input inset.
+      (expect (some #(and (= title-row (:row %)) (= t/terminal-bg (:bg %)) (= pad (:col %)))
                     @fills))
-      ;; Border row UNDER the title: horizontal rule, inset by `pad`,
-      ;; same column span as the title accent stripe.
+      ;; Border row under the title uses the same inset.
       (expect (some #(and (= border-row (:row %))
                           (str/starts-with? (:text %) "─")
                           (= pad (:col %))
@@ -3169,12 +3167,12 @@
                     @puts))
       ;; Top margin row: a full-width terminal-bg gap above the title.
       (expect (some #(and (= margin-row (:row %)) (= 0 (:col %)) (= t/terminal-bg (:bg %))) @fills))
-      ;; Title row: BOLD label "Slash commands" on the accent stripe.
+      ;; Title row: BOLD accent label directly on the terminal background.
       (expect (some #(and (= title-row (:row %))
                           (str/includes? (:text %) "Slash commands")
                           (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)
-                          (= t/dialog-title-fg (:fg %))
-                          (= t/dialog-title-bg (:bg %)))
+                          (= t/dialog-accent (:fg %))
+                          (= t/terminal-bg (:bg %)))
                     @puts))
       ;; Title row: BOLD keys for each [key action] hint pair.
       ;; Enter and Tab both complete selected slash suggestion.

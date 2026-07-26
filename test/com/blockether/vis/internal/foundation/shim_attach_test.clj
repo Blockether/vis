@@ -191,7 +191,8 @@
                  (let [pctx (ctx-with-root (temp-root))]
                    (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachments"]
                               (vec (ev pctx "sorted(apropos('vis_attach'))"))))
-                   (expect (true? (ev pctx "'callable' in doc('vis_attach')")))))
+                   (expect (true? (ev pctx "'callable' in doc('vis_attach')")))
+                   (expect (true? (ev pctx "'callable' in doc('vis_reinspect_attachment')")))))
              (it "raises when called with no active capture sink (outside a driven block)"
                  (let [pctx (ctx-with-root (temp-root))]
                    ;; a bare .eval does NOT bind the per-block sink, so the bridge refuses
@@ -339,7 +340,20 @@
               :filename "chart.png"
               :kind "image"
               :size 7
-              :storage-uri nil}))})
+              :storage-uri nil}))
+   :reinspect (fn [id _detail]
+                (when (= id "a1")
+                  (let
+                    [a {:id "a1"
+                        :base64 (.encodeToString (java.util.Base64/getEncoder)
+                                                 (.getBytes "PNGDATA"))
+                        :media-type "image/png"
+                        :filename "chart.png"
+                        :kind "image"
+                        :size 7
+                        :storage-uri nil}]
+                    (mpl-capture/queue-reinspection! a)
+                    a)))})
 
 (defdescribe
   vis-attachments-reader-test
@@ -367,6 +381,30 @@
         (expect (nil? (:error out)))
         (expect (re-find #"a1 image/png call-1 it1" so))
         (expect (re-find #"PNGDATA image/png chart.png 7" so))))
+  (it
+    "queues a persisted image for one model reinspection without duplicating it"
+    (let
+      [pctx
+       (ctx-with-root (temp-root))
+
+       sink
+       (atom [])
+
+       out
+       (binding
+         [mpl-capture/*attachment-reader*
+          (fake-reader)
+
+          mpl-capture/*attachment-reinspection-sink*
+          sink]
+
+         (block
+           pctx
+           "r = vis_reinspect_attachment('a1', detail='high')\nprint(r['id'], r['media_type'])"))]
+
+      (expect (nil? (:error out)))
+      (expect (re-find #"a1 image/png" (str (:stdout out))))
+      (expect (= ["a1"] (mapv :id @sink)))))
   (it "raises on an unknown id"
       (let
         [pctx

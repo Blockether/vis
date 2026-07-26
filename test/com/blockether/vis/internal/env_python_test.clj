@@ -47,6 +47,28 @@
 
                    (expect (= "[]\n" (:stdout result))))))
 
+(defdescribe python-binding-aliases-test
+             ;; A native tool is reachable in the sandbox under its canonical Python name
+             ;; PLUS the intentional compatibility aliases. `fs` also answers to `fs_tool`
+             ;; so it reads as a verb next to `shell_run`/`grep`; a missing alias is a bare
+             ;; NameError to the model, which reads as "the tool is gone" and invites a spin.
+             (it "exposes fs as both fs and fs_tool, grep as grep/find_files/find"
+                 (expect (= ["fs" "fs_tool"] (ep/python-binding-names 'fs)))
+                 (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep))))
+             (it "routes every alias to the SAME tool in a live context"
+                 (let
+                   [ctx
+                    (:python-context (ep/create-python-context {'fs (fn fs-stub [& args]
+                                                                      {"op" "fs"
+                                                                       "args" (vec args)})}))
+
+                    result
+                    (ep/run-python-block ctx
+                                         (str "print(fs('exists')['op'], fs('exists')['args'])\n"
+                                              "print(fs_tool('x')['op'], fs_tool('x')['args'])"))]
+
+                   (expect (= "fs ['exists']\nfs ['x']\n" (:stdout result))))))
+
 (defdescribe
   proxy-and-capture-test
   (let
@@ -246,14 +268,26 @@
         (let
           [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"
                          "'len='+str('len' in a)," "'cat='+str('cat' in a),"
-                         "'find_files='+str('find_files' in a),"
-                         "'struct_patch='+str('struct_patch' in a))"))]
+                         "'grep='+str('grep' in a)," "'struct_patch='+str('struct_patch' in a))"))]
           (expect (re-find #"asyncio=False" out))
           (expect (re-find #"len=False" out))
           (expect (re-find #"cat=True" out))
-          ;; `rg` was replaced by `find_files` (name + content search in one tool)
-          (expect (re-find #"find_files=True" out))
+          ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
+          (expect (re-find #"grep=True" out))
           (expect (re-find #"struct_patch=True" out))))
+    (it "native apropos hides advertised canonical names and compatibility aliases only"
+        ;; In-Python apropos remains a complete composable index. Only the native
+        ;; markdown renderer suppresses capabilities whose schema is already visible.
+        (ep/set-advertised-native-tools! ctx ["cat" "grep" "find_files" "find"])
+        (let
+          [out (run (str "print('raw='+','.join(sorted(apropos('find').keys())))\n"
+                         "print('native-find='+__vis_apropos_table__('find'))\n"
+                         "print('native-struct='+__vis_apropos_table__('struct_patch'))"))]
+          (expect (str/includes? out "raw=find,find_files"))
+          (expect
+            (str/includes? out "native-find=apropos('find'): no unadvertised capabilities match."))
+          (expect (str/includes? out "native-struct=| capability | gist |"))
+          (expect (str/includes? out "| `struct_patch` |"))))
     (it "apropos and doc describe their own callable contracts"
         (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
           (expect (str/includes? out "apropos(query='')"))

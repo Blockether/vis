@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.language-python.core
   "vis-language-python — a managed Python REPL exposed through the generic
-   language facade (repl_start / repl_eval / repl_stop). Activates
+   language facade (repl / repl_eval / repl_stop). Activates
    only when the workspace looks like a Python project. The REPL is a subprocess
    on a project-aware interpreter (uv / poetry / .venv / python3), registered as
    a session resource so it shows in ctx + the footer and is stoppable by id."
@@ -90,7 +90,7 @@
 ;; =============================================================================
 
 (defn py-start-repl-fn
-  "repl_start handler for Python. Positional `op` (default \"start\") + opts
+  "repl handler for Python. Positional `op` (default \"start\") + opts
    `{dir, id}`. Lifecycle: start / restart / stop / status. `op` arrives as a
    STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
@@ -123,7 +123,7 @@
             (register-repl-resource! (:session-id env) dir r id)
             (extension/success {:result r})))
 
-      (throw (ex-info (str "repl_start(python) unknown op: " (pr-str op))
+      (throw (ex-info (str "repl(python) unknown op: " (pr-str op))
                       {:type :py/bad-args :got op})))))
 
 (defn py-repl-eval-fn
@@ -150,7 +150,7 @@
     (when-not (= "up" (get (repl/status dir) "status"))
       (throw (ex-info (str "Python REPL is not up for "
                            dir
-                           "; call repl_start(\"python\", {\"dir\": "
+                           "; call repl(\"python\", {\"dir\": "
                            (pr-str dir)
                            "}) first")
                       {:type :py/no-repl :dir dir})))
@@ -314,7 +314,7 @@
 ;; Manifest
 ;; =============================================================================
 
-;; No :ext/prompt-fn — the foundation advertises repl_eval / repl_start through
+;; No :ext/prompt-fn — the foundation advertises repl_eval / repl through
 ;; the AUTO capability matrix; repl_eval's own result ({ok,out,value,data,type,
 ;; exc}; opaque values carry __type__/__attrs__/__opaque__) is self-documenting.
 
@@ -322,7 +322,7 @@
   (vis/extension
     {:ext/name "language-python"
      :ext/description
-     "Python language pack: a managed Python REPL (uv/poetry/venv/python3) behind the generic repl_start/repl_eval/repl_stop facade. Activates on Python workspaces."
+     "Python language pack: a managed Python REPL (uv/poetry/venv/python3) behind the generic repl/repl_eval/repl_stop facade. Activates on Python workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

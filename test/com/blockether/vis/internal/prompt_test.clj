@@ -63,7 +63,20 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      (expect (< (count text) 2200))
+      (expect (< (count text) 2700))
+      (let
+        [steps (mapv #(str/index-of text %)
+                     ["use `grep` to locate unknown code" "known supported file" "`struct_index`"
+                      "`cat` only the needed body" "`struct_patch`"])]
+        (expect (every? some? steps))
+        (expect (apply < steps)))
+      (expect (str/includes? text "`grep` FIRST"))
+      (expect (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`"))
+      (expect (str/includes? text "never grep `.`"))
+      (expect (str/includes? text "never open with it"))
+      (expect (str/includes? text "the first move, before docs"))
+      (expect (str/includes? text "Use `cat` on a directory for an ls-style listing"))
+      (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
@@ -72,33 +85,29 @@
       (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`"]]
         (expect (not (str/includes? text tool))))
       (doseq
-        [required
-         ["Work on the host project by default" "For vis tasks" "`await vis_docs()`"
-          "runtime > source > docs > assumption"
-          "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
-          "hard preconditions"
-          "`python_execution`" "`await gather(...)` independent calls" "anything complicated"
-          "direct native tools for single operations"
-          "read-only `session`" "never use `ctx` or `context`"
-          "reproduce before editing" "rerun the same check after the fix"
-          "batch independent reads"
-          "Create no unrequested" "without asking permission or offering optional"
-          "Never expose or log secrets" "commit, push, publish"
-          "retry any blocked fold" "`session_fold` owns the mechanics"
-          "preserve only decisions,\n  findings, edits"
-          "Lead with the answer. Be terse; depth only when earned."
-          "Confirm destructive actions."]]
+        [required ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
+                   "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
+                   "hard preconditions" "`python_execution`" "`await gather(...)` independent calls"
+                   "anything complicated" "direct native tools for single operations"
+                   "Call advertised native tools directly" "never preflight a visible native tool"
+                   "read-only `session`" "never use `ctx` or `context`" "reproduce before editing"
+                   "rerun the same check after the fix" "batch independent reads"
+                   "Create no unrequested" "without asking permission or offering optional"
+                   "Never expose or log secrets" "commit, push, publish" "retry any blocked fold"
+                   "`session_fold` owns the mechanics" "preserve only decisions,\n  findings, edits"
+                   "Lead with the answer. Be terse; depth only when earned."
+                   "Confirm destructive actions."]]
         (expect (str/includes? text required)))
-      ;; Tool-schema-owned contracts must NOT be duplicated in the core prompt.
-      (expect (zero? (count (re-seq #"ntr\[tool_id\]" text))))
+      ;; Python's native-result retrieval contract belongs in the execution-surface
+      ;; guidance because it controls context shaping across every native tool.
+      (expect (= 1 (count (re-seq #"ntr\[tool_id\]" text))))
       (doseq
         [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
                   "canonical decision table"
                   ;; schema-owned or removed contracts stay out of the core prompt
-                  "`repl_start`" "External REPLs" "stales anchors"
-                  "benchmark/profile" "Route vis issues upstream"
-                  "Before every `session_fold`" "`await session_state"
+                  "`repl`" "External REPLs" "stales anchors" "benchmark/profile"
+                  "Route vis issues upstream" "Before every `session_fold`" "`await session_state"
                   "≤120 words" "never offer a menu"]]
         (expect (not (str/includes? text surplus))))))
   (it "advertises concise Python guidance and every auto-imported name"

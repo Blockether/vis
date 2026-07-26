@@ -71,10 +71,16 @@
                               "command" "npx"
                               "args" ["-y" "server"]
                               "cwd" "/tmp"
-                              "env" {"TOKEN" "secret"}}
+                              "env" {"TOKEN" "secret"}
+                              "enabled" true
+                              "timeout_ms" 60000}
                      "remote" {"transport" "http"
                                "url" "https://mcp.example.com"
-                               "headers" {"Authorization" "Bearer secret"}}}}
+                               "headers" {"Authorization" "Bearer secret"}
+                               "listen" true
+                               "auth" {"client_id" "vis"
+                                       "scope" "openid profile offline_access"
+                                       "authorization_timeout_ms" 300000}}}}
    "message_queue" {"breaker_threshold" 3
                     "retry_backoff_ms" [2000 8000 30000]
                     "halfopen_probe_ms" 60000

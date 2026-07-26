@@ -1,0 +1,128 @@
+(ns com.blockether.vis.internal.foundation.shim-nippy
+  "Built-in sandbox SHIM exposing Vis's Nippy persistence codec to Python.
+
+   `nippy_decode(bytes)` decodes trusted Vis-owned Nippy BLOBs (for example
+   `session_turn_iteration.forms`, `session_turn_state.ctx`, and
+   `session_turn_state.error`) into native Python data. Nippy-stream Vectorz
+   vectors decode as Python lists. `nippy_encode(value)` performs the inverse for
+   Python plain data. The same functions are available as `nippy.decode` /
+   `nippy.encode` after `import nippy`.
+
+   The Python module and Vectorz codec registration are lazy: neither runs during
+   sandbox context initialization; Vectorz installs on the first codec call.
+   Decoded Clojure values cross the normal sandbox boundary: map keys become
+   canonical snake_case strings, keyword/symbol values become strings, dates
+   become epoch milliseconds, and unsupported leaves stringify. This is for
+   inspection and plain-data round trips, not exact Clojure type preservation.
+   Java Serializable fallback is disabled in both directions."
+  (:require [clojure.walk :as walk]
+            [com.blockether.vis.core :as vis]
+            [io.blockether.nippy-stream.vectorz-compat :as vectorz-compat]
+            [taoensso.nippy :as nippy])
+  (:import [java.util Base64]))
+
+(defn- nippy-envelope
+  "Return `[true payload]`, or `[false message]` so Python can raise a catchable
+   `nippy.NippyError` instead of leaking an uncatchable host exception."
+  [f]
+  (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
+
+(defn- nippy-python-value
+  "Convert Vectorz values nested in decoded Nippy data to ordinary vectors before
+   applying Vis's canonical Python boundary conversion."
+  [value]
+  (->> value
+       (walk/postwalk vectorz-compat/->clj-vector)
+       vis/wire-canonical))
+
+(defn- nippy-bridge-bindings
+  "Host Nippy codec callables. Bytes cross as base64; decoded data crosses through
+   Vis's canonical string-keyed wire shape. Vectorz compatibility is installed on
+   the first codec call only. Serializable fallback stays disabled because sandbox
+   input is not a trusted Java object graph."
+  []
+  {"__vis_nippy_decode__" (fn [encoded]
+                            (nippy-envelope #(do (vectorz-compat/ensure-installed!)
+                                                 (-> (.decode (Base64/getDecoder) ^String encoded)
+                                                     (nippy/thaw {:serializable-allowlist #{}})
+                                                     nippy-python-value))))
+   "__vis_nippy_encode__"
+   (fn [value]
+     (nippy-envelope #(do (vectorz-compat/ensure-installed!)
+                          (.encodeToString (Base64/getEncoder)
+                                           (nippy/freeze value {:serializable-allowlist #{}})))))})
+
+(def ^:private nippy-shim-src
+  "def __vis_install_nippy__():
+    import base64, sys, types
+    _bi = sys.modules['builtins']
+    _decode = __vis_nippy_decode__
+    _encode = __vis_nippy_encode__
+
+    class NippyError(Exception):
+        pass
+
+    def _realize(value):
+        is_foreign = globals().get('__vis_is_foreign__')
+        if is_foreign is None or not is_foreign(value):
+            return value
+        if hasattr(value, 'keys'):
+            try:
+                return {key: _realize(item) for key, item in value.items()}
+            except Exception:
+                return value
+        try:
+            return [_realize(item) for item in value]
+        except Exception:
+            return value
+
+    def _call(fn, arg):
+        result = fn(arg)
+        if not result[0]:
+            raise NippyError(result[1])
+        return _realize(result[1])
+
+    def decode(data):
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError('nippy_decode() requires bytes-like input')
+        encoded = base64.b64encode(bytes(data)).decode('ascii')
+        return _call(_decode, encoded)
+
+    def encode(value):
+        encoded = _call(_encode, value)
+        return base64.b64decode(encoded)
+
+    mod = types.ModuleType('nippy')
+    mod.__doc__ = 'Vis Nippy codec for trusted persistence BLOBs and Python plain data.'
+    mod.__version__ = 'vis'
+    mod.NippyError = NippyError
+    mod.decode = decode
+    mod.encode = encode
+    mod.loads = decode
+    mod.dumps = encode
+    sys.modules['nippy'] = mod
+    _bi.nippy = mod
+    _bi.nippy_decode = decode
+    _bi.nippy_encode = encode
+
+__vis_install_nippy__()
+del __vis_install_nippy__")
+
+(def vis-extension
+  (vis/extension
+    {:ext/name "foundation-shim-nippy"
+     :ext/description
+     "Sandbox shim: nippy_decode(bytes) / nippy_encode(value), plus nippy.decode/encode, backed by Vis's JVM Nippy codec for persistence BLOB inspection."
+     :ext/version "0.1.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/kind "foundation"
+     :ext/sandbox-shims
+     [{:shim/name "nippy"
+       :shim/description
+       "Lazy nippy_decode(bytes) and nippy.decode(bytes) decode trusted Vis-owned Nippy persistence BLOBs to native Python data, including nippy-stream Vectorz vectors as lists; nippy_encode(value) and nippy.encode(value) encode Python plain data. Vectorz codecs install only on first codec use. Not supported: exact Clojure type preservation (keys/values canonicalize for Python), Java Serializable fallback, encrypted Nippy payloads, or untrusted input."
+       :shim/bindings nippy-bridge-bindings
+       :shim/preamble nippy-shim-src}]}))
+
+(vis/register-extension! vis-extension)

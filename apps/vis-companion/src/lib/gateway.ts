@@ -222,7 +222,7 @@ export class GatewayClient {
   }
 
   // GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy file index
-  // (fff) behind the TUI `@` picker and the find_files tool. Returns ranked
+  // (fff) behind the TUI `@` picker and the grep tool. Returns ranked
   // relative paths with size/age/git-status meta.
   async suggestFiles(
     sid: string,

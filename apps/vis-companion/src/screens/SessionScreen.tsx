@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent as ReactClipboardEvent,
@@ -954,11 +955,28 @@ export function SessionScreen({
     };
   }, [scrollToEnd, sid]);
 
+  // Autosize the composer WITHOUT thrashing layout. The naive pattern
+  // (`height='auto'` then read `scrollHeight` on every keystroke) invalidates
+  // the footer → section → chat scroller and forces a synchronous reflow of
+  // the ENTIRE transcript per keypress — that was the typing lag. With the box
+  // height left untouched, reading `scrollHeight` only lays out the textarea's
+  // own content, so the common case (no height change) costs nothing upstream.
+  const promptLengthRef = useRef(0);
   useEffect(() => {
     const textarea = composerRef.current;
     if (!textarea) return;
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+    const shrunk = prompt.length < promptLengthRef.current;
+    promptLengthRef.current = prompt.length;
+    const needed = Math.min(textarea.scrollHeight, 112);
+    if (needed > textarea.clientHeight + 1) {
+      // Content wrapped past the current box — grow (one cheap targeted write).
+      textarea.style.height = `${needed}px`;
+    } else if (shrunk && textarea.style.height) {
+      // Text got shorter while grown: remeasure from natural height so the box
+      // shrinks back. Only this rare path pays the full reset + reflow.
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+    }
   }, [prompt]);
 
   function addAttachments() {
@@ -1358,19 +1376,71 @@ export function SessionScreen({
   // While a live turn streams, drop the transcript's own copy of that same turn
   // (a running turn is persisted as a bare 'running' row) so it isn't rendered
   // twice — the live bubble owns it until `settle` confirms the finished row.
-  const visibleTurns = turns
-    .slice(visibleStart)
-    .filter((turn) => {
-      if (!liveTurn) return true;
-      const id = turn.id ?? turn.turn_id;
-      // Same turn by id — the live bubble owns it.
-      if (liveTurnId && id === liveTurnId) return false;
-      // The persisted 'running' row is the very turn being streamed live, even
-      // when its id can't be matched (e.g. turn.started replayed without a
-      // turn_id). Only one turn runs per session, so drop it to avoid a dup.
-      if (turn.status === 'running') return false;
-      return true;
-    });
+  const visibleTurns = useMemo(
+    () =>
+      turns.slice(visibleStart).filter((turn) => {
+        if (!liveTurn) return true;
+        const id = turn.id ?? turn.turn_id;
+        // Same turn by id — the live bubble owns it.
+        if (liveTurnId && id === liveTurnId) return false;
+        // The persisted 'running' row is the very turn being streamed live, even
+        // when its id can't be matched (e.g. turn.started replayed without a
+        // turn_id). Only one turn runs per session, so drop it to avoid a dup.
+        if (turn.status === 'running') return false;
+        return true;
+      }),
+    [turns, visibleStart, liveTurn, liveTurnId],
+  );
+  // Memoized rows keep their element IDENTITY across composer keystrokes
+  // (prompt/caret state), so React bails out of the whole transcript subtree
+  // instead of re-reconciling every turn wrapper on each keypress — that
+  // reconciliation was what made `/` and `@` completion typing lag.
+  const turnRows = useMemo(
+    () =>
+      visibleTurns.map((turn, index) => {
+        const request = turn.user_request ?? turn.request ?? '';
+        // No content-visibility deferral: the DOM is already bounded to
+        // INITIAL_VISIBLE_TURNS by pagination, and deferred turns rendered
+        // white placeholder bands (plus a synchronous render hitch) when
+        // fast-scrolling up into them on iOS — the 480px intrinsic-size guess
+        // never matched the real height, so the scroll position shifted too.
+        return (
+          <div
+            className={index === 0 ? '' : 'mt-10'}
+            key={turn.id ?? turn.turn_id}
+          >
+            {(request || (turn.attachments?.length ?? 0) > 0) && (
+              <UserMessage attachments={turn.attachments}>{request}</UserMessage>
+            )}
+            <AssistantMessage turn={turn} />
+          </div>
+        );
+      }),
+    [visibleTurns],
+  );
+  const liveRow = useMemo(
+    () =>
+      liveTurn && (
+        <div className={turns.length ? 'mt-10' : ''} data-live="true">
+          {liveTurn.request && <UserMessage>{liveTurn.request}</UserMessage>}
+          <AssistantMessage
+            turn={{
+              id: liveTurn.id ?? 'live',
+              request: liveTurn.request,
+              status: liveTurn.status,
+              iterations: liveTurn.iterations,
+              content: liveTurn.answer
+                ? [{ id: 'live-answer', type: 'prose', markdown: liveTurn.answer }]
+                : [],
+            }}
+            streaming={liveTurn.status === 'running'}
+            activity={liveProgressPhase(liveTurn)}
+            startedAt={liveTurn.startedAt}
+          />
+        </div>
+      ),
+    [liveTurn, turns.length],
+  );
   const loadEarlierTurns = () => {
     const viewport = scrollRef.current;
     if (viewport) prependScrollHeightRef.current = viewport.scrollHeight;
@@ -1407,7 +1477,7 @@ export function SessionScreen({
       <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none] [-webkit-overflow-scrolling:touch]"
+        className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
         onClickCapture={handleDisclosureClick}
         onScroll={handleScroll}
         role="log"
@@ -1443,40 +1513,9 @@ export function SessionScreen({
             </div>
           )}
 
-          {visibleTurns.map((turn, index) => {
-            const request = turn.user_request ?? turn.request ?? '';
-            return (
-              <div
-                className={`${index === 0 ? '' : 'mt-10'} [content-visibility:auto] [contain-intrinsic-size:auto_480px]`}
-                key={turn.id ?? turn.turn_id}
-              >
-                {(request || (turn.attachments?.length ?? 0) > 0) && (
-                  <UserMessage attachments={turn.attachments}>{request}</UserMessage>
-                )}
-                <AssistantMessage turn={turn} />
-              </div>
-            );
-          })}
+          {turnRows}
 
-          {liveTurn && (
-            <div className={turns.length ? 'mt-10' : ''} data-live="true">
-              {liveTurn.request && <UserMessage>{liveTurn.request}</UserMessage>}
-              <AssistantMessage
-                turn={{
-                  id: liveTurn.id ?? 'live',
-                  request: liveTurn.request,
-                  status: liveTurn.status,
-                  iterations: liveTurn.iterations,
-                  content: liveTurn.answer
-                    ? [{ id: 'live-answer', type: 'prose', markdown: liveTurn.answer }]
-                    : [],
-                }}
-                streaming={liveTurn.status === 'running'}
-                activity={liveProgressPhase(liveTurn)}
-                startedAt={liveTurn.startedAt}
-              />
-            </div>
-          )}
+          {liveRow}
           </>
         </div>
       </div>

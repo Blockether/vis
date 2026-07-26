@@ -606,3 +606,48 @@
                                                                         :dynamic {:limits []}}}}
                                                              :openai-codex
                                                              0))))))
+
+(defdescribe
+  footer-is-backgroundless-test
+  (it
+    "paints every footer cell on terminal-bg — no chip fills, no bands"
+    (let
+      [cols
+       100
+
+       rows
+       6
+
+       term
+       (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
+         (com.googlecode.lanterna.TerminalSize. cols rows))
+
+       scr
+       (doto (com.googlecode.lanterna.screen.TerminalScreen. term) (.startScreen))
+
+       g
+       (.newTextGraphics scr)
+
+       db
+       {:session (java.util.UUID/randomUUID)
+        :messages []
+        :settings {}
+        :input {:lines [""] :crow 0 :ccol 0}}]
+
+      (try (p/set-bg! g t/terminal-bg)
+           (p/fill-rect! g 0 0 cols rows)
+           (footer/draw-footer! g db 3 cols (System/currentTimeMillis))
+           (.refresh scr)
+           (expect (zero? (count (for
+                                   [y
+                                    (range rows)
+
+                                    x
+                                    (range cols)
+
+                                    :let [c
+                                          (.getBackCharacter scr (int x) (int y))]
+                                    :when (not= t/terminal-bg (.getBackgroundColor c))]
+
+                                   [x y]))))
+           (finally (.stopScreen scr))))))

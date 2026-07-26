@@ -33,9 +33,14 @@
             [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
-  "Per-session event-log ring size. Older events stay durable in the
-   session transcript; the ring only backs SSE cursor replay."
-  10000)
+  "Per-session event-log ring size. Older events stay durable in the session
+   transcript; the ring only backs short SSE cursor reconnects. Override with
+   `VIS_GATEWAY_EVENT_RING_MAX`; values <= 0 use the default of 2000."
+  (let
+    [configured (some-> (System/getenv "VIS_GATEWAY_EVENT_RING_MAX")
+                        str/trim
+                        parse-long)]
+    (if (pos? (long (or configured 0))) (long configured) 2000)))
 
 (def ^:private RESULT_PR_LIMIT 4000)
 
@@ -139,14 +144,58 @@
          :duration-ms-total 0
          :per-session {}}))
 
+(def ^:private MAX_CONCURRENT_TURNS
+  "Process-wide cap for simultaneously executing gateway turns. Each turn can
+   own a GraalPy context and substantial transient heap, so per-session
+   serialization alone is insufficient. Override with
+   `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 2."
+  (let
+    [configured (some-> (System/getenv "VIS_GATEWAY_MAX_CONCURRENT_TURNS")
+                        str/trim
+                        parse-long)]
+    (if (pos? (long (or configured 0))) (long configured) 50)))
+
+(defonce ^:private turn-permits (java.util.concurrent.Semaphore. (int MAX_CONCURRENT_TURNS) true))
+
+(defonce ^:private turns-executing (atom 0))
+
+(defonce ^:private turns-waiting (atom 0))
+
+(defn- acquire-turn-permit!
+  "Wait for a process-wide execution slot. Returns false when cancellation wins
+   while queued; no Python environment is opened before a slot is acquired."
+  [cancel-token]
+  (swap! turns-waiting inc)
+  (try (loop []
+
+         (cond (cancellation/cancelled? cancel-token) false
+               (try (.tryAcquire ^java.util.concurrent.Semaphore turn-permits
+                                 100
+                                 java.util.concurrent.TimeUnit/MILLISECONDS)
+                    (catch InterruptedException _ false))
+               true
+               :else (recur)))
+       (finally (swap! turns-waiting dec))))
+
+(defn- release-turn-permit!
+  []
+  (swap! turns-executing dec)
+  (.release ^java.util.concurrent.Semaphore turn-permits))
+
 ;; =============================================================================
 ;; Event log + fan-out
 ;; =============================================================================
 
 (defn- trim-ring
+  "Keep the newest replay events in a persistent queue. `subvec` is deliberately
+   avoided: its view retains the entire historical backing vector and turns a
+   nominally bounded replay ring into an unbounded heap retention path."
   [events]
-  (let [n (count events)]
-    (if (> n (long EVENT_RING_MAX)) (subvec events (- n (long EVENT_RING_MAX))) events)))
+  (loop
+    [ring (if (instance? clojure.lang.PersistentQueue events)
+            events
+            (into clojure.lang.PersistentQueue/EMPTY events))]
+    (if (> (count ring) (long EVENT_RING_MAX)) (recur (pop ring)) ring)))
 
 (defn- fan-out!
   "Deliver `event` to every local SSE sink for `sid`. Runs on the APPENDING
@@ -1675,6 +1724,20 @@
                                  :stalled? stalled?
                                  :retry-after-ms (failure-retry-after-ms {:throwable t})}))))))
 
+(defn- cancel-waiting-turn!
+  "Land a turn cancelled while waiting for the global execution permit without
+   constructing a Python environment."
+  [sid tid cancel-token]
+  (finish-turn!
+    sid
+    tid
+    {:status "cancelled" :role "assistant" :content [] :completed_at (System/currentTimeMillis)})
+  (append-event! sid "turn.cancelled" {:turn_id tid :status "cancelled"})
+  (emit-context-updated! sid)
+  (after-turn-terminal!
+    sid
+    tid
+    {:failed? false :transient? false :cancel-token cancel-token :stalled? false}))
 
 (defn- launch-turn-worker!
   [sid tid request
@@ -1682,10 +1745,6 @@
            engine-opts attachments display-request]}]
   (append-event! sid
                  "turn.started"
-                 ;; Carry the CANONICAL run-start clock (stamped into the registry
-                 ;; row by submit/drain) so every attached channel seeds its
-                 ;; elapsed timer from the ONE shared timestamp — a TUI's local
-                 ;; submit/drain/attach stamp drifts from the actual run start.
                  (cond->
                    {:turn_id tid
                     :request (or display-request request)
@@ -1695,33 +1754,37 @@
                    queued?
                    (assoc :queued? true)
 
-                   ;; Echo the user's INLINE image attachments (web/API base64)
-                   ;; on the live event so a freshly-attached companion turn
-                   ;; renders the picture immediately — the SAME base64 the
-                   ;; history projection inlines (see `att-by-soul`). Without
-                   ;; this the live turn shows only the `[Image #N: …]` caption
-                   ;; until a reload rehydrates the persisted attachment.
                    (seq attachments)
                    (assoc :attachments attachments)))
-  (let [stall (atom {:phase nil :last-ms (System/currentTimeMillis)})]
+  (let
+    [stall
+     (atom {:phase nil :last-ms (System/currentTimeMillis)})
+
+     worker
+     (fn []
+       (if (acquire-turn-permit! cancel-token)
+         (do (swap! turns-executing inc)
+             (start-turn-stall-watchdog! sid tid cancel-token stall)
+             (try (run-turn! sid
+                             tid
+                             request
+                             {:messages messages
+                              :model model
+                              :reasoning-default reasoning-default
+                              :cancel-token cancel-token
+                              :extra-body extra-body
+                              :turn-features turn-features
+                              :workspace workspace
+                              :engine-opts engine-opts
+                              :attachments attachments
+                              :display-request display-request
+                              :stall stall})
+                  (finally (release-turn-permit!))))
+         (cancel-waiting-turn! sid tid cancel-token)))]
+
     (cancellation/cancellation-set-future! cancel-token
-                                           (cancellation/worker-future
-                                             (str "gateway-turn-" tid)
-                                             #(run-turn! sid
-                                                         tid
-                                                         request
-                                                         {:messages messages
-                                                          :model model
-                                                          :reasoning-default reasoning-default
-                                                          :cancel-token cancel-token
-                                                          :extra-body extra-body
-                                                          :turn-features turn-features
-                                                          :workspace workspace
-                                                          :engine-opts engine-opts
-                                                          :attachments attachments
-                                                          :display-request display-request
-                                                          :stall stall})))
-    (start-turn-stall-watchdog! sid tid cancel-token stall)))
+                                           (cancellation/worker-future (str "gateway-turn-" tid)
+                                                                       worker))))
 
 
 (defn- first-queued-turn
@@ -1872,11 +1935,11 @@
   [{:keys [stalled? throwable result]}]
   (boolean (cond stalled? true
                  throwable (or (provider-error/transport-throwable? throwable)
-                               (contains? #{:rate-limit :transport}
+                               (contains? #{:rate-limit :transport :stream-timeout}
                                           (provider-error/provider-error-kind throwable)))
                  :else (let [err (:error result)]
                          (or (nil? err)
-                             (contains? #{:rate-limit :transport}
+                             (contains? #{:rate-limit :transport :stream-timeout}
                                         (provider-error/provider-error-kind err)))))))
 
 (defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
@@ -2032,8 +2095,15 @@
     [drain?
      (or stalled? (not (cancellation/cancelled? cancel-token)) (queued-after-cancel? sid tid))]
     (cond (not drain?) nil
-          (not failed?) (do (swap! registry update sid #(when % (dissoc % :queue-fails)))
-                            (drain-next-queued! sid))
+          (not failed?) (let [was-paused (volatile! false)]
+                          (swap! registry update
+                            sid
+                            (fn [entry]
+                              (when entry
+                                (when (:queue-paused entry) (vreset! was-paused true))
+                                (dissoc entry :queue-fails :queue-paused))))
+                          (when @was-paused (append-event! sid "queue.resumed" {:is_auto true}))
+                          (drain-next-queued! sid))
           transient? (do (re-queue-turn! sid tid)
                          (pause-queue! sid
                                        {:reason "provider_unhealthy"
@@ -2481,9 +2551,9 @@
           (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
           :else
           (do ;; Stamp the cancel wall-clock BEFORE firing the token so the
-              ;; unwinding worker can tell post-cancel submissions (drain
-              ;; them: "stop that, run THIS") from the pre-cancel backlog
-              ;; (leave queued) — see `queued-after-cancel?`.
+            ;; unwinding worker can tell post-cancel submissions (drain
+            ;; them: "stop that, run THIS") from the pre-cancel backlog
+            ;; (leave queued) — see `queued-after-cancel?`.
             (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
             ;; Durable twin of the stamp above: a JVM death mid-unwind must
             ;; not leave the engine row `:running` after the process exits).
@@ -2532,9 +2602,9 @@
 ;; =============================================================================
 
 (def ^:private PREWARM_POOL_DEPTH
-  "Empty, fully-built sessions retained per channel. Two absorbs rapid consecutive
-   creates while a background worker replenishes the first slot."
-  2)
+  "Empty, fully-built sessions retained per channel. One removes cold-start
+   latency without pinning a second unused GraalPy context per channel."
+  1)
 
 (defonce ^:private prewarm-pool (atom {:ready {} :in-flight {} :accepting? false}))
 
@@ -3038,13 +3108,25 @@
   (titling/add-global-title-listener! #'broadcast-title-event!))
 
 (defn metrics-snapshot
-  "Global + per-session counters for /metrics."
+  "Global, per-session, concurrency, replay-buffer, and JVM gauges for /metrics."
   []
-  (let [reg @registry]
-    (assoc @metrics
-      :sessions-tracked (count reg)
-      :turns-running (count (keep :current-turn (vals reg)))
-      :auth-refresh (lp/auth-refresh-metrics))))
+  (let
+    [reg
+     @registry
+
+     entries
+     (vals reg)]
+
+    (merge @metrics
+           (lp/gateway-runtime-metrics)
+           {:sessions-tracked (count reg)
+            :turns-running (count (keep :current-turn entries))
+            :turns-executing @turns-executing
+            :turns-waiting @turns-waiting
+            :turn-concurrency-limit MAX_CONCURRENT_TURNS
+            :turns-queued (reduce + 0 (map count-queued entries))
+            :replay-events-retained (reduce + 0 (map #(count (:events %)) entries))
+            :auth-refresh (lp/auth-refresh-metrics)})))
 
 (defn warm-db!
   "Force the persistence backend + shared connection on the CALLER's

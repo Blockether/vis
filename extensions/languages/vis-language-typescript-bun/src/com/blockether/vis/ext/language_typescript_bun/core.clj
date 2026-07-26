@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.language-typescript-bun.core
   "vis-language-typescript-bun — a managed TypeScript/Bun REPL exposed through
-   the generic language facade (repl_start / repl_eval / repl_stop) plus
+   the generic language facade (repl / repl_eval / repl_stop) plus
    run_tests -> `bun test`. Activates only when the workspace looks like a Bun
    project. The REPL is a persistent `bun` subprocess running a line-framed
    JSON eval server with REAL REPL semantics (persistent globals, top-level
@@ -155,10 +155,10 @@
                suggestion
                "\"})."
                (when (seq candidates) (str " Workspace dirs: " (str/join ", " candidates) "."))
-               " To force a root REPL anyway: repl_start(\"typescript\", {\"dir\": \".\"})."))))))
+               " To force a root REPL anyway: repl(\"typescript\", {\"dir\": \".\"})."))))))
 
 (defn ts-start-repl-fn
-  "repl_start handler for TypeScript/Bun. Positional `op` (default \"start\") +
+  "repl handler for TypeScript/Bun. Positional `op` (default \"start\") +
    opts `{dir, id}`. Lifecycle: start / restart / stop / status. `op` arrives as
    a STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
@@ -197,7 +197,7 @@
             (register-repl-resource! (:session-id env) dir r id)
             (extension/success {:result r})))
 
-      (throw (ex-info (str "repl_start(typescript) unknown op: " (pr-str op))
+      (throw (ex-info (str "repl(typescript) unknown op: " (pr-str op))
                       {:type :ts/bad-args :got op})))))
 
 (defn ts-repl-eval-fn
@@ -229,7 +229,7 @@
           (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
       (throw (ex-info (str "TypeScript REPL is not up for "
                            dir
-                           "; call repl_start(\"typescript\", {\"dir\": "
+                           "; call repl(\"typescript\", {\"dir\": "
                            (pr-str dir)
                            "}) first")
                       {:type :ts/no-repl :dir dir})))
@@ -316,7 +316,7 @@
 ;; Manifest
 ;; =============================================================================
 
-;; No :ext/prompt-fn — the foundation advertises repl_eval / repl_start /
+;; No :ext/prompt-fn — the foundation advertises repl_eval / repl /
 ;; run_tests through the AUTO capability matrix; repl_eval's own result
 ;; ({ok,out,err,value,data,type,exc}; opaque values carry __type__/__attrs__/
 ;; __opaque__) is self-documenting.
@@ -332,7 +332,7 @@
   (vis/extension
     {:ext/name "language-typescript-bun"
      :ext/description
-     "TypeScript/JavaScript (Bun) language pack: a managed Bun REPL (persistent globals, top-level await, reload()) behind the generic repl_start/repl_eval/repl_stop facade, plus run_tests -> `bun test`. Covers TS/TSX/JS/JSX and activates on Bun/Node workspaces."
+     "TypeScript/JavaScript (Bun) language pack: a managed Bun REPL (persistent globals, top-level await, reload()) behind the generic repl/repl_eval/repl_stop facade, plus run_tests -> `bun test`. Covers TS/TSX/JS/JSX and activates on Bun/Node workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

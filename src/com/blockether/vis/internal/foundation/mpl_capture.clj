@@ -51,6 +51,13 @@
    `RuntimeError` instead of silently returning nothing."
   nil)
 
+(def ^:dynamic *attachment-reinspection-sink*
+  "Per-block queue of persisted image attachments deliberately reintroduced to the
+   NEXT provider request. Bound by `run-python-code`; `vis_reinspect_attachment`
+   appends hydrated session-owned images here. Unlike `*attachment-sink*`, these
+   are ephemeral: the loop consumes them once and never stores duplicate bytes."
+  nil)
+
 (defn record-attachment!
   "Append ONE produced-artifact attachment map to the active per-block
    `*attachment-sink*` (a silent no-op when unbound — e.g. a call outside a driven
@@ -63,6 +70,20 @@
   (when-let [sink *attachment-sink*]
     (try (swap! sink conj m) (catch Throwable _ nil)))
   nil)
+
+(defn queue-reinspection!
+  "Queue one hydrated, session-owned image for exactly one provider request. A
+   silent no-op outside a driven block; callers validate ownership and media type."
+  [attachment]
+  (when-let [sink *attachment-reinspection-sink*]
+    (try (swap! sink conj attachment) (catch Throwable _ nil)))
+  nil)
+
+(defn drain-reinspections
+  "Queued one-request image re-inspections for `sink`, or nil when none."
+  [sink]
+  (not-empty (vec (some-> sink
+                          deref))))
 
 (defn drain
   "The attachments collected in `sink` (an atom vector) as a plain vector, or nil

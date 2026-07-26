@@ -100,7 +100,7 @@
             (or host "localhost")
             ":"
             port
-            " — is the REPL running? Check session[\"resources\"][\"repls\"][\"clojure\"] or call repl_start(\"clojure\").")
+            " — is the REPL running? Check session[\"resources\"][\"repls\"][\"clojure\"] or call repl(\"clojure\").")
           {:type :clj/nrepl-connect-failed
            :host (or host "localhost")
            :port port
@@ -1085,7 +1085,7 @@
                     timeout-ms
                     "ms on "
                     health-form
-                    " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl_start) or reprobe.")}
+                    " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl) or reprobe.")}
               (= "2" (str/trim (str (get combined "value")))) {:status :up :ms ms}
               :else
               {:status :unresponsive
@@ -1097,7 +1097,7 @@
                  (pr-str (get combined "value"))
                  " for "
                  health-form
-                 " (expected \"2\") — the REPL is UNHEALTHY. Kill & restart it (F4 / repl_start).")})))
+                 " (expected \"2\") — the REPL is UNHEALTHY. Kill & restart it (F4 / repl).")})))
         (catch clojure.lang.ExceptionInfo e
           (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
             {:status :down :form health-form}
@@ -1105,11 +1105,11 @@
              :form health-form
              :hint (str "nREPL connection error on "
                         health-form
-                        " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl_start).")}))
+                        " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl).")}))
         (catch IOException _ (evict! host port) {:status :down :form health-form})
         (catch Throwable _
           {:status :unresponsive
            :form health-form
            :hint (str "nREPL health check failed unexpectedly on "
                       health-form
-                      " — the REPL may be UNRESPONSIVE. Kill & restart it (F4 / repl_start).")})))))
+                      " — the REPL may be UNRESPONSIVE. Kill & restart it (F4 / repl).")})))))

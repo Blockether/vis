@@ -1028,14 +1028,19 @@
            (state/resume-queue! sid {:auto? false})
            (expect (= ["queue.resumed" :drained] (types)))
            (expect (nil? (state/queue-paused-info sid)))
-           ;; clean completion advances and never pauses
+           ;; clean completion clears a stale provider hold before advancing
            (seed!)
+           (swap! reg update sid assoc
+                  :queue-fails 2
+                  :queue-paused {:reason "provider_error" :held 2 :fails 2 :gen 1})
            (#'state/after-turn-terminal!
             sid
             "t"
             {:failed? false :transient? false :cancel-token :c :stalled? false})
-           (expect (= [:drained] (types)))
+           (expect (= ["queue.resumed" :drained] (types)))
+           (expect (true? (get-in @evs [0 1 :is_auto])))
            (expect (nil? (state/queue-paused-info sid)))
+           (expect (nil? (get-in @reg [sid :queue-fails])))
            ;; three straight transient failures trip the breaker; it stays OPEN
            (seed!)
            (dotimes [_ 3]
@@ -1052,3 +1057,59 @@
            (finally (doseq [[v orig] saved]
                       (alter-var-root v (constantly orig)))
                     (swap! reg dissoc sid))))))
+
+(defdescribe gateway-resource-bounds-test
+             (it "retains only the configured replay tail"
+                 (with-redefs-fn {#'state/EVENT_RING_MAX 3}
+                   (fn []
+                     (let
+                       [trim-ring
+                        (deref #'state/trim-ring)
+
+                        ring
+                        (trim-ring [1 2 3 4 5])]
+
+                       (expect (= [3 4 5] ring))
+                       (expect (instance? clojure.lang.PersistentQueue ring))))))
+             (it "waits for a global turn permit and lets cancellation win without execution"
+                 (let
+                   [semaphore
+                    (java.util.concurrent.Semaphore. 1 true)
+
+                    token
+                    (cancellation/cancellation-token)
+
+                    acquire!
+                    (deref #'state/acquire-turn-permit!)]
+
+                   (.acquire semaphore)
+                   (try (with-redefs-fn {#'state/turn-permits semaphore}
+                          (fn []
+                            (let [result (future (acquire! token))]
+                              (Thread/sleep 150)
+                              (expect (not (realized? result)))
+                              (cancellation/cancel! token)
+                              (expect (= false (deref result 1000 ::timeout))))))
+                        (finally (.release semaphore)))))
+             (it "keeps one unused prewarm context per channel"
+                 (let
+                   [pool
+                    @#'state/prewarm-pool
+
+                    prior
+                    @pool
+
+                    reserve!
+                    (deref #'state/reserve-prewarm-slot!)]
+
+                   (try (reset! pool {:ready {} :in-flight {} :accepting? true})
+                        (expect (true? (reserve! :api)))
+                        (expect (false? (reserve! :api)))
+                        (finally (reset! pool prior)))))
+             (it "exports concurrency, replay, heap, GC, thread, and env-cache gauges"
+                 (let [snapshot (state/metrics-snapshot)]
+                   (doseq
+                     [k [:turns-executing :turns-waiting :turn-concurrency-limit
+                         :replay-events-retained :jvm-heap-used-bytes :process-rss-bytes
+                         :jvm-gc-count-total :jvm-thread-count :env-cache-size]]
+                     (expect (contains? snapshot k))))))

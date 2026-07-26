@@ -176,7 +176,7 @@ Each catalog entry has an `id`, a `path` (absolute `/…` or home-relative `~`/`
 — a bare-relative path is rejected when the config is read), an optional
 `description` (shown in the session access view), an `access` of `read-write`
 (default) or `read-only`, and `search` (default `true`; `search: false` keeps the
-root out of the default `rg`/`find_files` sweep while explicit paths still reach
+root out of the default `grep` sweep while explicit paths still reach
 it).
 
 `jail.filesystem.allow` then lists the ids that enter the OS jail
@@ -496,7 +496,7 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
 - `python_execution` is in-process GraalPy. It cannot receive a per-thread
   Seatbelt profile, but its filesystem is confined and HTTP is routed through
   the same gateway policy. Its raw-socket host guard remains a separate floor.
-- Managed REPLs started by `repl_start` and managed project test processes are
+- Managed REPLs started by `repl` and managed project test processes are
   child processes and are jailed.
 - `repl_connect` attaches to an already-running, user-owned external process.
   Vis did not spawn it and cannot retroactively apply Seatbelt. Stopping the

@@ -415,3 +415,50 @@ const total = add(1, 2);")
             (it "no symbol carries an engine-scope"
                 (let [scopes (set (map :ext.symbol/engine-scope search/search-symbols))]
                   (expect (= #{nil} scopes))))))
+
+(defn- routed
+  "Run `search` with the three per-kind fns stubbed so the assertion sees ONLY
+   the dispatch decision. Redefs live INSIDE the call (lazytest defers `it`
+   bodies, so a `with-redefs` wrapping `describe` would already be unwound)."
+  [& args]
+  (with-redefs
+    [search/search-web
+     (fn [q opts]
+       {:hit :web :q q :opts opts})
+
+     search/search-code
+     (fn [q opts]
+       {:hit :code :q q :opts opts})
+
+     search/search-papers
+     (fn [q opts]
+       {:hit :papers :q q :opts opts})]
+
+    (apply search/search args)))
+
+(defdescribe
+  unified-search-test
+  (describe
+    "one `search` tool, kind picks the corpus"
+    (it "default kind is web" (expect (= :web (:hit (routed "x")))))
+    (it "kind=web routes to search-web" (expect (= :web (:hit (routed "x" {"kind" "web"})))))
+    (it "kind=code routes to search-code" (expect (= :code (:hit (routed "x" {"kind" "code"})))))
+    (it "kind=papers routes to search-papers"
+        (expect (= :papers (:hit (routed "x" {"kind" "papers"})))))
+    (it "`kind` is stripped before per-kind opts are forwarded"
+        (expect (= {"num_results" 3} (:opts (routed "x" {"kind" "web" "num_results" 3}))))))
+  (describe
+    "unknown kind fails loudly instead of silently searching the web"
+    (it "returns an error citation naming the valid kinds"
+        (let [c (first (get (envelope-result (search/search "x" {"kind" "moon"})) "citations"))]
+          (expect (true? (get c "error")))
+          (expect (str/includes? (get c "excerpt") "web | code | papers")))))
+  (describe "wire surface"
+            (it "`search` is the only NATIVE search tool"
+                (expect (true? (:ext.symbol/native-tool? search/search-symbol)))
+                (doseq [sym-entry [search/web-symbol search/code-symbol search/papers-symbol]]
+                  (expect (false? (:ext.symbol/native-tool? sym-entry)))))
+            (it "the schema exposes the three kinds"
+                (expect (= ["web" "code" "papers"]
+                           (get-in search/search-symbol
+                                   [:ext.symbol/schema :properties "kind" :enum]))))))

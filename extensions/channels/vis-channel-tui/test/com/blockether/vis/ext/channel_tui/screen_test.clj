@@ -97,12 +97,68 @@
 
 (def ^:private print-session-id-on-exit! (deref #'screen/print-session-id-on-exit!))
 
+(def ^:private authenticated-provider-config (deref #'screen/authenticated-provider-config))
+
+(def ^:private enable-terminal-escape-modes! (deref #'screen/enable-terminal-escape-modes!))
+
+(def ^:private disable-terminal-escape-modes! (deref #'screen/disable-terminal-escape-modes!))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag -
    the contract the channel entry point relies on to print a clean
    `vis: <msg>` line and exit 2 instead of a Java stack trace."
   [f]
   (try (f) false (catch clojure.lang.ExceptionInfo e (true? (:vis/user-error (ex-data e))))))
+
+(defdescribe
+  terminal-control-mode-lifecycle-test
+  (it
+    "disables IXON on screen setup and restores it on teardown"
+    (let
+      [calls
+       (atom [])
+
+       record
+       (fn [event]
+         (fn [& _]
+           (swap! calls conj event)))]
+
+      (with-redefs
+        [input/enable-bracketed-paste!
+         (record :enable-paste)
+
+         input/enable-sgr-mouse!
+         (record :enable-mouse)
+
+         input/disable-literal-next!
+         (record :disable-iexten)
+
+         input/disable-software-flow-control!
+         (record :disable-ixon)
+
+         input/set-default-bg!
+         (record :set-bg)
+
+         input/disable-bracketed-paste!
+         (record :disable-paste)
+
+         input/disable-sgr-mouse!
+         (record :disable-mouse)
+
+         input/reset-default-bg!
+         (record :reset-bg)
+
+         input/restore-software-flow-control!
+         (record :restore-ixon)
+
+         input/restore-literal-next!
+         (record :restore-iexten)]
+
+        (enable-terminal-escape-modes! nil)
+        (disable-terminal-escape-modes! nil))
+      (expect (= [:enable-paste :enable-mouse :disable-iexten :disable-ixon :set-bg :disable-paste
+                  :disable-mouse :reset-bg :restore-ixon :restore-iexten]
+                 @calls)))))
 
 (defdescribe
   render-heartbeat-test
@@ -545,6 +601,15 @@
       ;; final log write that rides the agent pool, and shutdown-agents will
       ;; refuse new work.
       (expect (= [:redirect :init :run :print-id :vis-shutdown :shutdown-agents] @calls)))))
+
+(defdescribe authenticated-provider-startup-config-test
+             (it "uses authenticated OAuth presets when no persisted config exists"
+                 (let [providers [{:id :openai-codex :models [{:name "gpt-5.5"}]}]]
+                   (with-redefs [vis/authenticated-preset-providers (constantly providers)]
+                     (expect (= {:providers providers} (authenticated-provider-config))))))
+             (it "falls through to onboarding when no authenticated preset is available"
+                 (with-redefs [vis/authenticated-preset-providers (constantly [])]
+                   (expect (nil? (authenticated-provider-config))))))
 
 (defdescribe startup-resume-test
              (it "--session-id reconciles orphaned running turns before rebuilding history"

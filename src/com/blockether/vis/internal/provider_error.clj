@@ -189,6 +189,20 @@
   [err]
   (= :svar.llm/empty-content (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn stream-timeout-error?
+  "True when the failure is one of svar's TYPED stream watchdogs firing:
+   `:svar.core/stream-semantic-timeout` (transport alive, zero model/progress
+   events inside the budget) or `:svar.core/stream-idle-timeout` (no bytes at
+   all). Dispatches on typed `ex-data` — NEVER on message text.
+
+   Emphatically NOT a rejection and NOT an outage: the provider accepted the
+   request, the model was (as far as anyone knows) still working, and VIS hung
+   up. Presenting it as 'the provider rejected the request before the model
+   ran' is false and points the user at auth/quota — the wrong place."
+  [err]
+  (contains? #{:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout}
+             (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (defn- provider-id-of [data] (or (:provider-id data) (:provider data) (:provider/id data)))
 
 (defn auth-provider-next-step
@@ -245,6 +259,25 @@
      (:tool-schema-field data)]
 
     (cond
+      (stream-timeout-error? err)
+      (let
+        [data
+         (or (:data err) (ex-data err))
+
+         budget-ms
+         (or (:semantic-timeout-ms data) (:idle-timeout-ms data))
+
+         semantic?
+         (= :svar.core/stream-semantic-timeout
+            (or (:type (:data err)) (:type err) (:type (ex-data err))))]
+
+        (str "WHAT HAPPENED: the provider accepted the request and the stream was still "
+             "open, but "
+             (if semantic? "no model/progress event arrived" "no bytes arrived")
+             (when budget-ms (str " for " (long (/ (long budget-ms) 1000)) "s"))
+             ", so VIS closed the connection — the model was likely still reasoning. "
+             "Nothing was rejected: this is not an auth, quota, or outage problem, and "
+             "your transcript and tool results are intact."))
       (empty-content-error? err)
       (let [resends (long (or (:empty-reply-resends data) 0))]
         (str "WHAT HAPPENED: the provider accepted the request and answered with a "
@@ -313,6 +346,9 @@
      (:data err)]
 
     (case (provider-error-kind err)
+      :stream-timeout
+      "Stream went quiet — Vis timed out"
+
       :empty-content
       "Model returned an empty response"
 
@@ -352,6 +388,13 @@
      (:data err)]
 
     (case (provider-error-kind err)
+      :stream-timeout
+      (str "NEXT STEP: retry the turn once — this watchdog timeout is not automatically "
+           "re-sent to the same provider. Long reasoning turns can legitimately exceed "
+           "the budget; raise `semantic-timeout-ms` (or set it to nil to disable the "
+           "watchdog) if this model routinely thinks longer. Auth, quota, and provider "
+           "status are NOT implicated.")
+
       :empty-content
       (str "NEXT STEP: retry the turn — Vis re-sends the same request to the same "
            "model, and these stalls usually clear with a little time. If it keeps "
@@ -429,7 +472,8 @@
      schema-rejection?
      (tool-schema-rejection-message? (str provider-message "\n" message))]
 
-    (cond (empty-content-error? err) :empty-content
+    (cond (stream-timeout-error? err) :stream-timeout
+          (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           schema-rejection? :tool-schema
           (auth-provider-error? status provider-message message) :auth

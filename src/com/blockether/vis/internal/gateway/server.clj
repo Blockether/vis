@@ -227,6 +227,28 @@
 
 (declare stop!)
 
+(defn- ensure-self-registered!
+  "Repair this live daemon's registry when it is missing or still points at a
+   dead predecessor. Never overwrite another live PID: that keeps close/reopen
+   handoff ownership monotonic even while shutdown and startup overlap."
+  []
+  (when-let [{:keys [^Server server db port host token]} @server-state]
+    (when (and server db (.isStarted server))
+      (try
+        (let [entry (discovery/read-registry db)
+              owner-pid (:pid entry)
+              self-pid (discovery/current-pid)
+              ours? (= owner-pid self-pid)
+              complete? (and ours?
+                             (= port (:port entry))
+                             (= host (:host entry))
+                             (= token (:secret entry)))]
+          (when (and (not complete?)
+                     (or (nil? owner-pid) ours? (not (discovery/pid-alive? owner-pid))))
+            (discovery/register-self! db {:port port :host host :secret token})))
+        (catch Throwable t
+          (tel/log! :warn ["gateway: registry self-repair failed" (ex-message t)]))))))
+
 (defn- idle-shutdown-eligible?
   "True when this daemon is allowed to stop itself. Foreground `vis gateway start`
    is user-owned and lives until Ctrl-C/admin stop; auto-spawned gateway daemons are
@@ -268,7 +290,11 @@
       (future (try (loop []
 
                      (Thread/sleep (long IDLE_REAP_MS))
-                     (when @server-state (reap-client-leases!) (maybe-stop-when-idle!) (recur)))
+                     (when @server-state
+                       (ensure-self-registered!)
+                       (reap-client-leases!)
+                       (maybe-stop-when-idle!)
+                       (recur)))
                    (catch Throwable t
                      (tel/log! :warn ["gateway: idle reaper failed" (ex-message t)]))
                    (finally (reset! idle-reaper nil)))))))
@@ -279,7 +305,7 @@
 
 (defn- default-token-path
   ^Path []
-  (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway.token"])))
+  (.toPath (discovery/default-token-file)))
 
 (defn- ensure-token!
   "Read the bearer token at `path`, minting one on first run. The token file
@@ -634,54 +660,46 @@
 ;; =============================================================================
 
 (defn- prometheus-text
-  [{:keys [turns-total turns-failed tokens-input tokens-output cost-total duration-ms-total
-           sessions-tracked turns-running gateway-client-leases gateway-sse-clients
-           gateway-client-registrations-total gateway-client-releases-total
-           gateway-client-replacements-total gateway-client-leases-reaped-total]}]
-  (str
-    "# TYPE vis_turns_total counter\nvis_turns_total "
-    turns-total
-    "\n"
-    "# TYPE vis_turns_failed_total counter\nvis_turns_failed_total "
-    turns-failed
-    "\n"
-    "# TYPE vis_turn_tokens_total counter\n"
-    "vis_turn_tokens_total{kind=\"input\"} "
-    tokens-input
-    "\n"
-    "vis_turn_tokens_total{kind=\"output\"} "
-    tokens-output
-    "\n"
-    "# TYPE vis_turn_cost_usd_total counter\nvis_turn_cost_usd_total "
-    cost-total
-    "\n"
-    "# TYPE vis_turn_duration_ms_total counter\nvis_turn_duration_ms_total "
-    duration-ms-total
-    "\n"
-    "# TYPE vis_sessions_tracked gauge\nvis_sessions_tracked "
-    sessions-tracked
-    "\n"
-    "# TYPE vis_turns_running gauge\nvis_turns_running "
-    turns-running
-    "\n"
-    "# TYPE vis_gateway_client_leases gauge\nvis_gateway_client_leases "
-    gateway-client-leases
-    "\n"
-    "# TYPE vis_gateway_sse_clients gauge\nvis_gateway_sse_clients "
-    gateway-sse-clients
-    "\n"
-    "# TYPE vis_gateway_client_registrations_total counter\nvis_gateway_client_registrations_total "
-    gateway-client-registrations-total
-    "\n"
-    "# TYPE vis_gateway_client_releases_total counter\nvis_gateway_client_releases_total "
-    gateway-client-releases-total
-    "\n"
-    "# TYPE vis_gateway_client_replacements_total counter\nvis_gateway_client_replacements_total "
-    gateway-client-replacements-total
-    "\n"
-    "# TYPE vis_gateway_client_leases_reaped_total counter\nvis_gateway_client_leases_reaped_total "
-    gateway-client-leases-reaped-total
-    "\n"))
+  [snapshot]
+  (let
+    [series
+     [[:turns-total "vis_turns_total" "counter"] [:turns-failed "vis_turns_failed_total" "counter"]
+      [:cost-total "vis_turn_cost_usd_total" "counter"]
+      [:duration-ms-total "vis_turn_duration_ms_total" "counter"]
+      [:sessions-tracked "vis_sessions_tracked" "gauge"]
+      [:turns-running "vis_turns_running" "gauge"] [:turns-executing "vis_turns_executing" "gauge"]
+      [:turns-waiting "vis_turns_waiting" "gauge"] [:turns-queued "vis_turns_queued" "gauge"]
+      [:turn-concurrency-limit "vis_turn_concurrency_limit" "gauge"]
+      [:replay-events-retained "vis_replay_events_retained" "gauge"]
+      [:env-cache-size "vis_env_cache_size" "gauge"]
+      [:env-heap-pressure "vis_env_heap_pressure" "gauge"]
+      [:jvm-heap-used-bytes "vis_jvm_heap_used_bytes" "gauge"]
+      [:process-rss-bytes "vis_process_rss_bytes" "gauge"]
+      [:jvm-heap-committed-bytes "vis_jvm_heap_committed_bytes" "gauge"]
+      [:jvm-heap-max-bytes "vis_jvm_heap_max_bytes" "gauge"]
+      [:jvm-gc-count-total "vis_jvm_gc_count_total" "counter"]
+      [:jvm-gc-time-ms-total "vis_jvm_gc_time_ms_total" "counter"]
+      [:jvm-thread-count "vis_jvm_thread_count" "gauge"]
+      [:gateway-client-leases "vis_gateway_client_leases" "gauge"]
+      [:gateway-sse-clients "vis_gateway_sse_clients" "gauge"]
+      [:gateway-client-registrations-total "vis_gateway_client_registrations_total" "counter"]
+      [:gateway-client-releases-total "vis_gateway_client_releases_total" "counter"]
+      [:gateway-client-replacements-total "vis_gateway_client_replacements_total" "counter"]
+      [:gateway-client-leases-reaped-total "vis_gateway_client_leases_reaped_total" "counter"]]]
+    (str "# TYPE vis_turn_tokens_total counter\n"
+         "vis_turn_tokens_total{kind=\"input\"} "
+         (get snapshot :tokens-input 0)
+         "\n"
+         "vis_turn_tokens_total{kind=\"output\"} " (get snapshot :tokens-output 0)
+         "\n" (apply str
+                (map
+                  (fn [[k metric-name metric-type]]
+                    (let
+                      [value (get snapshot k 0)
+                       value (if (boolean? value) (if value 1 0) value)]
+
+                      (str "# TYPE " metric-name " " metric-type "\n" metric-name " " value "\n")))
+                  series)))))
 
 (defn- metrics-handler
   [request]
@@ -698,6 +716,10 @@
 
 (defn- health-handler
   [request]
+  ;; `/healthz` is also the recovery rendezvous for a client that still knows
+  ;; the stable token but found the registry missing. Restore ownership before
+  ;; answering so subsequent discovery calls attach instead of bind-racing us.
+  (ensure-self-registered!)
   (let
     [{:keys [token]}
      @server-state

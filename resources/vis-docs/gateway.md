@@ -184,3 +184,25 @@ The gateway also owns each session's current workspace and the repo-scoped draft
 list. That shared ownership is why a draft survives client reconnects and why TUI
 and web surfaces see the same state. Draft creation, safety, persistence, slash
 commands, and the workspace HTTP routes are documented in [Drafts](drafts.md).
+
+## Resource limits and metrics
+
+The gateway bounds expensive GraalPy work process-wide and evicts idle session
+environments under heap or resident-memory pressure. Defaults favor stable
+memory use; override them before starting the gateway when a larger host needs
+more concurrency:
+
+| Variable | Default | Purpose |
+| --- | ---: | --- |
+| `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Simultaneously executing turns across all sessions |
+| `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | In-memory SSE replay events retained per session |
+| `VIS_ENV_CACHE_MAX` | `8` | Resident idle session environments |
+| `VIS_ENV_MAX_TURNS_PER_CTX` | `25` | Turns before a long-lived GraalPy context is recycled |
+| `VIS_ENV_HEAP_BUDGET_MB` | `2048` | JVM heap pressure threshold |
+| `VIS_ENV_RSS_BUDGET_MB` | `3072` | Whole-process RSS threshold, including native/GraalPy memory |
+
+Values `<= 0` disable an eviction threshold; non-positive concurrency and event
+ring values fall back to their defaults. `GET /metrics` exposes active/waiting
+turns, queue depth, replay retention, environment-cache size, JVM heap/GC/thread
+gauges, process RSS, and memory-pressure state in Prometheus format (or JSON
+when requested with `Accept: application/json`).

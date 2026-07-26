@@ -983,7 +983,7 @@
 (defn native-tools-for
   "Every native tool on `active-extensions`' symbols — ONE walk, the single source
    the schemas / handlers / renderers / colours all project from, NORMALIZED to
-  `{:name :description :schema :handler :render :color-role :replay :active?}`.
+  `{:symbol :name :description :schema :handler :render :color-role :replay :active?}`.
 
    A symbol IS a native tool IFF it declares `:native-tool? true` (which REQUIRES
    `:schema`). Every field is FLAT on the symbol — no legacy `:native-tool` map.
@@ -991,15 +991,17 @@
    docstrings never enter the native surface. Input mechanics belong in `:schema`,
    and `doc(name)` appends those schema parameters exactly once. `:name` is the
    `:name` wire-name override else the symbol name (so `exists?` advertises
-   `file_exists`). `:active?` is the `:active-fn` against `env` (default true).
-   `env` may be nil."
+   `file_exists`). `:symbol` is internal identity metadata used to relate a provider
+   tool to any Python compatibility aliases; model-facing projections omit it.
+   `:active?` is the `:active-fn` against `env` (default true). `env` may be nil."
   ([active-extensions] (native-tools-for active-extensions nil))
   ([active-extensions env]
    (->> (or active-extensions [])
         (mapcat ext-symbols)
         (keep (fn [e]
                 (when (:ext.symbol/native-tool? e)
-                  {:name (or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
+                  {:symbol (:ext.symbol/symbol e)
+                   :name (or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
                    :description (:ext.symbol/description e)
                    :schema (:ext.symbol/schema e)
                    :handler (:ext.symbol/handler e)
@@ -3487,6 +3489,7 @@
     com.blockether.vis.internal.foundation.shim-toml
     com.blockether.vis.internal.foundation.shim-tzdata
     com.blockether.vis.internal.foundation.shim-sqlite3
+    com.blockether.vis.internal.foundation.shim-nippy
     com.blockether.vis.internal.foundation.shim-httpx
     com.blockether.vis.internal.foundation.shim-urllib3
     com.blockether.vis.internal.foundation.shim-paramiko

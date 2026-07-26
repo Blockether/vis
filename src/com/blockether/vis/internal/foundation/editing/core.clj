@@ -12,8 +12,9 @@
         (cat path :tail n)    ; last n lines
         (cat dir)             ; a DIRECTORY path -> shallow listing {:path :entries [{name path type size}] :depth}
         (cat dir opts)        ; opts keys: depth (recurse) / is_hidden / is_respect_gitignore
-        (rg query)           ; -> content hits; query = a term or list of terms (OR),
-                               ; smart-case substring. Opts: paths/include/context/is_files_only
+        (grep query)         ; -> content hits (anchored) + ranked file-NAME matches;
+                              ; query = a term or list of terms (OR), smart-case
+                              ; substring. Opts: paths/include/limit/is_hidden
 
    2. Cwd-safe wrappers over the babashka.fs file API. `patch` is
       the canonical text edit surface:
@@ -101,7 +102,7 @@
 
 (def ^:private fff-scan-max-concurrency
   "Permit count for `fff-scan-semaphore`: the max number of FRESH fff index
-   scans (rg / find_files / struct_occurrences — everything that goes through
+   scans (grep / struct_occurrences — everything that goes through
    `rg-fff-open`) allowed to run at once. A fresh scan spins fff's own worker
    threads over the whole tree — cheap for a small repo (~11ms), but up to the
    `rg-fff-scan-timeout-ms` (~30s) ceiling for a large one — so an UNBOUNDED
@@ -389,7 +390,7 @@
   (when (str/blank? (str p))
     (throw
       (ex-info
-        "Path is nil or blank - cat/ls take a concrete path string; note find_files returns a MAP, so use (:paths r) or the keys under (get-in r [\"content\" \"matches\"]), not the result itself"
+        "Path is nil or blank - cat/ls take a concrete path string; note grep returns a MAP, so use (:paths r) or the keys under (get r \"matches\"), not the result itself"
         {:type :ext.foundation.editing/blank-path :path p})))
   (let
     [cwd
@@ -512,7 +513,7 @@
             :else (recur (.getParentFile cur))))))
 
 (defn- normalize-find-dir-path
-  "Normalize one find_files scope to a directory. Existing files become their
+  "Normalize one grep scope to a directory. Existing files become their
    parent directory; missing paths climb to the nearest existing confined
    directory. The model-facing value uses the same round-trippable address as
    every search result."
@@ -534,13 +535,40 @@
 
     (if dir (rel-path dir) p)))
 
+(defn- find-scope-misses
+  "The requested grep scopes that DO NOT exist, each
+   `{\"requested\" p \"searched\" nearest-existing-dir}`.
+
+   `normalize-find-dir-path` climbs a stale path to the nearest existing
+   directory so the search still runs — which would otherwise SWALLOW the typo.
+   Computing the misses from the RAW scopes (before normalization) keeps the
+   climb productive while `grep` still reports `missing_paths`, exactly
+   like the content search does."
+  [paths]
+  (into []
+        (keep (fn [p]
+                (let [s (str/trim (str p))]
+                  (when-not (str/blank? s)
+                    (let [^File f (safe-path s)]
+                      (when-not (.exists f)
+                        (let [anc (nearest-existing-dir f)]
+                          (cond-> {"requested" s}
+                            anc
+                            (assoc "searched" (rel-path anc))))))))))
+        paths))
+
+
 (defn- resolve-search-roots
-  "Resolve rg/find `paths` into `{:roots [File …] :resolutions [{…} …]}`.
+  "Resolve grep `paths` into
+   `{:roots [File …] :searched-paths [model-path …] :resolutions [{…} …]}`.
 
    `:roots` are the canonical Files actually searched — a FILE root is searched as
    that ONE file, a DIRECTORY root is walked as a tree (ripgrep / Claude-Code /
    Codex semantics: `rg PATTERN a.clj src/` greps `a.clj` as a file and `src/` as
    a tree in one pass; the whole downstream already special-cases `.isFile`).
+   `:searched-paths` names those physical roots using the same round-trippable
+   addresses returned for search hits; it never leaves a default multi-root sweep
+   disguised as `[\".\"]`.
 
    A path that DOES NOT EXIST is NOT silently dropped: it CLIMBS to its nearest
    existing ANCESTOR directory (parent, then parent-of-parent, …) via
@@ -570,16 +598,16 @@
                  paths)]
     (if (some #{"."} paths)
       (let
-        [roots (workspace/allowed-roots)
-         primary (first roots)
-         no-search (workspace/no-search-roots)]
+        [allowed (workspace/allowed-roots)
+         primary (first allowed)
+         no-search (workspace/no-search-roots)
+         roots (into []
+                     (comp (remove (fn [r]
+                                     (and (not= r primary) (contains? no-search r))))
+                           (map io/file))
+                     allowed)]
 
-        {:roots (into []
-                      (comp (remove (fn [r]
-                                      (and (not= r primary) (contains? no-search r))))
-                            (map io/file))
-                      roots)
-         :resolutions []})
+        {:roots roots :searched-paths (mapv rel-path roots) :resolutions []})
       (let
         [resolutions
          (mapv (fn [p]
@@ -595,14 +623,14 @@
                paths)
          roots (into [] (comp (keep :root) (distinct)) resolutions)]
 
-        {:roots roots :resolutions resolutions}))))
+        {:roots roots :searched-paths (mapv rel-path roots) :resolutions resolutions}))))
 
 (defn- missing-search-paths
   "From `resolve-search-roots` `:resolutions`, the requested paths that did NOT
    exist — each `{\"requested\" p \"searched\" ancestor-dir}` (`searched` = the
    nearest existing directory the search climbed to, omitted when nothing in the
    chain existed). Empty when every named path was real (and always empty for the
-   default `.` sweep). Surfaced identically on both `rg` and `find_files` as
+   default `.` sweep). Surfaced identically on the `grep` name and content sides as
    `missing_paths` so a stale/typo'd path is reported, never silently absorbed."
   [resolutions]
   (into []
@@ -1279,7 +1307,13 @@
    matching for the whole listing."
   [^File f ^File root node is_hidden levels]
   (when-not (or (and (not is_hidden) (.isHidden f)) (ignored? node f root))
-    (let [dir? (.isDirectory f)]
+    (let
+      [dir?
+       (.isDirectory f)
+
+       levels
+       (long levels)]
+
       (cond->
         {"name" (.getName f) "path" (rel-path f) "type" (if dir? "dir" "file") "size" (.length f)}
         (and dir? (> levels 1))
@@ -1718,32 +1752,30 @@
      args
 
      spec
-     (cond
-       (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
-       (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b)) (assoc b "query" a)
-       (and (= 1 (count args)) (map? a)) a
-       :else
-       (throw
-         (ex-info
-           "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
-           {:type :ext.foundation.editing/invalid-find-args
-            :expected '([query] [query opts] [spec-map])
-            :got args})))
+     (cond (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
+           (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b)) (assoc b "query" a)
+           (and (= 1 (count args)) (map? a)) a
+           :else (throw (ex-info
+                          "grep takes grep(query), grep(query, opts), or grep({\"query\": q, ...})."
+                          {:type :ext.foundation.editing/invalid-find-args
+                           :expected '([query] [query opts] [spec-map])
+                           :got args})))
 
      allowed-keys
-     #{"query" "paths" "path" "limit" "include" "is_hidden" "is_respect_gitignore"}
+     #{"query" "paths" "path" "limit" "include" "context" "is_hidden" "is_respect_gitignore"}
 
      unknown-keys
      (seq (remove allowed-keys (keys spec)))]
 
     (when unknown-keys
-      (throw (ex-info (str
-                        "find spec has unknown keys: "
-                        (str/join ", " (map str unknown-keys))
-                        ". Allowed: query, paths, limit, include, is_hidden, is_respect_gitignore.")
-                      {:type :ext.foundation.editing/invalid-find-args
-                       :unknown (vec unknown-keys)
-                       :allowed (vec (sort allowed-keys))})))
+      (throw
+        (ex-info
+          (str "find spec has unknown keys: "
+               (str/join ", " (map str unknown-keys))
+               ". Allowed: query, paths, limit, include, context, is_hidden, is_respect_gitignore.")
+          {:type :ext.foundation.editing/invalid-find-args
+           :unknown (vec unknown-keys)
+           :allowed (vec (sort allowed-keys))})))
     (let
       [raw-query
        (get spec "query")
@@ -1792,6 +1824,19 @@
              "find \"paths\" must be a string or vector of directory strings (empty defaults to current directory)"
              {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
 
+       precise-paths
+       (into [] (distinct) paths)
+
+       missing
+       (find-scope-misses paths)
+
+       context
+       (let [c (get spec "context" 0)]
+         (when-not (and (integer? c) (not (neg? (long c))))
+           (throw (ex-info "find \"context\" must be a non-negative integer"
+                           {:type :ext.foundation.editing/invalid-find-args :context c})))
+         (long c))
+
        paths
        (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
 
@@ -1805,6 +1850,9 @@
 
       {:query query
        :paths paths
+       :precise-paths precise-paths
+       :missing missing
+       :context context
        :limit limit
        :is_hidden (boolean (get spec "is_hidden"))
        :is_respect_gitignore (get spec "is_respect_gitignore" true)
@@ -1957,7 +2005,7 @@
          vec)))
 
 (defn- find-ls
-  "ls-mode listing for a BLANK find_files query: enumerate every file under
+  "ls-mode listing for a BLANK grep query: enumerate every file under
    `roots` (a FILE root lists itself) ranked by frecency then recency, capped at
    `limit`. There is no pattern to match, so this is `ls`, not a fuzzy search —
    it skips the whole query-scoring path. Honors `is_hidden`/`is_respect_gitignore`
@@ -2014,10 +2062,11 @@
 (defn- find-search
   [args]
   (let
-    [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit is_ls]}
+    [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit is_ls]
+      scope-misses :missing}
      (coerce-find-spec args)
 
-     {roots :roots find-resolutions :resolutions}
+     {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
      (resolve-search-roots paths)
 
      ;; fff ranks genuine hits first but pads the page with loose subsequence
@@ -2160,13 +2209,13 @@
          (:source it)
          (assoc "source" (name (:source it)))))]
 
-    ;; Model-facing find_files result — string keys, no keyword values.
+    ;; Model-facing grep result — string keys, no keyword values.
     (cond->
       {"items" (mapv ->item items)
        "item_count" (count items)
        "paths" (mapv :path items)
        "query" query
-       "searched_paths" paths
+       "searched_paths" searched-paths
        "limit" limit
        "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")}
       fuzzy?
@@ -2175,16 +2224,17 @@
       (seq matched-terms)
       (assoc "matched_terms" matched-terms)
 
-      (seq (missing-search-paths find-resolutions))
-      (assoc "missing_paths" (missing-search-paths find-resolutions)))))
+      (seq (into (missing-search-paths find-resolutions) scope-misses))
+      (assoc "missing_paths" (into (missing-search-paths find-resolutions) scope-misses)))))
 
 (declare ^:private rg-search ^:private coerce-rg-spec)
 
 (defn- find-args->content-spec
-  "Build find_files' CONTENT-search spec from its public args. Scope paths come
-   from `coerce-find-spec`, so content search receives directories even when a
-   caller supplied a filename. find_files intentionally exposes no context-lines
-   option; each hit contains only its matching line and patch anchor."
+  "Build grep's CONTENT-search spec from its public args. Scope paths are the
+   PRECISE ones the caller named (a file greps as that one file, rg-style); the
+   caller widens to the normalized directory scopes only when the precise pass
+   finds nothing. `context` N (0 = off) rides along, so one call can ask for the
+   surrounding lines of every hit."
   [args]
   (let
     [[a b]
@@ -2196,10 +2246,13 @@
            (= 1 (count args)) {"query" a}
            :else {})
 
-     {:keys [paths]}
+     {paths :precise-paths :keys [context]}
      (coerce-find-spec args)]
 
     (cond-> {"query" (get spec "query") "paths" paths}
+      (pos? (long (or context 0)))
+      (assoc "context" context)
+
       (contains? spec "include")
       (assoc "include" (get spec "include"))
 
@@ -2210,11 +2263,13 @@
       (assoc "is_respect_gitignore" (get spec "is_respect_gitignore")))))
 
 (defn- content-result
-  "Build find_files' CONTENT block from an `rg-search` result: an ordered
+  "Build grep's CONTENT hits from an `rg-search` result: an ordered
    `{path {\"lineno:hash\" {\"text\" line}}}` matches map (each anchor key is a
    patch `from_anchor`), plus hit/file counts, first hit, echoed needles, and
-   breadth flags when more files match than are shown. The compatibility arity
-   ignores its former context argument."
+   breadth flags when more files match than are shown. With `context` N each hit
+   also carries `before`/`after` — vectors of `{\"line\" n \"text\" line}` — so the
+   surrounding lines arrive in the same call. The compatibility arity takes the
+   context count positionally; the hits already carry it."
   ([out needles]
    (let
      [hits
@@ -2236,8 +2291,21 @@
       (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
         (doseq [p ordered-paths]
           (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
-            (doseq [{:keys [line text]} (get by-path p)]
-              (.put fm (patch/line-anchor line text) {"text" text}))
+            (doseq [{:keys [line text before after]} (get by-path p)]
+              (.put fm
+                    (patch/line-anchor line text)
+                    (cond-> {"text" text}
+                      (seq before)
+                      (assoc "before"
+                        (mapv (fn [[ln txt]]
+                                {"line" ln "text" txt})
+                              before))
+
+                      (seq after)
+                      (assoc "after"
+                        (mapv (fn [[ln txt]]
+                                {"line" ln "text" txt})
+                              after)))))
             (.put mm p fm)))
         mm)
 
@@ -2265,23 +2333,91 @@
        (assoc "total_file_count" total-files)
 
        (and more-files? (not (:total-file-count-exact? out)))
-       (assoc "total_file_count_is_exact" false))))
+       (assoc "total_file_count_is_exact" false)
+
+       ;; CONTENT truncation is its OWN signal: the top-level `truncated_by` is
+       ;; the NAME search's, so a capped content sweep would otherwise read as
+       ;; `end_of_results` and the model would treat a slice as the whole answer.
+       (contains? #{:limit :bytes} (:truncated-by out))
+       (assoc "hits_truncated_by" (name (:truncated-by out))))))
   ([out needles _former-context] (content-result out needles)))
 
-(defn- find-tool
-  "Find files by NAME/PATH and search their CONTENT in one call (bound as
-   `find_files`; `find` is a compatibility alias).
+(defn- name-relevant-paths
+  "Prune the fuzzy NAME list down to the paths a human would call a match.
 
-     await find_files(\"render\")
-     await find_files(\"channel_tui render\", {\"paths\": [\"src\"], \"limit\": 20})
-     await find_files([\"TODO\", \"FIXME\"], {\"include\": [\"**/*.clj\"]})
+   Fuzzy subsequence matching is deliberately generous, so a distinctive symbol
+   query (`strip-schema-constraints`) also drags in a pile of unrelated files
+   whose path merely contains the letters in order. When the SAME query already
+   produced CONTENT hits, those hits are the real answer and the generous name
+   list is pure noise — keep only paths whose lowercased path contains one whole
+   needle contiguously. Returns `paths` unchanged when there is nothing to
+   filter on."
+  [paths needles]
+  (let
+    [terms (->> needles
+                (keep #(some-> %
+                               str
+                               str/lower-case
+                               not-empty))
+                seq)]
+    (if-not terms
+      paths
+      (vec (filter (fn [p]
+                     (let [lp (str/lower-case (str p))]
+                       (some #(str/includes? lp %) terms)))
+                   paths)))))
 
-   `paths` is directory scope. Existing filename inputs normalize to their parent
-   directory, and missing paths normalize to the nearest existing confined
-   directory. NAME matching is fuzzy subsequence over the file tree. CONTENT
-   matching is smart-case literal substring; a query list is OR for content.
-   Content hits contain only matching lines, each keyed by a patch-ready
-   `lineno:hash` anchor; find_files has no surrounding-context option."
+(defn- regex-looking-query?
+  "True when `query` carries rg-style regex syntax that CONTENT search will match
+   LITERALLY. `grep` is a literal smart-case substring search, so a pattern like
+   `defn-? +grep`, `foo.*bar` or `^ns\\b` silently returns zero content hits and
+   the caller cannot tell a missing symbol from a wrong dialect — exactly the
+   dead end that invites a pointless re-run with cosmetic edits.
+
+   Deliberately conservative: `?`, `*`, `(` and `)` alone are ordinary code
+   characters (`stale?`, `*warn-on-reflection*`, `(defn foo`) and never trip it."
+  [query]
+  (let [qs (if (coll? query) (map str query) [(str query)])]
+    (boolean (some (fn [q]
+                     (or (re-find #"\.[*+]" q)
+                         (re-find #"\\[bdwsBDWS]" q)
+                         (re-find #"\[\^" q)
+                         (re-find #"\S[*+?]\s" q)
+                         (str/includes? q "|")
+                         (str/starts-with? q "^")
+                         (str/ends-with? q "$")))
+                   qs))))
+
+(defn- grep-tool
+  "Search file CONTENT and match file NAMES/PATHS in one call (bound as `grep`;
+   `find_files`/`find` stay as compatibility aliases).
+
+     await grep(\"render-grep-result\")
+     await grep(\"channel_tui render\", {\"paths\": [\"src\"], \"limit\": 20})
+     await grep([\"TODO\", \"FIXME\"], {\"include\": [\"**/*.clj\"], \"context\": 2})
+
+   CONTENT matching is smart-case literal substring; a query list is OR. Every
+   hit lands in the CANONICAL flat result under `matches` —
+   `{path {\"lineno:hash\" {\"text\" … \"before\" [{\"line\" \"text\"}] \"after\" […]}}}`
+   — each key a patch-ready anchor, `context` N adding the surrounding lines.
+   Alongside it: `hit_count`, `file_count`, `file_counts`, `first_hit`, the
+   ranked NAME matches in `paths`, `searched_paths` naming every physical root
+   actually scanned (including the default `.` expansion), and `missing_paths`
+   for a scope that does not exist (never silently absorbed).
+   A blank query is ls mode: it lists scoped files by frecency/recency without
+   running CONTENT search or fuzzy query scoring.
+
+   Truncation is explicit on BOTH axes: `truncated_by` covers the NAME list,
+   `hits_truncated_by` (`limit`/`bytes`) appears only when the CONTENT sweep was
+   capped — its absence means the content result is complete. A query that reads
+   like a regex but matches no content gets a `hint` saying so, since CONTENT
+   matching never interprets regex syntax.
+
+   For NAME matching, existing files normalize to their parent directory and
+   missing paths to the nearest existing confined directory. CONTENT matching
+   searches an existing file first, retries its parent only on zero hits, and
+   reports missing scopes while searching their nearest existing directory.
+   NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
     [{:strs [query searched_paths limit item_count truncated_by] :as name-out}
@@ -2290,11 +2426,32 @@
      content-spec
      (find-args->content-spec args)
 
+     ls?
+     (str/blank? (str query))
+
      {:keys [needles]}
-     (coerce-rg-spec content-spec)
+     (if ls? {:needles []} (coerce-rg-spec content-spec))
+
+     ;; CONTENT search is PRECISE first: a named existing FILE is grepped as that
+     ;; one file (rg semantics), not diluted into its whole parent directory. Only
+     ;; when the precise scope yields NOTHING do we widen to the normalized
+     ;; directory scopes — the same "productive climb" a missing path gets, so a
+     ;; filename scope still finds the sibling the caller was probably after.
+     precise-out
+     (if ls? {:hits [] :total-file-count 0 :total-file-count-exact? true} (rg-search content-spec))
+
+     widened-spec
+     (assoc content-spec "paths" (:paths (coerce-find-spec args)))
+
+     content-out
+     (if ls?
+       precise-out
+       (if (or (seq (:hits precise-out)) (= (get content-spec "paths") (get widened-spec "paths")))
+         precise-out
+         (rg-search widened-spec)))
 
      content
-     (content-result (rg-search content-spec) needles)
+     (content-result content-out needles)
 
      content-hits
      (long (or (get content "hit_count") 0))
@@ -2302,25 +2459,55 @@
      multiword?
      (> (count (str/split (str/trim (str query)) #"\s+")) 2)
 
+     ;; When CONTENT matched, the fuzzy NAME list is noise (see
+     ;; `name-relevant-paths`) — keep only the paths that really carry a needle.
+     kept-paths
+     (if (pos? content-hits)
+       (name-relevant-paths (get name-out "paths") needles)
+       (get name-out "paths"))
+
+     ;; ONE FLAT canonical result: the content block is merged UP (no nested
+     ;; `content` envelope, no `items` duplicate of `paths`, no `fuzzy`/
+     ;; `matched_terms`/`item_count` internals) so `matches`/`hit_count`/`paths`
+     ;; sit at the top level for the model, the renderer and the tests alike.
      out
-     (cond-> (assoc name-out "content" content)
-       (and (zero? (long (or item_count 0))) (zero? content-hits))
+     (cond->
+       (-> name-out
+           (dissoc "items" "fuzzy" "matched_terms" "item_count")
+           (assoc "paths" kept-paths)
+           (merge content))
+       (and (not ls?) (zero? (long (or item_count 0))) (zero? content-hits))
        (assoc "hint"
          (str
-           "No file NAME or CONTENT matched \"" query
+           "No file NAME or CONTENT matched \""
+           query
            "\". "
            (if multiword?
              "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
-             "Try a different term, a real symbol/string, or widen the scope."))))]
+             "Try a different term, a real symbol/string, or widen the scope.")
+           (when (regex-looking-query? query)
+             " CONTENT matching is LITERAL smart-case substring — regex syntax is not interpreted; search a plain distinctive fragment.")))
 
-    (tool-success {:op :find_files
+       ;; Names matched but content did not, and the query reads like a regex:
+       ;; say so, or the caller re-runs the same pattern with cosmetic edits.
+       (and (not ls?)
+            (pos? (long (or item_count 0)))
+            (zero? content-hits)
+            (regex-looking-query? query))
+       (assoc "hint"
+         (str
+           "No CONTENT matched \"" query
+           "\" — CONTENT matching is LITERAL smart-case substring, regex syntax is not interpreted. "
+           "Search a plain distinctive fragment; only the file NAME matches in `paths` are real.")))]
+
+    (tool-success {:op :grep
                    :path (first searched_paths)
                    :kind :dir
                    :result out
                    :metadata {:query query
                               :paths searched_paths
                               :limit limit
-                              :item-count item_count
+                              :item-count (count kept-paths)
                               :hit-count content-hits
                               :truncated-by truncated_by}})))
 
@@ -2585,7 +2772,7 @@
 
 (defn- rg-search
   "The rg search ENGINE: takes the public rg spec map and does the
-   actual file scanning. The public `rg-tool` (= `rg`) wraps this with
+   actual file scanning. `grep-tool` (= `grep`) wraps this with
    arity/kwargs handling + the LLM-facing result envelope. Two output modes,
    picked by `:is_files_only` / (default content).
 
@@ -4022,7 +4209,7 @@
 (defn- patch-tool
   "Edit files by anchor (no text search/replace).
 
-   Each `lineno:hash` comes from a fresh `cat`, `rg`, or `struct_index` read.
+   Each `lineno:hash` comes from a fresh `cat`, `grep`, or `struct_index` read.
    Anchors re-resolve against live content: unrelated changes are preserved when
    the targets still match; changed targets abort the entire atomic batch. Omit
    `to_anchor` for one line, use an inclusive range otherwise, and use an empty
@@ -4626,6 +4813,121 @@
   [k]
   (first (str/split (kw->str k) #":")))
 
+(defn- rg-anchor-lineno-long
+  "Numeric line number from an anchor key — for ORDERING. The result round-trips
+   through GraalPy (`LinkedHashMap` → plain Clojure map), which drops insertion
+   order, so the renderer must re-sort by line number itself."
+  ^long [k]
+  (try (Long/parseLong (rg-anchor-lineno k)) (catch Exception _ 0)))
+
+(defn- md-inline-code
+  "CommonMark-safe inline code span for `s`. A naive `` `s` `` breaks when `s`
+   itself contains backticks: the inner backtick closes the span early and
+   corrupts every following span on the line. Pick a fence one longer than the
+   longest backtick run in `s`, and pad when `s` starts/ends with a backtick
+   (CommonMark strips a single symmetric leading+trailing space), so the term
+   renders as ONE clean chip."
+  [s]
+  (let
+    [s
+     (str s)
+
+     longest
+     (transduce (map count) max 0 (re-seq #"`+" s))
+
+     fence
+     (apply str (repeat (inc (long longest)) \`))
+
+     pad
+     (if (or (str/starts-with? s "`") (str/ends-with? s "`")) " " "")]
+
+    (str fence pad s pad fence)))
+
+(defn- needle-re
+  "Literal regex fragment for ONE OR `needle`, honoring the smart-case rule of
+   `make-line-matcher`: an all-lowercase needle matches any case (scoped inside
+   `(?i:…)` so its case-insensitivity can't leak into a sibling alternative);
+   one carrying an uppercase letter stays exact. `Pattern/quote` makes
+   metacharacters literal."
+  [needle]
+  (let [quoted (java.util.regex.Pattern/quote needle)]
+    (if (re-find #"[A-Z]" needle) quoted (str "(?i:" quoted ")"))))
+
+(defn- highlight-needles
+  "Wrap every occurrence of any OR `needle` in `text` with reverse-video SGR
+   (\u001B[7m … \u001B[0m) so BOTH channels paint the matched term: the TUI's
+   `paint-ansi-line!` maps the code to a fg, the web's `ansi->hiccup` turns it
+   into a highlight span. One non-overlapping pass, longest needle first, so a
+   short needle can't re-wrap a longer one's match."
+  [needles ^String text]
+  (if (or (not (seq needles)) (str/blank? text))
+    text
+    (let
+      [frags (into []
+                   (keep (fn [n]
+                           (when (seq n) (try (needle-re n) (catch Exception _ nil)))))
+                   (sort-by #(- (count %)) needles))]
+      (if (seq frags)
+        (str/replace text
+                     (re-pattern (str/join "|" frags))
+                     (fn [m]
+                       (str "\u001B[7m" m "\u001B[0m")))
+        text))))
+
+(defn- hit-context-rows
+  "The `before`/`after` context entries of one hit as `[lineno text]` pairs.
+   Canonical shape is a vector of `{\"line\" n \"text\" s}` maps; a legacy
+   `{anchor {\"text\" s}}` map is tolerated so an older result still renders."
+  [ctx]
+  (cond (sequential? ctx) (mapv (fn [c]
+                                  [(str (get c "line")) (str (get c "text"))])
+                                ctx)
+        (map? ctx) (mapv (fn [[k v]]
+                           [(rg-anchor-lineno k) (str (patch/anchor-value-text v))])
+                         (sort-by (comp rg-anchor-lineno-long key) ctx))
+        :else []))
+
+(defn- hit-gutter-width
+  "Widest line-number column across a file's hits AND their context lines, so
+   every gutter row in the block right-aligns. Mixed 1- and 4-digit line numbers
+   otherwise stagger the text column."
+  ^long [hits]
+  (reduce (fn [^long w [k v]]
+            (let
+              [ctx (when (map? v)
+                     (concat (hit-context-rows (get v "before"))
+                             (hit-context-rows (get v "after"))))]
+              (reduce (fn [^long w2 [ln _]]
+                        (max w2 (count (str ln))))
+                      (max w (count (rg-anchor-lineno k)))
+                      ctx)))
+          1
+          hits))
+
+(defn- gutter-row
+  "One `  <lineno>  <text>` gutter row, the line number right-aligned to `width`
+   (the file's widest). Any OR `needle` occurrence in the text is wrapped for
+   highlight (see `highlight-needles`)."
+  [needles ^long width lineno txt]
+  (str "  " (format (str "%" width "s") (str lineno))
+       "  " (str/trimr (highlight-needles needles (str txt)))))
+
+(defn- hit-rows
+  "Rows for ONE match anchor `k` → value `v` (`{\"text\" … \"before\" […]
+   \"after\" […]}`, before/after only with a context window): the before-context,
+   then the matched line, then the after-context — each a line-numbered gutter
+   row. A bare string `v` is tolerated as the lone matched line."
+  [needles width k v]
+  (if (map? v)
+    (concat (map (fn [[ln txt]]
+                   (gutter-row needles width ln txt))
+                 (hit-context-rows (get v "before")))
+            [(gutter-row needles width (rg-anchor-lineno k) (get v "text"))]
+            (map (fn [[ln txt]]
+                   (gutter-row needles width ln txt))
+                 (hit-context-rows (get v "after"))))
+    [(gutter-row needles width (rg-anchor-lineno k) v)]))
+
 (defn- render-patch-result
   "patch/write/struct_patch → `{:summary :body}`. The badge already states the
    operation, so the compact headline contains only affected paths
@@ -4675,15 +4977,44 @@
                     not-empty
                     (str "\n"))}))
 
-(defn- render-find-result
-  "find_files → `{:summary :body}`: file-NAME matches (ranked paths) ONLY. The
-   transcript is about FILES, so content hits are NEVER shown here — they stay in
-   the raw tool result for the model/patch anchors. 0 results keep the steer/hint
-   body so the user sees WHY nothing matched."
+(def ^:private grep-card-max-files
+  "Files shown in a grep card body before the tail collapses to a `+N more`."
+  12)
+
+(def ^:private grep-card-max-hits-per-file
+  "Hits shown per file in a grep card body before that file collapses."
+  8)
+
+(defn- render-grep-result
+  "grep → `{:summary :body}`. Content HITS are the point of the tool, so they are
+   what the card shows: a headline naming the term(s), the hit/file counts and
+   the scope, over per-file blocks of line-numbered, needle-highlighted matches
+   (`anchor` line numbers — the same `lineno:hash` the model patches with).
+
+   File-NAME matches ride along as a plain path fence (they are the whole answer
+   when a query matched no content). Long results collapse — at most
+   `grep-card-max-files` files and `grep-card-max-hits-per-file` hits each, the
+   remainder summarised as `+N more`. With nothing matched the steer/hint stays
+   in the body so the user sees WHY."
   [r]
   (let
-    [n
-     (or (get r "item_count") (count (get r "paths")) 0)
+    [hit-count
+     (long (or (get r "hit_count") 0))
+
+     file-count
+     (long (or (get r "file_count") 0))
+
+     paths
+     (seq (get r "paths"))
+
+     matches
+     (get r "matches")
+
+     needles
+     (seq (keep #(some-> %
+                         kw->str
+                         not-empty)
+                (get r "needles")))
 
      q
      (some-> (get r "query")
@@ -4695,38 +5026,60 @@
              kw->str
              not-empty)
 
-     paths
-     (get r "paths")
-
-     terms
-     (when (get r "fuzzy")
-       (seq (keep #(some-> %
-                           kw->str
-                           not-empty)
-                  (get r "matched_terms"))))
+     query-chip
+     (if needles
+       (str/join " OR " (map md-inline-code needles))
+       (some-> q
+               md-inline-code))
 
      scope
      (seq (remove #(= "." (kw->str %)) (get r "searched_paths")))
 
      scope-chip
-     (when scope (str "in " (str/join ", " (map #(str "`" (kw->str %) "`") scope))))
+     (when scope (str "in " (str/join ", " (map #(md-inline-code (disp-path (kw->str %))) scope))))
 
-     head
-     (str n
-          " match"
-          (when (not= 1 n) "es")
-          (when q (str " for \"" q "\""))
-          (when terms (str " · terms: " (str/join ", " terms)))
-          (when scope-chip (str " · " scope-chip)))]
+     counts-chip
+     (cond (pos? hit-count) (str hit-count
+                                 " hit" (when (not= 1 hit-count) "s")
+                                 " in " file-count
+                                 " file" (when (not= 1 file-count) "s"))
+           paths (str (count paths) " file name" (when (not= 1 (count paths)) "s"))
+           :else "no matches")
 
-    {:summary head
-     :body (-> (cond-> ""
-                 (seq paths)
-                 (str "\n```\n" (str/join "\n" (map (comp disp-path kw->str) paths)) "\n```")
+     shown
+     (take grep-card-max-files matches)
 
-                 (and (not (seq paths)) hint)
-                 (str "\n" hint))
-               not-empty)}))
+     more-files
+     (max 0 (- (count matches) (count shown)))
+
+     blocks
+     (for [[path hits] shown]
+       (let
+         [ordered (sort-by (comp rg-anchor-lineno-long key) hits)
+          width (hit-gutter-width hits)
+          kept (take grep-card-max-hits-per-file ordered)
+          extra (max 0 (- (count ordered) (count kept)))]
+
+         (str (md-inline-code (disp-path (kw->str path)))
+              "\n\n```\n"
+              (str/join "\n"
+                        (mapcat (fn [[k v]]
+                                  (hit-rows needles width k v))
+                                kept))
+              (when (pos? extra) (str "\n  … +" extra " more hit" (when (not= 1 extra) "s")))
+              "\n```")))
+
+     body
+     (str (when (seq blocks) (str "\n" (str/join "\n\n" blocks)))
+          (when (pos? more-files)
+            (str "\n\n… +" more-files " more file" (when (not= 1 more-files) "s")))
+          (when paths (str "\n```\n" (str/join "\n" (map (comp disp-path kw->str) paths)) "\n```"))
+          (when (and (not (seq blocks)) (not paths) hint) (str "\n" hint)))]
+
+    {:summary (str (when query-chip (str query-chip " · "))
+                   counts-chip
+                   (when scope-chip (str " · " scope-chip)))
+     :body (not-empty body)}))
 
 (defn- idx-cell
   "One-line, pipe-escaped, length-capped text for a GFM table cell (the TUI
@@ -5072,16 +5425,20 @@
      ;; cat(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
      :description
-     (str "Read one sufficient file region as patch-ready `lineno:hash` anchored lines. "
-          "A DIRECTORY path lists its entries instead (shallow one level; `depth` recurses). "
-          "For supported code, use `struct_index` first; every write invalidates returned anchors.")
+     (str
+       "Read one sufficient file region as patch-ready `lineno:hash` anchored lines. "
+       "A DIRECTORY path lists its entries instead (shallow one level; `depth` recurses). "
+       "Use exact physical paths returned by `grep`/`struct_index`; never reconstruct a path from a language namespace or module name. "
+       "For supported code, use `struct_index` first; every write invalidates returned anchors.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema
      {:type "object"
       :properties
-      {"path" {:type "string"
-               :description "File path (relative to a filesystem root or absolute under one)."}
+      {"path"
+       {:type "string"
+        :description
+        "Exact physical file/directory path (relative to a filesystem root or absolute under one); copy discovered paths from grep/struct_index unchanged."}
        "range" {:type "array"
                 :items {:type "integer" :minimum 1}
                 :minItems 2
@@ -5113,36 +5470,39 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
-(def find-symbol
+(def grep-symbol
   (vis/symbol
-    #'find-tool
-    {:symbol 'find_files
+    #'grep-tool
+    {:symbol 'grep
      :native-tool? true
      :description
      (str
-       "Find files by NAME/PATH (fuzzy subsequence) and search their CONTENT (smart-case literal) "
-       "in one call. Returns ranked paths plus patch-ready anchored content hits without surrounding lines.")
-     :render render-find-result
+       "Grep workspace CONTENT (literal smart-case) plus fuzzy file names/paths. Pass `query: \"\"` "
+       "to list scoped files. Returns patch-ready `matches`, hit/file counts, ranked name matches in "
+       "`paths`, and `missing_paths` for stale scopes. Returned paths are authoritative physical paths: "
+       "pass unchanged to `cat`/`struct_index`; never rebuild from a language namespace or module name. "
+       "`hits_truncated_by` appears only when the content sweep was capped; otherwise content results are complete.")
+     :render render-grep-result
      :color-role :tool-color/search
      :schema
      {:type "object"
       :properties
       {"query"
-       {:oneOf [{:type "string" :minLength 1}
-                {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
+       {:oneOf [{:type "string"} {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
         :description
-        "A filename fragment or partial path for fuzzy name matching; also a literal content term. A list is OR for content search."}
+        "The search term: a literal content substring and/or filename fragment. Pass an empty string to list scoped files, ranked by frecency/recency. Lists are OR for content search; filename matching uses the joined terms."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Directory scopes only (default: whole tree). Existing file values are normalized to their parent directory."}
+        "Scopes (default: whole tree). An existing file is searched first, then its parent on zero content hits. A missing scope searches its nearest existing directory and appears in missing_paths. Returned `paths` values are exact physical paths for direct handoff to cat/struct_index."}
+       "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
+                  :description "Restrict content search to these globs, e.g. [\"**/*.clj\"]."}
+       "context" {:type "integer"
+                  :minimum 0
+                  :description "N surrounding lines per hit, returned as before/after (default 0)."}
        "limit"
        {:type "integer" :minimum 1 :description "Maximum ranked filename matches (default 50)."}
-       "include"
-       {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
-        :description
-        "Content search only: restrict to files matching these globs, e.g. [\"**/*.clj\"]."}
        "is_hidden" {:type "boolean"
                     :description "Also match dotfiles / hidden dirs (default false)."}
        "is_respect_gitignore"
@@ -5151,9 +5511,9 @@
         "Honor .gitignore (default true). Set false to include files inside gitignored directories."}}
       :required ["query"]
       :additionalProperties false}
-     :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
+     :before-fn (path-protected-before-fn :grep :dir :read find-arg-paths)
      :tag :observation
-     :on-error-fn (tool-failure-on-error :find_files :dir nil)}))
+     :on-error-fn (tool-failure-on-error :grep :dir nil)}))
 
 (def patch-symbol
   (vis/symbol
@@ -5163,7 +5523,7 @@
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
-     (str "Surgically edit text or unsupported code using fresh anchors from `cat`, `rg`, or "
+     (str "Surgically edit text or unsupported code using fresh anchors from `cat`, `grep`, or "
           "`struct_index`. The batch is atomic and every write stales all anchors. On failure, "
           "follow its cause, refresh the target and anchor, retry once, then reassess; prefer "
           "`struct_patch` for supported code.")
@@ -6017,80 +6377,160 @@
   "Route the fs op through path protection with the RIGHT intent: `exists`
    reads, every other op writes."
   [env f args]
-  (let [m (first args)
-        intent (if (= "exists" (get m "op")) :read :write)]
+  (let
+    [m
+     (first args)
+
+     intent
+     (if (= "exists" (get m "op")) :read :write)]
+
     ((path-protected-before-fn :fs :path intent fs-arg-paths) env f args)))
 
 (defn- render-fs-result
-  "fs → delegate to the per-op summary render keyed by the result `op`."
+  "fs → `{:summary}` only: ONE verb-led line per action, read off the CANONICAL
+   fs result `{\"op\" \"fs\" \"action\" <verb> \"path\"|\"src\"+\"dest\"
+   \"is_created\"|\"is_deleted\"|\"is_existing\"}`.
+
+   The badge is the generic `FS` for every action, so the summary must LEAD with
+   the verb (`copied`/`moved`/`deleted`/…) — it is the only place the card says
+   WHICH filesystem op ran — and then name the path(s) it touched.
+
+   The action rides `\"action\"`, NOT `\"op\"`: the engine stamps `\"op\"` with the
+   canonical TOOL op (`\"fs\"`) on every result, so a sub-op parked under `\"op\"`
+   is clobbered and the card degrades to the nonsense headline `fs fs`. `\"op\"`
+   is still read as a fallback so results persisted before the split render.
+   Renders the canonical shape directly instead of delegating to the legacy
+   per-op renderers, which still serve the bare sandbox verbs."
   [r]
-  (case (get r "op")
-    "copy" (render-copy-result r)
-    "move" (render-move-result r)
-    "delete" (render-delete-result r)
-    "create_dirs" (render-create-dirs-result r)
-    "exists" (render-exists-result r)
-    {:summary (str "fs " (get r "op"))}))
+  (let
+    [p
+     (disp-path (get r "path"))
+
+     action
+     (if-some [a (get r "action")]
+       a
+       (let [o (get r "op")]
+         (when-not (= "fs" o) o)))]
+
+    {:summary
+     (case action
+       "copy"
+       (str "copied `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
+
+       "move"
+       (str "moved `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
+
+       "delete"
+       (if (get r "is_deleted") (str "deleted `" p "`") (str "nothing to delete at `" p "`"))
+
+       "create_dirs"
+       (if (get r "is_created") (str "created dir `" p "`") (str "dir `" p "` already exists"))
+
+       "exists"
+       (str "`" p "` " (if (get r "is_existing") "exists ✓" "missing ✗"))
+
+       ;; Unknown/absent action: never echo the tool name twice — say what is
+       ;; actually known (the verb and/or the path), else just the tool.
+       (str/join " " (remove nil? ["fs" (not-empty (str action)) (when p (str "`" p "`"))])))}))
 
 (defn- fs-tool
   "ONE filesystem tool dispatching on `op` — folds the old copy/move/delete/
    create_dirs/file_exists native tools into a single wire surface. Takes the
-   whole input dict; results mirror the per-op shapes plus an `op`
-   discriminator. The bare copy/move/delete/… sandbox functions remain."
+   whole input dict and answers ONE canonical flat shape: always an `action`
+   discriminator plus workspace-relative paths (`path`, or `src`+`dest` for the
+   two-path ops) and, where the action has a verdict, exactly one `is_<foo>`
+   flag (`is_created` / `is_deleted` / `is_existing`) — never an absolute path
+   and never a derivable duplicate. The discriminator is `action`, NOT `op`:
+   the engine stamps `op` with the canonical TOOL op (`fs`) on every result,
+   so a sub-op under `op` would be silently clobbered. The bare copy/move/
+   delete/… sandbox functions keep their own legacy shapes."
   [m]
-  (let [op (get m "op")
-        path (get m "path")
-        src (get m "src")
-        dest (get m "dest")]
+  (let
+    [op
+     (get m "op")
+
+     path
+     (get m "path")
+
+     src
+     (get m "src")
+
+     dest
+     (get m "dest")]
+
     (case op
       "copy"
-      (let [out (copy-safe src dest (select-keys m ["is_overwrite"]))]
+      (let
+        [out
+         (copy-safe src dest (select-keys m ["is_overwrite"]))
+
+         from
+         (rel-path (safe-path src))]
+
         (tool-success {:op :fs
-                       :path dest
+                       :path out
                        :kind :path
-                       :result {"op" "copy" "src" src "dest" dest "path" out}
-                       :metadata {:src (path->target src :path)
-                                  :dest (path->target dest :path)}}))
+                       :result {"action" "copy" "src" from "dest" out}
+                       :metadata {:src (path->target src :path) :dest (path->target dest :path)}}))
 
       "move"
-      (let [out (move-safe src dest (select-keys m ["is_overwrite"]))]
+      (let
+        [out
+         (move-safe src dest (select-keys m ["is_overwrite"]))
+
+         from
+         (rel-path (safe-path src))]
+
         (tool-success {:op :fs
-                       :path dest
+                       :path out
                        :kind :path
-                       :result {"op" "move" "src" src "dest" dest "path" out}
-                       :metadata {:src (path->target src :path)
-                                  :dest (path->target dest :path)}}))
+                       :result {"action" "move" "src" from "dest" out}
+                       :metadata {:src (path->target src :path) :dest (path->target dest :path)}}))
 
       "delete"
-      (let [deleted? (if (get m "is_missing_ok")
-                       (delete-if-exists-safe path)
-                       (do (delete-safe path) true))]
+      (let
+        [rel
+         (rel-path (safe-path path))
+
+         deleted?
+         (if (get m "is_missing_ok") (delete-if-exists-safe path) (do (delete-safe path) true))]
+
         (tool-success {:op :fs
-                       :path path
+                       :path rel
                        :kind :path
-                       :result {"op" "delete" "path" path "deleted" deleted?}
+                       :result {"action" "delete" "path" rel "is_deleted" deleted?}
                        :metadata {:deleted? deleted?}}))
 
       "create_dirs"
-      (let [before (fs/exists? (safe-path path))
-            out (create-dirs-safe path)]
+      (let
+        [before
+         (fs/exists? (safe-path path))
+
+         out
+         (create-dirs-safe path)]
+
         (tool-success {:op :fs
-                       :path path
+                       :path out
                        :kind :dir
-                       :result {"op" "create_dirs" "path" out
-                                "created" (not before)
-                                "already_existed" before}
+                       :result {"action" "create_dirs" "path" out "is_created" (not before)}
                        :metadata {:created? (not before) :already-existed? before}}))
 
       "exists"
-      (let [exists? (exists-safe? path)]
+      (let
+        [rel
+         (rel-path (safe-path path))
+
+         exists?
+         (exists-safe? path)]
+
         (tool-success {:op :fs
-                       :path path
+                       :path rel
                        :kind :path
-                       :result {"op" "exists" "path" (str path) "exists" exists?}
+                       :result {"action" "exists" "path" rel "is_existing" exists?}
                        :metadata {:exists? exists?}}))
 
-      (throw (ex-info (str "fs: unknown op " (pr-str op)
+      (throw (ex-info (str "fs: unknown op "
+                           (pr-str op)
                            " — expected copy | move | delete | create_dirs | exists")
                       {:type :ext.foundation.editing/bad-fs-op :op op})))))
 
@@ -6103,27 +6543,28 @@
      "One confined filesystem tool — `op` ∈ copy | move | delete | create_dirs | exists. copy/move take src+dest and fail on an existing dest unless is_overwrite; delete is destructive and needs explicit user intent (is_missing_ok no-ops when absent); create_dirs makes missing parents; exists checks without reading."
      :render render-fs-result
      :color-role :tool-color/move
-     :schema {:type "object"
-              :properties {"op" {:type "string"
-                                 :enum ["copy" "move" "delete" "create_dirs" "exists"]
-                                 :description "Filesystem operation."}
-                           "path" {:type "string"
-                                   :description "Target path (delete / create_dirs / exists)."}
-                           "src" {:type "string" :description "Source path (copy / move)."}
-                           "dest" {:type "string" :description "Destination path (copy / move)."}
-                           "is_overwrite" {:type "boolean"
-                                           :description "copy/move: overwrite an existing dest (default false)."}
-                           "is_missing_ok" {:type "boolean"
-                                            :description "delete: no-op when the path is absent (default false)."}}
-              :required ["op"]
-              :additionalProperties false}
+     :schema
+     {:type "object"
+      :properties
+      {"op" {:type "string"
+             :enum ["copy" "move" "delete" "create_dirs" "exists"]
+             :description "Filesystem operation."}
+       "path" {:type "string" :description "Target path (delete / create_dirs / exists)."}
+       "src" {:type "string" :description "Source path (copy / move)."}
+       "dest" {:type "string" :description "Destination path (copy / move)."}
+       "is_overwrite" {:type "boolean"
+                       :description "copy/move: overwrite an existing dest (default false)."}
+       "is_missing_ok" {:type "boolean"
+                        :description "delete: no-op when the path is absent (default false)."}}
+      :required ["op"]
+      :additionalProperties false}
      :before-fn fs-before-fn
      :tag :mutation
      :on-error-fn (tool-failure-on-error :fs :path nil)}))
 
 (defn available-editing-symbols
   []
-  [index-symbol cat-symbol find-symbol patch-symbol write-symbol struct-patch-symbol sexpr-symbol
+  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol sexpr-symbol
    occurrences-symbol symbol-rename-symbol fs-symbol create-dirs-symbol copy-symbol move-symbol
    delete-symbol delete-if-exists-symbol file-exists-symbol])
 

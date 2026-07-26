@@ -101,7 +101,7 @@
 ;; ── language-facade wiring ───────────────────────────────────────────────────
 (defdescribe
   facade-test
-  (it "repl_eval requires explicit repl_start and then returns the value"
+  (it "repl_eval requires explicit repl and then returns the value"
       (when (has-bun?)
         (let
           [root
@@ -122,7 +122,7 @@
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
-  (it "repl_start status/stop lifecycle ops route through the manager"
+  (it "repl status/stop lifecycle ops route through the manager"
       (when (has-bun?)
         (let
           [root
@@ -195,13 +195,13 @@
 ;; ── language registration (TS / TSX / JS / JSX all route through the facade) ────
 (defdescribe
   language-registration-test
-  "The pack registers repl_eval / run_tests / repl_start for ALL of TS / TSX /
+  "The pack registers repl_eval / run_tests / repl for ALL of TS / TSX /
    JS / JSX, so the facade routes whichever way the language is derived — an
    explicit repl_eval(\"jsx\", …), a .tsx file's grammar, or a js/ts primary."
   (it "registers the four Bun-runnable languages"
       (let [langs (into #{} (map :language) (:ext/language-tools core/vis-extension))]
         (expect (= #{"typescript" "javascript" "tsx" "jsx"} langs))))
-  (it "every language exposes repl_eval, run_tests and repl_start handlers"
+  (it "every language exposes repl_eval, run_tests and repl handlers"
       (doseq [entry (:ext/language-tools core/vis-extension)]
         (expect (fn? (:repl-eval-fn entry)))
         (expect (fn? (:test-fn entry)))
@@ -277,7 +277,7 @@
                (expect (re-find #"apps/api" (str msg)))
                (expect (re-find #"apps/web" (str msg))))
              (finally (cleanup root)))))
-  (it "repl_start WITHOUT dir at a monorepo root refuses the same way"
+  (it "repl WITHOUT dir at a monorepo root refuses the same way"
       (let [root (monorepo-fixture)]
         (try (let
                [{:keys [type]} (monorepo-guard-ex

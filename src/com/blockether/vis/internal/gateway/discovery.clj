@@ -28,6 +28,7 @@
            (java.lang.management ManagementFactory)
            (java.nio.channels FileChannel FileLock)
            (java.nio.charset StandardCharsets)
+           (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)
            (java.security MessageDigest)))
 
 ;; =============================================================================
@@ -40,6 +41,13 @@
   "Directory holding the per-DB registry files. Not created here."
   ^java.io.File []
   (io/file (vis-home) "gateway" "registry"))
+
+(defn default-token-file
+  "Stable bearer-token file shared by managed gateway daemons and local clients.
+   A client can use it to authenticate a loopback `/healthz` probe and repair a
+   missing registry without spawning a second daemon onto an occupied port."
+  ^java.io.File []
+  (io/file (vis-home) "gateway.token"))
 
 (defn- sha256-hex
   ^String [^String s]
@@ -132,18 +140,46 @@
 ;; Registry read / write / delete
 ;; =============================================================================
 
+(defonce ^:private registry-mutation-monitor (Object.))
+
+(defn- registry-mutation-lock-file
+  ^java.io.File [db]
+  (io/file (registry-dir) (str (registry-key db) ".registry.lock")))
+
+(defn- with-registry-mutation-lock
+  "Serialize registry replacement/conditional deletion across threads and JVMs.
+   This is deliberately separate from the spawn lock: the spawning client holds
+   that lock while the child daemon self-registers, so sharing it would deadlock."
+  [db f]
+  (locking registry-mutation-monitor
+    (.mkdirs (registry-dir))
+    (with-open
+      [raf (RandomAccessFile. (registry-mutation-lock-file db) "rw")
+       channel (.getChannel raf)
+       lock (.lock channel)]
+
+      (f))))
+
+(defn- read-registry-file
+  [^java.io.File f]
+  (when (.exists f)
+    (try (let [m (edn/read-string (slurp f))]
+           (when (map? m) m))
+         (catch Throwable _ nil))))
+
+(defn- delete-registry-file!
+  [^java.io.File f]
+  (try (boolean (and (.exists f) (.delete f))) (catch Throwable _ false)))
+
 (defn read-registry
   "Read the registry entry for `db`, or nil when absent/unreadable/garbage."
   [db]
-  (let [f (registry-file db)]
-    (when (.exists f)
-      (try (let [m (edn/read-string (slurp f))]
-             (when (map? m) m))
-           (catch Throwable _ nil)))))
+  (read-registry-file (registry-file db)))
 
 (defn write-registry!
-  "Write `entry` (a map, `:db`/`:created-at` filled in if absent) as the registry
-   for `db`. Creates the registry dir. Returns the written entry."
+  "Atomically write `entry` (a map, `:db`/`:created-at` filled in if absent) as
+   the registry for `db`. Registry readers therefore never observe a partial EDN
+   file and mistake a live daemon for a missing one. Returns the written entry."
   [db entry]
   (let
     [f
@@ -152,17 +188,47 @@
      entry
      (merge {:db (canonical-db db) :created-at (System/currentTimeMillis)} entry)]
 
-    (.mkdirs (registry-dir))
-    (spit f (pr-str entry))
+    (with-registry-mutation-lock
+      db
+      (fn []
+        (let [tmp (java.io.File/createTempFile (str (registry-key db) ".") ".tmp" (registry-dir))]
+          (try
+            (spit tmp (pr-str entry))
+            (try
+              (Files/move (.toPath tmp)
+                          (.toPath f)
+                          (into-array StandardCopyOption
+                                      [StandardCopyOption/ATOMIC_MOVE
+                                       StandardCopyOption/REPLACE_EXISTING]))
+              (catch AtomicMoveNotSupportedException _
+                (Files/move (.toPath tmp)
+                            (.toPath f)
+                            (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+            (finally
+              (when (.exists tmp) (.delete tmp)))))))
     entry))
 
 (defn delete-registry!
   "Remove the registry file for `db`. Never throws. Returns true when a file was
    removed."
   [db]
-  (try (let [f (registry-file db)]
-         (boolean (and (.exists f) (.delete f))))
-       (catch Throwable _ false)))
+  (try
+    (with-registry-mutation-lock db #(delete-registry-file! (registry-file db)))
+    (catch Throwable _ false)))
+
+(defn delete-registry-if!
+  "Atomically remove `db`'s registry only when `(pred current-entry)` is truthy.
+   The read + delete share the registry mutation lock, preventing an old daemon
+   or stale discoverer from deleting a successor's freshly-written ownership."
+  [db pred]
+  (try
+    (with-registry-mutation-lock
+      db
+      (fn []
+        (let [f (registry-file db)
+              entry (read-registry-file f)]
+          (boolean (and entry (pred entry) (delete-registry-file! f))))))
+    (catch Throwable _ false)))
 
 ;; =============================================================================
 ;; Freshness
@@ -195,7 +261,7 @@
    but only if it still points at us (never clobber a successor that took over)."
   [db]
   (when-not (memory-db? db)
-    (when (= (:pid (read-registry db)) (current-pid)) (delete-registry! db))))
+    (delete-registry-if! db #(= (:pid %) (current-pid)))))
 
 ;; =============================================================================
 ;; Spawn argv + detached launch
@@ -390,6 +456,8 @@
    only on the SLOW path (never on a plain `:attach`) with maps:
    `{:phase :spawning}`           WE won the lock and are launching the daemon;
    `{:phase :awaiting}`           another vis is starting it — we wait, not spawn;
+   `{:phase :recovering}`         a live registered owner missed a probe — preserve
+                                  it and wait for recovery instead of deleting it;
    `{:phase :tick :elapsed-ms n}` a poll heartbeat while awaiting either of those;
    `{:phase :ready :mode m :entry e}` the daemon came up;
    `{:phase :timeout}`            nobody came up in time. It never throws upward.
@@ -399,9 +467,12 @@
    launches a daemon; every other concurrent starter finds the lock held, learns
    'someone is already spawning', and just awaits the winner's self-registration.
    That replaces the old blind-port-bind race (N daemons launched, N-1 crashing)
-   with a single spawn + N-1 cheap waiters. A stale registry is deleted before
-   spawning; the lock is re-checked against a double-read so a daemon that came up
-   between our read and the lock is attached, not re-spawned."
+   with a single spawn + N-1 cheap waiters. A registry whose PID is DEAD is
+   conditionally deleted before spawning; a LIVE PID that merely missed a health
+   probe is preserved and re-probed. This distinction is critical: deleting a
+   live owner's only registry makes every new client spawn into its occupied port
+   and time out forever. The lock is re-checked against a double-read so a daemon
+   that came up between our read and the lock is attached, not re-spawned."
   [{:keys [db] :as opts} &
    {:keys [probe spawn timeout-ms poll-ms on-event]
     :or {probe (constantly true) spawn spawn-detached!}}]
@@ -428,15 +499,35 @@
                 ;; Double-check under the lock: another spawner may have finished
                 ;; between our read above and winning the lock.
                 (let [again (read-registry db)]
-                  (if (registry-fresh? again probe)
+                  (cond
+                    (registry-fresh? again probe)
                     {:mode :attach :entry again}
-                    (do (when again (delete-registry! db))
-                        (emit {:phase :spawning})
-                        (spawn opts)
-                        (if-let [entry (await-registry! db probe await-opts)]
-                          (do (emit {:phase :ready :mode :spawned :entry entry})
-                              {:mode :spawned :entry entry})
-                          (do (emit {:phase :timeout}) {:mode :timeout})))))
+
+                    ;; A failed HTTP probe is not proof that a live JVM stopped
+                    ;; owning the port. Preserve its registry and retry: if it is
+                    ;; paused/overloaded it can recover; if it stays wedged the
+                    ;; caller gets a timeout without a bind-storm of doomed
+                    ;; replacement daemons. True stale PID reuse is rarer and
+                    ;; safer to report than destructively racing a live owner.
+                    (and (:pid again) (pid-alive? (:pid again)))
+                    (do
+                      (emit {:phase :recovering})
+                      (if-let [entry (await-registry! db probe await-opts)]
+                        (do (emit {:phase :ready :mode :recovered :entry entry})
+                            {:mode :recovered :entry entry})
+                        (do (emit {:phase :timeout}) {:mode :timeout})))
+
+                    :else
+                    (do
+                      ;; Ownership-safe: a successor that registers between
+                      ;; `again` and this mutation is not deleted.
+                      (when again (delete-registry-if! db #(= again %)))
+                      (emit {:phase :spawning})
+                      (spawn opts)
+                      (if-let [entry (await-registry! db probe await-opts)]
+                        (do (emit {:phase :ready :mode :spawned :entry entry})
+                            {:mode :spawned :entry entry})
+                        (do (emit {:phase :timeout}) {:mode :timeout})))))
                 (finally (release-spawn-lock! holder)))
               ;; Lock is held by another process that's already spawning — don't
               ;; pile on a competing daemon, just wait for it to self-register.

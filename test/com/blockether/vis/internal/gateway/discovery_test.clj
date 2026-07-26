@@ -52,6 +52,21 @@
     (is (nil? (disco/read-registry db)))
     (is (false? (disco/delete-registry! db)))))
 
+(deftest registry-conditional-delete-preserves-a-successor
+  (let [db "/tmp/conditional/vis.db"]
+    (disco/write-registry! db {:pid 11 :port 7890 :host "127.0.0.1" :secret "old"})
+    (is (false? (disco/delete-registry-if! db #(= 22 (:pid %)))))
+    (is (= 11 (:pid (disco/read-registry db))))
+    (is (true? (disco/delete-registry-if! db #(= 11 (:pid %)))))
+    (is (nil? (disco/read-registry db)))))
+
+(deftest deregister-self-never-deletes-another-live-owner
+  (let [db "/tmp/deregister-owner/vis.db"]
+    (disco/write-registry! db {:pid 22 :port 7890 :host "127.0.0.1" :secret "new"})
+    (with-redefs [disco/current-pid (constantly 11)]
+      (disco/deregister-self! db))
+    (is (= 22 (:pid (disco/read-registry db))))))
+
 (deftest registry-fresh?-needs-live-pid-and-probe
   (testing "alive pid + probe true"
     (with-redefs
@@ -157,6 +172,48 @@
                                      :poll-ms 20)]
       (is (= :timeout (:mode res)))
       (is (nil? (disco/read-registry db))))))
+
+(deftest discover-or-start!-preserves-a-live-owner-that-misses-health
+  (let
+    [db
+     "/tmp/live-but-paused/vis.db"
+
+     spawned
+     (atom 0)]
+
+    (disco/write-registry! db {:pid 999 :port 7890 :host "127.0.0.1" :secret "s"})
+    (with-redefs [disco/pid-alive? (constantly true)]
+      (let [res (disco/discover-or-start! {:db db}
+                                          :probe (constantly false)
+                                          :spawn (fn [_]
+                                                   (swap! spawned inc))
+                                          :timeout-ms 80
+                                          :poll-ms 10)]
+        (is (= :timeout (:mode res)))
+        (is (zero? @spawned)
+            "a transiently unresponsive live owner must not spawn a bind loser")
+        (is (= 999 (:pid (disco/read-registry db)))
+            "the live owner's only discovery record must survive")))))
+
+(deftest discover-or-start!-reattaches-when-a-live-owner-recovers
+  (let
+    [db
+     "/tmp/live-recovers/vis.db"
+
+     probes
+     (atom 0)]
+
+    (disco/write-registry! db {:pid 999 :port 7890 :host "127.0.0.1" :secret "s"})
+    (with-redefs [disco/pid-alive? (constantly true)]
+      (let [res (disco/discover-or-start! {:db db}
+                                          :probe (fn [_]
+                                                   (>= (swap! probes inc) 3))
+                                          :spawn (fn [_]
+                                                   (throw (ex-info "must not spawn" {})))
+                                          :timeout-ms 500
+                                          :poll-ms 10)]
+        (is (= :recovered (:mode res)))
+        (is (= 999 (get-in res [:entry :pid])))))))
 
 (deftest acquire-spawn-lock!-is-exclusive-across-holders
   (let

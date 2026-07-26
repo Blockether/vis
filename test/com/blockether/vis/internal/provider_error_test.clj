@@ -203,3 +203,36 @@
       (let [err {:message "blank" :data {:type :svar.llm/empty-content}}]
         (expect (= :empty-content (perr/provider-error-kind err)))
         (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err)))))))
+
+(defdescribe
+  stream-timeout-kind-test
+  (it "typed :svar.core/stream-semantic-timeout → honest stall card, never 'Provider unavailable'"
+      (let
+        [err {:message "Stream semantic timeout (300000ms without model/progress event): closed"
+              :data {:type :svar.core/stream-semantic-timeout
+                     :stream? true
+                     :semantic-timeout-ms 300000
+                     :cause-class "java.io.IOException"}}
+         next-step (perr/provider-error-next-step err)]
+        (expect (perr/stream-timeout-error? err))
+        (expect (= :stream-timeout (perr/provider-error-kind err)))
+        (expect (= "Stream went quiet — Vis timed out" (perr/provider-error-title err)))
+        (expect (nil? (re-find #"(?i)provider unavailable" (perr/provider-error-title err))))
+        ;; The pre-fix copy claimed a pre-model REJECTION and pointed at auth/quota.
+        (expect (nil? (re-find #"(?i)rejected the request" (perr/provider-error-explanation err))))
+        (expect (re-find #"Nothing was rejected" (perr/provider-error-explanation err)))
+        (expect (re-find #"300s" (perr/provider-error-explanation err)))
+        (expect (re-find #"still reasoning" (perr/provider-error-explanation err)))
+        (expect (nil? (re-find #"(?i)auth, and quota" next-step)))
+        (expect (re-find #"not automatically re-sent" next-step))
+        (expect (nil? (re-find #"already re-sent" next-step)))))
+  (it "the idle-timeout sibling classifies the same way"
+      (let
+        [err {:message "Stream idle timeout (180000ms with no bytes)."
+              :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 180000}}]
+        (expect (= :stream-timeout (perr/provider-error-kind err)))
+        (expect (re-find #"180s" (perr/provider-error-explanation err)))))
+  (it "a real generic failure is untouched"
+      (let [err {:message "Provider unavailable" :data {}}]
+        (expect (= :generic (perr/provider-error-kind err)))
+        (expect (= "Provider unavailable" (perr/provider-error-title err))))))

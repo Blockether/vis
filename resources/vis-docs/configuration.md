@@ -266,7 +266,7 @@ db_spec:
 
 ## Search
 
-The `search` block tunes what `find_files` may see. By default
+The `search` block tunes what `grep` may see. By default
 both honor `.gitignore`; `include_gitignored_paths` re-includes chosen
 gitignored subtrees — the walker descends them as if
 `is_respect_gitignore=False` were passed **for those subtrees only**,

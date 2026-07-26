@@ -155,7 +155,7 @@ _main()
   [dir req timeout-ms]
   (let [info (get @processes dir)]
     (when-not (alive? info)
-      (throw (ex-info "Python REPL is not running for this dir — repl_start(\"python\") first."
+      (throw (ex-info "Python REPL is not running for this dir — repl(\"python\") first."
                       {:type :py/no-repl :dir dir})))
     (locking info
       (let

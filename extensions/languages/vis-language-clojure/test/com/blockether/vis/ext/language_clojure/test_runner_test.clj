@@ -42,7 +42,7 @@
                      (expect (= "repl" (get r "mode")))
                      (expect (= 54749 (get r "port")))
                      (expect (re-find #"went down mid-run" (get r "error")))
-                     (expect (re-find #"repl_start" (get r "error")))
+                     (expect (re-find #"repl" (get r "error")))
                      (expect (true? (get r "repl_unusable"))))))
              (it "still propagates an unrelated ExceptionInfo instead of swallowing it"
                  (with-redefs

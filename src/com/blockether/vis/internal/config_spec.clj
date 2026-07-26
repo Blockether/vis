@@ -171,7 +171,7 @@
 ;; ONE documented catalog of every filesystem root. Each entry is
 ;; `{id, path, description, access?, search?}`. `access` (default read-write)
 ;; picks RW vs read-only; `search: false` keeps the root OUT of the default
-;; rg/find_files sweep (explicit paths still reach it). The catalog is the sole
+;; grep sweep (explicit paths still reach it). The catalog is the sole
 ;; source of truth; `jail.filesystem.allow` references entries by id.
 (def workspace-entry-keys #{"id" "path" "description" "access" "search"})
 (def workspace-access-values #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})
@@ -237,7 +237,9 @@
 (def db-keys #{"backend" "path"})
 (def tui-keys #{"theme_name" "contributors_disabled"})
 (def mcp-keys #{"servers"})
-(def mcp-server-keys #{"transport" "command" "args" "cwd" "env" "url" "headers"})
+(def mcp-server-keys
+  #{"transport" "command" "args" "cwd" "env" "url" "headers" "enabled" "timeout_ms" "listen"
+    "auth"})
 (def python-keys #{"resource_cache"})
 (def message-queue-keys
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
@@ -278,6 +280,12 @@
    "retry_after_cap_ms" positive-int?})
 (s/def ::message-queue #(closed-map? message-queue-schema %))
 
+(def mcp-auth-schema
+  {"client_id" non-blank-string?
+   "scope" non-blank-string?
+   "authorization_timeout_ms" positive-int?})
+(s/def ::mcp-auth #(closed-map? mcp-auth-schema %))
+
 (def mcp-server-schema
   {"transport" (one-of #{"stdio" "http"})
    "command" non-blank-string?
@@ -285,10 +293,23 @@
    "cwd" non-blank-string?
    "env" string-map?
    "url" non-blank-string?
-   "headers" string-map?})
+   "headers" string-map?
+   "enabled" boolean?
+   "timeout_ms" positive-int?
+   "listen" boolean?
+   "auth" (spec-pred ::mcp-auth)})
 (s/def ::mcp-server
   #(and (closed-map? mcp-server-schema %)
-        (or (non-blank-string? (get % "command")) (non-blank-string? (get % "url")))))
+        ;; Exactly ONE transport-defining key. Prevents a stdio spec with a
+        ;; stray :url silently switching to http via inference.
+        (let
+          [has-cmd?
+           (non-blank-string? (get % "command"))
+
+           has-url?
+           (non-blank-string? (get % "url"))]
+
+          (and (or has-cmd? has-url?) (not (and has-cmd? has-url?))))))
 (s/def ::mcp-servers
   #(and (map? %) (every? non-blank-string? (keys %)) (every? (spec-pred ::mcp-server) (vals %))))
 (def mcp-schema {"servers" (spec-pred ::mcp-servers)})

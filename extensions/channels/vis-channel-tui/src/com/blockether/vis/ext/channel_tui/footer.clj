@@ -1051,8 +1051,8 @@
                          (+ (long c) (p/display-width separator)))))]
               (if (:kind s)
                 ;; Real button chip via the shared `components/button!` — the SAME
-                ;; component the header right-side buttons use (filled inverted cap,
-                ;; accent on hover, click region registered under `:kind`).
+                ;; component the header right-side buttons use (flat ink on the
+                ;; terminal bg, accent on hover, click region registered under `:kind`).
                 (do
                   (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
                   (+ (long c) (p/display-width (:text s))))

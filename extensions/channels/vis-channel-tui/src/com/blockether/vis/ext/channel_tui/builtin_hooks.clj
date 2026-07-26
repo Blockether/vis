@@ -40,7 +40,7 @@
 
 (defn- model-footer-render
   "Footer-segment contribution returning a VECTOR of segments:
-     1. `provider/model (C-x o) (cycle n/N C-x m)` clickable picker button
+     1. `provider/model (C-x c) (cycle n/N C-x m)` clickable picker button
         (priority 2, bold) — BOTH keybinding hints live INSIDE the one
         clickable chip that opens the fuzzy model picker. The `n/N` shows the
         current model's position in the C-x m cycle (omitted when the model
@@ -103,8 +103,8 @@
     (when (or info pref)
       (when display
         (cond->
-          [{;; ONE clickable chip carrying BOTH hints: `(C-x o)` opens the
-            ;; fuzzy per-session picker (`show-model-picker!`), `(cycle C-x m)`
+          [{;; ONE clickable chip carrying BOTH hints: `(C-x c)` opens the
+            ;; fuzzy per-session picker; `(cycle C-x m)`
             ;; is the quick keyboard cycle. Folding the cycle hint INTO the
             ;; button (was a separate muted segment sitting outside it) keeps
             ;; every keybinding for the model control in one place. The whole

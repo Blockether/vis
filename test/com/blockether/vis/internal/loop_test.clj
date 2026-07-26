@@ -608,6 +608,29 @@
                           (expect (str/includes? (str (:stdout form-res)) "42"))))
                       (finally (lp/dispose-environment! env))))))
 
+(defdescribe
+  stream-watchdog-no-retry-test
+  ;; Svar intentionally treats its watchdog aborts as terminal for the current
+  ;; provider call. Retrying here would stack another multi-minute retry ladder.
+  (doseq [error-type [:svar.core/stream-semantic-timeout
+                      :svar.core/stream-idle-timeout]]
+    (it (str error-type " is surfaced after exactly one provider call")
+        (let [calls (atom 0)]
+          (expect
+            (throws? clojure.lang.ExceptionInfo
+                     #(call-provider-with-stream-rewind-retry!
+                        {:cancel-atom (atom false)}
+                        {:iteration-position 1
+                         :provider "openai"
+                         :model "gpt-x"
+                         :on-chunk (fn [_])
+                         :reset-stream-state! (fn [])}
+                        (fn []
+                          (swap! calls inc)
+                          (throw (ex-info "Stream watchdog timeout"
+                                          {:type error-type :stream? true}))))))
+          (expect (= 1 @calls))))))
+
 (defdescribe provider-interrupt-retry-test
              (it "retries a provider interrupt once when user did not cancel"
                  (let
@@ -1054,6 +1077,58 @@
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (true? (:collapsed? (second (nth out 1)))))
           (expect (nil? (:collapsed? (second (nth out 2)))))))
+    ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
+    ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
+    ;; every later live turn, collapsing the whole trailer. The model then never
+    ;; saw its own tool results and re-issued the same call for 60+ iterations.
+    (it "a fold whose cursor outlives the live turn numbering never collapses the live turn"
+        (let
+          [trailer
+           [[0 {:forms-vec [{:scope "t95/i1/f1" :result "a"}]}]
+            [1 {:forms-vec [{:scope "t95/i2/f1" :result "b"}]}]
+            [2 {:forms-vec [{:scope "t95/i3/f1" :result "c"}]}]]
+
+           out
+           (apply-summaries trailer [{"through" "t113/i9" "gist" "stale numbering"}])]
+
+          (expect (every? (fn [[_ rec]]
+                            (nil? (:collapsed? rec)))
+                          out))
+          (expect (= trailer out))))
+    (it "a fold recorded in an EARLIER turn never collapses the live turn"
+        (let
+          [trailer
+           [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
+            [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+
+           out
+           (apply-summaries trailer [{"scopes" #{"t96/i1" "t96/i2"} "gist" "old" "at_turn" 95}])]
+
+          (expect (every? (fn [[_ rec]]
+                            (nil? (:collapsed? rec)))
+                          out))))
+    (it "a fold recorded in THIS turn still collapses its own live iterations"
+        (let
+          [trailer
+           [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
+            [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+
+           out
+           (apply-summaries trailer [{"through" "t96/i1" "gist" "in-turn" "at_turn" 96}])]
+
+          (expect (true? (:collapsed? (second (nth out 0)))))
+          (expect (nil? (:collapsed? (second (nth out 1)))))))
+    (it "a stale-numbered fold still collapses PRIOR-turn scopes on the trailer"
+        (let
+          [trailer
+           [[0 {:preserved-thinking/replay? false :forms-vec [{:scope "t94/i1/f1" :result "old"}]}]
+            [1 {:forms-vec [{:scope "t95/i1/f1" :result "live"}]}]]
+
+           out
+           (apply-summaries trailer [{"scopes" #{"t94/i1" "t95/i1"} "gist" "g" "at_turn" 94}])]
+
+          (expect (true? (:collapsed? (second (nth out 0)))))
+          (expect (nil? (:collapsed? (second (nth out 1)))))))
     (it "derives a live skill activation from the provider-visible full-body result"
         (let
           [trailer
@@ -1412,12 +1487,12 @@
      :content
      (or content
          [{:type "thinking" :thinking (str "think-" id) :thinking-signature (str "sig-" id)}
-          {:type "tool_use" :id (str "tc-" id) :name "find_files" :input {"query" "lmstudio"}}])}
+          {:type "tool_use" :id (str "tc-" id) :name "grep" :input {"query" "lmstudio"}}])}
     :llm-provider provider
     :llm-model model
     :preserved-thinking/replay? replay?
     :attachments attachments
-    :tool-calls [{:id (str "tc-" id) :name "find_files" :input {"query" "lmstudio"}}]
+    :tool-calls [{:id (str "tc-" id) :name "grep" :input {"query" "lmstudio"}}]
     :forms-vec [{:scope (str "t1/i" id)
                  :svar/tool-call-id (str "tc-" id)
                  :result {"item_count" 2 "paths" ["a.clj" "b.clj"]}}]}])
@@ -1426,7 +1501,7 @@
              ;; The session-c4b630c7 regression: the health gate demoted lmstudio so the
              ;; SELECTED model (target) was anthropic/opus while the ACTUAL server was
              ;; lmstudio/gemma. The old suffix dropped the whole [assistant, tool_result]
-             ;; pair on that mismatch — the model never saw its own find_files result and
+             ;; pair on that mismatch — the model never saw its own grep result and
              ;; re-issued the identical call every iteration.
              (it
                "replays [assistant sans thinking, tool_result] on provider/model mismatch"
@@ -1900,15 +1975,15 @@
 
 (defdescribe
   ask-code-idle-timeout-test
-  (it "uses a sixty-second TTFT timeout and three-minute idle timeout by default"
-      (expect (= (* 60 1000) rt/ASK_CODE_TTFT_TIMEOUT_MS))
-      (expect (= (* 3 60 1000) rt/ASK_CODE_IDLE_TIMEOUT_MS))
+  (it "uses one shared 300s budget for the TTFT and idle watchdogs by default"
+      (expect (= 300000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
+      (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
       (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
         (expect (= ::router router))
         (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
         ;; Semantic timeout is now auto-added by `with-default-ask-code-idle-timeout`
-        ;; (default 185s, catches transport-alive-but-model-silent stalls).
+        ;; (default 300s, catches transport-alive-but-model-silent stalls).
         (expect (= rt/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
   (it "preserves explicit ask-code TTFT and idle timeout overrides"
       (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
@@ -1917,13 +1992,14 @@
       (expect (= 42 (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms 42})))))
       (expect (contains? (:opts (captured-ask-code-opts {:idle-timeout-ms nil})) :idle-timeout-ms))
       (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil}))))))
-  (it "uses a 185-second semantic timeout by default and accepts overrides"
+  (it "uses a 300-second semantic timeout by default and accepts overrides"
       ;; Codex/Claude over Copilot can sit silent for minutes while the
       ;; model reasons server-side; idle-timeout-ms keeps resetting on
       ;; SSE pings. The semantic watchdog surfaces \"transport alive but
-      ;; no model events\" inside 185 seconds (a transport-alive stream with
-      ;; zero events could otherwise stall for many minutes).
-      (expect (= 185000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+      ;; no model events\" — at CODEX PARITY (the Codex CLI's own
+      ;; DEFAULT_STREAM_IDLE_TIMEOUT_MS is 300_000), so a legitimately
+      ;; long silent reasoning phase is not hung up on.
+      (expect (= 300000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
       (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
         (expect (= 180000 (:semantic-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))
@@ -2291,6 +2367,22 @@
           [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
           (expect (str/includes? (get-in m [:content 0 :content]) "no return"))))
+    (it "a NATIVE call with no output gets a tool-appropriate hint, not the print() one"
+        ;; A native tool RETURNS a value; telling it to print() reads as a
+        ;; malfunction and invites a pointless re-run (the shape that spins).
+        (let
+          [m
+           (irm {:tool-calls [{:id "F" :name "fs"}]
+                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "F"}]})
+
+           c
+           (get-in m [:content 0 :content])]
+
+          (expect (str/includes? c "`fs`"))
+          (expect (str/includes? c "NOT a failure"))
+          (expect (not (str/includes? c "print()")))
+          ;; still a plain result, never flagged as an error
+          (expect (nil? (:is_error (get-in m [:content 0]))))))
     (it "an unpaired/fold form folds onto the FIRST call (nothing lost)"
         (let
           [m
@@ -2324,40 +2416,102 @@
 (defdescribe
   repetition-loop-detection-test
   "Repetition-only loop detector + decision-checkpoint. No iteration/budget
-   counting — fires solely on identical action code repeated across iterations."
+   counting — fires on immediate repeats and short periodic action cycles."
   (let
     [detect
      (var-get #'lp/repetition-loop-state)
+
+     carry
+     (fn [r]
+       {:last-sig (:action-sig r) :recent-sigs (:recent-sigs r)})
+
+     step
+     (fn [previous code]
+       (detect [{:code code}] (when previous (carry previous))))
 
      msg
      (var-get #'lp/loop-checkpoint-message)]
 
     (describe "repetition-loop-state"
               (it "is not stuck on a single iteration"
-                  (let [r (detect [{:code "rg({\"any\": [\"x\"]})"}] nil)]
+                  (let [r (step nil "grep({\"query\": \"x\"})")]
                     (expect (false? (:stuck? r)))))
-              (it "trips when identical action code repeats across iterations"
+              (it "trips when identical action code repeats immediately"
                   (let
                     [blocks
-                     [{:code "rg({\"any\": [\"cancel\"]})"} {:code "cat(\"x.clj\")"}]
+                     [{:code "grep({\"query\": \"cancel\"})"} {:code "cat({\"path\": \"x.clj\"})"}]
 
                      r1
                      (detect blocks nil)
 
                      r2
-                     (detect blocks {:last-sig (:action-sig r1)})]
+                     (detect blocks (carry r1))]
 
                     (expect (false? (:stuck? r1)))
                     (expect (true? (:stuck? r2)))))
-              (it "does not trip on distinct action code across iterations"
+              (it "does not trip on a distinct action sequence"
                   (let
                     [r1
-                     (detect [{:code "rg({\"any\": [\"a\"]})"}] nil)
+                     (step nil "apropos({\"query\": \"x\"})")
 
                      r2
-                     (detect [{:code "rg({\"any\": [\"b\"]})"}] {:last-sig (:action-sig r1)})]
+                     (step r1 "doc({\"name\": \"x\"})")]
 
-                    (expect (false? (:stuck? r2))))))
+                    (expect (false? (:stuck? r2)))))
+              (it "detects an alternating apropos → doc → apropos cycle"
+                  (let
+                    [r1
+                     (step nil "apropos({\"query\": \"find\"})")
+
+                     r2
+                     (step r1 "doc({\"name\": \"grep\"})")
+
+                     r3
+                     (step r2 "apropos({\"query\": \"find\"})")]
+
+                    (expect (false? (:stuck? r1)))
+                    (expect (false? (:stuck? r2)))
+                    (expect (true? (:stuck? r3)))))
+              (it "detects a three-action periodic cycle and bounds history"
+                  (let
+                    [r1
+                     (step nil "a()")
+
+                     r2
+                     (step r1 "b()")
+
+                     r3
+                     (step r2 "c()")
+
+                     r4
+                     (step r3 "a()")]
+
+                    (expect (false? (:stuck? r3)))
+                    (expect (true? (:stuck? r4)))
+                    (expect (= 3 (count (:recent-sigs r4))))))
+              (it
+                "stays calm when only the OUTPUT repeats and the code differs"
+                (let
+                  [probe
+                   (fn [previous code out]
+                     (detect [{:code code :stdout out}] (when previous (carry previous))))
+
+                   r1
+                   (probe nil "shell_run('curl localhost:5273/healthz')" "{\"status\":\"ok\"}")
+
+                   r2
+                   (probe r1 "shell_run('curl 127.0.0.1:5273/healthz')" "{\"status\":\"ok\"}")
+
+                   r3
+                   (probe r2 "shell_run('curl -m 5 localhost:5273/healthz')" "{\"status\":\"ok\"}")]
+
+                  ;; DELIBERATE: no output/evidence hashing. Re-reading the same
+                  ;; content while reasoning forward is legitimate work, so only a
+                  ;; verbatim action repeat counts as a loop.
+                  (expect (false? (:stuck? r1)))
+                  (expect (false? (:stuck? r2)))
+                  (expect (false? (:stuck? r3)))
+                  (expect (nil? (:no-evidence-streak r3))))))
     (describe "loop-checkpoint-message"
               (it "shows the sticky best-answer and forces a decision"
                   (let [m (msg "The atom and token serve distinct roles.")]
@@ -2830,6 +2984,22 @@
           (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
 
 (defdescribe
+  stream-watchdog-terminal-error-test
+  "Stream watchdog failures already exhausted svar's bounded retry/fallback policy.
+   They must end the turn instead of becoming visible model-feedback iterations."
+  (let [ctx {:iteration 5 :messages [] :routing {} :reasoning-level nil}]
+    (doseq
+      [error-type [:svar.core/stream-cancelled :svar.core/stream-idle-timeout
+                   :svar.core/stream-semantic-timeout]]
+      (it (str error-type " is fatal and cannot create a duplicate next iteration")
+          (let
+            [result (lp/handle-iteration-exception! (ex-info "Terminal stream watchdog failure"
+                                                             {:type error-type})
+                                                    ctx)]
+            (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
+            (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))))
+
+(defdescribe
   provider-unavailable-retry-test
   "svar's terminal `:svar.llm/provider-unavailable` (a single pinned provider
    whose upstream call failed before any usable response) gets a few transparent
@@ -3123,6 +3293,11 @@
                         vec)))
         (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
         (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
+        ;; Discovery is for sandbox-only capabilities, not a mandatory two-call
+        ;; preflight before every native tool whose full schema is already visible.
+        (doseq [tool-name ["apropos" "doc"]]
+          (expect (str/includes? (get-in by-name [tool-name :description])
+                                 "not already advertised")))
         (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
         (let [python-description (get-in by-name ["python_execution" :description])]
           (doseq
@@ -3134,6 +3309,22 @@
   (it "does not advertise retry_native when no active tool owns a replay policy"
       (expect (= ["apropos" "doc" "session_fold" "python_execution"]
                  (mapv :name (@#'lp/native-tools [] nil nil)))))
+  (it "deduplicates provider names and Python compatibility aliases from native apropos"
+      (let
+        [editing-ext
+         {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
+
+         tools
+         (@#'lp/native-tools [editing-ext] nil nil)
+
+         names
+         (@#'lp/advertised-native-capability-names [editing-ext] nil tools)]
+
+        (doseq [name (map :name tools)]
+          (expect (contains? names name)))
+        (expect (contains? names "grep"))
+        (expect (contains? names "find_files"))
+        (expect (contains? names "find"))))
   (it "dispatches native discovery through the existing Python functions"
       (let
         [shapes
@@ -3166,8 +3357,7 @@
         (expect (nil? (get real-call-shapes "lint_code"))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
-        (expect (= "find_files({\"query\": \"x\"})"
-                   (synth {:name "find_files" :input {"query" "x"}})))
+        (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
         (expect (= "struct_occurrences({\"name\": \"foo\"})"
                    (synth {:name "struct_occurrences" :input {"name" "foo"}})))
         (expect (= "struct_index({\"path\": \"src/x.clj\"})"
@@ -3289,7 +3479,7 @@
     [tags
      {"cat" :observation
       "rg" :observation
-      "find_files" :observation
+      "grep" :observation
       "struct_index" :observation
       "struct_occurrences" :observation
       "file_exists" :observation
@@ -3841,6 +4031,9 @@
                            0
 
                            lp/env-heap-budget-mb
+                           0
+
+                           lp/env-rss-budget-mb
                            0]
 
                           (heap-pressure?)))))
@@ -3850,7 +4043,10 @@
                           0
 
                           lp/env-heap-budget-mb
-                          1]
+                          1
+
+                          lp/env-rss-budget-mb
+                          0]
 
                          (heap-pressure?)))))))
 
@@ -3912,3 +4108,63 @@
                           ;; the OLD env disposed exactly once
                           (expect (= [old-env] @disposed)))
                         (finally (swap! env-cache dissoc k)))))))
+
+(defdescribe env-reaper-enablement-test
+             (it "starts for the absolute heap budget even when every older policy is off"
+                 (let [enabled? (deref #'lp/env-reaper-enabled?)]
+                   (expect (true? (with-redefs
+                                    [lp/env-reaper-interval-ms 1000
+                                     lp/env-idle-ttl-ms 0
+                                     lp/env-cache-max 0
+                                     lp/env-heap-watermark-pct 0
+                                     lp/env-heap-budget-mb 1
+                                     lp/env-rss-budget-mb 0]
+
+                                    (enabled?))))
+                   (expect (false? (with-redefs
+                                     [lp/env-reaper-interval-ms 1000
+                                      lp/env-idle-ttl-ms 0
+                                      lp/env-cache-max 0
+                                      lp/env-heap-watermark-pct 0
+                                      lp/env-heap-budget-mb 0
+                                      lp/env-rss-budget-mb 0]
+
+                                     (enabled?))))))
+             (it "samples bounded runtime metrics without mutating the cache"
+                 (let
+                   [before
+                    (count @env-cache)
+
+                    snapshot
+                    (lp/gateway-runtime-metrics)]
+
+                   (expect (= before (:env-cache-size snapshot)))
+                   (expect (pos? (:jvm-heap-max-bytes snapshot)))
+                   (expect (pos? (:process-rss-bytes snapshot)))
+                   (expect (not (neg? (:jvm-gc-count-total snapshot))))
+                   (expect (pos? (:jvm-thread-count snapshot))))))
+
+(defdescribe env-rss-pressure-test
+             (it "detects native/process memory when JVM heap gates are disabled"
+                 (let [pressure? (deref #'lp/heap-pressure?)]
+                   (with-redefs-fn {#'lp/env-heap-watermark-pct 0
+                                    #'lp/env-heap-budget-mb 0
+                                    #'lp/env-rss-budget-mb 1
+                                    #'lp/process-rss-bytes (constantly (* 2 1024 1024))}
+                     (fn []
+                       (expect (true? (pressure?))))))))
+
+(defdescribe attachment-reinspection-wire-test
+             (it "renders a reinspection image as a canonical vision message"
+                 (let
+                   [image-message
+                    (deref #'lp/iteration-image-message)
+
+                    msg
+                    (image-message {:reinspect-attachments
+                                    [{:id "att-1" :media-type "image/png" :base64 "UE5H"}]})]
+
+                   (expect (= "user" (:role msg)))
+                   (expect (= "image_url" (get-in msg [:content 0 :type])))
+                   (expect (= "data:image/png;base64,UE5H"
+                              (get-in msg [:content 0 :image_url :url]))))))

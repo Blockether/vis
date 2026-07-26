@@ -769,6 +769,14 @@
 ;; the dialog code below reads unchanged.
 (def ^:private persisted-provider-config vis/provider-persisted-config)
 
+(defn- save-provider-config!
+  "Persist provider order in the raw config, then return the reloaded domain config."
+  [items]
+  (let
+    [cfg (assoc (or (vis/load-config-raw) {}) "providers" (mapv persisted-provider-config items))]
+    (vis/save-config! cfg)
+    (vis/load-config)))
+
 (def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)
 
 (def ^:private initial-provider-status vis/provider-initial-status)
@@ -1081,7 +1089,7 @@
    "• vis sends your prompts and the files you ask it to read"
    "  directly to the provider you choose. Nothing else."
    "• No vis servers sit in between. No telemetry of your code."
-   "• Remove a provider any time from Models (C-x o, or C-x p → Models)." ""
+   "• Remove a provider any time from Providers (C-x o, or C-x p → Providers)." ""
    "Local providers (Ollama / LM Studio) keep everything on-device."])
 
 (defn show-welcome!
@@ -1179,6 +1187,8 @@
                 (recur))
             (recur)))))))
 
+(def ^:private provider-dialog-title "Providers")
+
 (defn show-provider-dialog!
   "Provider manager dialog.
    Esc saves and closes, returning {:providers [...]} in priority order.
@@ -1191,8 +1201,13 @@
       (or current-config (vis/load-config) {:providers []})
 
       items
-      (atom (let [base (vec (or (:providers seed) []))
-                  configured-ids (into #{} (map :id) base)]
+      (atom (let
+              [base
+               (vec (or (:providers seed) []))
+
+               configured-ids
+               (into #{} (map :id) base)]
+
               ;; Mirror runtime-router-providers / picker-fleet: authenticated
               ;; OAuth providers (creds live OUTSIDE config) route AND list even
               ;; when never persisted into `:providers`. The manager must SEE them
@@ -1274,7 +1289,7 @@
           ;; after the last provider. `golden-dialog-size` floors height to
           ;; `content + chrome`, so passing the real card height fits the box
           ;; (and clamps to the terminal when there are many providers).
-          ;; Floor Models at the full default footprint so it reads as a
+          ;; Floor Providers at the full default footprint so it reads as a
           ;; substantial panel (more height), not a tiny box hugging 2 cards;
           ;; a long provider list still grows past it and scrolls.
           content-rows
@@ -1284,7 +1299,7 @@
           (dlg/draw-dialog-chrome! g
                                    cols
                                    rows
-                                   "Models"
+                                   provider-dialog-title
                                    (dlg/default-content-width cols)
                                    content-rows)
 
@@ -1780,14 +1795,7 @@
                :else
                (let [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)]
                  (cond
-                   (= ktype KeyType/Escape) (let
-                                              [cfg (assoc (or (vis/load-config-raw) {})
-                                                     "providers" (->> @items
-                                                                      (map
-                                                                        persisted-provider-config)
-                                                                      vec))]
-                                              (vis/save-config! cfg)
-                                              cfg)
+                   (= ktype KeyType/Escape) (save-provider-config! @items)
                    ;; ↑/↓ navigate; Ctrl+P/Ctrl+N (or Shift/Alt+↑/↓ where supported) reorder
                    (= ktype KeyType/ArrowUp)
                    (if (input/reorder-modifier? key)

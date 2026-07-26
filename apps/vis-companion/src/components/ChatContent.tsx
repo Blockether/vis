@@ -95,7 +95,7 @@ function codeLanguage(node: ReactNode): string {
   return /(?:^|\s)language-([\w-]+)/.exec(node.props.className ?? '')?.[1]?.toLowerCase() ?? '';
 }
 
-function DiffBlock({ value, compact }: { value: string; compact: boolean }) {
+const DiffBlock = memo(function DiffBlock({ value, compact }: { value: string; compact: boolean }) {
   const lineClasses: Record<DiffLineKind, string> = {
     meta: 'text-code-duration',
     hunk: 'text-code-syntax-keyword',
@@ -124,7 +124,7 @@ function DiffBlock({ value, compact }: { value: string; compact: boolean }) {
       </pre>
     </div>
   );
-}
+});
 
 const languageAliases: Record<string, string> = {
   clj: 'clojure',
@@ -249,7 +249,11 @@ function splitGutter(value: string): { gutters: string[]; code: string } | null 
   return { gutters, code: codeLines.join('\n') };
 }
 
-function SyntaxCodeBlock({
+// memo: during a live stream the turn re-renders every ~150 ms flush; memoized
+// leaves make every UNCHANGED block bail out instead of re-running Prism /
+// ReactMarkdown over the whole accumulated body (that main-thread churn is
+// what made typing during streaming lag).
+const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   value,
   language,
   compact,
@@ -289,9 +293,9 @@ function SyntaxCodeBlock({
       </pre>
     </div>
   );
-}
+});
 
-export function Markdown({
+export const Markdown = memo(function Markdown({
   children,
   compact = false,
   hardBreaks = false,
@@ -375,7 +379,7 @@ export function Markdown({
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function extractText(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -581,7 +585,7 @@ function ToolSummary({ children, className }: { children: string; className: str
   );
 }
 
-function ToolCard({ form }: { form: TranscriptForm }) {
+const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const role = toolRole(form.tool_color_role);
   const body = resultBody(form);
   const failed = form.error != null;
@@ -633,7 +637,7 @@ function ToolCard({ form }: { form: TranscriptForm }) {
       </div>
     </details>
   );
-}
+});
 
 function formCode(form: TranscriptForm): string {
   const source = form.display_code ?? form.code ?? form.source ?? form.src;
@@ -646,7 +650,7 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return form.tool_name === 'python_execution';
 }
 
-function FormTrace({ form }: { form: TranscriptForm }) {
+const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
   if (form.silent || form.result === 'vis_silent' || form.result === 'vis_answer') return null;
   const code = formCode(form);
   const showCode = showFormCode(form, code);
@@ -676,7 +680,7 @@ function FormTrace({ form }: { form: TranscriptForm }) {
       )}
     </div>
   );
-}
+});
 
 const REASONING_PREVIEW_LINES = 6;
 const REASONING_COLLAPSE_MIN_HIDDEN = 3;
@@ -692,7 +696,7 @@ function normalizeReasoning(value: string): string {
     .trim();
 }
 
-export function ThinkingBand({ children }: { children: string }) {
+export const ThinkingBand = memo(function ThinkingBand({ children }: { children: string }) {
   const normalized = normalizeReasoning(children);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -745,7 +749,7 @@ export function ThinkingBand({ children }: { children: string }) {
       </div>
     </section>
   );
-}
+});
 
 export const IterationTrace = memo(function IterationTrace({
   iterations,
@@ -788,7 +792,7 @@ export const IterationTrace = memo(function IterationTrace({
   );
 });
 
-export function ContentBlockView({ block }: { block: ContentBlock }) {
+export const ContentBlockView = memo(function ContentBlockView({ block }: { block: ContentBlock }) {
   switch (block.type) {
     case 'prose':
       return block.markdown ? <Markdown>{block.markdown}</Markdown> : null;
@@ -822,7 +826,7 @@ export function ContentBlockView({ block }: { block: ContentBlock }) {
     default:
       return null;
   }
-}
+});
 
 function fallbackAnswer(turn: TranscriptTurn): string {
   const iterations = turn.iterations ?? [];

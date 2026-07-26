@@ -1122,6 +1122,54 @@
                              :throwable t}))))))
 
 ;; =============================================================================
+;; Unified entry point — ONE search, three kinds
+;; =============================================================================
+
+(defn search
+  "await search(\\\"rust async runtime comparison\\\")                        (kind defaults to \\\"web\\\")
+   await search(\\\"…\\\", {\\\"kind\\\": \\\"code\\\", \\\"tokens_num\\\": N})
+   await search(\\\"…\\\", {\\\"kind\\\": \\\"papers\\\", \\\"max_results\\\": 10, \\\"sort\\\": \\\"relevance\\\"})
+
+   One research entry point. \\\"kind\\\" picks the corpus:
+   \\\"web\\\" = live web (Exa), \\\"code\\\" = repos + technical docs (Exa),
+   \\\"papers\\\" = arXiv abstracts.
+   Per-kind opts: web -> num_results/type/livecrawl/context_max_characters;
+   code -> tokens_num; papers -> max_results/sort/timeout_ms.
+   Returns {\\\"query\\\", \\\"citations\\\": [{\\\"type\\\", \\\"title\\\", \\\"url\\\", \\\"excerpt\\\", ...}, ...], \\\"citation_count\\\", \\\"truncated\\\", \\\"source\\\", \\\"endpoint\\\"}.
+   Gotcha: \\\"excerpt\\\" is markdown/abstract text — read it directly; on failure \\\"citations\\\"[0] carries \\\"error\\\": True."
+  ([query] (search query {}))
+  ([query opts]
+   (let
+     [opts
+      (or opts {})
+
+      kind
+      (str (or (get opts "kind") "web"))
+
+      opts
+      (dissoc opts "kind")]
+
+     (case kind
+       "web"
+       (search-web query opts)
+
+       "code"
+       (search-code query opts)
+
+       "papers"
+       (search-papers query opts)
+
+       (search-failure {:op :search-web
+                        :tool "search"
+                        :query query
+                        :source :exa
+                        :citation-type :web
+                        :throwable (ex-info (str "unknown search kind "
+                                                 (pr-str kind)
+                                                 " — use web | code | papers")
+                                            {:kind kind})})))))
+
+;; =============================================================================
 ;; Symbol entries
 ;; =============================================================================
 
@@ -1253,7 +1301,7 @@
   (vis/symbol
     #'search-web
     {:tag :observation
-     :native-tool? true
+     :native-tool? false
      :name "search_web"
      :color-role :tool-color/search
      :render render-search-result
@@ -1279,7 +1327,7 @@
   (vis/symbol
     #'search-code
     {:tag :observation
-     :native-tool? true
+     :native-tool? false
      :name "search_code"
      :color-role :tool-color/search
      :render render-search-result
@@ -1301,7 +1349,7 @@
   (vis/symbol
     #'search-papers
     {:tag :observation
-     :native-tool? true
+     :native-tool? false
      :name "search_papers"
      :color-role :tool-color/search
      :render render-search-result
@@ -1321,7 +1369,45 @@
      :handler (fn [_env input]
                 (search-papers (str (get input "query")) (dissoc input "query")))}))
 
-(def search-symbols [web-symbol code-symbol papers-symbol])
+(def search-symbol
+  (vis/symbol
+    #'search
+    {:tag :observation
+     :native-tool? true
+     :name "search"
+     :color-role :tool-color/search
+     :render render-search-result
+     :description
+     "Research beyond the local project: live web, public repos/technical docs, or arXiv papers. Returns ranked citations with excerpts."
+     :schema
+     {:type "object"
+      :properties
+      {"query" {:type "string" :description "Natural-language search query."}
+       "kind"
+       {:type "string"
+        :enum ["web" "code" "papers"]
+        :description
+        "Corpus to search (default \"web\"): web = live web, code = repos + technical docs, papers = arXiv."}
+       "num_results" {:type "integer" :description "web: max results."}
+       "type" {:type "string"
+               :description "web: Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
+       "livecrawl" {:type "string"
+                    :description "web: live-crawl mode, e.g. \"preferred\", \"always\", \"never\"."}
+       "context_max_characters" {:type "integer"
+                                 :description "web: cap on context characters per result."}
+       "tokens_num" {:type "integer"
+                     :description "code: approximate token budget for the returned context."}
+       "max_results" {:type "integer" :description "papers: max papers (default 10)."}
+       "sort" {:type "string"
+               :enum ["relevance" "lastUpdatedDate" "submittedDate"]
+               :description "papers: sort order (default relevance)."}
+       "timeout_ms" {:type "integer" :description "papers: HTTP timeout in milliseconds."}}
+      :required ["query"]
+      :additionalProperties false}
+     :handler (fn [_env input]
+                (search (str (get input "query")) (dissoc input "query")))}))
+
+(def search-symbols [search-symbol web-symbol code-symbol papers-symbol])
 ;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
 ;; above; register-extension! auto-populates the op registry.
 
@@ -1329,7 +1415,7 @@
   (vis/extension
     {:ext/name "foundation-search"
      :ext/description
-     "Live research bindings (NATIVE/bare): search_web + search_code (Exa MCP) + search_papers (arxiv)."
+     "Live research bindings: ONE native `search` tool (kind = web | code | papers) over Exa MCP + arxiv; search_web / search_code / search_papers remain sandbox verbs."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

@@ -25,6 +25,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [taoensso.telemere :as tel])
   (:import
     (java.io BufferedReader)
@@ -35,7 +36,6 @@
 
 (def ^:private protocol-version "2025-06-18")
 (def default-timeout-ms 30000)
-(def ^:private default-connect-timeout-ms 15000)
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -187,13 +187,9 @@
 ;; optional GET listen loop for server-pushed notifications.
 ;; ===========================================================================
 
-;; Lazy: a built HttpClient owns selector threads, so creating one at namespace
-;; load makes it land in a GraalVM native-image build heap (illegal). A delay
-;; defers construction to first use — at runtime, native or JVM alike.
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofMillis (long default-connect-timeout-ms)))
-             (.build))))
+;; HTTP client is shared with `oauth.clj` via `mcp-http/client` — one JDK
+;; `HttpClient` for every MCP subsystem (selector pool + virtual-thread
+;; executor). See `mcp/http.clj` for the perf/threading rationale.
 
 (defn- sse-data-objects
   "Extract every `data:` payload from an SSE body and parse each as JSON,
@@ -242,36 +238,37 @@
             b)]
 
          (.build b)))]
-    (doto (Thread. ^Runnable
-                   (fn []
-                     (let [backoff (atom 1000)]
-                       (while (not @closed?)
-                         (try (let
-                                [resp (.send ^HttpClient @http-client
-                                             (build-request)
-                                             (HttpResponse$BodyHandlers/ofString))
-                                 status (.statusCode resp)]
+    (doto (Thread.
+            ^Runnable
+            (fn []
+              (let [backoff (atom 1000)]
+                (while (not @closed?)
+                  (try (let
+                         [resp (.send ^HttpClient @mcp-http/client
+                                      (build-request)
+                                      (HttpResponse$BodyHandlers/ofString))
+                          status (.statusCode resp)]
 
-                                (cond (or (= 404 status) (= 405 status))
-                                      ;; Server doesn't support the listen channel — quit quietly.
-                                      (reset! closed? :no-listen)
-                                      (>= status 400) (do (tel/log! {:level :debug
-                                                                     :id ::http-listen-status
-                                                                     :data {:server server-name
-                                                                            :status status}}
-                                                                    "MCP HTTP listen non-2xx")
-                                                          (Thread/sleep (long @backoff))
-                                                          (swap! backoff #(min 30000 (* 2 %))))
-                                      :else (do (reset! backoff 1000)
-                                                (doseq [msg (sse-data-objects (.body resp))]
-                                                  (when (and (map? msg) (get msg "method"))
-                                                    (try (on-notify msg)
-                                                         (catch Throwable _ nil)))))))
-                              (catch Throwable _
-                                (when-not @closed?
-                                  (Thread/sleep (long @backoff))
-                                  (swap! backoff #(min 30000 (* 2 %)))))))))
-                   (str "mcp-http-listen-" server-name))
+                         (cond (or (= 404 status) (= 405 status))
+                               ;; Server doesn't support the listen channel — quit quietly.
+                               (reset! closed? :no-listen)
+                               (>= status 400)
+                               (do (tel/log! {:level :debug
+                                              :id ::http-listen-status
+                                              :data {:server server-name :status status}}
+                                             "MCP HTTP listen non-2xx")
+                                   (Thread/sleep (long @backoff))
+                                   (swap! backoff #(long (min 30000
+                                                              (unchecked-multiply 2 (long %))))))
+                               :else (do (reset! backoff 1000)
+                                         (doseq [msg (sse-data-objects (.body resp))]
+                                           (when (and (map? msg) (get msg "method"))
+                                             (try (on-notify msg) (catch Throwable _ nil)))))))
+                       (catch Throwable _
+                         (when-not @closed?
+                           (Thread/sleep (long @backoff))
+                           (swap! backoff #(long (min 30000 (unchecked-multiply 2 (long %)))))))))))
+            (str "mcp-http-listen-" server-name))
       (.setDaemon true)
       (.start))))
 
@@ -323,7 +320,7 @@
           (fn [^String bearer]
             (let
               [resp
-               (.send ^HttpClient @http-client
+               (.send ^HttpClient @mcp-http/client
                       (build-req bearer)
                       (HttpResponse$BodyHandlers/ofString))
 
@@ -382,7 +379,7 @@
                                   (some? params)
                                   (assoc "params" params)))
 
-                        {:keys [status body] :as r}
+                        {:keys [status body]}
                         (post! body timeout-ms)]
 
                        (parse-reply name method status body req-id)))
@@ -392,25 +389,26 @@
                                           (assoc "params" params)))
                                 10000)
                          (catch Throwable _ nil)))
-       :close-fn
-       (fn []
-         (reset! closed? true)
-         (when-let [sid @session]
-           (try
-             (let
-               [b (-> (HttpRequest/newBuilder (URI/create url))
-                      (.timeout (Duration/ofSeconds 5))
-                      (.header "Mcp-Session-Id" sid)
-                      (.header "MCP-Protocol-Version" protocol-version)
-                      (.DELETE))
-                b (apply-headers b headers)
-                b (if-let [t (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
-                    (.header b "Authorization" (str "Bearer " t))
-                    b)]
+       :close-fn (fn []
+                   (reset! closed? true)
+                   (when-let [sid @session]
+                     (try (let
+                            [b (-> (HttpRequest/newBuilder (URI/create url))
+                                   (.timeout (Duration/ofSeconds 5))
+                                   (.header "Mcp-Session-Id" sid)
+                                   (.header "MCP-Protocol-Version" protocol-version)
+                                   (.DELETE))
+                             b (apply-headers b headers)
+                             b (if-let
+                                 [t (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
+                                 (.header b "Authorization" (str "Bearer " t))
+                                 b)]
 
-               (.send ^HttpClient @http-client (.build b) (HttpResponse$BodyHandlers/discarding)))
-             (catch Throwable _ nil)))
-         (reset! session nil))
+                            (.send ^HttpClient @mcp-http/client
+                                   (.build b)
+                                   (HttpResponse$BodyHandlers/discarding)))
+                          (catch Throwable _ nil)))
+                   (reset! session nil))
        :alive-fn (fn []
                    (not @closed?))
        :www-auth-atom www-auth
@@ -418,8 +416,14 @@
       listen?
       (assoc :listen-start-fn
         (fn [on-notify]
-          (http-listen-loop! name url headers session bearer-fn
-                             (or on-notify (fn [_] nil))
+          (http-listen-loop! name
+                             url
+                             headers
+                             session
+                             bearer-fn
+                             (or on-notify
+                                 (fn [_]
+                                   nil))
                              closed?))))))
 
 ;; ===========================================================================
@@ -474,10 +478,11 @@
 
     ;; Per spec, acknowledge before issuing further requests.
     ((:notify-fn conn) "notifications/initialized" nil)
-    (let [conn (assoc conn
-                 :server-info (get init "serverInfo")
-                 :server-capabilities (get init "capabilities")
-                 :protocol-version (get init "protocolVersion"))]
+    (let
+      [conn (assoc conn
+              :server-info (get init "serverInfo")
+              :server-capabilities (get init "capabilities")
+              :protocol-version (get init "protocolVersion"))]
       ;; Wire the optional HTTP listen channel: server-pushed
       ;; `notifications/tools/list_changed` invalidates the tools cache so a
       ;; repeat `list-tools` re-fetches; any caller-supplied `:on-notification`

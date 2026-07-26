@@ -332,12 +332,13 @@
 
 (def ^:private INTERRUPT_RETRY_MAX_ELAPSED_MS
   "Ceiling on how long a provider call may have run and still have its interrupt
-   treated as a retryable spurious blip. svar's TTFT watchdog (~60s) can surface
-   a naked `InterruptedException` on a cold-start / queue spike — worth ONE retry.
+   treated as a retryable spurious blip. svar's TTFT watchdog (300s, see
+   `rt/ASK_CODE_TTFT_TIMEOUT_MS`) can surface a naked `InterruptedException` on a
+   cold-start / queue spike — worth ONE retry.
    But an interrupt that lands well AFTER the TTFT budget is svar's idle/semantic
    watchdog firing on a genuinely wedged stream: the provider already got its full
    budget, so retrying just RESETS every stall clock and doubles the wall-clock
-   hang (2×semantic ≈ 8min) before the failure finally surfaces — and it surfaces
+   hang (2×semantic = 10min) before the failure finally surfaces — and it surfaces
    as a bare interrupt that reads downstream like an Esc cancel. Past this ceiling
    we do NOT retry; let the timeout propagate as a real error fast."
   (+ (long rt/ASK_CODE_TTFT_TIMEOUT_MS) 30000))
@@ -430,6 +431,8 @@
              (str/includes? cause-lower "header parser")
              (str/includes? cause-lower "no bytes")
              (str/includes? cause-lower "handshake")))))
+
+
 
 (defn- provider-retry-event
   [{:keys [provider model reason attempt delay-ms error status]}]
@@ -527,11 +530,11 @@
                            ;; refused / DNS / TLS) that never started a stream — the safest,
                            ;; most idempotent retry, and the case the old `:stream?` gate
                            ;; silently dropped even while telling the user "just retry".
-                           ;; `:svar.llm/empty-content` is deliberately NOT here: svar
-                           ;; already re-sends an empty reply to the same model (bounded
-                           ;; backoff) inside the call, so retrying it again here would
-                           ;; stack ladders into a 16-send worst case.
-                           (or (stream-transport-error? t) (perr/transport-throwable? t)))]
+                           ;; `:svar.llm/empty-content` and stream watchdog timeouts are
+                           ;; deliberately NOT here: svar owns their bounded same-provider
+                           ;; policy, so retrying again here would stack retry ladders.
+                           (or (stream-transport-error? t)
+                               (perr/transport-throwable? t)))]
 
           (if can-retry?
             (let
@@ -774,7 +777,19 @@
                                       (assoc :turn-id (:turn-soul-id a))))))
                        (catch Throwable _ [])))
           :read (fn [id]
-                  (attachment-storage/hydrate (persistance/db-read-attachment d id)))}))
+                  ;; Never turn a UUID into cross-session read authority: prove it
+                  ;; belongs to this active session before the indexed row lookup.
+                  (when (some #(= (str id) (str (:id %)))
+                              (persistance/db-list-session-attachments d sid))
+                    (attachment-storage/hydrate (persistance/db-read-attachment d id))))
+          :reinspect (fn [id _detail]
+                       (when-let
+                         [a (when (some #(= (str id) (str (:id %)))
+                                        (persistance/db-list-session-attachments d sid))
+                              (attachment-storage/hydrate (persistance/db-read-attachment d id)))]
+                         (when (str/starts-with? (str (:media-type a)) "image/")
+                           (mpl-capture/queue-reinspection! a)
+                           a)))}))
 
      record-tool-event
      (fn [event]
@@ -792,6 +807,9 @@
 
          (when tool-event-fn (tool-event-fn event*))))
 
+     reinspection-sink
+     (atom [])
+
      exec-future
      (cancellation/worker-future
        "vis-python-eval"
@@ -801,12 +819,16 @@
                  record-tool-event
 
                  mpl-capture/*attachment-reader*
-                 attachment-reader]
+                 attachment-reader
+
+                 mpl-capture/*attachment-reinspection-sink*
+                 reinspection-sink]
 
                 ;; One persistent interpreter per session: globals (defs,
                 ;; imports, vars) carry across calls/turns NATURALLY.
                 (assoc (env/run-python-block python-context code {:form-cap (:form-cap env)})
-                  :lru {}))
+                  :lru {}
+                  :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink)))
               (catch Throwable e
                 (reset! thrown e)
                 {:result nil :lru {} :forms [] :error (python-op-error python-context e code)}))))
@@ -927,7 +949,7 @@
 ;; All-observation concurrent batch
 ;;
 ;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
-;; OBSERVATIONS (cat / rg / find_files / ls / struct_index / struct_occurrences / struct_node /
+;; OBSERVATIONS (cat / grep / ls / struct_index / struct_occurrences / struct_node /
 ;; file_exists — anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
 ;; the whole batch CONCURRENTLY through the isolated virtual-thread pool
@@ -1190,7 +1212,8 @@
   ;; svar already performs its own transport retry/fallback policy before
   ;; surfacing them to Vis, so feeding them back into the RLM only burns
   ;; visible iterations and cannot help the model self-correct.
-  #{:svar.core/http-error :svar.llm/all-providers-exhausted :svar.llm/circuit-open
+  #{:svar.core/http-error :svar.core/stream-cancelled :svar.core/stream-idle-timeout
+    :svar.core/stream-semantic-timeout :svar.llm/all-providers-exhausted :svar.llm/circuit-open
     :svar.llm/provider-exhausted :svar.llm/provider-unavailable})
 
 (defn- infrastructure-error?
@@ -2816,44 +2839,54 @@
      record!
      (fn [intent]
        (when ctx-atom
-         (swap! ctx-atom (fn [ctx]
-                           (let
-                             [candidates
-                              (conj (vec (get ctx "session_summaries")) intent)
+         (swap! ctx-atom
+           (fn [ctx]
+             (let
+               [candidates
+                ;; Stamp the RECORDING turn onto the intent: a range
+                ;; cursor is re-resolved against every LATER turn's live
+                ;; universe, so without this stamp a stale/foreign-numbered
+                ;; cursor (`{"through" "t113"}` in a session now at t103)
+                ;; collapses the whole live turn and the model goes blind.
+                ;; `apply-summaries` lets a summary touch LIVE-turn scopes
+                ;; only when `at_turn` IS that turn.
+                (conj (vec (get ctx "session_summaries"))
+                      (cond-> intent
+                        (current-turn)
+                        (assoc "at_turn" (current-turn))))
 
-                              ;; The supersede universe is the live wire PLUS every
-                              ;; concrete scope the candidates themselves name — so a
-                              ;; bare `tN` re-fold covers earlier enumerated folds of
-                              ;; that turn even before (or after) those iterations are
-                              ;; stamped into `engine_iter_universe`.
-                              universe
-                              (into (vec (or (get ctx "engine_iter_universe") []))
-                                    (comp (mapcat #(get % "scopes")) (filter ctx-engine/scope-key))
-                                    candidates)
+                ;; The supersede universe is the live wire PLUS every
+                ;; concrete scope the candidates themselves name — so a
+                ;; bare `tN` re-fold covers earlier enumerated folds of
+                ;; that turn even before (or after) those iterations are
+                ;; stamped into `engine_iter_universe`.
+                universe
+                (into (vec (or (get ctx "engine_iter_universe") []))
+                      (comp (mapcat #(get % "scopes")) (filter ctx-engine/scope-key))
+                      candidates)
 
-                              tagged
-                              (mapv (fn [idx summary]
-                                      (assoc summary "__record_idx" idx))
-                                    (range)
-                                    candidates)
+                tagged
+                (mapv (fn [idx summary]
+                        (assoc summary "__record_idx" idx))
+                      (range)
+                      candidates)
 
-                              winners
-                              (-> tagged
-                                  (ctx-engine/expand-through universe)
-                                  ctx-engine/supersede-summaries)
+                winners
+                (-> tagged
+                    (ctx-engine/expand-through universe)
+                    ctx-engine/supersede-summaries)
 
-                              kept
-                              (into #{} (map #(get % "__record_idx")) winners)]
+                kept
+                (into #{} (map #(get % "__record_idx")) winners)]
 
-                             ;; Persist the original selector shape for stable receipts/tests,
-                             ;; but discard superseded intents NOW. Rendering no longer has to
-                             ;; refine an ever-growing fold-of-fold chain on every request.
-                             (assoc ctx
-                               "session_summaries" (into []
-                                                         (keep-indexed (fn [idx summary]
-                                                                         (when (contains? kept idx)
-                                                                           summary)))
-                                                         candidates)))))))
+               ;; Persist the original selector shape for stable receipts/tests,
+               ;; but discard superseded intents NOW. Rendering no longer has to
+               ;; refine an ever-growing fold-of-fold chain on every request.
+               (assoc ctx
+                 "session_summaries" (into []
+                                           (keep-indexed (fn [idx summary]
+                                                           (when (contains? kept idx) summary)))
+                                           candidates)))))))
 
      fmt-tok
      (fn [t]
@@ -3129,15 +3162,74 @@
                              (or (seq (:forms b)) [b]))
                            (:blocks rec)))))
 
+       ;; Turn this trailer belongs to. A fold intent is a POINT-IN-TIME
+       ;; statement, but its range cursor is RE-RESOLVED on every later request
+       ;; — so a cursor that outlives its own turn numbering (a session now at
+       ;; t103 still carrying `{"through" "t113"}` from an earlier numbering)
+       ;; expands over EVERY live iteration, collapses the whole turn, and the
+       ;; model goes blind: it re-issues the identical call every iteration
+       ;; because its own results never reach the wire. A summary may collapse
+       ;; LIVE-turn iterations only when it belongs to this turn: `"at_turn"`
+       ;; (stamped when recorded) decides it; for legacy intents with no stamp,
+       ;; a cursor pointing at a turn NEWER than the live one is stale by
+       ;; construction. Prior-turn scopes are never affected.
+       live-turn
+       (some->> (map second trailer-iters)
+                (keep iter-scope-of)
+                (keep (fn [s]
+                        (first (ctx-engine/scope-key s))))
+                seq
+                (apply max))
+
+       cursor-turn-of
+       (fn [s]
+         (let
+           [turns (keep (fn [k]
+                          (when-let [c (get s k)]
+                            (or (first (ctx-engine/scope-key c)) (ctx-engine/turn-key c))))
+                        ["through" "to" "from" "since"])]
+           (when-let [turns (seq turns)]
+             (apply max turns))))
+
+       stale-for-live-turn?
+       (fn [s]
+         (when live-turn
+           (let
+             [at
+              (let [v (get s "at_turn")]
+                (cond (integer? v) (long v)
+                      (string? v) (parse-long (str/trim v))
+                      :else nil))
+
+              cursor
+              (cursor-turn-of s)]
+
+             (if at
+               (< (long at) (long live-turn))
+               (boolean (and cursor (> (long cursor) (long live-turn))))))))
+
        ;; Resolve any `:through` range cursor against THIS trailer's live
        ;; iteration scopes before matching, so a range fold collapses every
        ;; step at or before the cursor; then supersede covered summaries so a
        ;; broader re-fold replaces the finer one (one breadcrumb, not two).
        summaries
-       (->> (ctx-engine/expand-through summaries (keep iter-scope-of (map second trailer-iters)))
+       (->> summaries
+            (mapv (fn [s]
+                    (assoc s "__stale_live" (boolean (stale-for-live-turn? s)))))
+            (#(ctx-engine/expand-through % (keep iter-scope-of (map second trailer-iters))))
             (keep (fn [summary]
-                    (let [scopes (into #{} (remove (set protected-scopes)) (get summary "scopes"))]
-                      (when (seq scopes) (assoc summary "scopes" scopes)))))
+                    (let
+                      [scopes (into #{}
+                                    (comp (remove (set protected-scopes))
+                                          (remove (fn [s]
+                                                    (and (get summary "__stale_live")
+                                                         (= live-turn
+                                                            (first (ctx-engine/scope-key s)))))))
+                                    (get summary "scopes"))]
+                      (when (seq scopes)
+                        (-> summary
+                            (dissoc "__stale_live")
+                            (assoc "scopes" scopes))))))
             (ctx-engine/supersede-summaries))
 
        summarized
@@ -3671,7 +3763,16 @@
                   :tool_use_id (:id tc)
                   :content
                   (if (str/blank? c)
-                    "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
+                    ;; Empty body: the message must match the CALL KIND. A
+                    ;; python_execution block shows what it print()s; a NATIVE
+                    ;; tool returns a value, so telling it to print() reads as
+                    ;; a malfunction and invites a pointless retry.
+                    (if (= "python_execution" (str (:name tc)))
+                      "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
+                      (str
+                        "(no result — `"
+                        (or (not-empty (str (:name tc))) "tool")
+                        "` completed and returned nothing. This is NOT a failure; do not re-run it for the same answer.)"))
                     c)}
                  errored?
                  (assoc :is_error true))))
@@ -3834,7 +3935,9 @@
    sits between an assistant `tool_use` and its answering `tool_result` (which
    would break tool-call adjacency on the OpenAI chat wire)."
   [iter-rec]
-  (when-let [imgs (seq (filter image-attachment? (:attachments iter-rec)))]
+  (when-let
+    [imgs (seq (filter image-attachment?
+                       (concat (:attachments iter-rec) (:reinspect-attachments iter-rec))))]
     {:role "user" :content (mapv attachment->image-block imgs)}))
 
 
@@ -4009,12 +4112,13 @@
         "packages; use project REPLs. Print results; expressions are ignored; errors surface. "
         "Direct native results: `ntr[tool_id]`; Python stays in variables. Engine-bound natives "
         "are bare snake_case; native-only ones are absent. Await actions, gather independent "
-        "calls, call apropos/doc synchronously. Use direct natives for simple work."
+        "calls. Use apropos/doc only to discover capabilities not already advertised; do not "
+        "preflight a visible native tool. Use direct natives for simple work."
         (when-let [cap (python-execution-capability-line caps)]
           (str " " cap)))
    :schema {:type "object"
             :properties {"code" {:type "string"
-                                 :description "Python source to execute in the sandbox."}}
+                                 :description "Python source to evaluate in the sandbox."}}
             :required ["code"]
             :additionalProperties false}})
 
@@ -4079,7 +4183,9 @@
   []
   {:name "apropos"
    :description
-   "Discover live Python sandbox capabilities as compact name/gist results; use `doc` for one exact contract. The in-Python form returns a filterable dict."
+   (str "Discover live Python sandbox capabilities not already advertised as native tools. "
+        "Do not call this to preflight a visible tool whose schema is already present. "
+        "Returns compact name/gist results; the in-Python form returns a filterable dict.")
    :schema {:type "object"
             :properties {"query" {:type "string"
                                   :description "Optional substring used to filter tool names."}}
@@ -4092,9 +4198,13 @@
   []
   {:name "doc"
    :description
-   "Read one live Python sandbox capability's authoritative contract before guessing its call or result shape."
+   (str "Read one discovered Python sandbox capability's authoritative contract. "
+        "Use it when that capability is not already advertised or its call shape is unclear; "
+        "do not routinely preflight visible native tools.")
    :schema {:type "object"
-            :properties {"name" {:type "string" :description "Exact tool name from apropos."}}
+            :properties {"name" {:type "string"
+                                 :description
+                                 "Exact sandbox capability name, usually from apropos."}}
             :required ["name"]
             :additionalProperties false}})
 
@@ -4117,6 +4227,17 @@
 
       true
       (conj (session-fold-tool) (python-execution-tool caps)))))
+
+(defn- advertised-native-capability-names
+  "Provider-visible names plus Python compatibility names for active extension
+   natives. Native `apropos` suppresses this set to avoid rediscovering tools whose
+   authoritative schema is already in the model request."
+  [active-extensions environment provider-tools]
+  (into (set (map :name provider-tools))
+        (comp (filter :active?)
+              (mapcat (fn [{:keys [symbol]}]
+                        (when symbol (env/python-binding-names symbol)))))
+        (extension/native-tools-for active-extensions environment)))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -4280,7 +4401,7 @@
    default) — it returns RAW argument values (no `py-literal`, so tool namespaces
    need no engine dependency) which THIS fn renders. A tool with NO shape → the
    generic `name({…whole input…})` form (correct for struct_patch, struct_rename,
-   rg, find_files, struct_occurrences, struct_index …).
+   grep, struct_occurrences, struct_index …).
 
    `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
    Python program, passed through verbatim. This is deliberately the ONLY `code`
@@ -4519,6 +4640,10 @@
        ;; a typed routing-trace event so the UI shows what the heal cost
        ;; instead of silence.
        empty-reply-resend-events (atom [])
+       provider-tools (native-tools active-extensions (:sandbox-caps environment) environment)
+       _ (env/set-advertised-native-tools!
+           (:python-context environment)
+           (advertised-native-capability-names active-extensions environment provider-tools))
        ask-opts
        (rt/with-default-ask-code-idle-timeout
          (cond->
@@ -4528,7 +4653,7 @@
             ;; final answer (its text). svar returns
             ;; {:stop-reason :tool-calls|:end :tool-calls :content
             ;; :assistant-message}.
-            :tools (native-tools active-extensions (:sandbox-caps environment) environment)
+            :tools provider-tools
             :tool-choice :auto
             ;; two prompt-cache breakpoints: frozen system prefix
             ;; + moving recency (transcript). See apply-cache-breakpoints.
@@ -5086,6 +5211,9 @@
                     ;; captured at the SOURCE into the sandbox sink —
                     ;; carried down so the DB attachment OWNS the bytes.
                     :attachments (:attachments result)
+                    ;; Reinspection is ephemeral: it reaches the next request but
+                    ;; is never written as a duplicate iteration artifact.
+                    :reinspect-attachments (:reinspect-attachments result)
                     :error (op-error (:error result)
                                      {:code code :phase (get-in result [:envelope :op])})
                     :envelope (:envelope result)
@@ -6160,13 +6288,18 @@
        "for what I gathered."))
 
 (defn- repetition-loop-state
-  "Pure repetition-only loop detector. Given this iteration's executed `blocks`
-   and the prior `:stuck` carry, returns the next `:stuck` fields plus `:stuck?`.
+  "Pure loop detector. Given this iteration's executed `blocks` and the prior
+   `:stuck` carry, returns the next history plus `:stuck?`.
 
-   One signal, no iteration/budget counting: identical action code repeated
-   across iterations (the model reran the same search / rebuilt the same parser)
-   ⇒ stuck. (There is no done() any more; a plain-text answer always finalizes,
-   so there is no non-finalizing-done loop to detect.)"
+   ONE signal, no budget counting: an identical ACTION signature seen in the
+   previous three iterations means an immediate repeat or a short A→B→A /
+   A→B→C→A cycle. This catches alternating discovery/reference loops without
+   treating a long-running investigation as stuck.
+
+   Deliberately EXACT: no output/evidence hashing. Content-based \"no new
+   evidence\" detection fired on legitimate work (re-reading the same file
+   while reasoning forward) and killed real turns, so the detector only ever
+   reacts to the model literally re-issuing the same code."
   [blocks prev-stuck]
   (let
     [action-code
@@ -6175,10 +6308,22 @@
      action-sig
      (when (seq action-code) (hash action-code))
 
-     sig-repeat?
-     (boolean (and action-sig (= action-sig (:last-sig prev-stuck))))]
+     recent-sigs
+     (vec (or (:recent-sigs prev-stuck)
+              (when-let [last-sig (:last-sig prev-stuck)]
+                [last-sig])))
 
-    {:stuck? sig-repeat? :action-sig action-sig}))
+     sig-repeat?
+     (boolean (and action-sig (some #{action-sig} recent-sigs)))
+
+     next-recent-sigs
+     (if action-sig
+       (->> (conj recent-sigs action-sig)
+            (take-last 3)
+            vec)
+       recent-sigs)]
+
+    {:stuck? sig-repeat? :action-sig action-sig :recent-sigs next-recent-sigs}))
 
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
@@ -7305,6 +7450,7 @@
                                      (map #(assoc % :tool-call-id (:svar/tool-call-id b))
                                           (:attachments b))))
                            blocks)
+                     reinspection-attachments (into [] (mapcat :reinspect-attachments) blocks)
                      iteration-id
                      (persistance/db-store-iteration!
                        (:db-info environment)
@@ -7490,17 +7636,17 @@
                                        :times (mapv block-duration-ms blocks)})
                           (let
                             [_ blocks
-                             ;; Repetition-only loop detection (no iteration or
-                             ;; budget counting): identical action code repeated
-                             ;; across iterations ⇒ stuck.
-                             {:keys [stuck? action-sig]} (repetition-loop-state blocks
-                                                                                (:stuck loop-state))
+                             ;; Loop detection (no budget counting): an EXACT
+                             ;; action repeat inside a short window implies an
+                             ;; immediate or periodic cycle.
+                             {:keys [stuck? action-sig recent-sigs]}
+                             (repetition-loop-state blocks (:stuck loop-state))
                              nudged? (boolean (:nudged? (:stuck loop-state)))
                              sticky (some-> (:turn-state-atom environment)
                                             deref
                                             :best-answer
                                             :value)
-                             ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
+                             ;; Checkpoint already shown AND still stuck => force-finalize.
                              forced? (and nudged? stuck?)
                              forced-answer (or sticky {:answer loop-give-up-text})
                              ;; ctx-diff for THIS iteration: the standing context
@@ -7528,37 +7674,44 @@
                                  ;; structural Python delta (session[…] = … / del),
                                  ;; not the whole <context> block — append-only.
                                  (ctx-renderer/render-ctx-delta prev cur)))
-                             next-recent (conj (vec (or trailer-iters []))
-                                               [(inc (long iteration))
-                                                {:thinking thinking
-                                                 :blocks blocks
-                                                 ;; The `forms-vec` (each `{:scope :result …}`) is the
-                                                 ;; ONE scope source: persistence and the context
-                                                 ;; wire both read it, so scopes stay consistent.
-                                                 :forms-vec forms-vec
-                                                 ;; Outbound image artifacts this iteration's
-                                                 ;; tool calls produced (matplotlib figures),
-                                                 ;; each `{:tool-call-id :media-type :base64 …}`.
-                                                 ;; The conversation-suffix replays them as a
-                                                 ;; vision user message so the model SEES its
-                                                 ;; own plots within the turn.
-                                                 :attachments iteration-attachments
-                                                 :ctx-diff iter-ctx-diff
-                                                 :llm-provider (:llm-provider iteration-result)
-                                                 :llm-model (:llm-model iteration-result)
-                                                 ;; svar's canonical replay handle for this
-                                                 ;; iteration. Re-emitted only within this
-                                                 ;; live user turn via
-                                                 ;; `append-preserved-thinking-replay`; cross-turn
-                                                 ;; seeds opt out with
-                                                 ;; `:preserved-thinking/replay? false`.
-                                                 :assistant-message (:assistant-message
-                                                                      iteration-result)
-                                                 ;; Native tool calls for this iteration — iteration-results-message
-                                                 ;; pairs one `tool_result` block per call's :id (the API requires
-                                                 ;; every tool_use be answered).
-                                                 :tool-calls (:tool-calls iteration-result)
-                                                 :preserved-thinking/replay? true}])]
+                             ;; The immediately preceding provider call consumed any
+                             ;; reinspection image. Clear old queues before carrying
+                             ;; history forward: reinspection is exactly one request.
+                             next-recent (conj
+                                           (mapv (fn [[pos rec]]
+                                                   [pos (dissoc rec :reinspect-attachments)])
+                                                 (or trailer-iters []))
+                                           [(inc (long iteration))
+                                            {:thinking thinking
+                                             :blocks blocks
+                                             ;; The `forms-vec` (each `{:scope :result …}`) is the
+                                             ;; ONE scope source: persistence and the context
+                                             ;; wire both read it, so scopes stay consistent.
+                                             :forms-vec forms-vec
+                                             ;; Outbound image artifacts this iteration's
+                                             ;; tool calls produced (matplotlib figures),
+                                             ;; each `{:tool-call-id :media-type :base64 …}`.
+                                             ;; The conversation-suffix replays them as a
+                                             ;; vision user message so the model SEES its
+                                             ;; own plots within the turn.
+                                             :attachments iteration-attachments
+                                             :reinspect-attachments reinspection-attachments
+                                             :ctx-diff iter-ctx-diff
+                                             :llm-provider (:llm-provider iteration-result)
+                                             :llm-model (:llm-model iteration-result)
+                                             ;; svar's canonical replay handle for this
+                                             ;; iteration. Re-emitted only within this
+                                             ;; live user turn via
+                                             ;; `append-preserved-thinking-replay`; cross-turn
+                                             ;; seeds opt out with
+                                             ;; `:preserved-thinking/replay? false`.
+                                             :assistant-message (:assistant-message
+                                                                  iteration-result)
+                                             ;; Native tool calls for this iteration — iteration-results-message
+                                             ;; pairs one `tool_result` block per call's :id (the API requires
+                                             ;; every tool_use be answered).
+                                             :tool-calls (:tool-calls iteration-result)
+                                             :preserved-thinking/replay? true}])]
 
                             ;; ONE iteration-final chunk, AFTER the decision. Terminal
                             ;; (:done? true + :final answer) when force-finalizing so
@@ -7613,22 +7766,24 @@
                                       (attach-llm-routing-summary pre-resolved-model
                                                                   iteration-result)))
                               (recur
-                                (merge
-                                  (dissoc loop-state :llm-provider)
-                                  {:iteration (inc (long iteration))
-                                   :provider-error-streak 0
-                                   :empty-iteration-streak 0
-                                   ;; Inject ONE guidance turn when repetition
-                                   ;; is detected → stern decision-checkpoint.
-                                   :messages (cond-> messages
-                                               stuck?
-                                               (conj {:role "user"
-                                                      :content (loop-checkpoint-message
-                                                                 (when sticky
-                                                                   (answer-markdown sticky)))}))
-                                   :trace (conj trace trace-entry)
-                                   :trailer-iters next-recent
-                                   :stuck {:last-sig action-sig :nudged? stuck?}})))))))))))))))))
+                                (merge (dissoc loop-state :llm-provider)
+                                       {:iteration (inc (long iteration))
+                                        :provider-error-streak 0
+                                        :empty-iteration-streak 0
+                                        ;; Inject ONE guidance turn when repetition
+                                        ;; is detected → stern decision-checkpoint.
+                                        :messages (cond-> messages
+                                                    stuck?
+                                                    (conj {:role "user"
+                                                           :content (loop-checkpoint-message
+                                                                      (when sticky
+                                                                        (answer-markdown
+                                                                          sticky)))}))
+                                        :trace (conj trace trace-entry)
+                                        :trailer-iters next-recent
+                                        :stuck {:last-sig action-sig
+                                                :recent-sigs recent-sigs
+                                                :nudged? stuck?}})))))))))))))))))
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries
@@ -10098,13 +10253,12 @@
 (def ^:private env-cache-max
   "Soft cap on resident session envs. After the TTL sweep, if the cache still
    exceeds this the reaper force-evicts the least-recently-active idle entries
-   (still lock-guarded) until back under the cap — a second guard for burst
-   churn (e.g. prewarm). Override with `VIS_ENV_CACHE_MAX`; <= 0 disables it.
-   Default 16 — trims idle GraalPy Contexts without burst churn."
+   (still lock-guarded) until back under the cap. Override with
+   `VIS_ENV_CACHE_MAX`; <= 0 disables it. Default 8."
   (or (some-> (System/getenv "VIS_ENV_CACHE_MAX")
               str/trim
               parse-long)
-      16))
+      8))
 
 (def ^:private env-reaper-interval-ms
   "How often the idle-env reaper wakes to sweep. Override with
@@ -10116,13 +10270,12 @@
 
 (def ^:private env-max-turns-per-ctx
   "Turns a single session's GraalPy Context serves before the reaper recycles it
-   between turns (dispose + rebuild in place). Bounds a long-lived session the
-   idle reaper never touches because it never goes idle. Override with
-   `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables. Default 50."
+   between turns. Override with `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables.
+   Default 25."
   (or (some-> (System/getenv "VIS_ENV_MAX_TURNS_PER_CTX")
               str/trim
               parse-long)
-      50))
+      25))
 
 (def ^:private env-heap-watermark-pct
   "JVM heap-usage percent (used/max) at or above which the reaper treats the
@@ -10137,18 +10290,53 @@
       85))
 
 (def ^:private env-heap-budget-mb
-  "Absolute JVM heap-used ceiling, in MEGABYTES, at or above which the reaper
-   treats the process as under memory pressure and force-evicts EVERY idle
-   session env this sweep — the MACHINE-INDEPENDENT twin of
-   `env-heap-watermark-pct`. The percent watermark is measured against the MAX
-   heap, which under `-XX:MaxRAMPercentage` is tens of GB on a big box, so the
-   percent valve effectively NEVER fires there; this absolute budget is the real
-   backstop against runaway GraalPy Context growth. Override with
-   `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables. Default 4096 (4 GB)."
+  "Absolute JVM heap-used ceiling in MB. At or above it, the reaper force-evicts
+   every idle session env. Override with `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables.
+   Default 2048 (2 GB), low enough to react before allocation bursts reach the
+   multi-gigabyte resident-set spikes seen under concurrent GraalPy turns."
   (or (some-> (System/getenv "VIS_ENV_HEAP_BUDGET_MB")
               str/trim
               parse-long)
-      4096))
+      2048))
+
+(def ^:private env-rss-budget-mb
+  "Resident-set ceiling in MB. JVM heap alone misses GraalPy/native allocations,
+   so this gate also forces idle-env eviction when process RSS is high. Override
+   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables. Default 3072 (3 GB)."
+  (or (some-> (System/getenv "VIS_ENV_RSS_BUDGET_MB")
+              str/trim
+              parse-long)
+      3072))
+
+(defn- process-rss-bytes
+  "Best-effort process resident set in bytes. Reads procfs on Linux and `ps` on
+   macOS/other Unix hosts. Returns 0 when unavailable; never throws."
+  []
+  (try (let [status-path (java.nio.file.Path/of "/proc/self/status" (make-array String 0))]
+         (if (java.nio.file.Files/isRegularFile status-path (make-array java.nio.file.LinkOption 0))
+           (let
+             [status (java.nio.file.Files/readString status-path)
+              kb (some-> (re-find #"(?m)^VmRSS:\s+(\d+)\s+kB" status)
+                         second
+                         parse-long)]
+
+             (* (long (or kb 0)) 1024))
+           (let
+             [pid (.pid (java.lang.ProcessHandle/current))
+              process (.exec (Runtime/getRuntime)
+                             ^"[Ljava.lang.String;"
+                             (into-array String ["ps" "-o" "rss=" "-p" (str pid)]))]
+
+             (try (if (and (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS)
+                           (zero? (.exitValue process)))
+                    (* (long (or (some-> (slurp (.getInputStream process))
+                                         str/trim
+                                         parse-long)
+                                 0))
+                       1024)
+                    0)
+                  (finally (.destroy process))))))
+       (catch Throwable _ 0)))
 
 (defn- heap-used-pct
   "Current JVM heap utilization as an integer percent of the max heap
@@ -10163,17 +10351,23 @@
 
     (if (pos? mx) (long (/ (* 100 (- (.totalMemory rt) (.freeMemory rt))) mx)) 0)))
 
-(defn- heap-pressure?
-  "True when EITHER pressure gate trips: the percent watermark (used/max heap) OR
-   the absolute used-MB budget. The absolute budget is what actually protects a
-   process whose MAX heap is huge (`-XX:MaxRAMPercentage`), where the percent
-   valve can't reach."
-  []
+(defn- memory-pressure-for-rss?
+  [rss-bytes]
   (or (and (pos? (long env-heap-watermark-pct))
            (>= (long (heap-used-pct)) (long env-heap-watermark-pct)))
       (and (pos? (long env-heap-budget-mb))
            (let [rt (Runtime/getRuntime)]
-             (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long env-heap-budget-mb) 1024 1024))))))
+             (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long env-heap-budget-mb) 1024 1024))))
+      (and (pos? (long env-rss-budget-mb))
+           (>= (long rss-bytes) (* (long env-rss-budget-mb) 1024 1024)))))
+
+(defn- heap-pressure?
+  "True when JVM heap percentage, absolute heap, or process RSS crosses its
+   configured gate. The RSS gate catches GraalPy/native memory invisible to the
+   Java heap counters. Accepts a sampled RSS value to avoid duplicate process
+   calls during metrics and reaper sweeps."
+  ([] (heap-pressure? (process-rss-bytes)))
+  ([rss-bytes] (memory-pressure-for-rss? rss-bytes)))
 
 (defn- cpu-load-pct
   "Whole-process CPU load as a percent (0–100; -1 when the JVM can't sample the
@@ -10184,6 +10378,46 @@
       (let [v (.getProcessCpuLoad ^com.sun.management.OperatingSystemMXBean os)]
         (if (>= v 0.0) (Math/round (* v 100.0)) -1))
       -1)))
+
+(defn gateway-runtime-metrics
+  "Bounded process/runtime gauges for the gateway metrics endpoint. Values are
+   sampled on demand; no profiler or background allocation is required."
+  []
+  (let
+    [rt
+     (Runtime/getRuntime)
+
+     heap-used
+     (- (.totalMemory rt) (.freeMemory rt))
+
+     rss
+     (process-rss-bytes)
+
+     gc-beans
+     (java.lang.management.ManagementFactory/getGarbageCollectorMXBeans)
+
+     thread-bean
+     (java.lang.management.ManagementFactory/getThreadMXBean)]
+
+    {:jvm-heap-used-bytes heap-used
+     :jvm-heap-committed-bytes (.totalMemory rt)
+     :jvm-heap-max-bytes (.maxMemory rt)
+     :process-rss-bytes rss
+     :jvm-gc-count-total
+     (reduce (fn [^long n bean]
+               (let [v (.getCollectionCount ^java.lang.management.GarbageCollectorMXBean bean)]
+                 (+ n (long (max 0 v)))))
+             (long 0)
+             gc-beans)
+     :jvm-gc-time-ms-total
+     (reduce (fn [^long n bean]
+               (let [v (.getCollectionTime ^java.lang.management.GarbageCollectorMXBean bean)]
+                 (+ n (long (max 0 v)))))
+             (long 0)
+             gc-beans)
+     :jvm-thread-count (.getThreadCount thread-bean)
+     :env-cache-size (count @cache)
+     :env-heap-pressure (heap-pressure? rss)}))
 
 (defn- mem-log-enabled?
   "Master switch for memory-observability logging, shared conceptually with the
@@ -10274,8 +10508,11 @@
          (- now (.get la))
          0))
 
+     rss-bytes
+     (process-rss-bytes)
+
      pressure?
-     (heap-pressure?)
+     (heap-pressure? rss-bytes)
 
      effective-ttl
      (if pressure? 0 (long env-idle-ttl-ms))
@@ -10318,24 +10555,27 @@
      (cpu-load-pct)]
 
     (when (mem-log-enabled?)
-      (tel/log! {:level :info
-                 :id ::env-reaper-sweep
-                 :data {:evicted total
-                        :ttl-evicted ttl-evicted
-                        :lru-evicted lru-evicted
-                        :heap-used-pct (heap-used-pct)
-                        :cpu-proc-pct cpu
-                        :heap-pressure? pressure?
-                        :cache-size (count @cache)}}
-                (format
-                  "env-reaper evicted=%d (ttl=%d lru=%d) heap=%d%% cpu=%d%% pressure=%s cache=%d"
-                  (long total)
-                  (long ttl-evicted)
-                  (long lru-evicted)
-                  (long (heap-used-pct))
-                  cpu
-                  pressure?
-                  (count @cache))))
+      (tel/log!
+        {:level :info
+         :id ::env-reaper-sweep
+         :data {:evicted total
+                :ttl-evicted ttl-evicted
+                :lru-evicted lru-evicted
+                :heap-used-pct (heap-used-pct)
+                :process-rss-bytes rss-bytes
+                :cpu-proc-pct cpu
+                :memory-pressure? pressure?
+                :cache-size (count @cache)}}
+        (format
+          "env-reaper evicted=%d (ttl=%d lru=%d) heap=%d%% rss=%dMB cpu=%d%% pressure=%s cache=%d"
+          (long total)
+          (long ttl-evicted)
+          (long lru-evicted)
+          (long (heap-used-pct))
+          (quot (long rss-bytes) 1048576)
+          cpu
+          pressure?
+          (count @cache))))
     total))
 
 (defn- reaper-loop
@@ -10358,16 +10598,22 @@
 
 (defonce ^:private env-reaper-thread (atom nil))
 
+(defn- env-reaper-enabled?
+  "True when the sweep interval and at least one eviction policy are enabled."
+  []
+  (and (pos? (long env-reaper-interval-ms))
+       (or (pos? (long env-idle-ttl-ms))
+           (pos? (long env-cache-max))
+           (pos? (long env-heap-watermark-pct))
+           (pos? (long env-heap-budget-mb))
+           (pos? (long env-rss-budget-mb)))))
+
 (defn- ensure-env-reaper!
   "Start the idle-env reaper daemon thread once, lazily, on the first cache
    insert. Started here (not at namespace load) so a native-image build-time
    init never spawns a thread, and only when reaping is actually enabled."
   []
-  (when (and (pos? (long env-reaper-interval-ms))
-             (or (pos? (long env-idle-ttl-ms))
-                 (pos? (long env-cache-max))
-                 (pos? (long env-heap-watermark-pct)))
-             (nil? @env-reaper-thread))
+  (when (and (env-reaper-enabled?) (nil? @env-reaper-thread))
     (locking cache
       (when (nil? @env-reaper-thread)
         (let [t (doto (Thread. ^Runnable reaper-loop "vis-env-reaper") (.setDaemon true))]

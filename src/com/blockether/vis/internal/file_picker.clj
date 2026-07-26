@@ -283,9 +283,9 @@
   [sort-mode query]
   (name (resolved-sort-mode sort-mode query)))
 
-;; ── fff-backed fuzzy search (shared with the `find_files` tool) ───────────────
+;; ── fff-backed fuzzy search (shared with the `grep` tool) ───────────────
 ;; The `@`-mention pickers (TUI + gateway/web) rank files with the SAME engine
-;; the `find_files` tool uses — real typo-tolerant subsequence matching ranked
+;; the `grep` tool uses — real typo-tolerant subsequence matching ranked
 ;; by frecency — instead of the substring-only `file-picker-score` heuristic.
 
 (defn open-fuzzy-index
@@ -310,7 +310,7 @@
 (defn fuzzy-file-rows
   "Frecency-ranked, typo-tolerant fuzzy file search via fff against an already
    OPEN index `idx` (see `open-fuzzy-index`) — the SAME engine behind the
-   `find_files` tool. Returns rows shaped like `file-picker-items`
+   `grep` tool. Returns rows shaped like `file-picker-items`
    (`:path :label :status-label :size-label :age-label`), capped at `limit`.
 
    A blank `query` yields fff's default frecency/recency ordering."

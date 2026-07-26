@@ -148,7 +148,7 @@
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
    the available height, content is vertically centered within the frame.
-   Layout: border -> title bar -> top separator -> CONTENT -> bottom separator -> hint -> border."
+   Layout: border -> title row -> top separator -> CONTENT -> bottom separator -> hint -> border."
   ([bounds] (dialog-layout bounds nil))
   ([{:keys [top bottom]} content-count]
    (let
@@ -612,10 +612,7 @@
   "Paint a clickable X close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a
    click into Escape. Every dialog inherits it via `draw-dialog-chrome!`.
-   Lights up to the red pill (`close-button-hover-fg` + bold) when the
-   thread-local close-hover flag is set - the same affordance the header and
-   help/tasks overlay close buttons use - so modal X buttons are no longer
-   static."
+   The control stays backgroundless: accent at rest, red + bold on hover."
   [g box-right title-row]
   (let
     [label
@@ -631,16 +628,14 @@
      @(.get ^ThreadLocal modal-close-hover)]
 
     (p/clear-styles! g)
-    (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
-                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
+    (p/set-colors! g (if hovered? t/close-button-hover-fg t/dialog-accent) t/terminal-bg)
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)
     (reset! (.get ^ThreadLocal modal-close-bounds) {:x0 x0 :x1 x1 :y title-row})))
 
 (defn draw-dialog-chrome!
-  "Draw dialog background, shadow, border, and title.
+  "Draw flat dialog chrome on the terminal background: border, title, and separators.
 
    Three arities:
    - `(g cols rows title content-h)` - shared default width; the box HEIGHT is
@@ -681,15 +676,10 @@
       (long box-h)
 
       box-left
-      ;; Nudge the whole box LEFT of dead-centre so the drop shadow (+2 cols
-      ;; right) no longer butts against the window edge — this buys a clear
-      ;; RIGHT margin. Clamped so full-bleed dialogs keep a sane left inset.
-      (max 3 (- (quot (- cols box-w) 2) 3))
+      (quot (- cols box-w) 2)
 
       box-top
-      ;; Same idea vertically: lift the box so the shadow (+1 row down) leaves
-      ;; a clear BOTTOM margin instead of hugging the footer.
-      (max 2 (- (quot (- rows box-h) 2) 2))
+      (quot (- rows box-h) 2)
 
       box-right
       (+ box-left box-w -1)
@@ -700,30 +690,11 @@
       inner-w
       (- box-w 2)]
 
-     ;; Shadow - clipped to terminal bounds
-     (let
-       [shd-left
-        (+ box-left 2)
-
-        shd-top
-        (inc box-top)
-
-        shd-w
-        (min box-w (- cols shd-left))
-
-        shd-h
-        (min box-h (- rows shd-top))]
-
-       (when (and (pos? shd-w) (pos? shd-h))
-         (p/set-bg! g t/dialog-shadow)
-         (p/fill-rect! g shd-left shd-top shd-w shd-h)))
-     ;; Background
-     (p/set-bg! g t/dialog-bg)
+     ;; Clear only the dialog itself. No shadow, panel tint, or title stripe.
+     (p/set-bg! g t/terminal-bg)
      (p/fill-rect! g box-left box-top box-w box-h)
-     ;; Border
-     (p/set-colors! g t/dialog-border t/dialog-bg)
+     (p/set-colors! g t/dialog-border t/terminal-bg)
      (p/draw-box! g box-left box-top box-w box-h)
-     ;; Title bar - full-width accent stripe with centered title
      (let
        [title-row
         (inc box-top)
@@ -734,17 +705,11 @@
         tx
         (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
 
-       ;; Accent bar background
-       (p/set-bg! g t/dialog-title-bg)
-       (p/fill-rect! g (inc box-left) title-row inner-w 1)
-       ;; Title text - BOLD, matching the spel/blockether 700-weight header
-       (p/set-fg! g t/dialog-title-fg)
+       (p/set-colors! g t/dialog-accent t/terminal-bg)
        (p/styled g [p/BOLD] (p/put-str! g tx title-row title-text))
        (draw-dialog-close-button! g box-right title-row)
-       ;; Top separator - below title bar
-       (p/set-colors! g t/dialog-border t/dialog-bg)
+       (p/set-colors! g t/dialog-border t/terminal-bg)
        (p/draw-separator! g box-left box-right (inc title-row))
-       ;; Bottom separator - above hint bar
        (let [bot-sep (- box-bottom 2)]
          (when (> bot-sep (+ box-top 3)) (p/draw-separator! g box-left box-right bot-sep))))
      {:left box-left
@@ -765,10 +730,9 @@
    "             -===." "" "v i s"])
 
 (defn draw-flat-dialog-chrome!
-  "Flat variant of `draw-dialog-chrome!`: no drop shadow, no accent title
-   stripe, no separators - one thin-bordered rect on the dialog background
-   with the title inline on the top border. Same default footprint and the
-   same bounds map as the boxed chrome, so `dialog-layout` works unchanged."
+  "Minimal variant of `draw-dialog-chrome!`: no shadow, title stripe, or
+   separators—just a thin border on the terminal background with the title
+   inline. It returns the same bounds shape, so `dialog-layout` still applies."
   [g ^long cols ^long rows title]
   (let
     [content-w
@@ -801,14 +765,14 @@
      inner-w
      (- box-w 2)]
 
-    (p/set-bg! g t/dialog-bg)
+    (p/set-bg! g t/terminal-bg)
     (p/fill-rect! g box-left box-top box-w box-h)
-    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/set-colors! g t/dialog-border t/terminal-bg)
     (p/draw-box! g box-left box-top box-w box-h)
     ;; Title sits flat ON the top border - no stripe row.
     (when (seq (str title))
       (let [txt (str " " (ellipsize title (max 0 (- inner-w 6))) " ")]
-        (p/set-colors! g t/dialog-title-bg t/dialog-bg)
+        (p/set-colors! g t/dialog-accent t/terminal-bg)
         (p/enable! g p/BOLD)
         (p/put-str! g (+ box-left 2) box-top txt)
         (p/clear-styles! g)))
@@ -838,14 +802,10 @@
      (long box-h)
 
      box-left
-     ;; MUST mirror `draw-dialog-chrome!` exactly (lines ~687/692): the chrome
-     ;; nudges the box left/up to clear the drop shadow and clamps to a sane
-     ;; inset. Plain centering here would drift 3 cols / 2 rows from the painted
-     ;; frame, so every measured coordinate would overflow the border.
-     (max 3 (- (quot (- cols box-w) 2) 3))
+     (quot (- cols box-w) 2)
 
      box-top
-     (max 2 (- (quot (- rows box-h) 2) 2))]
+     (quot (- rows box-h) 2)]
 
     {:left box-left
      :top box-top
@@ -1233,9 +1193,8 @@
          rows (.getRows size)
          g (.newTextGraphics screen)
          ;; Fixed-size box (the 5-arg chrome ignores item count) drawn over the
-         ;; live screen with a shadow — exactly like select-dialog! — so the
-         ;; chat shows around it instead of a blank wipe. The box's own bg fill
-         ;; clears its interior each frame, so a shrinking list leaves nothing.
+         ;; live screen. Its terminal-background fill clears stale rows while
+         ;; leaving the surrounding chat visible.
          footer [["↑/↓" "move"] ["a" "add"] ["l" "logs"] ["s" "stop"] ["r" "restart"]
                  ["Esc" "close"]]
          bounds (draw-dialog-chrome! g
@@ -1575,7 +1534,7 @@
         (p/set-colors! g t/code-block-fg t/code-block-bg)
         (p/fill-rect! g 0 body-top cols body-h)
         ;; Top strip: title left, tail/position indicator right.
-        (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+        (p/set-colors! g t/dialog-accent t/terminal-bg)
         (p/fill-rect! g 0 title-row cols 1)
         (let
           [tag
@@ -1667,7 +1626,7 @@
    Options: :mask char (e.g. \\* for passwords), :initial string,
    :body string-or-lines rendered above the input label,
    :logo lines drawn centered in the accent color above the body,
-   :flat? true for the flat chrome (no shadow / title stripe)."
+   :flat? true selects the minimal inline-border chrome."
   [^TerminalScreen screen title label & {:keys [mask initial body logo flat?] :or {initial ""}}]
   (let
     [text
@@ -2905,10 +2864,8 @@
                         (:detached? model) "detached HEAD"
                         :else (:branch model)))))
 
-         ;; FULLSCREEN overlay that still spares the app's 2-row footer:
-         ;; center in `term-rows - 1` so the box border AND its drop shadow
-         ;; stay ABOVE the persistent footer (model/limits chips) instead of
-         ;; the shadow bleeding onto the footer's top row and hiding it.
+         ;; Full-screen overlay that still spares the app's two-row footer.
+         ;; Center within `term-rows - 1` so the frame stays above it.
          content-w
          (max (footer-content-width cols magit-hints) (- cols 4))
 
@@ -5270,13 +5227,9 @@
          ;; in place. golden-dialog-size still clamps to the terminal, so long
          ;; lists stay full-height and scroll.
          ;; Center within `rows-n - 6`, not the full terminal height, so the
-         ;; box only occupies the band from the tab-bar bottom border down to
-         ;; the composer's top border. The bottom UI band is 6 rows — footer
-         ;; chips (2) + input box (>=3) + echo/hint row (1) — so reserving 6
-         ;; keeps the frame AND its drop shadow clear of the input form, not
-         ;; just the footer. golden-dialog-size already insets 3 rows top/bottom
-         ;; inside that window, so the top margin matches the 3-row header band
-         ;; and a clean gap sits above the composer.
+         ;; frame occupies the band from the tab-bar border to the composer.
+         ;; The six reserved rows cover footer chips, input, and echo/hint;
+         ;; golden-dialog-size adds matching breathing room inside that band.
          (draw-dialog-chrome! g
                               cols
                               (- (long rows-n) 6)
@@ -5812,7 +5765,7 @@
                          "Switch where this session works. Draft files stay isolated until apply."
                          description-w)))
            (when trunk-visible?
-             (p/set-colors! g t/dialog-title-fg t/dialog-bg)
+             (p/set-colors! g t/dialog-accent t/terminal-bg)
              (p/styled g [p/BOLD] (p/put-str! g text-x sections-top "TRUNK"))
              (draw-list-item! g
                               left
@@ -5832,7 +5785,7 @@
              (p/draw-separator! g left right (+ (long sections-top) 3)))
            (cond
              (seq visible-drafts)
-             (do (p/set-colors! g t/dialog-title-fg t/dialog-bg)
+             (do (p/set-colors! g t/dialog-accent t/terminal-bg)
                  (p/styled
                    g
                    [p/BOLD]
@@ -5862,7 +5815,7 @@
                                                (inc row)
                                                (ellipsize (:description item) description-w))))))))
              query-blank?
-             (do (p/set-colors! g t/dialog-title-fg t/dialog-bg)
+             (do (p/set-colors! g t/dialog-accent t/terminal-bg)
                  (p/styled g [p/BOLD] (p/put-str! g text-x drafts-header-row "DRAFTS  0"))
                  (p/set-colors! g t/dialog-hint t/dialog-bg)
                  (p/styled
@@ -5947,7 +5900,7 @@
    {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
    {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
    {:id :fork-at-turn :label "Fork Session at Turn…"} {:id :close-tab :label "Close Tab"}
-   {:id :providers :label "Models"} {:id :settings :label "Settings"}
+   {:id :providers :label "Providers"} {:id :settings :label "Settings"}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])

@@ -525,7 +525,7 @@
       (as-keywords (if (seq aliases) aliases default-aliases))]
 
      ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
-     ;; racing second start! (e.g. the repl_start tool + an eval-autostart)
+     ;; racing second start! (e.g. the repl tool + an eval-autostart)
      ;; could both pass the alive? check and both spawn, orphaning a duplicate
      ;; JVM. Under the lock the loser re-checks and returns :already-running.
      ;; (`start-lock` returns a SHARED, atom-stored monitor — not a fresh/local
@@ -871,8 +871,8 @@
                             ":"
                             (:port info)
                             " is not answering — restart it and reconnect"
-                            " (repl_start(\"clojure\", \"connect\", {\"port\": ...})), or"
-                            " repl_start(\"clojure\", \"stop\") to detach.")})
+                            " (repl(\"clojure\", \"connect\", {\"port\": ...})), or"
+                            " repl(\"clojure\", \"stop\") to detach.")})
           (and (proc-alive? info)
                (:port info)
                (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))
@@ -888,7 +888,7 @@
                               "+ times in "
                               (quot (long crash-window-ms) 60000)
                               " min — autostart is SUSPENDED. Fix the boot failure"
-                              " (see log_tail), then repl_start(\"clojure\", \"restart\")"
+                              " (see log_tail), then repl(\"clojure\", \"restart\")"
                               " to reset.")}
               (get f "exit")
               (assoc "exit" (get f "exit"))
@@ -911,7 +911,7 @@
    Rules (the ownership contract):
      - explicit `id` → that REPL (throws :clj/unknown-repl-id if no such live REPL);
      - `id` = `default` (any case) → sentinel, treated as no explicit id (below);
-     - 0 REPLs       → throw :clj/no-repl (start one with repl_start, e.g. repl_start(\"clojure\"));
+     - 0 REPLs       → throw :clj/no-repl (start one with repl, e.g. repl(\"clojure\"));
      - 1 REPL        → use it (the implicit default);
      - >1 REPLs      → use the DEFAULT: the REPL owning `default-dir` (the
                        workspace root) when present, else the first (dir-sorted).
@@ -946,7 +946,7 @@
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
           (throw (ex-info (str "no running nREPL in this session — start one with "
-                               "repl_start(\"clojure\"), "
+                               "repl(\"clojure\"), "
                                "then retry the eval")
                           {:type :clj/no-repl :dir default-dir}))
           ;; 1+ REPLs: the implicit default is the one owning `default-dir`
