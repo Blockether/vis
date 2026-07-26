@@ -1,12 +1,16 @@
 (ns com.blockether.vis.internal.foundation.shell-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [org.graalvm.polyglot Context]))
 
 ;; The impls are private (named for clarity inside the ns); reach them by var
 ;; so tests drive the real gate/render contract without the Python wrapper.
@@ -636,3 +640,90 @@
           (finally (resources/stop-all! sid)
                    (io/delete-file secret true)
                    (io/delete-file ws true)))))))
+
+
+;; =============================================================================
+;; The PYTHON SANDBOX surface — `python_execution` is the model's main hand, so
+;; the shell has to be usable from ordinary Python, not only as a native tool.
+;; =============================================================================
+
+(defn- py-ctx
+  "A real sandbox Context wired with the REAL built-in bindings, so `shell` here
+   is the genuine tool (not a stub) resolving `env` at call time."
+  ^Context [env]
+  (:python-context (ep/create-python-context (extension/builtin-sandbox-bindings (constantly
+                                                                                   env)))))
+
+(defn- py
+  "Eval one Python expression in `c` and marshal the value back to Clojure."
+  [^Context c code]
+  (ep/->clj (.eval c "python" code)))
+
+(defdescribe
+  python-sandbox-surface-test
+  "ONE bare `shell` global (never a shell_run/bg/logs quartet), the whole op
+   grammar reachable through it from Python, a real `doc('shell')`, and the
+   `shell` toggle actually removing the binding when it is off."
+  (it "binds exactly ONE shell symbol into the sandbox globals, with a doc"
+      (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
+        (expect (= ['shell] (sort (filter #(str/includes? (name %) "shell") (keys bind)))))
+        (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
+  (it "runs a command through the bare `shell` global and answers the TOTAL map"
+      (let [c (py-ctx {})]
+        (expect (true? (py c "'shell' in globals() and callable(shell)")))
+        (expect (= ["run" 0 "hi" "shell"]
+                   (py c
+                       (str "r = __vis_settle__(shell('echo hi'))\n"
+                            "[r['stage'], r['exit'], r['stdout'].strip(), r['op']]"))))
+        ;; Keys this stage does not fill are still PRESENT — model Python indexes
+        ;; any documented field without a KeyError.
+        (expect (= []
+                   (py c
+                       (str "[k for k in ['lines','pid','status','sent','stopped','cwd',"
+                            "'timed_out','stderr'] if k not in r]"))))))
+  (it "drives the whole op grammar (bg -> logs -> stop) from Python"
+      (let
+        [sid
+         (str "py-shell-" (System/nanoTime))
+
+         c
+         (py-ctx {:session-id sid})]
+
+        (try (expect (= ["bg" true "logs" true "stop" true]
+                        (py c
+                            (str "import time\n" "b = __vis_settle__(shell('echo alive; sleep 30',"
+                                 " {'op':'bg','id':'pyjob'}))\n" "time.sleep(0.5)\n"
+                                 "l = __vis_settle__(shell('pyjob', {'op':'logs','n':10}))\n"
+                                 "s = __vis_settle__(shell('pyjob', {'op':'stop'}))\n"
+                                 "[b['stage'], b['pid'] is not None, l['stage'],"
+                                 " l['line_count'] >= 0, s['stage'], s['stopped']]"))))
+             (finally (resources/stop-all! sid)))))
+  (it "doc('shell') carries the description AND the op/cmd params"
+      (let [d (str (py (py-ctx {}) "doc('shell')"))]
+        (expect (str/includes? d "params:"))
+        (expect (str/includes? d "`op`"))
+        (expect (str/includes? d "`cmd`"))))
+  (it "flipping the `shell` toggle OFF removes the sandbox binding"
+      (let
+        [before
+         (toggles/enabled? "shell")
+
+         c
+         (py-ctx {})
+
+         env
+         {:extensions (atom (vec (extension/registered-extensions)))
+          :active-extensions (atom [])
+          :python-context c}
+
+         present?
+         (fn []
+           (boolean (py c "'shell' in globals()")))]
+
+        (try (toggles/set-enabled! "shell" false)
+             (lp/sync-active-extension-symbols! env)
+             (expect (false? (present?)))
+             (toggles/set-enabled! "shell" true)
+             (lp/sync-active-extension-symbols! env)
+             (expect (true? (present?)))
+             (finally (toggles/set-enabled! "shell" before))))))

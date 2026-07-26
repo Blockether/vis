@@ -233,16 +233,17 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
                 )}
               </p>
             </div>
-            <div className="grid shrink-0 grid-cols-2 gap-1.5">
+            <div className="grid shrink-0 grid-cols-2 gap-1">
               <Button
                 variant="ghost"
-                className="px-2.5 py-1 font-mono text-[10px]"
+                className="min-h-6 px-2 py-0.5 font-mono text-[9px] sm:min-h-6"
                 onClick={() => void load()}
               >
                 Refresh
               </Button>
               <Button
-                className="px-2.5 py-1 font-mono text-[10px]"
+                variant="ghost"
+                className="min-h-6 border-accent px-2 py-0.5 font-mono text-[9px] text-accent hover:bg-accent/10 hover:text-accent sm:min-h-6"
                 disabled={createBusy || !active}
                 onClick={() => void createSession()}
               >

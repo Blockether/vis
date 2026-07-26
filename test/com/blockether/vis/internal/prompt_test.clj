@@ -125,7 +125,7 @@
                   "never offer a menu"]]
         (expect (not (str/includes? text surplus))))))
   (it "advertises concise Python guidance and every auto-imported name"
-      (let [text (#'prompt/sandbox-shims-prompt-block)]
+      (let [text (#'prompt/sandbox-shims-prompt-block nil)]
         (expect (< (count text) 800))
         (expect (not (str/includes? text "Not supported:")))
         (expect (not (str/includes? text "apropos")))
@@ -134,8 +134,21 @@
         (expect (str/includes? text "Preinstalled shims"))
         (expect (str/includes? text "import numpy as np"))
         (expect (str/includes? text "never auto-created"))
+        ;; No shell layer active ⇒ no shell sentence.
+        (expect (not (str/includes? text "subprocess")))
         (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
-          (expect (str/includes? text (str "`" name "`")))))))
+          (expect (str/includes? text (str "`" name "`"))))))
+  (it "names the in-sandbox shell surface when the shell layer is active"
+      ;; `shell` is an ordinary bound global in `python_execution` and the
+      ;; POSIX-compat shim routes subprocess/os.system to it — neither fact is
+      ;; discoverable from the shim NAME list, so the prompt has to say it.
+      (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
+        (expect (< (count text) 800))
+        (expect (str/includes? text "`shell` is a bound global"))
+        (expect (str/includes? text "shell(cmd)"))
+        (expect (str/includes? text "\"op\": \"bg\""))
+        (expect (str/includes? text "subprocess"))
+        (expect (str/includes? text "os.system")))))
 
 (defdescribe
   project-instructions-hoist-test

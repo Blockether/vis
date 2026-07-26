@@ -117,7 +117,21 @@
                              (bus/hydrate! "sid-idem") ; reaps, appends terminal to journal
                              (reset! capture [])
                              (bus/hydrate! "sid-idem") ; terminal present now -> no-op
-                             (expect (empty? @capture)))))))
+                             (expect (empty? @capture))))))
+  (it "reaps ONCE even before the terminal lands in the journal (async publish! race)"
+      (with-temp-journal (fn [capture write!]
+                           (let [prod (str (java.util.UUID/randomUUID))]
+                             (write! "sid-race" [(turn-started prod dead-pid "sid-race" "T-race")])
+                             ;; `publish!` is ASYNC: hold the terminal out of the journal to stand
+                             ;; in for its write window. Without the CAS marker both hydrates read
+                             ;; `terminal? = false` and each emit their own `turn.failed`.
+                             (with-redefs
+                               [bus/publish! (fn [& _]
+                                               nil)]
+                               (bus/hydrate! "sid-race")
+                               (bus/hydrate! "sid-race"))
+                             (expect (= 1 (count @capture)))
+                             (expect (= "turn.failed" (get (first @capture) "type"))))))))
 
 (defdescribe
   journal-high-water-seq-test

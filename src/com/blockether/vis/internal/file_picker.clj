@@ -1,148 +1,28 @@
 (ns com.blockether.vis.internal.file-picker
-  "Backend for file-picking UIs.
+  "Backend for file-picking UIs (the `@` mention picker, TUI + web).
 
-   This namespace owns the NON-UI parts of the `@` picker:
-   - repository discovery
-   - git dirty / ignored metadata via the native `git` binary
-   - filesystem indexing via java.nio.file
-   - filtering, ranking, sorting
-   - compact display labels for size / age / git status
+   Everything here rides the ONE canonical pooled fff index
+   (`internal.fff-index`) that the `grep` / `find_files` tools use: fff owns the
+   tree walk, the gitignore policy, the git-status metadata and the
+   frecency-ranked fuzzy match. This namespace only leases that index and turns
+   fff rows into display rows.
 
-   Channels render and keybind on top of this data; they should not
-   reimplement repository walking or git-status logic themselves."
+   There is deliberately NO Clojure-side directory walk, git-status subprocess,
+   ignore matcher or scoring heuristic left in here — reintroducing one means the
+   picker and the search tools would rank and see different files."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.fff-index :as fff-index])
-  (:import [java.io File]
-           [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
-           [java.nio.file.attribute BasicFileAttributes]
+  (:import [java.nio.file Path]
            [java.util Locale]))
 
 (def ^:const max-results 200)
-
-(def ^:private sort-order [:recent :relevance])
 
 (defn cwd-path
   "Current explicit workspace cwd as a Path. Indirected for tests."
   ^Path []
   (.toPath (workspace/cwd)))
-
-(defn display-path
-  "`path` relativized against `root`, normalized to `/` separators."
-  ^String [^Path root ^Path path]
-  (paths/unixify (.relativize root path)))
-
-(defn status-priority
-  "Higher = more visually important in the picker."
-  [status]
-  (case status
-    :conflict
-    6
-
-    :deleted
-    5
-
-    :modified
-    4
-
-    :added
-    3
-
-    :untracked
-    2
-
-    :ignored
-    1
-
-    0))
-
-(defn git-status-snapshot
-  "Git metadata for the repository containing `cwd`, or a reduced empty shape
-   when the directory is not in git. Backed by one `git status` subprocess."
-  [^Path cwd]
-  (if-let [^File top (git/repo-work-tree (.toFile cwd))]
-    (try (assoc (git/git-status-snapshot top) :repo-root (.toPath top))
-         (catch Throwable _
-           {:repo-root (.toPath top) :path-status {} :ignored-exact #{} :ignored-prefixes []}))
-    {:repo-root nil :path-status {} :ignored-exact #{} :ignored-prefixes []}))
-
-(defn ignored-path?
-  "True when `repo-rel-path` is ignored according to the snapshot map
-   from `git-status-snapshot`."
-  [{:keys [ignored-exact ignored-prefixes]} repo-rel-path]
-  (boolean (and repo-rel-path
-                (or (contains? ignored-exact repo-rel-path)
-                    (some #(str/starts-with? repo-rel-path %) ignored-prefixes)))))
-
-(defn file-picker-entry
-  "Build one picker entry from a filesystem path + attrs. `cwd` is the
-   scan root; `git-info` is from `git-status-snapshot`."
-  [^Path cwd {:keys [repo-root path-status] :as git-info} ^Path path ^BasicFileAttributes attrs]
-  (let
-    [abs-path
-     (.toAbsolutePath path)
-
-     rel-path
-     (display-path cwd abs-path)
-
-     parent-path
-     (let [parent (.getParent abs-path)]
-       (cond (nil? parent) "."
-             (= (.toAbsolutePath parent) (.toAbsolutePath cwd)) "."
-             :else (display-path cwd parent)))
-
-     repo-rel
-     (when repo-root
-       (let [repo-root-abs (.toAbsolutePath ^Path repo-root)]
-         (when (.startsWith abs-path repo-root-abs) (display-path repo-root-abs abs-path))))
-
-     ignored?
-     (ignored-path? git-info repo-rel)
-
-     git-status
-     (or (get path-status repo-rel) (when ignored? :ignored))]
-
-    {:path rel-path
-     :name (str (.getFileName abs-path))
-     :parent (if (= rel-path parent-path) "." parent-path)
-     :size (.size attrs)
-     :mtime-ms (.toMillis (.lastModifiedTime attrs))
-     :git-status git-status
-     :ignored? ignored?}))
-
-(defn collect-file-picker-entries
-  "Index regular files under the current working directory. Skips `.git`
-   internals unconditionally; everything else stays eligible so the UI can
-   toggle ignored files on/off without rebuilding the index."
-  []
-  (let
-    [cwd
-     (cwd-path)
-
-     git-info
-     (git-status-snapshot cwd)
-
-     entries
-     (volatile! [])]
-
-    (Files/walkFileTree cwd
-                        (proxy [SimpleFileVisitor] []
-                          (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-                            (if (= ".git"
-                                   (some-> dir
-                                           .getFileName
-                                           str))
-                              FileVisitResult/SKIP_SUBTREE
-                              FileVisitResult/CONTINUE))
-                          (visitFile [^Path file ^BasicFileAttributes attrs]
-                            (when (or (.isRegularFile attrs) (.isSymbolicLink attrs))
-                              (vswap! entries conj (file-picker-entry cwd git-info file attrs)))
-                            FileVisitResult/CONTINUE)
-                          (visitFileFailed [_file _exc] FileVisitResult/CONTINUE)))
-    @entries))
 
 (defn format-bytes
   "Human-ish byte string for picker rows."
@@ -173,121 +53,10 @@
           (< hours 24) (str hours "h")
           :else (str days "d"))))
 
-(defn file-picker-score
-  "Heuristic fuzzy score for `query` against `path`. Nil means no match."
-  [path query]
-  (let
-    [path-lc
-     (str/lower-case path)
-
-     query-lc
-     (str/lower-case (or query ""))
-
-     file-name
-     (last (str/split path-lc #"/"))
-
-     segments
-     (str/split path-lc #"/")]
-
-    (cond (str/blank? query-lc) nil
-          (= path-lc query-lc) 1000
-          (= file-name query-lc) 950
-          (str/starts-with? file-name query-lc) 900
-          (some #(str/starts-with? % query-lc) segments) 850
-          (str/includes? file-name query-lc) (- 700 (.indexOf ^String file-name query-lc))
-          (str/starts-with? path-lc query-lc) 650
-          (str/includes? path-lc query-lc) (- 500 (.indexOf ^String path-lc query-lc))
-          :else nil)))
-
-(defn resolved-sort-mode
-  "Relevance falls back to path order when the query is blank; recent is
-   the default newest-first ordering."
-  [sort-mode query]
-  (case sort-mode
-    :relevance
-    (if (str/blank? query) :path :relevance)
-
-    :recent))
-
-(defn status-label
-  "Human-readable git status for picker table rows."
-  [status]
-  (case status
-    :modified
-    "modified"
-
-    :untracked
-    "untracked"
-
-    :added
-    "added"
-
-    :deleted
-    "deleted"
-
-    :conflict
-    "conflict"
-
-    :ignored
-    "ignored"
-
-    "clean"))
-
-(defn decorate-entry
-  "Attach derived display fields used by the picker renderer."
-  [entry now-ms query]
-  (let [score (file-picker-score (:path entry) query)]
-    (assoc entry
-      :label (:path entry)
-      :score score
-      :status-label (status-label (:git-status entry))
-      :size-label (format-bytes (:size entry))
-      :age-label (format-relative-age now-ms (:mtime-ms entry)))))
-
-(defn file-picker-items
-  "Filter, score, and sort picker entries.
-
-   Options:
-   - :include-ignored?  include gitignored files
-   - :sort-mode         :recent | :relevance
-   - :now-ms            override current time for deterministic tests"
-  [entries query
-   {:keys [include-ignored? sort-mode now-ms]
-    :or {include-ignored? false sort-mode :recent now-ms (System/currentTimeMillis)}}]
-  (let [sort-mode* (resolved-sort-mode sort-mode query)]
-    (->> entries
-         (filter #(or include-ignored? (not (:ignored? %))))
-         (map #(decorate-entry % now-ms query))
-         (filter #(or (str/blank? query) (some? (:score %))))
-         (sort-by (fn [entry]
-                    (case sort-mode*
-                      :recent
-                      [(- (long (:mtime-ms entry))) (- (long (status-priority (:git-status entry))))
-                       (:path entry)]
-
-                      :relevance
-                      [(- (double (or (:score entry) 0))) (- (long (:mtime-ms entry)))
-                       (- (long (status-priority (:git-status entry)))) (:path entry)]
-
-                      [(:path entry)])))
-         (take max-results)
-         vec)))
-
-(defn cycle-sort-mode
-  "Advance to the next picker sort mode."
-  [sort-mode]
-  (let [idx (.indexOf ^java.util.List sort-order sort-mode)]
-    (nth sort-order (mod (inc (max idx 0)) (count sort-order)))))
-
-(defn sort-label
-  "Human label for the current sort mode."
-  [sort-mode query]
-  (name (resolved-sort-mode sort-mode query)))
-
 ;; ── fff-backed fuzzy search (shared with the `grep` tool) ───────────────
 ;; The `@`-mention pickers (TUI + gateway/web) rank files with the SAME engine
 ;; the `grep` tool uses — real typo-tolerant subsequence matching ranked
-;; by frecency — instead of the substring-only `file-picker-score` heuristic.
+;; by frecency — over the same pooled index.
 
 (defn cwd-lease
   "The canonical pooled-fff lease for the current workspace cwd: gitignore
@@ -312,8 +81,8 @@
 (defn fuzzy-file-rows
   "Frecency-ranked, typo-tolerant fuzzy file search via fff — the SAME pooled
    index (and therefore the same ranking) the `grep`/`find_files` tools use.
-   Returns rows shaped like `file-picker-items` (`:path :label :status-label
-   :size-label :age-label`), capped at `limit`.
+   Returns display rows (`:path :label :status-label :size-label :age-label`),
+   capped at `limit`.
 
    The index is leased from `internal.fff-index` for the call only: callers own
    nothing and must not close anything. The FIRST call on a cold pool blocks for
@@ -362,9 +131,7 @@
    TUI never diverge on ranking or field derivation — only on the final shape.
 
    Returns the channel-agnostic WIRE rows `{:name :size :age :status}` (bare
-   relative path in `:name`). Never throws; on any error yields `[]`.
-
-   A blank `query` yields fff's default frecency/recency ordering."
+   relative path in `:name`). Never throws; on any error yields `[]`."
   ([query] (suggest-file-rows query {}))
   ([query {:keys [limit] :or {limit max-results}}]
    (try (into [] (map ->wire) (fuzzy-file-rows query {:limit limit})) (catch Throwable _ []))))

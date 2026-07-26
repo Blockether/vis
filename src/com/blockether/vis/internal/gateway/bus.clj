@@ -194,10 +194,31 @@
        nil))
    nil))
 
+(defonce ^:private reaped-turns
+  ;; sid -> turn-id this process has already orphan-reaped. The journal terminal
+  ;; is the CROSS-process guard, but `publish!` lands it asynchronously, so two
+  ;; hydrates racing inside that write window would both read no-terminal. This
+  ;; marker is the in-process compare-and-set that closes the window.
+  (atom {}))
+
+(defn- claim-reap!
+  "Compare-and-set the orphan-reap marker for `tid` in `sid`. True EXACTLY once
+   per turn — only that caller may publish the synthetic terminal."
+  [sid tid]
+  (let
+    [k
+     (str sid)
+
+     [old _]
+     (swap-vals! reaped-turns assoc k tid)]
+
+    (not= tid (get old k))))
+
 (defn forget!
   "Drop a session's journal (on session close). Never throws."
   [sid]
   (try (.delete (session-file sid)) (catch Throwable _ nil))
+  (swap! reaped-turns dissoc (str sid))
   nil)
 
 ;; ---------------------------------------------------------------------------
@@ -416,22 +437,27 @@
                         (tel/log! :debug ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
                 ;; Orphan: producer process is gone. Reap it terminally.
                 (when-let [tid (get started "turn_id")]
-                  (let
-                    [term {"schema" 1
-                           "type" "turn.failed"
-                           "session_id" (str sid)
-                           "turn_id" tid
-                           "status" "interrupted"
-                           "error" "gateway producer exited before the turn finished"}]
-                    ;; Durable + cross-process: appended (no truncate), so any
-                    ;; process hydrating later sees `terminal?` and skips.
-                    (publish! sid term {:store? true})
-                    (when-let [f' @deliver-fn]
-                      (try (f' sid true term)
-                           (catch Throwable t
-                             (tel/log! :debug
-                                       ["gateway-bus: orphan-reap deliver failed"
-                                        (ex-message t)]))))))))))))
+                  ;; CAS-claim the reap BEFORE publishing: `publish!` lands the
+                  ;; terminal ASYNCHRONOUSLY, so two hydrates inside that write
+                  ;; window would each read `terminal? = false` and each emit
+                  ;; its own `turn.failed` for the same turn.
+                  (when (claim-reap! sid tid)
+                    (let
+                      [term {"schema" 1
+                             "type" "turn.failed"
+                             "session_id" (str sid)
+                             "turn_id" tid
+                             "status" "interrupted"
+                             "error" "gateway producer exited before the turn finished"}]
+                      ;; Durable + cross-process: appended (no truncate), so any
+                      ;; process hydrating later sees `terminal?` and skips.
+                      (publish! sid term {:store? true})
+                      (when-let [f' @deliver-fn]
+                        (try (f' sid true term)
+                             (catch Throwable t
+                               (tel/log! :debug
+                                         ["gateway-bus: orphan-reap deliver failed"
+                                          (ex-message t)])))))))))))))
     (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
   nil)
 

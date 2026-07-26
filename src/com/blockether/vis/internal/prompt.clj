@@ -563,8 +563,15 @@
 
 (defn- sandbox-shims-prompt-block
   "Advertise Python's execution boundary, auto-imports, and live shim names.
-   Full shim contracts stay in `doc(name)` so this provider prompt remains small."
-  []
+   Full shim contracts stay in `doc(name)` so this provider prompt remains small.
+
+   When the shell layer is ACTIVE it also names the shell surface INSIDE the
+   sandbox: `shell` is an ordinary bound global there, and the POSIX-compat shim
+   routes `subprocess` / `os.system` / `os.popen` to it. That shim is inlined in
+   `env_python` rather than registered as a `:shim/name`, so it never appeared in
+   the list below — the model was left assuming ordinary Python process calls
+   simply cannot work in the sandbox."
+  [active-extensions]
   (let
     [shims
      (try (extension/sandbox-shims) (catch Throwable _ nil))
@@ -575,18 +582,26 @@
           distinct
           sort)
 
+     shell?
+     (boolean (some #(= "foundation-shell" (:ext/name %)) (or active-extensions [])))
+
      auto-imports
      (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
 
     (prompt-block "sandbox-shims"
-                  (str "Auto-imported by `python_execution` (no `import`): `" auto-imports
+                  (str "Auto-imported by `python_execution` (no `import`): `"
+                       auto-imports
                        "`."
                        (when (seq shim-names)
                          (str "\nPreinstalled shims (no pip; import before use, alias in the same "
                               "block — e.g. `import numpy as np`; `np`/`pd` are never "
                               "auto-created): `"
                               (str/join "`, `" shim-names)
-                              "`."))))))
+                              "`."))
+                       (when shell?
+                         (str "\n`shell` is a bound global there too — `shell(cmd)`, "
+                              "`shell(cmd, {\"op\": \"bg\", \"id\": \"dev\"})` — and "
+                              "`subprocess` / `os.system` / `os.popen` route to it."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime
@@ -600,7 +615,7 @@
   [environment active-extensions]
   (let
     [blocks (->> [(extensions-prompt-block environment active-extensions)
-                  (sandbox-shims-prompt-block)]
+                  (sandbox-shims-prompt-block active-extensions)]
                  (filter #(and (string? %) (not (str/blank? %))))
                  seq)]
     (when blocks (prompt-block "turn-system-context" (str/join "\n\n" blocks)))))
