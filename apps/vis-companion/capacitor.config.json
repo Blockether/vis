@@ -7,6 +7,6 @@
     "androidScheme": "https"
   },
   "ios": {
-    "scheme": "vis"
+    "scheme": "App"
   }
 }

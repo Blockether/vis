@@ -345,6 +345,8 @@ export interface SubmittedTurn {
   request?: string;
   status?: string;
   started_at?: number;
+  /** Set when the gateway enqueued the turn; orders the queue tray. */
+  queued_at?: number;
   [key: string]: unknown;
 }
 

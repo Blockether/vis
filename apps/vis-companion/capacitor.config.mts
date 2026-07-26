@@ -26,7 +26,8 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
   },
   ios: {
-    scheme: 'vis',
+    // Xcode scheme name in ios/App/App.xcodeproj — NOT a URL scheme.
+    scheme: 'App',
   },
 };
 
