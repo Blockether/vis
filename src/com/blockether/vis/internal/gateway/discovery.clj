@@ -154,9 +154,14 @@
   (locking registry-mutation-monitor
     (.mkdirs (registry-dir))
     (with-open
-      [raf (RandomAccessFile. (registry-mutation-lock-file db) "rw")
-       channel (.getChannel raf)
-       lock (.lock channel)]
+      [raf
+       (RandomAccessFile. (registry-mutation-lock-file db) "rw")
+
+       channel
+       (.getChannel raf)
+
+       _lock
+       (.lock channel)]
 
       (f))))
 
@@ -192,43 +197,44 @@
       db
       (fn []
         (let [tmp (java.io.File/createTempFile (str (registry-key db) ".") ".tmp" (registry-dir))]
-          (try
-            (spit tmp (pr-str entry))
-            (try
-              (Files/move (.toPath tmp)
-                          (.toPath f)
-                          (into-array StandardCopyOption
-                                      [StandardCopyOption/ATOMIC_MOVE
-                                       StandardCopyOption/REPLACE_EXISTING]))
-              (catch AtomicMoveNotSupportedException _
-                (Files/move (.toPath tmp)
-                            (.toPath f)
-                            (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-            (finally
-              (when (.exists tmp) (.delete tmp)))))))
+          (try (spit tmp (pr-str entry))
+               (try (Files/move (.toPath tmp)
+                                (.toPath f)
+                                (into-array StandardCopyOption
+                                            [StandardCopyOption/ATOMIC_MOVE
+                                             StandardCopyOption/REPLACE_EXISTING]))
+                    (catch AtomicMoveNotSupportedException _
+                      (Files/move (.toPath tmp)
+                                  (.toPath f)
+                                  (into-array StandardCopyOption
+                                              [StandardCopyOption/REPLACE_EXISTING]))))
+               (finally (when (.exists tmp) (.delete tmp)))))))
     entry))
 
 (defn delete-registry!
   "Remove the registry file for `db`. Never throws. Returns true when a file was
    removed."
   [db]
-  (try
-    (with-registry-mutation-lock db #(delete-registry-file! (registry-file db)))
-    (catch Throwable _ false)))
+  (try (with-registry-mutation-lock db #(delete-registry-file! (registry-file db)))
+       (catch Throwable _ false)))
 
 (defn delete-registry-if!
   "Atomically remove `db`'s registry only when `(pred current-entry)` is truthy.
    The read + delete share the registry mutation lock, preventing an old daemon
    or stale discoverer from deleting a successor's freshly-written ownership."
   [db pred]
-  (try
-    (with-registry-mutation-lock
-      db
-      (fn []
-        (let [f (registry-file db)
-              entry (read-registry-file f)]
-          (boolean (and entry (pred entry) (delete-registry-file! f))))))
-    (catch Throwable _ false)))
+  (try (with-registry-mutation-lock db
+                                    (fn []
+                                      (let
+                                        [f
+                                         (registry-file db)
+
+                                         entry
+                                         (read-registry-file f)]
+
+                                        (boolean
+                                          (and entry (pred entry) (delete-registry-file! f))))))
+       (catch Throwable _ false)))
 
 ;; =============================================================================
 ;; Freshness
@@ -260,8 +266,7 @@
   "Called from the daemon's shutdown hook: delete OUR registry entry for `db`,
    but only if it still points at us (never clobber a successor that took over)."
   [db]
-  (when-not (memory-db? db)
-    (delete-registry-if! db #(= (:pid %) (current-pid)))))
+  (when-not (memory-db? db) (delete-registry-if! db #(= (:pid %) (current-pid)))))
 
 ;; =============================================================================
 ;; Spawn argv + detached launch
@@ -499,35 +504,29 @@
                 ;; Double-check under the lock: another spawner may have finished
                 ;; between our read above and winning the lock.
                 (let [again (read-registry db)]
-                  (cond
-                    (registry-fresh? again probe)
-                    {:mode :attach :entry again}
-
-                    ;; A failed HTTP probe is not proof that a live JVM stopped
-                    ;; owning the port. Preserve its registry and retry: if it is
-                    ;; paused/overloaded it can recover; if it stays wedged the
-                    ;; caller gets a timeout without a bind-storm of doomed
-                    ;; replacement daemons. True stale PID reuse is rarer and
-                    ;; safer to report than destructively racing a live owner.
-                    (and (:pid again) (pid-alive? (:pid again)))
-                    (do
-                      (emit {:phase :recovering})
-                      (if-let [entry (await-registry! db probe await-opts)]
-                        (do (emit {:phase :ready :mode :recovered :entry entry})
-                            {:mode :recovered :entry entry})
-                        (do (emit {:phase :timeout}) {:mode :timeout})))
-
-                    :else
-                    (do
-                      ;; Ownership-safe: a successor that registers between
-                      ;; `again` and this mutation is not deleted.
-                      (when again (delete-registry-if! db #(= again %)))
-                      (emit {:phase :spawning})
-                      (spawn opts)
-                      (if-let [entry (await-registry! db probe await-opts)]
-                        (do (emit {:phase :ready :mode :spawned :entry entry})
-                            {:mode :spawned :entry entry})
-                        (do (emit {:phase :timeout}) {:mode :timeout})))))
+                  (cond (registry-fresh? again probe) {:mode :attach :entry again}
+                        ;; A failed HTTP probe is not proof that a live JVM stopped
+                        ;; owning the port. Preserve its registry and retry: if it is
+                        ;; paused/overloaded it can recover; if it stays wedged the
+                        ;; caller gets a timeout without a bind-storm of doomed
+                        ;; replacement daemons. True stale PID reuse is rarer and
+                        ;; safer to report than destructively racing a live owner.
+                        (and (:pid again) (pid-alive? (:pid again)))
+                        (do (emit {:phase :recovering})
+                            (if-let [entry (await-registry! db probe await-opts)]
+                              (do (emit {:phase :ready :mode :recovered :entry entry})
+                                  {:mode :recovered :entry entry})
+                              (do (emit {:phase :timeout}) {:mode :timeout})))
+                        :else (do
+                                ;; Ownership-safe: a successor that registers between
+                                ;; `again` and this mutation is not deleted.
+                                (when again (delete-registry-if! db #(= again %)))
+                                (emit {:phase :spawning})
+                                (spawn opts)
+                                (if-let [entry (await-registry! db probe await-opts)]
+                                  (do (emit {:phase :ready :mode :spawned :entry entry})
+                                      {:mode :spawned :entry entry})
+                                  (do (emit {:phase :timeout}) {:mode :timeout})))))
                 (finally (release-spawn-lock! holder)))
               ;; Lock is held by another process that's already spawning — don't
               ;; pile on a competing daemon, just wait for it to self-register.

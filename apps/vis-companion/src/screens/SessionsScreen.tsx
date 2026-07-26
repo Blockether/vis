@@ -35,8 +35,12 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   const refreshAnchorRef = useRef<{ id: string; top: number } | null>(null);
   const activeRef = useRef(active);
   const clientRef = useRef(client);
-  activeRef.current = active;
-  clientRef.current = client;
+  // Refs mirror the latest props for callbacks that must not re-subscribe on every
+  // connection object identity change. Written in an effect so render stays pure.
+  useEffect(() => {
+    activeRef.current = active;
+    clientRef.current = client;
+  });
   const activeKey = active ? `${active.url}\u0000${active.token ?? ''}` : '';
 
   const load = useCallback(
@@ -64,7 +68,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
         if (background) pollInFlight.current = false;
       }
     },
-    [activeKey],
+    [],
   );
 
   useEffect(() => {
@@ -73,7 +77,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
       if (document.visibilityState === 'visible') void load(controller.signal, true);
     };
 
-    setLoadError(null);
     if (sessions === null || !active) void load(controller.signal);
     else void load(controller.signal, true);
     const timer = window.setInterval(refreshLiveStates, 5_500);
@@ -116,10 +119,9 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
   // and unions its matching ids into the local title/project filter.
   useEffect(() => {
     const needle = query.trim();
-    if (!needle) {
-      setTranscriptMatches(null);
-      return;
-    }
+    // An empty query has no server matches; `matches` below derives that without
+    // writing state from this effect.
+    if (!needle) return;
     const connection = activeRef.current;
     if (!connection) return;
     const controller = new AbortController();
@@ -141,6 +143,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
     };
   }, [query, activeKey]);
 
+  const matches = query.trim() ? transcriptMatches : null;
+
   const visible = useMemo(() => {
     if (!sessions) return null;
     const needle = query.trim().toLowerCase();
@@ -149,10 +153,10 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
       return (
         !needle ||
         sessionSearchText(session).includes(needle) ||
-        transcriptMatches?.has(session.id) === true
+        matches?.has(session.id) === true
       );
     });
-  }, [query, sessions, transcriptMatches]);
+  }, [query, sessions, matches]);
 
   const totals = useMemo(() => {
     const all = sessions?.length ?? 0;
@@ -298,7 +302,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
                 sessions={projectSessions}
                 conn={active!}
                 subscribedIds={subscribedIds}
-                matches={transcriptMatches}
+                matches={matches}
                 needle={query.trim()}
                 onOpen={onOpen}
               />

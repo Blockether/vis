@@ -595,15 +595,25 @@ export function SessionScreen({
   const liveTurnRef = useRef<LiveTurn | null>(null);
   const runningRef = useRef(false);
   const turnsRef = useRef<TranscriptTurn[]>([]);
+  const cancelRef = useRef<() => void>(() => undefined);
   // Keep the loading overlay up until a freshly opened session has been
   // scrolled to its bottom, so persisted history never flashes at the top first.
   const initialScrollPendingRef = useRef(!fresh);
-  runningRef.current = running;
-  turnsRef.current = turns;
+  // Mirror the latest render values for async callbacks. Written in an effect so
+  // render itself stays pure.
+  useEffect(() => {
+    runningRef.current = running;
+    turnsRef.current = turns;
+    cancelRef.current = () => void cancel();
+  });
 
+  // Switching session identity resets this screen's whole view state. React's
+  // alternative is remounting via `key`, which would also tear down the live SSE
+  // subscription mid-stream, so the reset stays explicit here.
   useEffect(() => {
     void recordingRef.current?.cancel();
     recordingRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTurns([]);
     setLiveTurn(null);
     setQueued([]);
@@ -658,6 +668,8 @@ export function SessionScreen({
   useEffect(() => {
     const controller = new AbortController();
     void Promise.all([
+      // Transcript fetch: every state write happens after the request settles.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadTranscript(),
       client.session(sid, controller.signal).then(setSession).catch(() => undefined),
     ]);
@@ -907,7 +919,7 @@ export function SessionScreen({
       unsubscribeConnection();
       setConnected(false);
     };
-  }, [loadTranscript, sid, subscriptions]);
+  }, [client, loadTranscript, sid, subscriptions]);
 
   useLayoutEffect(() => {
     const viewport = scrollRef.current;
@@ -1299,7 +1311,7 @@ export function SessionScreen({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
-      void cancel();
+      cancelRef.current();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -1336,10 +1348,9 @@ export function SessionScreen({
   const selectedFile = fileMatches[Math.min(fileIndex, Math.max(0, fileMatches.length - 1))];
 
   useEffect(() => {
-    if (!fileOpen) {
-      setFileSuggestions([]);
-      return;
-    }
+    // `fileMatches` above already renders nothing while the menu is closed, so
+    // this effect never has to clear suggestion state.
+    if (!fileOpen) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void client

@@ -23,6 +23,9 @@ import { parseRoute, sessionHash, tabHash } from './lib/router';
 
 type Tab = 'sessions' | 'connect';
 
+/** Stable empty watch list for when no gateway stream is subscribed. */
+const NO_SUBSCRIBED_IDS = new Set<string>();
+
 export function App() {
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
@@ -117,6 +120,9 @@ export function App() {
   useEffect(() => {
     if (!ready) return;
     if (!routeApplied) {
+      // Adopting the address bar IS synchronising from an external system, and it
+      // happens exactly once per load — not a cascading render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       applyRoute(window.location.hash);
       setRouteApplied(true);
     }
@@ -142,6 +148,8 @@ export function App() {
   }, [openTarget, tab, ready, routeApplied, conns]);
 
   useEffect(() => {
+    // Mount-time gateway load: the flag flips only when the request settles.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh().finally(() => setReady(true));
   }, [refresh]);
 
@@ -208,10 +216,9 @@ export function App() {
   // keeps every visited session live even while another view is open.
   useEffect(() => {
     let cancelled = false;
-    if (!subscriptions || !sessionConn) {
-      setSubscribedIds(new Set());
-      return;
-    }
+    // Nothing to restore without a stream; `watchedIds` below derives the empty
+    // list rather than writing state from this effect.
+    if (!subscriptions || !sessionConn) return;
     void loadSubscribedSessions(sessionConn.url).then((ids) => {
       if (cancelled) return;
       const next = openTarget?.sid && !ids.includes(openTarget.sid)
@@ -224,6 +231,8 @@ export function App() {
       cancelled = true;
     };
   }, [openTarget?.sid, sessionConn, subscriptions]);
+
+  const watchedIds = subscriptions && sessionConn ? subscribedIds : NO_SUBSCRIBED_IDS;
 
   useEffect(() => () => subscriptions?.dispose(), [subscriptions]);
 
@@ -258,7 +267,7 @@ export function App() {
             active={active}
             client={client}
             subscriptions={subscriptions}
-            subscribedIds={subscribedIds}
+            subscribedIds={watchedIds}
             gatewayCount={conns.length}
             onOpen={openGatewaySession}
           />

@@ -36,40 +36,58 @@ export function GatewaySettingsDialog({
   const [labelDraft, setLabelDraft] = useState(gateway.label ?? '');
   const [confirmRemove, setConfirmRemove] = useState(false);
 
-  const load = useCallback(async () => {
-    setErr(null);
-    setUnreachable(false);
-    setUnauthorized(false);
-    try {
-      const settings = await client.settings();
-      setGroups(settings.groups ?? []);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      // Status flags are assigned only after the request settles, and never once the
+      // caller has been torn down — so mounting this loader writes no state
+      // synchronously and none after unmount.
       try {
-        const activeTheme = await client.theme();
-        const themePref = await getThemePref();
-        setTheme(activeTheme);
-        setPref(themePref);
-        if (isActive) applyGatewayTheme(resolveTheme(activeTheme, themePref));
+        const settings = await client.settings();
+        if (signal?.aborted) return;
+        setErr(null);
+        setUnreachable(false);
+        setUnauthorized(false);
+        setGroups(settings.groups ?? []);
+        try {
+          const activeTheme = await client.theme();
+          const themePref = await getThemePref();
+          if (signal?.aborted) return;
+          setTheme(activeTheme);
+          setPref(themePref);
+          if (isActive) applyGatewayTheme(resolveTheme(activeTheme, themePref));
+        } catch (e) {
+          if (signal?.aborted) return;
+          setTheme(null);
+          setErr(`Theme sync unavailable: ${(e as Error).message}`);
+        }
       } catch (e) {
-        setTheme(null);
-        setErr(`Theme sync unavailable: ${(e as Error).message}`);
-      }
-    } catch (e) {
-      // A token-gated gateway that's actually up answers /healthz (so the list
-      // reads Online) but 401s on /v1/settings. Surface that as "unauthorized",
-      // NOT "offline" — otherwise the dialog contradicts the reachable list.
-      if (e instanceof GatewayError && e.status === 401) {
-        setUnauthorized(true);
+        if (signal?.aborted) return;
+        // A token-gated gateway that's actually up answers /healthz (so the list
+        // reads Online) but 401s on /v1/settings. Surface that as "unauthorized",
+        // NOT "offline" — otherwise the dialog contradicts the reachable list.
+        if (e instanceof GatewayError && e.status === 401) {
+          setErr(null);
+          setUnreachable(false);
+          setUnauthorized(true);
+          setGroups(null);
+          return;
+        }
+        setErr((e as Error).message);
+        setUnreachable(true);
+        setUnauthorized(false);
         setGroups(null);
-        return;
       }
-      setErr((e as Error).message);
-      setUnreachable(true);
-      setGroups(null);
-    }
-  }, [client, isActive]);
+    },
+    [client, isActive],
+  );
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    // Mount-time settings fetch: `load` writes state only after it settles, and
+    // never once the signal aborts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
   useEffect(() => {

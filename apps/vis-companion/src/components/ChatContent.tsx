@@ -699,7 +699,7 @@ function normalizeReasoning(value: string): string {
 export const ThinkingBand = memo(function ThinkingBand({ children }: { children: string }) {
   const normalized = normalizeReasoning(children);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [isExpandRequested, setExpandRequested] = useState(false);
   const [hiddenRows, setHiddenRows] = useState(0);
 
   useLayoutEffect(() => {
@@ -720,9 +720,9 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
     return () => observer.disconnect();
   }, [normalized]);
 
-  useEffect(() => {
-    if (!hiddenRows) setExpanded(false);
-  }, [hiddenRows]);
+  // Collapsing is derived, not stored: a block with nothing hidden is never expanded.
+  const expanded = isExpandRequested && hiddenRows > 0;
+
 
   if (!normalized || normalized === ENCRYPTED_REASONING_PLACEHOLDER) return null;
   const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
@@ -735,7 +735,7 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
           data-disclosure-toggle
           className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-[9px] font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
           aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => setExpandRequested((value) => !value)}
         >
           <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
           <span>{expanded ? 'THINKING' : `THINKING  +${hiddenRows} more`}</span>
