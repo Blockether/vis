@@ -2186,7 +2186,7 @@ del __vis_posix_lazy__
    This is the model-facing inventory; keep it synchronized with
    `auto-imports-python` and its real-context regression test."
   ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib" "Path"
-   "textwrap" "base64" "math" "socket" "builtins"])
+   "textwrap" "base64" "math" "socket" "builtins" "time" "datetime"])
 
 (def ^:private auto-imports-python
   "Install tiny convenience imports as Python builtins so agents can use them
@@ -2198,12 +2198,20 @@ del __vis_posix_lazy__
    the proxy, so a session that never touches base64/textwrap/socket/... never
    pays their import at context build OR at every `sub_loop` fork. An explicit
    `import <name>` always works too (normal stdlib path). The model-facing
-   inventory is unchanged - see `AUTO_IMPORTED_PYTHON_NAMES`."
+   inventory is `AUTO_IMPORTED_PYTHON_NAMES`.
+
+   `time` is EAGER and NOT optional: GraalPy leaves the time module's state
+   (its `currentZoneId`) uninitialized until `time` is first imported, so the
+   first local-time conversion in a cold context - `datetime.fromtimestamp(...)`,
+   `datetime.now()`, `time.localtime()` - died with
+   `NullPointerException: Cannot read field \"currentZoneId\" because
+   \"moduleState\" is null`. Importing `time` here initializes it once per
+   context (~ms). `datetime` stays a lazy proxy - safe now that `time` is up."
   "def __vis_auto_imports__():
     import builtins as _b
     import importlib as _il
-    import json as _json, re as _re, os as _os, sys as _sys
-    _b.json = _json; _b.re = _re; _b.os = _os; _b.sys = _sys
+    import json as _json, re as _re, os as _os, sys as _sys, time as _time
+    _b.json = _json; _b.re = _re; _b.os = _os; _b.sys = _sys; _b.time = _time
     _b.builtins = _b
     class _LazyStd:
         def __init__(self, bind, mod, attr):
@@ -2233,6 +2241,7 @@ del __vis_posix_lazy__
         ('base64', 'base64', None),
         ('math', 'math', None),
         ('socket', 'socket', None),
+        ('datetime', 'datetime', None),
     ):
         setattr(_b, bind, _LazyStd(bind, mod, attr))
 __vis_auto_imports__()

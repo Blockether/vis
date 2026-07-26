@@ -3767,3 +3767,130 @@
                 :when (some? decoded)]
 
                [(long (:position row)) decoded]))))))
+(defn- fts5-quote [value] (str "\"" (str/replace (str value) "\"" "\"\"") "\""))
+
+(declare render-search-query)
+
+(defn- render-search-join
+  [operator nodes]
+  (when-not (seq nodes)
+    (throw (ex-info "search boolean node needs at least one child" {:operator operator})))
+  (str "(" (str/join (str " " operator " ") (map render-search-query nodes)) ")"))
+
+(defn- render-search-query
+  "Render the backend-neutral search DSL as a safely quoted FTS5 expression."
+  [query]
+  (cond (string? query) (let [terms (remove str/blank? (str/split (str/trim query) #"\s+"))]
+                          (when-not (seq terms)
+                            (throw (ex-info "search query must contain text" {:query query})))
+                          (if (= 1 (count terms))
+                            (fts5-quote (first terms))
+                            (str "(" (str/join " AND " (map fts5-quote terms)) ")")))
+        (map? query)
+        (let [{:keys [term phrase prefix all any near]} query]
+          (cond (contains? query :term) (fts5-quote term)
+                (contains? query :phrase) (fts5-quote phrase)
+                (contains? query :prefix) (str (fts5-quote prefix) "*")
+                (contains? query :near)
+                (let [{:keys [terms within]} near]
+                  (when-not (seq terms) (throw (ex-info "search :near needs terms" {:query query})))
+                  (str "NEAR(" (str/join " " (map fts5-quote terms)) ", " (long within) ")"))
+                (contains? query :any) (render-search-join "OR" any)
+                (contains? query :all) (let
+                                         [negative? #(and (map? %) (contains? % :not))
+                                          positive (remove negative? all)
+                                          negative (map :not (filter negative? all))]
+
+                                         (when-not (seq positive)
+                                           (throw (ex-info "search :all needs a positive child"
+                                                           {:query query})))
+                                         (reduce #(str %1 " NOT " (render-search-query %2))
+                                                 (render-search-join "AND" positive)
+                                                 negative))
+                (contains? query :not) (throw (ex-info "search :not must be a child of :all"
+                                                       {:query query}))
+                :else (throw (ex-info "unrecognized search-query node" {:query query}))))
+        :else (throw (ex-info "search query must be a string or a DSL map" {:query query}))))
+
+(def ^:private searchable-transcript-fields
+  [{:owner-table "session_turn_soul"
+    :field "user_request"
+    :table "transcript_request_fts"
+    :column "user_request"
+    :owner-alias "ts"
+    :column-index 0}
+   {:owner-table "session_turn_iteration"
+    :field "answer_text"
+    :table "transcript_reply_fts"
+    :column "llm_assistant_prose"
+    :owner-alias "it"
+    :column-index 0}
+   {:owner-table "session_turn_iteration"
+    :field "thinking_text"
+    :table "transcript_reply_fts"
+    :column "llm_thinking"
+    :owner-alias "it"
+    :column-index 1}])
+
+(defn- search-field-sql
+  [{:keys [owner-table field table owner-alias column-index]}]
+  (str "SELECT '"
+       owner-table
+       "' AS owner_table, "
+       owner-alias
+       ".id AS owner_id, '"
+       field
+       "' AS field, snippet("
+       table
+       ", "
+       column-index
+       ", '[', ']', '…', 32) AS snippet, bm25("
+       table
+       ") AS rank FROM "
+       table
+       " JOIN "
+       owner-table
+       " "
+       owner-alias
+       " ON "
+       owner-alias
+       ".rowid = "
+       table
+       ".rowid WHERE "
+       table
+       " MATCH ? ORDER BY rank ASC LIMIT ?"))
+
+(defn db-search
+  "Search persisted prompts, answers, and thinking through SQLite FTS5."
+  ([db-info query] (db-search db-info query nil))
+  ([db-info query {:keys [limit owner-table field]}]
+   (if (or (not (ds db-info))
+           (and (string? query) (str/blank? query))
+           (and (map? query) (empty? query)))
+     []
+     (let
+       [match-query
+        (render-search-query query)
+
+        result-limit
+        (max 1 (long (or limit 50)))
+
+        sources
+        (filter #(and (or (nil? owner-table) (= owner-table (:owner-table %)))
+                      (or (nil? field) (= field (:field %))))
+                searchable-transcript-fields)]
+
+       (->> sources
+            (mapcat (fn [{:keys [column] :as source}]
+                      (raw-query! db-info
+                                  [(search-field-sql source) (str column " : (" match-query ")")
+                                   result-limit])))
+            (map (fn [row]
+                   {:owner-table (:owner_table row)
+                    :owner-id (:owner_id row)
+                    :field (:field row)
+                    :snippet (:snippet row)
+                    :rank (:rank row)}))
+            (sort-by :rank)
+            (take result-limit)
+            vec)))))

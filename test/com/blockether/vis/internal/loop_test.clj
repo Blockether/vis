@@ -3852,6 +3852,70 @@
            {:status 401 :body "{\"error\":{\"message\":\"Invalid authentication credentials\"}}"}))
 
 (defdescribe
+  auth-provider-fallback-routing-test
+  "Terminal auth recovery releases one dead provider only after refresh handling ends."
+  (it "unpinns the failed provider and enables observable fleet auth fallback"
+      (let
+        [fallback
+         @#'lp/auth-fallback-routing
+
+         error
+         (ex-info "OAuth access token has been revoked" {:type :svar.core/http-error :status 401})
+
+         routing
+         {:provider :openai-codex
+          :model "gpt-5.6-sol"
+          :on-transient-error :fallback-model-in-the-same-provider
+          :reasoning :deep}
+
+         result
+         (fallback error routing {:provider :openai-codex})]
+
+        (expect (= {:on-transient-error :hybrid
+                    :on-auth-error :fallback-provider
+                    :exclude-providers #{:openai-codex}
+                    :reasoning :deep}
+                   result))))
+  (it
+    "preserves existing exclusions and refuses replay after visible output"
+    (let
+      [fallback
+       @#'lp/auth-fallback-routing
+
+       base
+       {:provider :openai-codex :model "gpt-5.6-sol" :exclude-providers #{:broken}}
+
+       model
+       {:provider :openai-codex}]
+
+      (expect (= #{:broken :openai-codex}
+                 (:exclude-providers (fallback (ex-info "Unauthorized" {:status 401}) base model))))
+      (expect (nil?
+                (fallback (ex-info "Unauthorized" {:status 401 :content-acc-len 1}) base model)))
+      (expect
+        (nil? (fallback (ex-info "Unauthorized" {:status 401 :reasoning-acc-len 1}) base model)))))
+  (it "runs at most once and only for an identified failing provider"
+      (let
+        [fallback
+         @#'lp/auth-fallback-routing
+
+         error
+         (ex-info "Unauthorized" {:status 401})]
+
+        (expect (nil?
+                  (fallback error {:on-auth-error :fallback-provider} {:provider :openai-codex})))
+        (expect (nil? (fallback error {} {})))))
+  (it "threads the auth-fallback retry without consuming another retry budget"
+      (let
+        [next-counters
+         @#'lp/next-retry-counters
+
+         base
+         {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}]
+
+        (expect (= [2 1 1] (next-counters {::lp/retry-auth-fallback {}} base))))))
+
+(defdescribe
   post-refresh-propagation-backoff-test
   (describe
     "a token we JUST refreshed that 401s again is treated as propagation lag, not dead"

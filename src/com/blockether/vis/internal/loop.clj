@@ -305,6 +305,8 @@
           (= result ::retry-provider-unavailable) [attempt max-tokens-attempt (inc pu-attempt)]
           (and (map? result) (contains? result ::retry-max-tokens))
           [attempt (inc max-tokens-attempt) pu-attempt]
+          (and (map? result) (contains? result ::retry-auth-fallback)) [attempt max-tokens-attempt
+                                                                        pu-attempt]
           (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt pu-attempt]
           (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt pu-attempt])))
 
@@ -5948,6 +5950,39 @@
                                                                    str))
                                (ex-message e))))
 
+(defn- auth-fallback-routing
+  "Build one cross-provider rescue route after OAuth refresh/backoff is exhausted.
+   Returns nil after visible output, without a provider id, or once enabled."
+  [^Throwable e routing resolved-model]
+  (let
+    [data
+     (ex-data e)
+
+     provider
+     (:provider resolved-model)
+
+     output-started?
+     (or (pos? (long (or (:content-acc-len data) 0)))
+         (pos? (long (or (:reasoning-acc-len data) 0)))
+         (some? (:partial-content data))
+         (some? (:reasoning data)))
+
+     current
+     (or routing {})]
+
+    (when (and provider
+               (auth-error-shaped? e)
+               (not output-started?)
+               (not= :fallback-provider (:on-auth-error current)))
+      (cond->
+        (-> current
+            (dissoc :provider :model :force-provider :force-model)
+            (assoc :on-auth-error :fallback-provider)
+            (update :exclude-providers (fnil conj #{}) provider))
+        (or (nil? (:on-transient-error current))
+            (= :fallback-model-in-the-same-provider (:on-transient-error current)))
+        (assoc :on-transient-error :hybrid)))))
+
 (defn- refresh-just-failed?
   "True when we FORCED an OAuth refresh for this provider very recently (within
    [[AUTH_PROPAGATION_WINDOW_MS]]) and the token is STILL auth-failing — i.e.
@@ -7010,6 +7045,8 @@
                  effective-messages provider-messages
                  resolved-model pre-resolved-model
                  effective-routing (or routing {})
+                 ;; Mutates once only when exhausted auth recovery releases a dead provider.
+                 iteration-routing (atom effective-routing)
                  iteration-result
                  ;; Per-iteration retry state.
                  ;;   `:attempt`              — generic counter shared by every retry policy.
@@ -7043,7 +7080,7 @@
                                        {:iteration iteration
                                         :reasoning-level reasoning-level
                                         :reasoning-effort reasoning-effort
-                                        :routing effective-routing
+                                        :routing @iteration-routing
                                         :resolved-model resolved-model
                                         :on-chunk on-chunk
                                         :active-extensions active-exts
@@ -7136,6 +7173,30 @@
                                  (auth-refreshable-error? e resolved-model)
                                  (try-refresh-provider-token! resolved-model))
                             ::retry-auth-refresh
+                            ;; Refresh/backoff failed or credentials were revoked.
+                            ;; Release the dead provider, then let svar walk the fleet.
+                            (auth-fallback-routing e @iteration-routing resolved-model)
+                            (let
+                              [fallback-routing
+                               (auth-fallback-routing e @iteration-routing resolved-model)
+                               chunk (provider-retry-progress-chunk
+                                       (inc (long iteration))
+                                       e
+                                       {:provider (:provider resolved-model)
+                                        :model (or (:name resolved-model) (:model resolved-model))
+                                        :reason :authentication-fallback
+                                        :attempt 1
+                                        :max-retries 1
+                                        :delay-ms 0})]
+
+                              (emit-hook! on-chunk chunk "Auth fallback progress hook failed")
+                              (tel/log! {:level :warn
+                                         :id ::auth-provider-fallback
+                                         :data {:iteration iteration
+                                                :provider (:provider resolved-model)
+                                                :status (:status (ex-data e))}}
+                                        "Provider auth recovery exhausted; falling back")
+                              {::retry-auth-fallback fallback-routing})
                             ;; svar gave up on the single pinned
                             ;; provider with a transient 5xx and threw
                             ;; its terminal `provider-unavailable`. On
@@ -7178,7 +7239,7 @@
                             :else (handle-iteration-exception! e
                                                                {:iteration iteration
                                                                 :messages effective-messages
-                                                                :routing effective-routing
+                                                                :routing @iteration-routing
                                                                 :reasoning-level
                                                                 reasoning-level}))))]
                      (if-let
@@ -7199,20 +7260,22 @@
                                   pu-attempt*
                                   (::retry-max-tokens result)
                                   env)
+                           (and (map? result) (contains? result ::retry-auth-fallback))
+                           (do (reset! iteration-routing (::retry-auth-fallback result))
+                               (recur attempt*
+                                      max-tokens-attempt*
+                                      pu-attempt*
+                                      current-extra-body
+                                      env))
                            (= result ::retry-auth-refresh)
-                           ;; Token was force-refreshed and the router rebuilt;
-                           ;; reseat THIS turn's env onto the fresh router before
-                           ;; re-sending (run-iteration uses (:router env)).
+                           ;; Token refreshed; reseat this turn on the rebuilt router.
                            (recur attempt*
                                   max-tokens-attempt*
                                   pu-attempt*
                                   current-extra-body
                                   (assoc env :router (get-router)))
                            (= result ::retry-auth-backoff)
-                           ;; Same just-refreshed token 401'd (propagation lag):
-                           ;; wait, then re-send the SAME token — no re-mint, no
-                           ;; router rebuild. `attempt` grows so backoff widens and
-                           ;; the retry budget still bounds it.
+                           ;; Retry the same fresh token; propagation may still be settling.
                            (do (Thread/sleep #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
                                              (long (auth-propagation-backoff-ms attempt)))
                                (recur attempt*
@@ -7220,8 +7283,7 @@
                                       pu-attempt*
                                       current-extra-body
                                       env))
-                           ;; ::retry-stream / ::retry-provider-unavailable: same
-                           ;; request, same env; only the owning counter advanced.
+                           ;; Stream/provider-unavailable retry: same route and env.
                            :else
                            (recur attempt* max-tokens-attempt* pu-attempt* current-extra-body env)))
                        result)))]

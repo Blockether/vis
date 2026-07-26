@@ -47,6 +47,25 @@
 
                    (expect (= "[]\n" (:stdout result))))))
 
+(defdescribe cold-context-local-time-test
+             ;; GraalPy leaves the time module state (`currentZoneId`) null until `time`
+             ;; is imported, so the FIRST local-time call in a cold context used to die
+             ;; with `NPE: Cannot read field "currentZoneId"`. The eager `time` import in
+             ;; `auto-imports-python` initializes it - this guards that.
+             (it "converts a local timestamp as the first call in a fresh context"
+                 (let
+                   [ctx
+                    (:python-context (ep/create-python-context {}))
+
+                    result
+                    (ep/run-python-block ctx
+                                         (str "print(datetime.datetime.fromtimestamp(0).year)\n"
+                                              "print(time.localtime(0).tm_year)\n"
+                                              "from datetime import datetime as _dt\n"
+                                              "print(_dt.now().year > 2000)"))]
+
+                   (expect (= "1970\n1970\nTrue\n" (:stdout result))))))
+
 (defdescribe python-binding-aliases-test
              ;; A native tool is reachable in the sandbox under its canonical Python name
              ;; PLUS the intentional compatibility aliases. `fs` also answers to `fs_tool`

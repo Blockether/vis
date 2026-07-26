@@ -2717,3 +2717,56 @@
       (expect (= (:id other) (:project-id (rows guest))))
       (expect (= 0 (:project-position (rows guest))))
       (expect (nil? (rows missing))))))
+(defdescribe
+  full-text-search-facade-test
+  (it
+    "implements db-search across prompts, answers, and thinking"
+    (let
+      [s
+       (h/store)
+
+       cid
+       (h/store-session! s {:channel :tui :title "Search"})
+
+       tid
+       (vis/db-store-session-turn! s
+                                   {:parent-session-id cid
+                                    :user-request "the provider rejected your credentials"
+                                    :status :done})]
+
+      (h/store-iteration! s
+                          {:session-turn-id tid
+                           :assistant-prose "replace the expired credential"
+                           :thinking "authentication failure analysis"
+                           :code "x"
+                           :result 1})
+      (let
+        [prompt-hits
+         (vis/db-search s "provider rejected" {:limit 25})
+
+         answer-hits
+         (vis/db-search s {:phrase "expired credential"} {:limit 25})
+
+         thinking-hits
+         (vis/db-search s "authentication failure" {:limit 25})]
+
+        (expect (= ["user_request"] (mapv :field prompt-hits)))
+        (expect (= ["answer_text"] (mapv :field answer-hits)))
+        (expect (= ["thinking_text"] (mapv :field thinking-hits)))
+        (expect (str/includes? (:snippet (first prompt-hits)) "[provider]")))))
+  (it "honours field filters and safely treats punctuation as text"
+      (let
+        [s
+         (h/store)
+
+         cid
+         (h/store-session! s {:channel :tui :title "Filter"})]
+
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "literal OR operator" :status :done})
+        (expect (= [] (vis/db-search s "???" {:field "answer_text"})))
+        (expect (= ["user_request"]
+                   (mapv
+                     :field
+                     (vis/db-search s {:any ["literal" "missing"]} {:field "user_request"})))))))

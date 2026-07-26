@@ -2252,23 +2252,15 @@
   (config/init-cli!)
   (cli-fork-session! (get parsed "session-id") (get parsed "title")))
 
-(def ^:private search-field-labels
-  {"answer_text" "answer"
-   "thinking_text" "thinking"
-   "comments_text" "comments"
-   "user_request" "prompt"
-   "expression" "expression"})
-
 (defn- cli-sessions-search!
-  "`vis sessions search <query>` handler. Runs an FTS5 search
-   across user prompts, assistant answers, model thinking, per-block
-   comments, and persisted expression source. Hits print one per
-   line:
+  "`vis sessions search <query>` handler. Uses the same transcript search as the
+   TUI session navigator: token-prefix matching across user requests and assistant
+   replies (answer + thinking), ordered newest-first. Hits print one per line:
 
-     <session-id-prefix>  <field>  <snippet>
+     <session-id-prefix>  <side>     <snippet>
 
-   Snippets carry `[match]` markers around hit terms so the user can
-   see context. `--limit N` caps the result count (default 25)."
+   Snippets carry `[match]` markers around hit terms. `--limit N` caps the
+   result count (default 25)."
   [parsed _residual]
   (config/init-cli!)
   (let
@@ -2276,15 +2268,16 @@
      (or (get parsed "query") "")
 
      limit
-     (or (some-> (get parsed "limit")
-                 str/trim
-                 Long/parseLong)
-         25)]
+     (max 1
+          (long (or (some-> (get parsed "limit")
+                            str/trim
+                            Long/parseLong)
+                    25)))]
 
     (cond (str/blank? query) (do (stdout! "vis sessions search <query> [--limit N]")
                                  (stdout! "")
-                                 (stdout! "Searches session answers, thinking, comments,")
-                                 (stdout! "prompts, and persisted expression source.")
+                                 (stdout!
+                                   "Searches transcripts exactly like the TUI session navigator.")
                                  (shutdown-agents)
                                  (System/exit 1))
           :else
@@ -2293,21 +2286,25 @@
              (lp/db-info)
 
              hits
-             (or (persistance/db-search d query {:limit limit}) [])]
+             (->> (persistance/db-search-session-matches d :all query)
+                  (mapcat (fn [{:keys [id hits]}]
+                            (map #(assoc % :session-id id) hits)))
+                  (take limit)
+                  vec)]
 
             (cond (empty? hits) (do (stdout! (str "No matches for: " query)) (shutdown-agents))
                   :else (do (stdout! (str (count hits)
                                           " match" (when (not= 1 (count hits)) "es")
                                           " for: " query))
                             (stdout! "")
-                            (doseq [hit hits]
+                            (doseq [{:keys [session-id side snippet]} hits]
                               (let
-                                [label (get search-field-labels (:field hit) (:field hit))
-                                 id-pref (let [s (str (:owner-id hit))]
+                                [id-pref (let [s (str session-id)]
                                            (subs s 0 (min 8 (count s))))
-                                 snippet (str/replace (or (:snippet hit) "") #"\s+" " ")]
+                                 snippet (str/replace (or snippet "") #"\s+" " ")]
 
-                                (stdout! (str id-pref "  " (format "%-8s" label) "  " snippet))))
+                                (stdout!
+                                  (str id-pref "  " (format "%-8s" (name side)) "  " snippet))))
                             (shutdown-agents)))))))
 
 (defn- cli-sessions!
@@ -3424,15 +3421,15 @@
      :cmd/run-fn cli-export-session!}
     {:cmd/name "search"
      :cmd/parent ["sessions"]
-     :cmd/doc "Full-text search across answers, thinking, comments, prompts, and expressions."
+     :cmd/doc "Transcript search with the same matching semantics as the TUI session navigator."
      :cmd/usage "vis sessions search <query> [--limit N]"
      :cmd/args [{:name "query"
                  :kind :positional
                  :type :string
-                 :doc "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
+                 :doc "Words to search for (case-insensitive token prefixes, as in the TUI)."}
                 {:name "limit" :kind :flag :type :string :doc "Max hits to print (default 25)."}]
-     :cmd/examples ["vis sessions search \"znajduje nodes\"" "vis sessions search \"refactor*\""
-                    "vis sessions search \"foo OR bar\" --limit 100"]
+     :cmd/examples ["vis sessions search \"provider credentials\""
+                    "vis sessions search \"authentication failed\" --limit 100"]
      :cmd/run-fn cli-sessions-search!}]]
   (registry/register-cmd! spec))
 
