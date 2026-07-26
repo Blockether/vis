@@ -19,6 +19,8 @@
 
         (expect (= :lmstudio (:provider/id provider)))
         (expect (= "LM Studio" (:provider/label provider)))
+        (expect (false? (:is-authenticated status)))
+        (expect (nil? (:authenticated? status)))
         (expect (= "http://localhost:1234/v1" (:base-url status)))))
   (it "exposes a context-detection hook"
       (expect (ifn? (:provider/enrich-models-fn (vis/provider-by-id :lmstudio)))))

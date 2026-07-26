@@ -104,7 +104,6 @@ jobs:
           - extensions/common/vis-foundation-bridge
           - extensions/common/vis-foundation-search
           - extensions/common/vis-foundation-voice
-          - extensions/common/vis-foundation-mcp
           - extensions/languages/vis-language-clojure
           - extensions/workspaces/vis-workspace-rift
     steps:
